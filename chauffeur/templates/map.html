@@ -47,6 +47,14 @@
                 <span style="color: var(--panel-dim, #9ca3af)">Speaker for this room:</span>
                 <select id="announce-pin-select" class="bg-gray-800 rounded-lg px-2 py-1 text-sm"></select>
             </div>
+            <!-- Argyle's voice, everywhere at once. Not a Chauffeur setting:
+                 the HA pipeline is the single source of truth every mouth
+                 reads, and this dropdown is a remote control that writes to
+                 it (POST /api/announce/voice). -->
+            <div id="announce-voice-row" class="hidden w-full flex items-center gap-2 text-sm">
+                <span style="color: var(--panel-dim, #9ca3af)">Argyle's voice:</span>
+                <select id="announce-voice-select" class="bg-gray-800 rounded-lg px-2 py-1 text-sm"></select>
+            </div>
             <div id="announce-status" class="hidden w-full text-sm" style="color: var(--panel-dim, #9ca3af)"></div>
         </div>
     </div>
@@ -92,7 +100,11 @@
                     this.el('announce-text').focus();
                 };
                 this.el('announce-room').onchange = () => this.fillPin();
-                this.el('announce-pin-toggle').onclick = () => this.el('announce-pin').classList.toggle('hidden');
+                this.el('announce-pin-toggle').onclick = () => {
+                    this.el('announce-pin').classList.toggle('hidden');
+                    this.el('announce-voice-row').classList.toggle('hidden');
+                    this.loadVoices();     // lazy: a websocket round-trip HA-side
+                };
                 this.el('announce-pin-select').onchange = () => this.savePin();
                 this.el('announce-send').onclick = () => this.send();
                 this.el('announce-text').addEventListener('keydown', e => {
@@ -107,6 +119,27 @@
                 this.el('announce-pin-select').innerHTML =
                     '<option value="">Automatic</option>' + (r.candidates || []).map(c =>
                         `<option value="${c.entity_id}" ${c.entity_id === r.pinned ? 'selected' : ''}>${c.name}</option>`).join('');
+            },
+            voicesLoaded: false,
+            async loadVoices() {
+                if (this.voicesLoaded) return;
+                this.voicesLoaded = true;
+                try {
+                    const v = await fetch(apiBase + 'api/announce/voices').then(r => r.json());
+                    if (!(v.voices || []).length) {      // nothing to offer: no empty dropdown
+                        this.el('announce-voice-row').classList.add('hidden');
+                        return;
+                    }
+                    this.el('announce-voice-select').innerHTML = v.voices.map(o =>
+                        `<option value="${o.voice_id}" ${o.voice_id === v.current ? 'selected' : ''}>${o.name || o.voice_id}</option>`).join('');
+                    this.el('announce-voice-select').onchange = async () => {
+                        const res = await fetch(apiBase + 'api/announce/voice', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ voice: this.el('announce-voice-select').value }),
+                        }).then(x => x.json());
+                        this.status(res.message || 'Voice set.');
+                    };
+                } catch (e) { this.el('announce-voice-row').classList.add('hidden'); }
             },
             async savePin() {
                 const r = this.room();

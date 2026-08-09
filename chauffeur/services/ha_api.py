@@ -237,13 +237,14 @@ def _ws_url_and_token():
     return f"{ws}/websocket", token          # base already ends with /api
 
 
-def ws_command(command: str, timeout: float = 8):
+def ws_command(command: str, timeout: float = 8, **fields):
     """One-shot Core WebSocket command: connect → auth → one command → close.
 
     Assist pipeline config (and the registries proper) live behind the
     WebSocket API only. This deliberately stays a ONE-SHOT — the REST-only
     rule was protecting against a persistent client to keep alive, not
-    against the transport itself. Returns the command's `result` or None."""
+    against the transport itself. Extra fields ride the command message
+    (engine_id, pipeline_id, …). Returns the command's `result` or None."""
     url, token = _ws_url_and_token()
     if not url:
         return None
@@ -261,7 +262,7 @@ def ws_command(command: str, timeout: float = 8):
                     return None
             else:
                 return None
-            ws.send(_json.dumps({'id': 1, 'type': command}))
+            ws.send(_json.dumps({'id': 1, 'type': command, **fields}))
             while True:
                 msg = _json.loads(ws.recv(timeout))
                 if msg.get('id') == 1 and msg.get('type') == 'result':
@@ -274,33 +275,80 @@ def ws_command(command: str, timeout: float = 8):
 _pipeline_cache = {'ts': 0.0, 'data': None}
 
 
-def get_pipeline_tts(ttl: float = 300):
-    """{'engine', 'voice', 'language'} of the Assist pipeline that fronts
-    THIS app — the one whose conversation agent is the chauffeur_conversation
-    entity (its id carries the config-entry title, so match 'chauffeur' or
-    'argyle') — else HA's preferred pipeline. This is how the tts.speak
-    announcement path speaks in the SAME voice the satellites answer in.
-    Cached; serves the stale copy when the WebSocket is unavailable."""
-    now = time.time()
-    with _cache_lock:
-        if _pipeline_cache['data'] is not None and now - _pipeline_cache['ts'] < ttl:
-            return _pipeline_cache['data']
-    res = ws_command('assist_pipeline/pipeline/list')
-    pipelines = (res or {}).get('pipelines') or []
+def _pick_argyle_pipeline(listing: dict):
+    """The Assist pipeline that fronts THIS app — the one whose conversation
+    agent is the chauffeur_conversation entity (its id carries the
+    config-entry title, so match 'chauffeur' or 'argyle') — else HA's
+    preferred pipeline. Returns the raw pipeline dict or None."""
+    pipelines = (listing or {}).get('pipelines') or []
     if not pipelines:
-        return _pipeline_cache['data']
+        return None
     pick = next((p for p in pipelines
                  if any(w in (p.get('conversation_engine') or '').lower()
                         for w in ('chauffeur', 'argyle'))), None)
     if not pick:
-        pref = (res or {}).get('preferred_pipeline')
+        pref = (listing or {}).get('preferred_pipeline')
         pick = next((p for p in pipelines if p.get('id') == pref), pipelines[0])
-    data = {'engine': pick.get('tts_engine'), 'voice': pick.get('tts_voice'),
+    return pick
+
+
+def get_pipeline_tts(ttl: float = 300):
+    """{'id', 'name', 'engine', 'voice', 'language'} of the Argyle pipeline
+    (see _pick_argyle_pipeline). This is how the tts.speak announcement path
+    speaks in the SAME voice the satellites answer in. Cached; serves the
+    stale copy when the WebSocket is unavailable."""
+    now = time.time()
+    with _cache_lock:
+        if _pipeline_cache['data'] is not None and now - _pipeline_cache['ts'] < ttl:
+            return _pipeline_cache['data']
+    pick = _pick_argyle_pipeline(ws_command('assist_pipeline/pipeline/list'))
+    if not pick:
+        return _pipeline_cache['data']
+    data = {'id': pick.get('id'), 'name': pick.get('name'),
+            'engine': pick.get('tts_engine'), 'voice': pick.get('tts_voice'),
             'language': pick.get('tts_language')}
     with _cache_lock:
         _pipeline_cache['ts'] = now
         _pipeline_cache['data'] = data
     return data
+
+
+def list_tts_voices(engine_id: str, language: str = None) -> list:
+    """[{'voice_id', 'name'}] a TTS engine offers, via tts/engine/voices."""
+    fields = {'engine_id': engine_id}
+    if language:
+        fields['language'] = language
+    res = ws_command('tts/engine/voices', **fields)
+    return (res or {}).get('voices') or []
+
+
+# Every field assist_pipeline/pipeline/update expects back. The update is a
+# whole-object PUT in websocket clothing — omitting a field would null it on
+# the pipeline — and unknown extras fail validation, so an allowlist it is.
+_PIPELINE_FIELDS = ('name', 'language', 'conversation_engine',
+                    'conversation_language', 'stt_engine', 'stt_language',
+                    'tts_engine', 'tts_language', 'tts_voice',
+                    'wake_word_entity', 'wake_word_id')
+
+
+def set_pipeline_voice(voice: str) -> bool:
+    """Write a tts_voice onto the Argyle pipeline — the single source of
+    truth every mouth reads (satellite replies, satellite announces, and our
+    tts.speak fallback via get_pipeline_tts). Chauffeur stores nothing: a
+    stored copy would split-brain the moment somebody edited the pipeline in
+    HA's own UI. Busts the pipeline cache on success."""
+    pick = _pick_argyle_pipeline(ws_command('assist_pipeline/pipeline/list'))
+    if not pick or not pick.get('id'):
+        return False
+    fields = {k: pick.get(k) for k in _PIPELINE_FIELDS}
+    fields['tts_voice'] = voice
+    ok = ws_command('assist_pipeline/pipeline/update',
+                    pipeline_id=pick['id'], **fields)
+    if ok is None:
+        return False
+    with _cache_lock:
+        _pipeline_cache.update(ts=0.0, data=None)
+    return True
 
 
 def resolve_area_id(name: str):

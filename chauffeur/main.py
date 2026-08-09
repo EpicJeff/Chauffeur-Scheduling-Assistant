@@ -3743,6 +3743,35 @@ def announce_rooms():
                     'kind': target[0] if target else None})
     return out
 
+class VoiceRequest(BaseModel):
+    voice: str
+
+@app.get("/api/announce/voices")
+def announce_voices():
+    """Argyle's possible voices: the pipeline's TTS engine asked for its own
+    voice list, plus which one is current. Empty voices means the picker has
+    nothing to offer (legacy engine name, or HA unreachable) and the UI hides
+    itself rather than showing an empty dropdown."""
+    from services import ha_api
+    pipe = ha_api.get_pipeline_tts() or {}
+    engine = pipe.get('engine') or ''
+    if not engine.startswith('tts.'):
+        return {'engine': engine or None, 'current': pipe.get('voice'), 'voices': []}
+    return {'engine': engine, 'language': pipe.get('language'),
+            'current': pipe.get('voice'),
+            'voices': ha_api.list_tts_voices(engine, pipe.get('language'))}
+
+@app.post("/api/announce/voice")
+def set_announce_voice(req: VoiceRequest):
+    """One dropdown, every mouth: writes the voice onto the Argyle pipeline
+    itself (HA stays the single source of truth), so satellite replies,
+    announcements and the tts.speak fallback all change together."""
+    from services import ha_api
+    if ha_api.set_pipeline_voice(req.voice):
+        return {'status': 'success', 'message': "Argyle's voice is changed everywhere."}
+    return {'status': 'error',
+            'message': "Home Assistant wouldn't take the voice change — is the pipeline reachable?"}
+
 @app.post("/api/announce")
 def post_announce(req: AnnounceRequest):
     from services import announce as announce_svc

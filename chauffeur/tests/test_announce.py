@@ -267,6 +267,60 @@ def scenario_the_echo_is_a_dm_and_never_a_retry_hazard():
          agent_tools_v2._post_chat_message) = orig
 
 
+def scenario_changing_the_voice_writes_to_the_pipeline_not_a_copy():
+    """The voice picker is a REMOTE CONTROL, not a setting: it writes
+    tts_voice onto the Argyle pipeline in HA, which every mouth reads —
+    a stored Chauffeur copy would split-brain the first time somebody
+    edited the pipeline in HA's own UI. The update is a whole-object PUT
+    in websocket clothing, so every pipeline field must travel back."""
+    argyle = {'id': 'p2', 'name': 'Argyle', 'conversation_engine': 'conversation.argyle_assist',
+              'conversation_language': 'en', 'language': 'en',
+              'stt_engine': 'stt.whisper', 'stt_language': 'en',
+              'tts_engine': 'tts.piper', 'tts_language': 'en_US',
+              'tts_voice': 'lessac', 'wake_word_entity': 'wake_word.ok_nabu',
+              'wake_word_id': 'hey_argyle'}
+    listing = {'preferred_pipeline': 'p1', 'pipelines': [
+        {'id': 'p1', 'name': 'Home Assistant',
+         'conversation_engine': 'conversation.home_assistant'},
+        argyle,
+    ]}
+    calls = []
+
+    def fake_ws(command, timeout=8, **fields):
+        calls.append((command, fields))
+        if command == 'assist_pipeline/pipeline/list':
+            return listing
+        if command == 'assist_pipeline/pipeline/update':
+            return {**argyle, **fields}
+        return None
+
+    check(announce.ha_api._pick_argyle_pipeline(listing)['id'] == 'p2',
+          "our own pipeline outranks HA's preferred one")
+
+    orig_ws, orig_cache = ha_api.ws_command, dict(ha_api._pipeline_cache)
+    try:
+        ha_api.ws_command = fake_ws
+        ha_api._pipeline_cache.update(ts=9e12, data={'engine': 'stale'})
+        check(ha_api.set_pipeline_voice('ryan') is True, "the write succeeds")
+        cmd, fields = calls[-1]
+        check(cmd == 'assist_pipeline/pipeline/update' and
+              fields.get('pipeline_id') == 'p2' and fields.get('tts_voice') == 'ryan',
+              f"the Argyle pipeline gets the new voice, got {calls[-1]}")
+        missing = [k for k in ha_api._PIPELINE_FIELDS if k not in fields]
+        check(not missing,
+              f"a whole-object PUT: omitting a field nulls it on the pipeline — missing {missing}")
+        check(ha_api._pipeline_cache['data'] is None,
+              "the cache is busted so the next announcement reads the new voice")
+
+        ha_api.ws_command = lambda command, timeout=8, **f: (
+            listing if command.endswith('list') else None)
+        check(ha_api.set_pipeline_voice('ryan') is False,
+              "a refused update reports failure, not a silent shrug")
+    finally:
+        ha_api.ws_command = orig_ws
+        ha_api._pipeline_cache.update(orig_cache)
+
+
 def scenario_the_voice_tool_is_wired_into_the_agent():
     """The schema is offered, the router treats a completed announcement as
     terminal (its confirmation IS the spoken reply), and the tool tolerates
