@@ -513,6 +513,20 @@ rather than replacing them. It leaves numbers above 99 alone on purpose: "2024"
 could be spoken four different ways and a wrong alias is worse than none, since
 it silently matches a sentence you did not mean.
 
+**ONE ENTITY FAILS WHILE ITS SIBLINGS WORK.** `Front Yard Left 1` obeys and
+`Front Yard Left 2` does not, both exposed, both named the same way, nothing
+different in either one's settings. Two causes fit that shape, and neither is
+visible where you are looking:
+
+- **The entity is `unavailable`.** An offline target cannot be matched, so the
+  sentence resolves to nothing and falls through. This is runtime state, not
+  configuration, which is why comparing settings finds nothing. Developer tools
+  → States, filter for it, look at the state.
+- **A DIFFERENT entity shares its name.** The ambiguity is a property of the
+  pair, so the entity you are inspecting looks perfect. `add_voice_aliases.py`
+  checks every name and alias against every other and reports collisions, so a
+  dry run finds this for free.
+
 **A DUPLICATE NAME LOOKS EXACTLY LIKE A BROKEN SETTING.** If the built-in agent
 answers "there is more than one device with that name", prefer-local is working
 perfectly and you will still watch every such command land on Argyle — which
