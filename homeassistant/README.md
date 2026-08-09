@@ -452,6 +452,24 @@ If that does not work, "prefer handling commands locally" can never work
 either, and the fault is exposure or naming rather than anything to do with
 Chauffeur. This removes the whole pipeline from the question in one step.
 
+**IF IT WORKS TYPED AND FAILS SPOKEN, IT IS THE TRANSCRIPT, NOT THE ROUTING.**
+Type the sentence into Assist with the Chauffeur pipeline selected. If it is
+handled locally there, then prefer-local, the fall-through and the `CONTROL`
+flag are all working, and the only remaining variable is what speech-to-text
+actually wrote.
+
+Local matching is literal. `front porch column 1` and `front porch column one`
+are different strings, and speech-to-text will nearly always give you the
+second — entity names are matched as text, with no number-word conversion.
+Anything with a digit, an abbreviation, an ampersand or an unusual spelling
+works perfectly when typed and never matches when spoken.
+
+Read the transcript rather than guessing at it: **Settings → Voice assistants →
+your pipeline → three-dot → Debug** shows the exact STT output per run. Then
+fix it where the mismatch is — add an **alias** on the entity for how the
+sentence is actually said (`front porch column one`). Aliases exist for this;
+renaming the entity to suit the microphone is the worse trade.
+
 **A DUPLICATE NAME LOOKS EXACTLY LIKE A BROKEN SETTING.** If the built-in agent
 answers "there is more than one device with that name", prefer-local is working
 perfectly and you will still watch every such command land on Argyle — which
