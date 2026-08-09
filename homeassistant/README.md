@@ -138,9 +138,12 @@ Three things bite people here:
   threshold. Raise `amplify_shift` on `channel_0` (2 matches the wake channel),
   or point `voice_assistant:` at `comm_mic`.
 
-- **The command gets cut off after about a second** — logs show `STT by VAD end`
-  right after detection. Fix: ESPHome integration → device settings → set
-  **finished speaking detection** to **relaxed**.
+- **It wakes, then does not wait for the command** — logs show `STT by VAD end`
+  about a second after detection, so most attempts die before you finish
+  speaking. Fix: on the device in Home Assistant, set **finished speaking
+  detection** to **relaxed**. No reflash. If it is still intermittent, the
+  stream is too quiet for voice-activity detection to latch onto — see the
+  audio settings at the end of the overlay above.
 
 Telling the first two apart takes one glance at the **openWakeWord add-on log**.
 This, repeating, is cause 1:
@@ -248,6 +251,17 @@ voice_assistant:
     - delay: 2s
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
     - script.execute: control_leds
+
+  # ── only if the command is not being heard after the wake word ──
+  # Upstream zeroes all three because the XMOS chip does the conditioning and
+  # the wake word was decided ON the device, where a quiet stream is fine.
+  # Streaming to a server, Home Assistant's VAD has to find the start of speech
+  # in this audio, and the canonical server-side config (m5stack-atom-echo)
+  # feeds it a much hotter signal. Try the "relaxed" device setting FIRST — it
+  # needs no reflash — and only reach for these if that is not enough.
+  # noise_suppression_level: 2
+  # auto_gain: 31dBFS
+  # volume_multiplier: 2.0
 ```
 
 If Validate rejects `${voice_assist_idle_phase_id}`, the package's substitutions
