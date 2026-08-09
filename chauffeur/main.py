@@ -112,6 +112,19 @@ async def push_notification_loop():
                     # Expired, mark it fired
                     storage.mark_notification_fired(notif_id)
 
+            # --- Arrival auto-complete: a started leg closes itself when the
+            # tracked driver reaches its destination. Cheap when idle (one
+            # storage read); the whole point is that stale in_progress flags
+            # stop existing at the source instead of lying to every surface
+            # that reads them. ---
+            try:
+                from services import drive_arrival
+                for done_leg in drive_arrival.check_arrivals(now_ts):
+                    print(f"drive_arrival: auto-completed {done_leg['leg_id']} "
+                          f"({done_leg['distance_m']}m from {done_leg['dest']})")
+            except Exception as ae:
+                print(f"Arrival auto-complete error: {ae}")
+
             # --- Evening "tomorrow" digest (once per day after the set time) ---
             try:
                 settings = storage.get_settings() or {}
