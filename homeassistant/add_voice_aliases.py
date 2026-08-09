@@ -211,20 +211,57 @@ async def main() -> int:
             print(f"Nothing to add. ({skipped} already had their spoken alias.)")
             return 0
 
-        width = max(len(e) for e, _, _, _ in planned)
-        for entity_id, name, alias, _ in planned:
-            print(f"{entity_id:<{width}}  {name!r} -> +{alias!r}")
-        print(f"\n{len(planned)} to add, {skipped} already present.")
+        # Never hand two entities the same spoken name. An ambiguous target is
+        # not a smaller win, it is a LOSS: Home Assistant answers "more than one
+        # device with that name", which the pipeline discards as NO_VALID_TARGETS
+        # and forwards to the conversation agent instead. The command then comes
+        # back as an unrelated refusal. Adding a colliding alias would
+        # manufacture exactly the failure this script exists to remove.
+        owners: dict[str, set[str]] = {}
+        for ent in entities:
+            eid = ent["entity_id"]
+            existing_name = (friendly.get(eid) or ent.get("name")
+                             or ent.get("original_name") or "")
+            for label in (existing_name, *(ent.get("aliases") or [])):
+                if label:
+                    owners.setdefault(label.strip().lower(), set()).add(eid)
+        proposed_counts: dict[str, int] = {}
+        for _, _, alias, _ in planned:
+            proposed_counts[alias] = proposed_counts.get(alias, 0) + 1
+
+        safe, clashing = [], []
+        for row in planned:
+            entity_id, _, alias, _ = row
+            if proposed_counts[alias] > 1 or (owners.get(alias, set()) - {entity_id}):
+                clashing.append(row)
+            else:
+                safe.append(row)
+
+        if safe:
+            width = max(len(e) for e, _, _, _ in safe)
+            for entity_id, name, alias, _ in safe:
+                print(f"{entity_id:<{width}}  {name!r} -> +{alias!r}")
+
+        if clashing:
+            width = max(len(e) for e, _, _, _ in clashing)
+            print("\nSKIPPED -- these would give two entities the same spoken name,")
+            print("which is worse than having no alias at all:")
+            for entity_id, name, alias in ((e, n, a) for e, n, a, _ in clashing):
+                print(f"  {entity_id:<{width}}  {name!r} -> {alias!r}")
+            print("Rename or unexpose one of each pair, then run this again.")
+
+        print(f"\n{len(safe)} to add, {len(clashing)} skipped as ambiguous, "
+              f"{skipped} already present.")
 
         if not args.apply:
             print("Dry run. Re-run with --apply to write them.")
             return 0
 
-        for entity_id, _, alias, existing in planned:
+        for entity_id, _, alias, existing in safe:
             await ha.command(type="config/entity_registry/update",
                              entity_id=entity_id,
                              aliases=sorted({*existing, alias}))
-        print(f"Added {len(planned)} aliases.")
+        print(f"Added {len(safe)} aliases.")
     return 0
 
 
