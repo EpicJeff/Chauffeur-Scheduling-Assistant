@@ -168,6 +168,59 @@ round trip before the device even knows it was addressed.
 
 Either way, a bad flash is recoverable with the **Voice PE Imager**.
 
+### Installing a modified YAML
+
+`chauffeur/home-assistant-voice.yaml` in this repo is a **copy for versioning**.
+Editing it changes nothing on the device until it reaches ESPHome.
+
+1. **Take control, once.** ESPHome Device Builder → the Voice PE → **TAKE
+   CONTROL**. This generates a config for it and, crucially, an **API
+   encryption key** and OTA credentials, and re-pairs Home Assistant to it.
+2. **Copy three things out of that generated config before you overwrite it**:
+   `esphome: name:`, `api: encryption: key:`, and the `ota:` password/key.
+3. **EDIT** → paste your YAML → **put those three back**. Then check `wifi:`.
+4. **SAVE → INSTALL → Wirelessly**, and let the build run to
+   `INFO Successfully uploaded program`.
+5. Open **LOGS** and watch the device boot.
+
+Editing the files directly instead of using the Builder's editor works too —
+they live in the add-on's config folder (`/config/esphome/` in the standard
+layout) — but the editor sidesteps the question of which path your add-on
+version uses.
+
+**Three traps, and the upstream `home-assistant-voice.yaml` has all three**,
+because it is the factory source rather than an adopted-device config:
+
+- **No `api: encryption:`.** Home Assistant already holds a key for this
+  device. Flash firmware without one and it will not pair — the device goes
+  unavailable and you end up deleting and re-adding the integration.
+- **No `ota:` password.** Coming FROM Nabu Casa's firmware the first OTA can be
+  refused, which means USB for that one flash.
+- **No `wifi:` credentials.** It relies on what is already stored in flash.
+  That survives an OTA, but any full erase brings the device back with no
+  network and no way in except USB. Adding `ssid: !secret wifi_ssid` /
+  `password: !secret wifi_password` is cheap insurance.
+
+**Prove the flash took.** A flash that silently did not apply looks exactly like
+a change that did not work, and you will debug the wrong thing. The config logs
+a revision at boot:
+
+```yaml
+substitutions:
+  config_revision: '1'      # bump on every edit
+
+esphome:
+  on_boot:
+    then:
+      - logger.log:
+          level: INFO
+          format: "=== chauffeur voice config revision ${config_revision} ==="
+```
+
+Bump it, install, and look for that line in LOGS. If the number is stale, the
+device is not running what you just wrote and nothing else you observe means
+anything.
+
 ### The openWakeWord side (route B, and any streaming satellite)
 
 This half is the same whether the satellite is a re-flashed Voice PE, an ATOM

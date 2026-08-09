@@ -1,4 +1,10 @@
 substitutions:
+  # Bump this every time you change this file. It is logged at boot, so the
+  # device itself tells you which build is actually running — otherwise a flash
+  # that silently did not take is indistinguishable from a change that did not
+  # work, and you debug the wrong thing.
+  config_revision: '1'
+
   # Phases of the Voice Assistant
   # The voice assistant is ready to be triggered by a wake word
   voice_assist_idle_phase_id: '1'
@@ -25,6 +31,9 @@ esphome:
   on_boot:
     priority: 375
     then:
+      - logger.log:
+          level: INFO
+          format: "=== chauffeur voice config revision ${config_revision} ==="
       # Run the script to refresh the LED status
       - script.execute: control_leds
       - delay: 1s
