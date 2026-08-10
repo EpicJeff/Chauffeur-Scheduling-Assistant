@@ -408,12 +408,34 @@ access) · `Stage` (the developmental band a child is in) · the **load ledger**
 like a carpool parent than a second adult — assigned a drive and it is covered;
 the difference is only that they hold the app. That generalises: `Driver` gains
 a tier, `household | assist`, and carpool drivers, `helper`s and Copilot teens
-are all `assist`. They cover the drive, they do NOT carry the load — excluded
-from the ledger and from the balancing term, assignable but not auto-assigned
-without a per-driver opt-in, with hard (not soft) passenger and time ceilings.
-Fixes a latent bug: the weekly digest's per-driver counts currently let a
-nanny's ten runs make the week look shared. The teen keeps `role='child'` and
-the whole kid lens; the Copilot stage unlocks the driver surfaces.
+are all `assist`. **The tier does exactly one job: load accounting** — excluded
+from the ledger and from the balancing term, while coverage still counts (no
+needs-a-driver flag, no ghost, no watcher alarm). Fixes a latent bug: the
+weekly digest's per-driver counts currently let a nanny's ten runs make the
+week look shared. The teen keeps `role='child'` and the whole kid lens; the
+Copilot stage unlocks the driver surfaces.
+
+**What a driver will and won't do** (corrected 2026-08-10 — an earlier draft
+wrongly hung these on the tier). Radius from home, passenger cap, time
+ceilings and auto-assign consent are **ordinary driver-profile settings
+available to every driver**, not teen constraints. The `Driver` record is thin
+today: one `preferred_start`/`preferred_end` pair for the whole week, soft-only.
+So: a list of availability constraints, each with a kind, a scope and a
+**strength** — preference (soft, tradeable) vs limit (hard, never crossed),
+which is the real axis rather than age. Kinds: several per-weekday time
+windows, radius, passenger cap, **after dark anchored to sunset** (how both a
+nervous driver and most graduated licences actually think; `sun.sun` is
+already read for the panel theme), and auto-assign. **Per-weekday windows plus
+a radius is most of a work model** — "Tuesday I'm in the office 45 minutes
+away, Wednesday I'm home" — which closes the no-work-model finding without an
+employment entity. Teen-specific reduces to the DEFAULTS and WHO HOLDS THE PEN.
+Correctness note for the rebuild: the current window check tests the EVENT, not
+the drive, so a 9:00 event with an 8:30 leave-by doesn't violate a 9:00 window.
+
+Five orthogonal things, each with one job: **entity** (member or contact) ·
+**role** (what of the app you reach) · **stage** (which kid surfaces) ·
+**tier** (do your drives count as household load) · **profile** (what you will
+and won't do).
 
 - **A1 — the carpool book. SHIP FIRST.** A drive that is real and isn't ours,
   as a third assignment state so it leaves the optimisation entirely. Stored

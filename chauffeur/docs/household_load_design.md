@@ -68,27 +68,26 @@ And all three share one property that the household drivers do not have:
 
 > **They cover the drive. They do not carry the load.**
 
-So `Driver` gains a tier — `household | assist` — and the tier, not the role,
-is what the rest of the system reads. What `assist` changes:
+So `Driver` gains a tier — `household | assist`. **The tier does exactly one
+job: load accounting.**
 
-- **Excluded from the load ledger.** This is the critical one. If a teenager
-  drives six times a week, the ledger must not report the household as evenly
-  split. The same protection applies to a hired driver, which is a bug waiting
-  to happen today: the weekly digest prints per-driver drive counts sorted
-  descending, and a nanny's ten runs currently make the week look shared.
+- **Excluded from the load ledger.** If a teenager drives six times a week,
+  the ledger must not report the household as evenly split. The same
+  protection applies to a hired driver, which is a bug waiting to happen
+  today: the weekly digest prints per-driver drive counts sorted descending,
+  and a nanny's ten runs currently make the week look shared.
 - **Excluded from the solver's load-balancing term**, exactly as ghost drivers
   already are (`solver/matcher.py:1056`).
-- **Assignable, but not auto-assigned by default.** *Can be given a drive* and
-  *will be volunteered for one* are different permissions, and the second one
-  should be a deliberate per-driver opt-in. Nobody wants CP-SAT deciding a
-  sixteen-year-old takes the 8pm cross-town run because it optimised well.
-- **Constraints that are soft for an adult go hard for a teen**: the passenger
-  cap (`Driver.max_passengers` exists as a graduated-licensing field and has
-  never had a customer), a time-of-day ceiling, and — worth considering — a
-  radius from home. `preferred_start`/`preferred_end` is a −2,000,000 soft
-  penalty today; a curfew is not a preference.
-- **Coverage counts.** No `needs a driver` flag, no ghost route, no watcher
-  alarm. A drive an assist driver holds is handled.
+- **Coverage still counts.** No `needs a driver` flag, no ghost route, no
+  watcher alarm. A drive an assist driver holds is handled.
+
+An earlier draft of this section also hung *"not auto-assigned by default"* and
+*"hard rather than soft constraints"* on the tier. **That was wrong** (caught
+2026-08-10): those are not properties of being a teenager or a helper, they
+are ordinary things any driver might want, and they belong on the driver
+profile where everyone can reach them. See the next section. What remains
+teen-specific is only the **defaults** and **who holds the pen** — which is
+authority, not capability.
 
 The teen keeps their `child` role and their whole kid lens — becoming useful
 is not a reason to be deleted from the family. What the Copilot stage unlocks
@@ -99,6 +98,73 @@ what stage capability flags are for.
 There is also a nice social result: driving your sister to practice lands as
 being **trusted**, not as being enrolled in the chore economy — which is what
 should replace points at that stage anyway.
+
+## What a driver will and won't do
+
+Prompted by the obvious question (2026-08-10): *why should a radius, a
+passenger cap and a time ceiling be teen constraints — why can't adults
+customise their availability the same way?* They can, they should, and framing
+them as teen features was the error.
+
+The `Driver` record is thin today. One `preferred_start`/`preferred_end` pair
+covering Monday and Saturday alike, `max_passengers` (present, never used),
+and everything else about an adult's availability living as opaque calendar
+busy-time. So a driver carries a **list of availability constraints**, each
+with a kind, a scope, and — the part that actually matters — a **strength**.
+
+**Strength is the real axis, not age.** Today preferred hours are a single
+−2,000,000 soft penalty, which is correct for *"I'd rather not drive after
+nine, but I will if I'm the one at the event"* and wrong for *"I legally may
+not."* Both sentences exist for adults too:
+
+| | Preference (soft) | Limit (hard) |
+|---|---|---|
+| Time | I'd rather not do the late run | I can't drive after my eye appointment |
+| Radius | Keep me near home if you can | I'm not going across the county on a school night |
+| Passengers | — | Two car seats are installed; four kids don't fit |
+
+Kinds worth having, all available to every driver:
+
+- **Time windows — several, per weekday.** One pair for the whole week is the
+  single biggest hole in the current model. This is also where shift work and
+  hybrid work finally become expressible.
+- **Radius from home**, with a strength.
+- **Passenger cap** — physical, so effectively always a limit.
+- **After dark**, anchored to sunset rather than a clock. This is how both a
+  nervous driver and most graduated-licence rules actually think, and the
+  darkness moves ninety minutes across a school year. We already read
+  `sun.sun` for the panel theme, so the input is in hand.
+- **Auto-assign: may the solver volunteer me, or only give me what I accept?**
+  Also not a teen question — a grandparent happy to drive when asked but not
+  to be scheduled, or a parent in a crunch week, wants exactly this.
+
+**A per-weekday window plus a radius is most of a work model.** *"Tuesday I'm
+in the office forty-five minutes away, so no school-hours pickup; Wednesday
+I'm home, so anything."* That is far cheaper than modelling employment, and it
+answers a good part of the A5 finding that the app has no concept of work at
+all.
+
+One correctness note for the rebuild, from the audit: the current check fires
+when the **event** starts before `preferred_start` or ends after
+`preferred_end` — the *drive* is not considered, so a 9:00 event with an 8:30
+leave-by does not violate a 9:00 window. Windows should be evaluated against
+the drive, travel and buffer included, which is the thing the person is
+actually agreeing to.
+
+### So what is still teen-specific?
+
+Two things, and neither is a capability:
+
+1. **Defaults.** A Copilot's profile ships with limits already set — a time
+   ceiling, a passenger cap, a radius — because the licence says so. An
+   adult's ships empty.
+2. **Who may edit them.** A teenager must not raise their own ceiling; a
+   parent holds the pen. An adult sets their own.
+
+Which leaves five orthogonal things, each doing one job: the **entity** (member
+or contact), the **role** (what of the app you can reach), the **stage** (which
+kid surfaces you get), the **tier** (whether your drives count as household
+load), and the **profile** (what you will and won't do).
 
 ---
 
@@ -413,7 +479,21 @@ Surface it as a **decision with a growing cost**, reusing the occasions O3
 helper, a carpool family, aftercare extension. Not an alarm — a decision with
 a deadline and options.
 
-## 4. Two implementation-versus-doc gaps that belong to this arc
+## 4. The work model, answered cheaply
+
+The audit's other dual-income finding was that the app has **no concept of
+work at all**: a job exists as opaque calendar busy-time plus one
+`preferred_start`/`preferred_end` pair that covers Monday and Saturday alike.
+No work-from-home versus in-office distinction, no shifts, no commute — which
+for a hybrid worker is the entire question.
+
+This does **not** want an employment entity. Per-weekday availability windows
+plus a radius, from *What a driver will and won't do* above, express it
+directly: *"Tuesday I'm in the office forty-five minutes away; Wednesday I'm
+home."* Shift work falls out of the same model. Build that, and this finding
+closes without a new noun.
+
+## 5. Two implementation-versus-doc gaps that belong to this arc
 
 - `clear_deck` and `give_space` have **no solver effect**
   (`services/status_protocols.py:411-412`) despite the design doc promising
@@ -587,15 +667,21 @@ into it first.
   `CarpoolGroup` entity? Start derived; promote only if it fails.
 - Do half-days need a per-kid override, given siblings at different schools
   with different calendars?
-- Should an `assist` driver ever be solver-eligible by default, or is manual
-  assignment always the entry point with auto-assign as the opt-in? (Leaning:
-  opt-in, per driver — and possibly per time window, since "yes to the 4pm
-  practice run" and "yes to anything" are different answers.)
-- Does the `assist` tier want a radius-from-home ceiling, or do the passenger
-  cap and time ceiling cover enough of the real worry?
+- Does `auto_assign` want to be per **window** rather than per driver? "Yes to
+  the 4pm practice run, no to anything else" and "yes to anything" are
+  different answers, and the second is rarer than it looks.
+- Does the radius constraint measure straight-line distance or drive minutes?
+  (Leaning: minutes — the travel cache already speaks in them, and forty
+  minutes of traffic is the thing a person is actually refusing.)
+- Where do a driver's constraints live on screen: the existing driver profile
+  in Config, or the member card alongside the quiet-hours block? They are the
+  same sentence from the person's side — *how and when to use me.*
 
-**Answered 2026-08-10:** a teen driver is an `assist`-tier `Driver` who keeps
+**Answered 2026-08-10.** A teen driver is an `assist`-tier `Driver` who keeps
 their `child` role and kid lens — covering is not carrying, and helpers get
-the same protection. Adult quiet hours live on the member's identity, not in
-household config, because a preference owned by the self belongs somewhere
-different from a protection set by someone else.
+the same protection. Quiet hours live on the member's identity, because a
+preference owned by the self belongs somewhere different from a protection set
+by someone else. Radius, passenger and time ceilings, and auto-assign consent
+are **ordinary driver-profile settings available to everyone** — the tier does
+load accounting and nothing else; what is teen-specific is the defaults and
+who holds the pen.
