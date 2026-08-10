@@ -183,6 +183,22 @@ def _ensure_cache(cal_id, settings, day):
         return covered
 
 
+def _in_school_year(day: datetime.date, settings: dict) -> bool:
+    """Whether `day` falls inside the school year: manual bounds when the
+    parent has taken control, detected intervals otherwise. Unknown (no
+    calendar, no markers, failed fetch) is True — fail open, in-year."""
+    ys = _parse_date(settings.get('school_year_start'))
+    ye = _parse_date(settings.get('school_year_end'))
+    if ys or ye:
+        return not ((ys and day < ys) or (ye and day > ye))
+    cal_id = (settings.get('school_calendar_id') or '').strip()
+    if not cal_id or not _ensure_cache(cal_id, settings, day):
+        return True
+    with _lock:
+        return not _cache['intervals'] \
+            or any(s <= day <= e for s, e, _ in _cache['intervals'])
+
+
 def school_in_session(day) -> bool:
     """True when `day` (date or ISO string) is a school day. Fails open."""
     if isinstance(day, str):
@@ -193,12 +209,7 @@ def school_in_session(day) -> bool:
         return False
 
     settings = storage.get_settings() or {}
-    ys = _parse_date(settings.get('school_year_start'))
-    ye = _parse_date(settings.get('school_year_end'))
-    manual_bounds = bool(ys or ye)
-    if ys and day < ys:
-        return False
-    if ye and day > ye:
+    if not _in_school_year(day, settings):
         return False
 
     cal_id = (settings.get('school_calendar_id') or '').strip()
@@ -208,21 +219,21 @@ def school_in_session(day) -> bool:
         return True  # no usable data — fail open, never kill the features
 
     with _lock:
-        # Auto bounds only when the parent hasn't taken manual control.
-        if not manual_bounds and _cache['intervals'] \
-                and not any(s <= day <= e for s, e, _ in _cache['intervals']):
-            return False
         return day.isoformat() not in _cache['dates']
 
 
 def school_day_kind(day) -> str:
     """What KIND of school day this is: 'full' | 'half' | 'delayed' |
-    'closed' | 'weekend'.
+    'closed' | 'weekend' | 'break'.
 
     `school_in_session` stayed a boolean, and the boolean was blind to the
     day that bites a two-income household hardest: the half day nobody has
     PTO booked for. Fails toward 'full' exactly as the boolean fails open —
     a broken calendar must never invent closures.
+
+    'break' is a day outside the school year entirely (summer, between
+    years). 'closed' is reserved for a closure DURING the year — the two
+    must not blur, or every August weekday reads as a surprise closure.
     """
     if isinstance(day, str):
         day = _parse_date(day)
@@ -230,6 +241,8 @@ def school_day_kind(day) -> str:
         return 'full'
     if day.weekday() >= 5:
         return 'weekend'
+    if not _in_school_year(day, storage.get_settings() or {}):
+        return 'break'
     if not school_in_session(day):
         return 'closed'
     settings = storage.get_settings() or {}
@@ -247,7 +260,9 @@ def care_gap_days(horizon_days: int = 21):
 
     Returns [{date, kind, weekday}] for non-full weekdays with at least one
     child in the house. Weekends are not gaps: the household already has a
-    shape for those.
+    shape for those. Neither are 'break' days — summer is a season the
+    family plans for, not a wall of surprise no-school pings (2026-08-10:
+    every weekday of August was announced as a closure).
     """
     kids = [m for m in storage.get_all_members() if m.get('role') == 'child']
     if not kids:
@@ -257,7 +272,7 @@ def care_gap_days(horizon_days: int = 21):
     for i in range(1, max(1, horizon_days) + 1):
         d = today + datetime.timedelta(days=i)
         kind = school_day_kind(d)
-        if kind in ('full', 'weekend'):
+        if kind in ('full', 'weekend', 'break'):
             continue
         out.append({'date': d.isoformat(), 'kind': kind,
                     'weekday': d.strftime('%A')})

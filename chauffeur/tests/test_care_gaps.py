@@ -158,6 +158,38 @@ def scenario_aftercare_softens_a_half_day_but_not_a_closure():
           f"the finding names who needs covering, not who is fine: {half_msgs}")
 
 
+def scenario_summer_is_a_break_not_a_wall_of_closures():
+    """2026-08-10: with the school year over, every weekday in the 21-day
+    horizon read as 'closed' and Argyle sent a no-school line for each one.
+    A day outside the school year is a 'break' — a season the family plans
+    for — and never a care gap. 'closed' is reserved for closures DURING
+    the year."""
+    from services import watchers
+    # Manual bounds: the year ended a month ago.
+    _reset(settings={'school_year_end':
+                     (TODAY - datetime.timedelta(days=30)).isoformat()})
+    _kid("Lily")
+    _prime_school_cache()
+    check(school.school_day_kind(_weekday_ahead(5)) == 'break',
+          "outside the year is a break, not a closure")
+    check(school.care_gap_days(21) == [],
+          "summer weekdays are not care gaps")
+    check(watchers._care_gap_findings(datetime.datetime.now()) == [],
+          "and Argyle says nothing about them")
+
+    # Auto-detected intervals say the same thing without manual bounds.
+    _reset()
+    _kid("Lily")
+    _prime_school_cache()
+    with school._lock:
+        school._cache['intervals'] = [(TODAY - datetime.timedelta(days=330),
+                                       TODAY - datetime.timedelta(days=30), False)]
+    check(school.school_day_kind(_weekday_ahead(5)) == 'break',
+          "detected intervals gate the pings the same way")
+    check(school.care_gap_days(21) == [],
+          "no gaps between detected school years either")
+
+
 def scenario_the_finding_is_a_decision_not_an_alarm():
     from services import watchers
     _reset()
