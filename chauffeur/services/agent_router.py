@@ -309,6 +309,9 @@ sending or claiming, and never pass from_member/member_name for them.
     # get_point_balances is a query, but its message is already the complete
     # spoken answer — treating it terminal saves a 40-80s concluding round.
     TERMINAL_ACTION_TOOLS = {"assign_driver_to_event_fuzzy", "remove_override_for_event_fuzzy",
+                             # Optional events: the write confirms itself out
+                             # loud ("skipped — nobody will be scheduled").
+                             "decide_optional_event", "set_event_optional",
                              "add_trip_poi",
                              "clear_trip_itinerary", "auto_schedule_trip_itinerary",
                              "manage_trip_rules", "manage_trip_flights",
@@ -465,6 +468,23 @@ sending or claiming, and never pass from_member/member_name for them.
                     if res.get("message"): agent_message = res["message"]
                     if res.get("ui_action"): ui_action = res["ui_action"]
                     if res.get("target_driver_id"): target_driver_id = res["target_driver_id"]
+                elif func_name == "decide_optional_event":
+                    from services.agent_tools_v2 import decide_optional_event
+                    res = decide_optional_event(args.get("event_name"),
+                                                args.get("target_date") or "today",
+                                                args.get("decision"))
+                    # The decision rides the events hash — re-solve so the
+                    # boards stop showing the old plan.
+                    if res.get("status") == "success": schedule_dirty = True
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "set_event_optional":
+                    from services.agent_tools_v2 import set_event_optional
+                    res = set_event_optional(args.get("event_name"),
+                                             args.get("target_date") or "today",
+                                             args.get("optional", True),
+                                             args.get("scope") or "series")
+                    if res.get("status") == "success": schedule_dirty = True
+                    if res.get("message"): agent_message = res["message"]
                 elif func_name == "remove_override_for_event_fuzzy":
                     from services.agent_tools_v2 import remove_override_for_event_fuzzy
                     res = remove_override_for_event_fuzzy(args.get("event_name"), args.get("target_date"))

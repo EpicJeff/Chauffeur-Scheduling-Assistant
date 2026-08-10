@@ -5334,6 +5334,7 @@ def member_day(member_id: str, date: Optional[str] = None):
         matched.append((ev, ev_id, parent_id))
 
     from services import prep_kits as _prep
+    from services.optional_events import decision_for as _opt_decision
     _kits = storage.get_prep_kits()
     _pax = _prep.passenger_objs()
 
@@ -5378,8 +5379,14 @@ def member_day(member_id: str, date: Optional[str] = None):
             'legs': legs or [],
             'prep': _prep.items_for_event(ev, _kits, _pax),
             # Optional events (event config): the card softens its voice — an
-            # optional ride without a driver was skipped, not failed.
+            # optional ride without a driver was skipped, not failed. The
+            # decision is read LIVE (not the cached stamp): the button's
+            # re-solve runs in the background, and the card must show the
+            # choice the moment it was made, not a solve later.
             'optional': bool((ev.get('app_config') or {}).get('is_optional')),
+            'optional_decision': (_opt_decision(ev)
+                                  if (ev.get('app_config') or {}).get('is_optional')
+                                  else None),
         }
 
     groups = {}
@@ -8884,6 +8891,27 @@ def delete_event_config(google_id: str):
     trigger_background_refresh()
     return {"status": "deleted"}
 
+@app.post("/api/events/{event_id}/optional_decision")
+def set_optional_decision_api(event_id: str, body: dict = Body(default={})):
+    """Optional events, phase 2: the per-occurrence attend/skip choice.
+    Resolves the cached-schedule event so the decision is keyed by the
+    occurrence's own google id — recurring siblings are never touched."""
+    from services import optional_events
+    sched = storage.get_cached_schedule() or {}
+    ev = next((e for e in sched.get('events', [])
+               if str(e.get('id')) == str(event_id)), None)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found in the current schedule.")
+    if not ((ev.get('app_config') or {}).get('is_optional')):
+        raise HTTPException(status_code=400, detail="That event is not marked optional.")
+    res = optional_events.record_decision(ev, body.get('decision'),
+                                          decided_by=body.get('member_id'))
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    # The decision rides the events hash, so this re-solve does real work.
+    trigger_background_refresh()
+    return res
+
 # --- Settings API ---
 @app.get("/api/settings")
 def get_settings():
@@ -9713,6 +9741,13 @@ def hash_events(events_list, assist_map=None):
         # nothing until the next forced refresh.
         if assist_map and eid in assist_map:
             parts.append(f"assist:{eid}:{assist_map[eid]}")
+        # Optionality and its per-occurrence decision ride the hash for the
+        # same reason: ticking Optional or answering attend/skip changes
+        # nothing about the EVENT, only about how it should be solved.
+        conf = getattr(e, 'app_config', None) or {}
+        dec = getattr(e, 'optional_decision', None)
+        if conf.get('is_optional') or dec:
+            parts.append(f"opt:{eid}:{1 if conf.get('is_optional') else 0}:{dec or ''}")
     return hashlib.sha256("||".join(parts).encode('utf-8')).hexdigest()
 
 import threading
@@ -10246,6 +10281,13 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # (needs_triage events still go to the dashboard but are stripped out of solver below)
         if is_passenger and not is_member_only:
             events.append(e)
+
+    # Optional events, phase 2: stamp each optional event with the family's
+    # per-occurrence decision (attend/skip/undecided) before unrolling, so
+    # every unrolled copy carries it. Skips leave the solve per-day below;
+    # attends regain full weight in the solver.
+    from services import optional_events as _opt
+    _opt.stamp_decisions(events)
 
     # Unroll events for passenger-specific times
     unrolled_events = []
@@ -11022,6 +11064,16 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             daily_events_to_solve = [e for e in daily_events_to_solve
                                      if e.id not in daily_assist]
 
+        # An optional event decided 'skip' leaves the optimisation the same
+        # way an assist-covered one does: not assignable, not unassigned,
+        # nobody chased. Still drawn — it is a real thing on the calendar,
+        # worn as skipped.
+        skipped_optional = [e for e in daily_events_to_solve
+                            if getattr(e, 'optional_decision', None) == 'skip']
+        if skipped_optional:
+            daily_events_to_solve = [e for e in daily_events_to_solve
+                                     if getattr(e, 'optional_decision', None) != 'skip']
+
         # Else, solve for this day!
         daily_locations = set()
         if home_location:
@@ -11095,9 +11147,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "lateness_warnings": lateness_warnings,
             "ghost_assignments": ghost_assignments,
             "ghost_drivers": ghost_drivers,
-            # Covered events go back in: the solver ignored them, but they are
-            # real things happening today and the timeline must draw them.
-            "events": daily_events_to_solve + assist_events,
+            # Covered and skipped events go back in: the solver ignored them,
+            # but they are real things happening today and the timeline must
+            # draw them.
+            "events": daily_events_to_solve + assist_events + skipped_optional,
             "true_unassigned": true_unassigned,
             "conflicts": conflicts
         }

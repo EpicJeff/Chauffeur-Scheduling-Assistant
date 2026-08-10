@@ -15,6 +15,17 @@ properties:
      modals (series or instance, same as Background Trip), and the timeline
      and My Day cards wear the softened voice.
 
+Phase 2 — per-occurrence decisions (attend | skip | undecided):
+
+  5. **'attend' promotes to full weight.** Once somebody said "she's going"
+     it stopped being optional; an uncoverable attend IS a siren again.
+  6. **'skip' is quiet.** Excluded from the solve upstream, nothing said.
+  7. **Decisions are occurrence-scoped**, keyed by the instance's own google
+     id (series id as fallback, mirroring the config lookup), expiring with
+     the day. They live in their OWN table — never the event config, whose
+     wholesale-replacing lookup would lose passengers on a programmatic write.
+  8. **Both agent stacks** carry decide_optional_event / set_event_optional.
+
 Run from chauffeur/:  python tests/test_optional_events.py
 """
 import datetime
@@ -107,6 +118,128 @@ def scenario_the_hand_path_exists():
     app = open(os.path.join(tpl, 'app.html'), encoding='utf-8').read()
     check('r.optional' in app and 'not planned today' in app,
           "a My Day card says optional-not-planned instead of needs-a-driver")
+
+
+def scenario_decisions_are_occurrence_scoped_and_expire():
+    storage.optional_decisions_table.truncate()
+    storage.set_optional_decision("gym_instance_1", "2026-09-07", "skip")
+    storage.set_optional_decision("gym_series", "2026-09-14", "attend")
+    check(storage.get_optional_decision(["gym_instance_1", "gym_series"], "2026-09-07") == "skip",
+          "the instance's own decision is found")
+    check(storage.get_optional_decision(["gym_instance_2", "gym_series"], "2026-09-07") is None,
+          "a sibling occurrence on the same date is untouched")
+    check(storage.get_optional_decision(["gym_instance_3", "gym_series"], "2026-09-14") == "attend",
+          "a series-keyed decision covers whichever occurrence falls on that date")
+    storage.set_optional_decision("gym_instance_1", "2026-09-07", "")  # clear
+    check(storage.get_optional_decision(["gym_instance_1"], "2026-09-07") is None,
+          "clearing removes the row")
+    storage.prune_optional_decisions("2026-09-10")
+    check(storage.get_optional_decisions() and
+          all(r["date"] >= "2026-09-10" for r in storage.get_optional_decisions()),
+          "yesterday's decisions expire; future ones survive")
+    storage.optional_decisions_table.truncate()
+
+
+def scenario_attend_promotes_back_to_full_weight():
+    # Two OPTIONAL events at the same hour, one driver. Undecided vs undecided
+    # is a coin toss; an 'attend' on one settles it — that one is a commitment
+    # again and the undecided one is dropped.
+    drivers = [mk_driver(1)]
+    events = [mk_event(0, 9, optional=True), mk_event(1, 9, optional=True)]
+    events[0].optional_decision = 'attend'
+    assignments, unassigned, _, _ = matcher.solve_schedule(events, drivers, [])
+    check(assignments.get("e0") == "d1" and unassigned == ["e1"],
+          f"the attended occurrence wins the driver: {assignments} / {unassigned}")
+
+
+def scenario_the_watcher_sirens_for_a_promised_kid():
+    storage.cache_table.truncate()
+    soon = (NOON + datetime.timedelta(days=1)).replace(hour=16)
+    storage.set_cached_schedule({
+        "events": [
+            {"id": "gym", "title": "Open Gym", "start": soon.isoformat(),
+             "end": (soon + datetime.timedelta(hours=1)).isoformat(),
+             "app_config": {"is_optional": True}, "optional_decision": "attend"},
+        ],
+        "assignments": {},
+        "unassigned": ["gym"],
+    })
+    found = dict(watchers._unassigned_findings(NOON))
+    keys = list(found)
+    check(len(keys) == 1 and keys[0].startswith("unassigned:gym:")
+          and "🚨" in found[keys[0]],
+          f"attend-decided means somebody promised — the real alarm is back: {found}")
+
+
+def scenario_the_stamp_reads_the_familys_choice():
+    from services import optional_events
+    storage.optional_decisions_table.truncate()
+    ev = mk_event(0, 9, optional=True)
+    gid = optional_events.candidate_google_ids(ev)[0]
+    storage.set_optional_decision(gid, ev.start.date().isoformat(), "skip")
+    optional_events.stamp_decisions([ev, mk_event(1, 10)])
+    check(ev.optional_decision == "skip",
+          "the optional event carries the day's decision after the stamp")
+    storage.optional_decisions_table.truncate()
+
+
+def scenario_deciding_by_words_finds_the_event():
+    from services import optional_events
+    storage.cache_table.truncate()
+    storage.optional_decisions_table.truncate()
+    soon = (NOON + datetime.timedelta(days=1)).replace(hour=16)
+    storage.set_cached_schedule({
+        "events": [
+            {"id": "cal1::gyminstance42", "title": "Open Gym",
+             "source_event_ids": ["cal1::gyminstance42"],
+             "recurring_event_id": "gymseries",
+             "start": soon.isoformat(),
+             "end": (soon + datetime.timedelta(hours=1)).isoformat(),
+             "app_config": {"is_optional": True}},
+            {"id": "cal1::dentist", "title": "Dentist",
+             "source_event_ids": ["cal1::dentist"],
+             "start": soon.isoformat(),
+             "end": (soon + datetime.timedelta(hours=1)).isoformat()},
+        ],
+        "assignments": {}, "unassigned": [],
+    })
+    res = optional_events.decide_by_title("open gym", soon.date().isoformat(), "skip")
+    check(res.get("status") == "success", f"the agent path resolves and writes: {res}")
+    check(storage.get_optional_decision(["gyminstance42"], soon.date().isoformat()) == "skip",
+          "keyed by the occurrence's own google id, not the series")
+    res2 = optional_events.decide_by_title("dentist", soon.date().isoformat(), "skip")
+    check(res2.get("status") == "error" and "not marked optional" in res2.get("message", ""),
+          f"deciding attendance on a mandatory event is refused out loud: {res2}")
+    storage.optional_decisions_table.truncate()
+
+
+def scenario_both_agent_stacks_carry_the_tools():
+    from services import agent_tools, agent_tools_v2
+    check("decide_optional_event" in agent_tools.TOOL_HANDLERS
+          and "set_event_optional" in agent_tools.TOOL_HANDLERS
+          and "decide_optional_event" in agent_tools.TOOL_SCHEMAS,
+          "the v1 stack has schema and handler")
+    v2_names = {t.get("name") for t in agent_tools_v2.get_available_tools()}
+    check({"decide_optional_event", "set_event_optional"} <= v2_names,
+          "the chat widget's Gemma stack (agent_router/agent_tools_v2) has them too")
+    import os
+    router_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                   'services', 'agent_router.py'), encoding='utf-8').read()
+    check("decide_optional_event" in router_src and "set_event_optional" in router_src,
+          "and the router dispatches them")
+
+
+def scenario_the_decision_hand_path_exists():
+    import os
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    app = open(os.path.join(tpl, 'app.html'), encoding='utf-8').read()
+    check('decideOptional(' in app and 'Skip today' in app and 'Going' in app,
+          "My Day cards offer attend/skip/undo by hand")
+    timeline = open(os.path.join(tpl, 'components', 'schedule_timeline.html'),
+                    encoding='utf-8').read()
+    check('optional_decision' in timeline and 'Skipped today' in timeline,
+          "the timeline wears the decided states")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

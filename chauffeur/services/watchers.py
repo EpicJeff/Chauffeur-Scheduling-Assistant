@@ -69,12 +69,18 @@ def _unassigned_findings(now: datetime.datetime):
         # Optional events (event config `is_optional`): dropped-first is the
         # DESIGN, not a coverage hole — one calm line, never the siren. The
         # key differs from the unassigned one so flipping the flag re-says
-        # the day in the right voice.
-        if (ev.get('app_config') or {}).get('is_optional'):
+        # the day in the right voice. This IS the conflict-triggered ask:
+        # it fires only when the solver actually had to drop the event, and
+        # the reply path is wired ("she's still going" -> decide_optional_
+        # event -> full weight -> re-solve). An occurrence decided 'attend'
+        # deliberately falls through to the siren — somebody promised a kid;
+        # 'skip' never gets here (excluded from the solve upstream).
+        if (ev.get('app_config') or {}).get('is_optional') \
+                and ev.get('optional_decision') != 'attend':
             out.append((f"optional_skip:{ev_id}:{start.date().isoformat()}",
                         f"⏭️ {title} ({_fmt_when(start)}) is optional and didn't "
-                        f"fit around the other drives — skipped. Say so if they "
-                        f"should still go."))
+                        f"fit around the other drives — skipped it. If they "
+                        f"should still go, tell me and I'll re-plan the day."))
             continue
         key = f"unassigned:{ev_id}:{start.date().isoformat()}"
         out.append((key, f"🚨 No driver yet: {title} — {_fmt_when(start)}"))

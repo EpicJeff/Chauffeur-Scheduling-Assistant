@@ -1333,11 +1333,15 @@
                     </div>
                     <div class="flex gap-2">${driverButtons(r.driver, r.title)}</div>
                 </div>`;
-            } else if (r.optional) {
-                // Skipped optional: the design working, not a coverage hole.
+            } else if (r.optional && r.optional_decision !== 'attend') {
+                // Skipped or undecided optional: the design working, not a
+                // coverage hole. An attend-decided ride without a driver
+                // falls through to the real red badge — somebody promised.
+                const optLabel = r.optional_decision === 'skip'
+                    ? 'Skipped today' : 'Optional — not planned today';
                 driverRow = `
                 <div class="mt-3 pt-3 border-t border-gray-800">
-                    <span class="text-xs font-black uppercase text-purple-300 bg-purple-500/10 border border-purple-500/40 px-2 py-1 rounded-full">Optional — not planned today</span>
+                    <span class="text-xs font-black uppercase text-purple-300 bg-purple-500/10 border border-purple-500/40 px-2 py-1 rounded-full">${optLabel}</span>
                 </div>`;
             } else {
                 driverRow = `
@@ -1357,8 +1361,50 @@
                     <span class="text-xs font-black uppercase text-amber-300">🎒 Bring</span>
                     ${r.prep.map(p => `<span class="text-xs font-bold bg-amber-500/10 text-amber-200 border border-amber-500/30 px-2 py-0.5 rounded-full">${mfEscape(p)}</span>`).join('')}
                 </div>` : ''}
+                ${r.optional ? renderOptionalDecisionRow(r) : ''}
                 ${driverRow}
             </div>`;
+        }
+
+        // Optional events, phase 2: the per-occurrence attend/skip choice.
+        // Undecided is a real state that needs no answer — the buttons are an
+        // offer, not a demand.
+        function renderOptionalDecisionRow(r) {
+            const btn = (label, decision, cls) =>
+                `<button onclick="decideOptional('${String(r.id).replace(/'/g, '&#39;')}', '${decision}')"
+                    class="text-xs font-bold px-2.5 py-1.5 rounded-lg ${cls}">${label}</button>`;
+            if (r.optional_decision === 'attend') {
+                return `<div class="flex items-center gap-2 mt-2">
+                    <span class="text-xs font-black uppercase text-green-300 bg-green-500/10 border border-green-500/40 px-2 py-1 rounded-full">✓ Going</span>
+                    ${btn('Undo', 'clear', 'bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700')}
+                </div>`;
+            }
+            if (r.optional_decision === 'skip') {
+                return `<div class="flex items-center gap-2 mt-2">
+                    <span class="text-xs font-black uppercase text-purple-300 bg-purple-500/10 border border-purple-500/40 px-2 py-1 rounded-full">Skipped today</span>
+                    ${btn('Undo', 'clear', 'bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700')}
+                </div>`;
+            }
+            return `<div class="flex items-center gap-2 mt-2">
+                ${btn('Going ✓', 'attend', 'bg-green-600 text-white active:bg-green-700')}
+                ${btn('Skip today', 'skip', 'bg-gray-800 text-purple-300 border border-purple-500/40 active:bg-gray-700')}
+            </div>`;
+        }
+
+        async function decideOptional(eventId, decision) {
+            try {
+                const res = await fetch(`${apiBase}api/events/${encodeURIComponent(eventId)}/optional_decision`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ decision, member_id: selectedMemberId }) });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    showGlobalAlert(err.detail || "Couldn't save that.");
+                    return;
+                }
+                const out = await res.json();
+                if (out.message) showGlobalAlert(out.message);
+                await renderMyDay();
+            } catch (e) { showGlobalAlert("Couldn't save that."); }
         }
 
         function showGlobalAlert(msg) {

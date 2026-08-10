@@ -212,6 +212,32 @@ def remove_override_for_event_fuzzy(event_name: str, target_date: str) -> Dict[s
             "target_element_id": _get_target_element_id("event", ev_id),
             "ui_action": "jump_and_reload"}
 
+def decide_optional_event(event_name: str, target_date: str, decision: str,
+                          member_id: str = None) -> Dict[str, Any]:
+    """
+    Optional events, phase 2: record the family's per-occurrence choice for an
+    event flagged optional — 'attend' (a firm commitment now, full solver
+    weight), 'skip' (out of today's plan, nobody scheduled or chased), or
+    'clear' (back to goes-if-it-fits).
+    """
+    from services import optional_events
+    return optional_events.decide_by_title(event_name, target_date, decision,
+                                           decided_by=member_id)
+
+
+def set_event_optional(event_name: str, target_date: str, optional: bool = True,
+                       scope: str = 'series') -> Dict[str, Any]:
+    """
+    Flags an event optional (or firm again) in its event config — the same
+    flag as the Optional checkbox on the event modals. scope 'series' (the
+    default) covers every occurrence of a recurring event; 'instance' only
+    the one on target_date.
+    """
+    from services import optional_events
+    return optional_events.set_optional_flag(event_name, target_date,
+                                             bool(optional), scope or 'series')
+
+
 # ==============================================================================
 # TRIP TOOLS
 # ==============================================================================
@@ -2685,6 +2711,33 @@ def get_available_tools() -> List[Dict]:
                     "target_date": {"type": "string", "description": "The date the event occurs as YYYY-MM-DD, resolved from the CURRENT DATE in your context (relative terms like 'tonight' or 'tomorrow' are also accepted)."}
                 },
                 "required": ["event_name", "driver_name", "target_date"]
+            }
+        },
+        {
+            "name": "decide_optional_event",
+            "description": "Records whether the family is attending an OPTIONAL event's occurrence on a date: 'she's going to open gym today' -> attend, 'skip gymnastics tonight' -> skip, 'never mind, leave it open' -> clear. attend makes it a firm commitment (a driver will be found or a real alarm raised); skip takes it out of the day's plan with nobody scheduled or chased. Only works on events already marked optional.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_name": {"type": "string", "description": "The name of the event or a substring of it."},
+                    "target_date": {"type": "string", "description": "The date of the occurrence as YYYY-MM-DD (relative terms like 'today' or 'tomorrow' are accepted). Default today."},
+                    "decision": {"type": "string", "enum": ["attend", "skip", "clear"], "description": "attend = going for sure; skip = not going today; clear = undecided again (goes if it fits)."}
+                },
+                "required": ["event_name", "decision"]
+            }
+        },
+        {
+            "name": "set_event_optional",
+            "description": "Marks an event as OPTIONAL ('open gym is optional', 'we don't have to go to swim') or firm again ('practice is mandatory now'). Optional events are scheduled when the day allows but dropped first on conflicts, with calm messaging instead of no-driver alarms. Applies to the whole recurring series by default.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_name": {"type": "string", "description": "The name of the event or a substring of it."},
+                    "target_date": {"type": "string", "description": "A date the event occurs on, YYYY-MM-DD or relative ('today', 'Thursday'), used to find it. Default today."},
+                    "optional": {"type": "boolean", "description": "true to mark optional (default), false to make it a firm commitment again."},
+                    "scope": {"type": "string", "enum": ["series", "instance"], "description": "series (default) = every occurrence; instance = only the one on target_date."}
+                },
+                "required": ["event_name"]
             }
         },
         {

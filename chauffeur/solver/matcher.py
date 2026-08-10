@@ -831,8 +831,12 @@ def solve_schedule(
         # still worth driving on a free day — 100k stays far above the
         # routing-preference noise (bonuses are in the thousands) — but the
         # FIRST thing dropped when a real conflict bites: losing 100k always
-        # beats losing another event's 1M.
-        if (getattr(e, 'app_config', None) or {}).get('is_optional'):
+        # beats losing another event's 1M. A per-occurrence 'attend' decision
+        # promotes the instance back to full weight: once somebody said
+        # "she's going", it stopped being optional. ('skip' never reaches the
+        # solver — those events are excluded upstream, like assist coverage.)
+        if (getattr(e, 'app_config', None) or {}).get('is_optional') \
+                and getattr(e, 'optional_decision', None) != 'attend':
             base_event_weight = int(100000 * unassigned_penalty_mult)
         for pr in priority_rules:
             if does_event_match_rule(e, pr, passengers):

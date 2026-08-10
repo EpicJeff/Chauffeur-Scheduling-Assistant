@@ -764,6 +764,23 @@ class GetDriveDigestTool(BaseModel):
     target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
     member_name: Optional[str] = Field(None, description="Limit to one family member's drives; omit for all drivers.")
 
+class DecideOptionalEventTool(BaseModel):
+    """
+    Records whether the family is attending an OPTIONAL event's occurrence on a date: "she's going to open gym today" -> attend, "skip gymnastics tonight" -> skip, "leave it open" -> clear. attend makes it a firm commitment (a driver will be found or a real alarm raised); skip takes it out of the day's plan with nobody scheduled or chased. Only works on events already marked optional.
+    """
+    event_name: str = Field(..., description="The name of the event or a substring of it.")
+    decision: str = Field(..., description="attend | skip | clear. attend = going for sure; skip = not going today; clear = undecided again (goes if it fits).")
+    target_date: Optional[str] = Field("today", description="The date of the occurrence, YYYY-MM-DD or relative ('today', 'tomorrow').")
+
+class SetEventOptionalTool(BaseModel):
+    """
+    Marks an event as OPTIONAL ("open gym is optional") or firm again ("practice is mandatory now"). Optional events are scheduled when the day allows but dropped first on conflicts, with calm messaging instead of no-driver alarms. Applies to the whole recurring series by default.
+    """
+    event_name: str = Field(..., description="The name of the event or a substring of it.")
+    optional: bool = Field(True, description="true to mark optional, false to make it a firm commitment again.")
+    scope: Optional[str] = Field("series", description="series (default) = every occurrence; instance = only the one on target_date.")
+    target_date: Optional[str] = Field("today", description="A date the event occurs on, used to find it.")
+
 # A unified schema registry
 TOOL_SCHEMAS = {
     "start_drive": StartDriveTool.model_json_schema(),
@@ -807,6 +824,8 @@ TOOL_SCHEMAS = {
     "get_routine_status": GetRoutineStatusTool.model_json_schema(),
     "post_weekly_digest": PostWeeklyDigestTool.model_json_schema(),
     "get_drive_digest": GetDriveDigestTool.model_json_schema(),
+    "decide_optional_event": DecideOptionalEventTool.model_json_schema(),
+    "set_event_optional": SetEventOptionalTool.model_json_schema(),
     "get_kid_tasks": GetKidTasksTool.model_json_schema(),
     "add_kid_task": AddKidTaskTool.model_json_schema(),
     "complete_kid_task": CompleteKidTaskTool.model_json_schema(),
@@ -2175,6 +2194,19 @@ def handle_get_routine_status(args: dict) -> dict:
     return get_routine_status(args.get("member_name", ""),
                               args.get("target_date", "today"))
 
+def handle_decide_optional_event(args: dict) -> dict:
+    from services import optional_events
+    return optional_events.decide_by_title(args.get("event_name"),
+                                           args.get("target_date") or "today",
+                                           args.get("decision"))
+
+def handle_set_event_optional(args: dict) -> dict:
+    from services import optional_events
+    return optional_events.set_optional_flag(args.get("event_name"),
+                                             args.get("target_date") or "today",
+                                             bool(args.get("optional", True)),
+                                             args.get("scope") or "series")
+
 TOOL_HANDLERS = {
     "start_drive": handle_start_drive,
     "update_drive_status": handle_update_drive_status,
@@ -2217,6 +2249,8 @@ TOOL_HANDLERS = {
     "get_routine_status": handle_get_routine_status,
     "post_weekly_digest": handle_post_weekly_digest,
     "get_drive_digest": handle_get_drive_digest,
+    "decide_optional_event": handle_decide_optional_event,
+    "set_event_optional": handle_set_event_optional,
     "get_kid_tasks": handle_get_kid_tasks,
     "add_kid_task": handle_add_kid_task,
     "complete_kid_task": handle_complete_kid_task,

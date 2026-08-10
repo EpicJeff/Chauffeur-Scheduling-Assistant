@@ -403,6 +403,7 @@ with db_lock:
     routines_table = db.table('routines')
     routine_checks_table = db.table('routine_checks')
     kid_tasks_table = db.table('kid_tasks')
+    optional_decisions_table = db.table('optional_decisions')
     shopping_lists_table = db.table('shopping_lists')
     shopping_items_table = db.table('shopping_items')
     meals_table = db.table('meals')
@@ -1685,6 +1686,47 @@ def complete_kid_task(task_id: str, done: bool = True) -> Optional[dict]:
         out = dict(res[0])
         out['status'] = 'done' if done else 'open'
         return out
+
+# --- Optional-event decisions (phase 2) ---
+# A per-OCCURRENCE choice for an event flagged optional in its event config:
+# (google_id of the instance or series, event date) -> 'attend' | 'skip'.
+# Deliberately a separate table from event_configs: a decision is what the
+# family chose THAT DAY, a config is what the event IS — and a programmatic
+# decision write must never clobber the series config's passengers/attendance.
+
+def get_optional_decisions() -> List[dict]:
+    with db_lock:
+        return [dict(r) for r in optional_decisions_table.all()]
+
+def get_optional_decision(google_ids, date: str) -> Optional[str]:
+    """The decision for one occurrence. `google_ids` is the candidate id list
+    (instance id first, then the recurring series id) — first hit wins,
+    mirroring the event-config lookup order."""
+    ids = [str(g) for g in google_ids if g]
+    with db_lock:
+        rows = optional_decisions_table.search(Query().date == date)
+    for gid in ids:
+        for r in rows:
+            if r.get('google_id') == gid:
+                return r.get('decision')
+    return None
+
+def set_optional_decision(google_id: str, date: str, decision: str,
+                          decided_by: str = None):
+    import time as _time
+    q = Query()
+    with db_lock:
+        optional_decisions_table.remove((q.google_id == google_id) & (q.date == date))
+        if decision in ('attend', 'skip'):
+            optional_decisions_table.insert({
+                'google_id': google_id, 'date': date, 'decision': decision,
+                'decided_by': decided_by, 'ts': _time.time()})
+
+def prune_optional_decisions(before_date: str):
+    """Decisions expire with the day — yesterday's 'skip' says nothing about
+    next week's occurrence."""
+    with db_lock:
+        optional_decisions_table.remove(Query().date < before_date)
 
 # --- Outside hands (load arc A1) ---
 # Contacts who do work for this household without holding the app, and the

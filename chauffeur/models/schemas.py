@@ -37,6 +37,11 @@ class Event(BaseModel):
     original_event_id: Optional[str] = None
     needs_triage: bool = False
     app_config: Optional[dict] = None
+    # Optional events, phase 2: what the family chose about THIS occurrence.
+    # 'attend' -> full weight, real commitment; 'skip' -> out of the solve,
+    # still drawn; None -> undecided, goes if it fits. Stamped each refresh
+    # from storage.optional_decisions (services/optional_events.py).
+    optional_decision: Optional[str] = None
     trip_id: Optional[str] = None
     poi_id: Optional[str] = None
     # Set by the refresh when every passenger on the event is away on a
