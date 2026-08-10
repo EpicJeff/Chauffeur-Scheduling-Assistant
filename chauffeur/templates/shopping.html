@@ -1963,11 +1963,25 @@
                     };
                 },
 
+                // A dish's rule-words: its own tags plus the names of the
+                // categories it belongs to. Mirror of rule_matches() in
+                // services/meals.py — "protein" means the protein shelf on the
+                // server, so the preview and the -word resolver must read it
+                // the same way, or the panel calls a working rule dead.
+                dishRuleWords(d) {
+                    const words = (d.tags || []).map(t => String(t).trim().toLowerCase());
+                    (d.category_ids || []).forEach(cid => {
+                        const c = (this.categories || []).find(x => x.id === cid);
+                        if (c && c.name) words.push(String(c.name).trim().toLowerCase());
+                    });
+                    return words;
+                },
+
                 minusMatches(minus) {
                     if (!minus.length) return [];
                     return (this.repertoire || []).filter(d => {
                         const hay = [(d.name || ''), (d.short_name || ''),
-                                     ...(d.tags || [])].join(' ').toLowerCase();
+                                     ...this.dishRuleWords(d)].join(' ').toLowerCase();
                         return minus.some(m => hay.includes(m));
                     });
                 },
@@ -1986,8 +2000,8 @@
                     return (this.repertoire || []).filter(x => {
                         if (dropped.has(x.id)) return false;
                         if (d.dish_ids.length && !d.dish_ids.includes(x.id)) return false;
-                        if (tags.length && !(x.tags || [])
-                            .some(t => tags.includes(String(t).toLowerCase()))) return false;
+                        if (tags.length && !this.dishRuleWords(x)
+                            .some(t => tags.includes(t))) return false;
                         if (d.takeout && (x.source || 'prep') !== 'ordered') return false;
                         return true;
                     });

@@ -1976,20 +1976,25 @@ def scenario_approving_the_week_pins_it_and_buys_for_it():
     _settings(sides_per_meal=2, include_dessert=False)
     _week_repertoire()
 
-    before = meals.compose_week('2026-08-08', 3)
-    res = meals.approve_week('2026-08-08', 3)
+    # Relative to the real clock ON PURPOSE: approve_week reconciles claims
+    # against datetime.date.today(), and a night that has drifted into the
+    # past is one reconcile rightly prunes — a fixed start date made this
+    # scenario expire the day after it, which is what happened to 2026-08-08.
+    start = (datetime.date.today() + datetime.timedelta(days=2)).isoformat()
+    before = meals.compose_week(start, 3)
+    res = meals.approve_week(start, 3)
     check(res['day_count'] == 3 and len(res['pinned_dates']) == 3,
           f"every night in the window is pinned, got {res['pinned_dates']}")
     check(res['added'], "and the span's fresh ingredients went on the list")
 
-    after = meals.compose_week('2026-08-08', 3)
+    after = meals.compose_week(start, 3)
     check(all(d['pinned'] for d in after), "the week now reports itself pinned")
     check([[x['id'] for x in d['dishes']] for d in after]
           == [[x['id'] for x in d['dishes']] for d in before],
           "and holds exactly what was approved — money has been spent on it")
 
     # Second press buys nothing new; the skips say why, and which night.
-    again = meals.approve_week('2026-08-08', 3)
+    again = meals.approve_week(start, 3)
     check(not again['added'], f"nothing bought twice, got {again['added']}")
     dupes = [s for s in again['skipped'] if s['reason'] == 'already on the list']
     check(dupes and all(s.get('weekday') for s in dupes),
@@ -2320,6 +2325,31 @@ def scenario_tags_and_categories_reach_the_hand():
           "the dish picker search must match category names")
     check('addDishTag' in shopping and 'dropDishTag' in shopping,
           "free-form tags must be editable by hand on the dish row")
+
+
+def scenario_the_rule_preview_reads_categories_like_the_server():
+    """Reported with a screenshot: 'protein' in the rule builder's tag box
+    said "matches no dish — it would do nothing", while the saved rule would
+    in fact govern the whole protein shelf. rule_matches() learned category
+    names in v2.158.0 but the browser preview (ruleWouldMatch) — whose whole
+    job is to answer BEFORE saving — kept comparing free-form tags only, so
+    the panel called a working rule dead. One vocabulary now: dishRuleWords
+    (tags + category names) feeds the preview AND the -word resolver, so
+    '-protein' subtracts the shelf the same way 'protein' matches it."""
+    import os
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    shopping = open(os.path.join(tpl, 'shopping.html'), encoding='utf-8').read()
+    check('dishRuleWords' in shopping,
+          "the shared tag-or-category vocabulary helper is gone")
+    would = shopping.split('ruleWouldMatch()')[1].split('rulePreview()')[0]
+    check('dishRuleWords' in would and '(x.tags || [])' not in would,
+          "the preview must read tags AND category names through the shared "
+          "helper, not compare free-form tags on its own")
+    minus = shopping.split('minusMatches(minus)')[1].split('},')[0]
+    check('dishRuleWords' in minus,
+          "-word must subtract by category name too — asymmetry means "
+          "'protein' matches the shelf but '-protein' cannot spare it")
 
 
 def scenario_a_rule_matching_nothing_says_so():
@@ -3351,7 +3381,13 @@ def scenario_no_image_is_a_normal_state_not_a_failure():
 
 def scenario_m6_tools_in_both_stacks():
     reset_db(); _seed_people()
-    _settings(sides_per_meal=1, include_dessert=False)
+    # The shop day is pinned two days out from the REAL clock: the bridge
+    # answers in planning voice ("Shopping Saturday…") only inside the lead
+    # window, and a hard-coded weekday made this scenario's phrasing check
+    # true four days a week — plan_window runs on datetime.date.today().
+    _settings(sides_per_meal=1, include_dessert=False,
+              grocery_weekday=(datetime.date.today().weekday() + 2) % 7,
+              grocery_plan_lead_days=2)
     _week_repertoire()
     from services import agent_tools, agent_tools_v2
     want = {"get_week_dinners", "approve_week_dinners"}
