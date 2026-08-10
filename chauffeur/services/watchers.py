@@ -204,7 +204,26 @@ def collect_findings(now: datetime.datetime = None):
     findings += _errand_findings()
     findings += _occasion_findings(now)
     findings += _household_task_findings(now)
+    findings += _stage_findings(now)
     return findings, unclaimed
+
+
+def _stage_findings(now: datetime.datetime):
+    """A child whose age has moved past their stage (load arc A4). One line to
+    the parents, because growing up is GRANTED — announced and confirmed —
+    never a config value that silently changes one morning. The dedup key is
+    (child, stage), so it says so once per transition, not once per sweep."""
+    try:
+        from services import stages
+        out = []
+        for p in stages.pending_promotions(now.date()):
+            out.append((f"stage:{p['member_id']}:{p['to']}",
+                        f"🌱 {p['name']} is {p['age']} now — ready to be a "
+                        f"{p['to'].capitalize()}. Confirm it in Config → People."))
+        return out
+    except Exception as e:
+        print(f"[watchers] stage findings failed: {e}")
+        return []
 
 
 def _household_task_findings(now: datetime.datetime):

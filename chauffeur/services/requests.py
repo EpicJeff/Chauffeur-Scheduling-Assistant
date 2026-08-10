@@ -71,6 +71,16 @@ def create(from_member_id: str, body: str, kind: str = 'other',
     An unaddressed request goes to every adult: "somebody please take this" is
     a real ask and must not require picking a victim.
     """
+    # Stages (load arc A4): asking is a granted capability. A Sprout's wants
+    # go through a parent in person — the gate lives HERE, not only in the
+    # UI, so no surface can forget it.
+    from services import stages
+    asker_m = storage.get_member(from_member_id)
+    if asker_m and not stages.can(asker_m, 'can_request'):
+        return {'status': 'error',
+                'message': "Asking through the app comes with the next stage — "
+                           "for now this one goes through a grown-up in person."}
+
     from models.schemas import Request
     req = Request(from_member=from_member_id, to_member=to_member_id,
                   kind=kind if kind in KINDS else 'other',

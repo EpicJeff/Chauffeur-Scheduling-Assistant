@@ -135,6 +135,17 @@ class FamilyMember(BaseModel):
     # a teenager cooked, making the parents' split look even.
     # `helper` is always assist regardless of what this says.
     assist_tier: str = 'household'          # household | assist
+    # --- Stages: the child that grows (load arc A4) ---
+    # A birthdate only ever SUGGESTS a stage; `stage_override` pins it, and
+    # `capability_overrides` bends a single switch, because kids differ and a
+    # single number should not be destiny. `stage_acknowledged` is what a
+    # parent has confirmed — growing up is GRANTED, never silently switched,
+    # so the suggestion moving ahead of the acknowledgement is what raises the
+    # "Ellie is a Navigator now" moment rather than the app quietly changing.
+    birthdate: Optional[str] = None         # YYYY-MM-DD
+    stage_override: Optional[str] = None    # sprout | explorer | navigator | copilot
+    stage_acknowledged: Optional[str] = None
+    capability_overrides: Dict[str, Any] = Field(default_factory=dict)
     driver_id: Optional[str] = None
     passenger_id: Optional[str] = None
     # Google calendars belonging to THIS PERSON — set in exactly one place
@@ -779,6 +790,14 @@ class Settings(BaseModel):
     # overriding the satellite-first/playing-first pick. Only rooms the family
     # has pinned appear; everything else resolves automatically.
     announce_targets: Dict[str, str] = Field(default_factory=dict)
+    # Stages (load arc A4): the three ages where the kid bands change, stored
+    # as CUTOFFS rather than four ranges — contiguous bands defined by cutoffs
+    # cannot develop gaps or overlaps the way independently edited ranges can.
+    # Defaults map to preschool / elementary / middle / high school; they are
+    # configurable because school systems differ (US middle school usually
+    # starts at 11-turning-12, so a fixed 12 puts a sixth grader in the wrong
+    # stage for half the year).
+    stage_cutoffs: List[int] = Field(default_factory=lambda: [6, 12, 15])
     family_philosophy: str = ""
     enable_standard_rules: bool = True
     enable_ai_rules: bool = True

@@ -1664,6 +1664,86 @@
 
                 </div>
 
+                <!-- Stages (People tab sub-panel, load arc A4).
+                     `role == 'child'` used to be the entire model, so a six-
+                     and a sixteen-year-old got the identical screen. -->
+                <div x-show="activeTab === 'family'" x-cloak x-transition.opacity id="growing-up"
+                    class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+                    <h2 class="text-3xl font-bold mb-2 text-purple-300">Growing up</h2>
+                    <p class="text-gray-400 text-sm mb-4">What the app shows a child changes as they get
+                        older — how much of the week they can see, whether points and streaks lead the
+                        screen, whether they can ask you for things, whether they can be given real jobs.
+                        A birthday only <b>suggests</b> a stage; you can pin any child wherever suits
+                        them. <b>Nothing is ever deleted when a child moves up</b> — points and streaks
+                        are kept, they just stop being the point.</p>
+
+                    <div x-show="(stageData.pending || []).length" class="mb-4 space-y-2">
+                        <template x-for="p in stageData.pending" :key="p.member_id">
+                            <div class="bg-purple-950/50 border border-purple-800/60 rounded-xl p-4">
+                                <div class="font-bold text-purple-100">
+                                    <span x-text="p.name"></span> is
+                                    <span x-text="p.age"></span> now — ready to move up to
+                                    <span class="capitalize" x-text="p.to"></span>.
+                                </div>
+                                <ul class="text-sm text-purple-200/80 mt-1 list-disc list-inside">
+                                    <template x-for="g in p.grants" :key="g">
+                                        <li x-text="'They get ' + g"></li>
+                                    </template>
+                                </ul>
+                                <button @click="acknowledgeStage(p)"
+                                    class="mt-2 bg-purple-600 hover:bg-purple-500 px-4 py-2 rounded-lg font-bold text-sm">
+                                    Yes, they're growing up
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+
+                    <div class="space-y-2">
+                        <template x-for="k in (stageData.kids || [])" :key="k.member_id">
+                            <div class="bg-gray-900 p-3 rounded-xl flex flex-wrap items-center gap-3">
+                                <span class="font-bold text-white flex-1" x-text="k.name"></span>
+                                <input type="date" :value="k.birthdate || ''"
+                                    @change="saveKidBirthdate(k, $event.target.value)"
+                                    class="bg-gray-800 rounded-lg px-2 py-1 text-sm">
+                                <span class="text-xs text-gray-500"
+                                    x-text="k.age === null ? 'no birthday set' : (k.age + ' years')"></span>
+                                <select :value="k.pinned || ''" @change="pinStage(k, $event.target.value)"
+                                    class="bg-gray-800 rounded-lg px-2 py-1 text-sm">
+                                    <option value="">Follow their age</option>
+                                    <template x-for="s in (stageData.stages || [])" :key="s.key">
+                                        <option :value="s.key" x-text="s.label + ' (' + s.school + ')'"></option>
+                                    </template>
+                                </select>
+                                <span class="px-2 py-0.5 bg-purple-900/40 text-purple-300 rounded-full text-xs font-bold capitalize"
+                                    x-text="k.stage"></span>
+                            </div>
+                        </template>
+                        <p x-show="!(stageData.kids || []).length" class="text-gray-500 text-sm italic">
+                            No children on the roster yet.</p>
+                    </div>
+
+                    <div class="mt-5 bg-gray-900 p-4 rounded-xl">
+                        <label class="block text-xs font-bold text-gray-400 mb-2">When the stages change</label>
+                        <div class="flex flex-wrap gap-3 items-center text-sm">
+                            <span class="text-gray-400">Sprout until</span>
+                            <input type="number" min="1" max="24" x-model.number="stageCutoffs[0]"
+                                class="w-16 bg-gray-800 rounded-lg px-2 py-1">
+                            <span class="text-gray-400">Explorer until</span>
+                            <input type="number" min="2" max="24" x-model.number="stageCutoffs[1]"
+                                class="w-16 bg-gray-800 rounded-lg px-2 py-1">
+                            <span class="text-gray-400">Navigator until</span>
+                            <input type="number" min="3" max="24" x-model.number="stageCutoffs[2]"
+                                class="w-16 bg-gray-800 rounded-lg px-2 py-1">
+                            <button @click="saveStageCutoffs()"
+                                class="bg-purple-600 hover:bg-purple-500 px-4 py-1.5 rounded-lg font-bold">Save</button>
+                        </div>
+                        <p class="text-[11px] text-gray-500 mt-2">Defaults follow preschool, elementary,
+                            middle and high school. Change them to match your schools — middle school
+                            often starts at eleven, and a fixed twelve would put a sixth grader in the
+                            wrong stage for half the year.</p>
+                    </div>
+                </div>
+
                 <!-- Outside hands (People tab sub-panel, load arc A1).
                      People who do work for this household without holding the
                      app: a carpool parent, the neighbour who does the dishes.
@@ -3581,6 +3661,9 @@
                 newMemberCalendarInput: '',
                 // Status Days (Presence & Status arc P1)
                 statusProtocols: [],
+                // Stages (load arc A4)
+                stageData: { kids: [], pending: [], stages: [], cutoffs: [6, 12, 15] },
+                stageCutoffs: [6, 12, 15],
                 // Outside hands (load arc A1)
                 assistContacts: [],
                 assistForm: { id: null, name: '', relation_label: '', phone: '',
@@ -3618,6 +3701,7 @@
                     await this.loadMembers();
                     this.loadStatusData();  // not awaited: a side panel on the People tab
                     this.loadAssistContacts();  // ditto (load arc A1)
+                    this.loadStages();          // ditto (load arc A4)
                     this.loadHaOptions();  // not awaited: HA may be slow/absent
                     await this.loadRules();
                     await this.loadPriorityRules();
@@ -4712,6 +4796,57 @@
                     this.nearbyStations = [];
                     await this.saveSettings();
                     showGlobalAlert(`Home gas station set: ${st.name}`);
+                },
+
+                // --- Stages: the child that grows (load arc A4) ---
+                async loadStages() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/stages`);
+                        this.stageData = r.ok ? await r.json() : { kids: [], pending: [], stages: [] };
+                        this.stageCutoffs = (this.stageData.cutoffs || [6, 12, 15]).slice();
+                    } catch (e) { console.error("Failed to load stages", e); }
+                },
+                async acknowledgeStage(p) {
+                    // Growing up is GRANTED — a parent confirms it, and the
+                    // new capabilities are named out loud rather than the app
+                    // quietly getting different one morning.
+                    try {
+                        const res = await fetch(`${this.apiBase}api/stages/${p.member_id}/acknowledge`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ stage: p.to }) }).then(r => r.json());
+                        showGlobalAlert(res.message || 'Done.');
+                        await this.loadStages();
+                    } catch (e) { showGlobalAlert("Couldn't save that."); }
+                },
+                async saveKidBirthdate(k, value) {
+                    try {
+                        await fetch(`${this.apiBase}api/members/${k.member_id}`, {
+                            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ birthdate: value || null }) });
+                        await this.loadStages();
+                    } catch (e) { showGlobalAlert("Couldn't save the birthday."); }
+                },
+                async pinStage(k, value) {
+                    try {
+                        await fetch(`${this.apiBase}api/members/${k.member_id}`, {
+                            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ stage_override: value || null }) });
+                        await this.loadStages();
+                    } catch (e) { showGlobalAlert("Couldn't pin that stage."); }
+                },
+                async saveStageCutoffs() {
+                    const c = this.stageCutoffs.map(n => parseInt(n, 10));
+                    if (!(c[0] > 0 && c[0] < c[1] && c[1] < c[2] && c[2] < 25)) {
+                        showGlobalAlert('The three ages have to climb: each one bigger than the last.');
+                        return;
+                    }
+                    try {
+                        await fetch(`${this.apiBase}api/settings`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ stage_cutoffs: c }) });
+                        await this.loadStages();
+                        showGlobalAlert('Saved.');
+                    } catch (e) { showGlobalAlert("Couldn't save that."); }
                 },
 
                 // --- Outside hands (load arc A1) ---

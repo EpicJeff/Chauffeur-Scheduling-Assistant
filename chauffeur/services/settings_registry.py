@@ -278,6 +278,11 @@ ENTRIES: List[dict] = [
     _e('ha_base_url', 'integrations', 'Home Assistant URL', 'Where Home Assistant lives.'),
     _e('ha_token', 'integrations', 'Home Assistant token', 'A long-lived access token.'),
     _e('ma_server_url', 'integrations', 'Music Assistant URL', 'Where Music Assistant lives.'),
+    _e('stage_cutoffs', 'kids', 'When the kid stages change',
+       'The three ages where a child moves from Sprout to Explorer to '
+       'Navigator to Copilot — roughly preschool, elementary, middle and high '
+       'school. Change them to match your schools.',
+       page=_CONFIG, anchor='growing-up'),
     _e('announce_targets', 'integrations', 'Room announcement speakers',
        'Pin which speaker Argyle announces through in a room; unpinned rooms '
        'pick the voice satellite, then whichever player is already on.',

@@ -737,7 +737,7 @@
             const label = document.getElementById('current-day-label');
             if (!label) return;
             document.getElementById('btn-prev-day').disabled = mydayOffset <= 0;
-            document.getElementById('btn-next-day').disabled = mydayOffset >= MYDAY_MAX_OFFSET;
+            document.getElementById('btn-next-day').disabled = mydayOffset >= kidHorizonDays();
             const sub = document.getElementById('date-subtitle');
             const d = new Date();
             d.setDate(d.getDate() + mydayOffset);
@@ -749,7 +749,7 @@
 
         let mydaySlideDir = 0;
         function mydayShift(delta) {
-            const next = Math.max(0, Math.min(MYDAY_MAX_OFFSET, mydayOffset + delta));
+            const next = Math.max(0, Math.min(kidHorizonDays(), mydayOffset + delta));
             if (next === mydayOffset) return;
             mydayOffset = next;
             mydaySlideDir = delta > 0 ? 1 : -1;
@@ -961,17 +961,26 @@
             const st = (routineData && routineData.streak) || {};
             const total = st.today_total || ((routineData && routineData.items) || []).length;
             const done = st.today_done || 0;
-            const streak = st.current > 0 ? ` \u00B7 \u{1F525} ${st.current}` : '';
+            // Stages (load arc A4). Points and streaks stop LEADING at
+            // Navigator \u2014 at twelve they start to read as babyish. The ledger
+            // itself is untouched: nothing is deleted when a child moves up,
+            // it simply stops being the first thing on the screen.
+            const showPoints = kidCan('show_points');
+            const showStreaks = kidCan('show_streaks');
+            const streak = (showStreaks && st.current > 0) ? ` \u00B7 \u{1F525} ${st.current}` : '';
             const m = membersData.find(x => x.id === selectedMemberId) || {};
             const first = (m.name || '').split(' ')[0];
+            // "Hi James! \uD83D\uDC4B" is right for a seven-year-old and embarrassing
+            // for a fifteen-year-old.
+            const greet = showPoints ? `Hi ${mfEscape(first)}! \u{1F44B}` : `Hey ${mfEscape(first)}`;
             return `
             <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4 flex items-center justify-between mb-1">
                 <div>
-                    <div class="text-xl font-black text-gray-100">Hi ${mfEscape(first)}! \u{1F44B}</div>
+                    <div class="text-xl font-black text-gray-100">${greet}</div>
                     <div class="text-sm font-bold text-gray-500">${done}/${total} done today${streak}</div>
                 </div>
-                <button onclick="setView('chores')" class="px-4 py-2 rounded-full font-black text-lg"
-                    style="background:${kidTint(0.15)};color:${kidAccent()}">${balance} \u2B50</button>
+                ${showPoints ? `<button onclick="setView('chores')" class="px-4 py-2 rounded-full font-black text-lg"
+                    style="background:${kidTint(0.15)};color:${kidAccent()}">${balance} \u2B50</button>` : ''}
             </div>`;
         }
 
@@ -1036,7 +1045,7 @@
                 // Asking is only offered on TODAY: "can you get me at 3" is a
                 // question about now, and an ask about a day you are merely
                 // looking at would arrive without its context.
-                const askHtml = (requestedOffset === 0) ? `
+                const askHtml = (requestedOffset === 0 && kidCan('can_request')) ? `
                     <button onclick="askForSomething()"
                         class="w-full text-left bg-gray-900 border border-dashed border-gray-700 hover:border-indigo-600
                                rounded-xl px-3 py-2 mb-2 text-sm text-gray-400 hover:text-indigo-300 transition-colors">
@@ -1740,6 +1749,26 @@
         function currentMemberRole() {
             const m = membersData.find(x => x.id === selectedMemberId);
             return m ? (m.role || 'adult') : 'adult';
+        }
+
+        // --- Stages: the child that grows (load arc A4) -------------------
+        // Surfaces ask for a capability BY NAME. Nothing here works out an
+        // age: `role == 'child'` used to be the entire model, so a six- and a
+        // sixteen-year-old got the identical screen.
+        function kidCaps() {
+            const m = membersData.find(x => x.id === selectedMemberId) || {};
+            return m.capabilities || {};
+        }
+        function kidCan(capability) {
+            const m = membersData.find(x => x.id === selectedMemberId) || {};
+            if ((m.role || 'adult') !== 'child') return true;   // adults are not staged
+            return !!kidCaps()[capability];
+        }
+        function kidHorizonDays() {
+            const m = membersData.find(x => x.id === selectedMemberId) || {};
+            if ((m.role || 'adult') !== 'child') return 13;
+            const h = kidCaps().horizon_days;
+            return Number.isFinite(h) ? h : 13;
         }
 
         // --- PIN auth (identity switching) ---

@@ -3358,6 +3358,38 @@ def _public_member(m: dict) -> dict:
     out['has_pin'] = bool(m.get('pin_hash'))
     return out
 
+# --- Stages: the child that grows (load arc A4) ---
+
+@app.get("/api/stages")
+def get_stages():
+    """The bands, and where every child currently sits."""
+    from services import stages
+    kids = []
+    for m in storage.get_all_members():
+        if m.get('role') != 'child':
+            continue
+        kids.append({
+            'member_id': m['id'], 'name': m.get('name'),
+            'birthdate': m.get('birthdate'), 'age': stages.age_of(m),
+            'stage': stages.stage_of(m),
+            'suggested': stages.suggested_stage(m),
+            'pinned': m.get('stage_override'),
+            'acknowledged': m.get('stage_acknowledged'),
+            'capabilities': stages.capabilities(m),
+        })
+    return {'stages': stages.STAGES, 'cutoffs': stages.cutoffs(),
+            'kids': kids, 'pending': stages.pending_promotions()}
+
+@app.post("/api/stages/{member_id}/acknowledge")
+def acknowledge_stage(member_id: str, body: dict = Body(default={})):
+    """A parent confirms a child has moved up. Growing up is GRANTED, never
+    silently switched — and nothing is deleted in the process."""
+    from services import stages
+    res = stages.acknowledge(member_id, body.get('stage'))
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    return res
+
 # --- Requests: the ask as a first-class object (load arc A3) ---
 # A kid could report but not ASK; an adult could only TAKE a drive from their
 # partner. One object for both, always answered.
@@ -3393,6 +3425,8 @@ def create_request(req: RequestCreate, background_tasks: BackgroundTasks):
     row = _req.create(req.from_member, req.body, kind=req.kind,
                       to_member_id=req.to_member, subject_ref=req.subject_ref,
                       subject_label=req.subject_label or "")
+    if row.get('status') == 'error':      # stage-gated (load arc A4)
+        raise HTTPException(status_code=403, detail=row.get('message'))
     return {"status": "success", "id": row['id']}
 
 @app.post("/api/requests/{request_id}/decide")
@@ -3620,11 +3654,18 @@ def get_members():
     members = storage.get_all_members()
     drivers = {d.get('id'): d for d in storage.get_all_drivers()}
     passengers = {p.get('id'): p for p in storage.get_all_passengers()}
+    from services import stages
     out = []
     for m in members:
         pub = _public_member(m)
         pub['driver'] = drivers.get(m.get('driver_id'))
         pub['passenger'] = passengers.get(m.get('passenger_id'))
+        # Stages (load arc A4): the PWA shell asks for a capability BY NAME
+        # rather than working one out from an age, so no surface downstream
+        # ever has to know a birthday.
+        if m.get('role') == 'child':
+            pub['stage'] = stages.stage_of(m)
+            pub['capabilities'] = stages.capabilities(m)
         out.append(pub)
     return out
 

@@ -677,9 +677,11 @@ def make_request(body: str, to_member: str = None, kind: str = None,
         task, _rows = _match_task(subject_label)
         if task:
             subject_ref, subject_label, k = task['id'], task['title'], 'take_task'
-    _req.create(asker['id'], text, kind=k,
-                to_member_id=(target or {}).get('id'),
-                subject_ref=subject_ref, subject_label=subject_label)
+    row = _req.create(asker['id'], text, kind=k,
+                      to_member_id=(target or {}).get('id'),
+                      subject_ref=subject_ref, subject_label=subject_label)
+    if row.get('status') == 'error':      # stage-gated (load arc A4)
+        return row
     who = target.get('name') if target else "everyone who could say yes"
     return {"status": "success",
             "message": f"Asked {who}: “{text}”. I'll tell you the moment there's an answer."}
