@@ -69,6 +69,13 @@ def parse_ics(content: bytes, window_start=None, window_end=None) -> dict:
     import icalendar
     import recurring_ical_events
 
+    # Real-world feeds (TeamSnap) mix bare LF, CRLF, and even lone CR line
+    # endings in one file, which icalendar rejects outright. splitlines()
+    # accepts all three, so rejoining yields the RFC 5545 CRLF form while
+    # leaving folded-line continuations (leading space/tab) intact.
+    if isinstance(content, str):
+        content = content.encode('utf-8')
+    content = b'\r\n'.join(content.splitlines()) + b'\r\n'
     cal = icalendar.Calendar.from_ical(content)
     feed_name = cal.get('X-WR-CALNAME')
     feed_name = str(feed_name) if feed_name else None
