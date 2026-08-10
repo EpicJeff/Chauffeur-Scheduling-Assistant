@@ -54,7 +54,7 @@ def ensure_vapid_keys():
 
 ensure_vapid_keys()
 
-from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier, StatusProtocol, StatusDay, AssistContact, AssistAssignment
+from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier, StatusProtocol, StatusDay, AssistContact, AssistAssignment, HouseholdTask, ProtectedCommitment
 from services import storage, calendar, maps
 from solver import matcher
 from fastapi.templating import Jinja2Templates
@@ -293,7 +293,10 @@ async def push_notification_loop():
                 from services import meals as _prep_svc
 
                 def _prep_push(member, title, body):
-                    _notify_member_lanes(member, title, body, '/shopping')
+                    # urgent: prep deliberately ignores quiet hours — the
+                    # evening prep time is late on purpose, and a family that
+                    # set 20:30 has asked to be told at 20:30.
+                    _notify_member_lanes(member, title, body, '/shopping', urgent=True)
 
                 fired = await asyncio.to_thread(_prep_svc.run_prep_reminders, _prep_push)
                 if fired:
@@ -431,6 +434,35 @@ def _send_tomorrow_digests(subs):
                              "lines": ["🎉 You're free — nothing on the schedule."],
                              "count": 0}
 
+    # The household briefing (load arc A6): every parent/adult gets tomorrow
+    # for the WHOLE family — openings first, handled underneath — instead of
+    # the per-driver silo, because the parent who isn't driving otherwise
+    # learns the day changed by happening to look at a screen. Helpers and
+    # unlinked drivers keep the per-driver digest: another family's nanny has
+    # no business receiving this household's whole picture.
+    briefed_member_ids = set()
+    try:
+        briefing = family_digest.build_household_briefing()
+        if briefing.get('lines'):
+            b_lines = ([weather_line] if weather_line else []) + briefing['lines']
+            opens = briefing.get('open_count') or 0
+            b_title = (f"🏠 {briefing['label']}: {opens} thing"
+                       f"{'s' if opens != 1 else ''} still open"
+                       if opens else f"🏠 {briefing['label']}, all handled")
+            from services.agent_tools_v2 import _post_chat_message
+            argyle = storage.ensure_argyle_member()
+            for m in storage.get_all_members():
+                if m.get('role') not in ('parent', 'adult') or m.get('system'):
+                    continue
+                try:
+                    dm = storage.get_or_create_dm(argyle['id'], m['id'])
+                    _post_chat_message(dm, argyle, b_title + "\n" + "\n".join(b_lines))
+                    briefed_member_ids.add(m['id'])
+                except Exception as be:
+                    print(f"Briefing DM failed for {m.get('name')}: {be}")
+    except Exception as bfe:
+        print(f"Household briefing failed (falling back to per-driver): {bfe}")
+
     subscribed = {s.get("driver_id") for s in subs}
     for d_id, d in drivers.items():
         lines = list(d["lines"])
@@ -438,6 +470,8 @@ def _send_tomorrow_digests(subs):
             lines.insert(0, weather_line)
         title = d["title"]
         member = storage.get_member_by_driver_id(d_id)
+        if member and member['id'] in briefed_member_ids:
+            continue        # the briefing already covers their tomorrow
         if member:
             try:
                 from services.agent_tools_v2 import _post_chat_message
@@ -3358,6 +3392,48 @@ def _public_member(m: dict) -> dict:
     out['has_pin'] = bool(m.get('pin_hash'))
     return out
 
+# --- Protected commitments (load arc A6) ---
+# The one place an adult's time is FOR something rather than an obstacle.
+
+@app.get("/api/commitments")
+def list_commitments(member_id: Optional[str] = None):
+    rows = storage.get_protected_commitments(member_id=member_id,
+                                             include_inactive=True)
+    names = {m['id']: m.get('name') for m in storage.get_all_members()}
+    for r in rows:
+        r['member_name'] = names.get(r.get('member_id'))
+    return rows
+
+@app.post("/api/commitments")
+def create_commitment(pc: ProtectedCommitment, background_tasks: BackgroundTasks):
+    data = pc.model_dump()
+    if not (data.get('title') or '').strip():
+        raise HTTPException(status_code=400, detail="It needs a name")
+    if not storage.get_member(data.get('member_id') or ''):
+        raise HTTPException(status_code=404, detail="Member not found")
+    storage.add_protected_commitment(data)
+    # The solver has to learn the ban now, not at the next routine refresh —
+    # protecting an evening that stays scheduled is not protecting it.
+    background_tasks.add_task(trigger_background_refresh, None, None, True)
+    return {"status": "success", "id": data['id']}
+
+@app.patch("/api/commitments/{commitment_id}")
+def patch_commitment(commitment_id: str, updates: dict = Body(...),
+                     background_tasks: BackgroundTasks = None):
+    clean = {k: v for k, v in (updates or {}).items()
+             if k in ProtectedCommitment.model_fields and k not in ('id', 'created_at')}
+    if not storage.update_protected_commitment(commitment_id, clean):
+        raise HTTPException(status_code=404, detail="Commitment not found")
+    if background_tasks:
+        background_tasks.add_task(trigger_background_refresh, None, None, True)
+    return {"status": "success"}
+
+@app.delete("/api/commitments/{commitment_id}")
+def remove_commitment(commitment_id: str, background_tasks: BackgroundTasks):
+    storage.delete_protected_commitment(commitment_id)
+    background_tasks.add_task(trigger_background_refresh, None, None, True)
+    return {"status": "success"}
+
 # --- Stages: the child that grows (load arc A4) ---
 
 @app.get("/api/stages")
@@ -3999,8 +4075,16 @@ def _fanout_message_notifications(channel, message):
         for m in recipients:
             if m['id'] == message['sender_member_id']:
                 continue
-            send_push_to_member(m['id'], title, body, path)
-            svc = m.get('notify_service')
+            # Quiet hours on the identity (load arc A6): the message still
+            # lands in the thread — only the PING is skipped. Skip, never
+            # defer: a chat push at 8am about a 10pm message is noise.
+            from services import family_digest as _fd
+            if _fd.in_member_quiet_hours(m):
+                continue
+            lanes = m.get('notify_lanes') or 'all'
+            if lanes in ('all', 'push'):
+                send_push_to_member(m['id'], title, body, path)
+            svc = m.get('notify_service') if lanes in ('all', 'ha') else None
             if svc:
                 svc_name = svc.split('.', 1)[1] if '.' in svc else svc
                 payload = {"title": title, "message": body}
@@ -4264,18 +4348,31 @@ def music_play(req: MusicPlayRequest):
 # rest of the dashboard), members claim/complete them, VERIFICATION is the
 # integrity gate and requires a parent device token (PIN-backed).
 
-def _notify_member_lanes(member, title, body, path='/app'):
+def _notify_member_lanes(member, title, body, path='/app', urgent=False):
     """One member, all lanes: web push + HA companion notify.
 
     Web push deep links are RELATIVE: the service worker navigates within
     whatever origin the PWA is actually installed on (LAN, ingress, tunnel),
     so a mismatched/stale public_base_url can never 404 the tap — the bug
     that sent intake-proposal taps to a dead absolute URL. Only the HA
-    companion lane, which has no origin context, gets the absolute link."""
+    companion lane, which has no origin context, gets the absolute link.
+
+    Quiet hours on the identity (load arc A6): a non-urgent send inside the
+    member's window SKIPS — never defers — matching the kid rule ("a stale
+    on-the-way push is worse than none"). `urgent=True` escapes: a 5:30am
+    departure has to fire at 5:10 inside a window that runs to eight, or the
+    first night-shift parent misses a drive. Children keep the kid-quiet
+    machinery; this window is the adult's own. `notify_lanes` (all|push|ha)
+    settles the double-delivery a member with both lanes always had."""
     try:
+        from services import family_digest as _fd
+        if not urgent and _fd.in_member_quiet_hours(member):
+            return
+        lanes = member.get('notify_lanes') or 'all'
         base = (storage.get_settings().get('public_base_url') or '').rstrip('/')
-        send_push_to_member(member['id'], title, body, path)
-        svc = member.get('notify_service')
+        if lanes in ('all', 'push'):
+            send_push_to_member(member['id'], title, body, path)
+        svc = member.get('notify_service') if lanes in ('all', 'ha') else None
         if svc:
             from services import ha_api
             svc_name = svc.split('.', 1)[1] if '.' in svc else svc
@@ -9947,11 +10044,34 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             rules.append(Rule(driver_id=entry['driver_id'],
                               constraint_type='unavailable',
                               start_date=entry['date'],
-                              end_date=entry.get('end_date') or entry['date']))
+                              end_date=entry.get('end_date') or entry['date'],
+                              # clear_deck/give_space teeth (A6): evening-only.
+                              time_start=entry.get('time_start'),
+                              time_end=entry.get('time_end')))
             logger.info(f"Status day: {entry['label']} -> driver {entry['driver_id']} "
                         f"unavailable {entry['date']}..{entry.get('end_date') or entry['date']}")
     except Exception as _se:
         logger.warning(f"Status-day unavailability injection failed: {_se}")
+
+    # Protected commitments (load arc A6): a standing piece of somebody's own
+    # life — the run club, therapy, choir — as recurring unavailable windows.
+    # The one place an adult's time is FOR something rather than an obstacle.
+    try:
+        from services import stages as _stg  # noqa: F401  (import guard parity)
+        for pc in storage.get_protected_commitments():
+            member = storage.get_member(pc.get('member_id')) or {}
+            drv = member.get('driver_id')
+            if not drv or not pc.get('days_of_week'):
+                continue
+            rules.append(Rule(driver_id=drv, constraint_type='unavailable',
+                              days_of_week=list(pc['days_of_week']),
+                              time_start=pc.get('time_start'),
+                              time_end=pc.get('time_end')))
+            logger.info(f"Protected: {pc.get('title')} -> driver {drv} "
+                        f"unavailable {pc.get('days_of_week')} "
+                        f"{pc.get('time_start')}-{pc.get('time_end')}")
+    except Exception as _pce:
+        logger.warning(f"Protected-commitment injection failed: {_pce}")
 
     priority_rules = []
     enable_standard_priority_rules = settings.get("enable_standard_priority_rules", True)

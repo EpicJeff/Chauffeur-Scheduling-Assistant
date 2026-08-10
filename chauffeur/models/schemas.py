@@ -142,6 +142,17 @@ class FamilyMember(BaseModel):
     # parent has confirmed — growing up is GRANTED, never silently switched,
     # so the suggestion moving ahead of the acknowledgement is what raises the
     # "Ellie is a Navigator now" moment rather than the app quietly changing.
+    # Quiet hours ON THE IDENTITY (load arc A6). A kid's window is a
+    # protection set for them by someone else, and lives in household config;
+    # an adult's is a preference owned by the self, and lives here — a
+    # night-shift parent, a 6am riser and a hired driver share no window.
+    # Absent = the household default (21:00–08:00), NEVER "off". Urgent sends
+    # (a departure push, a drive reassigned today) escape the window.
+    quiet_start: Optional[str] = None       # HH:MM
+    quiet_end: Optional[str] = None         # HH:MM
+    # Merged stale backlog item: members with both web push and HA notify got
+    # everything twice. 'all' keeps the v1 behaviour.
+    notify_lanes: str = 'all'               # all | push | ha
     birthdate: Optional[str] = None         # YYYY-MM-DD
     stage_override: Optional[str] = None    # sprout | explorer | navigator | copilot
     stage_acknowledged: Optional[str] = None
@@ -508,6 +519,29 @@ class ManualOverride(BaseModel):
     # 'pwa' when a driver self-assigned via the PWA Assign-to-Me button.
     # Used to suppress the redundant "you gained this" push for that driver.
     source: Optional[str] = None
+
+class ProtectedCommitment(BaseModel):
+    """A standing piece of somebody's OWN life the solver defends (load arc
+    A6). A run club, therapy, choir, a standing coffee.
+
+    The finding this answers: an adult's own life existed in the app only as
+    an OBSTACLE — a personal calendar event's entire function was to make you
+    unavailable to drive. There was no concept of your time being FOR
+    something, nothing that noticed when it eroded, and nothing that made it
+    real by covering it. The app cannot make anyone rested; it can make sure
+    the time exists, is defended, and is covered.
+    """
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    member_id: str
+    title: str                              # "Thursday run", in their words
+    days_of_week: List[int] = Field(default_factory=list)   # 0=Mon
+    time_start: str = "18:00"               # HH:MM
+    time_end: str = "20:00"
+    # When true, the watcher flags open drives that collide with the window a
+    # few days out — wishing for time does not produce time; covered time does.
+    needs_coverage: bool = False
+    active: bool = True
+    created_at: float = Field(default_factory=time.time)
 
 class Request(BaseModel):
     """An ask, with a state (load arc A3).

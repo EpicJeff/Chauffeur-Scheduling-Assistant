@@ -305,6 +305,120 @@ def weather_line(target: datetime.date):
     return None
 
 
+ADULT_QUIET_DEFAULT = ('21:00', '08:00')
+
+
+def in_member_quiet_hours(member: dict, now: datetime.datetime = None) -> bool:
+    """Adult quiet hours, on the identity (load arc A6).
+
+    Absent means the HOUSEHOLD DEFAULT (21:00–08:00), never "off" — the trap
+    the screensaver settings hit once already. `start == end` disables, same
+    grammar as the kid window. Children keep the kid machinery; this is for
+    everyone else, because the kid window is a protection set by someone else
+    and an adult's is a preference owned by the self."""
+    if not member or member.get('role') == 'child':
+        return False
+    now = now or datetime.datetime.now()
+    start_s = member.get('quiet_start') or ADULT_QUIET_DEFAULT[0]
+    end_s = member.get('quiet_end') or ADULT_QUIET_DEFAULT[1]
+    try:
+        sh, sm = [int(x) for x in start_s.split(':')[:2]]
+        eh, em = [int(x) for x in end_s.split(':')[:2]]
+    except (ValueError, TypeError):
+        sh, sm = 21, 0
+        eh, em = 8, 0
+    start = datetime.time(sh, sm)
+    end = datetime.time(eh, em)
+    if start == end:
+        return False
+    t = now.time()
+    if start < end:
+        return start <= t < end
+    return t >= start or t < end       # wraps midnight
+
+
+def build_household_briefing(target_date: datetime.date = None) -> dict:
+    """Tomorrow for the WHOLE household, for every adult (load arc A6).
+
+    The per-driver digest shows each adult only their own drives, so the
+    parent who isn't driving learns the day changed by happening to look at
+    a screen — informed-at rather than invited. This is the direct answer to
+    "tools to be included and pick up more of the slack", and one rule keeps
+    it from becoming a nag:
+
+    **It shows OPENINGS, not assignments.** "Two things are open tomorrow:
+    James at 4, and the permission slip is due." Tapping (or answering
+    Argyle) takes it. The hard part of picking up slack is not willingness,
+    it is visibility.
+
+    Returns {'date', 'label', 'lines', 'open_count'} — one briefing, the
+    same for every adult, because a shared picture is the point.
+    """
+    tomorrow = target_date or (datetime.date.today() + datetime.timedelta(days=1))
+    cache = storage.get_cached_schedule() or {}
+    events = {str(e.get("id")): e for e in cache.get("events", [])}
+    assignments = dict(cache.get("assignments") or {})
+    assist_map = dict(cache.get("assist_assignments") or {})
+    assist_names = {c['id']: (c.get('relation_label') or c.get('name'))
+                    for c in (cache.get('assist_contacts') or [])}
+    members = storage.get_all_members()
+    by_driver = {m.get('driver_id'): m for m in members if m.get('driver_id')}
+
+    covered, open_lines = [], []
+    for ev_id, ev in events.items():
+        if ev.get('event_type') in ('errand', 'background_trip') or ev.get('trip_suppressed'):
+            continue
+        if ev_id.endswith('_dropoff') or ev_id.endswith('_pickup'):
+            continue
+        try:
+            start = datetime.datetime.fromisoformat(str(ev['start'])).replace(tzinfo=None)
+        except (ValueError, TypeError, KeyError):
+            continue
+        if start.date() != tomorrow:
+            continue
+        stamp = start.strftime('%I:%M %p').lstrip('0')
+        title = ev.get('title') or 'Event'
+        if ev_id in assist_map:
+            who = assist_names.get(assist_map[ev_id]) or 'outside help'
+            covered.append((start, f"{stamp} {title} — {who} (covered)"))
+        elif ev_id in assignments and not str(assignments[ev_id]).startswith('ghost_'):
+            m = by_driver.get(assignments[ev_id])
+            covered.append((start, f"{stamp} {title} — {(m or {}).get('name') or 'a driver'}"))
+        else:
+            open_lines.append((start, f"{stamp} {title} — nobody yet"))
+
+    # Household tasks due tomorrow or already late ride along: the permission
+    # slip is exactly the kind of opening the other parent cannot see today.
+    names = {m['id']: m.get('name') for m in members}
+    for t in storage.get_household_tasks():
+        due = t.get('due_date')
+        if not due or due > tomorrow.isoformat():
+            continue
+        label = t.get('title') or 'Task'
+        if due < tomorrow.isoformat():
+            label += " (past due)"
+        if t.get('assigned_to'):
+            covered.append((datetime.datetime.combine(tomorrow, datetime.time(23)),
+                            f"📋 {label} — {names.get(t['assigned_to']) or 'somebody'}"))
+        else:
+            open_lines.append((datetime.datetime.combine(tomorrow, datetime.time(23)),
+                               f"📋 {label} — nobody yet"))
+
+    label = 'Tomorrow' if tomorrow == datetime.date.today() + datetime.timedelta(days=1) \
+        else tomorrow.strftime('%A')
+    lines = []
+    # Openings FIRST: the thing an adult can actually do something about
+    # leads, and everything already handled is the reassurance underneath.
+    if open_lines:
+        lines.append(f"⚠️ Open — nobody has these yet:")
+        lines += [l for _, l in sorted(open_lines)]
+    if covered:
+        lines.append("Handled:" if open_lines else "All handled:")
+        lines += [l for _, l in sorted(covered)]
+    return {'date': tomorrow.isoformat(), 'label': label,
+            'lines': lines, 'open_count': len(open_lines)}
+
+
 def build_drive_digests(target_date: datetime.date = None) -> dict:
     """Per-driver drive-digest content for one day from the combined schedule
     cache (assigned events + scheduled errands, prep-kit items appended,

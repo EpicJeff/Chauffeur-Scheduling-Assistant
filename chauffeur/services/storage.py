@@ -431,6 +431,7 @@ with db_lock:
     assist_assignments_table = db.table('assist_assignments')
     household_tasks_table = db.table('household_tasks')
     requests_table = db.table('requests')
+    protected_commitments_table = db.table('protected_commitments')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -1746,6 +1747,40 @@ def set_assist_assignment(event_id: str, contact_id: str, note: str = "") -> dic
 def clear_assist_assignment(event_id: str) -> bool:
     with db_lock:
         return bool(assist_assignments_table.remove(Query().event_id == event_id))
+
+# --- Protected commitments (load arc A6) ---
+
+def get_protected_commitments(member_id: str = None,
+                              include_inactive: bool = False) -> List[dict]:
+    with db_lock:
+        rows = [dict(c) for c in protected_commitments_table.all()]
+    if member_id:
+        rows = [c for c in rows if c.get('member_id') == member_id]
+    if not include_inactive:
+        rows = [c for c in rows if c.get('active', True)]
+    rows.sort(key=lambda c: (c.get('title') or '').lower())
+    return rows
+
+def add_protected_commitment(data: dict) -> str:
+    # Cache invalidation on every mutation, same as status days: a protected
+    # window moves driver availability, and a stale cache would keep placing
+    # drives inside the very evening this exists to defend.
+    with db_lock:
+        protected_commitments_table.insert(data)
+        _invalidate_schedule_caches()
+    return data['id']
+
+def update_protected_commitment(commitment_id: str, data: dict) -> bool:
+    with db_lock:
+        ok = bool(protected_commitments_table.update(data, Query().id == commitment_id))
+        if ok:
+            _invalidate_schedule_caches()
+    return ok
+
+def delete_protected_commitment(commitment_id: str):
+    with db_lock:
+        protected_commitments_table.remove(Query().id == commitment_id)
+        _invalidate_schedule_caches()
 
 # --- Requests (load arc A3) ---
 # An ask with a state. A request is ALWAYS answered: silence is the failure

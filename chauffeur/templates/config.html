@@ -1247,6 +1247,23 @@
                                                 </template>
                                             </select>
                                         </div>
+                                        <div x-show="memberEdit.role !== 'child'">
+                                            <label class="block text-gray-400 mb-1 text-sm">🌙 Quiet hours
+                                                <span class="text-gray-600">(no non-urgent pings in this window — leave-by and today's changes still get through; empty = the household default 21:00–08:00)</span></label>
+                                            <div class="flex items-center gap-2 flex-wrap">
+                                                <input type="time" x-model="memberEdit.quiet_start"
+                                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                                <span class="text-gray-500">to</span>
+                                                <input type="time" x-model="memberEdit.quiet_end"
+                                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                                <select x-model="memberEdit.notify_lanes"
+                                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                                    <option value="all">Push + HA (both)</option>
+                                                    <option value="push">Web push only</option>
+                                                    <option value="ha">HA companion only</option>
+                                                </select>
+                                            </div>
+                                        </div>
                                         <div>
                                             <label class="block text-gray-400 mb-1 text-sm">Media Player</label>
                                             <select x-model="memberEdit.media_player_entity"
@@ -1689,6 +1706,80 @@
                          shop day, how early to ask, propose-the-week and the
                          offer-a-trip toggle all live at shopping#planning now. -->
 
+                </div>
+
+                <!-- Protected time (People tab sub-panel, load arc A6).
+                     An adult's life used to exist here only as an obstacle —
+                     a calendar event whose whole job was making you
+                     unavailable. This is time that is FOR something. -->
+                <div x-show="activeTab === 'family'" x-cloak x-transition.opacity id="protected-time"
+                    class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+                    <h2 class="text-3xl font-bold mb-2 text-emerald-300">Protected time</h2>
+                    <p class="text-gray-400 text-sm mb-4">A run club, therapy, choir, a standing coffee —
+                        a piece of somebody's own life the solver <b>defends</b> instead of filling. Drives
+                        stop landing in the window, an override that steals it gets called out before the
+                        evening is lost, and "needs cover" flags open drives in that window days ahead.
+                        Everyone needs an outlet; covered time is what makes one real.</p>
+                    <div class="space-y-2">
+                        <template x-for="pc in commitments" :key="pc.id">
+                            <div class="bg-gray-900 p-3 rounded-xl flex flex-wrap items-center gap-3"
+                                :class="pc.active === false ? 'opacity-50' : ''">
+                                <span class="font-bold text-white" x-text="pc.title"></span>
+                                <span class="text-xs text-gray-500" x-text="pc.member_name"></span>
+                                <span class="text-xs text-gray-400"
+                                    x-text="(pc.days_of_week || []).map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ')
+                                            + ' · ' + pc.time_start + '–' + pc.time_end"></span>
+                                <span x-show="pc.needs_coverage"
+                                    class="px-2 py-0.5 bg-emerald-900/40 text-emerald-300 rounded-full text-xs font-bold">needs cover</span>
+                                <button @click="deleteCommitment(pc)"
+                                    class="ml-auto text-red-500 hover:text-red-400 text-xs font-bold">Delete</button>
+                            </div>
+                        </template>
+                        <p x-show="!commitments.length" class="text-gray-500 text-sm italic">
+                            Nothing protected yet. That is usually not because nobody needs anything.</p>
+                    </div>
+                    <div class="mt-4 bg-gray-900 p-4 rounded-xl flex flex-wrap items-end gap-3">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 mb-1">What</label>
+                            <input x-model="commitmentForm.title" placeholder="Thursday run"
+                                class="bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 mb-1">Whose</label>
+                            <select x-model="commitmentForm.member_id" class="bg-gray-800 rounded-lg px-2 py-2 text-sm">
+                                <template x-for="m in members.filter(m => ['parent','adult'].includes(m.role))" :key="m.id">
+                                    <option :value="m.id" x-text="m.name"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div class="flex gap-1">
+                            <template x-for="(dl, di) in ['M','T','W','T','F','S','S']" :key="di">
+                                <button type="button"
+                                    @click="commitmentForm.days_of_week = commitmentForm.days_of_week.includes(di)
+                                        ? commitmentForm.days_of_week.filter(x => x !== di)
+                                        : [...commitmentForm.days_of_week, di]"
+                                    :class="commitmentForm.days_of_week.includes(di)
+                                        ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-500'"
+                                    class="w-9 h-9 rounded font-bold text-sm" x-text="dl"></button>
+                            </template>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 mb-1">From</label>
+                            <input type="time" x-model="commitmentForm.time_start"
+                                class="bg-gray-800 rounded-lg px-2 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 mb-1">To</label>
+                            <input type="time" x-model="commitmentForm.time_end"
+                                class="bg-gray-800 rounded-lg px-2 py-2 text-sm">
+                        </div>
+                        <label class="flex items-center gap-2 text-sm text-gray-300 pb-2">
+                            <input type="checkbox" x-model="commitmentForm.needs_coverage"
+                                class="w-4 h-4 accent-emerald-500"> needs cover
+                        </label>
+                        <button @click="saveCommitment()"
+                            class="bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded-lg font-bold text-sm">Protect it</button>
+                    </div>
                 </div>
 
                 <!-- Stages (People tab sub-panel, load arc A4).
@@ -3691,6 +3782,11 @@
                 // Stages (load arc A4)
                 stageData: { kids: [], pending: [], stages: [], cutoffs: [6, 12, 15] },
                 stageCutoffs: [6, 12, 15],
+                // Protected time (load arc A6)
+                commitments: [],
+                commitmentForm: { title: '', member_id: '', days_of_week: [],
+                                  time_start: '18:00', time_end: '20:00',
+                                  needs_coverage: false },
                 // Outside hands (load arc A1)
                 assistContacts: [],
                 assistForm: { id: null, name: '', relation_label: '', phone: '',
@@ -3729,6 +3825,7 @@
                     this.loadStatusData();  // not awaited: a side panel on the People tab
                     this.loadAssistContacts();  // ditto (load arc A1)
                     this.loadStages();          // ditto (load arc A4)
+                    this.loadCommitments();     // ditto (load arc A6)
                     this.loadHaOptions();  // not awaited: HA may be slow/absent
                     await this.loadRules();
                     await this.loadPriorityRules();
@@ -4825,6 +4922,39 @@
                     showGlobalAlert(`Home gas station set: ${st.name}`);
                 },
 
+                // --- Protected time (load arc A6) ---
+                async loadCommitments() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/commitments`);
+                        this.commitments = r.ok ? await r.json() : [];
+                    } catch (e) { console.error("Failed to load commitments", e); }
+                },
+                async saveCommitment() {
+                    const f = this.commitmentForm;
+                    if (!(f.title || '').trim() || !f.member_id || !f.days_of_week.length) {
+                        showGlobalAlert('It needs a name, a person, and at least one day.');
+                        return;
+                    }
+                    try {
+                        await fetch(`${this.apiBase}api/commitments`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(f) });
+                        this.commitmentForm = { title: '', member_id: f.member_id,
+                                                days_of_week: [], time_start: '18:00',
+                                                time_end: '20:00', needs_coverage: false };
+                        await this.loadCommitments();
+                    } catch (e) { showGlobalAlert("Couldn't protect that."); }
+                },
+                async deleteCommitment(pc) {
+                    if (!await promptConfirm('Stop protecting it?',
+                        `${pc.title} goes back to being ordinary time the solver can fill.`,
+                        'Stop', 'Keep')) return;
+                    try {
+                        await fetch(`${this.apiBase}api/commitments/${pc.id}`, { method: 'DELETE' });
+                        await this.loadCommitments();
+                    } catch (e) { showGlobalAlert("Couldn't remove it."); }
+                },
+
                 // --- Stages: the child that grows (load arc A4) ---
                 async loadStages() {
                     try {
@@ -5057,6 +5187,9 @@
                         role: member.role || 'adult',
                         ha_person_entity: member.ha_person_entity || '',
                         notify_service: member.notify_service || '',
+                        quiet_start: member.quiet_start || '',
+                        quiet_end: member.quiet_end || '',
+                        notify_lanes: member.notify_lanes || 'all',
                         media_player_entity: member.media_player_entity || '',
                         school_hours_start: member.school_hours_start || '',
                         school_hours_end: member.school_hours_end || '',
@@ -5117,6 +5250,9 @@
                     updates.media_player_entity = updates.media_player_entity || null;
                     updates.school_hours_start = updates.school_hours_start || null;
                     updates.school_hours_end = updates.school_hours_end || null;
+                    updates.quiet_start = updates.quiet_start || null;
+                    updates.quiet_end = updates.quiet_end || null;
+                    updates.notify_lanes = updates.notify_lanes || 'all';
                     updates.aftercare_days = updates.aftercare_days || [];
                     updates.aftercare_until = updates.aftercare_until || null;
                     updates.aftercare_place = (updates.aftercare_place || '').trim() || null;

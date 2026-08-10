@@ -390,9 +390,15 @@ def unavailable_driver_dates(start: str, end: str):
     """P2 solver feed: (date, driver_id, label) for every status day in
     [start, end] whose protocol needs the affected member OUT of the driving
     rotation — 'cover' (they're resting/at treatment) and 'help' (they're
-    being cared for). clear_deck/give_space days don't touch driving.
-    main.refresh_schedule_logic turns these into synthetic one-day
-    'unavailable' Rules, so the solver machinery needs nothing new."""
+    being cared for). main.refresh_schedule_logic turns these into synthetic
+    one-day 'unavailable' Rules, so the solver machinery needs nothing new.
+
+    clear_deck and give_space finally have teeth (load arc A6 — the design
+    doc promised "the solver protects the evening" and the code never did):
+    they emit an EVENING-scoped ban (17:00 on) rather than a whole-day one,
+    because "keep the evening free" and "home but resting" are claims about
+    the evening, and banning the school run too would overshoot the family's
+    own words. Entries for these carry time_start/time_end."""
     members = {m['id']: m for m in storage.get_all_members()}
     out = []
     try:
@@ -408,16 +414,21 @@ def unavailable_driver_dates(start: str, end: str):
     while d <= end_d:
         seen_drivers = set()
         for s in active_statuses(d.isoformat()):
-            if s['need'] not in ('cover', 'help'):
-                continue
             member = members.get(s.get('member_id')) or {}
             drv = member.get('driver_id')
             if not drv or drv in seen_drivers:
                 continue  # not a driver — nothing to take out of the rotation
-            seen_drivers.add(drv)
-            out.append({'date': d.isoformat(), 'end_date': d.isoformat(),
-                        'driver_id': drv,
-                        'label': f"{s['name']} — {member.get('name')}"})
+            if s['need'] in ('cover', 'help'):
+                seen_drivers.add(drv)
+                out.append({'date': d.isoformat(), 'end_date': d.isoformat(),
+                            'driver_id': drv,
+                            'label': f"{s['name']} — {member.get('name')}"})
+            elif s['need'] in ('clear_deck', 'give_space'):
+                seen_drivers.add(drv)
+                out.append({'date': d.isoformat(), 'end_date': d.isoformat(),
+                            'driver_id': drv,
+                            'time_start': '17:00', 'time_end': '23:59',
+                            'label': f"{s['name']} (evening) — {member.get('name')}"})
         d += datetime.timedelta(days=1)
     return out
 

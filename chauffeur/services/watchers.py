@@ -206,7 +206,71 @@ def collect_findings(now: datetime.datetime = None):
     findings += _household_task_findings(now)
     findings += _stage_findings(now)
     findings += _care_gap_findings(now)
+    findings += _commitment_findings(now)
     return findings, unclaimed
+
+
+def _commitment_findings(now: datetime.datetime):
+    """Protected time, watched (load arc A6).
+
+    Two findings per commitment, both forward-looking:
+
+    **Erosion**: the solver is BANNED from a protected window, so a drive can
+    only land there through a manual override — which is exactly the quiet
+    way an outlet dies, one reasonable-seeming exception at a time. Say it
+    before it costs the evening, name the drive.
+
+    **Coverage**: a commitment marked needs_coverage with open drives in its
+    window a few days out — wishing for time does not produce time; covered
+    time does.
+    """
+    try:
+        cache = storage.get_cached_schedule() or {}
+        events = {str(e.get('id')): e for e in cache.get('events', [])}
+        assignments = dict(cache.get('assignments') or {})
+        unassigned = set(str(x) for x in cache.get('unassigned') or [])
+        covered_out = set((cache.get('assist_assignments') or {}).keys())
+        members = {m['id']: m for m in storage.get_all_members()}
+        horizon = now + datetime.timedelta(days=4)
+        out = []
+        for pc in storage.get_protected_commitments():
+            member = members.get(pc.get('member_id')) or {}
+            drv = member.get('driver_id')
+            days = set(pc.get('days_of_week') or [])
+            if not days:
+                continue
+            try:
+                sh, sm = [int(x) for x in (pc.get('time_start') or '18:00').split(':')[:2]]
+                eh, em = [int(x) for x in (pc.get('time_end') or '20:00').split(':')[:2]]
+            except (ValueError, TypeError):
+                continue
+            for ev_id, ev in events.items():
+                try:
+                    start = datetime.datetime.fromisoformat(str(ev['start'])).replace(tzinfo=None)
+                except (ValueError, TypeError, KeyError):
+                    continue
+                if not (now <= start <= horizon) or start.weekday() not in days:
+                    continue
+                w_start = start.replace(hour=sh, minute=sm, second=0)
+                w_end = start.replace(hour=eh, minute=em, second=0)
+                if not (w_start <= start <= w_end):
+                    continue
+                day_label = start.strftime('%A')
+                if drv and assignments.get(ev_id) == drv:
+                    out.append((f"erosion:{pc['id']}:{ev_id}",
+                                f"⏳ {day_label}'s {pc.get('title')} is about to be "
+                                f"lost to a drive ({ev.get('title') or 'an event'}) — "
+                                f"that took an override, so make sure it was worth it."))
+                elif pc.get('needs_coverage') and str(ev_id) in unassigned \
+                        and str(ev_id) not in covered_out:
+                    out.append((f"pc_cover:{pc['id']}:{ev_id}",
+                                f"🛡️ {member.get('name')}'s {pc.get('title')} is "
+                                f"{day_label} — {ev.get('title') or 'a drive'} in that "
+                                f"window still needs a driver."))
+        return out
+    except Exception as e:
+        print(f"[watchers] commitment findings failed: {e}")
+        return []
 
 
 CARE_GAP_HORIZON_DAYS = 21     # closures are known weeks ahead; PTO needs lead time
