@@ -538,6 +538,51 @@
             }, true);
         }
 
+        // Server push. A wall panel is a display the server should be able to
+        // tap on the shoulder: it subscribes to the same SSE stream the
+        // dashboard and PWA use (/api/stream). Three messages matter here:
+        //   hello:<boot_id> — sent on every (re)connect. A DIFFERENT id after
+        //     a reconnect means the add-on restarted (usually a rebuild), and
+        //     the panel reloads itself to pick up the new frontend instead of
+        //     running last week's JS until somebody touches the wall.
+        //   profile — panel_* settings changed somewhere; layout/theme edits
+        //     only land through a full reload, so reload.
+        //   update — data changed (a solve finished, a decision was made);
+        //     re-announced as a DOM event so each page refreshes its own data
+        //     its own way (the board's load(), the screensaver's hero).
+        if (isPanel && typeof EventSource !== 'undefined') {
+            let chfBootId = null, chfEs = null, chfUpdateDebounce = null;
+            const chfConnectStream = () => {
+                if (chfEs) { try { chfEs.close(); } catch (e) { } }
+                chfEs = new EventSource(apiBase + 'api/stream');
+                chfEs.onmessage = (m) => {
+                    const d = m.data || '';
+                    if (d.startsWith('hello:')) {
+                        const id = d.slice(6);
+                        if (chfBootId && id !== chfBootId) { window.location.reload(); return; }
+                        chfBootId = id;
+                    } else if (d === 'profile') {
+                        window.location.reload();
+                    } else if (d === 'update') {
+                        // Solves can land in bursts; one repaint per burst.
+                        clearTimeout(chfUpdateDebounce);
+                        chfUpdateDebounce = setTimeout(() =>
+                            document.dispatchEvent(new CustomEvent('chf-server-update')), 1500);
+                    }
+                };
+                // EventSource gives up permanently on a non-200 reconnect
+                // (expired ingress session); recreate it ourselves — same
+                // resilience pattern as the dashboard and the PWA.
+                chfEs.onerror = () => {
+                    if (chfEs.readyState === EventSource.CLOSED) setTimeout(chfConnectStream, 5000);
+                };
+            };
+            chfConnectStream();
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden && (!chfEs || chfEs.readyState === EventSource.CLOSED)) chfConnectStream();
+            });
+        }
+
         // Screensaver. After a longer idle than the return-home, the wall stops
         // being a schedule and becomes a picture frame: a Ken Burns slideshow
         // (Moments, the HA media share, or the wallpaper) with a clock. The
@@ -719,6 +764,12 @@
                 if (!ssCfg || !ssCfg.idle_seconds) return;
                 ssIdleTimer = setTimeout(ssStart, ssCfg.idle_seconds * 1000);
             };
+
+            // Server push: a solve finishing mid-slideshow refreshes the
+            // Next-up corner right away instead of on the 3-minute timer.
+            document.addEventListener('chf-server-update', () => {
+                if (window._chfSsActive) ssFetchHero();
+            });
 
             panelProfile().then(p => {
                 ssCfg = (p && p.screensaver) || null;

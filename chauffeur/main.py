@@ -11,8 +11,17 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 import asyncio
 import time
+import uuid as _uuid
 
 LAST_UPDATE_TIME = time.time()
+# One id per PROCESS. The stream says hello with it on every (re)connect, so
+# a wall panel that sees a different id after a reconnect knows the add-on
+# restarted — usually a rebuild — and reloads itself to pick up the new
+# frontend instead of running last week's JS until somebody touches it.
+BOOT_ID = _uuid.uuid4().hex
+# Bumped when panel_* settings change: layout/theme edits made on one device
+# must repaint every panel, not just the one holding the settings drawer.
+LAST_PROFILE_TIME = 0.0
 
 class PushSubscription(BaseModel):
     driver_id: str
@@ -2724,11 +2733,20 @@ def delete_driver(doc_id: int, background_tasks: BackgroundTasks):
 async def stream_events():
     async def event_generator():
         last_seen = LAST_UPDATE_TIME
+        last_profile_seen = LAST_PROFILE_TIME
         last_ping = time.time()
         try:
+            # Hello first: the boot id lets a panel notice a server restart on
+            # reconnect and reload itself. Existing consumers match the exact
+            # string "update" and ignore everything else, so this is additive.
+            yield f"data: hello:{BOOT_ID}\n\n"
             while True:
                 await asyncio.sleep(1)
                 now = time.time()
+                if LAST_PROFILE_TIME > last_profile_seen:
+                    last_profile_seen = LAST_PROFILE_TIME
+                    yield "data: profile\n\n"
+                    last_ping = now
                 if LAST_UPDATE_TIME > last_seen:
                     last_seen = LAST_UPDATE_TIME
                     yield "data: update\n\n"
@@ -2739,7 +2757,7 @@ async def stream_events():
                     last_ping = now
         except asyncio.CancelledError:
             pass
-            
+
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 # --- V2 Agentic Core API ---
@@ -8973,6 +8991,13 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
                     storage.delete_cached_geocode(key)
     current.update(incoming)
     storage.update_settings(current)
+    # Panel-shaped settings (layout, theme, screensaver…) edited on one device
+    # must repaint every wall panel — they reload on the `profile` stream
+    # event. Everything else rides the generic `update` bump.
+    global LAST_UPDATE_TIME, LAST_PROFILE_TIME
+    if any(k.startswith('panel_') for k in incoming):
+        LAST_PROFILE_TIME = time.time()
+    LAST_UPDATE_TIME = time.time()
     background_tasks.add_task(trigger_background_refresh)
     return {"status": "updated"}
 

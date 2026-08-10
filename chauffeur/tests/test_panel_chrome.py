@@ -533,6 +533,34 @@ def scenario_the_orb_does_not_pulse_for_people_who_asked_it_not_to():
           "the orb animates regardless of the reduced-motion preference")
 
 
+def scenario_the_server_can_tap_the_panel_on_the_shoulder():
+    """A wall panel used to run last week's frontend until somebody touched
+    it: nothing reloaded on an add-on rebuild, layout edits from another
+    device landed on the next manual reload, and data changes waited out the
+    60s poll. The panel now subscribes to the same SSE stream as the
+    dashboard/PWA, with three contracts pinned here:
+      hello:<boot_id> on connect (a changed id after reconnect = restart ->
+      reload), `profile` on panel_* settings saves (-> reload), and `update`
+      re-announced as a chf-server-update DOM event each page consumes."""
+    check("EventSource(apiBase + 'api/stream')" in NAV
+          and "hello:" in NAV and "chf-server-update" in NAV,
+          "nav.html no longer subscribes the panel to the server stream")
+    check("window.location.reload()" in NAV,
+          "a restart or profile change must reload the panel outright")
+    src = open(os.path.join(os.path.dirname(TPL), 'main.py'), encoding='utf-8').read()
+    check('BOOT_ID' in src and 'data: hello:{BOOT_ID}' in src,
+          "the stream must say hello with the process boot id")
+    check('LAST_PROFILE_TIME' in src and "data: profile" in src
+          and "k.startswith('panel_')" in src,
+          "panel_* settings saves must emit the profile event")
+    home = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    check("chf-server-update" in home,
+          "the board must repaint on the push, not only on the 60s poll")
+    check("HeroCard.html(ssNext, { compact: true })" in NAV
+          and NAV.count('chf-server-update') >= 2,
+          "the screensaver hero must also listen for the push")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

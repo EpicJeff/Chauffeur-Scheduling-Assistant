@@ -1008,6 +1008,13 @@
                     document.addEventListener('visibilitychange', () => {
                         if (!document.hidden) this.load();
                     });
+                    // Server push (nav.html's panel stream): a finished solve
+                    // or a decision made on a phone repaints the board NOW,
+                    // not up to a minute later. The 60s poll stays as the
+                    // safety net for a dead stream.
+                    document.addEventListener('chf-server-update', () => {
+                        if (!document.hidden) this.load();
+                    });
 
                     if (!this.isPanel) this.loadSetup();
                 },
