@@ -1033,7 +1033,17 @@
                         <span class="text-xs text-indigo-300/70 ml-auto truncate">${mfEscape(data.launch.title || '')}</span>
                     </div>`;
                 const statusHtml = renderStatusBanner(data.status_days, dateStr);
-                wrap.innerHTML = statusHtml + kidTopHtml + launchHtml + routineHtml + dueSoonHtml + (data.rides.length
+                // Asking is only offered on TODAY: "can you get me at 3" is a
+                // question about now, and an ask about a day you are merely
+                // looking at would arrive without its context.
+                const askHtml = (requestedOffset === 0) ? `
+                    <button onclick="askForSomething()"
+                        class="w-full text-left bg-gray-900 border border-dashed border-gray-700 hover:border-indigo-600
+                               rounded-xl px-3 py-2 mb-2 text-sm text-gray-400 hover:text-indigo-300 transition-colors">
+                        🙋 Ask for something…
+                    </button>` : '';
+                const requestsHtml = renderRequests() + askHtml;
+                wrap.innerHTML = statusHtml + requestsHtml + kidTopHtml + launchHtml + routineHtml + dueSoonHtml + (data.rides.length
                     ? data.rides.map(renderMyDayCard).join('')
                     : '<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4 mt-2">' +
                       ((routineHtml || dueSoonHtml) ? 'No rides today 🎉' : 'Nothing scheduled 🎉') + '</div>');
@@ -1060,6 +1070,99 @@
         // message + need, plus set/clear controls. Clearing is two-tap armed
         // (it announces the change of plans family-wide — never one stray touch).
         let statusProtocolsCache = null;
+
+        // --- Requests: the ask as a first-class object (load arc A3) -------
+        // A kid could report but not ASK; an adult could only TAKE a drive
+        // from their partner. Both live here, above the day, because an
+        // unanswered ask is the most time-sensitive thing on the screen.
+
+        let myRequests = { waiting_on_me: [], mine: [] };
+
+        async function fetchRequests() {
+            const mid = selectedMemberId;
+            if (!mid) return;
+            try {
+                const r = await fetch(`${apiBase}api/requests?member_id=${mid}`);
+                myRequests = r.ok ? await r.json() : { waiting_on_me: [], mine: [] };
+            } catch (e) { /* the day still renders without them */ }
+        }
+
+        function renderRequests() {
+            const waiting = myRequests.waiting_on_me || [];
+            const mine = myRequests.mine || [];
+            if (!waiting.length && !mine.length) return '';
+            let html = '';
+            waiting.forEach(r => {
+                // Yes and no are both one tap. Declining is first-class here
+                // on purpose: a no with a reason beats silence every time.
+                html += `<div class="bg-amber-950/40 border border-amber-800/50 rounded-xl p-3 mb-2">
+                    <div class="text-sm text-amber-100"><b>${r.from}</b> is asking:</div>
+                    <div class="text-base text-white mt-0.5">“${r.body}”</div>
+                    <div class="flex gap-2 mt-2">
+                        <button onclick="answerRequest('${r.id}', true)"
+                            class="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded-lg text-sm font-bold">Yes</button>
+                        <button onclick="answerRequest('${r.id}', false)"
+                            class="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded-lg text-sm font-bold">Can't</button>
+                    </div>
+                </div>`;
+            });
+            mine.forEach(r => {
+                html += `<div class="bg-gray-900 border border-gray-800 rounded-xl p-3 mb-2 flex items-center gap-3">
+                    <div class="flex-1">
+                        <div class="text-xs text-gray-500">You asked ${r.to} — waiting for an answer</div>
+                        <div class="text-sm text-white">“${r.body}”</div>
+                    </div>
+                    <button onclick="cancelRequest('${r.id}')"
+                        class="text-gray-600 hover:text-red-400 text-xs">withdraw</button>
+                </div>`;
+            });
+            return html;
+        }
+
+        async function answerRequest(id, accept) {
+            let reason = '';
+            if (!accept) {
+                // A reason is offered, never demanded — the point is that an
+                // answer exists, not that it is justified.
+                reason = await promptInput('Anything to say?', 'A reason is optional — an answer is what matters.',
+                                           { placeholder: 'e.g. in a meeting until 5', okText: 'Send' }) || '';
+            }
+            try {
+                await fetch(`${apiBase}api/requests/${id}/decide`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ accept, member_id: selectedMemberId, reason }),
+                });
+                await fetchRequests();
+                renderMyDay();
+            } catch (e) { showGlobalAlert("That didn't go through."); }
+        }
+
+        async function cancelRequest(id) {
+            try {
+                await fetch(`${apiBase}api/requests/${id}/cancel`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: selectedMemberId }),
+                });
+                await fetchRequests();
+                renderMyDay();
+            } catch (e) { showGlobalAlert("That didn't go through."); }
+        }
+
+        async function askForSomething() {
+            const body = await promptInput('What do you want to ask for?',
+                                           "I'll pass it on and tell you the moment there's an answer.",
+                                           { placeholder: 'e.g. can you get me at 3 instead of 4?', okText: 'Ask' });
+            if (!body || !body.trim()) return;
+            try {
+                await fetch(`${apiBase}api/requests`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ from_member: selectedMemberId, body: body.trim() }),
+                });
+                await fetchRequests();
+                renderMyDay();
+                showGlobalAlert("Asked — I'll tell you as soon as there's an answer.");
+            } catch (e) { showGlobalAlert("That didn't go through."); }
+        }
 
         function renderStatusBanner(statusDays, dateStr) {
             const role = currentMemberRole();
@@ -1594,6 +1697,11 @@
             // Parents: load the intake proposal queue so the Family tab (and
             // the ?view=family push deep link) shows it immediately.
             if (currentMemberRole() === 'parent') fetchProposals();
+            // Requests (load arc A3): both directions, for everyone. An
+            // unanswered ask is the most time-sensitive thing on the screen.
+            fetchRequests().then(() => {
+                if (currentView === 'myday') renderMyDay();
+            });
         }
 
         async function fetchDrivers() {

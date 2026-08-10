@@ -489,6 +489,49 @@ class ManualOverride(BaseModel):
     # Used to suppress the redundant "you gained this" push for that driver.
     source: Optional[str] = None
 
+class Request(BaseModel):
+    """An ask, with a state (load arc A3).
+
+    Two problems that turned out to be the same shape:
+
+    A kid could REPORT but not ASK. Kid-as-sensor handles facts well
+    ("practice moved") and routes them as parent-approvable cards, but there
+    was no object for *"can you get me at 3 instead of 4"* — the single most
+    common kid-to-parent logistics message in existence. It lived only as free
+    text.
+
+    An adult who wanted out of a drive could only TAKE it from their partner:
+    the override lands and the other parent gets a bare "Schedule Updated"
+    push with no indication it was an ask. That is socially terrible, and a
+    large part of why the non-driving parent feels informed-at rather than
+    invited.
+
+    One object for both, because the state machine, the surfaces and the
+    notification rails are identical — and because a teenager asking for a
+    ride and a mother asking for Thursday evening should ride the same rails.
+
+    **A request is always answered.** Silence is the failure mode this exists
+    to fix, so an untouched request expires loudly rather than fading.
+    """
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    from_member: str
+    # None = the household (in practice: the parents). "Somebody please take
+    # this" is a real ask and must not require picking a victim.
+    to_member: Optional[str] = None
+    kind: str = 'other'   # ride_change | pickup_early | swap_drive | take_task | cover | permission | other
+    # What it is ABOUT: an event id, a task id, a date. Accepting a request
+    # that names one performs the change — the request IS the mechanism, not
+    # a note about one.
+    subject_ref: Optional[str] = None
+    subject_label: Optional[str] = ""
+    body: str = ""                      # their own words, never generated
+    status: str = 'open'                # open | accepted | declined | expired | cancelled
+    reason: Optional[str] = ""          # why it was declined — blameless, and better than silence
+    decided_by: Optional[str] = None
+    decided_at: Optional[float] = None
+    expires_at: Optional[float] = None
+    created_at: float = Field(default_factory=time.time)
+
 class HouseholdTask(BaseModel):
     """Work with a deadline and no destination (load arc A2 — the keystone).
 

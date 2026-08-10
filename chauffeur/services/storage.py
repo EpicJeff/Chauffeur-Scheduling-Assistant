@@ -430,6 +430,7 @@ with db_lock:
     assist_contacts_table = db.table('assist_contacts')
     assist_assignments_table = db.table('assist_assignments')
     household_tasks_table = db.table('household_tasks')
+    requests_table = db.table('requests')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -1745,6 +1746,54 @@ def set_assist_assignment(event_id: str, contact_id: str, note: str = "") -> dic
 def clear_assist_assignment(event_id: str) -> bool:
     with db_lock:
         return bool(assist_assignments_table.remove(Query().event_id == event_id))
+
+# --- Requests (load arc A3) ---
+# An ask with a state. A request is ALWAYS answered: silence is the failure
+# mode this exists to fix.
+
+def get_requests(status: str = None, to_member: str = None,
+                 from_member: str = None) -> List[dict]:
+    with db_lock:
+        rows = [dict(r) for r in requests_table.all()]
+    if status:
+        rows = [r for r in rows if r.get('status') == status]
+    if to_member:
+        # An unaddressed request is FOR the household, so it belongs in every
+        # adult's list — "somebody please take this" must not sit in nobody's.
+        rows = [r for r in rows
+                if r.get('to_member') == to_member or not r.get('to_member')]
+    if from_member:
+        rows = [r for r in rows if r.get('from_member') == from_member]
+    rows.sort(key=lambda r: r.get('created_at') or 0, reverse=True)
+    return rows
+
+def get_request(request_id: str) -> Optional[dict]:
+    with db_lock:
+        res = requests_table.search(Query().id == request_id)
+        return dict(res[0]) if res else None
+
+def add_request(data: dict) -> str:
+    with db_lock:
+        requests_table.insert(data)
+        return data['id']
+
+def update_request(request_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(requests_table.update(data, Query().id == request_id))
+
+def expire_stale_requests(now_ts: float = None) -> List[dict]:
+    """Anything past its expiry becomes `expired` — LOUDLY, not silently.
+    Callers announce it: an ask that just fades away is the exact failure this
+    object exists to prevent."""
+    import time as _time
+    now_ts = now_ts or _time.time()
+    expired = []
+    for r in get_requests(status='open'):
+        if r.get('expires_at') and r['expires_at'] <= now_ts:
+            update_request(r['id'], {'status': 'expired'})
+            r['status'] = 'expired'
+            expired.append(r)
+    return expired
 
 # --- Household tasks (load arc A2) ---
 # Work with a deadline and no destination. Task = do something, errand = go

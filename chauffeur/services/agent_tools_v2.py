@@ -645,6 +645,91 @@ def send_direct_message(recipient_name: str, message_text: str,
             "message": f"Sent to {recipient.get('name')} from {sender.get('name')}: “{text}”"}
 
 
+def make_request(body: str, to_member: str = None, kind: str = None,
+                 about: str = None, acting_member: dict = None,
+                 sender_driver_id: str = None) -> Dict[str, Any]:
+    """Raise an ask. This is how a kid says "can you get me at 3 instead of 4"
+    and how an adult says "can you take Thursday" — the same rails, because
+    the state machine is identical."""
+    from services import requests as _req, storage
+    asker, err = _resolve_actor(sender_driver_id, None)
+    if not asker:
+        asker = acting_member
+    if not asker:
+        return {"status": "error",
+                "message": "I need to know who's asking — tell me your name."}
+    text = (body or '').strip()
+    if not text:
+        return {"status": "error", "message": "What do you want to ask for?"}
+    target = None
+    if to_member:
+        target = _find_member_fuzzy(to_member)
+        if not target:
+            return {"status": "error",
+                    "message": f"I couldn't find '{to_member}'. Family members: {_member_names()}."}
+    k = (kind or 'other').strip().lower()
+    if k not in _req.KINDS:
+        k = 'other'
+    # A named subject makes accepting DO the thing rather than just agree to
+    # it. Tasks resolve by title; a drive resolves by event title today.
+    subject_ref, subject_label = None, (about or '').strip()
+    if subject_label:
+        task, _rows = _match_task(subject_label)
+        if task:
+            subject_ref, subject_label, k = task['id'], task['title'], 'take_task'
+    _req.create(asker['id'], text, kind=k,
+                to_member_id=(target or {}).get('id'),
+                subject_ref=subject_ref, subject_label=subject_label)
+    who = target.get('name') if target else "everyone who could say yes"
+    return {"status": "success",
+            "message": f"Asked {who}: “{text}”. I'll tell you the moment there's an answer."}
+
+
+def get_requests(acting_member: dict = None, sender_driver_id: str = None) -> Dict[str, Any]:
+    from services import requests as _req
+    who, _err = _resolve_actor(sender_driver_id, None)
+    who = who or acting_member
+    if not who:
+        return {"status": "error", "message": "Who am I checking for?"}
+    data = _req.summary_for(who['id'])
+    lines = []
+    for r in data['waiting_on_me']:
+        lines.append(f"{r['from']} is asking: “{r['body']}”")
+    for r in data['mine']:
+        lines.append(f"You asked {r['to']}: “{r['body']}” — no answer yet")
+    if not lines:
+        return {"status": "success", "message": "Nothing waiting either way."}
+    return {"status": "success", "message": "\n".join(lines)}
+
+
+def answer_request(accept: bool, which: str = None, reason: str = None,
+                   acting_member: dict = None, sender_driver_id: str = None) -> Dict[str, Any]:
+    from services import requests as _req
+    who, _err = _resolve_actor(sender_driver_id, None)
+    who = who or acting_member
+    if not who:
+        return {"status": "error", "message": "Who's answering?"}
+    open_for_me = [r for r in _req.summary_for(who['id'])['waiting_on_me']]
+    if not open_for_me:
+        return {"status": "success", "message": "Nothing is waiting on you."}
+    target = None
+    if which:
+        q = which.strip().lower()
+        hits = [r for r in open_for_me
+                if q in (r['body'] or '').lower() or q in (r['from'] or '').lower()]
+        if len(hits) == 1:
+            target = hits[0]
+    elif len(open_for_me) == 1:
+        target = open_for_me[0]
+    if not target:
+        asks = "; ".join(f"{r['from']}: “{r['body']}”" for r in open_for_me[:5])
+        return {"status": "error",
+                "message": f"Which one? {asks}"}
+    res = _req.decide(target['id'], bool(accept), who['id'], reason or "")
+    return {"status": res.get('status', 'success'), "message": res.get('message'),
+            "schedule_dirty": res.get('schedule_dirty')}
+
+
 def _task_due_date(when: str):
     """A spoken deadline into YYYY-MM-DD, or None. None is a real answer —
     'sort the garage' is work with no date, and inventing one would put a
@@ -2747,6 +2832,38 @@ def get_available_tools() -> List[Dict]:
                     "from_member": {"type": "string", "description": "Who the message is from. Omit in driver chat."}
                 },
                 "required": ["recipient_name", "message_text"]
+            }
+        },
+        {
+            "name": "make_request",
+            "description": "Raises an ASK that somebody has to answer yes or no — 'can you get me at 3 instead of 4?', 'can somebody take the dentist call?', 'can you cover Thursday evening?'. Use this whenever the speaker wants something from another person rather than stating a fact. The asker is told the moment there's an answer, and an unanswered ask says so rather than fading away.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "body": {"type": "string", "description": "The ask, in the speaker's own words."},
+                    "to_member": {"type": "string", "description": "Who they're asking. Omit to ask whichever adult can say yes."},
+                    "kind": {"type": "string", "description": "ride_change | pickup_early | swap_drive | take_task | cover | permission | other"},
+                    "about": {"type": "string", "description": "What it's about, if it names an existing task or drive — accepting then performs the change."}
+                },
+                "required": ["body"]
+            }
+        },
+        {
+            "name": "get_requests",
+            "description": "Reads what's waiting for an answer — both directions ('is anyone waiting on me?', 'did anyone answer me?').",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "answer_request",
+            "description": "Says yes or no to somebody's ask ('yes, tell her I'll get her at 3', 'no, I'm in a meeting until 5'). Declining with a reason is a real answer and better than silence — always pass the reason when one was given.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "accept": {"type": "boolean", "description": "True for yes, false for no."},
+                    "which": {"type": "string", "description": "Which ask, if more than one is waiting (match on words or who asked)."},
+                    "reason": {"type": "string", "description": "Why not — pass it whenever they said."}
+                },
+                "required": ["accept"]
             }
         },
         {

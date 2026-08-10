@@ -245,6 +245,22 @@ async def push_notification_loop():
             except Exception as we:
                 print(f"Watcher sweep error: {we}")
 
+            # --- Unanswered requests (load arc A3) ---
+            # A request is ALWAYS answered. One that nobody touched expires
+            # LOUDLY — to the asker, who otherwise learns nothing, and to
+            # whoever owed the answer. An ask that quietly evaporates is the
+            # exact failure this object exists to prevent, so this sweep is
+            # deliberately NOT quiet-hours gated on its own account: it runs
+            # on its own 30-minute cadence and the DM rails carry the timing.
+            try:
+                last_rq = float(storage.get_app_state("requests_swept") or 0)
+                if time.time() - last_rq >= 1800:
+                    storage.set_app_state("requests_swept", time.time())
+                    from services import requests as _reqsvc
+                    await asyncio.to_thread(_reqsvc.sweep)
+            except Exception as re_:
+                print(f"Request sweep error: {re_}")
+
             # --- Car readiness sweep (C2, docs/car_telemetry_design.md) ---
             # Charge/fuel-before-drives pushes + away-from-home warnings.
             # Inert when no car has HA fields; quiet-hours gated like the kid
@@ -3341,6 +3357,61 @@ def _public_member(m: dict) -> dict:
     out = {k: v for k, v in m.items() if k not in ('pin_hash', 'pin_salt', 'pin')}
     out['has_pin'] = bool(m.get('pin_hash'))
     return out
+
+# --- Requests: the ask as a first-class object (load arc A3) ---
+# A kid could report but not ASK; an adult could only TAKE a drive from their
+# partner. One object for both, always answered.
+
+class RequestCreate(BaseModel):
+    from_member: str
+    body: str
+    kind: str = 'other'
+    to_member: Optional[str] = None
+    subject_ref: Optional[str] = None
+    subject_label: Optional[str] = ""
+
+class RequestDecide(BaseModel):
+    accept: bool
+    member_id: str
+    reason: Optional[str] = ""
+
+@app.get("/api/requests")
+def list_requests(member_id: str):
+    from services import requests as _req
+    if not storage.get_member(member_id):
+        raise HTTPException(status_code=404, detail="Member not found")
+    return _req.summary_for(member_id)
+
+@app.post("/api/requests")
+def create_request(req: RequestCreate, background_tasks: BackgroundTasks):
+    from services import requests as _req
+    if not storage.get_member(req.from_member):
+        raise HTTPException(status_code=404, detail="Member not found")
+    if not (req.body or '').strip():
+        raise HTTPException(status_code=400, detail="An ask needs words")
+    # Off-request: the fan-out touches push endpoints and HA.
+    row = _req.create(req.from_member, req.body, kind=req.kind,
+                      to_member_id=req.to_member, subject_ref=req.subject_ref,
+                      subject_label=req.subject_label or "")
+    return {"status": "success", "id": row['id']}
+
+@app.post("/api/requests/{request_id}/decide")
+def decide_request(request_id: str, req: RequestDecide, background_tasks: BackgroundTasks):
+    from services import requests as _req
+    res = _req.decide(request_id, bool(req.accept), req.member_id, req.reason or "")
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    if res.get('schedule_dirty'):
+        background_tasks.add_task(trigger_background_refresh, None, None, True)
+    return res
+
+@app.post("/api/requests/{request_id}/cancel")
+def cancel_request(request_id: str, body: dict = Body(...)):
+    from services import requests as _req
+    res = _req.cancel(request_id, body.get('member_id'))
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    return res
 
 # --- Household tasks (load arc A2 — the keystone) ---
 # Work with a deadline and no destination. Task = do something, errand = go

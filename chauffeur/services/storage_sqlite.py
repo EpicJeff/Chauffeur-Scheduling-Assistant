@@ -70,6 +70,8 @@ INDEX_SPEC = {
     # Household tasks (load arc A2). Read by owner ("what's on my plate") and
     # by status on every sweep.
     "household_tasks": [["id"], ["assigned_to"], ["status"]],
+    # Requests (load arc A3): read by who owes an answer and by who is waiting.
+    "requests": [["id"], ["to_member"], ["from_member"], ["status"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

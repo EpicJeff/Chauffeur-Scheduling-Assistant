@@ -198,7 +198,16 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                     "SHOPPING LIST: if they mention the family is out of something ('we're out of "
                     "cereal', 'we need more shampoo'), add it with add_shopping_items right away and "
                     "tell them it's on the list. No approval needed and no parent required — noticing "
-                    "is genuinely useful and it costs nothing.\n")
+                    "is genuinely useful and it costs nothing.\n"
+                    "ASKING FOR SOMETHING: reporting a fact and ASKING for a change are different, "
+                    "and they used to come out the same. When they WANT something from a parent — "
+                    "'can you get me at 3 instead of 4', 'can I stay late', 'can someone bring my "
+                    "cleats' — call make_request. Their words go to the parents as an ask that has "
+                    "to be answered yes or no, and you tell them the moment there is an answer. Say "
+                    "plainly that you have asked and that nothing is decided yet; never promise the "
+                    "answer, and never treat a no as a failure — a parent saying no with a reason is "
+                    "a real answer and better than silence. Use propose_family_action for FACTS they "
+                    "are reporting; make_request for things they are ASKING for.\n")
         else:
             system_prompt += ("\nFAMILY MESSAGING & CHORES: you can send family/direct messages and claim chores, "
                               "but you do NOT know who is speaking in this context. If the speaker has identified "
@@ -314,7 +323,10 @@ sending or claiming, and never pass from_member/member_name for them.
                              # Outside hands (load arc A1): the write confirms
                              # itself out loud, the read IS the whole answer.
                              "cover_with_assist", "get_assist_coverage",
-                             # Household tasks (load arc A2), same reasoning.
+                             # Requests (load arc A3) and household tasks (A2):
+                             # same reasoning — the write confirms itself, the
+                             # read IS the complete spoken answer.
+                             "make_request", "get_requests", "answer_request",
                              "add_household_task", "get_household_tasks",
                              "complete_household_task", "claim_household_task",
                              "get_household_load",
@@ -522,6 +534,30 @@ sending or claiming, and never pass from_member/member_name for them.
                                               args.get("message_text", ""),
                                               sender_driver_id=driver_id if driver else None,
                                               from_member=args.get("from_member"))
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name in ("make_request", "get_requests", "answer_request"):
+                    from services import agent_tools_v2 as _atv2
+                    actor = acting_member
+                    if actor is None and driver:
+                        from services import storage as _st
+                        actor = _st.get_member_by_driver_id(driver_id)
+                    if func_name == "make_request":
+                        res = _atv2.make_request(
+                            args.get("body", "") or "", to_member=args.get("to_member"),
+                            kind=args.get("kind"), about=args.get("about"),
+                            acting_member=actor,
+                            sender_driver_id=driver_id if driver else None)
+                    elif func_name == "get_requests":
+                        res = _atv2.get_requests(
+                            acting_member=actor,
+                            sender_driver_id=driver_id if driver else None)
+                    else:
+                        res = _atv2.answer_request(
+                            bool(args.get("accept")), which=args.get("which"),
+                            reason=args.get("reason"), acting_member=actor,
+                            sender_driver_id=driver_id if driver else None)
+                        if res.get("schedule_dirty"):
+                            schedule_dirty = True
                     if res.get("message"): agent_message = res["message"]
                 elif func_name in ("add_household_task", "get_household_tasks",
                                    "complete_household_task", "claim_household_task",
