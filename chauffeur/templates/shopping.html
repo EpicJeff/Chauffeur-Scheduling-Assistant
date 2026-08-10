@@ -2011,13 +2011,18 @@
                     const hit = this.ruleWouldMatch();
                     const { minus } = this.parseTagField(this.ruleDraft.tags);
                     const cut = this.minusMatches(minus);
+                    // Short names, because the SAVED rule's "covers" line uses
+                    // them (the server answers short_name || name) — the same
+                    // six dishes under two spellings reads as two different
+                    // lists, and was reported as exactly that.
+                    const label = x => x.short_name || x.name;
                     const tail = cut.length
-                        ? '  ·  minus ' + cut.map(x => x.name).join(', ')
+                        ? '  ·  minus ' + cut.map(label).join(', ')
                         : '';
                     if (!hit.length) {
                         return 'Right now this matches no dish — it would do nothing.' + tail;
                     }
-                    const names = hit.slice(0, 8).map(x => x.name).join(', ');
+                    const names = hit.slice(0, 8).map(label).join(', ');
                     return 'Covers ' + hit.length + ': ' + names
                         + (hit.length > 8 ? '…' : '') + tail;
                 },

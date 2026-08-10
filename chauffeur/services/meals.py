@@ -899,12 +899,19 @@ def _leftover_coverage(as_of: float, served: dict, headcount: int,
 
 
 def rule_context(as_of: float, served: dict, settings: dict = None,
-                 runs: dict = None) -> dict:
+                 runs: dict = None, planned: dict = None) -> dict:
     """Everything the rules decide ONCE per composed day.
 
     Batch cycles in particular must be resolved per day rather than per
     candidate: the question "which pot is open" has one answer, and asking it
     per dish would let two members of the same group both look eligible.
+
+    `planned` is {dish_id -> stamps of PINNED nights across the horizon} from
+    compose_week. A pinned night is a decision the family already made, and it
+    binds in BOTH directions: with brisket locked for Tuesday, Monday proposing
+    brisket makes the locked night the repeat — and the composer walks the days
+    in order, so without this the earlier day literally cannot know. The
+    `served` overlay only ever carries the days already walked past.
     """
     rules = storage.get_meal_rules()
     if not rules:
@@ -928,8 +935,16 @@ def rule_context(as_of: float, served: dict, settings: dict = None,
         ids = {d['id'] for d in members}
 
         if rule.get('kind') == 'frequency_cap':
-            used = _served_days(ids, as_of, int(rule.get('window_days') or 7),
-                                served, all_dishes)
+            window = max(1, int(rule.get('window_days') or 7))
+            used = _served_days(ids, as_of, window, served, all_dishes)
+            # Pinned nights AHEAD of this one spend the budget too. Counted as
+            # distinct days, strictly inside the forward window — a night
+            # exactly window_days out starts a fresh budget. (Two sparse
+            # servings straddling tonight can over-count by sharing no single
+            # window; that errs toward variety, which is what the cap is for.)
+            used += len({int(s // 86400) for did in ids
+                         for s in (planned or {}).get(did, ())
+                         if 0 < s - as_of < window * 86400.0})
             if used >= max(1, int(rule.get('max_servings') or 1)):
                 blocked |= ids
 
@@ -946,6 +961,13 @@ def rule_context(as_of: float, served: dict, settings: dict = None,
             for d in members:
                 last = max(served.get(d['id'], 0), d.get('last_served_at') or 0)
                 if last and (as_of - last) < window:
+                    blocked.add(d['id'])
+                # The cooldown radiates from a pinned night both ways — see
+                # `planned` in the docstring. `s != as_of` spares the pinned
+                # day itself; its own dishes are returned as-is, never
+                # re-proposed against the rules.
+                elif any(s != as_of and abs(s - as_of) < window
+                         for s in (planned or {}).get(d['id'], ())):
                     blocked.add(d['id'])
 
         elif rule.get('kind') == 'batch_cycle':
@@ -1028,7 +1050,7 @@ def _rank(dish: dict, leftover_ids: set, affinity: set, dislike: set,
 
 def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
                   served: dict = None, runs: dict = None,
-                  rejected: list = None) -> list:
+                  rejected: list = None, planned: dict = None) -> list:
     """Propose one day's dishes. Nothing is stored — this is the suggestion.
 
     Coherence is handled with a SOFT tag affinity to the entree rather than a
@@ -1058,7 +1080,7 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
         leftover_ids.update(l.get('dish_ids') or [])
     as_of = _as_of_ts(date_str)
     # How this household eats, resolved once for the day (M11).
-    ctx = rule_context(as_of, served or {}, settings, runs or {})
+    ctx = rule_context(as_of, served or {}, settings, runs or {}, planned)
     # What an occasion's window opens up (O1) — eligibility, not selection.
     from services import occasions as _occ
     open_tags = _occ.dish_tags_for(date_str)
@@ -1698,9 +1720,21 @@ def compose_week(start_date: str = None, days: int = 7,
     # `runs` counts how many days a batch has been open, which is what a
     # batch_cycle needs; `served` only ever holds the most recent stamp.
     served, runs, out = {}, {}, []
-    for date_str in week_dates(start_date, days):
+    dates = week_dates(start_date, days)
+    plates = {ds: storage.get_plate(ds) for ds in dates}
+    # Every pinned night in the span, gathered BEFORE the walk. The walk goes
+    # in order, so an overlay fed day-by-day can never tell Monday what the
+    # family locked in for Tuesday — and a no-repeats rule that only looks
+    # backward proposes the very dish a locked night makes a repeat of.
+    planned = {}
+    for ds, saved in plates.items():
+        if saved and saved.get('edited'):
+            for it in saved.get('items') or []:
+                if it.get('dish_id'):
+                    planned.setdefault(it['dish_id'], set()).add(_as_of_ts(ds))
+    for date_str in dates:
         plan = eating_plan(date_str, 'dinner', sched=sched, settings=settings)
-        saved = storage.get_plate(date_str)
+        saved = plates[date_str]
         pinned = bool(saved and saved.get('edited'))
         locked = bool(saved and saved.get('locked'))
         note = (saved or {}).get('note')
@@ -1712,7 +1746,8 @@ def compose_week(start_date: str = None, days: int = 7,
         else:
             dishes = compose_plate(date_str, plan, settings, served=served,
                                    runs=runs,
-                                   rejected=(saved or {}).get('rejected'))
+                                   rejected=(saved or {}).get('rejected'),
+                                   planned=planned)
         stamp = _as_of_ts(date_str)
         # Deliberately NOT zeroed on a night the dish is skipped: one takeout
         # evening does not empty the pot, and zeroing there stretched a 3-day

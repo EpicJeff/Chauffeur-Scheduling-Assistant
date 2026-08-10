@@ -2173,6 +2173,52 @@ def _served_days(week, names):
             if {x['name'] for x in d['dishes']} & set(names)]
 
 
+def scenario_a_pinned_night_binds_the_days_before_it():
+    """Reported from the panel: "no repeats on protein" on file, brisket
+    locked for Tuesday — and Repropose put brisket on Monday. The composer
+    walks the days in order, so the served overlay literally cannot warn
+    Monday about Tuesday; the pinned nights are now gathered before the walk
+    and their cooldown radiates BOTH directions."""
+    # Phase 1: repeat_spacing. Brisket is the only entree, so an unguarded
+    # Monday MUST take it — the assertion cannot pass by ranking luck.
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    brisket = _dish('city bbq brisket', type='entree', tags=['protein'])
+    _dish('rice', type='side', side_type='starch')
+    _dish('salad', type='side', side_type='salad')
+    meals.add_meal_rule('protein no repeats', 'repeat_spacing',
+                        tags=['protein'], window_days=7)
+    # The family's actual gesture: lock Tuesday's brisket. (add_to_plate
+    # would answer `unchanged` here — the only entree is already showing.)
+    meals.set_plate_lock('2026-09-08', True, dish_ids=[brisket['id']])
+    week = meals.compose_week('2026-09-07', 7)               # Mon..Sun
+    check(week[1]['pinned'] and week[1]['locked']
+          and any(d['id'] == brisket['id'] for d in week[1]['dishes']),
+          "Tuesday holds the brisket the family locked")
+    check(_served_days(week, ('city bbq brisket',)) == [1],
+          f"the locked night is the ONLY brisket night — proposing it Monday "
+          f"makes the locked night the repeat, got days "
+          f"{_served_days(week, ('city bbq brisket',))}")
+
+    # Phase 2: frequency_cap. A DIFFERENT meat on Monday spends the same
+    # budget the pinned Tuesday already spent.
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    brisket = _dish('city bbq brisket', type='entree', tags=['meat'])
+    _dish('pork chops', type='entree', tags=['meat'])
+    _dish('veggie chili', type='entree', tags=['vegetarian'])
+    _dish('rice', type='side', side_type='starch')
+    _dish('salad', type='side', side_type='salad')
+    meals.add_meal_rule('meat once a week', 'frequency_cap',
+                        tags=['meat'], max_servings=1, window_days=7)
+    meals.set_plate_lock('2026-09-08', True, dish_ids=[brisket['id']])
+    week = meals.compose_week('2026-09-07', 7)
+    check(_served_days(week, ('city bbq brisket', 'pork chops')) == [1],
+          f"the pinned brisket spends the week's meat budget for the days "
+          f"before it too, got days "
+          f"{_served_days(week, ('city bbq brisket', 'pork chops'))}")
+
+
 def scenario_a_frequency_cap_holds_across_a_composed_fortnight():
     reset_db(); _seed_people()
     _settings(sides_per_meal=2, include_dessert=False)
@@ -2350,6 +2396,10 @@ def scenario_the_rule_preview_reads_categories_like_the_server():
     check('dishRuleWords' in minus,
           "-word must subtract by category name too — asymmetry means "
           "'protein' matches the shelf but '-protein' cannot spare it")
+    check('const label = x => x.short_name || x.name' in shopping,
+          "the preview must name dishes the way the saved rule's covers line "
+          "does (short_name first) — the same six dishes under two spellings "
+          "reads as two different lists")
 
 
 def scenario_a_rule_matching_nothing_says_so():
