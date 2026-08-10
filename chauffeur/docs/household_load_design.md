@@ -68,26 +68,41 @@ And all three share one property that the household drivers do not have:
 
 > **They cover the drive. They do not carry the load.**
 
-So `Driver` gains a tier — `household | assist`. **The tier does exactly one
-job: load accounting.**
+**The tier belongs on the MEMBER, not on `Driver`** — corrected 2026-08-10,
+and the correction matters more than it looks. *"Assisting is not a
+driving-specific thing"*: a teenager can cook a night, a nanny can supervise
+homework and fold laundry, a grandparent might cook Sunday dinner and never
+drive at all.
 
-- **Excluded from the load ledger.** If a teenager drives six times a week,
-  the ledger must not report the household as evenly split. The same
-  protection applies to a hired driver, which is a bug waiting to happen
-  today: the weekly digest prints per-driver drive counts sorted descending,
-  and a nanny's ten runs currently make the week look shared.
+Putting `household | assist` on the driver record would have re-committed the
+exact sin this whole brief is about — attaching a general idea to driving
+because driving is what the app happens to model. And it would have leaked
+immediately: a teenager who cooks three nights a week would have made the
+parents' split look even, because only their *drives* carried the tier.
+
+So it is a member-level property, and it reads the same across every kind of
+contribution — a drive, a cooked meal, a completed task, a claimed chore:
+
+> **This person helps. Their help is not the household's load.**
+
+**The tier does exactly one job: load accounting.**
+
+- **Excluded from the load ledger** — every kind of contribution, not just
+  drives. If a teenager drives six times and cooks twice, the ledger must not
+  report the household as evenly split. The same protection applies to a hired
+  driver, which is a bug waiting to happen today: the weekly digest prints
+  per-driver drive counts sorted descending, and a nanny's ten runs currently
+  make the week look shared.
 - **Excluded from the solver's load-balancing term**, exactly as ghost drivers
   already are (`solver/matcher.py:1056`).
 - **Coverage still counts.** No `needs a driver` flag, no ghost route, no
-  watcher alarm. A drive an assist driver holds is handled.
+  watcher alarm. Work an assist member holds is handled.
 
-An earlier draft of this section also hung *"not auto-assigned by default"* and
-*"hard rather than soft constraints"* on the tier. **That was wrong** (caught
-2026-08-10): those are not properties of being a teenager or a helper, they
-are ordinary things any driver might want, and they belong on the driver
-profile where everyone can reach them. See the next section. What remains
-teen-specific is only the **defaults** and **who holds the pen** — which is
-authority, not capability.
+An earlier draft also hung *"not auto-assigned by default"* and *"hard rather
+than soft constraints"* on the tier. **That was wrong** for the same reason:
+they are not properties of being a teenager or a helper, they are ordinary
+things anyone might want. See the next section. What remains teen-specific is
+only the **defaults** and **who holds the pen** — authority, not capability.
 
 The teen keeps their `child` role and their whole kid lens — becoming useful
 is not a reason to be deleted from the family. What the Copilot stage unlocks
@@ -99,72 +114,117 @@ There is also a nice social result: driving your sister to practice lands as
 being **trusted**, not as being enrolled in the chore economy — which is what
 should replace points at that stage anyway.
 
-## What a driver will and won't do
+## Three layers of "no"
 
 Prompted by the obvious question (2026-08-10): *why should a radius, a
 passenger cap and a time ceiling be teen constraints — why can't adults
 customise their availability the same way?* They can, they should, and framing
-them as teen features was the error.
+them as teen features was the error. Chasing that produced three genuinely
+different kinds of "no", which had been collapsed into one thin driver record.
 
-The `Driver` record is thin today. One `preferred_start`/`preferred_end` pair
-covering Monday and Saturday alike, `max_passengers` (present, never used),
-and everything else about an adult's availability living as opaque calendar
-busy-time. So a driver carries a **list of availability constraints**, each
-with a kind, a scope, and — the part that actually matters — a **strength**.
+### 1. Commitments — where you already are
+
+School hours, a job, a standing obligation. These are **facts, not
+preferences**, they block *everything* rather than driving specifically, and
+they are how a teenager with school and a shift, or a parent in the office
+Tuesdays, is actually described.
+
+Half of this already exists: `FamilyMember.school_hours_start/end` is a
+member-level field driving the dismissal push and the bus lines. It has never
+been fed to the solver, because until a Copilot drives, no child was a driver.
+The moment one is, their school hours obviously have to block driving.
+
+**Keep them typed rather than folding them into generic windows**, for three
+reasons that all bite:
+
+- **They suspend.** A5 already computes school closures and half days. A
+  closure has to vacate school hours, and it cannot reach a generic
+  unavailability window. The same is true of a job at a holiday.
+- **Other features read them.** School hours are not only a blocker — the
+  dismissal push, the bus layer, and the aftercare window are all built on
+  them.
+- **They are somebody else's schedule.** You do not get to prefer your way out
+  of the school day.
+
+### 2. Availability — when you'll take work
+
+**Universal, not assist-specific and not driving-specific.** A parent saying
+*"I'm free to be given things Tuesday evenings"* and a teenager saying the same
+are one object. Several windows, each with days, a time range and a strength.
+
+Effective availability is the obvious composition, stated explicitly because it
+is easy to get backwards: **unavailable = outside every window ∪ inside any
+commitment.** You are available when you are inside a window *and* not
+committed.
 
 **Strength is the real axis, not age.** Today preferred hours are a single
-−2,000,000 soft penalty, which is correct for *"I'd rather not drive after
-nine, but I will if I'm the one at the event"* and wrong for *"I legally may
-not."* Both sentences exist for adults too:
+−2,000,000 soft penalty, which is right for *"I'd rather not drive after nine,
+but I will if I'm the one at the event"* and wrong for *"I legally may not."*
+Both sentences exist for adults:
 
-| | Preference (soft) | Limit (hard) |
+| | Preference (soft, tradeable) | Limit (hard, never crossed) |
 |---|---|---|
 | Time | I'd rather not do the late run | I can't drive after my eye appointment |
-| Radius | Keep me near home if you can | I'm not going across the county on a school night |
-| Passengers | — | Two car seats are installed; four kids don't fit |
+| Radius | Keep me near home if you can | Not across the county on a school night |
+| Passengers | — | Two car seats are in; four kids don't fit |
 
-Kinds worth having, all available to every driver:
+**Opt-in is a single switch, and the windows are its scope.** An earlier draft
+asked whether auto-assign wanted to be per-window; that question was
+redundant. *"Yes to the 4pm practice run, no to anything else"* **is** a window
+— 15:30 to 17:30 on the days practice happens. Opt-in says *the solver may
+volunteer me*; the windows say *when*. Nothing further is needed. The other
+dimension people reach for — *"yes to my kids' runs, no to grocery errands"* —
+is not a time question and already has homes: routing `Rule`s for events,
+`Chore.eligible_member_ids` for the pot, and direct assignment for tasks.
 
-- **Time windows — several, per weekday.** One pair for the whole week is the
-  single biggest hole in the current model. This is also where shift work and
-  hybrid work finally become expressible.
-- **Radius from home**, with a strength.
+### 3. Driving constraints — what a drive may look like
+
+The genuinely drive-specific residue, on the driver profile:
+
+- **Radius, measured in drive minutes** (settled 2026-08-10). The travel cache
+  already speaks in minutes, and forty minutes of traffic is the thing a person
+  is actually refusing — not a distance on a map.
 - **Passenger cap** — physical, so effectively always a limit.
-- **After dark**, anchored to sunset rather than a clock. This is how both a
-  nervous driver and most graduated-licence rules actually think, and the
-  darkness moves ninety minutes across a school year. We already read
-  `sun.sun` for the panel theme, so the input is in hand.
-- **Auto-assign: may the solver volunteer me, or only give me what I accept?**
-  Also not a teen question — a grandparent happy to drive when asked but not
-  to be scheduled, or a parent in a crunch week, wants exactly this.
+- **After dark, anchored to sunset rather than a clock.** How both a nervous
+  driver and most graduated-licence rules actually think, and darkness moves
+  about ninety minutes across a school year. `sun.sun` is already read for the
+  panel theme.
 
-**A per-weekday window plus a radius is most of a work model.** *"Tuesday I'm
-in the office forty-five minutes away, so no school-hours pickup; Wednesday
-I'm home, so anything."* That is far cheaper than modelling employment, and it
-answers a good part of the A5 finding that the app has no concept of work at
-all.
+**A per-weekday window plus a radius is most of a work model** — *"Tuesday I'm
+in the office forty-five minutes away; Wednesday I'm home"* — and with typed
+commitments alongside it, the A5 finding that the app has no concept of work
+closes without an employment entity.
 
 One correctness note for the rebuild, from the audit: the current check fires
 when the **event** starts before `preferred_start` or ends after
 `preferred_end` — the *drive* is not considered, so a 9:00 event with an 8:30
-leave-by does not violate a 9:00 window. Windows should be evaluated against
-the drive, travel and buffer included, which is the thing the person is
-actually agreeing to.
+leave-by does not violate a 9:00 window. Windows must be evaluated against the
+drive, travel and buffer included, which is what the person actually agreed to.
 
 ### So what is still teen-specific?
 
 Two things, and neither is a capability:
 
-1. **Defaults.** A Copilot's profile ships with limits already set — a time
-   ceiling, a passenger cap, a radius — because the licence says so. An
-   adult's ships empty.
-2. **Who may edit them.** A teenager must not raise their own ceiling; a
-   parent holds the pen. An adult sets their own.
+1. **Defaults.** A Copilot ships with limits already set — a time ceiling, a
+   passenger cap, a radius — because the licence says so. An adult's ship
+   empty.
+2. **Who may edit them.** A teenager must not raise their own ceiling; a parent
+   holds the pen. An adult sets their own.
 
-Which leaves five orthogonal things, each doing one job: the **entity** (member
-or contact), the **role** (what of the app you can reach), the **stage** (which
-kid surfaces you get), the **tier** (whether your drives count as household
-load), and the **profile** (what you will and won't do).
+## What each thing is for
+
+| | Job | Lives on |
+|---|---|---|
+| **entity** | member, or a contact we only record | — |
+| **role** | what of the app you can reach | member |
+| **stage** | which kid surfaces you get | member (children) |
+| **tier** | does your contribution count as household load | member |
+| **commitments** | where you already are | member |
+| **availability** | when you'll take work of any kind | member |
+| **driving constraints** | what a drive may look like | driver profile |
+
+Six of the seven are member-level, which is the point: only the last one is
+about driving, and it is the only one that should be.
 
 ---
 
@@ -487,11 +547,17 @@ work at all**: a job exists as opaque calendar busy-time plus one
 No work-from-home versus in-office distinction, no shifts, no commute — which
 for a hybrid worker is the entire question.
 
-This does **not** want an employment entity. Per-weekday availability windows
-plus a radius, from *What a driver will and won't do* above, express it
-directly: *"Tuesday I'm in the office forty-five minutes away; Wednesday I'm
-home."* Shift work falls out of the same model. Build that, and this finding
-closes without a new noun.
+This does **not** want an employment entity. Typed **commitments** plus
+per-weekday **availability windows** plus a radius — see *Three layers of "no"*
+above — express it directly: *"Tuesday I'm in the office forty-five minutes
+away; Wednesday I'm home."* Shift work falls out of the same model, and so does
+a teenager with school and a job.
+
+It also sharpens the gap detection two paragraphs up. "Every caregiving adult
+unavailable" currently has to mean *has a calendar event*, which is a guess.
+With commitments modelled it means something real, and the false positives
+(a calendar hold that is not actually work) and false negatives (a job that
+was never on a shared calendar) both shrink.
 
 ## 5. Two implementation-versus-doc gaps that belong to this arc
 
@@ -667,21 +733,26 @@ into it first.
   `CarpoolGroup` entity? Start derived; promote only if it fails.
 - Do half-days need a per-kid override, given siblings at different schools
   with different calendars?
-- Does `auto_assign` want to be per **window** rather than per driver? "Yes to
-  the 4pm practice run, no to anything else" and "yes to anything" are
-  different answers, and the second is rarer than it looks.
-- Does the radius constraint measure straight-line distance or drive minutes?
-  (Leaning: minutes — the travel cache already speaks in them, and forty
-  minutes of traffic is the thing a person is actually refusing.)
-- Where do a driver's constraints live on screen: the existing driver profile
-  in Config, or the member card alongside the quiet-hours block? They are the
-  same sentence from the person's side — *how and when to use me.*
+- Does an assist member's availability need to say **what kind** of help they
+  will take — drive, cook, task — or is per-kind eligibility already covered
+  where that work lives (`Chore.eligible_member_ids`, task assignment, having
+  a `Driver` record at all)? Leaning: already covered, and a capability matrix
+  would be the kind of noun this brief exists to avoid.
+- A job has holidays and leave the way school has closures. Model them, or
+  accept that a commitment you are not actually at is a soft cost the calendar
+  can override?
+- One screen or two: commitments, availability and quiet hours are the same
+  sentence from the person's side — *how and when to use me* — and the driving
+  constraints are the only part that belongs somewhere else.
 
-**Answered 2026-08-10.** A teen driver is an `assist`-tier `Driver` who keeps
-their `child` role and kid lens — covering is not carrying, and helpers get
-the same protection. Quiet hours live on the member's identity, because a
-preference owned by the self belongs somewhere different from a protection set
-by someone else. Radius, passenger and time ceilings, and auto-assign consent
-are **ordinary driver-profile settings available to everyone** — the tier does
-load accounting and nothing else; what is teen-specific is the defaults and
-who holds the pen.
+**Answered 2026-08-10.** A teen who drives keeps their `child` role and kid
+lens and carries the `assist` tier — which sits on the **member**, not the
+driver record, because assisting is not driving-specific (a teenager can cook a
+night; a nanny can supervise homework). The tier does load accounting and
+nothing else. Quiet hours live on the member's identity, because a preference
+owned by the self belongs somewhere different from a protection set by someone
+else. Availability is universal and lives on the member as several windows with
+days and a strength; opt-in is one switch whose scope IS those windows, so
+per-window consent needs no extra mechanism. School and job hours are typed
+**commitments**, not windows, because they suspend (closures, holidays) and
+other features already read them. Radius is measured in **drive minutes**.

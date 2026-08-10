@@ -406,36 +406,60 @@ access) · `Stage` (the developmental band a child is in) · the **load ledger**
 
 **Covering is not carrying** (decided 2026-08-10). A teen who drives is more
 like a carpool parent than a second adult — assigned a drive and it is covered;
-the difference is only that they hold the app. That generalises: `Driver` gains
-a tier, `household | assist`, and carpool drivers, `helper`s and Copilot teens
-are all `assist`. **The tier does exactly one job: load accounting** — excluded
-from the ledger and from the balancing term, while coverage still counts (no
-needs-a-driver flag, no ghost, no watcher alarm). Fixes a latent bug: the
-weekly digest's per-driver counts currently let a nanny's ten runs make the
-week look shared. The teen keeps `role='child'` and the whole kid lens; the
-Copilot stage unlocks the driver surfaces.
+the difference is only that they hold the app. Carpool drivers, `helper`s and
+Copilot teens all carry an `assist` tier. **The tier does exactly one job: load
+accounting** — excluded from the ledger and from the balancing term, while
+coverage still counts (no needs-a-driver flag, no ghost, no watcher alarm).
+Fixes a latent bug: the weekly digest's per-driver counts currently let a
+nanny's ten runs make the week look shared. Teen keeps `role='child'` and the
+whole kid lens; the Copilot stage unlocks the driver surfaces.
 
-**What a driver will and won't do** (corrected 2026-08-10 — an earlier draft
-wrongly hung these on the tier). Radius from home, passenger cap, time
-ceilings and auto-assign consent are **ordinary driver-profile settings
-available to every driver**, not teen constraints. The `Driver` record is thin
-today: one `preferred_start`/`preferred_end` pair for the whole week, soft-only.
-So: a list of availability constraints, each with a kind, a scope and a
-**strength** — preference (soft, tradeable) vs limit (hard, never crossed),
-which is the real axis rather than age. Kinds: several per-weekday time
-windows, radius, passenger cap, **after dark anchored to sunset** (how both a
-nervous driver and most graduated licences actually think; `sun.sun` is
-already read for the panel theme), and auto-assign. **Per-weekday windows plus
-a radius is most of a work model** — "Tuesday I'm in the office 45 minutes
-away, Wednesday I'm home" — which closes the no-work-model finding without an
-employment entity. Teen-specific reduces to the DEFAULTS and WHO HOLDS THE PEN.
-Correctness note for the rebuild: the current window check tests the EVENT, not
-the drive, so a 9:00 event with an 8:30 leave-by doesn't violate a 9:00 window.
+**The tier is MEMBER-level, not on `Driver`** (corrected 2026-08-10 — this one
+matters). *Assisting is not driving-specific*: a teenager can cook a night, a
+nanny can supervise homework, a grandparent might cook and never drive. Hanging
+it on the driver record would re-commit the exact sin this brief is about, and
+would leak immediately — a teen who cooks three nights would make the parents'
+split look even, because only their drives carried the tier.
 
-Five orthogonal things, each with one job: **entity** (member or contact) ·
-**role** (what of the app you reach) · **stage** (which kid surfaces) ·
-**tier** (do your drives count as household load) · **profile** (what you will
-and won't do).
+**Three layers of "no"** (corrected 2026-08-10 — an earlier draft collapsed
+these into a thin driver record and wrongly framed them as teen constraints):
+
+1. **Commitments — where you already are.** School, job, standing obligations.
+   Facts, not preferences; they block everything, not just driving. Half exists
+   already (`FamilyMember.school_hours_start/end`, never fed to the solver
+   because no child was a driver). Keep them TYPED rather than generic windows:
+   they suspend (A5 already computes closures and half days, and a closure
+   can't reach a generic window), other features already read them (dismissal
+   push, bus, aftercare), and they're somebody else's schedule.
+2. **Availability — when you'll take work.** Universal: not assist-specific,
+   not driving-specific. Several windows, each with days, times and a
+   **strength** — preference (soft, tradeable) vs limit (hard, never crossed),
+   which is the real axis rather than age. `unavailable = outside every window
+   ∪ inside any commitment`. **Opt-in is ONE switch and the windows are its
+   scope** — "yes to the 4pm practice run" IS a window, so per-window consent
+   needs no extra mechanism; the "what kind of work" dimension already lives in
+   routing `Rule`s, `Chore.eligible_member_ids`, and direct task assignment.
+3. **Driving constraints — what a drive may look like.** The only genuinely
+   drive-specific residue, on the driver profile: radius in **drive minutes**
+   (settled — the travel cache speaks in them and traffic is what people
+   refuse), passenger cap, and **after dark anchored to sunset** not a clock
+   (how both a nervous driver and most graduated licences think; `sun.sun` is
+   already read for the panel theme).
+
+**Commitments + per-weekday windows + radius is most of a work model** —
+"Tuesday I'm in the office 45 minutes away, Wednesday I'm home" — closing the
+no-work-model finding without an employment entity, and sharpening A5's
+childcare-gap detection, where "every adult unavailable" currently has to guess
+from calendar holds. Teen-specific reduces to the DEFAULTS and WHO HOLDS THE
+PEN. Rebuild fix: the current window check tests the EVENT, not the drive, so a
+9:00 event with an 8:30 leave-by doesn't violate a 9:00 window.
+
+Seven things, one job each — and **six of the seven are member-level**, which
+is the point: **entity** (member or contact) · **role** (what of the app you
+reach) · **stage** (which kid surfaces) · **tier** (does your contribution count
+as household load) · **commitments** (where you already are) · **availability**
+(when you'll take work of any kind) · **driving constraints** (what a drive may
+look like — the only one that should be about driving).
 
 - **A1 — the carpool book. SHIP FIRST.** A drive that is real and isn't ours,
   as a third assignment state so it leaves the optimisation entirely. Stored
