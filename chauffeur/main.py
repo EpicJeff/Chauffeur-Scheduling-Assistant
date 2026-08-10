@@ -5377,6 +5377,9 @@ def member_day(member_id: str, date: Optional[str] = None):
             'status': status_by_event.get(ev_id),
             'legs': legs or [],
             'prep': _prep.items_for_event(ev, _kits, _pax),
+            # Optional events (event config): the card softens its voice — an
+            # optional ride without a driver was skipped, not failed.
+            'optional': bool((ev.get('app_config') or {}).get('is_optional')),
         }
 
     groups = {}

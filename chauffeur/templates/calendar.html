@@ -478,6 +478,11 @@
                 </div>
                 <div class="flex flex-col bg-gray-900 border border-gray-600 rounded-lg p-3">
                     <div class="flex items-center mb-3">
+                        <input type="checkbox" id="cal-edit-is-optional" class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-purple-500 focus:ring-purple-500 cursor-pointer">
+                        <label for="cal-edit-is-optional" class="ml-3 text-gray-300 font-bold cursor-pointer">Optional — dropped first if the day conflicts</label>
+                    </div>
+                    <p class="text-[10px] text-gray-500 -mt-2 mb-3 ml-8">Still scheduled on a free day, but the first thing let go when drives collide. Skipping it is never an alarm.</p>
+                    <div class="flex items-center mb-3">
                         <input type="checkbox" id="cal-edit-is-trip" class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer">
                         <label for="cal-edit-is-trip" class="ml-3 text-gray-300 font-bold cursor-pointer">Mark as pure Background Trip (No destination)</label>
                     </div>
@@ -538,6 +543,7 @@
             document.getElementById('cal-edit-location').value = ev.location || '';
             document.getElementById('cal-edit-attendance-mode').value = appConfig.driver_attendance_mode || 'scheduler';
             document.getElementById('cal-edit-is-trip').checked = appConfig.is_trip || false;
+            document.getElementById('cal-edit-is-optional').checked = appConfig.is_optional || false;
 
             // Passengers (checked: on-calendar > saved config > hashtag heuristic)
             const passengers = data.passengers || [];
@@ -641,6 +647,7 @@
                     driver_ids: Array.from(document.querySelectorAll('#cal-edit-drivers .cal-drv-checkbox:checked')).map(cb => cb.value),
                     driver_attendance_mode: document.getElementById('cal-edit-attendance-mode').value,
                     is_trip: document.getElementById('cal-edit-is-trip').checked,
+                    is_optional: document.getElementById('cal-edit-is-optional').checked,
                     trip_id: document.getElementById('cal-edit-trip-id').value,
                     location_override: document.getElementById('cal-edit-location').value
                 };

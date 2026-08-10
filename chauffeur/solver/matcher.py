@@ -827,6 +827,13 @@ def solve_schedule(
     for e in assignable_events:
         # Calculate dynamic base weight for the event
         base_event_weight = int(1000000 * unassigned_penalty_mult)
+        # Optional events (event config `is_optional`, series or instance):
+        # still worth driving on a free day — 100k stays far above the
+        # routing-preference noise (bonuses are in the thousands) — but the
+        # FIRST thing dropped when a real conflict bites: losing 100k always
+        # beats losing another event's 1M.
+        if (getattr(e, 'app_config', None) or {}).get('is_optional'):
+            base_event_weight = int(100000 * unassigned_penalty_mult)
         for pr in priority_rules:
             if does_event_match_rule(e, pr, passengers):
                 base_event_weight += pr.weight_modifier

@@ -1333,6 +1333,12 @@
                     </div>
                     <div class="flex gap-2">${driverButtons(r.driver, r.title)}</div>
                 </div>`;
+            } else if (r.optional) {
+                // Skipped optional: the design working, not a coverage hole.
+                driverRow = `
+                <div class="mt-3 pt-3 border-t border-gray-800">
+                    <span class="text-xs font-black uppercase text-purple-300 bg-purple-500/10 border border-purple-500/40 px-2 py-1 rounded-full">Optional — not planned today</span>
+                </div>`;
             } else {
                 driverRow = `
                 <div class="mt-3 pt-3 border-t border-gray-800">
@@ -1345,7 +1351,7 @@
                     <span class="text-sm font-bold uppercase tracking-wider text-blue-400">${timeStr}</span>
                     ${statusChip}
                 </div>
-                <div class="text-gray-100 font-bold text-lg leading-tight flex items-center gap-2 flex-wrap">${typeBadge}${mfEscape(r.title)}</div>
+                <div class="text-gray-100 font-bold text-lg leading-tight flex items-center gap-2 flex-wrap">${typeBadge}${mfEscape(r.title)}${r.optional ? '<span class="text-[10px] font-black uppercase bg-purple-500/15 text-purple-300 border border-purple-500/40 px-1.5 py-0.5 rounded-full">Optional</span>' : ''}</div>
                 ${r.location ? `<div class="text-gray-400 text-sm mt-1 truncate">${mfEscape(r.location)}</div>` : ''}
                 ${(r.prep && r.prep.length) ? `<div class="flex flex-wrap items-center gap-1.5 mt-2">
                     <span class="text-xs font-black uppercase text-amber-300">🎒 Bring</span>

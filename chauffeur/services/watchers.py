@@ -65,8 +65,19 @@ def _unassigned_findings(now: datetime.datetime):
             continue
         if not (now <= start <= horizon):
             continue
+        title = ev.get('title') or 'Event'
+        # Optional events (event config `is_optional`): dropped-first is the
+        # DESIGN, not a coverage hole — one calm line, never the siren. The
+        # key differs from the unassigned one so flipping the flag re-says
+        # the day in the right voice.
+        if (ev.get('app_config') or {}).get('is_optional'):
+            out.append((f"optional_skip:{ev_id}:{start.date().isoformat()}",
+                        f"⏭️ {title} ({_fmt_when(start)}) is optional and didn't "
+                        f"fit around the other drives — skipped. Say so if they "
+                        f"should still go."))
+            continue
         key = f"unassigned:{ev_id}:{start.date().isoformat()}"
-        out.append((key, f"🚨 No driver yet: {ev.get('title') or 'Event'} — {_fmt_when(start)}"))
+        out.append((key, f"🚨 No driver yet: {title} — {_fmt_when(start)}"))
     return out
 
 

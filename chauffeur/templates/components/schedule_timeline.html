@@ -872,11 +872,19 @@
                         const endY = getTimeY(ev.end);
                         const height = Math.max(endY - startY, 20);
 
+                        const evOptional = !!((ev.app_config || {}).is_optional);
                         let badgeHtml = '';
                         let borderClass = 'border-gray-700 hover:border-gray-500';
                         if (unassigned && unassigned.includes(ev.id) && c_id !== 'unassigned') {
-                            borderClass = 'border-red-500 hover:border-red-400';
-                            badgeHtml = '<div class="absolute -top-2 -right-2 bg-red-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-lg uppercase tracking-wider z-10">No Driver</div>';
+                            if (evOptional) {
+                                // Dropped-first is the DESIGN for an optional
+                                // event — a calm note, never the red siren.
+                                borderClass = 'border-purple-500/60 hover:border-purple-400';
+                                badgeHtml = '<div class="absolute -top-2 -right-2 bg-purple-700 text-purple-100 text-[9px] font-bold px-1.5 py-0.5 rounded shadow-lg uppercase tracking-wider z-10">Skipped · optional</div>';
+                            } else {
+                                borderClass = 'border-red-500 hover:border-red-400';
+                                badgeHtml = '<div class="absolute -top-2 -right-2 bg-red-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-lg uppercase tracking-wider z-10">No Driver</div>';
+                            }
                         }
 
                         let isAssignedToThisColumn = (localAssignments && localAssignments[ev.id] === c_id) || (ghost_assignments && ghost_assignments[ev.id] === c_id) || (c_id === 'unassigned' && unassigned && unassigned.includes(ev.id)) || (c_id === 'no_location' && no_location && no_location.includes(ev.id));
@@ -1017,6 +1025,7 @@
                                         <div class="font-bold text-[12px] text-white leading-tight truncate pointer-events-none ${isShort ? 'flex-1 min-w-0' : 'mb-0.5 mt-0.5'}">
                                             ${ev.event_type === 'dropoff' ? '<span class="text-[9px] uppercase bg-orange-600/50 text-orange-200 px-1 rounded mr-1">Drop</span>' : ''}
                                             ${ev.event_type === 'pickup' ? '<span class="text-[9px] uppercase bg-green-600/50 text-green-200 px-1 rounded mr-1">Pick</span>' : ''}
+                                            ${evOptional ? '<span class="text-[9px] uppercase bg-purple-600/40 text-purple-200 px-1 rounded mr-1" title="Optional — dropped first if the day conflicts">Opt</span>' : ''}
                                             ${isErrand ? '' : ev.title}
                                         </div>
                                         <div class="text-gray-400 text-[10px] font-medium truncate pointer-events-none shrink-0">${(isShort || ev.event_type === 'dropoff' || ev.event_type === 'pickup') ? formatTime(ev.start) : formatTime(ev.start) + ' - ' + formatTime(ev.end)}</div>

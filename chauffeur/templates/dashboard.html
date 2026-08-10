@@ -335,6 +335,12 @@
 
                             <div class="flex flex-col mt-4 bg-gray-900 border border-gray-600 rounded-lg p-3">
                                 <div class="flex items-center mb-3">
+                                    <input type="checkbox" id="edit-is-optional"
+                                        class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-purple-500 focus:ring-purple-500 cursor-pointer">
+                                    <label for="edit-is-optional" class="ml-3 text-gray-300 font-bold cursor-pointer">Optional — dropped first if the day conflicts</label>
+                                </div>
+                                <p class="text-[10px] text-gray-500 -mt-2 mb-3 ml-8">Still scheduled on a free day, but the first thing let go when drives collide. Skipping it is never an alarm.</p>
+                                <div class="flex items-center mb-3">
                                     <input type="checkbox" id="edit-is-trip"
                                         class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer">
                                     <label for="edit-is-trip" class="ml-3 text-gray-300 font-bold cursor-pointer">Mark as pure Background Trip (No destination)</label>
@@ -1542,6 +1548,7 @@
 
             document.getElementById('edit-attendance-mode').value = appConfig.driver_attendance_mode || 'scheduler';
             document.getElementById('edit-is-trip').checked = appConfig.is_trip || false;
+            document.getElementById('edit-is-optional').checked = appConfig.is_optional || false;
 
             // Populate from the canonical trip list (same source as the Trips page),
             // NOT currentData.events — those are per-day background_trip SLICES whose
@@ -1708,6 +1715,7 @@
                 driver_ids: Array.from(drvCheckboxes).map(cb => cb.value),
                 driver_attendance_mode: document.getElementById('edit-attendance-mode').value,
                 is_trip: document.getElementById('edit-is-trip').checked,
+                is_optional: document.getElementById('edit-is-optional').checked,
                 trip_id: document.getElementById('edit-trip-id').value,
                 location_override: document.getElementById('edit-location').value
             };
