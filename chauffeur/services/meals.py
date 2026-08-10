@@ -1278,6 +1278,26 @@ def get_or_compose_plate(date_str: str, plan: dict = None,
             'dishes': compose_plate(date_str, plan, settings), 'edited': False}
 
 
+def showing_plate(date_str: str, plan: dict = None,
+                  settings: dict = None) -> dict:
+    """get_or_compose_plate, but answering with the dinner the family is
+    LOOKING at.
+
+    Every surface that says "here is this night's dinner" — the Tonight card,
+    the voice answer, the prep nudges, the + List buy — must give the same
+    answer as the week strip, because to the family they are one question.
+    get_or_compose_plate composes the date in isolation, which ignores both
+    the span threading and the night's Repropose refusals; that is how the
+    Tonight card kept proposing a dinner the family had just refused, directly
+    above a strip row that had moved on.
+    """
+    saved = storage.get_plate(date_str)
+    if saved and saved.get('edited'):
+        return get_or_compose_plate(date_str, plan, settings)
+    return {'date': date_str, 'edited': False,
+            'dishes': dishes_showing_on(date_str, plan, settings)}
+
+
 def dishes_showing_on(date_str: str, plan: dict = None,
                       settings: dict = None) -> list:
     """What this night is SHOWING — not what it would get if it were the only
@@ -1311,8 +1331,18 @@ def dishes_showing_on(date_str: str, plan: dict = None,
             continue
         dates = week_dates(span['start'], span['days'])
         if date_str in dates:
-            week = compose_week(span['start'], dates.index(date_str) + 1, settings)
-            return week[-1]['dishes'] if week else []
+            # The WHOLE span, not the prefix up to this date. Composing only
+            # the first N days used to give the same answer — the walk was
+            # forward-only — but pinned nights now bind in both directions
+            # (v2.160.0), so a prefix cannot see a lock that sits LATER in
+            # the week. Caught on video: with brisket locked for Tuesday,
+            # Monday's strip row correctly showed chicken — and dropping one
+            # chip from it pinned brisket, because the prefix compose behind
+            # this function was blind to the lock and "froze" a dinner the
+            # family had never been shown.
+            week = compose_week(span['start'], span['days'], settings)
+            idx = dates.index(date_str)
+            return week[idx]['dishes'] if idx < len(week) else []
     return get_or_compose_plate(date_str, plan, settings)['dishes']
 
 

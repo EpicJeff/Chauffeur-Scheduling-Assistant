@@ -2219,6 +2219,66 @@ def scenario_a_pinned_night_binds_the_days_before_it():
           f"{_served_days(week, ('city bbq brisket', 'pork chops'))}")
 
 
+def scenario_freezing_a_night_freezes_what_it_was_showing():
+    """The screen recording, end to end. Brisket locked for tomorrow, a
+    no-repeats rule on file: today's strip row proposed chicken — and
+    dropping ONE chip from it pinned brisket. dishes_showing_on composed
+    only the PREFIX of the span, which cannot see a lock sitting later in
+    the week now that pinned nights bind both directions (v2.160.0), so
+    "freeze what's showing" froze a dinner the family had never been shown.
+    Same recording, same minute: after a Repropose the Tonight card kept
+    proposing the refused dinner, because get_or_compose_plate ranks the
+    date in isolation — every night-answer surface now reads showing_plate."""
+    reset_db(); _seed_people()
+    # The planning span must start TODAY for the strip context to engage:
+    # shop day = today's weekday, and plan_window runs on the real clock.
+    _settings(sides_per_meal=1, include_dessert=False,
+              grocery_weekday=datetime.date.today().weekday(),
+              grocery_plan_lead_days=2)
+    brisket = _dish('city bbq brisket', type='entree', tags=['protein'])
+    _dish('roast chicken', type='entree', tags=['protein'])
+    _dish('veggie chili', type='entree', tags=['vegetarian'])
+    _dish('rice', type='side', side_type='starch')
+    _dish('baked beans', type='side', side_type='vegetable')
+    meals.add_meal_rule('protein no repeats', 'repeat_spacing',
+                        tags=['protein'], window_days=7)
+    win = meals.plan_window()
+    dates = meals.week_dates(win['start'], win['days'])
+    check(dates[0] == datetime.date.today().isoformat(),
+          f"the planning span starts today, got {win}")
+    meals.set_plate_lock(dates[1], True, dish_ids=[brisket['id']])
+
+    week = meals.compose_week(win['start'], win['days'])
+    showing = [d['id'] for d in week[0]['dishes']]
+    check(showing and brisket['id'] not in showing,
+          "today's row respects tomorrow's locked brisket")
+    card = meals.showing_plate(dates[0])
+    check([d['id'] for d in card['dishes']] == showing,
+          "the Tonight card and the strip row are one answer")
+
+    drop = showing[-1]
+    meals.remove_from_plate(dates[0], drop)
+    saved = meals.get_or_compose_plate(dates[0])
+    kept = [d['id'] for d in saved['dishes']]
+    check(saved['edited'] and kept == [x for x in showing if x != drop],
+          f"dropping a chip freezes what was SHOWN minus that chip, got "
+          f"{kept} vs shown {showing}")
+    check(brisket['id'] not in kept,
+          "and never the locked night's dinner")
+
+    # And the Repropose half: refuse the span, and the card moves WITH the
+    # strip instead of re-proposing the dinner the family just refused.
+    meals.reset_plate(dates[0], force=True)
+    before = [d['id'] for d in meals.showing_plate(dates[0])['dishes']]
+    meals.repropose_week(win['start'], win['days'])
+    week2 = meals.compose_week(win['start'], win['days'])
+    card2 = [d['id'] for d in meals.showing_plate(dates[0])['dishes']]
+    check(card2 == [d['id'] for d in week2[0]['dishes']],
+          "after Repropose the card still matches the strip")
+    check(card2 != before,
+          f"and it moved off the refused dinner, got {card2} vs {before}")
+
+
 def scenario_a_frequency_cap_holds_across_a_composed_fortnight():
     reset_db(); _seed_people()
     _settings(sides_per_meal=2, include_dessert=False)

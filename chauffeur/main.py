@@ -6051,7 +6051,9 @@ def tonights_plate(date: Optional[str] = None):
     from services import meals as _meals
     date_str = date or _dt.date.today().isoformat()
     plan = _meals.eating_plan(date_str, 'dinner')
-    plate = _meals.get_or_compose_plate(date_str, plan)
+    # The week-aware read: the Tonight card must say what the strip's row for
+    # this night says, refusals and locked-night blocks included.
+    plate = _meals.showing_plate(date_str, plan)
     totals = _meals.plate_totals(plate['dishes'], date_str)
     return {'date': date_str, 'edited': plate['edited'],
             'dishes': _meals.with_chip_labels(plate['dishes']),
@@ -6093,7 +6095,8 @@ def plate_to_list(list_id: Optional[str] = None, date: Optional[str] = None):
     from services import meals as _meals
     day = date or _dt.date.today().isoformat()
     plan = _meals.eating_plan(day, 'dinner')
-    plate = _meals.get_or_compose_plate(day, plan)
+    # Buy for the dinner being SHOWN, not an isolated re-rank of the date.
+    plate = _meals.showing_plate(day, plan)
     totals = _meals.plate_totals(plate['dishes'], day)
     res = _meals.dishes_to_shopping(plate['dishes'], list_id,
                                     skip_dish_ids=totals.get('leftover_dish_ids'))
@@ -6343,7 +6346,9 @@ def prep_ahead(days: int = 2):
     for i in range(max(1, min(7, days))):
         date_str = (now.date() + _dt.timedelta(days=i)).isoformat()
         plan = _meals.eating_plan(date_str, 'dinner', settings=settings)
-        plate = _meals.get_or_compose_plate(date_str, plan, settings)
+        # Week-aware: a thaw nudge for a dinner the strip is not actually
+        # proposing would have somebody defrosting for a meal nobody planned.
+        plate = _meals.showing_plate(date_str, plan, settings)
         for dish in plate['dishes']:
             for step in _meals.dish_prep_steps(dish):
                 due = _meals.prep_step_due_at(step, date_str, settings, plan)

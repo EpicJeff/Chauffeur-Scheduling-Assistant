@@ -1828,7 +1828,9 @@ def get_tonights_plate(target_date: str = "today", acting_member: dict = None) -
     from services import meals
     day = _parse_fuzzy_date(target_date or 'today')
     plan = meals.eating_plan(day.isoformat(), 'dinner')
-    plate = meals.get_or_compose_plate(day.isoformat(), plan)
+    # Week-aware: the voice answer and the Meals page are one question to the
+    # family, so they must give one answer.
+    plate = meals.showing_plate(day.isoformat(), plan)
     when = "Tonight" if day == _dt.date.today() else day.strftime('%A')
     if not plate['dishes']:
         return {"status": "success",
@@ -2431,7 +2433,7 @@ def get_prep_ahead(acting_member: dict = None) -> Dict[str, Any]:
     for i in range(2):
         date_str = (now.date() + _dt.timedelta(days=i)).isoformat()
         plan = meals.eating_plan(date_str, 'dinner', settings=settings)
-        plate = meals.get_or_compose_plate(date_str, plan, settings)
+        plate = meals.showing_plate(date_str, plan, settings)
         for dish in plate['dishes']:
             for step in meals.dish_prep_steps(dish):
                 due = meals.prep_step_due_at(step, date_str, settings, plan)
