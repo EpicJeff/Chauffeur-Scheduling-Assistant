@@ -3223,17 +3223,17 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "set_meal_rule",
-            "description": "Records how this household EATS, as opposed to what it eats: we only eat meat about once a week, takeout is occasional, we cook one kind of beans at a time and eat it two or three days before making the next. Use kind=frequency_cap with max_servings and window_days for how often, or kind=batch_cycle with dwell_days for cook-a-batch-then-rotate.",
+            "description": "Records how this household EATS, as opposed to what it eats: we only eat meat about once a week, takeout is occasional, we cook one kind of beans at a time and eat it two or three days before making the next, don't repeat a takeout place within three weeks. Use kind=frequency_cap with max_servings and window_days for how often (counts the whole matched set), kind=batch_cycle with dwell_days for cook-a-batch-then-rotate, or kind=repeat_spacing with window_days for no-repeats (each matched dish individually cools down after being served). 'At most 2 takeout a week AND no repeats for 3 weeks' is TWO rules: one frequency_cap (max_servings=2, window_days=7, takeout=true) plus one repeat_spacing (window_days=21, takeout=true).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "description": {"type": "string", "description": "The rule in the family own words, e.g. meat about once a week."},
-                    "kind": {"type": "string", "enum": ["frequency_cap", "batch_cycle"], "description": "frequency_cap for how often; batch_cycle for cook one, eat it a few days, then the next."},
+                    "kind": {"type": "string", "enum": ["frequency_cap", "batch_cycle", "repeat_spacing"], "description": "frequency_cap for how often (whole set); batch_cycle for cook one, eat it a few days, then the next; repeat_spacing for no-repeats (per-dish cooldown of window_days)."},
                     "tags": {"type": "string", "description": "Comma separated dish tags it applies to, e.g. meat or beans."},
                     "dish_names": {"type": "string", "description": "Comma separated specific dishes, when tags will not do."},
                     "takeout": {"type": "boolean", "description": "true when the rule is about takeout or delivery."},
                     "max_servings": {"type": "number", "description": "How many times, for frequency_cap."},
-                    "window_days": {"type": "number", "description": "Per how many days, for frequency_cap (7 = a week)."},
+                    "window_days": {"type": "number", "description": "Per how many days for frequency_cap (7 = a week); the per-dish cooldown for repeat_spacing (21 = three weeks)."},
                     "dwell_days": {"type": "number", "description": "How many days one batch lasts, for batch_cycle."},
                     "except_dishes": {"type": "string", "description": "Comma separated dishes the rule should NOT cover, e.g. baked beans when the beans tag catches too much."}
                 },

@@ -523,12 +523,12 @@ class SetMealRuleTool(BaseModel):
     Records how this household EATS: meat about once a week, takeout occasionally, one kind of beans at a time for a few days.
     """
     description: str = Field(..., description="The rule in the family own words.")
-    kind: Optional[str] = Field("frequency_cap", description="frequency_cap or batch_cycle.")
+    kind: Optional[str] = Field("frequency_cap", description="frequency_cap (how often, whole set), batch_cycle (one at a time), or repeat_spacing (no repeats: per-dish cooldown of window_days).")
     tags: Optional[str] = Field(None, description="Comma separated dish tags, e.g. meat or beans.")
     dish_names: Optional[str] = Field(None, description="Comma separated specific dishes.")
     takeout: Optional[bool] = Field(False, description="true when the rule is about takeout.")
     max_servings: Optional[int] = Field(1, description="How many times, for frequency_cap.")
-    window_days: Optional[int] = Field(7, description="Per how many days (7 = a week).")
+    window_days: Optional[int] = Field(7, description="Per how many days (7 = a week); for repeat_spacing, the per-dish cooldown (21 = three weeks).")
     dwell_days: Optional[int] = Field(3, description="How many days one batch lasts.")
     except_dishes: Optional[str] = Field(None, description="Comma separated dishes the rule should NOT cover.")
 

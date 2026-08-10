@@ -2200,6 +2200,49 @@ def scenario_takeout_is_capped_by_source_not_by_tagging_every_dish():
           f"takeout stays occasional, got days {days}")
 
 
+def scenario_the_takeout_wish_is_two_rules_that_compose():
+    """THE request, verbatim: "not more than 2 takeout meals per week and do
+    not repeat a takeout item for 3 weeks." One frequency_cap (spends a
+    budget on the SET) plus one repeat_spacing (cools each MEMBER down
+    individually) — never a rule per dish, and they compose because every
+    kind only ever adds to the same blocked set."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    _rules_repertoire()
+    for n in ('sushi takeout', 'burger night out', 'chinese takeout'):
+        _dish(n, type='meal', source='ordered')
+    takeout = ('pizza delivery', 'thai takeout', 'sushi takeout',
+               'burger night out', 'chinese takeout')
+
+    meals.add_meal_rule('takeout at most twice a week', 'frequency_cap',
+                        sources=['ordered'], max_servings=2, window_days=7)
+    res = meals.add_meal_rule('no repeat takeout for 3 weeks', 'repeat_spacing',
+                              sources=['ordered'], window_days=21)
+    check(res['rule']['kind'] == 'repeat_spacing' and res['match_count'] == 5,
+          f"one rule covers the whole category, got {res}")
+
+    week = meals.compose_week('2026-09-07', 21)
+    days = _served_days(week, takeout)
+    for i in range(len(week)):
+        in_window = [d for d in days if i <= d < i + 7]
+        check(len(in_window) <= 2,
+              f"never more than 2 takeout nights in any rolling week: {days}")
+    seen = {}
+    for i, d in enumerate(week):
+        for x in d['dishes']:
+            if x['name'] in takeout:
+                if x['name'] in seen:
+                    check(i - seen[x['name']] >= 21,
+                          f"{x['name']} repeated after {i - seen[x['name']]} "
+                          f"days — inside the 3-week cooldown")
+                seen[x['name']] = i
+    check(days, "takeout still happens — spaced, not banned")
+
+    said = meals.describe_meal_rule(res['rule'])
+    check('not again for 3 weeks' in said,
+          f"the rule audits in plain words, got {said!r}")
+
+
 def scenario_a_batch_cycle_dwells_then_rotates():
     """THE one that needed measuring. The first cut compared "time since last
     served" against the dwell — but a batch is eaten EVERY day, so that gap is

@@ -699,7 +699,7 @@ def add_meal_rule(name: str, kind: str = 'frequency_cap', **kw) -> dict:
     a rule that matches nothing is the failure mode here — "meat" is not a
     field, and a tag the family never used silently governs nobody."""
     from models.schemas import MealRule
-    kind = kind if kind in ('frequency_cap', 'batch_cycle') else 'frequency_cap'
+    kind = kind if kind in ('frequency_cap', 'batch_cycle', 'repeat_spacing') else 'frequency_cap'
     rule = MealRule(name=(name or '').strip() or kind.replace('_', ' '),
                     kind=kind,
                     dish_ids=[str(x) for x in (kw.get('dish_ids') or [])],
@@ -733,7 +733,7 @@ def edit_meal_rule(rule_id: str, patch: dict) -> dict:
     clean = {}
     if patch.get('name') is not None:
         clean['name'] = str(patch['name']).strip() or rule.get('name') or 'rule'
-    if patch.get('kind') is not None and patch['kind'] in ('frequency_cap', 'batch_cycle'):
+    if patch.get('kind') is not None and patch['kind'] in ('frequency_cap', 'batch_cycle', 'repeat_spacing'):
         clean['kind'] = patch['kind']
     if patch.get('is_enabled') is not None:
         clean['is_enabled'] = bool(patch['is_enabled'])
@@ -776,6 +776,10 @@ def describe_meal_rule(rule: dict) -> str:
     if rule.get('kind') == 'batch_cycle':
         return (f"{subject}: one at a time, about {rule.get('dwell_days', 3)} "
                 f"days each, then the next")
+    if rule.get('kind') == 'repeat_spacing':
+        w = rule.get('window_days', 21)
+        span = 'a week' if w == 7 else (f"{w // 7} weeks" if w % 7 == 0 else f"{w} days")
+        return f"{subject}: no repeats — once served, not again for {span}"
     n, w = rule.get('max_servings', 1), rule.get('window_days', 7)
     every = 'a week' if w == 7 else ('a day' if w == 1 else f"{w} days")
     return f"{subject}: at most {n} in {every}"
@@ -905,6 +909,21 @@ def rule_context(as_of: float, served: dict, settings: dict = None,
                                 served, all_dishes)
             if used >= max(1, int(rule.get('max_servings') or 1)):
                 blocked |= ids
+
+        elif rule.get('kind') == 'repeat_spacing':
+            # Per-MEMBER cooldown, where frequency_cap spends a budget on the
+            # SET: Tuesday's pizza is off the table for `window_days`, and
+            # every other match is untouched. One rule covers a whole
+            # category — the alternative was one frequency_cap per dish, and
+            # every new takeout dish silently escaping until somebody
+            # remembered to write its rule. `served` carries the days this
+            # horizon has already composed, so a repeat is blocked inside the
+            # plan being built, not just against history.
+            window = max(1, int(rule.get('window_days') or 21)) * 86400.0
+            for d in members:
+                last = max(served.get(d['id'], 0), d.get('last_served_at') or 0)
+                if last and (as_of - last) < window:
+                    blocked.add(d['id'])
 
         elif rule.get('kind') == 'batch_cycle':
             dwell = max(1, int(rule.get('dwell_days') or 3))

@@ -1149,6 +1149,14 @@ class MealRule(BaseModel):
       "takeout is an occasional thing"              -> frequency_cap
       "we cook one kind of beans, eat it 2-3 days,  -> batch_cycle
        then make the next kind, then the next"
+      "don't repeat a takeout place for 3 weeks"    -> repeat_spacing
+
+    frequency_cap counts the SET (any two takeout nights spend the week's
+    takeout budget); repeat_spacing cools down each MEMBER individually (the
+    pizza you had Tuesday is off the table for `window_days`, every other
+    takeout dish is untouched). The takeout wish above is exactly one of
+    each, and they compose because every kind only ever adds to the same
+    blocked set.
 
     Deliberately NOT a general predicate language. Two kinds, both drawn from
     what the family actually said, each enforced at the point where the
@@ -1177,6 +1185,8 @@ class MealRule(BaseModel):
     exclude_dish_ids: List[str] = Field(default_factory=list)
 
     # frequency_cap: at most `max_servings` of the matched set per window.
+    # repeat_spacing reuses `window_days` as the per-dish cooldown: a matched
+    # dish, once served, is not proposed again for this many days.
     max_servings: int = 1
     window_days: int = 7
 
