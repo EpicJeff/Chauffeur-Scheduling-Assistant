@@ -377,6 +377,25 @@ def scenario_one_hero_renderer_not_a_smaller_copy():
           "delegating — two countdowns disagree within a week")
 
 
+def scenario_the_corner_card_keeps_white_ink_in_light_mode():
+    """The compact hero sits on a photograph behind its own FIXED dark band
+    (rgba(10,10,14,.55)) — 'fixed dark-surface ink' by design. panel_skin's
+    blanket ink remap (.text-white -> --panel-fg) turned that ink navy in the
+    LIGHT panel theme: navy-on-dark, unreadable from across the room. The
+    #panel-ss-next subtree must be exempt, keeping the dark-band vocabulary
+    whatever the theme."""
+    skin = open(os.path.join(TPL, 'panel_skin.html'), encoding='utf-8').read()
+    check('#panel-ss-next .text-white' in skin,
+          "the screensaver card's white ink is pinned against the theme remap")
+    check('#panel-ss-next .panel-label' in skin,
+          "and its Next-up label doesn't follow the light accent onto the dark band")
+    check('#panel-ss-next .bg-gray-700\\/60' in skin,
+          "and the countdown pill keeps a dark backing instead of going paper-white")
+    ink = skin.index('#panel-ss-next .text-white')
+    remap = skin.index('[data-panel] .text-white')
+    check(remap < ink, "the exemption must come after the blanket remap it corrects")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

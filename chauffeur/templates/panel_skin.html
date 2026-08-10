@@ -532,6 +532,37 @@
         color: var(--panel-dim) !important;
     }
 
+    /* The screensaver's Next-up corner is a caption on a photograph with its
+       own FIXED dark band (hero_card.html compact backing, rgba(10,10,14,.55))
+       — and the one mix that never works is a dark band with theme-following
+       ink (the photo-ink note above). The blanket remaps here were turning
+       its white title navy and its countdown pill white-on-white in light
+       mode. The subtree keeps the dark-surface vocabulary whatever the theme;
+       the id selector outranks the class rules above. */
+    html[data-panel] #panel-ss-next .text-white,
+    html[data-panel] #panel-ss-next .text-gray-50,
+    html[data-panel] #panel-ss-next .text-gray-100,
+    html[data-panel] #panel-ss-next .text-gray-200 {
+        color: #fff !important;
+    }
+
+    html[data-panel] #panel-ss-next .text-gray-300,
+    html[data-panel] #panel-ss-next .text-gray-400,
+    html[data-panel] #panel-ss-next .text-gray-500,
+    html[data-panel] #panel-ss-next .text-gray-600 {
+        color: rgb(255 255 255 / 0.72) !important;
+    }
+
+    html[data-panel] #panel-ss-next .bg-gray-700\/60 {
+        background-color: rgb(55 65 81 / 0.6) !important;
+    }
+
+    /* The "Next up" label follows --panel-accent, which light mode darkens
+       to sit on paper — pin it to the dark-theme accent on the dark band. */
+    html[data-panel] #panel-ss-next .panel-label {
+        color: #7dd3fc !important;
+    }
+
     /* ONE definition of "text on a picture", for all three places that do it:
        the trips grid, the meals week strip, and the board's mosaics. They each
        arrived with their own gradient and their own white, so light mode had
