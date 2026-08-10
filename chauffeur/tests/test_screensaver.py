@@ -377,6 +377,18 @@ def scenario_one_hero_renderer_not_a_smaller_copy():
           "delegating — two countdowns disagree within a week")
 
 
+def scenario_the_hero_card_wears_the_optional_chip():
+    """Both hero variants (board band AND the screensaver corner) share the
+    label row, so the chip lives there once: 'optional' while undecided,
+    '✓ going' once a parent answered. A hero asserting attendance for a
+    drop-in thing is the false urgency the flag exists to end."""
+    check('next.optional' in HERO_COMPONENT and 'optional</span>' in HERO_COMPONENT,
+          "the shared hero renderer says nothing about optional events")
+    check("optional_decision === 'attend'" in HERO_COMPONENT
+          and '✓ going' in HERO_COMPONENT,
+          "an answered occurrence must read as confirmation, not softness")
+
+
 def scenario_the_corner_card_keeps_white_ink_in_light_mode():
     """The compact hero sits on a photograph behind its own FIXED dark band
     (rgba(10,10,14,.55)) — 'fixed dark-surface ink' by design. panel_skin's

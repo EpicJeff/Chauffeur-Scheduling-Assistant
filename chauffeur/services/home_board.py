@@ -329,6 +329,13 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
             # its start and its end is happening, whatever anybody remembered
             # to press, and a board that calls it "next up" is arguing with the
             # clock two feet above it.
+            # Optional events (v2.153.0): the hero and the tiles must SAY an
+            # event is the soft kind — "next up" asserting attendance for a
+            # drop-in gym is the exact false-urgency the flag exists to end.
+            # A skip-decided event never gets here (excluded from the solve,
+            # so never assigned); 'attend' renders as a confirmed "✓ going".
+            'optional': bool((ev.get('app_config') or {}).get('is_optional')),
+            'optional_decision': ev.get('optional_decision'),
             'underway': bool(start <= now <= end),
             # The EVENT's end is the end. The live flag is a claim about a
             # DRIVE, and it must never extend the event's life on the board:

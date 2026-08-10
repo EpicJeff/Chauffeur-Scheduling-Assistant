@@ -107,8 +107,16 @@
                 ? { text: opts.countdown, cls: opts.countdownClass || '' }
                 : this.countdown(next, now);
             const tone = this.tone(next.color, '#3b82f6', !!opts.isLight && !opts.compact);
+            // Optional events wear it in the label row, in BOTH variants — a
+            // hero asserting "next up" for a drop-in thing nobody committed to
+            // is the false urgency the flag exists to end. An explicit
+            // "attending" answer reads as confirmation instead.
+            const optChip = !next.optional ? ''
+                : (next.optional_decision === 'attend'
+                    ? `<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">✓ going</span>`
+                    : `<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">optional</span>`);
             const label = `<span class="panel-label ${on ? 'text-emerald-300' : ''}">${on ? 'Happening now' : 'Next up'}</span>
-                <span class="text-xs font-bold px-2 py-0.5 rounded-full ${cd.cls}">${esc(cd.text)}</span>`;
+                <span class="text-xs font-bold px-2 py-0.5 rounded-full ${cd.cls}">${esc(cd.text)}</span>${optChip}`;
             // LEAVE time leads, start time supports it: the departure is the
             // one a family sets an alarm by. No travel time -> no honest
             // departure, and the start takes the big slot back.

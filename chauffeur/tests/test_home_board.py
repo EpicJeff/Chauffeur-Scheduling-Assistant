@@ -261,6 +261,48 @@ def scenario_next_up_is_the_one_you_leave_for_first():
          storage.get_in_progress_drives) = orig
 
 
+def scenario_the_hero_says_when_the_thing_is_optional():
+    """Reported from the wall: the hero asserted 'Next up' for a drop-in
+    event exactly like a firm commitment — the false urgency the optional
+    flag exists to end. The runs carry the flag and the decision, and the
+    hero card wears them ('optional' undecided, '✓ going' once answered)."""
+    orig = (storage.get_cached_schedule, storage.get_cached_daily_schedule,
+            storage.get_all_drivers, storage.get_completed_drives,
+            storage.get_in_progress_drives)
+    try:
+        sched = {
+            'events': [
+                {'id': 'gym', 'title': 'Open Gym',
+                 'start': _at(17).isoformat(), 'end': _at(18).isoformat(),
+                 'app_config': {'is_optional': True},
+                 'optional_decision': None},
+            ],
+            'assignments': {'gym': 'd1'},
+            'scheduled_errands': [], 'initial_edges': {}, 'route_edges': {},
+        }
+        storage.get_cached_schedule = lambda: sched
+        storage.get_cached_daily_schedule = lambda d: None
+        storage.get_all_drivers = lambda: [{'id': 'd1', 'name': 'Sarah',
+                                            'color_code': '#fff'}]
+        storage.get_completed_drives = lambda: []
+        storage.get_in_progress_drives = lambda: []
+
+        hero = home_board._hero(_at(14), home_board.todays_runs(now=_at(14)))
+        check(hero['next']['optional'] is True,
+              f"the hero knows the event is the soft kind: {hero['next']}")
+        check(hero['next']['optional_decision'] is None,
+              "and that nobody has answered yet")
+
+        sched['events'][0]['optional_decision'] = 'attend'
+        hero = home_board._hero(_at(14), home_board.todays_runs(now=_at(14)))
+        check(hero['next']['optional_decision'] == 'attend',
+              "an answered occurrence carries the confirmation through")
+    finally:
+        (storage.get_cached_schedule, storage.get_cached_daily_schedule,
+         storage.get_all_drivers, storage.get_completed_drives,
+         storage.get_in_progress_drives) = orig
+
+
 def scenario_a_thing_that_has_started_is_not_next():
     """Photographed from the wall at 1:53 PM: **"NEXT UP · 53 min ago — Pre
     Jazz/Ballet"**, for a class that began at one o'clock and still had ten
