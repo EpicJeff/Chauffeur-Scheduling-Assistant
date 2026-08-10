@@ -2535,8 +2535,8 @@ def scenario_the_board_block_leads_with_the_meal():
     which the migration renamed away (everything non-meal is 'dish'), so the
     headline fell through to PLATE ORDER; and replacing a protein re-adds it
     at the END of the plate, which crowned a side. The block now leads with
-    the whole meal, else the dish in the family's lead category (the first
-    with min_per_plate > 0 — the protein), and only then order."""
+    the whole meal, else the dish in the family's lead category (the FIRST
+    block in "What a plate looks like", unconditionally), and then order."""
     import os
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
@@ -2548,9 +2548,9 @@ def scenario_the_board_block_leads_with_the_meal():
           "type='entree' no longer exists post-M5, so without the category "
           "step the headline is whatever the plate's order happens to be")
     lead = shopping.split('leadCategoryId() {')[1].split('},')[0]
-    check('min_per_plate' in lead,
-          "the lead is the first block with a minimum — same definition as "
-          "compose_plate's lead")
+    check('(this.categories || [])[0]' in lead and 'min_per_plate' not in lead,
+          "the lead is the FIRST block, unconditionally — 'first with a "
+          "minimum' was the subtly-ambiguous rule the family refused")
 
 
 def scenario_a_rule_can_say_whole_meals():

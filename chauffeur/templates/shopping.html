@@ -669,7 +669,7 @@
                                                      the wall headlines it, whole meals stand in for
                                                      it — and nothing on this screen said so. -->
                                                 <span x-show="c.id === leadCategoryId()"
-                                                    title="The first must-have on the plate. It headlines the wall blocks and picks the dinner's picture; whole meals stand in for it. It is simply the first block here with a minimum above zero."
+                                                    title="The first block is always the main dish, whatever you name it. It leads the plate, headlines the wall blocks and picks the dinner's picture; whole meals stand in for it."
                                                     class="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg bg-pink-500/15 border border-pink-400/50 text-pink-200 shrink-0">
                                                     main dish
                                                 </span>
@@ -1830,11 +1830,13 @@
                 // re-added at the END of the plate, so the wall proudly
                 // headlined "carrots".
                 // One definition of "the lead block", shared by the badge in
-                // "What a plate looks like" and the board headline.
+                // "What a plate looks like" and the board headline: the FIRST
+                // block, unconditionally. Positional and explainable — "first
+                // with a minimum" was the same block in practice and
+                // impossible to say on the settings screen.
                 leadCategoryId() {
-                    const lead = (this.categories || [])
-                        .find(c => (c.min_per_plate || 0) > 0);
-                    return lead ? lead.id : null;
+                    const first = (this.categories || [])[0];
+                    return first ? first.id : null;
                 },
                 mainDish(day) {
                     const ds = day.dishes || [];

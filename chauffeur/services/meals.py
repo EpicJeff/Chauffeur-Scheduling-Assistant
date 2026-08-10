@@ -1132,10 +1132,12 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
                 and cid in (d.get('category_ids') or [])]
 
     # A `meal` dish is the whole plate. It competes on rank against the LEAD
-    # block — the first category the family said a plate must have, which is
-    # the protein in every household that has told us about one. That keeps
-    # one-pot meals in rotation without letting them take every night.
-    lead = next((c for c in cats if int(c.get('min_per_plate') or 0) > 0), None)
+    # block — the FIRST block in "What a plate looks like", full stop. It used
+    # to be "first with a minimum above zero", which was the same block in
+    # practice and impossible to explain on the settings screen; the rule is
+    # now positional and the panel badges block one as the main dish. That
+    # keeps one-pot meals in rotation without letting them take every night.
+    lead = cats[0] if cats else None
     best_meal = pick(storage.get_dishes_by_type('meal'))
     best_lead = pick(pool_for(lead['id'])) if lead else None
     # Strictly greater, not >=: on a tie the composed path wins. Everything
