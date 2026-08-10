@@ -199,9 +199,12 @@ def scenario_the_hand_path_exists():
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
     config = open(os.path.join(tpl, 'config.html'), encoding='utf-8').read()
-    check('acknowledgeStage' in config and 'saveKidBirthdate' in config
+    check('acknowledgeStage' in config and 'memberEdit.birthdate' in config
           and 'pinStage' in config and 'saveStageCutoffs' in config,
-          "birthdays, pins, cutoffs and the confirmation moment all work by hand")
+          "birthdays (on the identity card), pins, cutoffs and the confirmation "
+          "moment all work by hand")
+    check('startCutoffDrag' in config and 'stageKidMarkers' in config,
+          "the cutoff timeline is draggable and shows the kids on it")
     check('Nothing is ever deleted' in config,
           "and the promise is written where the parent makes the decision")
     app = open(os.path.join(tpl, 'app.html'), encoding='utf-8').read()

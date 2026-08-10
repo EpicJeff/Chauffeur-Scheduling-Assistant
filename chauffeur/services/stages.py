@@ -41,10 +41,10 @@ from services import storage
 # shown to a parent choosing the bands, so the vocabulary of independence
 # stays primary and the school mapping stays a hint.
 STAGES = [
-    {'key': 'sprout',    'label': 'Sprout',    'school': 'preschool'},
-    {'key': 'explorer',  'label': 'Explorer',  'school': 'elementary'},
-    {'key': 'navigator', 'label': 'Navigator', 'school': 'middle school'},
-    {'key': 'copilot',   'label': 'Copilot',   'school': 'high school'},
+    {'key': 'sprout',    'label': 'Sprout',    'school': 'preschool',     'glyph': '🌱'},
+    {'key': 'explorer',  'label': 'Explorer',  'school': 'elementary',    'glyph': '🔍'},
+    {'key': 'navigator', 'label': 'Navigator', 'school': 'middle school', 'glyph': '🧭'},
+    {'key': 'copilot',   'label': 'Copilot',   'school': 'high school',   'glyph': '🚗'},
 ]
 STAGE_KEYS = [s['key'] for s in STAGES]
 DEFAULT_CUTOFFS = [6, 12, 15]
