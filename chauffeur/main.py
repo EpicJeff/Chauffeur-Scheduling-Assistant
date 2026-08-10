@@ -9441,17 +9441,42 @@ def debug_travel(destination: Optional[str] = None, event: Optional[str] = None,
     settings = storage.get_settings() or {}
     origin = (origin or settings.get('home_location') or '').strip()
     matched_title = None
+    drive_status = None
     if event and not destination:
         low = event.lower()
-        ev = next((e for e in (storage.get_cached_schedule() or {}).get('events', [])
-                   if low in (e.get('title') or '').lower()), None)
+        sched = storage.get_cached_schedule() or {}
+        matches = [e for e in sched.get('events', [])
+                   if low in (e.get('title') or '').lower()]
+        ev = matches[0] if matches else None
         if not ev:
             raise HTTPException(status_code=404,
                                 detail=f"No cached event title contains '{event}'")
         destination = (ev.get('location') or '').strip()
         matched_title = ev.get('title')
+        # Say what KIND of thing was matched, out loud. A title-substring hit
+        # on the wrong sibling ("Girls" vs "Girls 2033") sent a whole debug
+        # session to the wrong venue — and an event nobody is assigned to
+        # drive has NO leave time, so its numbers are informational, not a
+        # departure anyone is being told about.
+        eid = ev.get('id')
+        assigned = (sched.get('assignments') or {}).get(eid) \
+            or (sched.get('assignments') or {}).get(f"{eid}_dropoff")
+        drive_status = {
+            "matched_event_id": eid,
+            "assigned_driver": assigned,
+            "is_scheduled_drive": bool(assigned),
+            "note": None if assigned else
+                    "NOT a scheduled drive (no driver assigned — likely no "
+                    "passengers configured). No leave-by, push, or day-of "
+                    "traffic exists for it; the numbers below are "
+                    "informational only.",
+        }
+        if len(matches) > 1:
+            drive_status["also_matched"] = [
+                {"title": m.get('title'), "start": m.get('start'),
+                 "location": m.get('location')} for m in matches[1:4]]
         if not destination:
-            return {"event": matched_title,
+            return {"event": matched_title, "drive_status": drive_status,
                     "problem": "This event has NO location — travel times for it "
                                "are guesses, not routes."}
     if not destination:
@@ -9467,6 +9492,8 @@ def debug_travel(destination: Optional[str] = None, event: Optional[str] = None,
 
     o, d = side(origin), side(destination)
     out = {"event": matched_title, "origin": o, "destination": d}
+    if drive_status:
+        out["drive_status"] = drive_status
     if o["coords"] and d["coords"]:
         out["straight_line_km"] = round(_haversine_m(
             o["coords"][0], o["coords"][1], d["coords"][0], d["coords"][1]) / 1000, 1)
