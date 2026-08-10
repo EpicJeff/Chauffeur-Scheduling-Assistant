@@ -365,7 +365,14 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
             'over': bool(end < now),
         })
 
-    runs.sort(key=lambda r: r['start'])
+    # The order a family ACTS in, not the order hosts expect them: sorted by
+    # the departure when the schedule knows it (start as the fallback),
+    # because two events starting together are not the same urgency when one
+    # is a seventeen-minute drive away — "next up" is the one you leave for
+    # first. The id tail makes the order TOTAL: ties used to fall through to
+    # the assignments dict's order from the last solve, and the hero flipped
+    # between two same-time events on every refetch.
+    runs.sort(key=lambda r: (r.get('leave_at') or r['start'], r['start'], str(r['id'])))
     return runs
 
 

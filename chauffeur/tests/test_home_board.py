@@ -200,6 +200,67 @@ def scenario_the_hero_says_when_to_leave():
          storage.get_in_progress_drives) = orig
 
 
+def scenario_next_up_is_the_one_you_leave_for_first():
+    """Reported from the wall with two 5:00 events: the hero FLIPPED between
+    them on refetches (ties fell through to the assignments dict's order from
+    the last solve), and when it settled it showed the 4:47 departure while
+    the other event needed leaving at 4:43. Both wrong for the same reason:
+    the board's own language says the leave time is the one somebody sets an
+    alarm by, so "next" is sorted by when somebody must ACT — the departure
+    when the schedule knows it — with an id tail so the order is total and
+    two same-time events can never trade places between refetches."""
+    orig = (storage.get_cached_schedule, storage.get_cached_daily_schedule,
+            storage.get_all_drivers, storage.get_completed_drives,
+            storage.get_in_progress_drives)
+    try:
+        def sched_with(assignments):
+            return {
+                'events': [
+                    {'id': 'lab', 'title': 'Practice: Girls 2033',
+                     'start': _at(17).isoformat(), 'end': _at(18).isoformat()},
+                    {'id': 'gym', 'title': 'Open Gym',
+                     'start': _at(17).isoformat(), 'end': _at(18).isoformat()},
+                ],
+                'assignments': assignments,
+                'scheduled_errands': [],
+                'initial_edges': {'d1': {'lab': {'travel_mins': 17}},
+                                  'd2': {'gym': {'travel_mins': 13}}},
+                'route_edges': {},
+            }
+        storage.get_cached_daily_schedule = lambda d: None
+        storage.get_all_drivers = lambda: [
+            {'id': 'd1', 'name': 'Sarah', 'color_code': '#fff'},
+            {'id': 'd2', 'name': 'Mom', 'color_code': '#fff'}]
+        storage.get_completed_drives = lambda: []
+        storage.get_in_progress_drives = lambda: []
+
+        firsts = []
+        for assignments in ({'lab': 'd1', 'gym': 'd2'}, {'gym': 'd2', 'lab': 'd1'}):
+            storage.get_cached_schedule = lambda a=assignments: sched_with(a)
+            runs = home_board.todays_runs(now=_at(14))
+            firsts.append(runs[0]['id'])
+            hero = home_board._hero(_at(14), runs)
+            check(hero['next']['id'] == 'lab',
+                  f"the 4:43 departure outranks the 4:47 one, got {hero['next']['id']}")
+        check(firsts == ['lab', 'lab'],
+              f"and the order ignores the solve's dict order entirely: {firsts}")
+
+        # An earlier START with a KNOWN later departure still yields to the
+        # drive that must leave first — the sort key is when you act.
+        sched = sched_with({'lab': 'd1', 'gym': 'd2'})
+        sched['events'][1]['start'] = _at(17, 30).isoformat()  # gym starts later
+        sched['initial_edges']['d2']['gym']['travel_mins'] = 90  # but leaves 16:00
+        storage.get_cached_schedule = lambda: sched
+        hero = home_board._hero(_at(14), home_board.todays_runs(now=_at(14)))
+        check(hero['next']['id'] == 'gym',
+              f"a later start with the earlier departure is still what's next, "
+              f"got {hero['next']['id']}")
+    finally:
+        (storage.get_cached_schedule, storage.get_cached_daily_schedule,
+         storage.get_all_drivers, storage.get_completed_drives,
+         storage.get_in_progress_drives) = orig
+
+
 def scenario_a_thing_that_has_started_is_not_next():
     """Photographed from the wall at 1:53 PM: **"NEXT UP · 53 min ago — Pre
     Jazz/Ballet"**, for a class that began at one o'clock and still had ten
