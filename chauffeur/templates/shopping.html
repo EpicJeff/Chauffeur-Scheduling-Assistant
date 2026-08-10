@@ -1090,6 +1090,26 @@
                                                     : 'border-gray-700 text-gray-600 hover:text-pink-300'"
                                                 x-text="c.name"></button>
                                         </template>
+                                        <!-- Free-form tags. The extractor and the
+                                             agent have always written these; the
+                                             family had no way to see or fix them
+                                             by hand, so a rule word could only be
+                                             attached by asking Argyle nicely. -->
+                                        <template x-for="t in (m.tags || [])" :key="'tg-' + m.id + t">
+                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
+                                                         bg-amber-500/10 border border-amber-500/40 text-amber-200
+                                                         flex items-center gap-1.5">
+                                                <span x-text="t"></span>
+                                                <button @click="dropDishTag(m, t)"
+                                                    class="text-amber-500/70 hover:text-red-400"
+                                                    title="Remove this tag">✕</button>
+                                            </span>
+                                        </template>
+                                        <button @click="addDishTag(m)"
+                                            class="text-[10px] font-bold text-gray-600 hover:text-amber-300"
+                                            title="A word rules can match — spicy, crockpot, kid-favorite">
+                                            + tag
+                                        </button>
                                         <button @click="toggleWholeMeal(m)"
                                             class="text-[10px] font-bold"
                                             :class="m.type === 'meal'
@@ -2264,6 +2284,20 @@
                     if (at >= 0) ids.splice(at, 1); else ids.push(cat.id);
                     return this.patchDish(dish, { category_ids: ids });
                 },
+                async addDishTag(dish) {
+                    const raw = await promptInput('Tag ' + (dish.short_name || dish.name),
+                        'A word rules and search can match — e.g. spicy, crockpot, '
+                        + 'kid-favorite. Commas add several at once.',
+                        { placeholder: 'e.g. spicy', okText: 'Add tag' });
+                    if (!raw) return;
+                    const tags = [...(dish.tags || [])];
+                    raw.split(',').map(t => t.trim().toLowerCase()).filter(Boolean)
+                        .forEach(t => { if (!tags.includes(t)) tags.push(t); });
+                    return this.patchDish(dish, { tags });
+                },
+                dropDishTag(dish, tag) {
+                    return this.patchDish(dish, { tags: (dish.tags || []).filter(t => t !== tag) });
+                },
                 toggleWholeMeal(dish) {
                     return this.patchDish(dish, { type: dish.type === 'meal' ? 'dish' : 'meal' });
                 },
@@ -2725,11 +2759,19 @@
                     // A dish cannot come with itself.
                     if (f.kind === 'pairing') on.add(f.dishId);
                     const q = (this.pickerQuery || '').trim().toLowerCase();
+                    // The family's categories are search words too: typing
+                    // "protein" must list everything IN the protein category,
+                    // not just dishes that happen to say it in their name.
+                    const catName = {};
+                    (this.categories || []).forEach(c => {
+                        catName[c.id] = (c.name || '').toLowerCase();
+                    });
                     return (this.repertoire || [])
                         .filter(d => !on.has(d.id))
                         .filter(d => !q || (d.name || '').toLowerCase().includes(q)
                             || (d.short_name || '').toLowerCase().includes(q)
                             || (d.tags || []).some(t => String(t).toLowerCase().includes(q))
+                            || (d.category_ids || []).some(cid => (catName[cid] || '').includes(q))
                             || (d.side_type || d.type || '').toLowerCase().includes(q))
                         .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                 },

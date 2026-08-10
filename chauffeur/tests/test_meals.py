@@ -2275,6 +2275,53 @@ def scenario_a_batch_cycle_dwells_then_rotates():
           f"without any batch overstaying the dwell, got {runs}")
 
 
+def scenario_rule_words_match_the_familys_categories():
+    """Reported: a rule saying "protein" governed nobody, because rule tags
+    only compared against free-form dish tags — and protein is a CATEGORY,
+    the family's own vocabulary (M5). A rule word now matches either, so
+    "only proteins" and "only starches" are expressible without re-tagging
+    every dish by hand."""
+    reset_db(); _seed_people(); _settings()
+    cats = {c['name']: c['id'] for c in storage.get_dish_categories()}
+    check('protein' in cats, f"the seeded vocabulary has protein: {list(cats)}")
+    chicken = _dish('roast chicken', category_ids=[cats['protein']])
+    _dish('rice', category_ids=[cats.get('starches/carbs') or list(cats.values())[0]])
+    check(not (storage.get_dish(chicken['id']).get('tags') or []),
+          "the dish has NO free-form tags — the category alone must carry it")
+
+    res = meals.add_meal_rule('protein once a day', 'frequency_cap',
+                              tags=['protein'], max_servings=1, window_days=1)
+    check(res['match_count'] == 1 and 'roast chicken' in res['matches'],
+          f"the rule catches the category members: {res['matches']}")
+
+    ctx = meals.rule_context(meals._as_of_ts('2026-09-08'),
+                             {chicken['id']: meals._as_of_ts('2026-09-08') - 3600},
+                             storage.get_settings(), {})
+    check(chicken['id'] in ctx['blocked'],
+          "and the cap actually bites through the category match")
+
+    # A free-form tag still matches exactly as before — additive, not moved.
+    tagged = _dish('lentil curry', tags=['vegetarian'])
+    res2 = meals.add_meal_rule('veg check', 'frequency_cap', tags=['vegetarian'])
+    check(res2['match_count'] == 1 and 'lentil curry' in res2['matches'],
+          f"free-form tags keep working: {res2['matches']}")
+
+
+def scenario_tags_and_categories_reach_the_hand():
+    """Two gaps reported together: the dish picker's search box ignored the
+    family's categories (typing 'protein' listed nothing), and free-form tags
+    had NO editing surface at all — the extractor and the agent wrote them,
+    the family could not see or fix them."""
+    import os
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    shopping = open(os.path.join(tpl, 'shopping.html'), encoding='utf-8').read()
+    check('category_ids || []).some(cid' in shopping,
+          "the dish picker search must match category names")
+    check('addDishTag' in shopping and 'dropDishTag' in shopping,
+          "free-form tags must be editable by hand on the dish row")
+
+
 def scenario_a_rule_matching_nothing_says_so():
     """"meat" is not a field. A tag the family never used governs nobody, and
     silently doing nothing is the failure mode worth surfacing."""

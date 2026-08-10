@@ -712,7 +712,8 @@ def add_meal_rule(name: str, kind: str = 'frequency_cap', **kw) -> dict:
                     window_days=max(1, int(kw.get('window_days') or 7)),
                     dwell_days=max(1, int(kw.get('dwell_days') or 3))).model_dump()
     storage.save_meal_rule(rule)
-    matched = [d for d in storage.get_dishes() if rule_matches(rule, d)]
+    _cats = _category_names_by_id()
+    matched = [d for d in storage.get_dishes() if rule_matches(rule, d, _cats)]
     return {'status': 'success', 'rule': rule,
             'matches': [d.get('short_name') or d['name'] for d in matched],
             'match_count': len(matched)}
@@ -751,7 +752,8 @@ def edit_meal_rule(rule_id: str, patch: dict) -> dict:
     if clean:
         storage.update_meal_rule(rule_id, clean)
     out = storage.get_meal_rule(rule_id)
-    matched = [d for d in storage.get_dishes() if rule_matches(out, d)]
+    _cats = _category_names_by_id()
+    matched = [d for d in storage.get_dishes() if rule_matches(out, d, _cats)]
     return {'status': 'success', 'rule': out,
             'matches': [d.get('short_name') or d['name'] for d in matched],
             'match_count': len(matched)}
@@ -785,13 +787,29 @@ def describe_meal_rule(rule: dict) -> str:
     return f"{subject}: at most {n} in {every}"
 
 
-def rule_matches(rule: dict, dish: dict) -> bool:
+def _category_names_by_id() -> dict:
+    """Lowercased current name per DishCategory id, for tag-word matching."""
+    return {c['id']: str(c.get('name') or '').strip().lower()
+            for c in storage.get_dish_categories()}
+
+
+def rule_matches(rule: dict, dish: dict, cat_names: dict = None) -> bool:
     """Selector clauses are ANDed; empty clauses are ignored.
 
     So `sources=['ordered']` alone means all takeout, while `tags=['beef']`
     with `types=['entree']` means beef mains only. Explicit `dish_ids` is the
     escape hatch for anything the tags do not capture cleanly — which is most
     households, since "meat" is not a field.
+
+    A rule's tag words match the dish's free-form tags AND the names of the
+    categories it belongs to — the family's own categories (M5) ARE their
+    vocabulary, so "protein" in a rule must catch everything IN the protein
+    category, not only dishes someone also happened to type a 'protein' tag
+    onto. Matched by CURRENT name at eval time: renaming a category renames
+    what the rule word means, and a rule orphaned by a rename shows amber
+    ("matches nothing") in the panel rather than silently governing nobody.
+    Callers looping many dishes pass `cat_names` (from
+    `_category_names_by_id`) so the table is read once, not per dish.
     """
     # Exclusions win over every other clause, including an explicit dish list —
     # "not this one" is never something the family meant only conditionally.
@@ -801,6 +819,10 @@ def rule_matches(rule: dict, dish: dict) -> bool:
         return False
     if rule.get('tags'):
         have = {str(t).strip().lower() for t in (dish.get('tags') or [])}
+        if cat_names is None:
+            cat_names = _category_names_by_id()
+        have |= {cat_names[c] for c in (dish.get('category_ids') or [])
+                 if c in cat_names}
         if not (have & {str(t).strip().lower() for t in rule['tags']}):
             return False
     if rule.get('types') and (dish.get('type') or '') not in rule['types']:
@@ -897,9 +919,10 @@ def rule_context(as_of: float, served: dict, settings: dict = None,
     all_dishes = [d for d in storage.get_dishes()
                   if str(d.get('scope') or 'everyday') != 'occasion']
     blocked, forced = set(), set()
+    cat_names = _category_names_by_id()
 
     for rule in rules:
-        members = [d for d in all_dishes if rule_matches(rule, d)]
+        members = [d for d in all_dishes if rule_matches(rule, d, cat_names)]
         if not members:
             continue
         ids = {d['id'] for d in members}
