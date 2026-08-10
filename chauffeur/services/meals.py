@@ -3753,6 +3753,32 @@ def pairing_view(dish: dict, all_by_id: dict = None) -> dict:
             'only_with': names(dish.get('only_with'))}
 
 
+def plate_display_order(dishes: list, cats: list = None) -> list:
+    """The plate, in the order "What a plate looks like" lists its blocks.
+
+    Stored plate order is insertion order — a replaced protein re-enters at
+    the END — but the family reads a plate the way their own blocks are
+    ordered, and every surface that leads with the first dish (the wall
+    blocks, the chip rows) inherits whatever order editing left behind.
+    A whole meal leads outright; every other dish sorts at its earliest
+    matching block; the sort is stable, so uncategorized dishes keep their
+    relative order at the back.
+    """
+    if not dishes:
+        return dishes
+    cats = cats if cats is not None else storage.get_dish_categories()
+    order = {c['id']: i for i, c in enumerate(cats)}
+    tail = len(cats)
+
+    def key(d):
+        if (d.get('type') or 'dish') == 'meal':
+            return -1
+        return min((order[c] for c in (d.get('category_ids') or [])
+                    if c in order), default=tail)
+
+    return sorted(dishes, key=key)
+
+
 def with_chip_labels(dishes: list, all_dishes: list = None) -> list:
     """Give each dish a chip label that names the OPTION, not the category.
 
@@ -3761,9 +3787,13 @@ def with_chip_labels(dishes: list, all_dishes: list = None) -> list:
     pizza" and "homemade pizza" all showed as "pizza" again. Same principle,
     new pool: a dish is disambiguated against every OTHER dish in the
     repertoire sharing its short name, rather than against its slot siblings.
+
+    Also the one place every plate display passes through, so the canonical
+    block order is applied here — see plate_display_order.
     """
     if not dishes:
         return dishes
+    dishes = plate_display_order(dishes)
     all_dishes = all_dishes if all_dishes is not None else storage.get_dishes()
     by_short = {}
     for d in all_dishes:

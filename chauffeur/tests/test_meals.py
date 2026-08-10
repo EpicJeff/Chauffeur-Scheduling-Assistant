@@ -2491,6 +2491,44 @@ def scenario_whole_meals_carry_categories_into_rules():
           "the closed hand path this scenario exists to keep open")
 
 
+def scenario_the_plate_reads_in_block_order():
+    """"The dishes should stay in the same order as the blocks in What a
+    plate looks like." Stored plate order is insertion order — a replaced
+    protein re-enters at the END — so every display pass sorts through
+    plate_display_order (inside with_chip_labels, the one door all plate
+    displays walk through): whole meal first, then each dish at its earliest
+    block, uncategorized dishes stable at the back. And the settings panel
+    now SAYS which block leads (the main-dish badge) instead of leaving it
+    folklore."""
+    reset_db(); _seed_people(); _settings()
+    order = storage.get_dish_categories()
+    prot_idx = next(i for i, c in enumerate(order) if c['name'] == 'protein')
+    later = next(iter(order[prot_idx + 1:]), None)
+    check(later is not None, f"a block exists after protein: {[c['name'] for c in order]}")
+    side = _dish('carrots', type='dish', category_ids=[later['id']])
+    prot = _dish('chicken', type='dish', category_ids=[order[prot_idx]['id']])
+    out = meals.with_chip_labels([side, prot])       # insertion order: side first
+    check([d['name'] for d in out] == ['chicken', 'carrots'],
+          f"the protein leads regardless of insertion order, got "
+          f"{[d['name'] for d in out]}")
+    pizza = _dish('pizza night', type='meal')
+    out = meals.with_chip_labels([side, prot, pizza])
+    check(out[0]['name'] == 'pizza night', "a whole meal leads outright")
+    mystery = _dish('mystery casserole', type='dish')      # no categories
+    out = meals.with_chip_labels([mystery, side, prot])
+    check([d['name'] for d in out] == ['chicken', 'carrots', 'mystery casserole'],
+          f"uncategorized dishes keep their place at the back, got "
+          f"{[d['name'] for d in out]}")
+
+    import os
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    shopping = open(os.path.join(tpl, 'shopping.html'), encoding='utf-8').read()
+    check('leadCategoryId()' in shopping and 'main dish' in shopping,
+          "the lead block must wear its main-dish badge in "
+          "'What a plate looks like'")
+
+
 def scenario_the_board_block_leads_with_the_meal():
     """Reported with a photo: a wall-panel meal block titled "carrots".
     mainDish() predates the M5 type collapse — it looked for type='entree',
@@ -2505,10 +2543,14 @@ def scenario_the_board_block_leads_with_the_meal():
     shopping = open(os.path.join(tpl, 'shopping.html'), encoding='utf-8').read()
     seg = shopping.split('mainDish(day) {')[1].split('},')[0]
     check("d.type === 'meal'" in seg, "the whole meal leads the block")
-    check('min_per_plate' in seg and 'category_ids' in seg,
+    check('leadCategoryId' in seg and 'category_ids' in seg,
           "the lead-category (protein) dish must outrank plate order — "
           "type='entree' no longer exists post-M5, so without the category "
           "step the headline is whatever the plate's order happens to be")
+    lead = shopping.split('leadCategoryId() {')[1].split('},')[0]
+    check('min_per_plate' in lead,
+          "the lead is the first block with a minimum — same definition as "
+          "compose_plate's lead")
 
 
 def scenario_a_rule_can_say_whole_meals():

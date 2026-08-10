@@ -664,6 +664,15 @@
                                                 <input type="text" x-model="c.name" @change="saveCategory(c)"
                                                     placeholder="protein"
                                                     class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-sm font-bold text-white w-40 focus:outline-none focus:border-pink-400/60">
+                                                <!-- Which block LEADS was invisible: the composer
+                                                     picks its lead from the first must-have block,
+                                                     the wall headlines it, whole meals stand in for
+                                                     it — and nothing on this screen said so. -->
+                                                <span x-show="c.id === leadCategoryId()"
+                                                    title="The first must-have on the plate. It headlines the wall blocks and picks the dinner's picture; whole meals stand in for it. It is simply the first block here with a minimum above zero."
+                                                    class="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg bg-pink-500/15 border border-pink-400/50 text-pink-200 shrink-0">
+                                                    main dish
+                                                </span>
                                                 <span class="text-[11px] text-gray-500">per plate</span>
                                                 <input type="number" min="0" max="6" x-model.number="c.min_per_plate"
                                                     @change="saveCategory(c)" title="Fewest a plate should have"
@@ -1820,13 +1829,19 @@
                 // falling through to PLATE ORDER — and a replaced protein is
                 // re-added at the END of the plate, so the wall proudly
                 // headlined "carrots".
-                mainDish(day) {
-                    const ds = day.dishes || [];
+                // One definition of "the lead block", shared by the badge in
+                // "What a plate looks like" and the board headline.
+                leadCategoryId() {
                     const lead = (this.categories || [])
                         .find(c => (c.min_per_plate || 0) > 0);
+                    return lead ? lead.id : null;
+                },
+                mainDish(day) {
+                    const ds = day.dishes || [];
+                    const leadId = this.leadCategoryId();
                     return ds.find(d => d.type === 'meal')
-                        || (lead && ds.find(d =>
-                                (d.category_ids || []).includes(lead.id)))
+                        || (leadId && ds.find(d =>
+                                (d.category_ids || []).includes(leadId)))
                         || ds.find(d => d.type === 'entree')
                         || ds[0] || null;
                 },
