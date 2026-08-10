@@ -2292,7 +2292,8 @@ def ensure_dish_categories():
                 with_meal = False
             rec = {'id': _uuid.uuid4().hex, 'name': name, 'description': desc,
                    'min_per_plate': lo, 'max_per_plate': hi,
-                   'with_complete_meal': with_meal, 'order': order,
+                   'with_complete_meal': with_meal, 'is_main': key == 'protein',
+                   'order': order,
                    'created_at': time.time()}
             dish_categories_table.insert(rec)
             by_key[key] = rec['id']
@@ -2323,10 +2324,43 @@ def ensure_dish_categories():
 
 
 def get_dish_categories() -> List[dict]:
+    """The family's blocks, MAIN FIRST — and the main is a stored flag.
+
+    `is_main` is data rather than position because position here is an
+    accident: ties on `order` fall back to NAME, so renaming a category could
+    silently promote it. The invariant (exactly one main) is defended at the
+    read: none flagged promotes the first block — which is also the zero-cost
+    migration for every install predating the flag — and several flagged
+    keeps the first. Returning the main first is what keeps "the first block
+    is the main dish" true on every screen.
+    """
     with db_lock:
         rows = [dict(c) for c in dish_categories_table.all()]
-    return sorted(rows, key=lambda c: (c.get('order') or 0,
-                                       (c.get('name') or '').lower()))
+    rows.sort(key=lambda c: (c.get('order') or 0,
+                             (c.get('name') or '').lower()))
+    mains = [c for c in rows if c.get('is_main')]
+    if rows and len(mains) != 1:
+        keep = (mains[0] if mains else rows[0])['id']
+        with db_lock:
+            for c in rows:
+                want = c['id'] == keep
+                if bool(c.get('is_main')) != want:
+                    dish_categories_table.update({'is_main': want},
+                                                 Query().id == c['id'])
+                c['is_main'] = want
+    rows.sort(key=lambda c: (0 if c.get('is_main') else 1,
+                             c.get('order') or 0,
+                             (c.get('name') or '').lower()))
+    return rows
+
+
+def set_main_dish_category(cat_id: str) -> None:
+    """Exclusive by construction: flag one, clear the rest."""
+    with db_lock:
+        for c in dish_categories_table.all():
+            dish_categories_table.update({'is_main': c.get('id') == cat_id},
+                                         doc_ids=[c.doc_id])
+        mark_all_daily_schedules_dirty()
 
 def get_dish_category(cat_id: str) -> Optional[dict]:
     with db_lock:

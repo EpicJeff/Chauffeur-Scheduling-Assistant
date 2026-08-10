@@ -668,11 +668,17 @@
                                                      picks its lead from the first must-have block,
                                                      the wall headlines it, whole meals stand in for
                                                      it — and nothing on this screen said so. -->
-                                                <span x-show="c.id === leadCategoryId()"
-                                                    title="The first block is always the main dish, whatever you name it. It leads the plate, headlines the wall blocks and picks the dinner's picture; whole meals stand in for it."
+                                                <span x-show="c.is_main"
+                                                    title="The main dish, whatever you name it. It leads the plate, headlines the wall blocks and picks the dinner's picture; whole meals stand in for it. The list always shows it first."
                                                     class="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg bg-pink-500/15 border border-pink-400/50 text-pink-200 shrink-0">
                                                     main dish
                                                 </span>
+                                                <button x-show="!c.is_main"
+                                                    @click="saveCategory({ ...c, is_main: true })"
+                                                    title="Make this block the main dish"
+                                                    class="text-[10px] font-bold text-gray-600 hover:text-pink-300 shrink-0">
+                                                    make main
+                                                </button>
                                                 <span class="text-[11px] text-gray-500">per plate</span>
                                                 <input type="number" min="0" max="6" x-model.number="c.min_per_plate"
                                                     @change="saveCategory(c)" title="Fewest a plate should have"
@@ -1829,14 +1835,16 @@
                 // falling through to PLATE ORDER — and a replaced protein is
                 // re-added at the END of the plate, so the wall proudly
                 // headlined "carrots".
-                // One definition of "the lead block", shared by the badge in
-                // "What a plate looks like" and the board headline: the FIRST
-                // block, unconditionally. Positional and explainable — "first
-                // with a minimum" was the same block in practice and
-                // impossible to say on the settings screen.
+                // One definition of "the main dish block", shared by the badge
+                // in "What a plate looks like" and the board headline: the
+                // stored is_main flag. Position was an accident — order ties
+                // sort by NAME, so a rename could silently promote a block.
+                // The server returns the main first, so [0] is only the
+                // fallback for the beat before a heal has run.
                 leadCategoryId() {
-                    const first = (this.categories || [])[0];
-                    return first ? first.id : null;
+                    const m = (this.categories || []).find(c => c.is_main)
+                        || (this.categories || [])[0];
+                    return m ? m.id : null;
                 },
                 mainDish(day) {
                     const ds = day.dishes || [];

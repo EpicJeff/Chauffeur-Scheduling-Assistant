@@ -2491,6 +2491,44 @@ def scenario_whole_meals_carry_categories_into_rules():
           "the closed hand path this scenario exists to keep open")
 
 
+def scenario_the_main_dish_is_a_stored_flag():
+    """cats[0] was fragile — order ties fall back to NAME, so renaming a
+    block could silently move the main dish. `is_main` is stored fact:
+    seeded onto protein, self-healed to exactly one (none flagged promotes
+    the first block, which is also the free migration for old installs;
+    several flagged keeps one), and get_dish_categories always returns the
+    main FIRST, so "the first block is the main dish" stays true on every
+    screen without any consumer trusting a sort."""
+    reset_db(); _seed_people(); _settings()
+    cats = storage.get_dish_categories()
+    check([c['name'] for c in cats if c.get('is_main')] == ['protein']
+          and cats[0].get('is_main'),
+          f"seeding flags protein and it arrives first, got "
+          f"{[(c['name'], bool(c.get('is_main'))) for c in cats]}")
+    # Move the crown: flagging another block un-flags protein in the same act.
+    other = cats[1]
+    storage.set_main_dish_category(other['id'])
+    cats = storage.get_dish_categories()
+    check(cats[0]['id'] == other['id']
+          and [c['id'] for c in cats if c.get('is_main')] == [other['id']],
+          "exactly one main, and the list leads with it")
+    # Heal: an install with no flag at all promotes the first block.
+    for c in storage.get_dish_categories():
+        storage.save_dish_category({**c, 'is_main': False})
+    healed = storage.get_dish_categories()
+    check(sum(1 for c in healed if c.get('is_main')) == 1,
+          "no main heals to exactly one rather than none")
+
+    import os
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    shopping = open(os.path.join(tpl, 'shopping.html'), encoding='utf-8').read()
+    check('x-show="c.is_main"' in shopping,
+          "the badge must read the stored flag")
+    check('make main' in shopping and 'is_main: true' in shopping,
+          "moving the crown needs a hand path on the other blocks")
+
+
 def scenario_the_plate_reads_in_block_order():
     """"The dishes should stay in the same order as the blocks in What a
     plate looks like." Stored plate order is insertion order — a replaced
@@ -2520,6 +2558,21 @@ def scenario_the_plate_reads_in_block_order():
           f"uncategorized dishes keep their place at the back, got "
           f"{[d['name'] for d in out]}")
 
+    # The multi-category wrinkle: beans are protein AND starch. With chicken
+    # holding the protein slot the beans are there as the starch — sorting
+    # them first because protein is block one is technically correct and
+    # useless. Slots are assigned specialists-first with block capacity, so
+    # the versatile dish takes the slot that is actually open.
+    beans = _dish('red beans', type='dish',
+                  category_ids=[order[prot_idx]['id'], later['id']])
+    out = meals.with_chip_labels([beans, prot])      # beans inserted first
+    check([d['name'] for d in out] == ['chicken', 'red beans'],
+          f"a dish sorts at the slot it FILLS, not the earliest it matches, "
+          f"got {[d['name'] for d in out]}")
+    out = meals.with_chip_labels([beans, side])
+    check(out[0]['name'] == 'red beans',
+          "and with no chicken the beans ARE the protein and lead")
+
     import os
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
@@ -2548,9 +2601,9 @@ def scenario_the_board_block_leads_with_the_meal():
           "type='entree' no longer exists post-M5, so without the category "
           "step the headline is whatever the plate's order happens to be")
     lead = shopping.split('leadCategoryId() {')[1].split('},')[0]
-    check('(this.categories || [])[0]' in lead and 'min_per_plate' not in lead,
-          "the lead is the FIRST block, unconditionally — 'first with a "
-          "minimum' was the subtly-ambiguous rule the family refused")
+    check('c.is_main' in lead and 'min_per_plate' not in lead,
+          "the lead must read the stored main-dish flag — position was a "
+          "sort accident and minimums were the ambiguity before that")
 
 
 def scenario_a_rule_can_say_whole_meals():

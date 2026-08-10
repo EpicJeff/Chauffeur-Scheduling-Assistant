@@ -1131,13 +1131,15 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
                 if (d.get('type') or 'dish') != 'meal'
                 and cid in (d.get('category_ids') or [])]
 
-    # A `meal` dish is the whole plate. It competes on rank against the LEAD
-    # block — the FIRST block in "What a plate looks like", full stop. It used
-    # to be "first with a minimum above zero", which was the same block in
-    # practice and impossible to explain on the settings screen; the rule is
-    # now positional and the panel badges block one as the main dish. That
-    # keeps one-pot meals in rotation without letting them take every night.
-    lead = cats[0] if cats else None
+    # A `meal` dish is the whole plate. It competes on rank against the MAIN
+    # DISH block — the stored `is_main` flag, not a list position: position
+    # here is an accident (order ties fall back to name, so a rename could
+    # silently promote a block). get_dish_categories returns the main first,
+    # so the settings panel still reads "first block = main dish"; the flag
+    # is what makes that true rather than coincidental. That keeps one-pot
+    # meals in rotation without letting them take every night.
+    lead = next((c for c in cats if c.get('is_main')),
+                cats[0] if cats else None)
     best_meal = pick(storage.get_dishes_by_type('meal'))
     best_lead = pick(pool_for(lead['id'])) if lead else None
     # Strictly greater, not >=: on a tie the composed path wins. Everything
@@ -3762,9 +3764,20 @@ def plate_display_order(dishes: list, cats: list = None) -> list:
     the END — but the family reads a plate the way their own blocks are
     ordered, and every surface that leads with the first dish (the wall
     blocks, the chip rows) inherits whatever order editing left behind.
-    A whole meal leads outright; every other dish sorts at its earliest
-    matching block; the sort is stable, so uncategorized dishes keep their
-    relative order at the back.
+
+    A dish sorts at the block it is FILLING, not merely the earliest one it
+    matches. Beans are protein AND starch; when chicken holds the protein
+    slot, the beans are on the plate as the starch, and sorting them first
+    because protein is block one is technically correct and useless. The
+    composer knows the real assignment (`assigned` in compose_plate) but it
+    is never persisted, and pinned plates and hand-added dishes never had
+    one — so the display re-derives it the same way: one slot per dish,
+    block capacity (max_per_plate) respected, SPECIALISTS assigned first so
+    a single-block dish is never displaced from its only block by a
+    versatile one. A dish that finds all its blocks full sorts at its
+    earliest block anyway (two proteins both read as protein), a whole meal
+    leads outright, and the sort is stable, so uncategorized dishes keep
+    their relative order at the back.
     """
     if not dishes:
         return dishes
@@ -3772,13 +3785,30 @@ def plate_display_order(dishes: list, cats: list = None) -> list:
     order = {c['id']: i for i, c in enumerate(cats)}
     tail = len(cats)
 
-    def key(d):
-        if (d.get('type') or 'dish') == 'meal':
-            return -1
-        return min((order[c] for c in (d.get('category_ids') or [])
-                    if c in order), default=tail)
+    def blocks_of(d):
+        return sorted(order[c] for c in (d.get('category_ids') or [])
+                      if c in order)
 
-    return sorted(dishes, key=key)
+    remaining = {c['id']: max(1, int(c.get('max_per_plate') or 1))
+                 for c in cats}
+    slot = {}
+    claimants = [(len(blocks_of(d)) or tail + 1, i, d)
+                 for i, d in enumerate(dishes)
+                 if (d.get('type') or 'dish') != 'meal']
+    for _breadth, i, d in sorted(claimants, key=lambda t: (t[0], t[1])):
+        blocks = blocks_of(d)
+        got = next((bi for bi in blocks if remaining[cats[bi]['id']] > 0), None)
+        if got is None:
+            slot[i] = blocks[0] if blocks else tail
+        else:
+            remaining[cats[got]['id']] -= 1
+            slot[i] = got
+
+    def key(pair):
+        i, d = pair
+        return -1 if (d.get('type') or 'dish') == 'meal' else slot[i]
+
+    return [d for _i, d in sorted(enumerate(dishes), key=key)]
 
 
 def with_chip_labels(dishes: list, all_dishes: list = None) -> list:

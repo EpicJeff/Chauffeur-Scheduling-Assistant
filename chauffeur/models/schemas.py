@@ -1289,6 +1289,14 @@ class DishCategory(BaseModel):
     # wants — spaghetti night still ends with fruit — so the block says so
     # rather than the code hardcoding "dessert is special".
     with_complete_meal: bool = False
+    # THE MAIN DISH block, as stored fact rather than list position. It leads
+    # the composed plate, headlines the wall blocks, picks the dinner's
+    # picture, and whole meals stand in for it. Exactly one category carries
+    # this — storage.get_dish_categories() self-heals the invariant (promotes
+    # the first block when none is flagged, keeps one when several are) and
+    # always returns the main first, so "the first block is the main dish"
+    # stays true on every screen without any consumer trusting sort accidents.
+    is_main: bool = False
     order: int = 0
     created_at: float = 0.0
 

@@ -6440,6 +6440,10 @@ class DishCategoryReq(BaseModel):
     min_per_plate: int = 0
     max_per_plate: int = 1
     with_complete_meal: bool = False
+    # None means "leave it as it is" — the handler rebuilds the record, and a
+    # rename that silently cleared the main-dish flag would hand main-ness
+    # back to sort order, the accident the flag exists to end.
+    is_main: Optional[bool] = None
     order: int = 0
 
 @app.get("/api/meals/categories")
@@ -6465,9 +6469,16 @@ def save_dish_category(req: DishCategoryReq):
            'name': name, 'description': (req.description or '').strip(),
            'min_per_plate': lo, 'max_per_plate': hi,
            'with_complete_meal': bool(req.with_complete_meal),
+           'is_main': bool((prior or {}).get('is_main'))
+                      if req.is_main is None else bool(req.is_main),
            'order': int(req.order),
            'created_at': (prior or {}).get('created_at') or _t.time()}
     storage.save_dish_category(rec)
+    # Exactly one main: flagging this block un-flags the others in the same
+    # act. (Un-flagging the current main is allowed and simply hands the
+    # role to the first block via the read-side heal.)
+    if rec['is_main']:
+        storage.set_main_dish_category(rec['id'])
     _touch_stream()
     return rec
 
