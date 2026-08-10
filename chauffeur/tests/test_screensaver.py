@@ -195,6 +195,15 @@ def scenario_wake_tap_is_swallowed():
     check("addEventListener('pointerdown', (e) => {" in NAV
           and 'e.preventDefault(); e.stopPropagation(); ssStop();' in NAV,
           "the waking tap must dismiss, not press whatever was underneath")
+    # Cancelling pointerdown does not cancel the CLICK synthesised at release,
+    # and that click is hit-tested when it fires — so the overlay must outlive
+    # the gesture as an invisible shield, not vanish on the press (which is
+    # how the dismissal tap was navigating the panel).
+    check("root.addEventListener('click', (e) => {" in NAV
+          and "['pointerup', 'pointercancel'].forEach" in NAV,
+          "the overlay must stay as a shield until the gesture's click has "
+          "died on it — removing it on pointerdown lets the click fall "
+          "through to the page")
 
 
 def scenario_screensaver_covers_the_overlays():
@@ -272,7 +281,19 @@ setTimeout(() => {
           leaveBig: (next.querySelector('.text-4xl') || {}).textContent || '' }
       : null;
     before.dispatchEvent(new w.Event('pointerdown', { bubbles: true, cancelable: true }));
-    out.goneAfterTap = !doc.getElementById('panel-screensaver');
+    // The press stops the slideshow but must NOT remove the overlay yet:
+    // the browser's synthesised click is hit-tested at release, and an
+    // already-removed overlay would let it land on the page below.
+    const shield = doc.getElementById('panel-screensaver');
+    out.slideshowStopped = w._chfSsActive === false;
+    out.shieldStays = !!shield;
+    out.shieldInvisible = !!shield && shield.style.opacity === '0';
+    if (shield) {
+      const click = new w.Event('click', { bubbles: true, cancelable: true });
+      shield.dispatchEvent(click);
+      out.clickSwallowed = click.defaultPrevented;
+    }
+    out.goneAfterClick = !doc.getElementById('panel-screensaver');
   }
   console.log(JSON.stringify(out));
   w.close();
@@ -316,8 +337,15 @@ def scenario_jsdom_overlay_appears_and_a_tap_wakes_it():
           "the clock is empty — the idle face has no time on it")
     check(out.get('gradientPainted'),
           "an empty playlist should paint the gradient, not a black slab")
-    check(out.get('goneAfterTap'),
-          "a tap did not dismiss the screensaver")
+    check(out.get('slideshowStopped'),
+          "the press did not stop the slideshow")
+    check(out.get('shieldStays') and out.get('shieldInvisible'),
+          "after the press the overlay must remain as an INVISIBLE shield — "
+          f"removing it now is what let the tap click the page below: {out}")
+    check(out.get('clickSwallowed'),
+          "the gesture's click must die on the shield, not reach the page")
+    check(out.get('goneAfterClick'),
+          "once the click has been swallowed the shield must leave")
     nxt = out.get('next') or {}
     txt = nxt.get('text') or ''
     check('Soccer Practice' in txt,

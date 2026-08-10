@@ -636,7 +636,28 @@
                 clearInterval(ssSlideTimer);
                 clearInterval(ssClockTimer);
                 clearInterval(ssHeroTimer);
-                if (ssRoot) ssRoot.remove();
+                if (ssRoot) {
+                    // Cancelling the pointerdown does NOT cancel the click the
+                    // browser synthesises at release, and that click is
+                    // hit-tested when it FIRES. Remove the overlay here and
+                    // the dismissal tap presses whatever sat under the finger
+                    // — a shelf button, a tile — and the panel navigates. So
+                    // the overlay goes invisible now but stays as a shield
+                    // until the gesture is over: the click dies on it, or the
+                    // release passes with no click (drag, palm), and then it
+                    // leaves. The long fallback only covers a pointer that
+                    // never reports its release.
+                    const root = ssRoot;
+                    root.style.transition = 'none';
+                    root.style.opacity = '0';
+                    const fallback = setTimeout(() => bury(), 10000);
+                    const bury = () => { clearTimeout(fallback); root.remove(); };
+                    root.addEventListener('click', (e) => {
+                        e.preventDefault(); e.stopPropagation(); bury();
+                    }, true);
+                    ['pointerup', 'pointercancel'].forEach(ev =>
+                        root.addEventListener(ev, () => setTimeout(bury, 400), true));
+                }
                 ssRoot = null; ssLayers = [];
                 if (window._chfSsPendingHome) {
                     window._chfSsPendingHome = false;
