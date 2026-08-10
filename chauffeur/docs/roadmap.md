@@ -384,6 +384,63 @@ looking, and every one works. config.html is the residue.
 Rule going forward: **a new setting is registered in the registry and placed on
 its feature's surface, never appended to config.html.**
 
+## The load arc (designed 2026-08-10 — the next big program)
+
+Full brief: `docs/household_load_design.md`. Six arcs, four new primitives,
+one derived lens. Built from a code audit, not from these docs.
+
+The finding: **the app models the family's work as driving, and anything not
+drive-shaped has no home** (`Errand` requires `location`+`duration_mins`
+because an errand IS a drive) — and **the child's work is fully modelled while
+the adult's work is not modelled at all** (`assigned_to`/`assignee`/
+`owner_member`: zero hits repo-wide). That is backwards, because the mental
+load is the adults'. A third: an adult's own life exists in this app only as
+an OBSTACLE — a personal calendar event's whole function is to make you
+unavailable to drive.
+
+Primitives: `HouseholdTask` (work with a deadline and no destination) ·
+`Request` (an ask with a state, kid→parent and adult→adult on the same rails) ·
+`CarpoolDriver` (external coverage — NOT a `helper`, who is internal with app
+access) · `Stage` (the developmental band a child is in) · the **load ledger**
+(a lens that states and never scores).
+
+- **A1 — the carpool book. SHIP FIRST.** A drive that is real and isn't ours,
+  as a third assignment state so it leaves the optimisation entirely. Stored
+  drivers (name + phone + "Emma's mom") because they repeat, the number is the
+  value in the moment, and only a stored driver stops the solver scheduling
+  us. Kills a standing false alarm (`🚨 No driver yet` for rides that were
+  always handled). Slice 2: the turn ledger — "you've driven 2 of the last 9".
+- **A2 — household tasks + assignee. The keystone.** Task = do something,
+  errand = go somewhere. Yearly recurrence (errands lack it). Unassigned is a
+  real state meaning the household owes it. Unlocks intake's fourth target —
+  the extraction prompt already names "permission slip due, payment due,
+  picture day" and has nowhere to put them.
+- **A3 — requests.** A kid can report but cannot ask; an adult can only TAKE a
+  drive from their partner, who gets a bare "Schedule Updated" push. One
+  object, always answered, accepting performs the change.
+- **A4 — stages.** No birthdate/age/grade field exists today; `role=='child'`
+  is the whole model, so a 6yo and a 16yo get identical everything and the only
+  exit deletes the kid lens. Sprout/Explorer/Navigator/Copilot, suggested from
+  birthdate, overridable per capability. Growing up is GRANTED, never silently
+  switched; nothing is deleted on transition. Load awareness is the anti-stress
+  feature. Explicitly out: mood/journaling/sentiment — health is a scheduling
+  problem, not a content problem.
+- **A5 — the dual-income safety net.** School days get kinds (half days are the
+  sneaky ones), aftercare as a care window that widens the solver's deadline,
+  and childcare-gap detection over a 21-day horizon — the app already knows
+  school is closed and knows both calendars and never computes the
+  intersection. Also fixes: `clear_deck`/`give_space` have no solver effect
+  despite the design doc, and the status→solver injection is 14 days against a
+  30-day build horizon.
+- **A6 — outlets + the household briefing.** Protected commitments the solver
+  defends, erosion watch ("you've missed your Thursday run three weeks running
+  — every time it was a drive"), coverage that makes an outlet real, recovery
+  beats, adult quiet hours (the kid machinery has no adult counterpart), and
+  **the briefing**: the tomorrow digest is per-driver today, so the
+  non-driving parent learns the day changed by looking at a screen. Show
+  OPENINGS, not assignments — the hard part of picking up slack is visibility,
+  not willingness.
+
 ## Nice-to-haves / polish
 
 - Chore fairness nudges via the solver (rotation suggestions for chronically
