@@ -483,6 +483,15 @@
                                 <input type="checkbox" x-model="ruleDraft.takeout" class="accent-pink-500 w-4 h-4">
                                 Takeout
                             </label>
+                            <!-- Structural, like Takeout: `type='meal'` is a
+                                 field, so "one-pot dinners once a week" needs
+                                 no tagging campaign. ANDs with the tag box —
+                                 both set means whole meals carrying the tag. -->
+                            <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer pb-2"
+                                title="Dinners that are the whole plate on their own — lasagna, chili, pizza night">
+                                <input type="checkbox" x-model="ruleDraft.whole_meals" class="accent-violet-500 w-4 h-4">
+                                Whole meals
+                            </label>
                             <div x-show="ruleDraft.kind === 'frequency_cap'" class="flex items-end gap-2">
                                 <div>
                                     <label class="block text-[11px] text-gray-500 mb-1">At most</label>
@@ -520,7 +529,7 @@
                              offered when a tag or takeout is doing the
                              selecting — with dishes picked by hand there is
                              nothing to subtract from. -->
-                        <div x-show="(ruleDraft.tags || '').trim() || ruleDraft.takeout"
+                        <div x-show="(ruleDraft.tags || '').trim() || ruleDraft.takeout || ruleDraft.whole_meals"
                             class="mt-3 pt-3 border-t border-gray-700 flex flex-wrap items-center gap-2">
                             <button @click="openDishMultiPicker('exclude_dish_ids')"
                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:text-white">
@@ -1946,6 +1955,7 @@
                 blankRule() {
                     return { id: null, kind: 'frequency_cap', name: '', tags: '',
                              dish_ids: [], exclude_dish_ids: [], takeout: false,
+                             whole_meals: false,
                              max_servings: 1, window_days: 7, dwell_days: 3 };
                 },
 
@@ -2001,7 +2011,8 @@
                 ruleWouldMatch() {
                     const d = this.ruleDraft;
                     const { tags, minus } = this.parseTagField(d.tags);
-                    const hasClause = d.dish_ids.length || tags.length || d.takeout;
+                    const hasClause = d.dish_ids.length || tags.length
+                        || d.takeout || d.whole_meals;
                     if (!hasClause) return [];
                     const dropped = new Set([...d.exclude_dish_ids,
                                              ...this.minusMatches(minus).map(x => x.id)]);
@@ -2011,6 +2022,7 @@
                         if (tags.length && !this.dishRuleWords(x)
                             .some(t => tags.includes(t))) return false;
                         if (d.takeout && (x.source || 'prep') !== 'ordered') return false;
+                        if (d.whole_meals && (x.type || 'dish') !== 'meal') return false;
                         return true;
                     });
                 },
@@ -2057,6 +2069,7 @@
                         dish_ids: [...(r.dish_ids || [])],
                         exclude_dish_ids: [...(r.exclude_dish_ids || [])],
                         takeout: (r.sources || []).includes('ordered'),
+                        whole_meals: (r.types || []).includes('meal'),
                         max_servings: r.max_servings || 1,
                         window_days: r.window_days || 7,
                         dwell_days: r.dwell_days || 3,
@@ -2067,9 +2080,9 @@
                 async saveRule() {
                     const d = this.ruleDraft;
                     const { tags, minus } = this.parseTagField(d.tags);
-                    if (!d.dish_ids.length && !tags.length && !d.takeout) {
+                    if (!d.dish_ids.length && !tags.length && !d.takeout && !d.whole_meals) {
                         showGlobalAlert('What does this apply to? Pick the dishes, '
-                            + 'type a tag, or tick Takeout.');
+                            + 'type a tag, or tick Takeout or Whole meals.');
                         return;
                     }
                     // `-word` is resolved to real dish ids HERE rather than
@@ -2081,11 +2094,13 @@
                     try {
                         const body = {
                             name: (d.name || '').trim() || tags.join(', ')
-                                  || (d.takeout ? 'takeout' : 'rule'),
+                                  || (d.takeout ? 'takeout'
+                                      : d.whole_meals ? 'whole meals' : 'rule'),
                             kind: d.kind, tags: tags,
                             dish_ids: [...d.dish_ids],
                             exclude_dish_ids: excl,
                             sources: d.takeout ? ['ordered'] : [],
+                            types: d.whole_meals ? ['meal'] : [],
                             max_servings: parseInt(d.max_servings) || 1,
                             window_days: parseInt(d.window_days) || 7,
                             dwell_days: parseInt(d.dwell_days) || 3,

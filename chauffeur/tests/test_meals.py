@@ -2491,6 +2491,49 @@ def scenario_whole_meals_carry_categories_into_rules():
           "the closed hand path this scenario exists to keep open")
 
 
+def scenario_a_rule_can_say_whole_meals():
+    """"I want a rule that matches whole meals." type='meal' is a field, so
+    the selector is structural like takeout (types=['meal']) and the matcher
+    always honoured it — what did not exist was any way to SAY it: the form
+    had no control, the preview was blind to the clause, and neither agent
+    stack offered the flag."""
+    reset_db(); _seed_people(); _settings()
+    _dish('lasagna', type='meal')
+    _dish('chili', type='meal')
+    _dish('roast chicken', type='entree')
+    res = meals.add_meal_rule('one-pot dinners', 'frequency_cap',
+                              types=['meal'], max_servings=1, window_days=7)
+    check(res['match_count'] == 2 and set(res['matches']) == {'lasagna', 'chili'},
+          f"types=['meal'] selects exactly the whole meals, got {res['matches']}")
+    check('whole meals' in meals.describe_meal_rule(res['rule']),
+          "the description says it the family's way, not schema vocabulary")
+
+    from services import agent_tools, agent_tools_v2
+    said = agent_tools.execute_tool('set_meal_rule', {
+        'description': 'one-pot dinners now and then',
+        'whole_meals': True, 'max_servings': 1, 'window_days': 7})
+    check(said['status'] == 'success' and 'lasagna' in said['message'],
+          f"the v1 bridge carries whole_meals through, got {said}")
+    v2 = next(t for t in agent_tools_v2.get_available_tools()
+              if t['name'] == 'set_meal_rule')
+    check('whole_meals' in v2['parameters']['properties'],
+          "the v2 schema offers the flag")
+
+    import os
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    shopping = open(os.path.join(tpl, 'shopping.html'), encoding='utf-8').read()
+    for needle, why in (
+            ('ruleDraft.whole_meals', 'no form control for whole meals'),
+            ("(r.types || []).includes('meal')",
+             'editing a whole-meals rule silently drops the selector'),
+            ("d.whole_meals && (x.type || 'dish') !== 'meal'",
+             'the live preview is blind to the selector'),
+            ("types: d.whole_meals ? ['meal'] : []",
+             'the save never sends the selector')):
+        check(needle in shopping, why)
+
+
 def scenario_a_rule_matching_nothing_says_so():
     """"meat" is not a field. A tag the family never used governs nobody, and
     silently doing nothing is the failure mode worth surfacing."""

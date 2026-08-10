@@ -768,7 +768,9 @@ def describe_meal_rule(rule: dict) -> str:
         what.append('takeout' if 'ordered' in rule['sources']
                     else '/'.join(rule['sources']))
     if rule.get('types'):
-        what.append('/'.join(rule['types']))
+        # `meal` is schema vocabulary; the family says "whole meals".
+        what.append('/'.join('whole meals' if t == 'meal' else t
+                             for t in rule['types']))
     if rule.get('dish_ids'):
         names = [(storage.get_dish(i) or {}).get('short_name')
                  or (storage.get_dish(i) or {}).get('name')

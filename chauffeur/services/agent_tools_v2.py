@@ -1897,12 +1897,15 @@ def get_shopping_trip(list_name: str = "", acting_member: dict = None) -> Dict[s
 
 def set_meal_rule(description: str, kind: str = "frequency_cap",
                   tags: str = "", dish_names: str = "", takeout: bool = False,
+                  whole_meals: bool = False,
                   max_servings: int = 1, window_days: int = 7,
                   dwell_days: int = 3, except_dishes: str = "",
                   acting_member: dict = None) -> Dict[str, Any]:
     """WRITE: how this household EATS. "we only eat meat about once a week",
     "takeout now and then", "we cook one kind of beans at a time and eat it a
-    few days before making the next"."""
+    few days before making the next". `whole_meals` is structural like
+    `takeout`: type='meal' is a field, so "one-pot dinners at most twice a
+    week" needs no tagging campaign."""
     from services import storage, meals
     tag_list = [t.strip().lower()
                 for t in str(tags or '').replace(' and ', ',').split(',')
@@ -1921,6 +1924,7 @@ def set_meal_rule(description: str, kind: str = "frequency_cap",
     res = meals.add_meal_rule(description, kind, tags=tag_list, dish_ids=ids,
                               exclude_dish_ids=excl,
                               sources=['ordered'] if takeout else [],
+                              types=['meal'] if whole_meals else [],
                               max_servings=max_servings, window_days=window_days,
                               dwell_days=dwell_days)
     said = meals.describe_meal_rule(res['rule'])
@@ -3234,6 +3238,7 @@ def get_available_tools() -> List[Dict]:
                     "tags": {"type": "string", "description": "Comma separated dish tags it applies to, e.g. meat or beans."},
                     "dish_names": {"type": "string", "description": "Comma separated specific dishes, when tags will not do."},
                     "takeout": {"type": "boolean", "description": "true when the rule is about takeout or delivery."},
+                    "whole_meals": {"type": "boolean", "description": "true when the rule is about whole meals / one-pot dinners (dishes that are the entire plate on their own, like lasagna or chili)."},
                     "max_servings": {"type": "number", "description": "How many times, for frequency_cap."},
                     "window_days": {"type": "number", "description": "Per how many days for frequency_cap (7 = a week); the per-dish cooldown for repeat_spacing (21 = three weeks)."},
                     "dwell_days": {"type": "number", "description": "How many days one batch lasts, for batch_cycle."},

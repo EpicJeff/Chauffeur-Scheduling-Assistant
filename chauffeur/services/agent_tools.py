@@ -527,6 +527,7 @@ class SetMealRuleTool(BaseModel):
     tags: Optional[str] = Field(None, description="Comma separated dish tags, e.g. meat or beans.")
     dish_names: Optional[str] = Field(None, description="Comma separated specific dishes.")
     takeout: Optional[bool] = Field(False, description="true when the rule is about takeout.")
+    whole_meals: Optional[bool] = Field(False, description="true when the rule is about whole meals / one-pot dinners (a dish that is the entire plate, like lasagna or chili).")
     max_servings: Optional[int] = Field(1, description="How many times, for frequency_cap.")
     window_days: Optional[int] = Field(7, description="Per how many days (7 = a week); for repeat_spacing, the per-dish cooldown (21 = three weeks).")
     dwell_days: Optional[int] = Field(3, description="How many days one batch lasts.")
@@ -2012,14 +2013,19 @@ def handle_get_tonights_plate(args: dict) -> dict:
 
 def handle_set_meal_rule(args: dict) -> dict:
     from services.agent_tools_v2 import set_meal_rule
+    # Keywords, not positions: the v2 signature grows (whole_meals landed
+    # between takeout and max_servings) and a positional bridge silently
+    # shifts every argument after the insertion point.
     return set_meal_rule(args.get("description") or "",
-                         args.get("kind") or "frequency_cap",
-                         args.get("tags") or "", args.get("dish_names") or "",
-                         bool(args.get("takeout")),
-                         int(args.get("max_servings") or 1),
-                         int(args.get("window_days") or 7),
-                         int(args.get("dwell_days") or 3),
-                         args.get("except_dishes") or "")
+                         kind=args.get("kind") or "frequency_cap",
+                         tags=args.get("tags") or "",
+                         dish_names=args.get("dish_names") or "",
+                         takeout=bool(args.get("takeout")),
+                         whole_meals=bool(args.get("whole_meals")),
+                         max_servings=int(args.get("max_servings") or 1),
+                         window_days=int(args.get("window_days") or 7),
+                         dwell_days=int(args.get("dwell_days") or 3),
+                         except_dishes=args.get("except_dishes") or "")
 
 def handle_get_meal_rules(args: dict) -> dict:
     from services.agent_tools_v2 import get_meal_rules
