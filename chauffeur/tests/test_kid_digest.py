@@ -87,6 +87,48 @@ def scenario_builder_rides_and_reassurance():
           f"unassigned ride never alarms with a driver phrase, got {k['lines'][2]}")
 
 
+def scenario_the_digest_does_not_assert_a_maybe():
+    """Reported from the Daily Routines wall: '7:00 PM – Girls' for an
+    optional drop-in read exactly like a firm commitment. Undecided ->
+    '(optional)'; skipped -> the line says so and STOPS (no driver phrase,
+    no bring-list for a thing they are not attending); an explicit attend
+    reads firm, unmarked."""
+    _reset()
+    day = TOMORROW.isoformat()
+    storage.set_cached_schedule({
+        "events": [
+            {"id": "gym", "title": "Open Gym", "start": f"{day}T17:00:00",
+             "end": f"{day}T18:00:00", "calendar_ids": ["cal1"],
+             "app_config": {"is_optional": True}},
+            {"id": "girls", "title": "Girls", "start": f"{day}T19:00:00",
+             "end": f"{day}T20:00:00", "calendar_ids": ["cal1"],
+             "app_config": {"is_optional": True}, "optional_decision": "skip"},
+            {"id": "ballet", "title": "Ballet", "start": f"{day}T20:00:00",
+             "end": f"{day}T21:00:00", "calendar_ids": ["cal1"],
+             "app_config": {"is_optional": True}, "optional_decision": "attend"},
+        ],
+        "assignments": {"gym": "d1", "ballet": "d1"},
+        "ghost_assignments": {}, "matched_rules": {}, "scheduled_errands": [],
+    })
+    import main
+    with mock.patch.object(family_digest, 'weather_line', return_value=None), \
+         mock.patch.object(storage, 'get_optional_decision',
+                           side_effect=lambda ids, d:
+                               'skip' if 'girls' in ids else
+                               ('attend' if 'ballet' in ids else None)):
+        digest = main._build_kid_digests()
+    lines = digest["kids"]["kid1"]["lines"]
+    gym = next(l for l in lines if 'Open Gym' in l)
+    check('(optional)' in gym and '🚗' in gym,
+          f"undecided is marked but still reassures about the driver: {gym}")
+    girls = next(l for l in lines if 'Girls' in l)
+    check('skipped today' in girls and '🚗' not in girls,
+          f"a skipped occurrence says so and stops: {girls}")
+    ballet = next(l for l in lines if 'Ballet' in l)
+    check('(optional)' not in ballet and '🚗' in ballet,
+          f"an explicit attend reads like any firm commitment: {ballet}")
+
+
 def scenario_routine_only_kid_included():
     _reset()
     storage.set_cached_schedule({"events": [], "assignments": {}, "matched_rules": {},
@@ -293,6 +335,7 @@ SCENARIOS = [
     scenario_a_trip_already_under_way_does_not_keep_beginning,
     scenario_an_all_day_trip_does_not_come_home_a_day_late,
     scenario_builder_rides_and_reassurance,
+    scenario_the_digest_does_not_assert_a_maybe,
     scenario_routine_only_kid_included,
     scenario_kid_quiet_hours,
     scenario_dm_delivery_per_child,

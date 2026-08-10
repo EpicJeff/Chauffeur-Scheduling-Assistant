@@ -7137,6 +7137,16 @@ def _build_kid_digests(target_date=None):
                 line = f"{t} – {r.get('title') or 'Event'}"
             except Exception:
                 line = r.get('title') or 'Event'
+            # Optional events: the digest must not assert a maybe. A skipped
+            # occurrence says so and stops — no driver phrase, no bring-list
+            # for a thing they are not attending; an undecided one is marked
+            # (optional) so "5:00 PM – Open Gym" never reads as a promise.
+            # An explicit 'attend' reads like any firm commitment.
+            if r.get('optional') and r.get('optional_decision') == 'skip':
+                lines.append(line + " — skipped today")
+                continue
+            if r.get('optional') and r.get('optional_decision') != 'attend':
+                line += " (optional)"
             # Driver phrase: reassurance is the point. Split legs may have
             # different drivers ("Dad takes you, Mom brings you home");
             # an unassigned ride just omits the phrase — the parent watcher
