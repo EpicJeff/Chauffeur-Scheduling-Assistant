@@ -429,6 +429,7 @@ with db_lock:
     status_days_table = db.table('status_days')
     assist_contacts_table = db.table('assist_contacts')
     assist_assignments_table = db.table('assist_assignments')
+    household_tasks_table = db.table('household_tasks')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -1744,6 +1745,107 @@ def set_assist_assignment(event_id: str, contact_id: str, note: str = "") -> dic
 def clear_assist_assignment(event_id: str) -> bool:
     with db_lock:
         return bool(assist_assignments_table.remove(Query().event_id == event_id))
+
+# --- Household tasks (load arc A2) ---
+# Work with a deadline and no destination. Task = do something, errand = go
+# somewhere; keeping that line crisp is what keeps "renew the passports" out
+# of the solver's Tuesday.
+
+def get_household_tasks(assigned_to: str = None, include_done: bool = False,
+                        unassigned_only: bool = False) -> List[dict]:
+    with db_lock:
+        rows = [dict(t) for t in household_tasks_table.all()]
+    if assigned_to:
+        rows = [t for t in rows if t.get('assigned_to') == assigned_to]
+    if unassigned_only:
+        rows = [t for t in rows if not t.get('assigned_to')]
+    if not include_done:
+        rows = [t for t in rows if t.get('status') != 'done']
+    # Dated work first, in date order; undated work after it. A task with no
+    # deadline is real ("sort the garage") but it must never push a dated one
+    # down the list.
+    rows.sort(key=lambda t: (t.get('due_date') or '9999-99-99',
+                             (t.get('title') or '').lower()))
+    return rows
+
+def get_household_task(task_id: str) -> Optional[dict]:
+    with db_lock:
+        res = household_tasks_table.search(Query().id == task_id)
+        return dict(res[0]) if res else None
+
+def add_household_task(data: dict) -> str:
+    with db_lock:
+        household_tasks_table.insert(data)
+        return data['id']
+
+def update_household_task(task_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(household_tasks_table.update(data, Query().id == task_id))
+
+def delete_household_task(task_id: str):
+    with db_lock:
+        household_tasks_table.remove(Query().id == task_id)
+
+def _next_due(due_date: str, recurrence: str) -> Optional[str]:
+    """The next occurrence after `due_date`. Yearly is the one that matters
+    here — errands cannot express it, and annual is exactly the life-admin
+    cadence (inspection, physicals, passports, registration windows)."""
+    import datetime as _dt
+    if not due_date or recurrence in (None, '', 'none'):
+        return None
+    try:
+        d = _dt.date.fromisoformat(due_date)
+    except ValueError:
+        return None
+    if recurrence == 'daily':
+        return (d + _dt.timedelta(days=1)).isoformat()
+    if recurrence == 'weekly':
+        return (d + _dt.timedelta(days=7)).isoformat()
+    if recurrence == 'monthly':
+        month = d.month + 1
+        year = d.year + (1 if month > 12 else 0)
+        month = 1 if month > 12 else month
+        # Clamp the day: the 31st of a 30-day month is the 30th, not a crash.
+        import calendar as _cal
+        day = min(d.day, _cal.monthrange(year, month)[1])
+        return _dt.date(year, month, day).isoformat()
+    if recurrence == 'yearly':
+        try:
+            return d.replace(year=d.year + 1).isoformat()
+        except ValueError:           # 29 Feb into a common year
+            return d.replace(year=d.year + 1, day=28).isoformat()
+    return None
+
+def complete_household_task(task_id: str, done: bool = True,
+                            member_id: str = None) -> Optional[dict]:
+    """Completing a recurring task closes this one and opens the next, the
+    same shape recurring errands use — regenerate on completion rather than
+    scheduling the whole series ahead."""
+    import time as _time
+    import uuid as _uuid
+    with db_lock:
+        res = household_tasks_table.search(Query().id == task_id)
+        if not res:
+            return None
+        row = dict(res[0])
+        patch = {'status': 'done' if done else 'open',
+                 'completed_at': _time.time() if done else None,
+                 'completed_by': member_id if done else None}
+        household_tasks_table.update(patch, Query().id == task_id)
+        row.update(patch)
+        follow = None
+        if done and row.get('recurrence') not in (None, '', 'none'):
+            nxt = _next_due(row.get('due_date'), row.get('recurrence'))
+            if nxt:
+                follow = dict(row)
+                follow.update({'id': _uuid.uuid4().hex, 'due_date': nxt,
+                               'status': 'open', 'completed_at': None,
+                               'completed_by': None, 'created_at': _time.time()})
+                household_tasks_table.insert(follow)
+    if follow:
+        row['next_task_id'] = follow['id']
+        row['next_due_date'] = follow['due_date']
+    return row
 
 # --- Shopping lists (meals & provisioning arc M1) ---
 # A STANDING list bound to a recurring errand by TAG, never by errand id: the

@@ -3197,6 +3197,35 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
         return {"status": "approved", "errand_id": errand.id,
                 "message": f'Added "{errand.title}" as a drive errand 🚗'}
 
+    # Load arc A2: 'household_task' is the FOURTH intake target, and the one
+    # the capture layer had been missing. The extraction prompt already names
+    # "permission slip due, payment due, picture day" as things to find — and
+    # until now they fit nowhere: not a calendar event, not an errand (which
+    # demands a location because an errand IS a drive), not a kid task (that
+    # is a child's own school list). They became a fake all-day event or
+    # nothing at all.
+    if (req.calendar_id or '') == 'household_task':
+        from models.schemas import HouseholdTask
+        due = (start or '')[:10]
+        try:
+            datetime.strptime(due, '%Y-%m-%d')
+        except (ValueError, TypeError):
+            due = None                 # a task may legitimately have no deadline
+        task = HouseholdTask(title=title, due_date=due, source='intake',
+                             source_ref=proposal_id,
+                             notes=prop.get('notes') or '').model_dump()
+        storage.add_household_task(task)
+        storage.update_proposal(proposal_id, {
+            'status': 'approved', 'calendar_id': req.calendar_id,
+            'created_task_id': task['id'], 'title': title, 'start': start, 'end': end,
+        })
+        _record_intake_feedback(prop, req.calendar_id)
+        # Deliberately unassigned: "the household owes this" is a real state,
+        # and picking an owner here would just move the deciding back onto
+        # whoever happened to tap Approve.
+        return {"status": "approved", "task_id": task['id'],
+                "message": f'Added "{title}" to the household list 📋'}
+
     # K4b: a 'tasks:{member_id}' target lands the item on that kid's school
     # list instead of any calendar — never solver load, never an all-day 📌.
     if (req.calendar_id or '').startswith('tasks:'):
@@ -3312,6 +3341,134 @@ def _public_member(m: dict) -> dict:
     out = {k: v for k, v in m.items() if k not in ('pin_hash', 'pin_salt', 'pin')}
     out['has_pin'] = bool(m.get('pin_hash'))
     return out
+
+# --- Household tasks (load arc A2 — the keystone) ---
+# Work with a deadline and no destination. Task = do something, errand = go
+# somewhere. `assigned_to` optional, and UNASSIGNED IS A REAL STATE meaning
+# the household owes it — that is where delegation lives.
+
+@app.get("/api/household-tasks")
+def list_household_tasks(assigned_to: Optional[str] = None,
+                         include_done: bool = False,
+                         unassigned_only: bool = False):
+    import datetime as _dt
+    tasks = storage.get_household_tasks(assigned_to=assigned_to,
+                                        include_done=include_done,
+                                        unassigned_only=unassigned_only)
+    today = _dt.date.today().isoformat()
+    members = {m['id']: m for m in storage.get_all_members(include_system=True)}
+    for t in tasks:
+        due = t.get('due_date')
+        t['past_due'] = bool(due and due < today and t.get('status') != 'done')
+        t['due_today'] = bool(due and due == today)
+        owner = members.get(t.get('assigned_to') or '')
+        t['assigned_to_name'] = owner.get('name') if owner else None
+    return tasks
+
+@app.post("/api/household-tasks")
+def create_household_task(task: HouseholdTask):
+    data = task.model_dump()
+    if not (data.get('title') or '').strip():
+        raise HTTPException(status_code=400, detail="A task needs a title")
+    storage.add_household_task(data)
+    return {"status": "success", "id": data['id']}
+
+@app.patch("/api/household-tasks/{task_id}")
+def patch_household_task(task_id: str, updates: dict = Body(...)):
+    if not storage.get_household_task(task_id):
+        raise HTTPException(status_code=404, detail="Task not found")
+    clean = {k: v for k, v in (updates or {}).items()
+             if k in HouseholdTask.model_fields and k not in ('id', 'created_at')}
+    storage.update_household_task(task_id, clean)
+    return {"status": "success"}
+
+@app.post("/api/household-tasks/{task_id}/complete")
+def complete_household_task_endpoint(task_id: str, body: dict = Body(default={})):
+    row = storage.complete_household_task(task_id, done=bool(body.get('done', True)),
+                                          member_id=body.get('member_id'))
+    if not row:
+        raise HTTPException(status_code=404, detail="Task not found")
+    out = {"status": "success"}
+    if row.get('next_due_date'):
+        out['message'] = f"Done — the next one is due {row['next_due_date']}."
+        out['next_due_date'] = row['next_due_date']
+    return out
+
+@app.delete("/api/household-tasks/{task_id}")
+def remove_household_task(task_id: str):
+    if not storage.get_household_task(task_id):
+        raise HTTPException(status_code=404, detail="Task not found")
+    storage.delete_household_task(task_id)
+    return {"status": "success"}
+
+@app.get("/api/household-load")
+def household_load(days: int = 30):
+    """Who is carrying what. **States, never scores** — no percentages, no
+    leaderboard, no chart. Adults need division of labour, not gamification,
+    and a fairness chart between two spouses is a fight generator.
+
+    Assist-tier members are counted SEPARATELY, never folded into the
+    household's split: a teenager who drives six times and cooks twice must
+    not make the parents look even (load arc, "covering is not carrying").
+    """
+    import datetime as _dt
+    from services import family_digest
+    cutoff = (_dt.date.today() - _dt.timedelta(days=max(1, min(days, 180)))).isoformat()
+    members = [m for m in storage.get_all_members() if not m.get('system')]
+    by_id = {m['id']: m for m in members}
+
+    rows = {}
+    for m in members:
+        if m.get('role') in ('parent', 'adult') or m.get('assist_tier') == 'assist':
+            rows[m['id']] = {'member_id': m['id'], 'name': m.get('name'),
+                             'assist': m.get('assist_tier') == 'assist'
+                                       or m.get('role') == 'helper',
+                             'tasks': 0, 'drives': 0}
+
+    for t in storage.get_household_tasks(include_done=True):
+        if t.get('status') != 'done' or not t.get('assigned_to'):
+            continue
+        done_day = _dt.datetime.fromtimestamp(t.get('completed_at') or 0).date().isoformat()
+        if done_day < cutoff:
+            continue
+        r = rows.get(t['assigned_to'])
+        if r:
+            r['tasks'] += 1
+
+    # Drives come from the existing daily snapshots, which already exclude
+    # ghost drivers (services/family_digest.record_daily_stats).
+    span = [(_dt.date.today() - _dt.timedelta(days=i)).isoformat()
+            for i in range(max(1, min(days, 180)))]
+    try:
+        stats = storage.get_daily_stats(span) or []
+    except Exception:
+        stats = []
+    drv_to_member = {m.get('driver_id'): m['id'] for m in members if m.get('driver_id')}
+    for day in stats:
+        for drv_id, d in (day.get('drivers') or {}).items():
+            mid = drv_to_member.get(drv_id)
+            if mid and mid in rows:
+                rows[mid]['drives'] += int(d.get('drives') or 0)
+
+    household = [r for r in rows.values() if not r['assist']]
+    assisting = [r for r in rows.values() if r['assist']]
+    for r in household + assisting:
+        r['total'] = r['tasks'] + r['drives']
+    household.sort(key=lambda r: -r['total'])
+    assisting.sort(key=lambda r: -r['total'])
+
+    # The sentence, in the occasions `_load_balance` voice: it counts and
+    # names and deliberately never ranks or scores.
+    line = None
+    carried = [r for r in household if r['total']]
+    if len(carried) >= 2 and sum(r['total'] for r in carried) >= 6:
+        top, total = carried[0], sum(r['total'] for r in carried)
+        line = (f"{top['total']} of the {total} things done in the last "
+                f"{days} days were {top['name']}'s.")
+    elif len(carried) == 1 and carried[0]['total'] >= 4:
+        line = f"Everything logged in the last {days} days was {carried[0]['name']}'s."
+    return {"days": days, "household": household, "assisting": assisting,
+            "line": line}
 
 # --- Outside hands: assist contacts and the work they cover (load arc A1) ---
 # A contact is somebody outside this household who does work for it — a carpool

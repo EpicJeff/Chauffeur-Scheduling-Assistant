@@ -71,6 +71,9 @@ WIDGETS = [
      'blurb': "The next few days on the family calendar, drives or not."},
     {'key': 'errands', 'icon': '📋', 'label': 'Errands waiting',
      'blurb': "What still needs doing, past-due first."},
+    {'key': 'tasks', 'icon': '📝', 'label': 'The household owes',
+     'blurb': "Work with a deadline and nowhere to drive — past due first, "
+              "and what nobody has taken."},
     {'key': 'trips', 'icon': '🧭', 'label': 'Next trip',
      'blurb': "The next trip and how long until it starts."},
     {'key': 'map', 'icon': '🗺️', 'label': 'Where everyone is',
@@ -885,6 +888,41 @@ def _tile_calendar(now, sched=None, settings=None, **_):
         return None
 
 
+def _tile_tasks(now, **_):
+    """Household work with a deadline and no destination (load arc A2).
+
+    Past due first, then unclaimed, then the rest. The unclaimed band is the
+    one that earns the tile: "nobody has this and it is due Thursday" is
+    invisible everywhere else, and a wall is where a household actually
+    notices it.
+    """
+    try:
+        rows = storage.get_household_tasks()
+        if not rows and not storage.get_household_tasks(include_done=True):
+            return None                       # never made one: feature unused
+        if not rows:
+            return {'empty': "Nothing owed right now."}
+        today = now.date().isoformat()
+        names = {m['id']: m.get('name') for m in storage.get_all_members()}
+        out = []
+        for t in rows:
+            due = t.get('due_date')
+            out.append({
+                'title': t.get('title') or 'Task',
+                'due': due,
+                'past_due': bool(due and due < today),
+                'unclaimed': not t.get('assigned_to'),
+                'who': names.get(t.get('assigned_to') or ''),
+            })
+        out.sort(key=lambda r: (not r['past_due'], not r['unclaimed'],
+                                r['due'] or '9999-99-99'))
+        return {'tasks': out[:6], 'total': len(out),
+                'unclaimed': sum(1 for r in out if r['unclaimed'])}
+    except Exception as e:
+        print(f"[home_board] tasks failed: {e}")
+        return None
+
+
 def _tile_errands(now, **_):
     try:
         every = storage.get_all_errands() or []
@@ -1114,7 +1152,8 @@ _BUILDERS: dict = {
     'drives': _tile_drives, 'kids': _tile_kids, 'meals': _tile_meals,
     'shopping': _tile_shopping, 'chores': _tile_chores, 'routines': _tile_routines,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,
-    'calendar': _tile_calendar, 'errands': _tile_errands, 'trips': _tile_trips,
+    'calendar': _tile_calendar, 'errands': _tile_errands, 'tasks': _tile_tasks,
+    'trips': _tile_trips,
     'map': _tile_map, 'intake': _tile_intake,
 }
 

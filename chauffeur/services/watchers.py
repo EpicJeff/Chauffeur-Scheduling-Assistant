@@ -24,6 +24,7 @@ from services import storage
 
 WATCH_WINDOW_DAYS = 3          # unassigned-event lookahead
 STALE_PROPOSAL_DAYS = 3        # intake proposals pending this long
+UNCLAIMED_TASK_LEAD_DAYS = 2   # a dated household task with nobody's name on it
 STALE_VERIFY_HOURS = 48        # done chores awaiting parent verification
 STALE_REDEMPTION_HOURS = 48    # reward requests awaiting a decision
 UNCLAIMED_CHORE_DAYS = 7       # open chores nobody has claimed
@@ -202,7 +203,41 @@ def collect_findings(now: datetime.datetime = None):
     findings += _redemption_findings(now_ts)
     findings += _errand_findings()
     findings += _occasion_findings(now)
+    findings += _household_task_findings(now)
     return findings, unclaimed
+
+
+def _household_task_findings(now: datetime.datetime):
+    """Household work with a deadline and no destination (load arc A2).
+
+    Two findings, and the second is the point of the whole object: a task
+    that is DUE SOON AND STILL BELONGS TO NOBODY. "The household owes this"
+    is a real state, and the moment it stops being fine is when the date
+    arrives with nobody's name on it.
+    """
+    import datetime as _dt
+    today = now.date()
+    out = []
+    for t in storage.get_household_tasks():
+        due = t.get('due_date')
+        if not due:
+            continue          # an undated task is never late; it is just work
+        try:
+            due_d = _dt.date.fromisoformat(due)
+        except ValueError:
+            continue
+        title = t.get('title') or 'Something'
+        if due_d < today:
+            days = (today - due_d).days
+            out.append((f"task_overdue:{t['id']}:{due}",
+                        f"📋 Past due: {title} — was due "
+                        f"{'yesterday' if days == 1 else f'{days} days ago'}"))
+        elif not t.get('assigned_to') and (due_d - today).days <= UNCLAIMED_TASK_LEAD_DAYS:
+            when = 'today' if due_d == today else (
+                'tomorrow' if (due_d - today).days == 1 else due_d.strftime('%a'))
+            out.append((f"task_unclaimed:{t['id']}:{due}",
+                        f"📋 Nobody has {title} — due {when}"))
+    return out
 
 
 def run_watchers(now: datetime.datetime = None) -> int:

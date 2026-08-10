@@ -125,6 +125,16 @@ class FamilyMember(BaseModel):
     # participation, no admin. child: family + kid lens + points economy.
     # helper: external (hired driver/nanny) — driving surfaces only.
     role: str = 'adult'
+    # COVERING IS NOT CARRYING (load arc). `household` contributions count as
+    # the household's load; `assist` ones do not. A teenager who drives, a
+    # hired nanny, a grandparent who cooks Sunday dinner all COVER work
+    # without CARRYING the household's share of it — and the tier lives here,
+    # on the member, rather than on the driver record, because assisting is
+    # not a driving-specific thing: a teen can cook a night, a nanny can
+    # supervise homework. Hanging it on `Driver` would have leaked the moment
+    # a teenager cooked, making the parents' split look even.
+    # `helper` is always assist regardless of what this says.
+    assist_tier: str = 'household'          # household | assist
     driver_id: Optional[str] = None
     passenger_id: Optional[str] = None
     # Google calendars belonging to THIS PERSON — set in exactly one place
@@ -478,6 +488,46 @@ class ManualOverride(BaseModel):
     # 'pwa' when a driver self-assigned via the PWA Assign-to-Me button.
     # Used to suppress the redundant "you gained this" push for that driver.
     source: Optional[str] = None
+
+class HouseholdTask(BaseModel):
+    """Work with a deadline and no destination (load arc A2 — the keystone).
+
+    **Task = do something. Errand = go somewhere.** `Errand` requires a
+    `location` and a `duration_mins` because an errand IS a drive the solver
+    routes — so "sign the permission slip", "call the pediatrician", "renew
+    the passports", "$12 for picture day" had nowhere to live at all. Keeping
+    the line crisp is what stops "renew the passports" becoming a routing job
+    competing for a Tuesday slot.
+
+    `assigned_to` is OPTIONAL, and unassigned is a real state meaning *the
+    household owes this*. That is where delegation and whose-turn live; an
+    object that forces an owner at creation just moves the deciding back onto
+    whoever typed it.
+    """
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    title: str
+    notes: Optional[str] = ""
+    due_date: Optional[str] = None          # YYYY-MM-DD; a task may have no deadline
+    assigned_to: Optional[str] = None       # member id; None = the household owes it
+    created_by: Optional[str] = None
+    status: str = 'open'                    # open | done
+    completed_at: Optional[float] = None
+    completed_by: Optional[str] = None
+    # Yearly is the point of this field: errands offer daily/weekly/monthly,
+    # and annual is precisely the life-admin cadence — inspection, physicals,
+    # passports, registration windows.
+    recurrence: str = 'none'                # none | daily | weekly | monthly | yearly
+    category: Optional[str] = 'general'     # paperwork | health | money | home | school | general
+    effort_mins: Optional[int] = None
+    # What this belongs to, when it belongs to something.
+    occasion_id: Optional[str] = None
+    member_id: Optional[str] = None         # the person it is ABOUT (not who does it)
+    event_id: Optional[str] = None
+    # Who covered it, when the answer is "somebody outside the house" (A1).
+    assist_contact_id: Optional[str] = None
+    source: str = 'manual'                  # manual | agent | intake | ics
+    source_ref: Optional[str] = None
+    created_at: float = Field(default_factory=time.time)
 
 class AssistContact(BaseModel):
     """Someone outside the household who does work for it (load arc A1).

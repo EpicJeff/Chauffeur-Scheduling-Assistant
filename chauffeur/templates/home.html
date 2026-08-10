@@ -522,6 +522,29 @@
                     </template>
 
                     <!-- errands waiting -->
+                    <!-- the household owes — work with a deadline and nowhere
+                         to drive. Unclaimed items say so out loud: "nobody has
+                         this and it is due Thursday" is invisible everywhere
+                         else, and a wall is where a household notices it. -->
+                    <template x-if="t.key === 'tasks' && !t.data.empty">
+                        <div class="space-y-1.5">
+                            <template x-for="(e, i) in t.data.tasks" :key="i">
+                                <div class="flex items-baseline gap-2">
+                                    <span class="shrink-0" :class="e.past_due ? 'text-amber-400' : 'panel-dim'"
+                                        x-text="e.past_due ? '!' : '•'"></span>
+                                    <span class="text-base truncate"
+                                        :class="e.past_due ? 'text-amber-200' : 'panel-text'"
+                                        x-text="e.title"></span>
+                                    <span class="text-xs shrink-0"
+                                        :class="e.unclaimed ? 'text-amber-300/80' : 'panel-dim'"
+                                        x-text="e.who || 'nobody yet'"></span>
+                                </div>
+                            </template>
+                            <div class="text-xs panel-dim pt-1" x-show="t.data.total > t.data.tasks.length"
+                                x-text="'and ' + (t.data.total - t.data.tasks.length) + ' more'"></div>
+                        </div>
+                    </template>
+
                     <template x-if="t.key === 'errands' && !t.data.empty">
                         <div class="space-y-1.5">
                             <template x-for="(e, i) in t.data.errands" :key="i">

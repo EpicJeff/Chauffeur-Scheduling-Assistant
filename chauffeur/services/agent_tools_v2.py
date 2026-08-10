@@ -645,6 +645,161 @@ def send_direct_message(recipient_name: str, message_text: str,
             "message": f"Sent to {recipient.get('name')} from {sender.get('name')}: “{text}”"}
 
 
+def _task_due_date(when: str):
+    """A spoken deadline into YYYY-MM-DD, or None. None is a real answer —
+    'sort the garage' is work with no date, and inventing one would put a
+    false deadline in front of the family."""
+    if not (when or '').strip():
+        return None
+    try:
+        return _parse_fuzzy_date(when).isoformat()
+    except Exception:
+        return None
+
+
+def add_household_task(title: str, due: str = None, assign_to: str = None,
+                       notes: str = None, recurrence: str = None,
+                       category: str = None, acting_member: dict = None) -> Dict[str, Any]:
+    """Work with a deadline and no destination. If it needs a drive it is an
+    errand; this is for the permission slip, the phone call, the renewal."""
+    from models.schemas import HouseholdTask
+    from services import storage
+    title = (title or '').strip()
+    if not title:
+        return {"status": "error", "message": "What is the task?"}
+    owner = None
+    if assign_to:
+        owner = _find_member_fuzzy(assign_to)
+        if not owner:
+            return {"status": "error",
+                    "message": f"I couldn't find '{assign_to}'. Family members: {_member_names()}."}
+    rec = (recurrence or 'none').strip().lower()
+    if rec not in ('none', 'daily', 'weekly', 'monthly', 'yearly'):
+        rec = 'none'
+    task = HouseholdTask(
+        title=title, due_date=_task_due_date(due), notes=(notes or '').strip(),
+        assigned_to=(owner or {}).get('id'), recurrence=rec,
+        category=(category or 'general').strip().lower() or 'general',
+        created_by=(acting_member or {}).get('id'), source='agent').model_dump()
+    storage.add_household_task(task)
+    who = f" for {owner['name']}" if owner else ""
+    when = f", due {task['due_date']}" if task['due_date'] else ""
+    every = f", every {rec}" if rec != 'none' else ""
+    return {"status": "success",
+            "message": f"Added \"{title}\"{who}{when}{every} to the household list."}
+
+
+def get_household_tasks(assigned_to: str = None, unassigned_only: bool = False) -> Dict[str, Any]:
+    import datetime
+    from services import storage
+    owner = _find_member_fuzzy(assigned_to) if assigned_to else None
+    if assigned_to and not owner:
+        return {"status": "error",
+                "message": f"I couldn't find '{assigned_to}'. Family members: {_member_names()}."}
+    rows = storage.get_household_tasks(assigned_to=(owner or {}).get('id'),
+                                       unassigned_only=unassigned_only)
+    if not rows:
+        if unassigned_only:
+            return {"status": "success", "message": "Nothing is sitting unclaimed."}
+        return {"status": "success",
+                "message": f"Nothing on {owner['name']}'s list." if owner
+                           else "The household list is clear."}
+    names = {m['id']: m.get('name') for m in storage.get_all_members()}
+    today = datetime.date.today().isoformat()
+    lines = []
+    for t in rows[:15]:
+        bits = [t.get('title') or 'Task']
+        if t.get('due_date'):
+            bits.append("past due" if t['due_date'] < today else f"due {t['due_date']}")
+        holder = names.get(t.get('assigned_to') or '')
+        bits.append(holder if holder else "nobody yet")
+        lines.append(" — ".join(bits))
+    head = (f"{owner['name']}'s list:" if owner
+            else ("Waiting for somebody to take it:" if unassigned_only
+                  else "The household list:"))
+    return {"status": "success", "message": head + "\n" + "\n".join(lines)}
+
+
+def _match_task(title: str):
+    from services import storage
+    q = (title or '').strip().lower()
+    rows = storage.get_household_tasks()
+    if not q:
+        return None, rows
+    exact = [t for t in rows if (t.get('title') or '').lower() == q]
+    if len(exact) == 1:
+        return exact[0], rows
+    part = [t for t in rows if q in (t.get('title') or '').lower()]
+    if len(part) == 1:
+        return part[0], rows
+    return None, rows
+
+
+def complete_household_task(title: str, acting_member: dict = None) -> Dict[str, Any]:
+    from services import storage
+    task, rows = _match_task(title)
+    if not task:
+        open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing'
+        return {"status": "error",
+                "message": f"I couldn't pin down '{title}'. Open: {open_titles}."}
+    row = storage.complete_household_task(task['id'], True,
+                                          (acting_member or {}).get('id'))
+    msg = f"Done: {task.get('title')}."
+    if row and row.get('next_due_date'):
+        msg += f" The next one is due {row['next_due_date']}."
+    return {"status": "success", "message": msg}
+
+
+def claim_household_task(title: str, member_name: str = None,
+                         acting_member: dict = None) -> Dict[str, Any]:
+    """Put a name on work the household owed. This is the delegation path —
+    and the reason `assigned_to` is optional in the first place."""
+    from services import storage
+    owner, err = (_find_member_fuzzy(member_name), None) if member_name else (acting_member, None)
+    if member_name and not owner:
+        return {"status": "error",
+                "message": f"I couldn't find '{member_name}'. Family members: {_member_names()}."}
+    if not owner:
+        return {"status": "error",
+                "message": "Who should take it? Tell me a name."}
+    task, rows = _match_task(title)
+    if not task:
+        open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing'
+        return {"status": "error",
+                "message": f"I couldn't pin down '{title}'. Open: {open_titles}."}
+    storage.update_household_task(task['id'], {'assigned_to': owner['id']})
+    return {"status": "success",
+            "message": f"{owner.get('name')} has {task.get('title')}."}
+
+
+def get_household_load(days: int = 30) -> Dict[str, Any]:
+    """Who is carrying what. STATES, never scores — the occasions
+    `_load_balance` voice. No percentages, no leaderboard, no chart: adults
+    need division of labour, not gamification, and a fairness chart between
+    two spouses is a fight generator."""
+    try:
+        import main as _main
+        data = _main.household_load(days=days)
+    except Exception as e:
+        return {"status": "error", "message": f"I couldn't work that out ({e})."}
+    parts = []
+    for r in data.get('household', []):
+        if r.get('total'):
+            parts.append(f"{r['name']}: {r['total']}")
+    if not parts:
+        return {"status": "success",
+                "message": f"Nothing logged in the last {days} days."}
+    msg = f"Last {days} days — " + ", ".join(parts) + "."
+    if data.get('line'):
+        msg += " " + data['line']
+    helping = [f"{r['name']}: {r['total']}" for r in data.get('assisting', []) if r.get('total')]
+    if helping:
+        # Named separately on purpose: help covers work, it does not carry
+        # the household's share of it.
+        msg += " Helping hands (not counted in the split) — " + ", ".join(helping) + "."
+    return {"status": "success", "message": msg}
+
+
 def _find_assist_contact(name: str):
     """Match a spoken name against the assist contacts, on BOTH the name and
     the label the family actually says. Nobody in this house says "Sarah
@@ -2592,6 +2747,68 @@ def get_available_tools() -> List[Dict]:
                     "from_member": {"type": "string", "description": "Who the message is from. Omit in driver chat."}
                 },
                 "required": ["recipient_name", "message_text"]
+            }
+        },
+        {
+            "name": "add_household_task",
+            "description": "Adds household work that has a DEADLINE BUT NO DESTINATION — 'sign the permission slip', 'call the pediatrician', 'renew the passports', '$12 for picture day', 'book the dentist'. If the job is to GO somewhere, use add_errand instead (that one is a drive the solver routes). Leave it unassigned unless somebody was named: 'the household owes this' is a real state.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "The task, in the family's own words."},
+                    "due": {"type": "string", "description": "When it's due, as spoken ('Friday', 'the 14th'). Omit if there is no deadline."},
+                    "assign_to": {"type": "string", "description": "Who is doing it, if anyone was named. Omit to leave it on the household."},
+                    "notes": {"type": "string", "description": "Anything else that matters."},
+                    "recurrence": {"type": "string", "description": "none | daily | weekly | monthly | yearly. Use yearly for inspections, physicals, passports, registration windows."},
+                    "category": {"type": "string", "description": "paperwork | health | money | home | school | general"}
+                },
+                "required": ["title"]
+            }
+        },
+        {
+            "name": "get_household_tasks",
+            "description": "Reads the household's task list ('what's on my plate?', 'what do we owe this week?', 'what's nobody doing?'). Use unassigned_only for the last one.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "assigned_to": {"type": "string", "description": "Whose list to read. Omit for the whole household."},
+                    "unassigned_only": {"type": "boolean", "description": "Only work nobody has taken."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "complete_household_task",
+            "description": "Marks a household task done ('I signed the permission slip', 'the passports are renewed'). A recurring task opens its next instance automatically.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Which task, as spoken."}
+                },
+                "required": ["title"]
+            }
+        },
+        {
+            "name": "claim_household_task",
+            "description": "Puts somebody's name on household work that nobody had taken ('I'll do the permission slip', 'give the dentist call to Dad'). This is the delegation path between adults.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Which task, as spoken."},
+                    "member_name": {"type": "string", "description": "Who is taking it. Omit in driver chat to mean the speaker."}
+                },
+                "required": ["title"]
+            }
+        },
+        {
+            "name": "get_household_load",
+            "description": "Who has been carrying the household lately — tasks done and drives driven ('who's been doing everything?', 'how's the split been this month?'). States it plainly and never scores it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "description": "How far back to look (default 30)."}
+                },
+                "required": []
             }
         },
         {

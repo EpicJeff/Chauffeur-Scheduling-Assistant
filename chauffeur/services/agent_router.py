@@ -314,6 +314,10 @@ sending or claiming, and never pass from_member/member_name for them.
                              # Outside hands (load arc A1): the write confirms
                              # itself out loud, the read IS the whole answer.
                              "cover_with_assist", "get_assist_coverage",
+                             # Household tasks (load arc A2), same reasoning.
+                             "add_household_task", "get_household_tasks",
+                             "complete_household_task", "claim_household_task",
+                             "get_household_load",
                              "get_family_messages", "list_chores",
                              "claim_chore", "get_routine_status",
                              "post_weekly_digest", "get_drive_digest",
@@ -518,6 +522,37 @@ sending or claiming, and never pass from_member/member_name for them.
                                               args.get("message_text", ""),
                                               sender_driver_id=driver_id if driver else None,
                                               from_member=args.get("from_member"))
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name in ("add_household_task", "get_household_tasks",
+                                   "complete_household_task", "claim_household_task",
+                                   "get_household_load"):
+                    from services import agent_tools_v2 as _atv2
+                    # Same actor resolution as the kid-task and shopping tools:
+                    # attribution, never a gate — anyone in the family may add
+                    # to the household list or take something off it.
+                    actor = acting_member
+                    if actor is None and driver:
+                        from services import storage as _st
+                        actor = _st.get_member_by_driver_id(driver_id)
+                    if func_name == "add_household_task":
+                        res = _atv2.add_household_task(
+                            args.get("title", "") or "", due=args.get("due"),
+                            assign_to=args.get("assign_to"), notes=args.get("notes"),
+                            recurrence=args.get("recurrence"), category=args.get("category"),
+                            acting_member=actor)
+                    elif func_name == "get_household_tasks":
+                        res = _atv2.get_household_tasks(
+                            assigned_to=args.get("assigned_to"),
+                            unassigned_only=bool(args.get("unassigned_only")))
+                    elif func_name == "complete_household_task":
+                        res = _atv2.complete_household_task(args.get("title", "") or "",
+                                                            acting_member=actor)
+                    elif func_name == "claim_household_task":
+                        res = _atv2.claim_household_task(args.get("title", "") or "",
+                                                         member_name=args.get("member_name"),
+                                                         acting_member=actor)
+                    else:
+                        res = _atv2.get_household_load(days=args.get("days", 30) or 30)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "cover_with_assist":
                     from services.agent_tools_v2 import cover_with_assist

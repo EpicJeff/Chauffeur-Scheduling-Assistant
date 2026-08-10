@@ -96,9 +96,45 @@
         
         <!-- Header -->
         <header class="panel-page p-8 pb-4">
-            <h2 class="panel-page-title">Errands</h2>
-            <p class="text-gray-400">Add errands here to have them automatically scheduled into driver routes.</p>
+            <h2 class="panel-page-title">Errands &amp; tasks</h2>
+            <p class="text-gray-400">An <b>errand</b> is a drive — it has a place to go, and the solver
+                fits it into somebody's routes. A <b>task</b> is work with a deadline and nowhere to
+                drive: sign the form, make the call, renew the passports.</p>
         </header>
+
+        <!-- Household tasks (load arc A2 — the keystone).
+             Deliberately on THIS page and above the errands: the distinction
+             between "do something" and "go somewhere" is the whole point of
+             the object, and it is only learnable if you can see both. -->
+        <div class="px-8 pb-2">
+            <div class="bg-gray-800/60 rounded-xl border border-gray-700/50 p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-widest">The household list</h3>
+                    <span id="task-load-line" class="text-xs text-gray-500 italic"></span>
+                </div>
+
+                <div class="flex flex-wrap gap-2 mb-3">
+                    <input id="new-task-title" placeholder="Sign the permission slip"
+                        class="flex-1 min-w-52 bg-gray-900 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-teal-500">
+                    <input type="date" id="new-task-due"
+                        class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-sm">
+                    <select id="new-task-owner" class="bg-gray-900 rounded-lg px-2 py-2 text-sm">
+                        <option value="">Nobody yet</option>
+                    </select>
+                    <select id="new-task-recurrence" class="bg-gray-900 rounded-lg px-2 py-2 text-sm">
+                        <option value="none">One-off</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                    </select>
+                    <button onclick="addHouseholdTask()"
+                        class="bg-teal-600 hover:bg-teal-500 px-4 py-2 rounded-lg font-semibold text-sm">Add task</button>
+                </div>
+
+                <div id="tasks-list" class="flex flex-col gap-2"></div>
+                <p id="tasks-empty" class="text-gray-500 text-sm italic hidden">Nothing owed right now.</p>
+            </div>
+        </div>
 
         <!-- Input Area -->
         <div class="px-8 pb-6">
@@ -899,8 +935,117 @@
             }
         }
 
+        // --- Household tasks (load arc A2) -------------------------------
+        // Task = do something, errand = go somewhere. Kept deliberately plain:
+        // this list exists so that work with a deadline and no destination
+        // finally has somewhere to be, not to become a project manager.
+
+        let householdTasks = [];
+
+        async function fetchHouseholdTasks() {
+            try {
+                const [tRes, mRes, lRes] = await Promise.all([
+                    fetch('api/household-tasks'),
+                    fetch('api/members'),
+                    fetch('api/household-load?days=30'),
+                ]);
+                householdTasks = tRes.ok ? await tRes.json() : [];
+                const members = mRes.ok ? await mRes.json() : [];
+                const owner = document.getElementById('new-task-owner');
+                if (owner && owner.options.length <= 1) {
+                    members.filter(m => m.role !== 'child')
+                        .forEach(m => owner.add(new Option(m.name, m.id)));
+                }
+                const load = lRes.ok ? await lRes.json() : {};
+                // States it, never scores it: one sentence, no chart.
+                document.getElementById('task-load-line').textContent = load.line || '';
+                renderHouseholdTasks();
+            } catch (e) { console.error(e); }
+        }
+
+        function renderHouseholdTasks() {
+            const list = document.getElementById('tasks-list');
+            const empty = document.getElementById('tasks-empty');
+            if (!list) return;
+            empty.classList.toggle('hidden', householdTasks.length > 0);
+            list.innerHTML = householdTasks.map(t => {
+                const due = t.past_due
+                    ? `<span class="text-red-400 font-semibold">past due</span>`
+                    : (t.due_date ? `<span class="text-gray-400">due ${t.due_date}</span>` : '');
+                // "Nobody yet" is a real, sayable state — not a blank.
+                const who = t.assigned_to_name
+                    ? `<span class="text-teal-300">${t.assigned_to_name}</span>`
+                    : `<button onclick="claimTask('${t.id}')" class="text-gray-500 hover:text-teal-300 underline decoration-dotted">nobody yet</button>`;
+                const rec = t.recurrence && t.recurrence !== 'none'
+                    ? `<span class="text-gray-600">· ${t.recurrence}</span>` : '';
+                return `<div class="bg-gray-900 rounded-lg px-3 py-2 flex items-center gap-3">
+                    <input type="checkbox" onchange="completeTask('${t.id}')"
+                        class="w-4 h-4 rounded accent-teal-500 shrink-0">
+                    <span class="flex-1 text-sm text-white">${t.title}</span>
+                    <span class="text-xs flex items-center gap-2">${due} ${who} ${rec}</span>
+                    <button onclick="deleteTask('${t.id}')"
+                        class="text-gray-600 hover:text-red-400 text-xs">✕</button>
+                </div>`;
+            }).join('');
+        }
+
+        async function addHouseholdTask() {
+            const title = document.getElementById('new-task-title').value.trim();
+            if (!title) return;
+            const payload = {
+                title,
+                due_date: document.getElementById('new-task-due').value || null,
+                assigned_to: document.getElementById('new-task-owner').value || null,
+                recurrence: document.getElementById('new-task-recurrence').value || 'none',
+            };
+            document.getElementById('new-task-title').value = '';
+            try {
+                await fetch('api/household-tasks', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload) });
+                await fetchHouseholdTasks();
+            } catch (e) { showGlobalAlert("Couldn't add that."); }
+        }
+
+        async function completeTask(id) {
+            try {
+                const res = await fetch(`api/household-tasks/${id}/complete`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ done: true }) }).then(r => r.json());
+                if (res.message) showGlobalAlert(res.message);
+                await fetchHouseholdTasks();
+            } catch (e) { showGlobalAlert("Couldn't mark that done."); }
+        }
+
+        async function claimTask(id) {
+            const who = document.getElementById('new-task-owner').value;
+            if (!who) {
+                showGlobalAlert("Pick who's taking it in the dropdown first.");
+                return;
+            }
+            try {
+                await fetch(`api/household-tasks/${id}`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ assigned_to: who }) });
+                await fetchHouseholdTasks();
+            } catch (e) { showGlobalAlert("Couldn't assign that."); }
+        }
+
+        async function deleteTask(id) {
+            if (!await promptConfirm('Delete this task?', 'It goes for everyone.', 'Delete')) return;
+            try {
+                await fetch(`api/household-tasks/${id}`, { method: 'DELETE' });
+                await fetchHouseholdTasks();
+            } catch (e) { showGlobalAlert("Couldn't delete that."); }
+        }
+
+        document.getElementById('new-task-title').addEventListener('keydown', e => {
+            if (e.key === 'Enter') addHouseholdTask();
+        });
+
         // Initialize
         fetchErrands();
+        fetchHouseholdTasks();
     </script>
     {% include 'components/control_center.html' %}
     {% include 'components/moments_hearth.html' %}
