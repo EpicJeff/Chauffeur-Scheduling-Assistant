@@ -583,6 +583,44 @@
             });
         }
 
+        // ── The idle clock is "when was the wall last TOUCHED", and it
+        // survives a reload. Background updates come in two kinds and neither
+        // may reset it: data pushes repaint in place through chf-server-update
+        // and never touch these timers at all, while code/layout pushes
+        // (hello: after a rebuild, a profile edit) are real reloads — so the
+        // last-touch stamp lives in localStorage and the timers arm with the
+        // REMAINDER of the idle period, not a fresh one. Without this, a
+        // rebuild or a settings tweak on a phone woke the wall up for a full
+        // idle period, and a busy afternoon of them meant the screensaver
+        // never came at all.
+        let chfLastInput = Date.now(), chfLastInputWrite = 0;
+        if (isPanel) {
+            try {
+                const s = parseInt(localStorage.getItem('chfPanelLastInput'), 10);
+                if (s && s <= Date.now()) chfLastInput = s;
+            } catch (e) { /* private mode: reloads just get a fresh period */ }
+        }
+        const chfStampInput = () => {
+            chfLastInput = Date.now();
+            // Throttled: wheel fires at frame rate and the stamp only has to
+            // be accurate to seconds against periods measured in minutes.
+            if (chfLastInput - chfLastInputWrite > 3000) {
+                chfLastInputWrite = chfLastInput;
+                try { localStorage.setItem('chfPanelLastInput', String(chfLastInput)); }
+                catch (e) { /* the in-memory stamp still serves this page */ }
+            }
+        };
+        // Remaining idle time. Clamped both ways: a stamp from the future
+        // (clock skew) cannot stretch the period past its full length, and a
+        // stale stamp still leaves a short beat so a reload paints before the
+        // photos take the glass — capped at the period itself so a
+        // deliberately tiny idle_seconds is honoured.
+        const chfIdleRemaining = (secs) => {
+            const ms = secs * 1000;
+            return Math.max(Math.min(3000, ms),
+                            Math.min(ms, ms - (Date.now() - chfLastInput)));
+        };
+
         // Screensaver. After a longer idle than the return-home, the wall stops
         // being a schedule and becomes a picture frame: a Ken Burns slideshow
         // (Moments, the HA media share, or the wallpaper) with a clock. The
@@ -677,6 +715,10 @@
 
             const ssStop = () => {
                 if (!window._chfSsActive) return;
+                // The waking tap IS user input, but its pointerdown is
+                // swallowed on the overlay before the document listeners see
+                // it — stamp here or ssArm below re-fires in seconds.
+                chfStampInput();
                 window._chfSsActive = false;
                 clearInterval(ssSlideTimer);
                 clearInterval(ssClockTimer);
@@ -762,7 +804,7 @@
             const ssArm = () => {
                 clearTimeout(ssIdleTimer);
                 if (!ssCfg || !ssCfg.idle_seconds) return;
-                ssIdleTimer = setTimeout(ssStart, ssCfg.idle_seconds * 1000);
+                ssIdleTimer = setTimeout(ssStart, chfIdleRemaining(ssCfg.idle_seconds));
             };
 
             // Server push: a solve finishing mid-slideshow refreshes the
@@ -774,11 +816,20 @@
             panelProfile().then(p => {
                 ssCfg = (p && p.screensaver) || null;
                 if (!ssCfg || !ssCfg.idle_seconds) return;
-                ['pointerdown', 'keydown', 'wheel', 'touchstart', 'scroll'].forEach(ev =>
-                    document.addEventListener(ev, () => { if (!window._chfSsActive) ssArm(); }, { passive: true }));
+                // No 'scroll' here: every human scroll on this hardware begins
+                // with a touchstart/wheel/pointerdown that already stamps, and
+                // a board repaint that clamps the page's scroll position fires
+                // a document scroll of its own — the one background "event"
+                // that was resetting the idle clock from inside the page.
+                ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(ev =>
+                    document.addEventListener(ev, () => { chfStampInput(); if (!window._chfSsActive) ssArm(); }, { passive: true }));
                 // A tab HA un-hides after hours away should not flash straight
-                // into the slideshow; give it a fresh idle period.
-                document.addEventListener('visibilitychange', () => { if (!document.hidden && !window._chfSsActive) ssArm(); });
+                // into the slideshow; give it a fresh idle period. (Stamped as
+                // input on purpose — a reload never fires visibilitychange, so
+                // this cannot mask the survives-a-reload arming above.)
+                document.addEventListener('visibilitychange', () => {
+                    if (!document.hidden && !window._chfSsActive) { chfStampInput(); ssArm(); }
+                });
                 ssArm();
             });
         }
@@ -805,10 +856,15 @@
                         };
                         const reset = () => {
                             clearTimeout(timer);
-                            timer = setTimeout(goHome, secs * 1000);
+                            // Remainder, not a fresh period: a rebuild reload
+                            // mid-wander must not grant the page another stay.
+                            timer = setTimeout(goHome, chfIdleRemaining(secs));
                         };
-                        ['pointerdown', 'keydown', 'wheel', 'touchstart', 'scroll']
-                            .forEach(ev => document.addEventListener(ev, reset, { passive: true }));
+                        // Same event list as the screensaver, for the same
+                        // reason: scroll events are the one thing a background
+                        // repaint can fire without a finger on the glass.
+                        ['pointerdown', 'keydown', 'wheel', 'touchstart']
+                            .forEach(ev => document.addEventListener(ev, () => { chfStampInput(); reset(); }, { passive: true }));
                         reset();
                     });
             }

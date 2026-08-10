@@ -206,6 +206,30 @@ def scenario_wake_tap_is_swallowed():
           "through to the page")
 
 
+def scenario_background_updates_never_reset_the_idle_clock():
+    """The wall only goes idle if nothing resets the countdown, and background
+    updates must not. Data pushes already repaint in place (chf-server-update),
+    but two holes remained: a board repaint that clamps the page's scroll
+    position fires a document 'scroll' with no finger on the glass, and the
+    reloads a rebuild/profile push cause restarted the countdown from zero.
+    So 'scroll' is out of the input lists, and the last-touch stamp lives in
+    localStorage so a reload arms with the REMAINDER of the period."""
+    check("'touchstart', 'scroll'" not in NAV,
+          "'scroll' is back in an idle input list — a background repaint that "
+          "clamps the page's scroll position resets the clock with no touch")
+    check(NAV.count("['pointerdown', 'keydown', 'wheel', 'touchstart']") == 2,
+          "both idle timers listen to the four real-input events, no more")
+    check("localStorage.getItem('chfPanelLastInput')" in NAV,
+          "the last-touch stamp no longer survives a reload — every rebuild "
+          "push wakes the wall for a full idle period")
+    check(NAV.count('chfIdleRemaining') >= 3,
+          "both timers (screensaver + idle return) must arm with the "
+          "remainder of the idle period, not a fresh one")
+    check('chfStampInput' in NAV.split('const ssStop')[1].split('ssRoot = null')[0],
+          "the waking tap is swallowed before the document listeners — "
+          "without a stamp in ssStop the slideshow re-fires in seconds")
+
+
 def scenario_screensaver_covers_the_overlays():
     idx = SKIN.index('#panel-screensaver')
     block = SKIN[idx:idx + 400]
