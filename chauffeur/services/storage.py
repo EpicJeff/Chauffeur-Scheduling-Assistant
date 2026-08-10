@@ -1728,7 +1728,7 @@ def get_assist_assignments() -> List[dict]:
     with db_lock:
         return [dict(a) for a in assist_assignments_table.all()]
 
-def get_assist_assignment_map() -> Dict[str, str]:
+def get_assist_assignment_map() -> dict:
     """{event_id: contact_id} — what the solver and every surface read."""
     return {a['event_id']: a['contact_id'] for a in get_assist_assignments()
             if a.get('event_id') and a.get('contact_id')}
