@@ -68,7 +68,66 @@
     window.drop = window.drop || function () {};
     window.allowDrop = window.allowDrop || function () {};
 
+        // Captured so a chip-tap mutation can redraw exactly what the page
+        // drew (the board and the dashboard call with different options).
+        let lastScheduleRenderOptions = {};
+
+        // --- Optional-event decision popover (phase 2 hand path) ---
+        // Works on EVERY surface that renders this timeline — the dashboard
+        // (parents deciding for small children) and the /home wall board
+        // (no PWA needed). Two deliberate taps; readOnly only disables drag.
+        let _optDecisionPop = null;
+        function closeOptionalDecision() {
+            if (_optDecisionPop) { _optDecisionPop.remove(); _optDecisionPop = null; }
+        }
+        function openOptionalDecision(e, evId, current) {
+            e.stopPropagation();
+            e.preventDefault();
+            closeOptionalDecision();
+            const rect = e.currentTarget.getBoundingClientRect();
+            const pop = document.createElement('div');
+            pop.className = 'fixed z-[300] bg-gray-900 border border-purple-500/50 rounded-xl shadow-2xl p-2 flex gap-2';
+            pop.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 280)) + 'px';
+            pop.style.top = Math.min(rect.bottom + 6, window.innerHeight - 60) + 'px';
+            const btn = (label, decision, cls, active) =>
+                `<button onclick="setOptionalDecisionFromChip('${evId}', '${decision}')"
+                    class="text-xs font-bold px-3 py-2 rounded-lg ${cls} ${active ? 'ring-2 ring-white/70' : ''}">${label}</button>`;
+            pop.innerHTML =
+                btn('Going ✓', 'attend', 'bg-green-600 text-white', current === 'attend') +
+                btn('Skip today', 'skip', 'bg-purple-700 text-purple-100', current === 'skip') +
+                btn('Leave open', 'clear', 'bg-gray-700 text-gray-200', !current);
+            pop.addEventListener('click', ev2 => ev2.stopPropagation());
+            document.body.appendChild(pop);
+            _optDecisionPop = pop;
+            setTimeout(() => document.addEventListener('click', closeOptionalDecision, { once: true }), 0);
+        }
+        async function setOptionalDecisionFromChip(evId, decision) {
+            closeOptionalDecision();
+            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+            try {
+                const res = await fetch(`${apiBase}api/events/${encodeURIComponent(evId)}/optional_decision`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ decision }) });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    if (window.showGlobalAlert) showGlobalAlert(err.detail || "Couldn't save that.");
+                    return;
+                }
+                const out = await res.json();
+                if (window.showGlobalAlert && out.message) showGlobalAlert(out.message);
+                // Reflect the choice immediately; the background re-solve
+                // catches the driver consequences on the next data poll.
+                const ev = ((currentData && currentData.events) || [])
+                    .find(x => String(x.id) === String(evId));
+                if (ev) ev.optional_decision = out.decision || null;
+                if (currentData) renderSchedule(currentData, lastScheduleRenderOptions || {});
+            } catch (e2) {
+                if (window.showGlobalAlert) showGlobalAlert("Couldn't save that.");
+            }
+        }
+
         function renderSchedule(data, options = {}) {
+            lastScheduleRenderOptions = options;
             if (!data) data = {};
             const {
                 targetContainerId = 'schedule-container',
@@ -1033,9 +1092,17 @@
                                         <div class="font-bold text-[12px] text-white leading-tight truncate pointer-events-none ${isShort ? 'flex-1 min-w-0' : 'mb-0.5 mt-0.5'}">
                                             ${ev.event_type === 'dropoff' ? '<span class="text-[9px] uppercase bg-orange-600/50 text-orange-200 px-1 rounded mr-1">Drop</span>' : ''}
                                             ${ev.event_type === 'pickup' ? '<span class="text-[9px] uppercase bg-green-600/50 text-green-200 px-1 rounded mr-1">Pick</span>' : ''}
-                                            ${evOptional ? (evDecision === 'attend'
-                                                ? '<span class="text-[9px] uppercase bg-green-600/40 text-green-200 px-1 rounded mr-1" title="Optional, but they said they\'re going — a firm commitment today">✓ Going</span>'
-                                                : '<span class="text-[9px] uppercase bg-purple-600/40 text-purple-200 px-1 rounded mr-1" title="Optional — dropped first if the day conflicts">Opt</span>') : ''}
+                                            ${evOptional ? (() => {
+                                                // The chip is the universal hand path for the per-occurrence
+                                                // decision — parents on the dashboard, anyone at the wall
+                                                // board. Deliberately a tap-then-choose popover, never a
+                                                // cycle: a board must not change state by being leaned
+                                                // against (same principle that disables drag when readOnly).
+                                                const chipId = String(ev.id).replace(/'/g, '&#39;');
+                                                if (evDecision === 'attend') return `<button onclick="openOptionalDecision(event, '${chipId}', 'attend')" class="pointer-events-auto text-[9px] uppercase bg-green-600/40 text-green-200 px-1 rounded mr-1 cursor-pointer" title="Optional, but they said they're going — tap to change">✓ Going</button>`;
+                                                if (evDecision === 'skip') return `<button onclick="openOptionalDecision(event, '${chipId}', 'skip')" class="pointer-events-auto text-[9px] uppercase bg-purple-600/40 text-purple-200 px-1 rounded mr-1 cursor-pointer" title="Skipped today — tap to change">Skipped</button>`;
+                                                return `<button onclick="openOptionalDecision(event, '${chipId}', '')" class="pointer-events-auto text-[9px] uppercase bg-purple-600/40 text-purple-200 px-1 rounded mr-1 cursor-pointer" title="Optional — goes if it fits. Tap to decide for today">Opt</button>`;
+                                            })() : ''}
                                             ${isErrand ? '' : ev.title}
                                         </div>
                                         <div class="text-gray-400 text-[10px] font-medium truncate pointer-events-none shrink-0">${(isShort || ev.event_type === 'dropoff' || ev.event_type === 'pickup') ? formatTime(ev.start) : formatTime(ev.start) + ' - ' + formatTime(ev.end)}</div>

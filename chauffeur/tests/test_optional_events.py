@@ -240,6 +240,12 @@ def scenario_the_decision_hand_path_exists():
                     encoding='utf-8').read()
     check('optional_decision' in timeline and 'Skipped today' in timeline,
           "the timeline wears the decided states")
+    # The chip popover is the decision hand path for people WITHOUT the kid's
+    # PWA: parents on the dashboard, anyone at the /home wall board — both
+    # render this same component. Two deliberate taps, never a cycle.
+    check('openOptionalDecision' in timeline and 'setOptionalDecisionFromChip' in timeline
+          and 'Leave open' in timeline,
+          "the chip opens a Going/Skip/Leave-open popover on every timeline surface")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
