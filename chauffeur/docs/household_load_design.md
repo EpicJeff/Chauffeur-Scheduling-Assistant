@@ -41,7 +41,7 @@ app has plenty of machinery and too few nouns.
 |---|---|---|
 | `HouseholdTask` | work with a deadline and no destination | `Errand` is a drive; a task with no place cannot be one |
 | `Request` | an ask with a state, from anyone to anyone | today an ask is either free text or a silent override |
-| `CarpoolDriver` | a driver who is not in this household | `helper` is an internal hired person *with* app access |
+| `AssistContact` | someone outside the house who does work for it | `helper` is an external person *with* app access; a contact has no account at all |
 | `Stage` | the developmental band a child is in | `role == 'child'` is currently the entire model |
 | **the load ledger** | a lens, not a table: who is carrying what | reads all of the above; states, never scores |
 
@@ -60,7 +60,7 @@ who has the app, sees driving surfaces only, and is not family. So the app has
 
 | Kind | Has the app? | Assigned how? |
 |---|---|---|
-| `CarpoolDriver` | no — a contact | recorded; the solver is *told* |
+| `AssistContact` | no — a contact | recorded; the solver is *told* |
 | `helper` (hired driver, nanny) | driving surfaces only | assignable; solver-eligible |
 | `Copilot` teen | driving surfaces **plus** their kid lens | assignable; solver-eligible only if allowed |
 
@@ -228,7 +228,7 @@ about driving, and it is the only one that should be.
 
 ---
 
-# A1 — The carpool book
+# A1 — Outside hands
 
 **Ship first.** Smallest, immediate relief, and it teaches the codebase the
 idea of *coverage that isn't ours* — which A5 then reuses.
@@ -242,29 +242,67 @@ solver then plans around) or left unassigned — which fires the watcher DM
 when you need the driver at 4:40 on a Tuesday, her number is in a text thread
 from August.
 
+**And it is not only carpool** — corrected 2026-08-10, after the tier moved to
+the member. The neighbourhood girl who comes to do the dishes and the cleaning
+has no place in this app at all, and her work is recorded nowhere. That is the
+same sentence as the carpool one, and it is the thesis of this entire brief
+pointed at its own first draft: *household work is being carried, and the app
+cannot see it.*
+
+So the noun is not `CarpoolDriver`. Carpool is a **kind of help**, not a kind
+of person.
+
 ## The model
 
-`CarpoolDriver` — `{id, name, phone, email?, relation_label, kid_names[],
-color_code, notes, active}`. `relation_label` is how the family actually
-refers to them: "Emma's mom".
+`AssistContact` — `{id, name, phone, email?, relation_label, kinds[],
+relationship, color_code, notes, active}`.
+
+- `relation_label` is how the family actually refers to them: *"Emma's mom"*,
+  *"the Kellys' daughter"*.
+- `kinds` is a free tag list — `carpool`, `housework`, `childcare`,
+  `tutoring`, `pets`. **Nothing branches on it.**
+- `relationship` is `reciprocal | paid | volunteer`, and it earns its place
+  below.
 
 **Not a `FamilyMember`.** No login, no PIN, no headcount, no wall board, no
-DMs — they belong to another household. The `helper` role is the opposite
-thing (an internal hired driver *with* app access), and conflating them would
-put another family's parent on the kitchen kiosk.
+DMs. They are a contact precisely *because* they have no account — which is
+also the clean line against the existing `helper` role, an external person who
+**does** hold the app. Three points on one axis: a contact we only record, a
+`helper` with driving surfaces, a full member. If a contact ever needs the app
+they are promoted to a `helper` member, and **their history must survive the
+promotion** — the record of what they covered belongs to the household, not to
+the row.
 
-**Coverage is a third assignment state**, alongside assigned-to-a-family-driver
-and unassigned: `carpool_assignments: {event_id: carpool_driver_id}`. To the
-solver the event is **covered** — not assignable, not unassigned, not
-ghost-eligible. It leaves the optimisation entirely, which is the whole point:
-a carpool drive *removes* load, and today the app cannot be told that.
+**Contacts are `assist` by definition.** The household/assist tier is a real
+choice only for *members* (a teenager, a nanny with the app). Nobody outside
+the house is ever household load.
+
+### The discipline: never branch on `kinds`
+
+The tags are for humans — filtering a list, answering *"who could take this?"*
+Behaviour comes from **what references the contact**, not from what they are
+labelled. A contact referenced by a drive is functioning as a carpool driver; a
+contact referenced by a chore or a task is functioning as house help. Branch on
+the tag instead and every new kind of help becomes a code change, which is
+exactly the trap this brief keeps walking the app out of.
+
+**Coverage is a third assignment state**, alongside assigned-to-a-household-
+member and unassigned. To the solver a covered event is **covered** — not
+assignable, not unassigned, not ghost-eligible. It leaves the optimisation
+entirely, which is the whole point: outside help *removes* load, and today the
+app cannot be told that.
+
+The same false alarm exists off the road and gets the same fix: a chore or task
+the neighbour is coming to do on Saturday should not sit in the pot looking
+unclaimed, nag the family, or reach the past-due watcher.
 
 ## Should we store them, or just type a name?
 
 **Store them.** A free-text name gives you a label and nothing else. Storing
-gives you three things a label cannot: they repeat (the same soccer carpool
-runs all season), the phone number is the entire value in the moment you need
-it, and only a stored driver lets the solver stop scheduling us.
+gives you three things a label cannot: they repeat (the same soccer carpool all
+season, the same girl every other Saturday), the phone number is the entire
+value in the moment you need it, and only a stored contact lets the rest of the
+app stop treating the work as open.
 
 ## Surfaces
 
@@ -279,11 +317,24 @@ it, and only a stored driver lets the solver stop scheduling us.
   counting as needing a driver. This alone removes a recurring false alarm.
 - Contact controls are a **parent** surface, not a kid one.
 
-## Slice 2 — the turn ledger
+## Slicing
 
-Reciprocity is what makes a carpool work socially, and remembering that you
-owe a turn is classic invisible labour. Each carpool-covered event records who
-drove; each event *we* drive for the same group records our turn. Then:
+The entity generalises now; the **coverage machinery arrives one kind at a
+time**, because that is where the real work is. Generalising the noun costs two
+extra fields. Generalising every surface at once is how a small shippable slice
+becomes a platform.
+
+1. **The contact book plus drive coverage.** The third assignment state, the
+   timeline chip, the contact sheet, the digest line, the watcher exclusion.
+2. **The turn ledger** (below).
+3. **Chore and task coverage** — the same "covered, not ours" state applied to
+   the pot and to `HouseholdTask`, which wants A2 to exist first.
+
+## Slice 2 — the turn ledger, and why `relationship` exists
+
+Reciprocity is what makes a carpool work socially, and remembering that you owe
+a turn is classic invisible labour. Each covered event records who did it; each
+one *we* take for the same group records our turn. Then:
 
 > Soccer carpool — you've driven 2 of the last 9.
 
@@ -292,9 +343,17 @@ and, inside the lead window, *"you haven't taken a soccer turn since April."*
 (`services/occasions.py:715-763`), which counts and names and deliberately
 never ranks.
 
-Group membership starts **derived** from the event's matching tag rather than
-as a new entity. Promote it to a real `CarpoolGroup` only if the derivation
-proves inadequate.
+**This is exactly why `relationship` is on the contact.** You owe a carpool
+parent a turn; you do not owe the girl who does the dishes a turn, you owe her
+money. Turn-taking fires for `reciprocal` and stays silent for `paid`.
+
+To be clear about a line already drawn: this is **not** a reversal of the money
+cut. We record that a relationship is paid so the app knows which nudges make
+sense. We do not track amounts, rates, or what is owed.
+
+Group membership starts **derived** from the work's matching tag rather than as
+a new entity. Promote it to a real group object only if the derivation proves
+inadequate.
 
 ## Explicitly out
 
@@ -673,7 +732,7 @@ Four details that keep it honest:
 ## 7. Social, honestly scoped
 
 People outside the household who matter — the friend nobody has seen since
-March. Reuse the carpool-driver contact shape: a name, a number, no account.
+March. Reuse the `AssistContact` shape: a name, a number, no account.
 The features are exactly three: **protect the time, remember the person,
 notice the lapse.**
 
@@ -683,9 +742,11 @@ Not a social network. No feed, no invitations, no external messaging.
 
 # Sequence, and why
 
-1. **A1 carpool book** — smallest, immediate relief, teaches the codebase
+1. **A1 outside hands** — smallest, immediate relief, teaches the codebase
    "coverage that isn't ours", and lands kid-visible value in week one
-   (*"Riding with Emma's mom"* is pure kid-arc certainty).
+   (*"Riding with Emma's mom"* is pure kid-arc certainty). The entity is
+   general from day one; drive coverage ships first and chore/task coverage
+   follows A2.
 2. **A2 household tasks** — the keystone primitive; everything downstream.
 3. **A3 requests** — small, and unblocks both the teenager and the adult ask.
 4. **A5 dual-income net** — rides on A2's task object and the decisions
@@ -719,8 +780,10 @@ into it first.
   extending the existing cuts on solver-assigned chores and points-for-routines.
 - **Money**: aftercare billing, carpool cost-splitting, allowance. Consistent
   with the existing money cut.
-- **Other-family accounts / multi-household.** Carpool drivers are contacts,
-  not users; multi-family stays the acknowledged non-goal.
+- **Other-family accounts / multi-household.** Assist contacts are contacts,
+  not users; multi-family stays the acknowledged non-goal. A contact who
+  genuinely needs the app becomes a `helper` member instead — that path exists
+  and keeps their history.
 - **External messaging** to carpool parents. `tel:` and `sms:` links only.
 - **Grades.** The kid arc's line holds: due dates and events, never grades.
 - **Gift secrecy** stays blocked until `hidden_from` is designed properly —

@@ -400,9 +400,9 @@ unavailable to drive.
 
 Primitives: `HouseholdTask` (work with a deadline and no destination) ·
 `Request` (an ask with a state, kid→parent and adult→adult on the same rails) ·
-`CarpoolDriver` (external coverage — NOT a `helper`, who is internal with app
-access) · `Stage` (the developmental band a child is in) · the **load ledger**
-(a lens that states and never scores).
+`AssistContact` (someone outside the house who does work for it — NOT a
+`helper`, who is external but HOLDS the app) · `Stage` (the developmental band
+a child is in) · the **load ledger** (a lens that states and never scores).
 
 **Covering is not carrying** (decided 2026-08-10). A teen who drives is more
 like a carpool parent than a second adult — assigned a drive and it is covered;
@@ -461,12 +461,26 @@ as household load) · **commitments** (where you already are) · **availability*
 (when you'll take work of any kind) · **driving constraints** (what a drive may
 look like — the only one that should be about driving).
 
-- **A1 — the carpool book. SHIP FIRST.** A drive that is real and isn't ours,
-  as a third assignment state so it leaves the optimisation entirely. Stored
-  drivers (name + phone + "Emma's mom") because they repeat, the number is the
-  value in the moment, and only a stored driver stops the solver scheduling
-  us. Kills a standing false alarm (`🚨 No driver yet` for rides that were
-  always handled). Slice 2: the turn ledger — "you've driven 2 of the last 9".
+- **A1 — outside hands. SHIP FIRST.** Was "the carpool book"; generalised
+  2026-08-10 once the tier moved to the member. **Carpool is a kind of HELP,
+  not a kind of person** — the neighbourhood girl who does the dishes has no
+  place in the app either, and her work is recorded nowhere, which is this
+  brief's own thesis pointed at its first draft. So `AssistContact`
+  `{name, phone, relation_label, kinds[], relationship, notes}`. `kinds` is a
+  free tag list (carpool, housework, childcare…) and **nothing branches on it**
+  — behaviour comes from what REFERENCES the contact, or every new kind of help
+  is a code change. `relationship` (`reciprocal|paid|volunteer`) exists so
+  turn-taking fires for a carpool parent and stays silent for someone you pay;
+  that is not a reversal of the money cut, since no amounts are tracked.
+  Contacts are `assist` by definition; the tier is only a real choice for
+  members. A contact who needs the app is promoted to a `helper` member and
+  **their history survives**. Work is a third assignment state — covered, not
+  assignable, not unassigned, not ghost-eligible — which kills a standing false
+  alarm (`🚨 No driver yet` for rides that were always handled) and its
+  off-road twin (a chore the neighbour is coming to do sitting unclaimed in the
+  pot). **Slice the machinery, not the noun**: contact book + drive coverage
+  first, then the turn ledger ("you've driven 2 of the last 9"), then chore and
+  task coverage after A2.
 - **A2 — household tasks + assignee. The keystone.** Task = do something,
   errand = go somewhere. Yearly recurrence (errands lack it). Unassigned is a
   real state meaning the household owes it. Unlocks intake's fourth target —
