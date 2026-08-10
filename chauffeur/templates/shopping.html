@@ -1080,10 +1080,18 @@
                                              Both were in the model from the start
                                              and on no screen: the only way to fix
                                              a misfiled dish was to ask the agent
-                                             and hope it re-extracted differently. -->
+                                             and hope it re-extracted differently.
+                                             Whole meals get the chips too: a
+                                             category is the family's rule
+                                             vocabulary as well as a plate slot,
+                                             and "no repeats on protein" must be
+                                             able to catch chicken alfredo. The
+                                             composer never slot-fills with a
+                                             meal (pool_for excludes the type),
+                                             so on a meal the chip is purely
+                                             "what this is". -->
                                         <template x-for="c in categories" :key="'dc-' + m.id + c.id">
                                             <button @click="toggleDishCategory(m, c)"
-                                                x-show="m.type !== 'meal'"
                                                 class="text-[10px] font-bold px-2 py-0.5 rounded-lg border transition-colors"
                                                 :class="(m.category_ids || []).includes(c.id)
                                                     ? 'bg-pink-500/15 border-pink-400/50 text-pink-200'

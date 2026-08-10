@@ -2462,6 +2462,35 @@ def scenario_the_rule_preview_reads_categories_like_the_server():
           "reads as two different lists")
 
 
+def scenario_whole_meals_carry_categories_into_rules():
+    """Reported: category words in rules were not catching whole meals. The
+    matcher never had a type gate — the gap was that whole meals could not
+    HAVE categories: seeding maps only entree/dessert/side, and the editor hid
+    the category chips on meal rows, so chicken alfredo was invisible to
+    "no repeats on protein" with no way to fix it by hand. The chips now show
+    on meals too (a category is rule vocabulary as well as a plate slot; the
+    composer's pool_for still excludes meals from slot-filling)."""
+    reset_db(); _seed_people(); _settings()
+    cats = {c['name']: c['id'] for c in storage.get_dish_categories()}
+    check('protein' in cats, f"the seeded vocabulary has protein: {list(cats)}")
+    alfredo = _dish('chicken alfredo', type='meal',
+                    category_ids=[cats['protein']])
+    _dish('rice', type='side', side_type='starch')
+    res = meals.add_meal_rule('protein no repeats', 'repeat_spacing',
+                              tags=['protein'])
+    check(res['match_count'] == 1 and 'chicken alfredo' in res['matches'],
+          f"a categorized whole meal is caught by the category word, "
+          f"got {res['matches']}")
+    import os
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    shopping = open(os.path.join(tpl, 'shopping.html'), encoding='utf-8').read()
+    seg = shopping.split('toggleDishCategory(m, c)')[1][:300]
+    check('x-show' not in seg,
+          "the category chips are gated off whole-meal rows again — that is "
+          "the closed hand path this scenario exists to keep open")
+
+
 def scenario_a_rule_matching_nothing_says_so():
     """"meat" is not a field. A tag the family never used governs nobody, and
     silently doing nothing is the failure mode worth surfacing."""
