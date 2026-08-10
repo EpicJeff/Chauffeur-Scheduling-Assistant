@@ -1664,6 +1664,96 @@
 
                 </div>
 
+                <!-- Outside hands (People tab sub-panel, load arc A1).
+                     People who do work for this household without holding the
+                     app: a carpool parent, the neighbour who does the dishes.
+                     NOT members — no login, no PIN, no headcount, no wall
+                     board. The `helper` role is the other thing entirely, an
+                     external person who DOES hold the app. -->
+                <div x-show="activeTab === 'family'" x-cloak x-transition.opacity
+                    class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+                    <h2 class="text-3xl font-bold mb-2 text-teal-300">Outside hands</h2>
+                    <p class="text-gray-400 text-sm mb-4">People outside this house who do work for it —
+                        the carpool parent, the neighbour who comes to do the dishes. They have no login
+                        and never appear on the wall board; they exist so the app can be told
+                        <b>this one isn't ours</b>. Hand a drive to one of them on the schedule and it
+                        leaves the solver entirely: no driver is scheduled, nobody gets chased about it,
+                        and the kids' digest says who they're riding with.</p>
+                    <div class="space-y-3">
+                        <template x-for="c in assistContacts" :key="c.id">
+                            <div class="bg-gray-900 p-4 rounded-xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3"
+                                :class="c.active === false ? 'opacity-50' : ''">
+                                <div>
+                                    <h3 class="text-lg font-bold text-white">
+                                        <span x-text="c.relation_label || c.name"></span>
+                                        <span class="text-xs text-gray-500 font-normal ml-1"
+                                            x-show="c.relation_label" x-text="c.name"></span>
+                                    </h3>
+                                    <div class="text-xs text-gray-400 mt-1 flex gap-2 flex-wrap items-center">
+                                        <span class="px-2 py-0.5 bg-teal-900/40 text-teal-300 rounded-full font-bold"
+                                            x-text="assistRelationshipLabel(c.relationship)"></span>
+                                        <template x-for="k in (c.kinds || [])" :key="k">
+                                            <span class="px-2 py-0.5 bg-gray-700 rounded-full" x-text="k"></span>
+                                        </template>
+                                        <span x-show="c.phone" x-text="c.phone"></span>
+                                        <span x-show="c.covering_count"
+                                            x-text="'covering ' + c.covering_count"></span>
+                                    </div>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button @click="editAssistContact(c)"
+                                        class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Edit</button>
+                                    <button @click="deleteAssistContactUi(c)"
+                                        class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Delete</button>
+                                </div>
+                            </div>
+                        </template>
+                        <p x-show="!assistContacts.length" class="text-gray-500 text-sm italic">
+                            Nobody yet. Add the carpool parents and anyone else who helps.</p>
+                    </div>
+
+                    <div class="mt-6 bg-gray-900 p-4 rounded-xl grid gap-3 md:grid-cols-2">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 mb-1">Name</label>
+                            <input x-model="assistForm.name" placeholder="Sarah Whitfield"
+                                class="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 mb-1">What you call them</label>
+                            <input x-model="assistForm.relation_label" placeholder="Emma's mom"
+                                class="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 mb-1">Phone</label>
+                            <input x-model="assistForm.phone" placeholder="555-0142"
+                                class="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 mb-1">Helps with</label>
+                            <input x-model="assistForm.kinds_text" placeholder="carpool, housework"
+                                class="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 mb-1">Arrangement</label>
+                            <select x-model="assistForm.relationship"
+                                class="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                                <option value="reciprocal">We take turns</option>
+                                <option value="paid">We pay them</option>
+                                <option value="volunteer">They just help</option>
+                            </select>
+                            <p class="text-[11px] text-gray-500 mt-1">Only "we take turns" gets turn-taking
+                                nudges — you owe a carpool parent a turn, not the person you pay.</p>
+                        </div>
+                        <div class="flex items-end gap-2">
+                            <button @click="saveAssistContact()"
+                                class="bg-teal-600 hover:bg-teal-500 px-4 py-2 rounded-lg font-bold text-sm"
+                                x-text="assistForm.id ? 'Save' : 'Add'"></button>
+                            <button x-show="assistForm.id" @click="resetAssistForm()"
+                                class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg font-bold text-sm">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Status Days (People tab sub-panel, Presence & Status arc P1) -->
                 <div x-show="activeTab === 'family'" x-cloak x-transition.opacity
                     class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
@@ -3491,6 +3581,10 @@
                 newMemberCalendarInput: '',
                 // Status Days (Presence & Status arc P1)
                 statusProtocols: [],
+                // Outside hands (load arc A1)
+                assistContacts: [],
+                assistForm: { id: null, name: '', relation_label: '', phone: '',
+                              kinds_text: '', relationship: 'reciprocal' },
                 statusDays: [],
                 showStatusForm: false,
                 editStatusId: null,
@@ -3523,6 +3617,7 @@
                     this.loadIcsFeeds();  // not awaited: feeds are a side panel
                     await this.loadMembers();
                     this.loadStatusData();  // not awaited: a side panel on the People tab
+                    this.loadAssistContacts();  // ditto (load arc A1)
                     this.loadHaOptions();  // not awaited: HA may be slow/absent
                     await this.loadRules();
                     await this.loadPriorityRules();
@@ -4617,6 +4712,68 @@
                     this.nearbyStations = [];
                     await this.saveSettings();
                     showGlobalAlert(`Home gas station set: ${st.name}`);
+                },
+
+                // --- Outside hands (load arc A1) ---
+                // People who work for this household without holding the app.
+                async loadAssistContacts() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/assist-contacts?include_inactive=true`);
+                        this.assistContacts = r.ok ? await r.json() : [];
+                    } catch (e) { console.error("Failed to load assist contacts", e); }
+                },
+                assistRelationshipLabel(rel) {
+                    return { reciprocal: 'We take turns', paid: 'We pay them',
+                             volunteer: 'They just help' }[rel] || 'We take turns';
+                },
+                resetAssistForm() {
+                    this.assistForm = { id: null, name: '', relation_label: '', phone: '',
+                                        kinds_text: '', relationship: 'reciprocal' };
+                },
+                editAssistContact(c) {
+                    this.assistForm = {
+                        id: c.id, name: c.name || '', relation_label: c.relation_label || '',
+                        phone: c.phone || '', kinds_text: (c.kinds || []).join(', '),
+                        relationship: c.relationship || 'reciprocal',
+                    };
+                },
+                async saveAssistContact() {
+                    const f = this.assistForm;
+                    if (!(f.name || '').trim()) {
+                        showGlobalAlert('They need a name.');
+                        return;
+                    }
+                    const payload = {
+                        name: f.name.trim(), relation_label: (f.relation_label || '').trim(),
+                        phone: (f.phone || '').trim(), relationship: f.relationship || 'reciprocal',
+                        kinds: (f.kinds_text || '').split(',').map(s => s.trim()).filter(Boolean),
+                    };
+                    try {
+                        if (f.id) {
+                            await fetch(`${this.apiBase}api/assist-contacts/${f.id}`, {
+                                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload) });
+                        } else {
+                            await fetch(`${this.apiBase}api/assist-contacts`, {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload) });
+                        }
+                        this.resetAssistForm();
+                        await this.loadAssistContacts();
+                    } catch (e) { showGlobalAlert('Could not save them.'); }
+                },
+                async deleteAssistContactUi(c) {
+                    // Deleting drops their coverage, which hands those drives
+                    // back to the family — say so before it happens.
+                    const extra = c.covering_count
+                        ? ` ${c.covering_count} drive${c.covering_count === 1 ? '' : 's'} will come back to the family.`
+                        : '';
+                    if (!await promptConfirm('Remove them?',
+                        `${c.relation_label || c.name} will be removed.${extra}`, 'Remove', 'Keep')) return;
+                    try {
+                        await fetch(`${this.apiBase}api/assist-contacts/${c.id}`, { method: 'DELETE' });
+                        await this.loadAssistContacts();
+                    } catch (e) { showGlobalAlert('Could not remove them.'); }
                 },
 
                 // --- Status Days (Presence & Status arc P1) ---

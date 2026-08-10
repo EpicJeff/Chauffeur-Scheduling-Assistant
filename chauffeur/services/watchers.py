@@ -45,11 +45,18 @@ def _unassigned_findings(now: datetime.datetime):
     """Events in the next WATCH_WINDOW_DAYS the solver left unassigned."""
     cache = storage.get_cached_schedule() or {}
     events = {str(e.get('id')): e for e in cache.get('events', [])}
+    # Outside hands (load arc A1). A ride a carpool parent is making was never
+    # ours to cover, and "🚨 No driver yet" for it is the standing false alarm
+    # this feature exists to retire. Read from the cache rather than storage so
+    # the sweep sees exactly what the last solve saw.
+    covered = set((cache.get('assist_assignments') or {}).keys())
     horizon = now + datetime.timedelta(days=WATCH_WINDOW_DAYS)
     out = []
     for ev_id in cache.get('unassigned', []) or []:
         ev = events.get(str(ev_id))
         if not ev or ev.get('trip_suppressed') or ev.get('event_type') == 'errand':
+            continue
+        if str(ev_id) in covered:
             continue
         try:
             start = datetime.datetime.fromisoformat(ev['start']).replace(tzinfo=None)

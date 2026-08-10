@@ -63,6 +63,10 @@ INDEX_SPEC = {
     # anchor is indexed alongside the id.
     "occasions": [["id"], ["anchor_date"]],
     "occasion_guests": [["id"], ["occasion_id"]],
+    # Outside hands (load arc A1). The assignment map is rebuilt on every
+    # solve and every board build, and it is looked up by event_id.
+    "assist_contacts": [["id"]],
+    "assist_assignments": [["id"], ["event_id"], ["contact_id"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

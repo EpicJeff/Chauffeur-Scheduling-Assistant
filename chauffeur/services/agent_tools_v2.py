@@ -645,6 +645,134 @@ def send_direct_message(recipient_name: str, message_text: str,
             "message": f"Sent to {recipient.get('name')} from {sender.get('name')}: “{text}”"}
 
 
+def _find_assist_contact(name: str):
+    """Match a spoken name against the assist contacts, on BOTH the name and
+    the label the family actually says. Nobody in this house says "Sarah
+    Whitfield" out loud; they say "Emma's mom", and a matcher that only
+    knows legal names would miss every real utterance."""
+    import re
+    from services import storage
+    contacts = storage.get_assist_contacts()
+
+    def _variants(label: str):
+        """Every way a person might say a label out loud. The apostrophe is
+        the one that actually bites: speech-to-text writes "emmas mom" and a
+        tag of "Emma's mom" never matches it."""
+        label = (label or '').strip()
+        if not label:
+            return []
+        flat = re.sub(r"[^a-z0-9 ]", "", label.lower())          # emmas mom
+        loose = re.sub(r"\s+", " ", label.lower().replace("'s", "s")).strip()
+        out = {label, flat, loose}
+        # Single words too ("emma"). "mom" will collide across two carpool
+        # parents — which is safe, because _match_person requires a UNIQUE
+        # winner in a tier and an ambiguous tag simply falls through rather
+        # than handing the drive to the wrong household.
+        out.update(w for w in flat.split() if len(w) > 2)
+        return [v for v in out if v]
+
+    roster = []
+    for c in contacts:
+        # _match_person reads `name` and `hashtags`; feeding it the relation
+        # label as tags makes "Emma's mom" a first-class way to be found
+        # without teaching the matcher a new field.
+        entry = dict(c)
+        entry['hashtags'] = _variants(c.get('relation_label'))
+        roster.append(entry)
+    contact, _ = _match_person(name, roster)
+    return contact
+
+
+def cover_with_assist(event_name: str, contact_name: str = None,
+                      target_date: str = None, clear: bool = False) -> Dict[str, Any]:
+    """Hand a drive to somebody outside the household, or take it back.
+
+    Deliberately not an override: an override says "this driver, whatever the
+    solver thinks"; this says "not ours at all", and the event leaves the
+    optimisation entirely.
+    """
+    import datetime
+    from services import storage
+    day = _parse_fuzzy_date(target_date or 'today')
+    sched = storage.get_cached_schedule() or {}
+    todays = []
+    for ev in sched.get('events', []):
+        try:
+            if datetime.datetime.fromisoformat(str(ev.get('start'))).date() == day:
+                todays.append(ev)
+        except (ValueError, TypeError):
+            continue
+    if not todays:
+        return {"status": "error",
+                "message": f"Nothing is on the schedule for {day.strftime('%A %d %b')}."}
+
+    q = (event_name or '').strip().lower()
+    match = next((e for e in todays if q and q in (e.get('title') or '').lower()), None)
+    if not match:
+        titles = ', '.join(sorted({e.get('title') or '?' for e in todays})[:8])
+        return {"status": "error",
+                "message": f"I couldn't find '{event_name}' that day. On the schedule: {titles}."}
+
+    if clear or not contact_name:
+        storage.clear_assist_assignment(match['id'])
+        return {"status": "success", "schedule_dirty": True,
+                "message": f"{match.get('title')} is back on the family's plate — "
+                           f"I'll work out who drives."}
+
+    contact = _find_assist_contact(contact_name)
+    if not contact:
+        known = ', '.join(c.get('relation_label') or c.get('name')
+                          for c in storage.get_assist_contacts()) or 'nobody yet'
+        return {"status": "error",
+                "message": f"I don't know '{contact_name}'. Outside hands I know: {known}. "
+                           f"A parent can add them in Config → People → Outside hands."}
+    storage.set_assist_assignment(match['id'], contact['id'])
+    who = contact.get('relation_label') or contact.get('name')
+    return {"status": "success", "schedule_dirty": True,
+            "message": f"{who} is covering {match.get('title')} — I've taken it off the family's plate."}
+
+
+def get_assist_coverage(target_date: str = None) -> Dict[str, Any]:
+    """What outside help is covering on a day, and who to ring."""
+    import datetime
+    from services import storage
+    day = _parse_fuzzy_date(target_date or 'today')
+    sched = storage.get_cached_schedule() or {}
+    # From STORAGE, not the cache. Coverage is written the moment somebody
+    # says "Emma's mom is taking them"; the schedule cache only learns about
+    # it when the background re-solve lands. Reading the cache here would
+    # answer "nobody is covering anything" to a question asked ten seconds
+    # after the change — the events come from the cache, the truth does not.
+    assist_map = storage.get_assist_assignment_map()
+    if not assist_map:
+        return {"status": "success",
+                "message": f"Nobody outside the family is covering anything on "
+                           f"{day.strftime('%A %d %b')}."}
+    by_id = {c['id']: c for c in storage.get_assist_contacts(include_inactive=True)}
+    lines = []
+    for ev in sched.get('events', []):
+        ev_id = str(ev.get('id'))
+        if ev_id not in assist_map:
+            continue
+        try:
+            start = datetime.datetime.fromisoformat(str(ev.get('start')))
+            if start.date() != day:
+                continue
+            stamp = start.strftime('%I:%M %p').lstrip('0')
+        except (ValueError, TypeError):
+            stamp = ''
+        c = by_id.get(assist_map[ev_id]) or {}
+        who = c.get('relation_label') or c.get('name') or 'someone'
+        phone = f" ({c['phone']})" if c.get('phone') else ''
+        lines.append(f"{stamp} {ev.get('title') or 'Event'} — {who}{phone}".strip())
+    if not lines:
+        return {"status": "success",
+                "message": f"Nobody outside the family is covering anything on "
+                           f"{day.strftime('%A %d %b')}."}
+    return {"status": "success",
+            "message": "Covered by outside hands:\n" + "\n".join(lines)}
+
+
 def announce_to_room(room: str, message: str, recipient_name: str = None,
                      sender_driver_id: str = None, from_member: str = None) -> Dict[str, Any]:
     """Speak in a room over HA (services/announce.py owns the how). Unlike the
@@ -2464,6 +2592,31 @@ def get_available_tools() -> List[Dict]:
                     "from_member": {"type": "string", "description": "Who the message is from. Omit in driver chat."}
                 },
                 "required": ["recipient_name", "message_text"]
+            }
+        },
+        {
+            "name": "cover_with_assist",
+            "description": "Records that somebody OUTSIDE the family is handling a drive — a carpool parent, a neighbour ('Emma's mom is taking them to soccer today', 'the Kellys have practice this week'). The event leaves the solver entirely: no family driver is scheduled and nobody is chased about it. Use clear=true to take it back ('actually we're driving after all').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_name": {"type": "string", "description": "The event being covered, as spoken ('soccer', 'the dance class')."},
+                    "contact_name": {"type": "string", "description": "Who is covering it — their name OR what the family calls them ('Emma's mom'). Omit when clearing."},
+                    "target_date": {"type": "string", "description": "Which day (default today). Accepts 'tomorrow', 'Friday'."},
+                    "clear": {"type": "boolean", "description": "True to hand the drive back to the family."}
+                },
+                "required": ["event_name"]
+            }
+        },
+        {
+            "name": "get_assist_coverage",
+            "description": "Reads what people outside the family are covering on a day, with their phone numbers ('who's driving soccer today?', 'what's the carpool this week?', 'what's Emma's mom's number?').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_date": {"type": "string", "description": "Which day (default today)."}
+                },
+                "required": []
             }
         },
         {

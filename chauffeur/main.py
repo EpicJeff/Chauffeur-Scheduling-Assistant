@@ -54,7 +54,7 @@ def ensure_vapid_keys():
 
 ensure_vapid_keys()
 
-from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier, StatusProtocol, StatusDay
+from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier, StatusProtocol, StatusDay, AssistContact, AssistAssignment
 from services import storage, calendar, maps
 from solver import matcher
 from fastapi.templating import Jinja2Templates
@@ -3313,6 +3313,80 @@ def _public_member(m: dict) -> dict:
     out['has_pin'] = bool(m.get('pin_hash'))
     return out
 
+# --- Outside hands: assist contacts and the work they cover (load arc A1) ---
+# A contact is somebody outside this household who does work for it — a carpool
+# parent, the neighbour who does the dishes. They have no account, which is the
+# line against the `helper` ROLE (an external person who does hold the app).
+# Coverage is the third assignment state: a covered event leaves the solver.
+
+@app.get("/api/assist-contacts")
+def list_assist_contacts(include_inactive: bool = False):
+    contacts = storage.get_assist_contacts(include_inactive=include_inactive)
+    covered = storage.get_assist_assignment_map()
+    counts = {}
+    for cid in covered.values():
+        counts[cid] = counts.get(cid, 0) + 1
+    for c in contacts:
+        c['covering_count'] = counts.get(c['id'], 0)
+    return contacts
+
+@app.post("/api/assist-contacts")
+def create_assist_contact(contact: AssistContact):
+    data = contact.model_dump()
+    if not (data.get('name') or '').strip():
+        raise HTTPException(status_code=400, detail="A contact needs a name")
+    storage.add_assist_contact(data)
+    return {"status": "success", "id": data['id']}
+
+@app.patch("/api/assist-contacts/{contact_id}")
+def patch_assist_contact(contact_id: str, updates: dict = Body(...)):
+    if not storage.get_assist_contact(contact_id):
+        raise HTTPException(status_code=404, detail="Contact not found")
+    # id and created_at are the row's identity, never client-settable.
+    clean = {k: v for k, v in (updates or {}).items()
+             if k in AssistContact.model_fields and k not in ('id', 'created_at')}
+    storage.update_assist_contact(contact_id, clean)
+    return {"status": "success"}
+
+@app.delete("/api/assist-contacts/{contact_id}")
+def remove_assist_contact(contact_id: str, background_tasks: BackgroundTasks):
+    if not storage.get_assist_contact(contact_id):
+        raise HTTPException(status_code=404, detail="Contact not found")
+    # Deleting drops their coverage too (storage enforces it), which hands
+    # those events back to the solver — so the schedule has to be rebuilt or
+    # the day would keep showing them as covered by somebody who is gone.
+    storage.delete_assist_contact(contact_id)
+    background_tasks.add_task(trigger_background_refresh, None, None, True)
+    return {"status": "success"}
+
+class AssistCoverageRequest(BaseModel):
+    event_id: str
+    contact_id: Optional[str] = None   # None/empty clears the coverage
+    note: Optional[str] = ""
+
+@app.post("/api/assist-coverage")
+def set_assist_coverage(req: AssistCoverageRequest, background_tasks: BackgroundTasks):
+    """Hand an event to somebody outside the house, or take it back.
+
+    Either way the schedule must be re-solved: handing it over frees a
+    household driver for the rest of the day, and taking it back puts the
+    event in front of the solver again. force_refresh, because the events
+    themselves did not change — only who is covering them.
+    """
+    if not req.event_id:
+        raise HTTPException(status_code=400, detail="event_id is required")
+    if req.contact_id:
+        contact = storage.get_assist_contact(req.contact_id)
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        storage.set_assist_assignment(req.event_id, req.contact_id, req.note or "")
+        msg = f"{contact.get('name')} is covering it."
+    else:
+        storage.clear_assist_assignment(req.event_id)
+        msg = "Back on the family's plate."
+    background_tasks.add_task(trigger_background_refresh, None, None, True)
+    return {"status": "success", "message": msg}
+
 @app.get("/api/members")
 def get_members():
     members = storage.get_all_members()
@@ -4897,8 +4971,26 @@ def member_day(member_id: str, date: Optional[str] = None):
     _kits = storage.get_prep_kits()
     _pax = _prep.passenger_objs()
 
+    # Outside hands (load arc A1). "Riding with Emma's mom" is exactly the
+    # certainty the kid arc exists to sell, and it was invisible: a
+    # carpool-covered ride had no driver, so the digest simply said nothing.
+    _assist_map = dict(sched.get('assist_assignments', {}))
+    _assist_by_id = {c['id']: c for c in (sched.get('assist_contacts')
+                                          or storage.get_assist_contacts(include_inactive=True))}
+
+    def _assist_for(ev_id):
+        c = _assist_by_id.get(_assist_map.get(ev_id))
+        if not c:
+            return None
+        # The label the family actually says out loud comes first: a child
+        # knows "Emma's mom" and may not know her name.
+        return {'id': c['id'], 'name': c.get('name'),
+                'label': c.get('relation_label') or c.get('name'),
+                'phone': c.get('phone') or ''}
+
     def _ride(ev, ev_id, legs=None):
         return {
+            'assist': _assist_for(ev_id),
             'id': ev.get('id'),
             'title': ev.get('title'),
             'event_type': ev.get('event_type', 'standard'),
@@ -6632,7 +6724,14 @@ def _build_kid_digests(target_date=None):
                           if l.get('type') == 'dropoff' and l.get('driver')), None)
             back = next((l['driver']['name'] for l in legs
                          if l.get('type') == 'pickup' and l.get('driver')), None)
-            if there and back and there != back:
+            # Outside hands (load arc A1) leads the phrase: when a carpool
+            # parent is making the run, "riding with Emma's mom" is the whole
+            # answer to the question the child is actually asking, and no
+            # household driver name will appear to give it.
+            assist = r.get('assist')
+            if assist:
+                line += f" — 🚗 riding with {assist.get('label') or assist.get('name')}"
+            elif there and back and there != back:
                 line += f" — 🚗 {there} takes you, {back} brings you home"
             elif there or back:
                 line += f" — 🚗 {there or back} is driving you"
@@ -9204,11 +9303,19 @@ def get_unsplash_background(query: str, wikidata_id: str = None):
 
 import hashlib
 
-def hash_events(events_list):
+def hash_events(events_list, assist_map=None):
     sorted_events = sorted(events_list, key=lambda e: getattr(e, 'id', ''))
     parts = []
     for e in sorted_events:
-        parts.append(f"{getattr(e, 'id', '')}|{getattr(e, 'start', '')}|{getattr(e, 'end', '')}|{getattr(e, 'location', '')}|{getattr(e, 'title', '')}")
+        eid = getattr(e, 'id', '')
+        parts.append(f"{eid}|{getattr(e, 'start', '')}|{getattr(e, 'end', '')}|{getattr(e, 'location', '')}|{getattr(e, 'title', '')}")
+        # Outside-hands coverage rides the hash (load arc A1). Handing a drive
+        # to a carpool parent changes nothing about the EVENT, so without this
+        # the day's cache stays valid and the solver keeps a household driver
+        # on a ride somebody else is making — the change would appear to do
+        # nothing until the next forced refresh.
+        if assist_map and eid in assist_map:
+            parts.append(f"assist:{eid}:{assist_map[eid]}")
     return hashlib.sha256("||".join(parts).encode('utf-8')).hexdigest()
 
 import threading
@@ -9503,6 +9610,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     rules_data = storage.get_all_rules()
     priority_rules_data = storage.get_all_priority_rules()
     overrides_data = [] if ignore_overrides else storage.get_all_overrides()
+    # Outside hands (load arc A1): {event_id: contact_id} for work somebody
+    # outside this household is covering. Read once for the whole refresh; the
+    # per-day slice is taken inside the solve loop.
+    assist_map = storage.get_assist_assignment_map()
 
     enable_standard_rules = settings.get("enable_standard_rules", True)
     enable_ai_rules = settings.get("enable_ai_rules", True)
@@ -10069,6 +10180,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         nonlocal calendar_metadata
         combined_assignments = {}
         combined_car_assignments = {}
+        combined_assist_assignments = {}
         combined_unassigned = []
         combined_lateness_warnings = []
         combined_ghost_assignments = {}
@@ -10095,6 +10207,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 sched = daily_cache['schedule']
                 combined_assignments.update(sched.get('assignments', {}))
                 combined_car_assignments.update(sched.get('car_assignments', {}))
+                combined_assist_assignments.update(sched.get('assist_assignments', {}))
                 combined_unassigned.extend(sched.get('unassigned', []))
                 combined_lateness_warnings.extend(sched.get('lateness_warnings', []))
                 combined_ghost_assignments.update(sched.get('ghost_assignments', {}))
@@ -10249,6 +10362,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "assignments": combined_assignments,
             "car_assignments": combined_car_assignments,
             "cars": cars,
+            # Outside hands (load arc A1): {event_id: contact_id}, plus the
+            # contacts themselves so every surface can name and ring them
+            # without a second request.
+            "assist_assignments": combined_assist_assignments,
+            "assist_contacts": storage.get_assist_contacts(include_inactive=True),
             "ghost_assignments": combined_ghost_assignments,
             "ghost_drivers": combined_ghost_drivers,
             "route_edges": combined_route_edges,
@@ -10438,23 +10556,24 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # Check abort at the start of each daily iteration
         check_abort_refresh()
 
-        daily_hash = hash_events(events_to_solve_by_date[date_str])
+        daily_hash = hash_events(events_to_solve_by_date[date_str], assist_map=assist_map)
         daily_events_to_solve = events_to_solve_by_date[date_str]
 
         # Check cache
         daily_cache = storage.get_cached_daily_schedule(date_str)
         if daily_cache and daily_cache.get('events_hash') == daily_hash and not force_refresh and not draft:
             sched = daily_cache.get('schedule', {})
-            
+
             # Update previous_assignments so subsequent days know what was assigned!
             previous_assignments.update(sched.get("assignments", {}))
-            
+
             base_schedules[date_str] = {
                 "assignments": sched.get("assignments", {}),
                 # Every key Pass 3 persists must survive this reuse branch —
                 # omitting one silently erases it from the daily cache on the
                 # next routine refresh (how car_assignments kept vanishing).
                 "car_assignments": sched.get("car_assignments", {}),
+                "assist_assignments": sched.get("assist_assignments", {}),
                 "unassigned": sched.get("unassigned", []),
                 "lateness_warnings": sched.get("lateness_warnings", []),
                 "ghost_assignments": sched.get("ghost_assignments", {}),
@@ -10464,6 +10583,19 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 "conflicts": sched.get("conflicts", [])
             }
             continue
+
+        # Outside hands (load arc A1): an event somebody outside this household
+        # is covering leaves the optimisation ENTIRELY — not assignable, not
+        # unassigned, not ghost-eligible. It is still drawn (it is a real thing
+        # happening today), so it goes back into `events` below; it simply is
+        # not ours to solve. This is the whole point of the feature: outside
+        # help removes load, and the app previously had no way to be told so.
+        daily_assist = {e.id: assist_map[e.id]
+                        for e in daily_events_to_solve if e.id in assist_map}
+        assist_events = [e for e in daily_events_to_solve if e.id in daily_assist]
+        if daily_assist:
+            daily_events_to_solve = [e for e in daily_events_to_solve
+                                     if e.id not in daily_assist]
 
         # Else, solve for this day!
         daily_locations = set()
@@ -10533,11 +10665,14 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         base_schedules[date_str] = {
             "assignments": assignments,
             "car_assignments": car_assignments,
+            "assist_assignments": daily_assist,
             "unassigned": unassigned,
             "lateness_warnings": lateness_warnings,
             "ghost_assignments": ghost_assignments,
             "ghost_drivers": ghost_drivers,
-            "events": daily_events_to_solve,
+            # Covered events go back in: the solver ignored them, but they are
+            # real things happening today and the timeline must draw them.
+            "events": daily_events_to_solve + assist_events,
             "true_unassigned": true_unassigned,
             "conflicts": conflicts
         }
@@ -10601,6 +10736,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         daily_schedule = {
             "assignments": base['assignments'],
             "car_assignments": base.get('car_assignments', {}),
+            "assist_assignments": base.get('assist_assignments', {}),
             "unassigned": base['unassigned'],
             "lateness_warnings": base['lateness_warnings'],
             "ghost_assignments": base['ghost_assignments'],
@@ -10819,6 +10955,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                         all_cached = True
                         combined_assignments = {}
                         combined_car_assignments = {}
+                        combined_assist_assignments = {}
                         combined_unassigned = []
                         combined_lateness_warnings = []
                         combined_ghost_assignments = {}
@@ -10865,7 +11002,10 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                             
                             for e_id, d_id in sched.get('ghost_assignments', {}).items():
                                 combined_ghost_assignments[e_id] = d_id
-                            
+
+                            for e_id, c_id in sched.get('assist_assignments', {}).items():
+                                combined_assist_assignments[e_id] = c_id
+
                             existing_ghost_ids = {g['id'] for g in combined_ghost_drivers}
                             for g in sched.get('ghost_drivers', []):
                                 if g['id'] not in existing_ghost_ids:
@@ -10905,6 +11045,8 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                             cached = {
                                 "assignments": combined_assignments,
                                 "car_assignments": combined_car_assignments,
+                                "assist_assignments": combined_assist_assignments,
+                                "assist_contacts": storage.get_assist_contacts(include_inactive=True),
                                 "unassigned": combined_true_unassigned,
                                 "lateness_warnings": combined_lateness_warnings,
                                 "ghost_assignments": combined_ghost_assignments,

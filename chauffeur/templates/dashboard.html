@@ -1935,6 +1935,44 @@
             }
         }
 
+        // --- Outside hands (load arc A1) ---------------------------------
+        // Hand a drive to somebody outside the household, or take it back.
+        // Deliberately NOT an override: an override says "this driver, whatever
+        // the solver thinks", while this says "not ours at all", and the event
+        // leaves the optimisation entirely. Sending it down the override path
+        // would keep a household driver notionally on the hook.
+
+        async function setAssistCoverage(eventId, contactId) {
+            const ev = currentEventsMap[eventId];
+            if (ev) localSolvingDates.add(ev.start.split('T')[0]);
+            try {
+                const res = await fetch('api/assist-coverage', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ event_id: eventId, contact_id: contactId || null })
+                });
+                if (!res.ok) throw new Error('failed');
+                // Optimistic: paint the change now, then let the re-solve land.
+                if (currentData) {
+                    currentData.assist_assignments = currentData.assist_assignments || {};
+                    if (contactId) {
+                        currentData.assist_assignments[eventId] = contactId;
+                        delete currentData.assignments[eventId];
+                        currentData.unassigned = (currentData.unassigned || []).filter(id => id !== eventId);
+                    } else {
+                        delete currentData.assist_assignments[eventId];
+                        if (!(currentData.unassigned || []).includes(eventId)) {
+                            (currentData.unassigned = currentData.unassigned || []).push(eventId);
+                        }
+                    }
+                    renderSchedule(currentData);
+                }
+                forceSync(false, false).catch(console.error);
+            } catch (e) {
+                showGlobalAlert("Couldn't change who's covering that.");
+            }
+        }
+
         async function forceSwap(ghostEventId, driverId) {
             closeEventModal();
             let targetEventId = ghostEventId;
@@ -2072,7 +2110,22 @@
             if (driverId === 'unassigned') {
                 const elem = ev.target.closest('.bg-cardbg');
                 if (elem) elem.style.opacity = '0.5';
-                await forceSwap(eventId, 'unassigned');
+                // Dragging OUT of an assist column hands the drive back to the
+                // household, which is a coverage change and not an override —
+                // clear it first or the solver would still skip the event.
+                if (String(sourceDriverId || '').startsWith('assist_')) {
+                    await setAssistCoverage(eventId, null);
+                } else {
+                    await forceSwap(eventId, 'unassigned');
+                }
+            } else if (driverId.startsWith('assist_')) {
+                // Outside hands (load arc A1): drop a drive on a carpool
+                // parent's column and it becomes theirs. This is the fastest
+                // hand path there is, and it uses the same gesture the family
+                // already knows for moving a drive between parents.
+                const elem = ev.target.closest('.bg-cardbg');
+                if (elem) elem.style.opacity = '0.5';
+                await setAssistCoverage(eventId, driverId.slice('assist_'.length));
             } else if (driverId !== 'no_location' && !/^g\d+$/.test(driverId)) {
                 // ghost columns are g1, g2, ... — a REAL driver whose id merely
                 // starts with 'g' must still accept drops

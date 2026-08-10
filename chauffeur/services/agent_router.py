@@ -311,6 +311,9 @@ sending or claiming, and never pass from_member/member_name for them.
                              # answer (same reasoning as get_point_balances).
                              "send_family_message", "send_direct_message",
                              "announce_to_room",
+                             # Outside hands (load arc A1): the write confirms
+                             # itself out loud, the read IS the whole answer.
+                             "cover_with_assist", "get_assist_coverage",
                              "get_family_messages", "list_chores",
                              "claim_chore", "get_routine_status",
                              "post_weekly_digest", "get_drive_digest",
@@ -515,6 +518,21 @@ sending or claiming, and never pass from_member/member_name for them.
                                               args.get("message_text", ""),
                                               sender_driver_id=driver_id if driver else None,
                                               from_member=args.get("from_member"))
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "cover_with_assist":
+                    from services.agent_tools_v2 import cover_with_assist
+                    res = cover_with_assist(args.get("event_name", "") or "",
+                                            contact_name=args.get("contact_name"),
+                                            target_date=args.get("target_date"),
+                                            clear=bool(args.get("clear")))
+                    # Coverage changes what the solver may do with the day, so
+                    # the client has to re-solve exactly as for an override.
+                    if res.get("schedule_dirty"):
+                        schedule_dirty = True
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "get_assist_coverage":
+                    from services.agent_tools_v2 import get_assist_coverage
+                    res = get_assist_coverage(args.get("target_date"))
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "announce_to_room":
                     from services.agent_tools_v2 import announce_to_room

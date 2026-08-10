@@ -479,6 +479,58 @@ class ManualOverride(BaseModel):
     # Used to suppress the redundant "you gained this" push for that driver.
     source: Optional[str] = None
 
+class AssistContact(BaseModel):
+    """Someone outside the household who does work for it (load arc A1).
+
+    A carpool parent, the neighbour who comes to do the dishes, a sitter.
+    **Carpool is a kind of help, not a kind of person** — which is why this is
+    not `CarpoolDriver`: household work gets carried by people the app could
+    not see at all, and that is the finding the whole load arc is built on.
+
+    NOT a `FamilyMember`: no login, no PIN, no headcount, no wall board, no
+    DMs. They are a contact precisely BECAUSE they have no account, which is
+    the clean line against the `helper` role — an external person who DOES
+    hold the app. Three points on one axis: a contact we only record, a
+    `helper` with driving surfaces, a full member.
+    """
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    name: str
+    phone: Optional[str] = ""
+    email: Optional[str] = ""
+    # How the family actually refers to them: "Emma's mom", "the Kellys' girl".
+    relation_label: Optional[str] = ""
+    # Free tags — carpool, housework, childcare, tutoring, pets. NOTHING
+    # branches on this. Behaviour comes from what REFERENCES the contact: one
+    # referenced by a drive is a carpool driver, one referenced by a chore is
+    # house help. Branch on the tag instead and every new kind of help becomes
+    # a code change, which is the trap this arc exists to walk the app out of.
+    kinds: List[str] = Field(default_factory=list)
+    # reciprocal | paid | volunteer. Earns its place: you owe a carpool parent
+    # a TURN, you owe the girl who does the dishes MONEY, so turn-taking fires
+    # for `reciprocal` and stays silent for `paid`. Not a reversal of the money
+    # cut — no amounts, rates or balances are tracked anywhere.
+    relationship: str = 'reciprocal'
+    color_code: Optional[str] = None
+    notes: Optional[str] = ""
+    active: bool = True
+    created_at: float = Field(default_factory=time.time)
+
+class AssistAssignment(BaseModel):
+    """This event is covered by someone outside the house.
+
+    The third assignment state, alongside assigned-to-a-household-member and
+    unassigned. To the solver a covered event is COVERED: not assignable, not
+    unassigned, not ghost-eligible. It leaves the optimisation entirely, which
+    is the whole point — outside help REMOVES load, and until now the app had
+    no way to be told so. It also retires a standing false alarm: the watcher
+    DM "🚨 No driver yet" for a ride that was always handled.
+    """
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    event_id: str
+    contact_id: str
+    note: Optional[str] = ""
+    created_at: float = Field(default_factory=time.time)
+
 class StatusTier(BaseModel):
     name: str
     emoji: str = ''

@@ -491,6 +491,14 @@ def send_coverage_reports(now: datetime.datetime = None, lookahead_days: int = 4
     members = {m['id']: m for m in storage.get_all_members()}
     assignments = dict(sched.get('assignments', {}))
     assignments.update(sched.get('ghost_assignments', {}))
+    # Outside hands (load arc A1): a ride somebody outside the house is making
+    # is covered, so the report names them instead of flagging it as open. A
+    # coverage report that says "needs a driver" about a carpool run is exactly
+    # the wrong thing to hand the co-parent on a hard week.
+    assist_map = dict(sched.get('assist_assignments', {}))
+    assist_names = {c['id']: (c.get('relation_label') or c.get('name'))
+                    for c in (sched.get('assist_contacts')
+                              or storage.get_assist_contacts(include_inactive=True))}
 
     sent = []
     for day in storage.get_status_days(start=today.isoformat(), end=horizon):
@@ -521,12 +529,16 @@ def send_coverage_reports(now: datetime.datetime = None, lookahead_days: int = 4
                 stamp = f"{s_dt.strftime('%a')} {s_dt.strftime('%I:%M %p').lstrip('0')}"
             except (ValueError, TypeError, KeyError):
                 stamp = span_start
-            d_id = assignments.get(ev_id)
-            drv = None
-            if d_id and not str(d_id).startswith('ghost_'):
-                drv = next((m for m in members.values()
-                            if m.get('driver_id') == d_id), None)
-            who = (drv or {}).get('name')
+            who = None
+            if ev_id in assist_map:
+                who = assist_names.get(assist_map[ev_id]) or 'covered'
+            else:
+                d_id = assignments.get(ev_id)
+                drv = None
+                if d_id and not str(d_id).startswith('ghost_'):
+                    drv = next((m for m in members.values()
+                                if m.get('driver_id') == d_id), None)
+                who = (drv or {}).get('name')
             lines.append(f"• {stamp} — {ev.get('title') or 'Event'} — "
                          + (who if who else "⚠️ needs a driver"))
 

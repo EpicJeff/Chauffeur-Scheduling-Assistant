@@ -105,6 +105,41 @@
             let localInitialEdges = JSON.parse(JSON.stringify(initialEdges || {}));
             let localFinalEdges = JSON.parse(JSON.stringify(finalEdges || {}));
 
+            // Outside hands (load arc A1): somebody outside this household is
+            // covering the drive. They get a COLUMN, exactly as a ghost driver
+            // does, so the entire existing column machinery — sorting, blocks,
+            // empty-column hiding — works on them unchanged.
+            //
+            // Injected HERE, in the shared renderer, rather than on the
+            // dashboard: the board tile draws with this same function, and the
+            // v2.126.0 lesson was that two drawings of one thing drift apart
+            // the day they ship.
+            const assistAssignments = data.assist_assignments || {};
+            const assistContacts = {};
+            (data.assist_contacts || []).forEach(c => { assistContacts[c.id] = c; });
+            Object.entries(assistAssignments).forEach(([evId, cId]) => {
+                const c = assistContacts[cId];
+                if (!c) return;   // contact deleted mid-flight: leave it unassigned
+                const colId = 'assist_' + cId;
+                if (!driversMap[colId]) {
+                    driversMap[colId] = {
+                        id: colId,
+                        // The label the family says out loud beats the legal
+                        // name on a kitchen wall: "Emma's mom".
+                        name: c.relation_label || c.name,
+                        color_code: c.color_code || '#64748b',
+                        // Not 'primary'/'secondary', so colSortKey lands them
+                        // after the household and before the ghosts: real
+                        // coverage outranks a hypothetical extra person.
+                        group: 'assist',
+                        priority_index: 999,
+                        is_assist: true,
+                        assist_contact: c
+                    };
+                }
+                localAssignments[evId] = colId;
+            });
+
             if (window.showErrands && scheduled_errands && scheduled_errands.length > 0) {
                 scheduled_errands.forEach(errand => {
                     errand.start = errand.start_time;

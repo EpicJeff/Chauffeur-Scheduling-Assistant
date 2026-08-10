@@ -427,6 +427,8 @@ with db_lock:
     cars_table = db.table('cars')
     status_protocols_table = db.table('status_protocols')
     status_days_table = db.table('status_days')
+    assist_contacts_table = db.table('assist_contacts')
+    assist_assignments_table = db.table('assist_assignments')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -1680,6 +1682,68 @@ def complete_kid_task(task_id: str, done: bool = True) -> Optional[dict]:
         out = dict(res[0])
         out['status'] = 'done' if done else 'open'
         return out
+
+# --- Outside hands (load arc A1) ---
+# Contacts who do work for this household without holding the app, and the
+# work they cover. Assignments are keyed by event_id — one covered event has
+# exactly one contact, the same shape `overrides` uses for drivers.
+
+def get_assist_contacts(include_inactive: bool = False) -> List[dict]:
+    with db_lock:
+        rows = [dict(c) for c in assist_contacts_table.all()]
+    if not include_inactive:
+        rows = [c for c in rows if c.get('active', True)]
+    rows.sort(key=lambda c: (c.get('name') or '').lower())
+    return rows
+
+def get_assist_contact(contact_id: str) -> Optional[dict]:
+    if not contact_id:
+        return None
+    with db_lock:
+        res = assist_contacts_table.search(Query().id == contact_id)
+        return dict(res[0]) if res else None
+
+def add_assist_contact(data: dict) -> str:
+    with db_lock:
+        assist_contacts_table.insert(data)
+        return data['id']
+
+def update_assist_contact(contact_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(assist_contacts_table.update(data, Query().id == contact_id))
+
+def delete_assist_contact(contact_id: str):
+    """Remove the contact AND the coverage that pointed at them — a covered
+    event whose contact no longer exists would read as unassigned everywhere
+    and quietly re-enter the solver, which is the false alarm this feature is
+    here to kill."""
+    with db_lock:
+        assist_contacts_table.remove(Query().id == contact_id)
+        assist_assignments_table.remove(Query().contact_id == contact_id)
+
+def get_assist_assignments() -> List[dict]:
+    with db_lock:
+        return [dict(a) for a in assist_assignments_table.all()]
+
+def get_assist_assignment_map() -> Dict[str, str]:
+    """{event_id: contact_id} — what the solver and every surface read."""
+    return {a['event_id']: a['contact_id'] for a in get_assist_assignments()
+            if a.get('event_id') and a.get('contact_id')}
+
+def set_assist_assignment(event_id: str, contact_id: str, note: str = "") -> dict:
+    """One contact per event: setting replaces rather than stacking."""
+    import time as _time
+    import uuid as _uuid
+    row = {'id': _uuid.uuid4().hex, 'event_id': event_id, 'contact_id': contact_id,
+           'note': note or "", 'created_at': _time.time()}
+    with db_lock:
+        assist_assignments_table.remove(Query().event_id == event_id)
+        assist_assignments_table.insert(row)
+    return row
+
+def clear_assist_assignment(event_id: str) -> bool:
+    with db_lock:
+        return bool(assist_assignments_table.remove(Query().event_id == event_id))
 
 # --- Shopping lists (meals & provisioning arc M1) ---
 # A STANDING list bound to a recurring errand by TAG, never by errand id: the
