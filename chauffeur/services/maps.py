@@ -248,6 +248,30 @@ def get_route_geometry(origin: str, destination: str, profile: str = "driving",
 # the stage markers make that failure mode structurally impossible here).
 # Surfaces never fetch: they read the day-of cache and fall back to static.
 
+def _traffic_cache_key(addr: str, coords: tuple = None) -> str:
+    """Day-of rows are keyed by COORDINATES, not by address strings.
+
+    The same house arrives here as '…Apex, NC, USA' from a solver edge and
+    '…Apex, North Carolina 27523, United States' from settings — string keys
+    made the sweep's buys invisible to every reader. Geocoding is already
+    cached for every address these paths carry, and four decimals (~11 m)
+    is the same building. The raw string is the fallback so an ungeocodable
+    pair still round-trips against itself.
+    """
+    coords = coords or geocode_address(addr)
+    if coords:
+        return f"{coords[0]:.4f},{coords[1]:.4f}"
+    return (addr or '').strip().lower()
+
+
+def get_day_of_traffic(origin: Optional[str], destination: Optional[str]) -> Optional[dict]:
+    """Today's traffic row for a pair, whatever spelling the caller has."""
+    if not origin or not destination:
+        return None
+    return storage.get_cached_day_of_traffic(_traffic_cache_key(origin),
+                                             _traffic_cache_key(destination))
+
+
 def fetch_traffic_minutes(origin: Optional[str], destination: Optional[str],
                           depart_at_ts: float = None,
                           stage: str = 'refine') -> Optional[int]:
@@ -289,8 +313,10 @@ def fetch_traffic_minutes(origin: Optional[str], destination: Optional[str],
             if routes:
                 mins = int(round(float(routes[0].get('duration') or 0) / 60.0))
                 if mins > 0:
-                    storage.set_cached_day_of_traffic(origin, destination,
-                                                      mins, stage)
+                    storage.set_cached_day_of_traffic(
+                        _traffic_cache_key(origin, coords_origin),
+                        _traffic_cache_key(destination, coords_dest),
+                        mins, stage)
                     return mins
         else:
             print(f"driving-traffic {resp.status_code}: {origin} -> {destination}")
@@ -315,7 +341,7 @@ def live_adjusted_trigger(notif: dict) -> float:
         return trigger
     if not origin or not dest or static <= 0:
         return trigger
-    row = storage.get_cached_day_of_traffic(origin, dest)
+    row = get_day_of_traffic(origin, dest)
     if not row or row['duration_mins'] <= static:
         return trigger
     return trigger - (row['duration_mins'] - static) * 60.0
@@ -349,7 +375,9 @@ def run_day_of_traffic_sweep(now_ts: float = None) -> dict:
     except (TypeError, ValueError):
         morning_hour = 6
     today = _dt.date.fromtimestamp(now_ts).isoformat()
-    state = storage.get_app_state('traffic_sweep_done') or {}
+    # _v2: the key namespace moved when the cache went coordinate-keyed —
+    # markers from the string-keyed hour get one re-buy under the new keys.
+    state = storage.get_app_state('traffic_sweep_done_v2') or {}
     if state.get('date') != today:
         state = {'date': today, 'done': {}}
     done = dict(state.get('done') or {})
@@ -382,7 +410,7 @@ def run_day_of_traffic_sweep(now_ts: float = None) -> dict:
             done[f"{nid}:refine"] = True
             if fetch_traffic_minutes(origin, dest, stage='refine') is not None:
                 fetched += 1
-    storage.set_app_state('traffic_sweep_done', {'date': today, 'done': done})
+    storage.set_app_state('traffic_sweep_done_v2', {'date': today, 'done': done})
     return {'fetched': fetched}
 
 

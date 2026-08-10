@@ -151,7 +151,11 @@ def _day_of_overlay(sched: dict, driver_id: str, event_id: str,
         origin = (events.get(_base_id(lead.get('from_event') or '')) or {}).get('location')
     if not origin or not dest:
         return None
-    row = storage.get_cached_day_of_traffic(origin, dest)
+    # The keyed reader: the same house is spelled differently by the solver's
+    # edges and the settings record, so the cache is coordinate-keyed and
+    # maps owns the translation.
+    from services import maps
+    row = maps.get_day_of_traffic(origin, dest)
     if not row or row['duration_mins'] <= lead['travel_mins']:
         return None
     mins = row['duration_mins']

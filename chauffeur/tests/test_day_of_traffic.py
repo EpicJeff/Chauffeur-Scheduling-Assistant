@@ -29,8 +29,11 @@ from services import storage, maps, leave_by
 def _reset():
     with storage.db_lock:
         storage.live_traffic_table.truncate()
-    storage.set_app_state('traffic_sweep_done', None)
+    storage.set_app_state('traffic_sweep_done_v2', None)
     maps._last_sweep_ts = 0.0
+    # No network in tests: an ungeocodable address falls back to the raw
+    # string as its own cache key, so writes and reads still meet.
+    maps.geocode_address = lambda addr: None
 
 
 def scenario_the_cache_answers_only_for_today():
@@ -173,6 +176,41 @@ def scenario_the_sweep_buys_each_leg_at_most_twice_a_day():
         storage.get_settings = real_settings
         maps.fetch_traffic_minutes = real_fetch
         storage.save_pending_notifications([])
+
+
+def scenario_any_spelling_of_the_same_place_finds_the_row():
+    """Caught live on day one: the sweep stored under the solver edge's
+    spelling ('…Apex, NC, USA') while the overlay and the debug endpoint
+    looked up with the settings spelling ('…Apex, North Carolina 27523,
+    United States') — same house, different strings, every read a miss. The
+    cache is coordinate-keyed now (four decimals, the same building), with
+    the raw string only as an ungeocodable fallback."""
+    _reset()
+    home_coords = (35.780458, -78.915698)
+    gym_coords = (35.687847, -78.833321)
+
+    def fake_geocode(addr):
+        a = (addr or '').lower()
+        if 'chestnut' in a:
+            return home_coords
+        if 'williams' in a:
+            return gym_coords
+        return None
+
+    maps.geocode_address = fake_geocode
+    key_a = maps._traffic_cache_key('265 Chestnut Walk Drive, Apex, NC, USA')
+    key_b = maps._traffic_cache_key(
+        '265 Chestnut Walk Drive, Apex, North Carolina 27523, United States')
+    check(key_a == key_b == '35.7805,-78.9157',
+          f"two spellings of one house share a key, got {key_a} / {key_b}")
+    storage.set_cached_day_of_traffic(
+        key_a, maps._traffic_cache_key('2161 E Williams St, Apex, NC 27539'),
+        28, 'refine')
+    row = maps.get_day_of_traffic(
+        '265 Chestnut Walk Drive, Apex, North Carolina 27523, United States',
+        '2161 East Williams Street, Apex, North Carolina 27539, United States')
+    check(row and row['duration_mins'] == 28,
+          f"a row bought under one spelling reads back under another, got {row}")
 
 
 def scenario_every_surface_is_wired():

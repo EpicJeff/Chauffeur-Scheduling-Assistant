@@ -9474,7 +9474,9 @@ def debug_travel(destination: Optional[str] = None, event: Optional[str] = None,
         origin.lower(), destination.lower(), ignore_age=True)
     # The day-of layer (v2.165.0): what the sweep has bought for this pair
     # TODAY — the number the hero, the PWA and the pushes are acting on.
-    out["day_of_traffic"] = storage.get_cached_day_of_traffic(origin, destination)
+    # Read through maps: the cache is coordinate-keyed (v2.165.1), so any
+    # spelling of the same two places finds the row.
+    out["day_of_traffic"] = _maps.get_day_of_traffic(origin, destination)
     # Which origin each DRIVER actually routes from: a driver record's own
     # home_location OVERRIDES the global home (solver initial edges,
     # matcher.py) — the classic source of a "9 minutes" chip while the
