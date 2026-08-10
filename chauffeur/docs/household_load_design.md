@@ -1,6 +1,6 @@
 # The load arc — what the family carries, and who carries it
 
-Design brief for the next program of work. Six arcs, four new primitives, one
+**STATUS: BUILT.** All six arcs shipped 2026-08-10, v2.146.0-v2.151.0; see roadmap.md for what was deferred. Design brief for the program of work. Six arcs, four new primitives, one
 derived lens. Written 2026-08-10 against a code audit (not against the docs).
 
 ## The finding this is built on

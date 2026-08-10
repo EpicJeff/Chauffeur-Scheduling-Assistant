@@ -384,10 +384,19 @@ looking, and every one works. config.html is the residue.
 Rule going forward: **a new setting is registered in the registry and placed on
 its feature's surface, never appended to config.html.**
 
-## The load arc (designed 2026-08-10 — the next big program)
+## The load arc (SHIPPED 2026-08-10, v2.146.0 → v2.151.0 — designed and built the same day)
 
 Full brief: `docs/household_load_design.md`. Six arcs, four new primitives,
-one derived lens. Built from a code audit, not from these docs.
+one derived lens. Built from a code audit, not from these docs. ALL SIX ARCS
+SHIPPED: A1 outside hands (v2.146.0) · A2 household tasks + assist tier
+(v2.147.0) · A3 requests (v2.148.0) · A4 stages, cutoffs 6/12/15 configurable
+(v2.149.0) · A5 dual-income net (v2.150.0) · A6 outlets + member quiet hours
++ household briefing (v2.151.0). On-device verification pending for all of it.
+Deferred from the design, with reasons in system_capabilities.md: the carpool
+turn ledger (A1 slice 2) and chore/task coverage by outside hands (wants usage
+data first); driver availability windows/radius from "Three layers of no"
+(the commitment + quiet-hours machinery covers the sharpest cases; per-weekday
+work windows are the next slice).
 
 The finding: **the app models the family's work as driving, and anything not
 drive-shaped has no home** (`Errand` requires `location`+`duration_mins`
