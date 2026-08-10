@@ -45,6 +45,61 @@ app has plenty of machinery and too few nouns.
 | `Stage` | the developmental band a child is in | `role == 'child'` is currently the entire model |
 | **the load ledger** | a lens, not a table: who is carrying what | reads all of the above; states, never scores |
 
+## Covering is not carrying
+
+One cross-cutting property, discovered by asking where a teenage driver
+belongs (2026-08-10). The observation was that a teen who drives is more like
+a carpool parent than like a second adult: **they can be assigned a drive and
+it is covered — the difference is that they have the app and can use the
+driving tools.**
+
+That is exactly right, and it generalises past teenagers. There is already a
+third case with the same shape: the `helper` role — a hired driver or nanny
+who has the app, sees driving surfaces only, and is not family. So the app has
+**three kinds of driver on one axis**, which is how much of the app they hold:
+
+| Kind | Has the app? | Assigned how? |
+|---|---|---|
+| `CarpoolDriver` | no — a contact | recorded; the solver is *told* |
+| `helper` (hired driver, nanny) | driving surfaces only | assignable; solver-eligible |
+| `Copilot` teen | driving surfaces **plus** their kid lens | assignable; solver-eligible only if allowed |
+
+And all three share one property that the household drivers do not have:
+
+> **They cover the drive. They do not carry the load.**
+
+So `Driver` gains a tier — `household | assist` — and the tier, not the role,
+is what the rest of the system reads. What `assist` changes:
+
+- **Excluded from the load ledger.** This is the critical one. If a teenager
+  drives six times a week, the ledger must not report the household as evenly
+  split. The same protection applies to a hired driver, which is a bug waiting
+  to happen today: the weekly digest prints per-driver drive counts sorted
+  descending, and a nanny's ten runs currently make the week look shared.
+- **Excluded from the solver's load-balancing term**, exactly as ghost drivers
+  already are (`solver/matcher.py:1056`).
+- **Assignable, but not auto-assigned by default.** *Can be given a drive* and
+  *will be volunteered for one* are different permissions, and the second one
+  should be a deliberate per-driver opt-in. Nobody wants CP-SAT deciding a
+  sixteen-year-old takes the 8pm cross-town run because it optimised well.
+- **Constraints that are soft for an adult go hard for a teen**: the passenger
+  cap (`Driver.max_passengers` exists as a graduated-licensing field and has
+  never had a customer), a time-of-day ceiling, and — worth considering — a
+  radius from home. `preferred_start`/`preferred_end` is a −2,000,000 soft
+  penalty today; a curfew is not a preference.
+- **Coverage counts.** No `needs a driver` flag, no ghost route, no watcher
+  alarm. A drive an assist driver holds is handled.
+
+The teen keeps their `child` role and their whole kid lens — becoming useful
+is not a reason to be deleted from the family. What the Copilot stage unlocks
+is the **driver surfaces** (the Drives tab, start/complete route, the driver
+chat agent, leave-by), which the passenger shell hides today. That is precisely
+what stage capability flags are for.
+
+There is also a nice social result: driving your sister to practice lands as
+being **trusted**, not as being enrolled in the chore economy — which is what
+should replace points at that stage anyway.
+
 ---
 
 # A1 — The carpool book
@@ -310,10 +365,15 @@ sixteen-year-old.
 
 ## The teen and the wheel
 
-A Copilot who drives should become a `Driver` **while remaining a `child`
-member** — that is the entire reason for not flipping the role. The graduated
-licensing cap already exists as `Driver.max_passengers`
-(`models/schemas.py:74`) and has never had a customer.
+A Copilot who drives becomes a `Driver` on the **assist** tier while remaining
+a `child` member — see *Covering is not carrying* above. The stage unlocks the
+driver surfaces; the tier keeps their drives out of the adults' ledger; the
+role keeps their kid lens intact.
+
+Two things follow that are worth stating plainly. Their drives must show up in
+a sibling's digest in the family's own voice — *"🚗 James is driving you"* is
+warmer and truer than naming a driver record. And the household must never be
+told it is evenly split because a sixteen-year-old absorbed the week.
 
 ---
 
@@ -426,12 +486,43 @@ That converts awareness into action without anyone having to ask — which is
 the real mechanism, because the hard part of picking up slack is not
 willingness, it is **visibility**.
 
-## 6. Adult quiet hours
+## 6. Quiet hours, on the identity
 
 The kid quiet-hours machinery is thorough (`family_digest.in_kid_quiet_hours`,
 honoured at eleven call sites) and has no adult counterpart at all; adults can
 be pushed at any hour by schedule changes, pending drives and capture prompts.
-Mirror it per adult, with the same **skip, do not defer** discipline.
+
+**It belongs on the member, not in household config** — decided 2026-08-10 —
+and the reason is a real difference in kind, not just in schedule:
+
+> **Kid quiet hours are a protection, set for someone by someone else. Adult
+> quiet hours are a preference, owned by the self.**
+
+Different ownership means a different home. A household window would also
+serve nobody in a house with a night-shift parent and a six-a.m. riser, and
+the `helper` case is starker still: a hired driver should not be pinged at ten
+at night about tomorrow's run. This lands on the member's own card, which is
+where the config-decentralisation rule wants it anyway.
+
+Four details that keep it honest:
+
+- **Absent means the household default, never "off".** The exact trap the
+  screensaver settings hit — an unset window must resolve to a default
+  (21:00–08:00, matching the constants this replaces), not to no protection at
+  all. It also retires two hardcoded magic numbers,
+  `watchers.QUIET_END_HOUR` / `QUIET_START_HOUR`.
+- **Urgency escapes.** A 5:30am departure push has to fire at 5:10 even inside
+  a window that runs to eight, or the first night-shift parent misses a drive.
+  Time-critical lanes (leave now, a drive reassigned today) escape; digests,
+  watchers, capture prompts and nudges respect the window.
+- **Skip versus defer stays per-lane.** Time-sensitive sends *skip* — a stale
+  on-the-way push is worse than none. Watcher findings already *defer* to the
+  next morning sweep, which is correct for them. Do not flatten these into one
+  rule.
+- **Merge with the stale roadmap item.** "Per-member notification preferences"
+  (members with both web push and HA notify get everything twice) has been on
+  the backlog since 2026-07-31. It is the same block on the same card: *how*
+  and *when* I want to be reached. Build them together and close both.
 
 ## 7. Social, honestly scoped
 
@@ -496,7 +587,15 @@ into it first.
   `CarpoolGroup` entity? Start derived; promote only if it fails.
 - Do half-days need a per-kid override, given siblings at different schools
   with different calendars?
-- Does a `Copilot` who drives siblings enter the load ledger as an adult, or
-  stay outside it? (Leaning: outside — a teenager helping is not a third
-  parent, and counting them invites the wrong conversation.)
-- Adult quiet hours: per member, or one household window like the kid one?
+- Should an `assist` driver ever be solver-eligible by default, or is manual
+  assignment always the entry point with auto-assign as the opt-in? (Leaning:
+  opt-in, per driver — and possibly per time window, since "yes to the 4pm
+  practice run" and "yes to anything" are different answers.)
+- Does the `assist` tier want a radius-from-home ceiling, or do the passenger
+  cap and time ceiling cover enough of the real worry?
+
+**Answered 2026-08-10:** a teen driver is an `assist`-tier `Driver` who keeps
+their `child` role and kid lens — covering is not carrying, and helpers get
+the same protection. Adult quiet hours live on the member's identity, not in
+household config, because a preference owned by the self belongs somewhere
+different from a protection set by someone else.

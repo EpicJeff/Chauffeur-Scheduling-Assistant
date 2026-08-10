@@ -404,6 +404,17 @@ Primitives: `HouseholdTask` (work with a deadline and no destination) ·
 access) · `Stage` (the developmental band a child is in) · the **load ledger**
 (a lens that states and never scores).
 
+**Covering is not carrying** (decided 2026-08-10). A teen who drives is more
+like a carpool parent than a second adult — assigned a drive and it is covered;
+the difference is only that they hold the app. That generalises: `Driver` gains
+a tier, `household | assist`, and carpool drivers, `helper`s and Copilot teens
+are all `assist`. They cover the drive, they do NOT carry the load — excluded
+from the ledger and from the balancing term, assignable but not auto-assigned
+without a per-driver opt-in, with hard (not soft) passenger and time ceilings.
+Fixes a latent bug: the weekly digest's per-driver counts currently let a
+nanny's ten runs make the week look shared. The teen keeps `role='child'` and
+the whole kid lens; the Copilot stage unlocks the driver surfaces.
+
 - **A1 — the carpool book. SHIP FIRST.** A drive that is real and isn't ours,
   as a third assignment state so it leaves the optimisation entirely. Stored
   drivers (name + phone + "Emma's mom") because they repeat, the number is the
@@ -435,8 +446,12 @@ access) · `Stage` (the developmental band a child is in) · the **load ledger**
 - **A6 — outlets + the household briefing.** Protected commitments the solver
   defends, erosion watch ("you've missed your Thursday run three weeks running
   — every time it was a drive"), coverage that makes an outlet real, recovery
-  beats, adult quiet hours (the kid machinery has no adult counterpart), and
-  **the briefing**: the tomorrow digest is per-driver today, so the
+  beats, **quiet hours on the IDENTITY** (not household config: a kid's window
+  is a protection set by someone else, an adult's is a preference owned by the
+  self — and a night-shift parent, a 6am riser and a hired driver share no
+  window; absent = the household default, never off; urgent lanes escape;
+  merges with the stale "per-member notification preferences" backlog item),
+  and **the briefing**: the tomorrow digest is per-driver today, so the
   non-driving parent learns the day changed by looking at a screen. Show
   OPENINGS, not assignments — the hard part of picking up slack is visibility,
   not willingness.
