@@ -1269,6 +1269,33 @@
                                             </div>
                                         </div>
                                         <div x-show="memberEdit.role === 'child'">
+                                            <label class="block text-gray-400 mb-1 text-sm">🏫 Aftercare
+                                                <span class="text-gray-600">(on these days the pickup deadline is the aftercare end, not the bell — and the dismissal push says so)</span></label>
+                                            <div class="flex items-center gap-2 flex-wrap">
+                                                <div class="flex gap-1">
+                                                    <template x-for="(dl, di) in ['M','T','W','T','F']" :key="di">
+                                                        <button type="button"
+                                                            @click="memberEdit.aftercare_days = (memberEdit.aftercare_days || []).includes(di)
+                                                                ? memberEdit.aftercare_days.filter(x => x !== di)
+                                                                : [...(memberEdit.aftercare_days || []), di]"
+                                                            :class="(memberEdit.aftercare_days || []).includes(di)
+                                                                ? 'bg-teal-600 text-white' : 'bg-gray-900 text-gray-500'"
+                                                            class="w-9 h-9 rounded font-bold text-sm" x-text="dl"></button>
+                                                    </template>
+                                                </div>
+                                                <div>
+                                                    <span class="block text-xs text-gray-500 mb-0.5">until</span>
+                                                    <input type="time" x-model="memberEdit.aftercare_until"
+                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                                </div>
+                                                <div class="flex-1 min-w-[140px]">
+                                                    <span class="block text-xs text-gray-500 mb-0.5">called</span>
+                                                    <input x-model="memberEdit.aftercare_place" placeholder="Extended Day"
+                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div x-show="memberEdit.role === 'child'">
                                             <label class="block text-gray-400 mb-1 text-sm">🚌 School bus
                                                 <span class="text-gray-600">(AM stop time enables bus leave-by lines + the bus-home dismissal push; live times come from Here Comes The Bus in HA automatically)</span></label>
                                             <div class="flex items-center gap-2 flex-wrap">
@@ -5033,6 +5060,9 @@
                         media_player_entity: member.media_player_entity || '',
                         school_hours_start: member.school_hours_start || '',
                         school_hours_end: member.school_hours_end || '',
+                        aftercare_days: (member.aftercare_days || []).slice(),
+                        aftercare_until: member.aftercare_until || '',
+                        aftercare_place: member.aftercare_place || '',
                         bus_am_stop_time: member.bus_am_stop_time || '',
                         bus_pm_stop_time: member.bus_pm_stop_time || '',
                         bus_walk_mins: member.bus_walk_mins || null,
@@ -5087,6 +5117,9 @@
                     updates.media_player_entity = updates.media_player_entity || null;
                     updates.school_hours_start = updates.school_hours_start || null;
                     updates.school_hours_end = updates.school_hours_end || null;
+                    updates.aftercare_days = updates.aftercare_days || [];
+                    updates.aftercare_until = updates.aftercare_until || null;
+                    updates.aftercare_place = (updates.aftercare_place || '').trim() || null;
                     updates.bus_am_stop_time = updates.bus_am_stop_time || null;
                     updates.bus_pm_stop_time = updates.bus_pm_stop_time || null;
                     updates.bus_walk_mins = parseInt(updates.bus_walk_mins) || null;

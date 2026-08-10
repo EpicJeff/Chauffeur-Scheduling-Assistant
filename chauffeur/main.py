@@ -6885,6 +6885,34 @@ def _send_school_end_push(member, now=None):
     except (ValueError, TypeError):
         return False
     end_dt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    # Aftercare as a care window (load arc A5): on an aftercare day the real
+    # pickup deadline is the aftercare end, not the bell — so the push tells
+    # the child the truth about their afternoon FIRST, and the ride horizon
+    # extends past the aftercare end rather than the school one.
+    aftercare_today = (now.weekday() in (member.get('aftercare_days') or [])
+                       and member.get('aftercare_until'))
+    if aftercare_today:
+        place = member.get('aftercare_place') or 'aftercare'
+        try:
+            ah, am = [int(x) for x in member['aftercare_until'].split(':')[:2]]
+            ac_end = now.replace(hour=ah, minute=am, second=0, microsecond=0)
+        except (ValueError, TypeError):
+            ac_end = end_dt
+        until = ac_end.strftime('%I:%M %p').lstrip('0')
+        # Name the pickup driver when a ride sits near the aftercare end.
+        who = None
+        for r in day.get('rides', []):
+            try:
+                start = _dt.datetime.fromisoformat(r['start']).replace(tzinfo=None)
+            except (ValueError, TypeError, KeyError):
+                continue
+            if abs((start - ac_end).total_seconds()) <= 45 * 60 and r.get('driver'):
+                who = r['driver']['name']
+                break
+        body = (f"{(place[:1].upper() + place[1:])} until {until}"
+                + (f" — {who} gets you" if who else "") + s_suffix)
+        _notify_member_lanes(member, f"🏫 {(place[:1].upper() + place[1:])} today", body, '/app')
+        return True
     horizon = end_dt + _dt.timedelta(hours=3)
     for r in day.get('rides', []):
         try:
@@ -9909,7 +9937,12 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         import datetime as _sd_dt
         from services import status_protocols as _status
         _sd_start = _sd_dt.date.today().isoformat()
-        _sd_end = (_sd_dt.date.today() + _sd_dt.timedelta(days=14)).isoformat()
+        # The full build horizon (load arc A5 fix). This was hardcoded to 14
+        # days against a 30-day `days_to_build`, so a cover day 20 days out
+        # was announced to the whole family while the solver went right on
+        # scheduling that parent for it.
+        _sd_days = int(settings.get('days_to_build', 30) or 30)
+        _sd_end = (_sd_dt.date.today() + _sd_dt.timedelta(days=_sd_days)).isoformat()
         for entry in _status.unavailable_driver_dates(_sd_start, _sd_end):
             rules.append(Rule(driver_id=entry['driver_id'],
                               constraint_type='unavailable',

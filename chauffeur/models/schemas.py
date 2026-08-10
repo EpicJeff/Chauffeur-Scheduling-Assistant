@@ -164,6 +164,15 @@ class FamilyMember(BaseModel):
     # push and the morning launch line. Empty = no school-hour features.
     school_hours_start: Optional[str] = None  # HH:MM
     school_hours_end: Optional[str] = None    # HH:MM
+    # Aftercare as a care window (load arc A5, children only). The actual
+    # fallback most two-income families use, previously inexpressible: on an
+    # aftercare day the pickup deadline is `aftercare_until`, not the school
+    # bell, which widens the solver's window and lets the dismissal push tell
+    # the child the truth ("you're in aftercare today, Mom gets you at 5:30").
+    # Days are weekday ints (0=Mon). No cost, no sessions — we don't do money.
+    aftercare_days: List[int] = Field(default_factory=list)
+    aftercare_until: Optional[str] = None     # HH:MM
+    aftercare_place: Optional[str] = ""       # "Extended Day", a name the kid knows
     # Dietary constraints (meals arc M3), mirroring the SOLVER's own hard/soft
     # grammar: `dietary_avoid` is HARD — a meal tagged with one of these is
     # filtered out entirely whenever this person is eating (allergies).

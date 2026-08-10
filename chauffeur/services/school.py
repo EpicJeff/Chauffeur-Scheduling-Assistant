@@ -36,6 +36,15 @@ from services import storage
 
 DEFAULT_CLOSED_KEYWORDS = ('no school, holiday, break, closed, '
                            'teacher workday, staff development, conferences')
+# School days get KINDS (load arc A5). `school_in_session` stayed a boolean,
+# and the boolean was blind to the day that bites a two-income household the
+# hardest: the half day nobody has PTO booked for. A timed event still never
+# closes or shortens a day — these match ALL-DAY events only, same as closure.
+HALF_DAY_KEYWORDS = ('half day', 'half-day', 'early release', 'early dismissal',
+                     'early out', 'minimum day', 'noon dismissal')
+DELAYED_KEYWORDS = ('delayed opening', 'late start', 'delayed start',
+                    'two hour delay', '2 hour delay', '2-hour delay',
+                    'late arrival')
 # Year-bound markers: matched against event titles (all-day OR timed — some
 # districts put "First Day of School" on a timed event). Broad on purpose;
 # the manual settings are the escape hatch for an unrecognizable calendar.
@@ -55,7 +64,8 @@ _WINDOW_DAYS = 370
 
 _lock = threading.Lock()
 _cache = {'ts': 0.0, 'fail_ts': 0.0, 'cal_id': None,
-          'start': None, 'end': None, 'dates': set(), 'intervals': []}
+          'start': None, 'end': None, 'dates': set(), 'intervals': [],
+          'kinds': {}}
 
 
 def _reset_cache():
@@ -63,7 +73,7 @@ def _reset_cache():
     with _lock:
         _cache.update({'ts': 0.0, 'fail_ts': 0.0, 'cal_id': None,
                        'start': None, 'end': None, 'dates': set(),
-                       'intervals': []})
+                       'intervals': [], 'kinds': {}})
 
 
 def _keywords(settings):
@@ -111,6 +121,7 @@ def _fetch_school_data(cal_id, start, end, keywords):
         return None
 
     dates = set()
+    kinds = {}          # date_str -> 'half' | 'delayed' (closures live in `dates`)
     firsts, lasts = [], []
     for e in events:
         title = (e.get('summary') or '').lower()
@@ -121,20 +132,31 @@ def _fetch_school_data(cal_id, start, end, keywords):
             firsts.append(d)
         elif any(k in title for k in LAST_DAY_KEYWORDS):
             lasts.append(d)
-        if not any(k in title for k in keywords):
-            continue
         s = (e.get('start') or {}).get('date')
         if not s:
-            continue  # timed event: doesn't close the school day
+            continue  # timed event: doesn't close or shorten the school day
         # Google all-day ends are exclusive; single-day events may omit end.
         d_end = _parse_date((e.get('end') or {}).get('date'))
         if d_end is None or d_end <= d:
             d_end = d + datetime.timedelta(days=1)
-        cur = d
-        while cur < d_end:
-            dates.add(cur.isoformat())
-            cur += datetime.timedelta(days=1)
-    return dates, _pair_intervals(firsts, lasts)
+        if any(k in title for k in keywords):
+            cur = d
+            while cur < d_end:
+                dates.add(cur.isoformat())
+                cur += datetime.timedelta(days=1)
+        elif any(k in title for k in HALF_DAY_KEYWORDS):
+            cur = d
+            while cur < d_end:
+                kinds[cur.isoformat()] = 'half'
+                cur += datetime.timedelta(days=1)
+        elif any(k in title for k in DELAYED_KEYWORDS):
+            cur = d
+            while cur < d_end:
+                # A closure keyword on another event wins over a delay; a half
+                # day wins too (shorter care coverage is the worse case).
+                kinds.setdefault(cur.isoformat(), 'delayed')
+                cur += datetime.timedelta(days=1)
+    return dates, _pair_intervals(firsts, lasts), kinds
 
 
 def _ensure_cache(cal_id, settings, day):
@@ -151,10 +173,10 @@ def _ensure_cache(cal_id, settings, day):
             end = max(today + datetime.timedelta(days=_WINDOW_DAYS), day)
             data = _fetch_school_data(cal_id, start, end, _keywords(settings))
             if data is not None:
-                dates, intervals = data
+                dates, intervals, kinds = data
                 _cache.update({'ts': now, 'fail_ts': 0.0, 'cal_id': cal_id,
                                'start': start, 'end': end, 'dates': dates,
-                               'intervals': intervals})
+                               'intervals': intervals, 'kinds': kinds})
                 covered = True
             else:
                 _cache['fail_ts'] = now
@@ -191,6 +213,55 @@ def school_in_session(day) -> bool:
                 and not any(s <= day <= e for s, e, _ in _cache['intervals']):
             return False
         return day.isoformat() not in _cache['dates']
+
+
+def school_day_kind(day) -> str:
+    """What KIND of school day this is: 'full' | 'half' | 'delayed' |
+    'closed' | 'weekend'.
+
+    `school_in_session` stayed a boolean, and the boolean was blind to the
+    day that bites a two-income household hardest: the half day nobody has
+    PTO booked for. Fails toward 'full' exactly as the boolean fails open —
+    a broken calendar must never invent closures.
+    """
+    if isinstance(day, str):
+        day = _parse_date(day)
+    if day is None:
+        return 'full'
+    if day.weekday() >= 5:
+        return 'weekend'
+    if not school_in_session(day):
+        return 'closed'
+    settings = storage.get_settings() or {}
+    cal_id = (settings.get('school_calendar_id') or '').strip()
+    if not cal_id or not _ensure_cache(cal_id, settings, day):
+        return 'full'
+    with _lock:
+        return _cache['kinds'].get(day.isoformat(), 'full')
+
+
+def care_gap_days(horizon_days: int = 21):
+    """Days in the horizon where school does not run full and children need
+    covering (load arc A5). The 3-day watcher window is far too late here —
+    closures are known weeks ahead, and taking a day off needs lead time.
+
+    Returns [{date, kind, weekday}] for non-full weekdays with at least one
+    child in the house. Weekends are not gaps: the household already has a
+    shape for those.
+    """
+    kids = [m for m in storage.get_all_members() if m.get('role') == 'child']
+    if not kids:
+        return []
+    out = []
+    today = datetime.date.today()
+    for i in range(1, max(1, horizon_days) + 1):
+        d = today + datetime.timedelta(days=i)
+        kind = school_day_kind(d)
+        if kind in ('full', 'weekend'):
+            continue
+        out.append({'date': d.isoformat(), 'kind': kind,
+                    'weekday': d.strftime('%A')})
+    return out
 
 
 def status():

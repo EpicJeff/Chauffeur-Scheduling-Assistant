@@ -205,7 +205,57 @@ def collect_findings(now: datetime.datetime = None):
     findings += _occasion_findings(now)
     findings += _household_task_findings(now)
     findings += _stage_findings(now)
+    findings += _care_gap_findings(now)
     return findings, unclaimed
+
+
+CARE_GAP_HORIZON_DAYS = 21     # closures are known weeks ahead; PTO needs lead time
+
+
+def _care_gap_findings(now: datetime.datetime):
+    """Days school does not run full, said WEEKS ahead (load arc A5).
+
+    The app knew school was closed and knew both parents' calendars, and
+    never computed the intersection — the highest-drama moment in a
+    two-income household. The 3-day unassigned window is far too late here:
+    taking a day off needs lead time, so this one looks 21 days out.
+
+    Framed as a DECISION with named options, not an alarm. Aftercare
+    softens a half day (that is what it is for) and is said so; a closure
+    closes aftercare with the school, so nothing softens it.
+    """
+    try:
+        from services import school
+        kids = [m for m in storage.get_all_members() if m.get('role') == 'child']
+        if not kids:
+            return []
+        out = []
+        for gap in school.care_gap_days(CARE_GAP_HORIZON_DAYS):
+            d = datetime.date.fromisoformat(gap['date'])
+            when = f"{gap['weekday']} {d.strftime('%b %d').replace(' 0', ' ')}"
+            if gap['kind'] == 'half':
+                covered = [k for k in kids
+                           if d.weekday() in (k.get('aftercare_days') or [])
+                           and k.get('aftercare_until')]
+                if len(covered) == len(kids):
+                    continue        # aftercare has the afternoon: not a gap
+                names = [k.get('name') for k in kids if k not in covered]
+                line = (f"🏫 {when} is a half day — early release, and "
+                        f"{', '.join(names)} need{'s' if len(names) == 1 else ''} "
+                        f"the afternoon covered. A parent, a grandparent, a "
+                        f"carpool family, or an aftercare day all work.")
+            elif gap['kind'] == 'delayed':
+                line = (f"🏫 {when} is a late start — someone has the morning "
+                        f"until school opens.")
+            else:
+                line = (f"🏫 {when} — no school. Someone has the day: a parent "
+                        f"takes it off, a grandparent, a carpool family, or a "
+                        f"camp day.")
+            out.append((f"caregap:{gap['date']}:{gap['kind']}", line))
+        return out
+    except Exception as e:
+        print(f"[watchers] care-gap findings failed: {e}")
+        return []
 
 
 def _stage_findings(now: datetime.datetime):
