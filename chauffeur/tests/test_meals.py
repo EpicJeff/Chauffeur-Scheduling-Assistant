@@ -2491,6 +2491,26 @@ def scenario_whole_meals_carry_categories_into_rules():
           "the closed hand path this scenario exists to keep open")
 
 
+def scenario_the_board_block_leads_with_the_meal():
+    """Reported with a photo: a wall-panel meal block titled "carrots".
+    mainDish() predates the M5 type collapse — it looked for type='entree',
+    which the migration renamed away (everything non-meal is 'dish'), so the
+    headline fell through to PLATE ORDER; and replacing a protein re-adds it
+    at the END of the plate, which crowned a side. The block now leads with
+    the whole meal, else the dish in the family's lead category (the first
+    with min_per_plate > 0 — the protein), and only then order."""
+    import os
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    shopping = open(os.path.join(tpl, 'shopping.html'), encoding='utf-8').read()
+    seg = shopping.split('mainDish(day) {')[1].split('},')[0]
+    check("d.type === 'meal'" in seg, "the whole meal leads the block")
+    check('min_per_plate' in seg and 'category_ids' in seg,
+          "the lead-category (protein) dish must outrank plate order — "
+          "type='entree' no longer exists post-M5, so without the category "
+          "step the headline is whatever the plate's order happens to be")
+
+
 def scenario_a_rule_can_say_whole_meals():
     """"I want a rule that matches whole meals." type='meal' is a field, so
     the selector is structural like takeout (types=['meal']) and the matcher

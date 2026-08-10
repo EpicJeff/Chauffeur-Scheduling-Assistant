@@ -1810,12 +1810,25 @@
                 },
 
                 // --- kiosk board helpers (K1) ---
-                // The entree carries the block: it is what the question "what's
-                // for dinner" is actually asking, and sides read as a subtitle.
+                // The MEAL carries the block: it is what "what's for dinner"
+                // is actually asking, and sides read as a subtitle. The lead
+                // is the whole meal, else the dish in the family's own lead
+                // category — the first one a plate must have (min_per_plate),
+                // the protein in every household that has told us about one.
+                // `type === 'entree'` stays only for pre-M5 data; the type
+                // collapse renamed everything else 'dish', which left this
+                // falling through to PLATE ORDER — and a replaced protein is
+                // re-added at the END of the plate, so the wall proudly
+                // headlined "carrots".
                 mainDish(day) {
                     const ds = day.dishes || [];
+                    const lead = (this.categories || [])
+                        .find(c => (c.min_per_plate || 0) > 0);
                     return ds.find(d => d.type === 'meal')
-                        || ds.find(d => d.type === 'entree') || ds[0] || null;
+                        || (lead && ds.find(d =>
+                                (d.category_ids || []).includes(lead.id)))
+                        || ds.find(d => d.type === 'entree')
+                        || ds[0] || null;
                 },
                 dayHeadline(day) {
                     const m = this.mainDish(day);
