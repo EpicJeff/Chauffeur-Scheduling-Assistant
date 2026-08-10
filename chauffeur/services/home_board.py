@@ -322,7 +322,12 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
             # departure gets a household burned once and then the board is
             # never believed again. Shared with the kid digest's "Leave by"
             # (services/leave_by), so the kitchen and the phone cannot differ.
-            **(leave_by.for_run(sched, d_id, ev_id, start) or {}),
+            # live=True lays TODAY's traffic over the static plan (the day-of
+            # cache maps' sweep maintains) — the board is a surface people
+            # act on, and a free-flow 17 on a 28-minute rush-hour drive makes
+            # someone late. Errands below stay static: the solver records
+            # only their detour cost, not a route to read traffic against.
+            **(leave_by.for_run(sched, d_id, ev_id, start, live=True, now=now) or {}),
             # UNDER WAY, read off the clock. `live` is the manual flag from
             # somebody tapping a leg as started, and the same thing that makes
             # `over` clock-based makes this one: nobody taps. A drive between

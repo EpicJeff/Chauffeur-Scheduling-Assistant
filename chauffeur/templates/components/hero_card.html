@@ -134,7 +134,7 @@
                         <div class="mt-2">
                             <span class="text-xs font-black uppercase tracking-[0.18em] text-white/60 align-middle mr-2">Leave</span>
                             <span class="text-4xl font-black tabular-nums text-white whitespace-nowrap">${esc(next.leave_label)}</span>
-                            <div class="text-sm text-white/70 tabular-nums whitespace-nowrap mt-0.5">for ${esc(next.at)}${next.travel_mins ? ' · ' + esc(next.travel_mins) + ' min drive' : ''}</div>
+                            <div class="text-sm text-white/70 tabular-nums whitespace-nowrap mt-0.5">for ${esc(next.at)}${next.travel_mins ? ' · ' + esc(next.travel_mins) + ' min drive' : ''}${next.traffic_delay_mins ? ` <span class="text-amber-300">+${esc(next.traffic_delay_mins)} traffic</span>` : ''}</div>
                         </div>` : `
                         <div class="text-3xl font-black tabular-nums text-white whitespace-nowrap mt-1">${esc(next.at)}</div>`}
                         ${next.driver ? `<div class="text-lg font-bold mt-1" style="color:${tone}">${esc(next.driver)}</div>` : ''}
@@ -156,7 +156,7 @@
                             <div class="text-xs font-black uppercase tracking-[0.18em] panel-dim">Leave</div>
                             <div class="text-3xl md:text-5xl font-black tabular-nums panel-text leading-none">${esc(next.leave_label)}</div>
                             <div class="text-sm md:text-base panel-dim mt-1 tabular-nums">
-                                <span>for ${esc(next.at)}</span>${next.travel_mins ? ` <span>· ${esc(next.travel_mins)} min drive</span>` : ''}
+                                <span>for ${esc(next.at)}</span>${next.travel_mins ? ` <span>· ${esc(next.travel_mins)} min drive</span>` : ''}${next.traffic_delay_mins ? ` <span class="text-amber-400 font-bold">+${esc(next.traffic_delay_mins)} traffic</span>` : ''}
                             </div>
                         </div>` : `
                         <div class="text-3xl md:text-5xl font-black tabular-nums panel-text">${esc(next.at)}</div>`}

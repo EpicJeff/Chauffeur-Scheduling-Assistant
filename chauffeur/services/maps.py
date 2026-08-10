@@ -234,6 +234,158 @@ def get_route_geometry(origin: str, destination: str, profile: str = "driving",
         
     return None
 
+# ── Day-of traffic ──────────────────────────────────────────────────────────
+# Three layers of travel time, cheapest first (the static Matrix numbers the
+# solver plans with are deliberately traffic-free and near-permanent — see
+# system_capabilities "Travel Time"):
+#   1. the static matrix          — planning baseline, bought once per pair
+#   2. a MORNING pass, day of     — driving-traffic with depart_at, predictive
+#      for each drive's planned hour, so the day reads realistic from breakfast
+#   3. a T-60 REFINE              — live traffic an hour before the current
+#      leave-at, when the number is about to be acted on
+# Two requests per driving leg per day, hard-marked so they can never repeat
+# (the 100k-element month came from a cache bug refetching every 10 minutes —
+# the stage markers make that failure mode structurally impossible here).
+# Surfaces never fetch: they read the day-of cache and fall back to static.
+
+def fetch_traffic_minutes(origin: Optional[str], destination: Optional[str],
+                          depart_at_ts: float = None,
+                          stage: str = 'refine') -> Optional[int]:
+    """One driving-traffic Directions request; writes the day-of cache.
+
+    `depart_at_ts` asks Mapbox for PREDICTIVE traffic at that departure time
+    (the morning pass); without it the answer is live traffic now (the
+    refine). None on any failure — callers fall back to the static number,
+    which can never be worse than before this existed.
+    """
+    if not origin or not destination:
+        return None
+    if origin.strip().lower() == destination.strip().lower():
+        return None
+    if get_map_option('disable_mapbox', False) \
+            or get_map_option('disable_mapbox_directions', False):
+        return None
+    mapbox_key = get_mapbox_api_key()
+    if not mapbox_key:
+        return None
+    coords_origin = geocode_address(origin)
+    coords_dest = geocode_address(destination)
+    if not coords_origin or not coords_dest:
+        return None
+    if not check_usage_limits_and_spikes('directions', increment=1):
+        return None
+    lat_s, lon_s = coords_origin
+    lat_d, lon_d = coords_dest
+    params = {"access_token": mapbox_key, "overview": "false"}
+    if depart_at_ts:
+        import datetime as _dt
+        params["depart_at"] = _dt.datetime.fromtimestamp(
+            depart_at_ts).strftime('%Y-%m-%dT%H:%M')
+    url = f"https://api.mapbox.com/directions/v5/mapbox/driving-traffic/{lon_s},{lat_s};{lon_d},{lat_d}"
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        if resp.status_code == 200:
+            routes = (resp.json() or {}).get('routes') or []
+            if routes:
+                mins = int(round(float(routes[0].get('duration') or 0) / 60.0))
+                if mins > 0:
+                    storage.set_cached_day_of_traffic(origin, destination,
+                                                      mins, stage)
+                    return mins
+        else:
+            print(f"driving-traffic {resp.status_code}: {origin} -> {destination}")
+    except Exception as e:
+        print(f"driving-traffic error ({origin} -> {destination}): {e}")
+    return None
+
+
+def live_adjusted_trigger(notif: dict) -> float:
+    """When a Time-to-Leave push should actually fire, given today's traffic.
+
+    Reads the day-of cache ONLY — the sweep does the buying. EARLIER only:
+    the static number is essentially free-flow, so a slower day-of reading
+    moves the departure up; a faster one is noise and never delays a plan
+    somebody may already be acting on.
+    """
+    trigger = float(notif.get('trigger_timestamp') or 0)
+    origin, dest = notif.get('origin'), notif.get('destination')
+    try:
+        static = float(notif.get('travel_static_mins') or 0)
+    except (TypeError, ValueError):
+        return trigger
+    if not origin or not dest or static <= 0:
+        return trigger
+    row = storage.get_cached_day_of_traffic(origin, dest)
+    if not row or row['duration_mins'] <= static:
+        return trigger
+    return trigger - (row['duration_mins'] - static) * 60.0
+
+
+_SWEEP_EVERY_SECS = 120
+_last_sweep_ts = 0.0
+
+
+def run_day_of_traffic_sweep(now_ts: float = None) -> dict:
+    """The two scheduled passes, driven off the pending Time-to-Leave
+    notifications (which carry each leg's route and static minutes).
+
+    Stage markers live in app_state keyed `notif_id:stage` and reset daily.
+    A marker is set BEFORE its fetch (the weekly-digest precedent): a failing
+    address gets one shot per stage per day, never a retry storm against the
+    Directions quota — the refine is the retry.
+    """
+    global _last_sweep_ts
+    import time
+    import datetime as _dt
+    now_ts = now_ts or time.time()
+    if now_ts - _last_sweep_ts < _SWEEP_EVERY_SECS:
+        return {'skipped': 'throttled'}
+    _last_sweep_ts = now_ts
+    settings = storage.get_settings() or {}
+    if settings.get('traffic_live_enabled') is False:
+        return {'skipped': 'disabled'}
+    try:
+        morning_hour = int(settings.get('traffic_morning_hour') or 6)
+    except (TypeError, ValueError):
+        morning_hour = 6
+    today = _dt.date.fromtimestamp(now_ts).isoformat()
+    state = storage.get_app_state('traffic_sweep_done') or {}
+    if state.get('date') != today:
+        state = {'date': today, 'done': {}}
+    done = dict(state.get('done') or {})
+    fetched = 0
+    for notif in storage.get_pending_notifications():
+        origin, dest = notif.get('origin'), notif.get('destination')
+        trigger = float(notif.get('trigger_timestamp') or 0)
+        try:
+            static = float(notif.get('travel_static_mins') or 0)
+        except (TypeError, ValueError):
+            continue
+        if not origin or not dest or static <= 0 or not trigger:
+            continue
+        # Today's legs only, and not already behind us.
+        if _dt.date.fromtimestamp(trigger).isoformat() != today \
+                or trigger < now_ts - 600:
+            continue
+        nid = str(notif.get('notif_id'))
+        if f"{nid}:morning" not in done \
+                and _dt.datetime.fromtimestamp(now_ts).hour >= morning_hour:
+            done[f"{nid}:morning"] = True
+            if fetch_traffic_minutes(origin, dest, depart_at_ts=trigger,
+                                     stage='morning') is not None:
+                fetched += 1
+        # T-60, measured against the CURRENT departure — the morning pass may
+        # already have pulled it earlier, and the hour is anchored to when
+        # somebody will actually stand up.
+        if f"{nid}:refine" not in done \
+                and now_ts >= live_adjusted_trigger(notif) - 3600:
+            done[f"{nid}:refine"] = True
+            if fetch_traffic_minutes(origin, dest, stage='refine') is not None:
+                fetched += 1
+    storage.set_app_state('traffic_sweep_done', {'date': today, 'done': done})
+    return {'fetched': fetched}
+
+
 def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
     from services import storage
     if not locations:

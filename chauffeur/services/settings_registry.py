@@ -319,6 +319,14 @@ ENTRIES: List[dict] = [
        'Monthly cap on nearby-category lookups such as fuel stations.'),
     _e('enable_mapbox_map_loads', 'maps', 'Interactive maps', 'Whether map tiles load at all.'),
     _e('mapbox_map_loads_limit', 'maps', 'Map load limit', 'Monthly cap on interactive map loads.'),
+    _e('traffic_live_enabled', 'maps', 'Day-of traffic',
+       'Re-price each drive with real traffic on the day: a predictive pass '
+       'in the morning and a live check an hour before leaving. Two small '
+       'Directions requests per drive per day; leave-by times and pushes '
+       'only ever move EARLIER. Planning stays on typical times.'),
+    _e('traffic_morning_hour', 'maps', 'Morning traffic pass',
+       'The hour (0-23) the day\'s drives get their predictive traffic '
+       'estimates. Default 6.'),
 
     # --- solver
     _e('enable_standard_rules', 'solver', 'Scheduling rules', 'Apply the hand-written solver rules.'),

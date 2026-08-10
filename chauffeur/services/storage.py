@@ -385,6 +385,7 @@ with db_lock:
     telemetry_table = db.table('telemetry')
     push_subscriptions_table = db.table('push_subscriptions')
     drive_status_table = db.table('drive_status')
+    live_traffic_table = db.table('live_traffic_cache')
     pending_notifications_table = db.table('pending_notifications')
     event_configs_table = db.table('event_configs')
     api_requests_log_table = db.table('api_requests_log')
@@ -975,6 +976,50 @@ def set_cached_travel_times_bulk(entries: List[dict]):
             # We don't upsert because finding and updating thousands of rows individually in TinyDB is slow.
             # The mem cache will use the latest inserted row automatically because it's populated sequentially on init.
             distance_cache_table.insert_multiple(rows_to_insert)
+
+def get_cached_day_of_traffic(origin: str, destination: str) -> Optional[dict]:
+    """Today's traffic-aware duration for a pair, or None.
+
+    A SEPARATE cache from the static matrix on purpose: the matrix is
+    deliberately static (the solver's planning baseline), while these rows are
+    day-of numbers written by the traffic sweep (morning pass + the T-60
+    refine) and are only ever valid on the day they were fetched — yesterday's
+    rush hour must not shade tomorrow morning's plan, so the date is part of
+    the validity check rather than an age window.
+    Returns {'duration_mins', 'stage', 'timestamp'}.
+    """
+    if not origin or not destination:
+        return None
+    import datetime as _dt
+    with db_lock:
+        row = live_traffic_table.get(
+            (Query().origin == origin.strip().lower())
+            & (Query().destination == destination.strip().lower()))
+    if not row:
+        return None
+    ts = row.get('timestamp') or 0
+    if _dt.date.fromtimestamp(ts) != _dt.date.today():
+        return None
+    try:
+        return {'duration_mins': int(row.get('duration_mins')),
+                'stage': row.get('stage') or 'morning', 'timestamp': ts}
+    except (TypeError, ValueError):
+        return None
+
+
+def set_cached_day_of_traffic(origin: str, destination: str,
+                              duration_mins: int, stage: str):
+    if not origin or not destination:
+        return
+    import time
+    with db_lock:
+        o, d = origin.strip().lower(), destination.strip().lower()
+        live_traffic_table.upsert(
+            {'origin': o, 'destination': d,
+             'duration_mins': int(duration_mins), 'stage': stage,
+             'timestamp': time.time()},
+            (Query().origin == o) & (Query().destination == d))
+
 
 def get_cached_route_geometry(origin: str, destination: str, profile: str, max_age_mins: int = 10080) -> Optional[dict]:
     # Cache for 1 week by default (10080 mins)
