@@ -918,31 +918,54 @@
             return `<div class="flex justify-evenly gap-2 py-1 mb-1 ${interactive ? '' : 'opacity-70'}">${rings.join('')}</div>`;
         }
 
+        // The stage's shell switches (load arc A4): how big the pictures are
+        // and how much air the rows get. Sprout is glyph-led and roomy;
+        // Explorer is today's Buddy tuning; Navigator shrinks the pictures
+        // and tightens the rows; Copilot drops the glyph column entirely —
+        // a real schedule, not a picture book.
+        const KID_GLYPH_ROW = { xl: 'text-3xl w-11', lg: 'text-2xl w-9', sm: 'text-lg w-7', none: null };
+        const KID_GLYPH_HERO = { xl: 80, lg: 64, sm: 40, none: 0 };
+        function kidShell() {
+            const caps = kidCaps();
+            return {
+                glyph: (caps.glyph_scale in KID_GLYPH_ROW) ? caps.glyph_scale : 'lg',
+                tight: caps.density === 'tight',
+            };
+        }
+
         function kidTaskRow(item, interactive) {
+            const sh = kidShell();
+            const rowGlyph = KID_GLYPH_ROW[sh.glyph];
+            const pad = sh.tight ? 'py-2 px-3' : 'py-3 px-4';
+            const box = sh.tight ? 'w-6 h-6' : 'w-8 h-8';
             return `
-                <label class="flex items-center gap-3 py-3 px-4 ${interactive ? 'cursor-pointer active:opacity-70' : 'opacity-70'}">
-                    <span class="text-2xl w-9 text-center shrink-0">${kidGlyph(item)}</span>
-                    <span class="flex-1 text-[16px] font-bold ${item.checked ? 'text-gray-500 line-through' : 'text-gray-100'}">${mfEscape(item.title)}</span>
+                <label class="flex items-center gap-3 ${pad} ${interactive ? 'cursor-pointer active:opacity-70' : 'opacity-70'}">
+                    ${rowGlyph ? `<span class="${rowGlyph} text-center shrink-0">${kidGlyph(item)}</span>` : ''}
+                    <span class="flex-1 text-[${sh.tight ? 15 : 16}px] font-bold ${item.checked ? 'text-gray-500 line-through' : 'text-gray-100'}">${mfEscape(item.title)}</span>
                     ${item.time_of_day ? `<span class="text-xs font-bold text-gray-500">${item.time_of_day}</span>` : ''}
                     <input type="checkbox" ${item.checked ? 'checked' : ''} ${interactive ? '' : 'disabled'}
                         onchange="toggleRoutine('${item.id}', this.checked)"
-                        class="w-8 h-8 rounded-full shrink-0" style="accent-color:${kidAccent()}">
+                        class="${box} rounded-full shrink-0" style="accent-color:${kidAccent()}">
                 </label>`;
         }
 
         function kidBucketSection(bucket, items, interactive) {
             if (!items.length) return '';
-            const firstOpen = interactive ? items.find(i => !i.checked) : null;
+            const sh = kidShell();
+            const heroPx = KID_GLYPH_HERO[sh.glyph];
+            // Copilot (glyph 'none') gets no glyph-forward hero card at all —
+            // every item is a plain row. A real schedule, not a picture book.
+            const firstOpen = (interactive && heroPx) ? items.find(i => !i.checked) : null;
             const hero = !firstOpen ? '' : `
                 <div class="rounded-2xl overflow-hidden border border-gray-800 bg-gray-900 mb-2">
-                    <div class="flex items-center justify-center py-6" style="background:${kidTint(0.16)}">
-                        <span style="font-size:64px;line-height:1">${kidGlyph(firstOpen)}</span>
+                    <div class="flex items-center justify-center ${sh.tight ? 'py-3' : 'py-6'}" style="background:${kidTint(0.16)}">
+                        <span style="font-size:${heroPx}px;line-height:1">${kidGlyph(firstOpen)}</span>
                     </div>
-                    <label class="flex items-center gap-3 p-4 cursor-pointer active:opacity-70">
-                        <span class="flex-1 text-lg font-black text-gray-100">${mfEscape(firstOpen.title)}</span>
+                    <label class="flex items-center gap-3 ${sh.tight ? 'p-3' : 'p-4'} cursor-pointer active:opacity-70">
+                        <span class="flex-1 ${sh.tight ? 'text-base' : 'text-lg'} font-black text-gray-100">${mfEscape(firstOpen.title)}</span>
                         ${firstOpen.time_of_day ? `<span class="text-xs font-bold text-gray-500">${firstOpen.time_of_day}</span>` : ''}
                         <input type="checkbox" onchange="toggleRoutine('${firstOpen.id}', this.checked)"
-                            class="w-9 h-9 rounded-full shrink-0" style="accent-color:${kidAccent()}">
+                            class="${sh.tight ? 'w-7 h-7' : 'w-9 h-9'} rounded-full shrink-0" style="accent-color:${kidAccent()}">
                     </label>
                 </div>`;
             const rest = items.filter(i => i !== firstOpen);
@@ -952,7 +975,7 @@
                 </div>`;
             return `
             <div id="kid-bucket-${bucket.key}" class="pt-2" style="scroll-margin-top:8px">
-                <div class="text-lg font-black text-gray-100 mb-2">${bucket.emoji} ${bucket.label}</div>
+                <div class="${sh.tight ? 'text-base' : 'text-lg'} font-black text-gray-100 mb-2">${bucket.emoji} ${bucket.label}</div>
                 ${hero}${rows}
             </div>`;
         }

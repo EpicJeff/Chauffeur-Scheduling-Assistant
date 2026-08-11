@@ -194,6 +194,125 @@ def scenario_the_members_api_carries_the_capabilities():
           "and the switches are the resolved ones, overrides applied")
 
 
+def scenario_household_jobs_arrive_with_navigator():
+    """`assignable_tasks` is a real gate, not a declared switch: both agent
+    stacks funnel through agent_tools_v2, and the API refuses at the same
+    door the errands page hides."""
+    from services import agent_tools_v2 as atv2
+    _reset()
+    storage.household_tasks_table.truncate()
+    ellie = _kid("Ellie", age=9)          # Explorer: not yet
+    james = _kid("James", age=16)         # Copilot: yes
+
+    res = atv2.add_household_task("Renew the passports", assign_to="Ellie")
+    check(res['status'] == 'error' and 'Navigator' in res['message'],
+          f"an Explorer is not handed the passport renewal: {res}")
+    check(not storage.get_household_tasks(),
+          "and nothing was stored")
+
+    res = atv2.add_household_task("Take the bins out", assign_to="James")
+    check(res['status'] == 'success',
+          f"a Copilot holds real household jobs: {res}")
+
+    atv2.add_household_task("Call the pediatrician")
+    res = atv2.claim_household_task("Call the pediatrician", member_name="Ellie")
+    check(res['status'] == 'error' and 'Navigator' in res['message'],
+          f"the claim door is the same door: {res}")
+
+    ellie['capability_overrides'] = {'assignable_tasks': True}
+    storage.update_member(ellie['id'], {'capability_overrides': {'assignable_tasks': True}})
+    res = atv2.claim_household_task("Call the pediatrician", member_name="Ellie")
+    check(res['status'] == 'success',
+          f"a single-switch override opens it without aging her up: {res}")
+
+    # And the API endpoint refuses at the same altitude.
+    import main
+    from fastapi import HTTPException
+    from models.schemas import HouseholdTask
+    rosie = _kid("Rosie", age=4)
+    try:
+        main.create_household_task(HouseholdTask(title="Mow the lawn",
+                                                 assigned_to=rosie['id']))
+        check(False, "a Sprout assignment should raise")
+    except HTTPException as e:
+        check('Navigator' in str(e.detail), f"the refusal names the stage: {e.detail}")
+
+
+def scenario_whereabouts_go_to_the_family_not_the_kiosk():
+    """`private_location`: with no viewer (the wall panel, /map) a
+    Navigator's zone and pin are withheld and the row says so; any family
+    member's own app sees the pin. Driving context survives either way —
+    that is the schedule speaking, not the phone."""
+    import main
+    from services import ha_api
+    from models.schemas import FamilyMember
+    _reset()
+    dad = FamilyMember(name="Jeff", role='parent',
+                       ha_person_entity='person.jeff').model_dump()
+    storage.add_member(dad)
+    lily = _kid("Lily", age=13)           # Navigator: private_location on
+    storage.update_member(lily['id'], {'ha_person_entity': 'person.lily'})
+    ellie = _kid("Ellie", age=9)          # Explorer: the kiosk may say
+    storage.update_member(ellie['id'], {'ha_person_entity': 'person.ellie'})
+
+    real_get_state = ha_api.get_state
+    ha_api.get_state = lambda ent: {'state': 'school', 'last_updated': 'now',
+                                    'attributes': {'latitude': 39.1, 'longitude': -94.6}}
+    try:
+        kiosk = {r['name']: r for r in main.family_locations()}
+        check(kiosk['Lily'].get('private') and kiosk['Lily']['latitude'] is None
+              and kiosk['Lily']['state'] is None,
+              f"the kiosk gets a 🔒 row, not a zone word: {kiosk['Lily']}")
+        check(kiosk['Ellie']['latitude'] == 39.1,
+              "an Explorer's pin still shows — privacy arrives with the stage")
+        check(kiosk['Jeff']['latitude'] == 39.1, "adults are untouched")
+
+        family = {r['name']: r for r in main.family_locations(viewer=dad['id'])}
+        check(family['Lily']['latitude'] == 39.1 and not family['Lily'].get('private'),
+              f"the family sees the pin: {family['Lily']}")
+
+        nobody = {r['name']: r for r in main.family_locations(viewer='not-a-member')}
+        check(nobody['Lily'].get('private'),
+              "an invented viewer id is a kiosk, not a key")
+    finally:
+        ha_api.get_state = real_get_state
+
+
+def scenario_driving_arrives_with_copilot():
+    """`can_drive`: a driver named for a child member is that child learning
+    to drive. Below Copilot the API refuses; at Copilot the profile is
+    created AND the kid lands on the assist tier — covering is not
+    carrying."""
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+    from models.schemas import Driver
+    _reset()
+    storage.drivers_table.truncate()
+    ellie = _kid("Ellie", age=9)
+    james = _kid("James", age=16)
+
+    try:
+        main.create_driver(Driver(id='drv_ellie', name='Ellie', color_code='#fff'),
+                           BackgroundTasks())
+        check(False, "an Explorer's driving profile should be refused")
+    except HTTPException as e:
+        check('Copilot' in str(e.detail), f"the refusal names the stage: {e.detail}")
+    check(not storage.get_all_drivers(), "and no driver record exists")
+
+    main.create_driver(Driver(id='drv_james', name='James', color_code='#fff'),
+                       BackgroundTasks())
+    check(len(storage.get_all_drivers()) == 1, "a Copilot's profile is created")
+    m = storage.get_member(james['id'])
+    check(m.get('assist_tier') == 'assist',
+          "and he COVERS drives without CARRYING the household's share — "
+          "his drives stay out of the adults' ledger")
+
+    grandma = main.create_driver(Driver(id='drv_gma', name='Grandma', color_code='#fff'),
+                                 BackgroundTasks())
+    check(grandma['status'] == 'created',
+          "a name matching no member is none of this gate's business")
+
+
 def scenario_the_hand_path_exists():
     import os
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -210,6 +329,18 @@ def scenario_the_hand_path_exists():
     app = open(os.path.join(tpl, 'app.html'), encoding='utf-8').read()
     check('kidCan(' in app and 'kidHorizonDays' in app,
           "the PWA shell asks for capabilities by name")
+    check('glyph_scale' in app and 'kidShell(' in app,
+          "the shell reads glyph scale and density — a Sprout's picture book "
+          "and a Copilot's plain schedule are the same template")
+    errands = open(os.path.join(tpl, 'errands.html'), encoding='utf-8').read()
+    check('assignable_tasks' in errands,
+          "the task owner dropdown opens to stage-capable kids by hand")
+    check("(member.capabilities || {}).can_drive" in config,
+          "and '+ Driving' appears on a Copilot kid's row by hand")
+    fmap = open(os.path.join(tpl, 'components', 'family_map_core.html'),
+                encoding='utf-8').read()
+    check('loc.private' in fmap and 'viewer=' in fmap,
+          "the map sends who is looking and renders the 🔒 chip")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

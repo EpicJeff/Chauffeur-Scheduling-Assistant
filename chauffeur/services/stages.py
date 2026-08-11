@@ -180,6 +180,35 @@ def can(member: dict, capability: str) -> bool:
     return bool(capabilities(member).get(capability))
 
 
+def refuse_task_assignment(member: dict):
+    """Why this member cannot be handed a household job, or None if they can.
+
+    The gate lives server-side for the same reason `requests.create` refuses a
+    Sprout itself: a hidden dropdown option is politeness, a refusal is policy
+    — and both agent stacks funnel through the same door."""
+    if not member or member.get('role') != 'child':
+        return None
+    if can(member, 'assignable_tasks'):
+        return None
+    return (f"Real household jobs come with the Navigator stage — "
+            f"{member.get('name') or 'this kid'} isn't there yet. "
+            f"Their own routine and chores are theirs already.")
+
+
+def refuse_driver_setup(member: dict):
+    """Why this member cannot be set up as a driver, or None if they can.
+
+    Only ever fires for a child: adults simply can, and a name that matches no
+    member at all (a grandparent, a hired helper) is none of this gate's
+    business."""
+    if not member or member.get('role') != 'child':
+        return None
+    if can(member, 'can_drive'):
+        return None
+    return (f"Driving comes with the Copilot stage — "
+            f"{member.get('name') or 'this kid'} isn't there yet.")
+
+
 def pending_promotions(today: datetime.date = None) -> list:
     """Children whose age has moved past their current stage.
 

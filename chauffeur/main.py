@@ -2745,7 +2745,30 @@ def get_drivers():
 
 @app.post("/api/drivers")
 def create_driver(driver: Driver, background_tasks: BackgroundTasks):
-    doc_id = storage.add_driver(driver.model_dump() if hasattr(driver, 'model_dump') else driver.dict())
+    data = driver.model_dump() if hasattr(driver, 'model_dump') else driver.dict()
+    # Stage gate (load arc A4): a driver named for a child member is that
+    # child learning to drive, and driving arrives with Copilot. A name that
+    # matches nobody (a grandparent, a helper) is none of this gate's
+    # business — same name-match storage uses to link driver to member.
+    from services import stages
+    name = (data.get('name') or '').strip().lower()
+    member = next((m for m in storage.get_all_members()
+                   if (m.get('name') or '').strip().lower() == name), None)
+    if member and not member.get('driver_id'):
+        # First-time setup only: the config edit flow is DELETE-then-POST with
+        # the same driver id, and a member already behind the wheel must keep
+        # their profile editable even if their stage was later pinned down.
+        block = stages.refuse_driver_setup(member)
+        if block:
+            raise HTTPException(status_code=400, detail=block)
+    doc_id = storage.add_driver(data)
+    if member and member.get('role') == 'child' \
+            and member.get('assist_tier') != 'assist':
+        # The teen and the wheel (household_load_design.md): a Copilot who
+        # drives COVERS work without CARRYING the household's share — the
+        # assist tier keeps their drives out of the adults' ledger while the
+        # role keeps their kid lens intact.
+        storage.update_member(member['id'], {'assist_tier': 'assist'})
     background_tasks.add_task(refresh_schedule_logic)
     return {"doc_id": doc_id, "status": "created"}
 
@@ -3591,11 +3614,22 @@ def list_household_tasks(assigned_to: Optional[str] = None,
         t['assigned_to_name'] = owner.get('name') if owner else None
     return tasks
 
+def _refuse_kid_task_assignment(member_id):
+    """Stage gate (load arc A4): real household jobs arrive with Navigator.
+    Server-side like the Sprout request gate — not merely hidden in the UI."""
+    if not member_id:
+        return
+    from services import stages
+    block = stages.refuse_task_assignment(storage.get_member(member_id))
+    if block:
+        raise HTTPException(status_code=400, detail=block)
+
 @app.post("/api/household-tasks")
 def create_household_task(task: HouseholdTask):
     data = task.model_dump()
     if not (data.get('title') or '').strip():
         raise HTTPException(status_code=400, detail="A task needs a title")
+    _refuse_kid_task_assignment(data.get('assigned_to'))
     storage.add_household_task(data)
     return {"status": "success", "id": data['id']}
 
@@ -3605,6 +3639,8 @@ def patch_household_task(task_id: str, updates: dict = Body(...)):
         raise HTTPException(status_code=404, detail="Task not found")
     clean = {k: v for k, v in (updates or {}).items()
              if k in HouseholdTask.model_fields and k not in ('id', 'created_at')}
+    if 'assigned_to' in clean:
+        _refuse_kid_task_assignment(clean.get('assigned_to'))
     storage.update_household_task(task_id, clean)
     return {"status": "success"}
 
@@ -7509,11 +7545,19 @@ def _leg_event_id(leg_id):
     return s
 
 @app.get("/api/family/locations")
-def family_locations():
+def family_locations(viewer: Optional[str] = None):
     """Every member with map-relevant data: HA person state/coords (absent
     for router-based trackers -> zone chip only) plus 'driving' context from
-    in-progress drive legs joined to the cached schedule's assignments."""
-    from services import ha_api
+    in-progress drive legs joined to the cached schedule's assignments.
+
+    `viewer` is who is looking (stage arc A4): the PWA sends its selected
+    member, the wall panel and /map send nothing. A Navigator's whereabouts
+    go to the family, not the kiosk — with no viewer, a private-stage kid's
+    zone and pin are withheld and the row says so with `private` instead.
+    Driving context stays either way: "en route to practice" is the schedule
+    speaking, and the kiosk already shows the schedule."""
+    from services import ha_api, stages
+    family_eyes = bool(viewer and storage.get_member(viewer))
     driving_by_driver = {}
     try:
         sched = storage.get_cached_schedule() or {}
@@ -7549,6 +7593,13 @@ def family_locations():
         }
         if m.get('driver_id') and m['driver_id'] in driving_by_driver:
             entry['driving'] = {'leg_title': driving_by_driver[m['driver_id']]}
+        if (not family_eyes and m.get('role') == 'child'
+                and stages.can(m, 'private_location')):
+            # Don't read HA state only to throw it away — the kiosk gets a
+            # 🔒 chip, not a zone word.
+            entry['private'] = True
+            out.append(entry)
+            continue
         ent = m.get('ha_person_entity')
         if ent:
             s = ha_api.get_state(ent)

@@ -1087,11 +1087,18 @@ def _tile_map(now, runs=None, **_):
         from services import ha_api
         driving = {r['driver_id']: r['title'] for r in (runs or []) if r.get('live')}
         rows = []
+        from services import stages
         for m in storage.get_all_members():
             if m.get('role') == 'helper' or m.get('system'):
                 continue
+            # Stage privacy (load arc A4): the wall panel is the kiosk, and a
+            # Navigator's whereabouts belong to the family, not the kitchen
+            # wall. The row stays (a 🔒 chip, not a silent absence); driving
+            # stays too, because that is the schedule speaking.
+            private = (m.get('role') == 'child'
+                       and stages.can(m, 'private_location'))
             state = lat = lon = None
-            ent = m.get('ha_person_entity')
+            ent = None if private else m.get('ha_person_entity')
             if ent:
                 try:
                     s = ha_api.get_state(ent) or {}
@@ -1110,6 +1117,7 @@ def _tile_map(now, runs=None, **_):
                          'avatar': m.get('avatar'), 'image': m.get('image'),
                          'state': state or None,
                          'latitude': lat, 'longitude': lon, 'is_car': False,
+                         'private': private or None,
                          'driving': {'leg_title': leg} if leg else None})
         if not rows:
             return None                       # no family members at all

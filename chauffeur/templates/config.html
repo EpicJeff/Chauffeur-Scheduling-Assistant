@@ -1104,7 +1104,12 @@
                                     <div class="flex space-x-2 items-center flex-wrap">
                                         <button @click="editMemberId === member.id ? editMemberId = null : startEditMember(member)"
                                             class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Identity</button>
+                                        <!-- Driving is a Copilot grant: below that stage the button
+                                             does not exist for a kid, rather than existing and refusing
+                                             (the server refuses too, in create_driver). An already-linked
+                                             kid keeps the button — history is never deleted. -->
                                         <button @click="openDrivingProfile(member)"
+                                            x-show="member.role !== 'child' || member.driver_id || (member.capabilities || {}).can_drive"
                                             class="text-green-500 hover:text-green-400 bg-green-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm"
                                             x-text="member.driver_id ? '🚗 Driving' : '+ Driving'"></button>
                                         <button @click="openPassengerProfile(member)"
@@ -4480,11 +4485,17 @@
                             await fetch(`${this.apiBase}api/drivers/${this.editDriverId}`, { method: 'DELETE' });
                         }
 
-                        await fetch(`${this.apiBase}api/drivers`, {
+                        const res = await fetch(`${this.apiBase}api/drivers`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload)
                         });
+                        if (!res.ok) {
+                            // e.g. the Copilot stage gate refusing a kid's
+                            // first driving profile — say why, don't swallow.
+                            const err = await res.json().catch(() => ({}));
+                            showGlobalAlert(err.detail || "Couldn't save that driving profile.");
+                        }
                         this.cancelEditDriver();
                         await this.loadDrivers();
                         await this.loadMembers();

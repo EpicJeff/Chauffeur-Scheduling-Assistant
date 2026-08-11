@@ -112,13 +112,25 @@
 
         function chipFor(loc) {
             const driving = loc.driving ? ' · 🚗' : '';
+            // A private-stage kid on a kiosk: the chip says the location is
+            // kept, rather than pretending the phone is untracked.
+            const where = loc.private ? '🔒' : esc(loc.state);
             return `<span class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-800 border border-gray-700 text-xs font-bold text-gray-300">
                 <span class="w-2.5 h-2.5 rounded-full" style="background-color:${loc.color_code || '#6b7280'}"></span>
-                ${esc(loc.name)}: ${esc(loc.state)}${driving}</span>`;
+                ${esc(loc.name)}: ${where}${driving}</span>`;
         }
 
         async function fetchLocations() {
-            const res = await fetch(`${apiBase}api/family/locations`);
+            // Who is looking travels with the request (stage arc A4): the PWA
+            // defines selectedMemberId, kiosk pages don't — and the server
+            // withholds a private-stage kid's whereabouts from viewerless
+            // (kiosk) requests.
+            let q = '';
+            try {
+                if (typeof selectedMemberId !== 'undefined' && selectedMemberId)
+                    q = `?viewer=${encodeURIComponent(selectedMemberId)}`;
+            } catch (e) { /* not a PWA page */ }
+            const res = await fetch(`${apiBase}api/family/locations${q}`);
             return await res.json();
         }
 
@@ -179,7 +191,7 @@
                         const hasCoords = typeof loc.latitude === 'number'
                             && typeof loc.longitude === 'number';
                         if (!hasCoords) {
-                            if (loc.state) chipHtml.push(chipFor(loc));
+                            if (loc.state || loc.private) chipHtml.push(chipFor(loc));
                             return;
                         }
                         seen.add(loc.member_id);

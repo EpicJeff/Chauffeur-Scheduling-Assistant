@@ -953,7 +953,10 @@
                 const members = mRes.ok ? await mRes.json() : [];
                 const owner = document.getElementById('new-task-owner');
                 if (owner && owner.options.length <= 1) {
-                    members.filter(m => m.role !== 'child')
+                    // Kids appear once their stage grants assignable_tasks
+                    // (Navigator+) — "being given real household jobs" is a
+                    // named grant, and the server refuses it below stage.
+                    members.filter(m => m.role !== 'child' || (m.capabilities || {}).assignable_tasks)
                         .forEach(m => owner.add(new Option(m.name, m.id)));
                 }
                 const load = lRes.ok ? await lRes.json() : {};

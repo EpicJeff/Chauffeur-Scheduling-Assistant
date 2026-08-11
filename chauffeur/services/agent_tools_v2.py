@@ -786,6 +786,12 @@ def add_household_task(title: str, due: str = None, assign_to: str = None,
         if not owner:
             return {"status": "error",
                     "message": f"I couldn't find '{assign_to}'. Family members: {_member_names()}."}
+        # Stage gate (load arc A4): the same door the API refuses at, so
+        # neither agent stack can hand a Sprout the passport renewal.
+        from services import stages
+        block = stages.refuse_task_assignment(owner)
+        if block:
+            return {"status": "error", "message": block}
     rec = (recurrence or 'none').strip().lower()
     if rec not in ('none', 'daily', 'weekly', 'monthly', 'yearly'):
         rec = 'none'
@@ -875,6 +881,10 @@ def claim_household_task(title: str, member_name: str = None,
     if not owner:
         return {"status": "error",
                 "message": "Who should take it? Tell me a name."}
+    from services import stages
+    block = stages.refuse_task_assignment(owner)
+    if block:
+        return {"status": "error", "message": block}
     task, rows = _match_task(title)
     if not task:
         open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing'
