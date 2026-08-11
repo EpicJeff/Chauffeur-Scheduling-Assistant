@@ -9045,6 +9045,12 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
             for key in {new_home, maps.extract_street_address(new_home)}:
                 if key:
                     storage.delete_cached_geocode(key)
+    # Flipping the toll policy changes what every cached minute MEANS: the
+    # static cache is deliberately immortal, so it has to burn here or the
+    # app keeps quoting the other policy's durations indefinitely.
+    if 'routing_avoid_tolls' in incoming and \
+            bool(incoming.get('routing_avoid_tolls')) != bool(current.get('routing_avoid_tolls')):
+        storage.clear_route_caches()
     current.update(incoming)
     storage.update_settings(current)
     # Panel-shaped settings (layout, theme, screensaver…) edited on one device

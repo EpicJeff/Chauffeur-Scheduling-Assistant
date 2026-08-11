@@ -215,6 +215,10 @@ def get_route_geometry(origin: str, destination: str, profile: str = "driving",
         "overview": "full",
         "geometries": "geojson"
     }
+    # Household toll policy — driving profiles only; `exclude=toll` is not a
+    # valid parameter for walking/cycling.
+    if profile in ("driving", "driving-traffic") and avoid_tolls_enabled():
+        params["exclude"] = "toll"
     
     try:
         resp = requests.get(url, params=params, timeout=10)
@@ -233,6 +237,19 @@ def get_route_geometry(origin: str, destination: str, profile: str = "driving",
         print(f"Error fetching route geometry: {e}")
         
     return None
+
+def avoid_tolls_enabled() -> bool:
+    """Whether drive times should be priced WITHOUT toll roads.
+
+    Mapbox's default is tolls-allowed, which quietly priced every Apex drive
+    over the NC-540 toll road — a 16-minute route the family may never take,
+    reported as "17 minutes" against Apple's 20-minute free route. Whether a
+    household drives tolls is a fact about the household, so it is a setting;
+    the Matrix API cannot express `exclude=toll`, so turning this on routes
+    every pair through the pairwise Directions tier instead.
+    """
+    return bool(get_map_option('routing_avoid_tolls', False))
+
 
 # ── Day-of traffic ──────────────────────────────────────────────────────────
 # Three layers of travel time, cheapest first (the static Matrix numbers the
@@ -301,6 +318,8 @@ def fetch_traffic_minutes(origin: Optional[str], destination: Optional[str],
     lat_s, lon_s = coords_origin
     lat_d, lon_d = coords_dest
     params = {"access_token": mapbox_key, "overview": "false"}
+    if avoid_tolls_enabled():
+        params["exclude"] = "toll"
     if depart_at_ts:
         import datetime as _dt
         params["depart_at"] = _dt.datetime.fromtimestamp(
@@ -520,10 +539,14 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
         
         disable_matrix = get_map_option('disable_mapbox_matrix', False)
         disable_directions = get_map_option('disable_mapbox_directions', False)
+        # The Matrix API cannot say `exclude=toll`, so a no-tolls household
+        # must skip straight to the pairwise Directions tier — a matrix
+        # answer priced over the toll road is wrong, not merely imprecise.
+        avoid_tolls = avoid_tolls_enabled()
         elements = len(src_indices) * len(dest_indices)
-        
+
         # --- TIER 1: Mapbox Matrix API ---
-        if mapbox_key and not disable_mapbox and not disable_matrix and check_usage_limits_and_spikes('matrix', elements):
+        if mapbox_key and not disable_mapbox and not disable_matrix and not avoid_tolls and check_usage_limits_and_spikes('matrix', elements):
             url = f"https://api.mapbox.com/directions-matrix/v1/mapbox/driving/{coord_str}"
             params = {
                 "access_token": mapbox_key,
@@ -618,6 +641,8 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
                             "access_token": mapbox_key,
                             "overview": "false"
                         }
+                        if avoid_tolls:
+                            params["exclude"] = "toll"
                         try:
                             with mapbox_routing_lock:
                                 import time as local_time

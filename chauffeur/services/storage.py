@@ -977,6 +977,26 @@ def set_cached_travel_times_bulk(entries: List[dict]):
             # The mem cache will use the latest inserted row automatically because it's populated sequentially on init.
             distance_cache_table.insert_multiple(rows_to_insert)
 
+def clear_route_caches():
+    """Every cached duration and geometry, gone at once.
+
+    For the settings that change what a "drive time" MEANS — the toll policy.
+    The static distance cache is deliberately immortal (the solver reads it
+    with no age check), so a policy flip must burn it, or the app keeps
+    quoting the other policy's minutes indefinitely. Day-of traffic rows and
+    the sweep's stage markers go with it so today re-prices under the new
+    policy too.
+    """
+    global _distance_mem_cache
+    with db_lock:
+        distance_cache_table.truncate()
+        live_traffic_table.truncate()
+        route_geometry_cache_table.truncate()
+        _distance_mem_cache = None
+        mark_all_daily_schedules_dirty()
+    set_app_state('traffic_sweep_done_v2', None)
+
+
 def get_cached_day_of_traffic(origin: str, destination: str) -> Optional[dict]:
     """Today's traffic-aware duration for a pair, or None.
 

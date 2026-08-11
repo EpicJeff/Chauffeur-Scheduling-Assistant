@@ -327,6 +327,11 @@ ENTRIES: List[dict] = [
     _e('traffic_morning_hour', 'maps', 'Morning traffic pass',
        'The hour (0-23) the day\'s drives get their predictive traffic '
        'estimates. Default 6.'),
+    _e('routing_avoid_tolls', 'maps', 'Avoid toll roads',
+       'Price every drive without toll roads. Off, Mapbox happily routes '
+       'over the toll road and quotes its faster time whether or not you '
+       'would take it. Flipping this clears every cached drive time so the '
+       'schedule re-prices under the new policy.'),
 
     # --- solver
     _e('enable_standard_rules', 'solver', 'Scheduling rules', 'Apply the hand-written solver rules.'),
