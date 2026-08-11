@@ -219,6 +219,7 @@ def scenario_intake_finally_has_somewhere_to_put_a_permission_slip():
 
 def scenario_every_agent_capability_has_a_hand_path():
     import os
+    import re
     from services import agent_tools_v2
     names = [t['name'] for t in agent_tools_v2.get_available_tools()]
     for t in ('add_household_task', 'get_household_tasks', 'complete_household_task',
@@ -227,12 +228,19 @@ def scenario_every_agent_capability_has_a_hand_path():
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
     errands = open(os.path.join(tpl, 'errands.html'), encoding='utf-8').read()
-    check('addHouseholdTask' in errands and 'claimTask' in errands
-          and 'completeTask' in errands,
-          "adding, claiming and finishing all work by hand on the errands page")
+    check('addHouseholdTask' in errands and 'openTaskEditor' in errands
+          and 'saveTaskEdit' in errands and 'completeTask' in errands,
+          "adding, editing/assigning and finishing all work by hand on the "
+          "errands page")
+    # Assigning is an EDIT of the task, not a side effect of the create form.
+    # The old claimTask() read the new-task owner dropdown when you clicked
+    # "nobody yet" on a row, so two unrelated-looking controls were coupled.
+    check('function claimTask' not in errands,
+          "and assigning never again reads the create form's dropdown")
+    check(re.search(r"openTaskEditor\([^)]*\)[^>]*>\s*nobody yet", errands),
+          "'nobody yet' opens that same editor rather than acting invisibly")
     # Template copy wraps across lines, so compare on collapsed whitespace —
     # a raw substring check on prose is a test that breaks on reformatting.
-    import re
     flat = re.sub(r'\s+', ' ', errands)
     check('is a drive' in flat and 'nowhere to drive' in flat,
           "and the page teaches the distinction the object depends on: an "

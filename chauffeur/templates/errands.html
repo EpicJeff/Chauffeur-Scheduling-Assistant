@@ -205,6 +205,69 @@
     </div>
 
     <!-- Edit Modal (Hidden by default) -->
+    <!-- Household task editor. Same shape as the errand modal below, because
+         "tap edit → change it → save" is the flow this app uses everywhere;
+         assigning used to mean setting the CREATE form's dropdown and then
+         clicking "nobody yet" on the row, which coupled two controls that
+         look unrelated. -->
+    <div id="task-edit-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center">
+        <div class="bg-gray-800 w-full max-w-md rounded-2xl shadow-2xl border border-gray-700">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-5">
+                    <h3 class="text-xl font-bold text-white">Edit task</h3>
+                    <button onclick="closeTaskEditor()" class="text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+
+                <input type="hidden" id="task-edit-id">
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Task</label>
+                        <input type="text" id="task-edit-title"
+                            class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-teal-500 focus:border-transparent outline-none transition-all">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">Who's doing it</label>
+                            <select id="task-edit-owner"
+                                class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-teal-500 outline-none"></select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">Due</label>
+                            <input type="date" id="task-edit-due"
+                                class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-teal-500 outline-none">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Repeats</label>
+                        <select id="task-edit-recurrence"
+                            class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-teal-500 outline-none">
+                            <option value="none">One-off</option>
+                            <option value="daily">Daily</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="yearly">Yearly</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Notes</label>
+                        <textarea id="task-edit-notes" rows="2"
+                            class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-teal-500 outline-none"></textarea>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-3 mt-6">
+                    <button onclick="closeTaskEditor()"
+                        class="px-4 py-2 rounded-lg text-sm font-medium text-gray-300 hover:bg-gray-700 transition-colors">Cancel</button>
+                    <button onclick="saveTaskEdit()"
+                        class="bg-teal-600 hover:bg-teal-500 text-white px-5 py-2 rounded-lg text-sm font-semibold transition-all">Save Changes</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="edit-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center">
         <div class="bg-gray-800 w-full max-w-md rounded-2xl shadow-2xl border border-gray-700 transform transition-all">
             <div class="p-6">
@@ -941,6 +1004,27 @@
         // finally has somewhere to be, not to become a project manager.
 
         let householdTasks = [];
+        // Who may hold a household job. Kids appear once their stage grants
+        // assignable_tasks (Navigator+) — "being given real household jobs" is
+        // a named grant, and the server refuses it below stage. Held once and
+        // shared, so the create form and the editor can never disagree.
+        let taskAssignees = [];
+
+        function fillTaskOwnerSelect(el, selectedId, blankLabel, currentName) {
+            if (!el) return;
+            el.innerHTML = '';
+            el.add(new Option(blankLabel, ''));
+            const list = taskAssignees.slice();
+            // Whoever holds it now stays selectable even if they are no longer
+            // eligible (a kid pinned to an earlier stage, a member since
+            // removed). Otherwise the select would quietly fall back to
+            // "nobody" and saving an unrelated edit would unassign them.
+            if (selectedId && !list.some(m => String(m.id) === String(selectedId))) {
+                list.push({ id: selectedId, name: currentName || 'Currently assigned' });
+            }
+            list.forEach(m => el.add(new Option(m.name, m.id)));
+            el.value = selectedId || '';
+        }
 
         async function fetchHouseholdTasks() {
             try {
@@ -951,13 +1035,12 @@
                 ]);
                 householdTasks = tRes.ok ? await tRes.json() : [];
                 const members = mRes.ok ? await mRes.json() : [];
+                taskAssignees = members
+                    .filter(m => m.role !== 'child' || (m.capabilities || {}).assignable_tasks)
+                    .map(m => ({ id: m.id, name: m.name }));
                 const owner = document.getElementById('new-task-owner');
                 if (owner && owner.options.length <= 1) {
-                    // Kids appear once their stage grants assignable_tasks
-                    // (Navigator+) — "being given real household jobs" is a
-                    // named grant, and the server refuses it below stage.
-                    members.filter(m => m.role !== 'child' || (m.capabilities || {}).assignable_tasks)
-                        .forEach(m => owner.add(new Option(m.name, m.id)));
+                    taskAssignees.forEach(m => owner.add(new Option(m.name, m.id)));
                 }
                 const load = lRes.ok ? await lRes.json() : {};
                 // States it, never scores it: one sentence, no chart.
@@ -975,10 +1058,12 @@
                 const due = t.past_due
                     ? `<span class="text-red-400 font-semibold">past due</span>`
                     : (t.due_date ? `<span class="text-gray-400">due ${t.due_date}</span>` : '');
-                // "Nobody yet" is a real, sayable state — not a blank.
+                // "Nobody yet" is a real, sayable state — not a blank — and it
+                // opens the same editor the ✎ does, rather than silently
+                // reading a dropdown somewhere else on the page.
                 const who = t.assigned_to_name
                     ? `<span class="text-teal-300">${t.assigned_to_name}</span>`
-                    : `<button onclick="claimTask('${t.id}')" class="text-gray-500 hover:text-teal-300 underline decoration-dotted">nobody yet</button>`;
+                    : `<button onclick="openTaskEditor('${t.id}')" class="text-gray-500 hover:text-teal-300 underline decoration-dotted">nobody yet</button>`;
                 const rec = t.recurrence && t.recurrence !== 'none'
                     ? `<span class="text-gray-600">· ${t.recurrence}</span>` : '';
                 return `<div class="bg-gray-900 rounded-lg px-3 py-2 flex items-center gap-3">
@@ -986,6 +1071,8 @@
                         class="w-4 h-4 rounded accent-teal-500 shrink-0">
                     <span class="flex-1 text-sm text-white">${t.title}</span>
                     <span class="text-xs flex items-center gap-2">${due} ${who} ${rec}</span>
+                    <button onclick="openTaskEditor('${t.id}')" title="Edit"
+                        class="text-gray-600 hover:text-teal-300 text-xs">✎</button>
                     <button onclick="deleteTask('${t.id}')"
                         class="text-gray-600 hover:text-red-400 text-xs">✕</button>
                 </div>`;
@@ -1020,18 +1107,54 @@
             } catch (e) { showGlobalAlert("Couldn't mark that done."); }
         }
 
-        async function claimTask(id) {
-            const who = document.getElementById('new-task-owner').value;
-            if (!who) {
-                showGlobalAlert("Pick who's taking it in the dropdown first.");
-                return;
-            }
+        // Tap edit → change it → save, the flow the rest of the app uses. This
+        // replaces claimTask(), which assigned by reading the CREATE form's
+        // owner dropdown when you clicked "nobody yet" on a row — two controls
+        // that look unrelated, silently coupled.
+        function openTaskEditor(id) {
+            const t = householdTasks.find(x => x.id === id);
+            if (!t) return;
+            document.getElementById('task-edit-id').value = t.id;
+            document.getElementById('task-edit-title').value = t.title || '';
+            document.getElementById('task-edit-due').value = t.due_date || '';
+            document.getElementById('task-edit-recurrence').value = t.recurrence || 'none';
+            document.getElementById('task-edit-notes').value = t.notes || '';
+            fillTaskOwnerSelect(document.getElementById('task-edit-owner'),
+                                t.assigned_to, 'Nobody yet', t.assigned_to_name);
+            document.getElementById('task-edit-modal').classList.remove('hidden');
+        }
+
+        function closeTaskEditor() {
+            document.getElementById('task-edit-modal').classList.add('hidden');
+        }
+
+        async function saveTaskEdit() {
+            const id = document.getElementById('task-edit-id').value;
+            const title = document.getElementById('task-edit-title').value.trim();
+            if (!title) { showGlobalAlert('A task needs a title.'); return; }
+            const payload = {
+                title,
+                // Empty is a real answer: unassigning returns it to "the
+                // household owes this", which is a state, not a blank.
+                assigned_to: document.getElementById('task-edit-owner').value || null,
+                due_date: document.getElementById('task-edit-due').value || null,
+                recurrence: document.getElementById('task-edit-recurrence').value || 'none',
+                notes: document.getElementById('task-edit-notes').value.trim(),
+            };
             try {
-                await fetch(`api/household-tasks/${id}`, {
+                const res = await fetch(`api/household-tasks/${id}`, {
                     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ assigned_to: who }) });
+                    body: JSON.stringify(payload) });
+                if (!res.ok) {
+                    // e.g. the Navigator stage gate refusing a younger kid —
+                    // say why rather than closing as though it saved.
+                    const err = await res.json().catch(() => ({}));
+                    showGlobalAlert(err.detail || "Couldn't save that task.");
+                    return;
+                }
+                closeTaskEditor();
                 await fetchHouseholdTasks();
-            } catch (e) { showGlobalAlert("Couldn't assign that."); }
+            } catch (e) { showGlobalAlert("Couldn't save that task."); }
         }
 
         async function deleteTask(id) {
