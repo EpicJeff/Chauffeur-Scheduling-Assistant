@@ -331,6 +331,51 @@
                         </div>
                     </section>
 
+                    <!-- ===== Waiting to be verified =====
+                         Finished work sat here unactionable: verifying was a
+                         PWA-only capability, so a parent looking at the admin
+                         page could see a kid was owed points and had to pick up
+                         a phone to award them. Verification is the step that
+                         PAYS, so the surface a parent actually sits in front of
+                         cannot be the one that can't do it.
+
+                         The parent guard is NOT relaxed to make this work — the
+                         page mints a real per-device token from the parent's PIN
+                         (POST /api/members/{id}/auth), so `verified_by` names a
+                         genuine parent exactly as it does from the phone. -->
+                    <section class="mb-10" x-show="pendingVerification().length">
+                        <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">
+                            Waiting for you to verify</h3>
+                        <div class="space-y-2">
+                            <template x-for="chore in pendingVerification()" :key="chore.id">
+                                <div class="bg-gray-800 rounded-xl border border-amber-700/40 px-4 py-3 flex flex-col md:flex-row md:items-center gap-3">
+                                    <div class="min-w-0 flex-1">
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <span class="font-bold text-white" x-text="chore.title"></span>
+                                            <span class="px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded font-bold text-xs"
+                                                x-text="'+' + chore.points + ' pts'"></span>
+                                        </div>
+                                        <div class="text-sm text-gray-400 mt-0.5">
+                                            <span x-text="(chore.claimed_by_name || 'Someone') + ' says it is done'"></span>
+                                            <span x-show="chore.done_at" x-text="' · ' + doneAgo(chore)"></span>
+                                        </div>
+                                    </div>
+                                    <div class="flex gap-2 shrink-0">
+                                        <button @click="verifyChore(chore)" :disabled="busyChoreId === chore.id"
+                                            class="bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white font-bold text-sm px-4 py-2 rounded-lg transition-colors">
+                                            ✓ Verify</button>
+                                        <button @click="rejectChore(chore)" :disabled="busyChoreId === chore.id"
+                                            class="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-100 font-bold text-sm px-4 py-2 rounded-lg transition-colors">
+                                            Send back</button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">Verifying is what awards the points. Sending one back
+                            asks for a reason and returns it to whoever claimed it — nothing is paid, and the
+                            chore is not thrown away.</p>
+                    </section>
+
                     <!-- ===== Chores admin ===== -->
                     <section class="mb-10">
                         <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Chore Pot</h3>
@@ -560,6 +605,7 @@
                 chores: [],
                 rewards: [],
                 redemptions: [],
+                busyChoreId: null,
                 editChoreId: null,
                 choreEdit: { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [], owner: '' },
                 editRewardId: null,
@@ -782,6 +828,119 @@
                 },
 
                 // --- Members ---
+                // --- Verifying finished work -------------------------------
+                pendingVerification() {
+                    return (this.chores || []).filter(c => c.state === 'done');
+                },
+                doneAgo(chore) {
+                    const secs = (Date.now() / 1000) - (chore.done_at || 0);
+                    if (secs < 3600) return `${Math.max(1, Math.round(secs / 60))} min ago`;
+                    if (secs < 86400) return `${Math.round(secs / 3600)} h ago`;
+                    return `${Math.round(secs / 86400)} d ago`;
+                },
+
+                // A real parent token, minted the same way the phone mints one.
+                // Deliberately NOT a relaxed guard on the endpoint: verification
+                // awards points, so who did it has to be a fact, and the admin
+                // page being behind Home Assistant is not the same as knowing
+                // WHICH parent is sitting at it. Kept under its own storage key
+                // so a kid's PWA token on the same browser is never clobbered.
+                parentToken() {
+                    return localStorage.getItem('chauffeur_admin_parent_token') || '';
+                },
+                async ensureParentToken(force) {
+                    if (!force && this.parentToken()) return this.parentToken();
+                    const parents = (this.members || []).filter(m => m.role === 'parent' && !m.system);
+                    if (!parents.length) {
+                        showGlobalAlert('No parent is set up to verify chores.');
+                        return '';
+                    }
+                    let parent = parents[0];
+                    if (parents.length > 1) {
+                        const pick = await promptChoice('Who is verifying?',
+                            'Whoever verifies is recorded against the points that get awarded.',
+                            parents.map(p => ({ value: p.id, label: p.name })));
+                        if (!pick) return '';
+                        parent = parents.find(p => p.id === pick) || parent;
+                    }
+                    let pin = null;
+                    if (parent.has_pin) {
+                        pin = await promptInput(`${parent.name}'s PIN`,
+                            'Needed once on this device — verifying awards points.',
+                            { type: 'password', placeholder: '••••', okText: 'Unlock' });
+                        if (!pin) return '';
+                    }
+                    try {
+                        const res = await fetch(`${this.apiBase}api/members/${parent.id}/auth`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ pin: pin || null }) });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) {
+                            showGlobalAlert(data.detail || "That PIN didn't work.");
+                            return '';
+                        }
+                        localStorage.setItem('chauffeur_admin_parent_token', data.token);
+                        return data.token;
+                    } catch (e) {
+                        showGlobalAlert("Couldn't check that PIN.");
+                        return '';
+                    }
+                },
+                // A stored token can be revoked or expire, and a stale one is
+                // indistinguishable from a wrong PIN until the server says 403 —
+                // so re-authenticate once rather than telling the parent they
+                // are not a parent.
+                async _parentPost(path, body, retried) {
+                    const token = await this.ensureParentToken(retried);
+                    if (!token) return null;
+                    const res = await fetch(`${this.apiBase}api/chores/${path}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Member-Token': token },
+                        body: JSON.stringify(body || {}) });
+                    if (res.status === 403 && !retried) {
+                        localStorage.removeItem('chauffeur_admin_parent_token');
+                        return this._parentPost(path, body, true);
+                    }
+                    return res;
+                },
+                async verifyChore(chore) {
+                    this.busyChoreId = chore.id;
+                    try {
+                        const res = await this._parentPost(`${chore.id}/verify`, {});
+                        if (!res) return;
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) { showGlobalAlert(data.detail || "Couldn't verify that."); return; }
+                        await Promise.all([this.loadChores(), this.loadPoints()]);
+                        const awarded = data.awarded || 0;
+                        showGlobalAlert(awarded
+                            ? `Verified — ${awarded} points to ${chore.claimed_by_name || 'them'} ✅`
+                            : 'Verified ✅', 'success');
+                    } catch (e) {
+                        showGlobalAlert("Couldn't verify that.");
+                    } finally { this.busyChoreId = null; }
+                },
+                async rejectChore(chore) {
+                    const reason = await promptInput('Send it back?',
+                        `${chore.claimed_by_name || 'They'} will see why, and the chore goes back to them `
+                        + `rather than into the pot. No points are awarded.`,
+                        { placeholder: 'e.g. the bins are still by the door', okText: 'Send back' });
+                    if (reason === null || reason === undefined) return;
+                    this.busyChoreId = chore.id;
+                    try {
+                        const res = await this._parentPost(`${chore.id}/reject`, { reason });
+                        if (!res) return;
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            showGlobalAlert(err.detail || "Couldn't send that back.");
+                            return;
+                        }
+                        await this.loadChores();
+                        showGlobalAlert('Sent back ↩️', 'success');
+                    } catch (e) {
+                        showGlobalAlert("Couldn't send that back.");
+                    } finally { this.busyChoreId = null; }
+                },
+
                 async loadMembers() {
                     try {
                         const res = await fetch(`${this.apiBase}api/members`);

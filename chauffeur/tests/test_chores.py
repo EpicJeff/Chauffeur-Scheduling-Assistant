@@ -255,6 +255,45 @@ def scenario_agent_points_tools():
           "balance summary reads naturally")
 
 
+def scenario_verification_is_reachable_from_the_admin_page():
+    """Verifying was PWA-only, so a parent sitting at the admin page could see
+    that a kid was owed points and had to pick up a phone to award them.
+    Verification is the step that PAYS — the surface a parent actually uses
+    cannot be the one that can't do it.
+
+    The guard is NOT relaxed to achieve that: the page mints a real per-device
+    token from the parent's PIN, so `verified_by` names a genuine parent
+    exactly as it does from the phone."""
+    import main
+    from fastapi import BackgroundTasks
+    _member("kid", "Kid", "child")
+    _member("mom", "Mom", "parent")
+    _chore("c1", title="Dishes", points=12)
+    storage.claim_chore("c1", "kid")
+    storage.mark_chore_done("c1", "kid")
+
+    # The token gating itself is pinned by scenario_endpoint_rules; what
+    # matters here is that the admin route produces the SAME attribution
+    # rather than an anonymous verification the ledger cannot explain.
+    mom_token = storage.create_member_token("mom")
+    result = main.verify_chore_endpoint("c1", BackgroundTasks(), mom_token)
+    check(result['awarded'] == 12 and storage.get_points_balance("kid") == 12,
+          "a parent token verifies and pays")
+    check(storage.get_chore("c1")['verified_by'] == 'mom',
+          "and the record names who did it — the reason the admin page mints a "
+          "real token instead of the endpoint trusting the surface")
+
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    page = open(os.path.join(tpl, 'chores.html'), encoding='utf-8').read()
+    check('pendingVerification' in page and 'Waiting for you to verify' in page,
+          "finished work is listed on the admin Chores page")
+    check('verifyChore' in page and 'rejectChore' in page,
+          "with both answers available — approving is not the only outcome")
+    check('X-Member-Token' in page and 'api/members/' in page and '/auth' in page,
+          "and it authenticates properly rather than posting unauthenticated")
+
+
 def scenario_reopen():
     import main
     from fastapi import BackgroundTasks, HTTPException
@@ -304,6 +343,7 @@ def scenario_reopen():
 
 
 SCENARIOS = [
+    scenario_verification_is_reachable_from_the_admin_page,
     scenario_lifecycle_and_points,
     scenario_adults_claimable_but_pointless,
     scenario_claim_cap,
