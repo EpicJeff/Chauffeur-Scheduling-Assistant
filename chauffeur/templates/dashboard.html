@@ -5,25 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Family Driver Schedule</title>
-    <script>
-        tailwind = {
-            config: {
-                darkMode: 'class',
-                theme: {
-                    extend: {
-                        fontFamily: {
-                            sans: ['Inter', 'sans-serif'],
-                        },
-                        animation: {
-                            'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-                        }
-                    }
-                }
-            }
-        };
-    </script>
     {% include 'ha_theme.html' %}
-    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
             background-color: #1a202c;
@@ -32,6 +14,7 @@
             transition: padding-right 0.3s ease-in-out;
         }
     </style>
+    <link rel="stylesheet" href="static/tailwind.css">
 </head>
 
 <body class="p-0 m-0">

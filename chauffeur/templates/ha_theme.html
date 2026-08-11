@@ -99,6 +99,24 @@
     const isHaTheme = !isPanelTheme
         && ((themeParam && themeParam.startsWith('ha')) || isKioskTheme);
 
+    // Writing a custom property on :root invalidates style for the ENTIRE
+    // document — every element has to be recomputed, because any of them could
+    // be reading the variable. This function ran every five seconds and wrote
+    // seven of them unconditionally, so a page that nobody was touching paid a
+    // full-document style recalc twelve times a minute for values that change
+    // maybe twice a day (the HA day/night schedule). On the wall panel that is
+    // a visible hitch in whatever animation happens to be running. Writing
+    // only what actually moved makes the steady state free.
+    const _haLast = {};
+
+    function setHaVar(name, value) {
+        if (!value) return;
+        const v = value.trim();
+        if (_haLast[name] === v) return;
+        _haLast[name] = v;
+        document.documentElement.style.setProperty(name, v);
+    }
+
     function syncHaTheme() {
         try {
             if (window.parent !== window && window.parent.document) {
@@ -111,13 +129,13 @@
                 const primary = style.getPropertyValue('--primary-color');
                 const secBg = style.getPropertyValue('--secondary-background-color') || card;
 
-                if (bg) document.documentElement.style.setProperty('--ha-bg', bg.trim());
-                if (card) document.documentElement.style.setProperty('--ha-card-bg', card.trim());
-                if (text) document.documentElement.style.setProperty('--ha-primary-text', text.trim());
-                if (sec) document.documentElement.style.setProperty('--ha-secondary-text', sec.trim());
-                if (div) document.documentElement.style.setProperty('--ha-divider', div.trim());
-                if (primary) document.documentElement.style.setProperty('--ha-primary-color', primary.trim());
-                if (secBg) document.documentElement.style.setProperty('--ha-header-bg', secBg.trim());
+                setHaVar('--ha-bg', bg);
+                setHaVar('--ha-card-bg', card);
+                setHaVar('--ha-primary-text', text);
+                setHaVar('--ha-secondary-text', sec);
+                setHaVar('--ha-divider', div);
+                setHaVar('--ha-primary-color', primary);
+                setHaVar('--ha-header-bg', secBg);
             }
         } catch (e) {
             // Cross-origin fallback applied automatically via CSS variable defaults

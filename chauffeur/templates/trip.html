@@ -5,21 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trip Itinerary</title>
     {% include 'ha_theme.html' %}
-    <script>
-        tailwind = {
-            config: {
-                darkMode: 'class',
-                theme: {
-                    extend: {
-                        fontFamily: {
-                            sans: ['Inter', 'sans-serif'],
-                        }
-                    }
-                }
-            }
-        };
-    </script>
-    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -68,9 +53,10 @@
         }
     </style>
     {% if allow_map_loads %}
-    <link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet">
-    <script src="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js"></script>
+    <link href="static/vendor/mapbox-gl.css" rel="stylesheet">
+    <script src="static/vendor/mapbox-gl.js"></script>
     {% endif %}
+    <link rel="stylesheet" href="static/tailwind.css">
 </head>
 <body class="p-0 m-0 min-h-screen flex flex-col relative">
 

@@ -5,31 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Errands & Todos</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script>
-        tailwind = {
-            config: {
-                darkMode: 'class',
-                theme: {
-                    extend: {
-                        fontFamily: {
-                            sans: ['Inter', 'sans-serif'],
-                        },
-                        colors: {
-                            gray: {
-                                900: '#111827',
-                                800: '#1F2937',
-                                700: '#374151',
-                                600: '#4B5563',
-                            }
-                        }
-                    }
-                }
-            }
-        };
-    </script>
+    <link href="static/vendor/fonts/inter/inter.css" rel="stylesheet">
     {% include 'ha_theme.html' %}
-    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
             background-color: #111827;
@@ -86,6 +63,7 @@
         .priority-2 { background-color: #f59e0b; } /* Med */
         .priority-3 { background-color: #3b82f6; } /* Low */
     </style>
+    <link rel="stylesheet" href="static/tailwind.css">
 </head>
 
 <body class="flex flex-col h-screen overflow-hidden">

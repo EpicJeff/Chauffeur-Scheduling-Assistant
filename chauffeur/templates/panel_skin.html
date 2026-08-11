@@ -32,21 +32,23 @@
    `['Inter', 'sans-serif']`, which drops all three. So the font is requested
    here and the families are put back into the stack below.
 
-   Only on a display surface, and not because of the weight: Google serves this
-   one in `unicode-range` slices, so a page pulls the two or three its emoji
-   actually fall in rather than the whole 1.5 MB face. The reason is the family
-   NAME. Android's own emoji font is also called "Noto Color Emoji", and an
-   `@font-face` beats a system font of the same name — so every phone in the
-   house would download a font it already has. iOS and Windows match their own
-   ("Apple Color Emoji", "Segoe UI Emoji") earlier in the stack and never ask.
+   It is vendored now (tools/vendor_assets.py) along with everything else the
+   app used to fetch from a CDN — that day came, and a panel on a wall should
+   not need the internet to draw itself. The `unicode-range` slicing survived
+   the move, so a page still pulls the two or three slices its emoji fall in
+   rather than the whole 2 MB face.
 
-   A panel with no internet has bigger problems than emoji — Tailwind, Alpine
-   and Inter all come from a CDN too — but if that day comes, this is the piece
-   to vendor into the add-on. #}
+   It is also RENAMED on the way in, to "Chauffeur Emoji", and that is the part
+   not to undo. Android's own emoji font is called "Noto Color Emoji", and an
+   `@font-face` beats a system font of the same name — ship it under Google's
+   name and every phone in the house downloads a font it already has. Under our
+   name, and placed LAST in the stacks below, iOS and Windows and Android all
+   match their own earlier and never ask for it. Raspberry Pi OS, which has
+   none of them, falls through to ours. Still only emitted on a display surface,
+   because that is the only place the problem exists. #}
 {% if request.query_params.get('panel') == 'true'
       or request.query_params.get('kiosk') == 'true' %}
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap">
+<link rel="stylesheet" href="static/vendor/fonts/emoji/emoji.css">
 {% endif %}
 <style>
     /* The emoji families, back on the end of the stack a page took them off.
@@ -57,7 +59,8 @@
     html[data-display] .font-sans {
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI",
             Roboto, "Helvetica Neue", Arial, sans-serif,
-            "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+            "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji",
+            "Chauffeur Emoji";
     }
 
     html[data-display] .font-mono,
@@ -65,7 +68,8 @@
     html[data-display] pre {
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
             "Liberation Mono", "Courier New", monospace,
-            "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+            "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji",
+            "Chauffeur Emoji";
     }
 
     /* ── Tokens. The only place light and dark are defined. */
@@ -76,9 +80,9 @@
         --panel-card-lo: rgb(8 11 20 / 0.38);
         /* Mapped page surfaces. More opaque than the board's glass because
            they carry no blur — see the surfaces block below. */
-        --panel-surface-1: rgb(10 13 22 / 0.45);
-        --panel-surface-2: rgb(18 24 38 / 0.55);
-        --panel-surface-3: rgb(32 40 60 / 0.68);
+        --panel-surface-1: rgb(10 13 22 / 0.62);
+        --panel-surface-2: rgb(18 24 38 / 0.72);
+        --panel-surface-3: rgb(32 40 60 / 0.80);
         --panel-line: rgb(255 255 255 / 0.10);
         --panel-fg: #f3f4f6;
         --panel-dim: rgb(255 255 255 / 0.55);
@@ -112,9 +116,9 @@
         --panel-card: rgb(255 255 255 / 0.88);
         --panel-card-hi: rgb(255 255 255 / 0.96);
         --panel-card-lo: rgb(255 255 255 / 0.72);
-        --panel-surface-1: rgb(255 255 255 / 0.62);
-        --panel-surface-2: rgb(255 255 255 / 0.72);
-        --panel-surface-3: rgb(255 255 255 / 0.86);
+        --panel-surface-1: rgb(255 255 255 / 0.78);
+        --panel-surface-2: rgb(255 255 255 / 0.86);
+        --panel-surface-3: rgb(255 255 255 / 0.93);
         --panel-line: rgb(15 23 42 / 0.13);
         --panel-fg: #0f172a;
         --panel-dim: rgb(15 23 42 / 0.62);
@@ -145,9 +149,9 @@
             --panel-card: rgb(255 255 255 / 0.88);
             --panel-card-hi: rgb(255 255 255 / 0.96);
             --panel-card-lo: rgb(255 255 255 / 0.72);
-            --panel-surface-1: rgb(255 255 255 / 0.62);
-            --panel-surface-2: rgb(255 255 255 / 0.72);
-            --panel-surface-3: rgb(255 255 255 / 0.86);
+            --panel-surface-1: rgb(255 255 255 / 0.78);
+            --panel-surface-2: rgb(255 255 255 / 0.86);
+            --panel-surface-3: rgb(255 255 255 / 0.93);
             --panel-line: rgb(15 23 42 / 0.13);
             --panel-fg: #0f172a;
             --panel-dim: rgb(15 23 42 / 0.62);
@@ -375,39 +379,46 @@
     }
 
     /* ── Surfaces.
-       NO `backdrop-filter` here, and that is a correctness rule rather than a
-       taste one. A filter (backdrop or otherwise) makes an element a
-       CONTAINING BLOCK for every fixed-position descendant and a new stacking
-       context. Several pages carry `bg-gray-900` on <body> itself, so blurring
-       the mapped greys put a filter on the body — which captured the shelf,
-       the orb and the two `z-index: -2` background layers, trapping the
-       photograph behind the very element it was supposed to sit behind. The
-       whole panel went flat. Blur stays on `.panel-card`, which is applied
-       deliberately to leaf cards that contain no fixed chrome.
-
-       Because there is no blur to help legibility, the mapped surfaces are
-       more opaque than the board's own glass — these are separate tokens for
-       exactly that reason. */
-    /* ── Surfaces.
        The split is by USAGE, not by shade, because this codebase uses
        `bg-gray-900` for both things. Bare `bg-gray-900` is a CARD — the
        schedule's driver column, the dashboard's rule sidebar — so it becomes
-       glass. The opacity variants (`/30`…`/90`) are the page-level scroll
+       a surface. The opacity variants (`/30`…`/90`) are the page-level scroll
        WRAPPERS that fill the content area — errands, moments, settings,
        routines — so they go transparent and let the photograph through.
        Getting this backwards is what put a slab over the picture one way and
        deleted the schedule's panes the other.
 
-       The blur is safe on every tier here only because <body> forces
-       `filter: none` below. A filter makes an element a containing block for
-       fixed descendants, and `config` and `map` put `bg-gray-900` on their
-       body — without that override the shelf, the orb and the background
-       layers would all be trapped inside it. */
+       NO `backdrop-filter` on any of these three tiers, and the reason is now
+       a performance one on top of the old correctness one.
+
+       PERFORMANCE. These selectors do not match a handful of elements. They
+       match every card on every page — 154 `bg-gray-*` sites in the driver
+       app, 86 in shopping, 77 in the dashboard, and those are the counts in
+       the SOURCE, before a list renders forty rows that are each a
+       `bg-gray-800`. Every backdrop-filtered element is its own compositing
+       layer whose backdrop — a full-screen photograph — has to be read back
+       and blurred again on any frame that touches it. A Raspberry Pi 5 falls
+       over long before a hundred of those, which is what a wall panel that
+       took several seconds to answer a tap was actually spending its time on.
+       Blur stays where it is countable and deliberate: `.panel-card` (six on
+       the home board) and `#panel-fade` (one strip). It does not go on a
+       selector that matches whatever a page happens to contain.
+
+       CORRECTNESS, the older reason, unchanged: a filter — backdrop or
+       otherwise — makes an element a CONTAINING BLOCK for every
+       fixed-position descendant and opens a new stacking context. `config`
+       and `map` carry `bg-gray-900` on <body>, so blurring this tier put a
+       filter on the body, which captured the shelf, the orb and both
+       `z-index: -2` background layers and trapped the photograph behind the
+       element it was supposed to sit behind. The body override below is still
+       the safety net for anything that reintroduces a filter here.
+
+       Because there is no blur to help legibility, the mapped surfaces are
+       more opaque than the board's own glass — these are separate tokens for
+       exactly that reason, and they were raised when the blur came off. */
     html[data-panel] .bg-gray-950,
     html[data-panel] .bg-gray-900 {
         background-color: var(--panel-surface-1) !important;
-        -webkit-backdrop-filter: blur(14px) saturate(135%);
-        backdrop-filter: blur(14px) saturate(135%);
     }
 
     html[data-panel] .bg-gray-900\/30,
@@ -430,8 +441,6 @@
     html[data-panel] .bg-gray-800\/80,
     html[data-panel] .bg-gray-800\/90 {
         background-color: var(--panel-surface-2) !important;
-        -webkit-backdrop-filter: blur(14px) saturate(135%);
-        backdrop-filter: blur(14px) saturate(135%);
     }
 
     html[data-panel] .bg-gray-700,
@@ -444,8 +453,6 @@
     html[data-panel] .bg-gray-700\/90,
     html[data-panel] .bg-gray-600 {
         background-color: var(--panel-surface-3) !important;
-        -webkit-backdrop-filter: blur(14px) saturate(135%);
-        backdrop-filter: blur(14px) saturate(135%);
     }
 
     /* The body is never a surface. It carries a grey on several pages, and the
@@ -473,10 +480,48 @@
     /* The calendar rolls its own glass (`.glass-panel`, rgba + blur) from
        before any of this existed. It is the one page-level container that is
        SUPPOSED to be a surface, so it is pointed at the token rather than
-       left on its own hard-coded slate. */
+       left on its own hard-coded slate — the MAPPED-surface token, not the
+       board's card, because its blur comes off in the budget rule below and
+       an unblurred 0.55 over a photograph is not a background you can read a
+       month grid against. */
     html[data-panel] .glass-panel {
-        background: var(--panel-card) !important;
+        background: var(--panel-surface-1) !important;
         border-color: var(--panel-line) !important;
+    }
+
+    /* ── The blur budget, enforced.
+       Only two things in panel mode are allowed a `backdrop-filter`:
+       `.panel-card` (six leaf tiles on the home board) and `#panel-fade` (one
+       strip behind the shelf). Everything else listed here is a page or a
+       library asking for glass in a place where it multiplies — and on a
+       Raspberry Pi the multiplier is the whole problem, because each blurred
+       element is a compositing layer that re-reads and re-blurs a full-screen
+       photograph on every frame that touches it.
+
+       These are not hypothetical. `.fc-daygrid-more-link` is per DAY CELL — up
+       to thirty-five blurs in a month view. `.fc .fc-button-primary` is every
+       toolbar button. Tailwind's `backdrop-blur-*` utilities are almost all on
+       `fixed inset-0` modal scrims, which is a FULL-SCREEN blur held for as
+       long as the modal is open, and `bg-black/60` underneath already does the
+       job on its own.
+
+       Scoped to `html[data-panel]` on purpose: at a laptop none of this costs
+       anything worth removing, so the browser keeps the look it has. */
+    html[data-panel] .backdrop-blur-none,
+    html[data-panel] .backdrop-blur-sm,
+    html[data-panel] .backdrop-blur,
+    html[data-panel] .backdrop-blur-md,
+    html[data-panel] .backdrop-blur-lg,
+    html[data-panel] .backdrop-blur-xl,
+    html[data-panel] .backdrop-blur-2xl,
+    html[data-panel] .backdrop-blur-3xl,
+    html[data-panel] .fc .fc-button-primary,
+    html[data-panel] .fc-popover,
+    html[data-panel] .fc-popover-header,
+    html[data-panel] .fc-daygrid-more-link,
+    html[data-panel] .glass-panel {
+        -webkit-backdrop-filter: none !important;
+        backdrop-filter: none !important;
     }
 
     /* FullCalendar draws its grid from its OWN variables, which default to a

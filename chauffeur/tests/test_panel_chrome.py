@@ -133,21 +133,43 @@ def scenario_the_skin_maps_the_greys_the_pages_are_written_in():
 
 
 def scenario_the_grey_mapping_never_applies_a_filter():
-    """This one broke the whole panel once and the reason is not obvious.
+    """This one broke the whole panel twice, for two different reasons.
 
-    A filter — `backdrop-filter` included — makes an element a CONTAINING BLOCK
-    for every fixed-position descendant and opens a new stacking context. The
-    mapped greys ARE blurred (that is the glass everyone wanted), and `config`
-    and `map` carry `bg-gray-900` on <body>. So the whole scheme rests on one
-    override: the body must force `filter: none`. Without it the shelf, the orb
-    and the two `z-index: -2` background layers are captured by the body and
-    the photograph ends up behind the element it was meant to sit behind."""
+    CORRECTNESS: a filter — `backdrop-filter` included — makes an element a
+    CONTAINING BLOCK for every fixed-position descendant and opens a new
+    stacking context. `config` and `map` carry `bg-gray-900` on <body>, so a
+    filter on that tier lands on the body, captures the shelf, the orb and the
+    two `z-index: -2` background layers, and puts the photograph behind the
+    element it was meant to sit behind.
+
+    PERFORMANCE: these selectors match every card on every page — 154
+    `bg-gray-*` sites in the driver app alone, more once a list renders. Each
+    blurred element is a compositing layer that re-blurs a full-screen
+    photograph per frame. That is what made the Raspberry Pi panel take
+    seconds to answer a tap. The blur budget is two things: `.panel-card` and
+    `#panel-fade`."""
+    # The three mapped tiers must carry no filter of their own. Slice each rule
+    # at its closing brace so a `backdrop-filter` further down the file (the
+    # budget rule, `.panel-card`) cannot make this pass by accident.
+    for tier in ('html[data-panel] .bg-gray-950,',
+                 'html[data-panel] .bg-gray-800,',
+                 'html[data-panel] .bg-gray-700,'):
+        rule = SKIN[SKIN.index(tier):]
+        rule = rule[:rule.index('}')]
+        check('backdrop-filter' not in rule,
+              f"the mapped tier starting '{tier}' is blurred again — that is "
+              f"one compositing layer per card on a Raspberry Pi, and it is "
+              f"what the panel's several-second tap latency was")
+    # The blur that IS allowed, so this guard cannot be satisfied by deleting
+    # the look entirely.
+    check('backdrop-filter: blur(16px) saturate(140%)' in SKIN,
+          ".panel-card lost its glass — the budget is two blurs, not zero")
+
     # <body> is the safety net for the whole scheme. A filter makes an element
     # a containing block for fixed descendants, and `config` and `map` put
-    # `bg-gray-900` on their body — the tier that is now blurred. Without this
-    # override the shelf, the orb and both background layers get trapped
-    # inside the body and the panel goes flat, which is exactly what v2.115
-    # shipped.
+    # `bg-gray-900` on their body. Without this override the shelf, the orb and
+    # both background layers get trapped inside the body and the panel goes
+    # flat, which is exactly what v2.115 shipped.
     body_rule = SKIN[SKIN.index('html[data-panel] body,'):]
     body_rule = body_rule[:body_rule.index('}')]
     # `background:` not `background-color:` — Calendar and Trips give the body
@@ -409,9 +431,13 @@ def scenario_the_page_background_never_covers_the_photograph():
           "the page frame is not among the transparent wrappers")
     card = SKIN[SKIN.index('html[data-panel] .bg-gray-950,'):]
     card = card[:card.index('}')]
-    check('--panel-surface-1' in card and 'backdrop-filter' in card,
-          "bare bg-gray-900 is no longer glass — the schedule's driver columns "
-          "and the dashboard's sidebar are cards, not page wrappers")
+    # A surface, not a wrapper — but a surface made of OPACITY, not of blur.
+    # The blur came off every mapped tier for the Raspberry Pi's sake (see
+    # scenario_the_grey_mapping_never_applies_a_filter), so the token is the
+    # only thing keeping these readable over a photograph.
+    check('--panel-surface-1' in card and 'transparent' not in card,
+          "bare bg-gray-900 is no longer a surface — the schedule's driver "
+          "columns and the dashboard's sidebar are cards, not page wrappers")
 
 
 def scenario_the_panel_brings_its_own_emoji():
@@ -422,26 +448,31 @@ def scenario_the_panel_brings_its_own_emoji():
     why it only ever showed up on the panel.
 
     Two things have to be true. The font has to be REQUESTED, and the family
-    has to be in the stack — and every page in this app overrides Tailwind's
-    `fontFamily.sans` with `['Inter', 'sans-serif']`, which drops the three
-    emoji families Tailwind's own default ends with. That override is the trap
-    a new page will fall into again, so the fix lives here, centrally, and this
-    guards it."""
-    check('Noto+Color+Emoji' in SKIN,
+    has to be in the stack — and the shared Tailwind config overrides
+    `fontFamily.sans` with a stack starting at Inter, which is what dropped
+    the three emoji families Tailwind's own default ends with. That override is
+    the trap a new page will fall into again, so the fix lives here, centrally,
+    and this guards it.
+
+    The font is vendored now (static/vendor/fonts/emoji) rather than fetched
+    from Google, and renamed to "Chauffeur Emoji" on the way in — see
+    tests/test_tailwind_build.py for why the name matters."""
+    check('vendor/fonts/emoji/emoji.css' in SKIN,
           "the panel no longer asks for an emoji font — on a device with none "
           "installed, every emoji on the board is a tofu box")
     # Only on a display surface: a phone with a perfectly good emoji font of
-    # its own should not download a megabyte and a half of this one.
-    gate = SKIN[:SKIN.index('Noto+Color+Emoji')]
+    # its own should not download two megabytes of this one.
+    gate = SKIN[:SKIN.index('vendor/fonts/emoji/emoji.css')]
     check("query_params.get('panel')" in gate and "query_params.get('kiosk')" in gate,
           "the emoji font is fetched for every browser, not just the panel")
 
     for rule in ('html[data-display] body', 'html[data-display] .font-mono'):
         block = SKIN[SKIN.index(rule):]
         block = block[:block.index('}')]
-        check('"Noto Color Emoji"' in block,
-              f"`{rule}` no longer names the emoji family, so the font is "
-              "downloaded and then never used for anything")
+        check('"Noto Color Emoji"' in block and '"Chauffeur Emoji"' in block,
+              f"`{rule}` no longer names both the system emoji family and the "
+              "vendored one, so the font is either never used or downloaded "
+              "by devices that already have their own")
 
 
 def scenario_the_skin_stays_out_of_the_browser():

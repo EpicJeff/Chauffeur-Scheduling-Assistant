@@ -4,19 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chauffeur - Calendar</title>
-    <script>
-        tailwind = {
-            config: {
-                darkMode: 'class',
-                theme: {
-                    extend: {}
-                }
-            }
-        };
-    </script>
     {% include 'ha_theme.html' %}
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+    <script src="static/vendor/fullcalendar.global.min.js"></script>
     <style>
         body { 
             background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); /* slate-900 to slate-800 */
@@ -294,6 +283,7 @@
         body.ha-theme .agenda-event { background-color: color-mix(in srgb, var(--ha-primary-text) 8%, transparent) !important; }
         body.ha-theme .agenda-event:hover { background-color: color-mix(in srgb, var(--ha-primary-text) 14%, transparent) !important; }
     </style>
+    <link rel="stylesheet" href="static/tailwind.css">
 </head>
 <body class="flex flex-col">
     {% include 'nav.html' %}

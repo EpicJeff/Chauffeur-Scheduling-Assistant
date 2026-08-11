@@ -57,12 +57,17 @@
             if (window.L) return Promise.resolve();
             if (window._fmLeafletLoading) return window._fmLeafletLoading;
             window._fmLeafletLoading = new Promise((resolve, reject) => {
+                // Vendored (tools/vendor_assets.py), and `apiBase` rather than
+                // a bare relative path because this component is included by
+                // pages at several depths. Leaflet's stylesheet reaches for
+                // `images/` beside itself, which is why the vendored copy keeps
+                // its own directory.
                 const css = document.createElement('link');
                 css.rel = 'stylesheet';
-                css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+                css.href = apiBase + 'static/vendor/leaflet/leaflet.css';
                 document.head.appendChild(css);
                 const js = document.createElement('script');
-                js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+                js.src = apiBase + 'static/vendor/leaflet/leaflet.js';
                 js.onload = resolve;
                 js.onerror = reject;
                 document.head.appendChild(js);

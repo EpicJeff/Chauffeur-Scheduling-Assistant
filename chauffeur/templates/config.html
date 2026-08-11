@@ -8,13 +8,12 @@
     {# The only page that never included this. It therefore had no Home
        Assistant theming either — an omission, not a decision. #}
     {% include 'ha_theme.html' %}
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://unpkg.com/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
-    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script defer src="static/vendor/alpine-collapse.min.js"></script>
+    <script src="static/vendor/alpine.min.js" defer></script>
     <!-- Mapbox GL: station-picker map (Car alerts). No map load is billed
          until the picker actually instantiates a map. -->
-    <link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet">
-    <script src="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js"></script>
+    <link href="static/vendor/mapbox-gl.css" rel="stylesheet">
+    <script src="static/vendor/mapbox-gl.js"></script>
     <style>
         [x-cloak] {
             display: none !important;
@@ -26,6 +25,7 @@
             font-family: 'Inter', sans-serif;
         }
     </style>
+    <link rel="stylesheet" href="static/tailwind.css">
 </head>
 
 <body class="bg-gray-900 text-white h-screen flex flex-col overflow-hidden" x-data="configApp()" x-init="init()">

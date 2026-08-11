@@ -5,14 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trip - Chauffeur</title>
-    <script>
-        tailwind = { config: { darkMode: 'class' } };
-    </script>
     {% include 'ha_theme.html' %}
     {% include 'components/trip_logic.html' %}
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet">
-    <script src="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js"></script>
+    <link href="static/vendor/mapbox-gl.css" rel="stylesheet">
+    <script src="static/vendor/mapbox-gl.js"></script>
     <style>
         .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -24,6 +20,7 @@
         /* Mapbox popups keep their own light chrome regardless of theme. */
         .mapboxgl-popup-content { color: #111; }
     </style>
+    <link rel="stylesheet" href="static/tailwind.css">
 </head>
 
 <body class="bg-gray-900 text-white min-h-screen flex flex-col">

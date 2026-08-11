@@ -52,45 +52,20 @@
             });
         })();
     </script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        // Every palette entry points at a channel triple from theme.css, so
-        // one [data-theme] flip restyles the app without touching a single
-        // utility class. `<alpha-value>` keeps opacity modifiers working
-        // (bg-amber-500/10, border-blue-500/50 and friends).
-        //
-        // white and black are deliberately NOT tokenized: `text-white` on a
-        // solid accent fill must stay white in both themes. Surface-level
-        // primary text uses text-gray-100 instead.
-        (function () {
-            const SHADES = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
-            const HUES = ['slate', 'blue', 'indigo', 'violet', 'purple', 'pink', 'rose',
-                'red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald',
-                'teal', 'cyan', 'sky'];
-            const ramp = (name) => Object.fromEntries(
-                SHADES.map(s => [s, `rgb(var(--c-${name}-${s}) / <alpha-value>)`]));
-            const colors = { gray: ramp('gray') };
-            HUES.forEach(h => { colors[h] = ramp(h); });
-            tailwind.config = {
-                darkMode: 'class',
-                theme: {
-                    extend: {
-                        colors,
-                        // 13px is the app's type floor: every arbitrary
-                        // 9-13px size was collapsed into text-xs, so this one
-                        // token IS the floor. Don't reintroduce text-[NNpx]
-                        // below it.
-                        fontSize: { xs: ['13px', '18px'] },
-                        // Softer radii app-wide (Skylight/Hearth direction):
-                        // same markup, friendlier geometry.
-                        borderRadius: {
-                            lg: '12px', xl: '16px', '2xl': '20px', '3xl': '28px',
-                        },
-                    }
-                }
-            };
-        })();
-    </script>
+    {# The palette that used to be built right here, at runtime, and handed to
+       the Tailwind compiler in the browser now lives in
+       tools/tailwind/tailwind.app.config.js and is compiled into
+       static/tailwind-app.css. It is otherwise unchanged: every entry still
+       points at a channel triple from theme.css, so one [data-theme] flip
+       restyles the app without touching a utility class.
+
+       This is the one page with its own stylesheet. The other twenty share
+       static/tailwind.css, which cannot carry this palette — a page that does
+       not load theme.css would render every colour as an unresolved variable.
+
+       If a class you add here does nothing, the stylesheet is stale:
+           cd chauffeur && python tools/build_tailwind.py
+       tests/test_tailwind_build.py fails when you forget. #}
     <style>
         .no-scrollbar::-webkit-scrollbar {
             display: none;
@@ -127,6 +102,7 @@
             min-height: 44px;
         }
     </style>
+    <link rel="stylesheet" href="static/tailwind-app.css">
 </head>
 
 <body class="bg-gray-950 text-gray-100 font-sans h-dvh flex flex-col overflow-hidden">

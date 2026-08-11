@@ -5,19 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Home</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
-        rel="stylesheet">
-    <script>
-        tailwind = {
-            config: {
-                darkMode: 'class',
-                theme: { extend: { fontFamily: { sans: ['Inter', 'sans-serif'] } } }
-            }
-        };
-    </script>
+    <link href="static/vendor/fonts/inter/inter.css" rel="stylesheet">
     {% include 'ha_theme.html' %}
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script src="static/vendor/alpine.min.js" defer></script>
     <style>
         /* Tokens, the background layers and .panel-card/.panel-label all come
            from panel_skin.html now, so every page shares them. What stays here
@@ -111,6 +101,7 @@
             #tile-grid { grid-template-columns: repeat(var(--c-lg, 4), minmax(0, 1fr)); }
         }
     </style>
+    <link rel="stylesheet" href="static/tailwind.css">
 </head>
 
 <body class="min-h-screen">
