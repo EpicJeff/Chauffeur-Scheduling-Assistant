@@ -290,6 +290,12 @@ def scenario_verification_is_reachable_from_the_admin_page():
           "finished work is listed on the admin Chores page")
     check('verifyChore' in page and 'rejectChore' in page,
           "with both answers available — approving is not the only outcome")
+    # The reward queue had the identical gap and literally said so on screen.
+    check('decideRedemption' in page and 'approve or deny in the app' not in page,
+          "reward requests are decided here too, not deferred to the phone")
+    check('affordsRedemption' in page,
+          "and the balance is on screen before the click, because approving "
+          "deducts the full cost without the server bounds-checking it")
     check('X-Member-Token' in page and 'api/members/' in page and '/auth' in page,
           "and it authenticates properly rather than posting unauthenticated")
 

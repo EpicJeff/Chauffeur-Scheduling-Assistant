@@ -319,13 +319,30 @@
                         <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Pending Reward Requests</h3>
                         <div class="space-y-2">
                             <template x-for="r in redemptions" :key="r.id">
-                                <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3 flex items-center gap-3">
-                                    <span class="font-bold text-white" x-text="r.member_name"></span>
-                                    <span class="text-gray-400">wants</span>
-                                    <span class="font-bold text-indigo-300 truncate" x-text="r.reward_title"></span>
-                                    <span class="px-2 py-0.5 bg-indigo-900/50 text-indigo-300 rounded font-bold text-xs shrink-0"
-                                        x-text="r.cost + ' pts'"></span>
-                                    <span class="ml-auto text-xs text-gray-500 shrink-0">approve or deny in the app (parent PIN)</span>
+                                <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3 flex flex-col md:flex-row md:items-center gap-3">
+                                    <div class="flex items-center gap-2 flex-wrap min-w-0 flex-1">
+                                        <span class="font-bold text-white" x-text="r.member_name"></span>
+                                        <span class="text-gray-400">wants</span>
+                                        <span class="font-bold text-indigo-300 truncate" x-text="r.reward_title"></span>
+                                        <span class="px-2 py-0.5 bg-indigo-900/50 text-indigo-300 rounded font-bold text-xs shrink-0"
+                                            x-text="r.cost + ' pts'"></span>
+                                        <!-- Approving deducts whatever the reward costs and does
+                                             NOT check the balance first, so the number that
+                                             decides this has to be on screen before the click. -->
+                                        <span class="text-xs shrink-0"
+                                            :class="affordsRedemption(r) ? 'text-gray-500' : 'text-amber-400 font-bold'"
+                                            x-text="affordsRedemption(r)
+                                                ? balanceOf(r.member_id) + ' pts available'
+                                                : 'only ' + balanceOf(r.member_id) + ' pts — this would go negative'"></span>
+                                    </div>
+                                    <div class="flex gap-2 shrink-0">
+                                        <button @click="decideRedemption(r, true)" :disabled="busyRedemptionId === r.id"
+                                            class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-sm px-4 py-2 rounded-lg transition-colors">
+                                            ✓ Approve</button>
+                                        <button @click="decideRedemption(r, false)" :disabled="busyRedemptionId === r.id"
+                                            class="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-100 font-bold text-sm px-4 py-2 rounded-lg transition-colors">
+                                            Deny</button>
+                                    </div>
                                 </div>
                             </template>
                         </div>
@@ -606,6 +623,7 @@
                 rewards: [],
                 redemptions: [],
                 busyChoreId: null,
+                busyRedemptionId: null,
                 editChoreId: null,
                 choreEdit: { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [], owner: '' },
                 editRewardId: null,
@@ -893,7 +911,7 @@
                 async _parentPost(path, body, retried) {
                     const token = await this.ensureParentToken(retried);
                     if (!token) return null;
-                    const res = await fetch(`${this.apiBase}api/chores/${path}`, {
+                    const res = await fetch(`${this.apiBase}${path}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'X-Member-Token': token },
                         body: JSON.stringify(body || {}) });
@@ -906,7 +924,7 @@
                 async verifyChore(chore) {
                     this.busyChoreId = chore.id;
                     try {
-                        const res = await this._parentPost(`${chore.id}/verify`, {});
+                        const res = await this._parentPost(`api/chores/${chore.id}/verify`, {});
                         if (!res) return;
                         const data = await res.json().catch(() => ({}));
                         if (!res.ok) { showGlobalAlert(data.detail || "Couldn't verify that."); return; }
@@ -927,7 +945,7 @@
                     if (reason === null || reason === undefined) return;
                     this.busyChoreId = chore.id;
                     try {
-                        const res = await this._parentPost(`${chore.id}/reject`, { reason });
+                        const res = await this._parentPost(`api/chores/${chore.id}/reject`, { reason });
                         if (!res) return;
                         if (!res.ok) {
                             const err = await res.json().catch(() => ({}));
@@ -939,6 +957,40 @@
                     } catch (e) {
                         showGlobalAlert("Couldn't send that back.");
                     } finally { this.busyChoreId = null; }
+                },
+
+                // --- Deciding reward requests ------------------------------
+                balanceOf(memberId) {
+                    const b = (this.balances || []).find(x => x.member_id === memberId);
+                    return b ? (b.balance || 0) : 0;
+                },
+                affordsRedemption(r) {
+                    return this.balanceOf(r.member_id) >= (r.cost || 0);
+                },
+                async decideRedemption(r, approve) {
+                    // Approving is a deduction the server does not bounds-check,
+                    // so an unaffordable one gets a confirmation rather than a
+                    // silent negative balance. Denying needs no ceremony.
+                    if (approve && !this.affordsRedemption(r)) {
+                        if (!await promptConfirm('Approve anyway?',
+                            `${r.member_name} has ${this.balanceOf(r.member_id)} points and this costs `
+                            + `${r.cost}. Approving takes the full cost, leaving them negative.`,
+                            'Approve anyway', 'Cancel')) return;
+                    }
+                    this.busyRedemptionId = r.id;
+                    try {
+                        const res = await this._parentPost(`api/redemptions/${r.id}/decide`,
+                                                           { approve: !!approve });
+                        if (!res) return;
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) { showGlobalAlert(data.detail || "Couldn't record that."); return; }
+                        await Promise.all([this.loadRedemptions(), this.loadPoints()]);
+                        showGlobalAlert(approve
+                            ? `Approved — ${r.cost} points spent 🎁`
+                            : 'Denied — nothing was deducted', 'success');
+                    } catch (e) {
+                        showGlobalAlert("Couldn't record that.");
+                    } finally { this.busyRedemptionId = null; }
                 },
 
                 async loadMembers() {
