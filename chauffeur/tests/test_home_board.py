@@ -74,9 +74,55 @@ def scenario_tabs_none_really_does_mean_none():
 
 
 def scenario_unknown_keys_are_dropped_not_rendered():
-    got = home_board.resolve_widgets('chores,drives,chores,made-up', {})
-    check(got == ['chores', 'drives'],
-          f"unknown keys dropped and duplicates collapsed, got {got}")
+    got = home_board.resolve_widgets('chores,drives,made-up', {})
+    check(got == ['chores', 'drives'], f"unknown keys dropped, got {got}")
+
+
+def scenario_the_same_tile_can_appear_twice():
+    """This used to be impossible by construction: `resolve_widgets` deduped,
+    so a second calendar was silently discarded and the household had no way to
+    find out why. Repeating a type is now the point of the thing — two calendar
+    tiles set to two different people is the case the arc exists for — so the
+    only rule left is that the two must be TELLABLE APART."""
+    got = home_board.resolve_instances('chores,drives,chores', {})
+    check([i['type'] for i in got] == ['chores', 'drives', 'chores'],
+          f"a repeated tile is still being collapsed: {got}")
+    ids = [i['id'] for i in got]
+    check(len(set(ids)) == 3, f"two instances share an id: {ids}")
+    check(ids[0] == 'chores',
+          "the first instance of a type no longer takes the bare type as its "
+          "id — every stored tile size is keyed by that string, so this is "
+          "what keeps an upgrade from resetting the board's layout")
+
+
+def scenario_a_stored_board_of_plain_names_still_works():
+    """Every install that predates this arc has `panel_widgets` stored as a
+    list of type names. Nothing rewrites it behind their back, so the upgrade
+    has to happen on read, and their tile sizes have to survive it."""
+    settings = {'panel_widgets': ['drives', 'map'],
+                'panel_tile_spans': {'map': {'cols': 6, 'rows': 2}}}
+    got = home_board.resolve_instances(None, settings)
+    check([i['type'] for i in got] == ['drives', 'map'],
+          f"the old shape no longer resolves: {got}")
+    check(got[1]['span'] == {'cols': 6, 'rows': 2},
+          f"the map's stored size did not survive the upgrade: {got[1]}")
+
+
+def scenario_a_card_can_ask_for_a_configured_board():
+    """`?widgets=a,b` is what people type and what every existing HA card
+    sends, so it keeps working exactly as it did. A card that wants a
+    CONFIGURED board has nowhere to say so in a comma-separated list, and
+    inventing a mini-language in a query string would be worse than admitting
+    it is JSON."""
+    got = home_board.resolve_instances(
+        '[{"type": "calendar", "config": {"days": 3}}]', {})
+    check(len(got) == 1 and got[0]['type'] == 'calendar',
+          f"a JSON board did not resolve: {got}")
+    check(got[0]['config'] == {'days': 3},
+          f"the card's config was dropped: {got[0]}")
+    check(home_board.resolve_instances('[not json', {}),
+          "malformed JSON emptied the board — a blank wall panel is "
+          "indistinguishable from a crash, so it must fall back")
 
 
 def scenario_an_unset_idle_timer_means_the_default_not_disabled():
@@ -635,7 +681,7 @@ def scenario_an_unconfigured_feature_has_no_tile():
     try:
         storage.get_cached_schedule = lambda: {}
         board = home_board.build(requested=','.join(home_board.WIDGET_KEYS))
-        keys = [t['key'] for t in board['tiles']]
+        keys = [t['type'] for t in board['tiles']]
         # The calendar is never hidden — a family calendar is not a feature you
         # opt into, and a missing calendar tile reads as a broken panel. Every
         # other tile belongs to something this blank install has not set up.
@@ -925,7 +971,7 @@ def scenario_one_bad_tile_does_not_take_the_board_down():
         home_board._BUILDERS['chores'] = boom
         board = home_board.build(requested='chores,drives')
         check(isinstance(board.get('tiles'), list), "the board still built")
-        check('chores' not in [t['key'] for t in board['tiles']],
+        check('chores' not in [t['type'] for t in board['tiles']],
               "the failing tile is simply absent")
     finally:
         home_board._BUILDERS['chores'] = orig
@@ -1050,7 +1096,7 @@ def scenario_the_kids_ride_in_the_hero_not_a_tile():
                 'k1': {'name': 'Addison', 'lines': ['5:00 PM — practice']}}})
         check(board['hero']['kids'] and board['hero']['kids'][0]['name'] == 'Addison',
               f"kids ride in the hero, got {board['hero'].get('kids')}")
-        check('kids' not in [t['key'] for t in board['tiles']],
+        check('kids' not in [t['type'] for t in board['tiles']],
               "and are not repeated as a tile")
     finally:
         storage.get_cached_schedule = orig
@@ -1163,12 +1209,12 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
     # as tall as the tile is — a fixed stack of rows left a band of empty card
     # under the photographs on any tile somebody made taller, which is the one
     # kind of tile where size is the entire point.
-    body = tpl[tpl.index("t.key === 'meals'"):tpl.index("t.key === 'calendar'")]
+    body = tpl[tpl.index("t.type === 'meals'"):tpl.index("t.type === 'calendar'")]
     check(body.count('grid-auto-rows: minmax(0, 1fr)') >= 2,
           "a mosaic is back to fixed-height rows, so it no longer fills its tile")
     check('flex-1 min-h-0' in body,
           "the mosaic does not claim the space its tile has left over")
-    check('fillsTile(t.key)' in tpl and 'isMosaic(key)' in tpl,
+    check('fillsTile(t.type)' in tpl and 'isMosaic(key)' in tpl,
           "tiles drawn INTO their slot (the mosaics, the map, the timeline) are "
           "no longer distinguished from tiles read down a list, so either they "
           "scroll a photograph or every text tile is stretched to fill")

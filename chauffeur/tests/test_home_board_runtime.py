@@ -61,17 +61,17 @@ PROBE = r"""
 const b = homeBoard();
 b.board = BOARD;
 
-const map = BOARD.tiles.find(t => t.key === 'map').data;
+const map = BOARD.tiles.find(t => t.type === 'map').data;
 
 console.log(JSON.stringify({
   // A day card is three of twelve board columns, so the count is the
   // calendar tile's own span measured in quarters.
   agenda: [
-    { span: 12, lg: b.agendaCols('lg'), md: b.agendaCols('md') }
+    { span: 12, lg: b.agendaCols('calendar', 'lg'), md: b.agendaCols('calendar', 'md') }
   ],
   agendaBySpan: [12, 9, 6, 3, 1].map(c => {
     b.board.spans = { calendar: { cols: c } };
-    return { cols: c, across: b.agendaCols('lg') };
+    return { cols: c, across: b.agendaCols('calendar', 'lg') };
   }),
   mapped: map.mapped,
   fills: ['map', 'drives', 'meals', 'moments', 'trips', 'calendar', 'chores']
@@ -104,10 +104,10 @@ BOARD = {
     'columns': 12,
     'spans': {'calendar': {'cols': 12}},
     'tiles': [
-        {'key': 'drives', 'data': {
+        {'id': 'drives', 'type': 'drives', 'data': {
             'count': 3, 'next_event_id': 'e1',
             'schedule': {'date': '2026-08-08', 'events': [], 'drivers': []}}},
-        {'key': 'map', 'data': {'mapped': 2, 'people': [
+        {'id': 'map', 'type': 'map', 'data': {'mapped': 2, 'people': [
             {'name': 'Sam', 'member_id': 'm1', 'latitude': 41.5, 'longitude': -81.6,
              'state': 'not_home', 'driving': {'leg_title': 'Practice'}},
             {'name': 'Addison', 'member_id': 'm3', 'latitude': None, 'longitude': None,

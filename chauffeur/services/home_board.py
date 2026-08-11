@@ -39,6 +39,7 @@ web page:
 """
 
 import datetime
+import json
 import re
 import time
 from typing import Callable, List, Optional
@@ -1326,7 +1327,68 @@ def backgrounds(settings: dict = None) -> dict:
     return out
 
 
-def resolve_widgets(requested: Optional[str] = None, settings: dict = None) -> List[str]:
+def _instance_id(type_: str, taken: set) -> str:
+    """`calendar`, then `calendar-2`, `calendar-3`. Readable on purpose.
+
+    The FIRST instance of a type gets the bare type as its id, which is what
+    makes the upgrade free: every board that exists today stores a list of type
+    names, and `panel_tile_spans` is keyed by those same names. Migrated
+    instances therefore already have the right id and their sizes already line
+    up. A uuid here would have needed a real data migration to avoid resetting
+    everybody's tile sizes on upgrade.
+    """
+    if type_ not in taken:
+        return type_
+    n = 2
+    while f'{type_}-{n}' in taken:
+        n += 1
+    return f'{type_}-{n}'
+
+
+def normalize_instances(raw, settings: dict = None) -> List[dict]:
+    """A board is a list of INSTANCES, and this is the only place that decides
+    what one is.
+
+    Until v2.180 a tile's type WAS its identity: `panel_widgets` was a list of
+    type names, spans were keyed by type name, the payload carried one `key`,
+    and `resolve_widgets` deduped — so a second calendar was silently dropped.
+    That made "two calendars, configured differently" impossible by
+    construction rather than by omission.
+
+    An instance is `{id, type, config}`. `id` is what the board, the grid and
+    the editor address; `type` is what it draws. Both shapes are accepted here
+    because the stored setting is upgraded lazily — nothing rewrites anybody's
+    settings behind their back, the editor simply saves the new shape the next
+    time somebody touches the board.
+    """
+    known = {w['key'] for w in WIDGETS}
+    spans = (settings or {}).get('panel_tile_spans') or {}
+    out, taken = [], set()
+    for item in raw or []:
+        if isinstance(item, str):
+            item = {'type': item}
+        if not isinstance(item, dict):
+            continue
+        type_ = str(item.get('type') or item.get('key') or '').strip().lower()
+        if type_ not in known:
+            continue
+        wanted = str(item.get('id') or '').strip()
+        iid = wanted if wanted and wanted not in taken else _instance_id(type_, taken)
+        taken.add(iid)
+        config = item.get('config')
+        inst = {'id': iid, 'type': type_,
+                'config': dict(config) if isinstance(config, dict) else {}}
+        # Size lives in `panel_tile_spans` keyed by instance id, which for a
+        # migrated board is the same string it was always keyed by.
+        span = item.get('span') if isinstance(item.get('span'), dict) else spans.get(iid)
+        if isinstance(span, dict):
+            inst['span'] = span
+        out.append(inst)
+    return out
+
+
+def resolve_instances(requested: Optional[str] = None,
+                      settings: dict = None) -> List[dict]:
     """URL wins, then the stored panel profile, then the default set.
 
     The URL has to win because an HA dashboard card is a second panel with
@@ -1334,26 +1396,38 @@ def resolve_widgets(requested: Optional[str] = None, settings: dict = None) -> L
     profile exists so the display bolted to a wall needs no address at all —
     the case that a URL-only design serves worst.
 
+    Two URL grammars, because those are two different jobs. `?widgets=drives,
+    calendar` is the one people type and the one every existing card uses: a
+    list of types, default config, unchanged. A JSON array is the one a card
+    generates when it wants a configured board — now that a tile has options,
+    a comma-separated list of names can no longer express what a card might
+    want, and inventing a mini-language in a query string would be worse than
+    admitting it is JSON.
+
     An empty result always falls back to the defaults. "Show nothing" is never
     what someone meant by a blank setting, and a blank screen on a wall is
     indistinguishable from a crash.
     """
-    known = set(WIDGET_KEYS)
-
-    def clean(seq):
-        out = []
-        for k in seq or []:
-            k = str(k).strip().lower()
-            if k in known and k not in out:
-                out.append(k)
-        return out
-
     if requested is not None:
-        picked = clean(requested.split(','))
+        raw = requested.strip()
+        if raw.startswith('['):
+            try:
+                picked = normalize_instances(json.loads(raw), settings)
+            except (ValueError, TypeError):
+                picked = []
+        else:
+            picked = normalize_instances(
+                [s.strip().lower() for s in raw.split(',')], settings)
         if picked:
             return picked
-    picked = clean((settings or {}).get('panel_widgets'))
-    return picked or list(DEFAULT_WIDGETS)
+    picked = normalize_instances((settings or {}).get('panel_widgets'), settings)
+    return picked or normalize_instances(list(DEFAULT_WIDGETS), settings)
+
+
+def resolve_widgets(requested: Optional[str] = None, settings: dict = None) -> List[str]:
+    """The instance TYPES, in order. Kept for callers that only need to know
+    which kinds of tile a board contains — it can no longer identify one."""
+    return [i['type'] for i in resolve_instances(requested, settings)]
 
 
 # The shelf's vocabulary — the same slugs `?tabs=` already speaks, plus the
@@ -1527,7 +1601,7 @@ def profile(tabs: Optional[str] = None, widgets: Optional[str] = None) -> dict:
         resolved = sun_theme(settings)
         theme, next_flip = resolved['theme'], resolved['next_flip']
     return {'tabs': resolve_tabs(tabs, settings),
-            'widgets': resolve_widgets(widgets, settings),
+            'widgets': resolve_instances(widgets, settings),
             'spans': settings.get('panel_tile_spans') or {},
             'row_height': grid_row_height(settings),
             'columns': grid_columns(settings),
@@ -1545,9 +1619,11 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     """The whole board in one payload."""
     now = now or datetime.datetime.now()
     settings = storage.get_settings() or {}
-    keys = resolve_widgets(requested, settings)
+    instances = resolve_instances(requested, settings)
 
-    cache_key = ','.join(keys)
+    # The whole resolved board, config included — two calendar tiles set to
+    # different people are different boards and must not share a cached answer.
+    cache_key = json.dumps(instances, sort_keys=True)
     if (_CACHE['data'] and _CACHE['key'] == cache_key
             and time.time() - _CACHE['at'] < TTL_SECONDS):
         return _CACHE['data']
@@ -1572,19 +1648,27 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     runs = todays_runs(now.date(), sched=sched, now=now)
 
     tiles = []
-    for key in keys:
-        builder = _BUILDERS.get(key)
+    for inst in instances:
+        builder = _BUILDERS.get(inst['type'])
         if not builder:
             continue
+        config = inst.get('config') or {}
         try:
             payload = builder(now, runs=runs, sched=sched, settings=settings,
-                              kid_digest_fn=kid_digest_fn)
+                              config=config, kid_digest_fn=kid_digest_fn)
         except Exception as e:
-            print(f"[home_board] tile '{key}' failed: {e}")
+            print(f"[home_board] tile '{inst['id']}' ({inst['type']}) failed: {e}")
             payload = None
         if payload:  # rule 1: nothing to say -> no tile, no reserved space
-            meta = next(w for w in WIDGETS if w['key'] == key)
-            tiles.append({'key': key, 'icon': meta['icon'], 'label': meta['label'],
+            meta = next(w for w in WIDGETS if w['key'] == inst['type'])
+            tiles.append({'id': inst['id'], 'type': inst['type'],
+                          'icon': meta['icon'],
+                          # A configured instance may say what it is better than
+                          # the type does ("Emma's week" beats "What's coming"),
+                          # so a title in the config wins over the catalog's.
+                          'label': (str(config.get('title') or '').strip()
+                                    or meta['label']),
+                          'config': config,
                           'data': payload})
 
     # The kids belong in the hero, not in a tile of their own. The hero band is
@@ -1593,11 +1677,11 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     # "Each Kid" was never a phrase anybody says out loud.
     hero = _hero(now, runs)
     hero['unbuilt'] = _hero_unbuilt(sched)
-    kid_tile = next((t for t in tiles if t['key'] == 'kids'), None)
+    kid_tile = next((t for t in tiles if t['type'] == 'kids'), None)
     if kid_tile:
         hero['kids'] = kid_tile['data'].get('kids') or []
         hero['kids_empty'] = kid_tile['data'].get('empty')
-        tiles = [t for t in tiles if t['key'] != 'kids']
+        tiles = [t for t in tiles if t['type'] != 'kids']
 
     try:
         weather = family_digest.weather_line(now.date())
@@ -1645,7 +1729,7 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
                      for s in statuses][:2],
         'hero': hero,
         'tiles': tiles,
-        'widgets': keys,
+        'widgets': instances,
         'spans': (settings.get('panel_tile_spans') or {}),
         'row_height': grid_row_height(settings),
         'columns': grid_columns(settings),

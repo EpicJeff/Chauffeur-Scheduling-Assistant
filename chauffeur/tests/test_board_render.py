@@ -81,7 +81,7 @@ def _board(hero=None):
                           'done': False, 'live': False, 'underway': True,
                           'over': False, 'minutes_until': -53, 'minutes_left': 7}},
         'tiles': [
-            {'key': 'drives', 'icon': '🚗', 'label': 'The rest of the day', 'data': {
+            {'id': 'drives', 'type': 'drives', 'icon': '🚗', 'label': 'The rest of the day', 'data': {
                 'count': 2, 'next_event_id': 'e1',
                 'schedule': {
                     'date': TODAY,
@@ -101,7 +101,7 @@ def _board(hero=None):
                                 {'id': 'drv2', 'name': 'Vovo', 'color_code': '#8b5cf6'}],
                     'cars': [], 'completed_drives': [], 'in_progress_drives': [],
                 }}},
-            {'key': 'calendar', 'icon': '📅', 'label': "What's coming", 'data': {
+            {'id': 'calendar', 'type': 'calendar', 'icon': '📅', 'label': "What's coming", 'data': {
                 'total': 1,
                 'days': [
                     {'date': TODAY, 'dom': 8, 'day': 'Today', 'today': True,
@@ -117,7 +117,7 @@ def _board(hero=None):
                     {'date': TOMORROW, 'dom': 9, 'day': 'Tomorrow', 'today': False,
                      'more': 0, 'earlier': 0, 'events': []},
                 ]}},
-            {'key': 'map', 'icon': '🗺️', 'label': 'Where everyone is', 'data': {
+            {'id': 'map', 'type': 'map', 'icon': '🗺️', 'label': 'Where everyone is', 'data': {
                 'mapped': 1,
                 'people': [{'member_id': 'm1', 'name': 'Sam', 'color_code': '#ef4444',
                             'avatar': None, 'image': None, 'state': 'not_home',
@@ -178,7 +178,9 @@ w.document.addEventListener('DOMContentLoaded', () => {
 
 setTimeout(() => {
   const doc = w.document;
-  const tl = doc.getElementById('board-timeline');
+  // Mount points carry the INSTANCE id now, so two driving tiles are two
+  // elements rather than two claims on one.
+  const tl = doc.getElementById('board-timeline-drives');
   const ag = doc.querySelector('.agenda-cards');
   console.log(JSON.stringify({
     errors: errors,
@@ -210,7 +212,7 @@ setTimeout(() => {
         return t ? t.textContent.replace(/\s+/g, ' ').trim() : '';
       })()
     },
-    map: { mounted: !!doc.getElementById('board-map'),
+    map: { mounted: !!doc.getElementById('board-map-map'),
            listRows: doc.querySelectorAll('.panel-chip').length }
   }));
   process.exit(0);
@@ -231,7 +233,7 @@ const html = fs.readFileSync(process.argv[2], 'utf8')
   .replace(/<script src="[^"]*"[^>]*><\/script>/g, '')
   .replace(/<link href="https:[^"]*"[^>]*>/g, '');
 const slice = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'))
-  .tiles.find(t => t.key === 'drives').data.schedule;
+  .tiles.find(t => t.type === 'drives').data.schedule;
 
 const dom = new JSDOM(html, {
   runScripts: 'dangerously', pretendToBeVisual: true, url: 'http://localhost/dashboard_v2',

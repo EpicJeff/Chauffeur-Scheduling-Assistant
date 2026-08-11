@@ -941,7 +941,14 @@ class Settings(BaseModel):
     # is a second panel with different needs and only the URL can say so.
     # Empty list = "use the default", never "show nothing": a blank profile
     # on a screen bolted to a wall is indistinguishable from a broken app.
-    panel_widgets: List[str] = Field(default_factory=list)
+    # A list of INSTANCES — `{'id', 'type', 'config'}` — not a list of type
+    # names. `List[Any]` rather than a model because the shape is versioned by
+    # `home_board.normalize_instances`, which accepts both this and the old
+    # list-of-strings and upgrades lazily: nothing rewrites a household's
+    # settings behind their back, the editor just saves the new shape next time
+    # somebody touches the board. Validating here would reject the old shape
+    # that every existing install still has stored.
+    panel_widgets: List[Any] = Field(default_factory=list)
     panel_tabs: List[str] = Field(default_factory=list)
     # Untouched for this long, any panel page returns to the home board. This
     # is what makes the panel an appliance rather than a browser: whatever
@@ -951,6 +958,9 @@ class Settings(BaseModel):
     # Per-tile size on the board: {'map': {'cols': 2, 'rows': 2}}. Absent means
     # 1x1. A wall board is a LAYOUT, not a list — the map and the calendar earn
     # more room than the intake counter, and only the household knows which.
+    # Keyed by INSTANCE ID since v2.180. The first instance of a type takes the
+    # bare type as its id, which is exactly what these keys already were, so
+    # every stored size still lands on the tile it was set for.
     panel_tile_spans: Dict[str, Any] = Field(default_factory=dict)
     # What ONE row of the board's grid is worth, in pixels. Without it a span
     # of 2 meant "as tall as whatever two content-sized rows happened to be" —

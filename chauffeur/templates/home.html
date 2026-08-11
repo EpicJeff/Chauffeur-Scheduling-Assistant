@@ -69,20 +69,20 @@
            chips keep their own surface. Everything else — the columns, the
            pills, the condensed gaps — is left exactly as the page draws it,
            which is the entire point of sharing the renderer. */
-        #board-timeline > div { margin-bottom: 0 !important; }
-        #board-timeline .bg-gray-900,
-        #board-timeline .bg-gray-900\/50,
-        #board-timeline .bg-gray-800\/50 { background: transparent !important; }
+        .board-timeline > div { margin-bottom: 0 !important; }
+        .board-timeline .bg-gray-900,
+        .board-timeline .bg-gray-900\/50,
+        .board-timeline .bg-gray-800\/50 { background: transparent !important; }
 
         /* OpenStreetMap's raster tiles are daylight-bright, and a white
            rectangle in the middle of a dark board at ten at night is the
            brightest thing in the kitchen. The /map page is allowed to be
            bright — you went there. A tile nobody asked for gets dimmed to sit
            in the board rather than shout over it. */
-        #board-map .leaflet-tile-pane { filter: brightness(0.78) saturate(0.85); }
-        html[data-panel-theme="light"] #board-map .leaflet-tile-pane { filter: none; }
+        .board-map .leaflet-tile-pane { filter: brightness(0.78) saturate(0.85); }
+        html[data-panel-theme="light"] .board-map .leaflet-tile-pane { filter: none; }
         @media (prefers-color-scheme: light) {
-            html[data-panel-theme="auto"] #board-map .leaflet-tile-pane { filter: none; }
+            html[data-panel-theme="auto"] .board-map .leaflet-tile-pane { filter: none; }
         }
 
         /* The column count is the household's, so the tracks cannot be
@@ -274,7 +274,7 @@
             :style="`--c-lg:${cols()}; --c-md:${Math.ceil(cols() / 2)};
                      --c-sm:${Math.ceil(cols() / 4)};
                      grid-auto-rows: ${rowHeight()}px`">
-            <template x-for="t in tiles()" :key="t.key">
+            <template x-for="t in tiles()" :key="t.id">
                 <!-- Every tile is a door. A wall panel you cannot touch is a
                      poster; tapping a tile takes you to the page it summarises,
                      and the shelf brings you back (as does the idle return). -->
@@ -286,9 +286,9 @@
                      Picture tiles never scroll, either. Scrolling a photograph
                      is not reading it, and a mosaic that fills its slot has
                      nothing below the fold by construction. -->
-                <a :href="link(t.key)" :style="spanStyle(t.key)"
+                <a :href="link(t.type)" :style="spanStyle(t.id)"
                     class="panel-card rounded-2xl p-4 md:p-5 min-w-0 overflow-x-hidden transition-transform active:scale-[0.985]"
-                    :class="fillsTile(t.key) ? 'flex flex-col overflow-hidden'
+                    :class="fillsTile(t.type) ? 'flex flex-col overflow-hidden'
                                              : 'block tile-scroll overflow-y-auto'">
                     <div class="flex items-center gap-2 mb-3 shrink-0">
                         <span class="text-lg" x-text="t.icon"></span>
@@ -314,15 +314,20 @@
                          alternative is scaling the page's typography down to
                          a few pixels. It opens on the next drive rather than
                          on breakfast. -->
-                    <template x-if="t.key === 'drives' && !t.data.empty">
-                        <div id="board-timeline-scroll"
-                            class="flex-1 min-h-0 overflow-auto tile-scroll">
-                            <div id="board-timeline"></div>
+                    <template x-if="t.type === 'drives' && !t.data.empty">
+                        <!-- The ids carry the INSTANCE, not the type. Two
+                             driving tiles on one board would otherwise be two
+                             elements with the same id, and the renderer would
+                             draw both days into whichever one the document
+                             happened to hand back first. -->
+                        <div :id="'board-timeline-scroll-' + t.id"
+                            class="board-timeline-scroll flex-1 min-h-0 overflow-auto tile-scroll">
+                            <div :id="'board-timeline-' + t.id" class="board-timeline"></div>
                         </div>
                     </template>
 
                     <!-- each kid -->
-                    <template x-if="t.key === 'kids' && !t.data.empty">
+                    <template x-if="t.type === 'kids' && !t.data.empty">
                         <div class="space-y-3">
                             <template x-for="k in t.data.kids" :key="k.name">
                                 <div>
@@ -340,7 +345,7 @@
                          decoration: a child who cannot read fluently yet learns
                          what is for dinner from it (arc K1), so the images lead
                          and the names ride on top of them. -->
-                    <template x-if="t.key === 'meals' && !t.data.empty">
+                    <template x-if="t.type === 'meals' && !t.data.empty">
                         <div class="grid grid-cols-2 gap-2 flex-1 min-h-0"
                             style="grid-auto-rows: minmax(0, 1fr)">
                             <template x-for="(d, i) in t.data.dishes" :key="i">
@@ -359,7 +364,7 @@
 
                     <!-- lists: the THINGS, as chips. "Groceries — 12" tells you
                          nothing you can act on walking past. -->
-                    <template x-if="t.key === 'shopping' && !t.data.empty">
+                    <template x-if="t.type === 'shopping' && !t.data.empty">
                         <div class="space-y-3">
                             <template x-for="l in t.data.lists" :key="l.id || l.name">
                                 <div>
@@ -382,7 +387,7 @@
                     </template>
 
                     <!-- chore points -->
-                    <template x-if="t.key === 'chores' && !t.data.empty">
+                    <template x-if="t.type === 'chores' && !t.data.empty">
                         <div class="space-y-1.5">
                             <template x-for="b in t.data.balances" :key="b.member_id">
                                 <div class="flex items-baseline justify-between gap-3">
@@ -398,7 +403,7 @@
                     </template>
 
                     <!-- streaks -->
-                    <template x-if="t.key === 'routines' && !t.data.empty">
+                    <template x-if="t.type === 'routines' && !t.data.empty">
                         <div class="space-y-1.5">
                             <template x-for="s in t.data.streaks" :key="s.name">
                                 <div class="flex items-baseline justify-between gap-3">
@@ -411,7 +416,7 @@
                     </template>
 
                     <!-- coming up -->
-                    <template x-if="t.key === 'occasions' && !t.data.empty">
+                    <template x-if="t.type === 'occasions' && !t.data.empty">
                         <div class="space-y-2">
                             <template x-for="o in t.data.occasions" :key="o.title + o.date">
                                 <div class="flex items-baseline justify-between gap-3">
@@ -427,7 +432,7 @@
                     </template>
 
                     <!-- the week -->
-                    <template x-if="t.key === 'weather' && !t.data.empty">
+                    <template x-if="t.type === 'weather' && !t.data.empty">
                         <div class="flex justify-between gap-2">
                             <template x-for="d in t.data.days" :key="d.day">
                                 <div class="text-center min-w-0">
@@ -445,7 +450,7 @@
                     </template>
 
                     <!-- latest moments -->
-                    <template x-if="t.key === 'moments' && !t.data.empty">
+                    <template x-if="t.type === 'moments' && !t.data.empty">
                         <div class="grid grid-cols-3 gap-2 flex-1 min-h-0"
                             style="grid-auto-rows: minmax(0, 1fr)">
                             <template x-for="(m, i) in t.data.moments" :key="i">
@@ -466,9 +471,9 @@
                          columns the tile is wide, so the same markup is one
                          day stacked on a narrow tile and a working week across
                          a wide one. -->
-                    <template x-if="t.key === 'calendar' && !t.data.empty">
+                    <template x-if="t.type === 'calendar' && !t.data.empty">
                         <div class="grid gap-2 agenda-cards"
-                            :style="`--a-lg:${agendaCols('lg')}; --a-md:${agendaCols('md')}`">
+                            :style="`--a-lg:${agendaCols(t.id, 'lg')}; --a-md:${agendaCols(t.id, 'md')}`">
                             <template x-for="d in t.data.days" :key="d.date">
                                 <div class="rounded-xl p-2"
                                     :style="'border: 1px solid ' + (d.today ? 'var(--panel-accent)' : 'var(--panel-line)')
@@ -517,7 +522,7 @@
                          to drive. Unclaimed items say so out loud: "nobody has
                          this and it is due Thursday" is invisible everywhere
                          else, and a wall is where a household notices it. -->
-                    <template x-if="t.key === 'tasks' && !t.data.empty">
+                    <template x-if="t.type === 'tasks' && !t.data.empty">
                         <div class="space-y-1.5">
                             <template x-for="(e, i) in t.data.tasks" :key="i">
                                 <div class="flex items-baseline gap-2">
@@ -536,7 +541,7 @@
                         </div>
                     </template>
 
-                    <template x-if="t.key === 'errands' && !t.data.empty">
+                    <template x-if="t.type === 'errands' && !t.data.empty">
                         <div class="space-y-1.5">
                             <template x-for="(e, i) in t.data.errands" :key="i">
                                 <div class="flex items-baseline gap-2">
@@ -553,7 +558,7 @@
                     </template>
 
                     <!-- trips as a mosaic, the soonest one leading -->
-                    <template x-if="t.key === 'trips' && !t.data.empty">
+                    <template x-if="t.type === 'trips' && !t.data.empty">
                         <div class="grid grid-cols-2 gap-2 flex-1 min-h-0"
                             style="grid-auto-rows: minmax(0, 1fr)">
                             <template x-for="(tr, i) in t.data.trips" :key="i">
@@ -587,10 +592,10 @@
                          The map takes no pointer events: on this board every
                          tile is a door, and a Leaflet map would swallow the
                          tap that opens the real one. -->
-                    <template x-if="t.key === 'map' && !t.data.empty">
+                    <template x-if="t.type === 'map' && !t.data.empty">
                         <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden"
                             style="border: 1px solid var(--panel-line)">
-                            <div id="board-map" class="absolute inset-0 bg-gray-800"
+                            <div :id="'board-map-' + t.id" class="board-map absolute inset-0 bg-gray-800"
                                 style="pointer-events: none"></div>
                             <!-- The one thing worth saying over the map: that
                                  there is nothing on it. A grey rectangle is
@@ -605,7 +610,7 @@
                     </template>
 
                     <!-- waiting to approve -->
-                    <template x-if="t.key === 'intake' && !t.data.empty">
+                    <template x-if="t.type === 'intake' && !t.data.empty">
                         <div class="flex items-baseline gap-3">
                             <span class="text-4xl font-black tabular-nums text-indigo-300"
                                 x-text="t.data.pending"></span>
@@ -677,14 +682,19 @@
                         <span class="font-normal text-gray-600">tall — a 2-row tile is twice this</span>
                     </label>
                     <div class="space-y-1.5 mb-3">
-                        <template x-for="(key, i) in draft.panel_widgets" :key="key">
+                        <!-- Keyed by INSTANCE id, not by type. Alpine uses this
+                             key to decide which DOM row belongs to which entry,
+                             so with two calendar tiles a type key would have
+                             made the second one silently unreachable — it would
+                             reuse the first one's row. -->
+                        <template x-for="(w, i) in draft.panel_widgets" :key="w.id">
                             <div class="flex items-center gap-2 bg-gray-800/70 rounded-lg px-3 py-2">
-                                <span x-text="widgetMeta(key).icon"></span>
+                                <span x-text="widgetMeta(w.type).icon"></span>
                                 <span class="flex-1 min-w-0">
                                     <span class="text-sm font-semibold text-gray-200"
-                                        x-text="widgetMeta(key).label"></span>
+                                        x-text="instanceLabel(w)"></span>
                                     <span class="block text-[0.7rem] text-gray-500 truncate"
-                                        x-text="widgetMeta(key).blurb"></span>
+                                        x-text="widgetMeta(w.type).blurb"></span>
                                 </span>
                                 <!-- Size, per tile. A wall board is a layout,
                                      not a list — the map earns two columns and
@@ -701,15 +711,15 @@
                                      are aiming at costs more than it explains. -->
                                 <label class="flex items-center gap-1 text-[0.7rem] text-gray-500">
                                     <input type="number" min="1" :max="cols()" step="1"
-                                        :value="spanOf(key, 'cols')"
-                                        @change="setSpan(key, 'cols', $event.target.value)"
+                                        :value="spanOf(w.id, 'cols')"
+                                        @change="setSpan(w.id, 'cols', $event.target.value)"
                                         class="w-12 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-1 py-0.5">
                                     cols
                                 </label>
                                 <label class="flex items-center gap-1 text-[0.7rem] text-gray-500">
                                     <input type="number" min="1" max="12" step="1"
-                                        :value="spanOf(key, 'rows')"
-                                        @change="setSpan(key, 'rows', $event.target.value)"
+                                        :value="spanOf(w.id, 'rows')"
+                                        @change="setSpan(w.id, 'rows', $event.target.value)"
                                         class="w-12 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-1 py-0.5">
                                     rows
                                 </label>
@@ -718,7 +728,7 @@
                                 <button @click="move(draft.panel_widgets, i, 1)"
                                     :disabled="i === draft.panel_widgets.length - 1"
                                     class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▼</button>
-                                <button @click="draft.panel_widgets.splice(i, 1)"
+                                <button @click="removeInstance(i)"
                                     class="text-gray-500 hover:text-red-400 px-1">✕</button>
                             </div>
                         </template>
@@ -726,11 +736,18 @@
                             None picked — the panel will show every tile but Intake.
                         </div>
                     </div>
+                    <!-- EVERY tile, every time, including ones already on the
+                         board. The palette used to hide what you had picked,
+                         which was right when a type could only appear once and
+                         is now the thing being fixed: two calendars showing
+                         different people is the point. -->
                     <div class="flex flex-wrap gap-1.5">
-                        <template x-for="w in unpickedWidgets()" :key="w.key">
-                            <button @click="draft.panel_widgets.push(w.key)"
+                        <template x-for="c in (catalog.widgets || [])" :key="c.key">
+                            <button @click="addInstance(c.key)"
                                 class="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-full px-3 py-1.5">
-                                <span x-text="w.icon"></span> <span x-text="w.label"></span>
+                                <span x-text="c.icon"></span> <span x-text="c.label"></span>
+                                <span x-show="countOfType(c.key)" class="text-gray-500"
+                                    x-text="'· ' + countOfType(c.key)"></span>
                             </button>
                         </template>
                     </div>
@@ -930,7 +947,9 @@
         // The Leaflet instance lives OUTSIDE Alpine. A map is a large graph of
         // DOM nodes, layers and event handlers, and handing it to a reactive
         // proxy means every one of those gets wrapped on the way past.
-        let boardMap = null;
+        // Keyed by INSTANCE id: the board can carry more than one map tile now,
+        // and a single module variable would have had them fighting over it.
+        const boardMaps = {};
 
         function homeBoard() {
             const params = new URLSearchParams(window.location.search);
@@ -980,7 +999,7 @@
                 // Weather rides in the clock strip, so it does not also take a
                 // box in the grid.
                 tiles() {
-                    return (this.board.tiles || []).filter(t => t.key !== 'weather');
+                    return (this.board.tiles || []).filter(t => t.type !== 'weather');
                 },
 
                 start() {
@@ -1135,7 +1154,7 @@
                 // The forecast rides in the clock strip now, so the tile's data
                 // is reused rather than fetched twice.
                 forecast() {
-                    const t = (this.board.tiles || []).find(x => x.key === 'weather');
+                    const t = (this.board.tiles || []).find(x => x.type === 'weather');
                     return (t && !t.data.empty && t.data.days) ? t.data.days.slice(0, 4) : [];
                 },
 
@@ -1193,10 +1212,14 @@
                 // three columns of a twelve-column board — a quarter — so the
                 // count is the tile's own span measured in quarters. Widening
                 // the tile adds cards; it does not stretch them.
-                agendaCols(breakpoint) {
+                // Per INSTANCE: two calendar tiles of different widths fit a
+                // different number of day cards across, and reading the width
+                // off the type would have given the narrow one the wide one's
+                // layout.
+                agendaCols(instanceId, breakpoint) {
                     const cols = this.cols();
                     const across = breakpoint === 'md' ? Math.ceil(cols / 2) : cols;
-                    const s = (this.board.spans || {})['calendar'] || {};
+                    const s = (this.board.spans || {})[instanceId] || {};
                     const span = Math.min(across, Math.max(1, parseInt(s.cols, 10)
                                                               || this.defaultCols()));
                     return Math.max(1, Math.floor(span * 4 / across));
@@ -1209,10 +1232,22 @@
                 // cached slice rather than from /api/schedule, which writes a
                 // cache and kicks a background refresh (rule 3: a display does
                 // not change what it is displaying).
+                // Every driving tile on the board, not "the" one. The renderer
+                // in components/schedule_timeline.html keeps its state in
+                // MODULE variables, so instances are drawn strictly one at a
+                // time: fill the globals, render into that instance's element,
+                // move on. Two of them cannot be drawn concurrently, which is
+                // fine — this is a loop, not a race — but it is the reason the
+                // component cannot simply be instantiated twice.
                 syncTimeline() {
-                    const tile = (this.board.tiles || []).find(x => x.key === 'drives');
-                    const el = document.getElementById('board-timeline');
-                    if (!tile || !el || !(tile.data || {}).schedule) return;
+                    (this.board.tiles || [])
+                        .filter(t => t.type === 'drives')
+                        .forEach(tile => this.renderTimelineInto(tile));
+                },
+
+                renderTimelineInto(tile) {
+                    const el = document.getElementById('board-timeline-' + tile.id);
+                    if (!el || !(tile.data || {}).schedule) return;
                     const data = tile.data.schedule;
                     try {
                         currentData = data;
@@ -1227,15 +1262,15 @@
                         // Errands are drives somebody still has to make. The
                         // page has a switch for them; a board that hid them
                         // would be answering a different question.
-                        window.showErrands = true;
+                        window.showErrands = tile.data.show_errands !== false;
                         renderSchedule(data, {
-                            targetContainerId: 'board-timeline',
+                            targetContainerId: 'board-timeline-' + tile.id,
                             dateFilter: data.date,
                             // A wall board never drags an event onto another
                             // driver by being leaned against.
                             isReadOnly: true, isKiosk: true
                         });
-                        this.scrollTimelineToNext(tile.data.next_event_id);
+                        this.scrollTimelineToNext(tile.id, tile.data.next_event_id);
                     } catch (e) {
                         console.warn('[board] timeline render failed', e);
                     }
@@ -1246,8 +1281,8 @@
                 // past is asking about. No next drive means the day is behind
                 // us: the timeline stays up and rests at its bottom — the hero
                 // already says "nothing left to drive", once is enough.
-                scrollTimelineToNext(eventId) {
-                    const box = document.getElementById('board-timeline-scroll');
+                scrollTimelineToNext(instanceId, eventId) {
+                    const box = document.getElementById('board-timeline-scroll-' + instanceId);
                     if (!box) return;
                     if (!eventId) { box.scrollTop = box.scrollHeight; return; }
                     const next = document.getElementById('event-' + eventId);
@@ -1264,15 +1299,39 @@
                 // /api/family/locations: the board already read every member's
                 // Home Assistant state to build this payload, and asking twice
                 // would double what the panel costs HA to draw one picture.
+                // One Leaflet map PER INSTANCE, held by instance id. Worth
+                // knowing before adding map tiles freely: each one is a real
+                // Leaflet instance with its own tile requests and its own
+                // layers, and this board runs on a Raspberry Pi. Two is a
+                // choice; six is a slideshow.
                 async syncMap() {
-                    const tile = (this.board.tiles || []).find(x => x.key === 'map');
-                    const el = document.getElementById('board-map');
-                    if (!tile || !el || !tile.data || !tile.data.mapped) return;
+                    const live = new Set();
+                    for (const tile of (this.board.tiles || []).filter(t => t.type === 'map')) {
+                        live.add(tile.id);
+                        await this.renderMapInto(tile);
+                    }
+                    // An instance the household removed takes its map with it,
+                    // rather than leaving one bound to a detached node forever.
+                    Object.keys(boardMaps).forEach(id => {
+                        if (!live.has(id)) {
+                            try { boardMaps[id].destroy(); } catch (e) { }
+                            delete boardMaps[id];
+                        }
+                    });
+                },
+
+                async renderMapInto(tile) {
+                    const el = document.getElementById('board-map-' + tile.id);
+                    if (!el || !tile.data || !tile.data.mapped) return;
                     // A map bound to an element Alpine has since replaced is
                     // drawing into a node nobody can see.
-                    if (boardMap && boardMap.el !== el) { boardMap.destroy(); boardMap = null; }
-                    if (!boardMap) {
-                        boardMap = FamilyMap.create(el, {
+                    const held = boardMaps[tile.id];
+                    if (held && held.el !== el) {
+                        try { held.destroy(); } catch (e) { }
+                        delete boardMaps[tile.id];
+                    }
+                    if (!boardMaps[tile.id]) {
+                        boardMaps[tile.id] = FamilyMap.create(el, {
                             interactive: false,   // the tile is a door; see the markup
                             popups: false,        // nothing to tap means nothing to open
                             markerSize: 30,
@@ -1280,8 +1339,8 @@
                         });
                     }
                     try {
-                        await boardMap.ensure();
-                        await boardMap.refresh(tile.data.people);
+                        await boardMaps[tile.id].ensure();
+                        await boardMaps[tile.id].refresh(tile.data.people);
                     } catch (e) { /* no Leaflet, no map: the chips still say who is where */ }
                 },
 
@@ -1312,7 +1371,13 @@
                         ]);
                         this.catalog = c;
                         this.draft = {
-                            panel_widgets: (s.panel_widgets || []).slice(),
+                            // Upgraded on the way in, exactly as the server
+                            // does it: a stored list of type names becomes
+                            // instances whose ids ARE those names, so the sizes
+                            // already stored under them still line up. Saving
+                            // is what writes the new shape back — nothing
+                            // rewrites a household's settings for looking.
+                            panel_widgets: this.toInstances(s.panel_widgets),
                             panel_tabs: (s.panel_tabs || []).slice(),
                             panel_idle_return_seconds:
                                 s.panel_idle_return_seconds === undefined
@@ -1348,14 +1413,72 @@
                     } catch (e) { /* setup stays on defaults */ }
                 },
 
-                widgetMeta(key) {
-                    return (this.catalog.widgets || []).find(w => w.key === key)
-                        || { key, icon: '▫️', label: key, blurb: '' };
+                // Both stored shapes in, instances out. Mirrors
+                // home_board.normalize_instances; kept deliberately small so
+                // the two cannot drift on anything but the id rule, which is
+                // shared with newInstanceId().
+                toInstances(raw) {
+                    const out = [], taken = new Set();
+                    (raw || []).forEach(item => {
+                        const w = (typeof item === 'string') ? { type: item } : (item || {});
+                        const type = String(w.type || w.key || '').trim().toLowerCase();
+                        if (!type) return;
+                        let id = String(w.id || '').trim();
+                        if (!id || taken.has(id)) {
+                            id = taken.has(type) ? null : type;
+                            if (!id) { let n = 2; while (taken.has(`${type}-${n}`)) n++; id = `${type}-${n}`; }
+                        }
+                        taken.add(id);
+                        out.push({ id, type, config: { ...(w.config || {}) } });
+                    });
+                    return out;
                 },
 
-                unpickedWidgets() {
-                    return (this.catalog.widgets || [])
-                        .filter(w => !this.draft.panel_widgets.includes(w.key));
+                widgetMeta(type) {
+                    return (this.catalog.widgets || []).find(w => w.key === type)
+                        || { key: type, icon: '▫️', label: type, blurb: '' };
+                },
+
+                // What this ROW is called. A board with three calendar tiles
+                // needs three distinguishable rows or the editor is a guessing
+                // game: an instance's own title wins, then the type's label,
+                // and a repeat says which repeat it is.
+                instanceLabel(w) {
+                    const own = ((w.config || {}).title || '').trim();
+                    if (own) return own;
+                    const label = this.widgetMeta(w.type).label;
+                    const same = this.draft.panel_widgets.filter(x => x.type === w.type);
+                    if (same.length < 2) return label;
+                    return `${label} (${same.indexOf(w) + 1} of ${same.length})`;
+                },
+
+                countOfType(type) {
+                    return this.draft.panel_widgets.filter(w => w.type === type).length;
+                },
+
+                // `calendar`, then `calendar-2`. Mirrors the server's rule in
+                // home_board._instance_id so a board built here and a board
+                // normalised there agree on what things are called — and so the
+                // FIRST of a type keeps the bare id its sizes are stored under.
+                newInstanceId(type) {
+                    const taken = new Set(this.draft.panel_widgets.map(w => w.id));
+                    if (!taken.has(type)) return type;
+                    let n = 2;
+                    while (taken.has(`${type}-${n}`)) n++;
+                    return `${type}-${n}`;
+                },
+
+                addInstance(type) {
+                    this.draft.panel_widgets.push(
+                        { id: this.newInstanceId(type), type, config: {} });
+                },
+
+                removeInstance(i) {
+                    const [gone] = this.draft.panel_widgets.splice(i, 1);
+                    // Its size goes with it. Leaving the entry behind would
+                    // silently re-apply an old width to the next instance that
+                    // happened to be given the same id.
+                    if (gone) delete this.draft.panel_tile_spans[gone.id];
                 },
 
                 tabMeta(slug) {
@@ -1382,8 +1505,10 @@
                     else delete this.draft.panel_page_backgrounds[slug];
                 },
 
-                spanOf(key, axis) {
-                    const span = this.draft.panel_tile_spans[key] || {};
+                // Addressed by INSTANCE id — two calendar tiles are two
+                // sizes, and keying this by type gave them one.
+                spanOf(instanceId, axis) {
+                    const span = this.draft.panel_tile_spans[instanceId] || {};
                     if (span[axis]) return String(span[axis]);
                     // An unsized tile shows the width it is actually DRAWN at,
                     // not 1 — a field reading "1" beside a quarter-width tile
@@ -1391,18 +1516,18 @@
                     return String(axis === 'cols' ? this.defaultCols() : 1);
                 },
 
-                setSpan(key, axis, value) {
+                setSpan(instanceId, axis, value) {
                     const max = axis === 'cols' ? this.cols() : 12;
                     const n = Math.min(max, Math.max(1, parseInt(value, 10) || 1));
-                    const cur = { ...(this.draft.panel_tile_spans[key] || {}) };
+                    const cur = { ...(this.draft.panel_tile_spans[instanceId] || {}) };
                     cur[axis] = n;
                     // A tile back at exactly the default stops being stored,
                     // rather than persisting numbers nobody chose. The default
                     // WIDTH is a quarter of the grid now, not 1.
                     if ((cur.cols || 0) === this.defaultCols() && (cur.rows || 1) === 1) {
-                        delete this.draft.panel_tile_spans[key];
+                        delete this.draft.panel_tile_spans[instanceId];
                     } else {
-                        this.draft.panel_tile_spans[key] = cur;
+                        this.draft.panel_tile_spans[instanceId] = cur;
                     }
                 },
 
