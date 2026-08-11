@@ -43,6 +43,7 @@ def check(cond, msg):
 _D = __import__('datetime')
 TODAY = _D.date.today().isoformat()
 TOMORROW = (_D.date.today() + _D.timedelta(days=1)).isoformat()
+DAY_AFTER_NEXT = (_D.date.today() + _D.timedelta(days=2)).isoformat()
 # Relative to the machine's real clock, because the panel re-checks the hero
 # against the browser's own time between polls — a fixture pinned to a wall
 # time would test nothing after midnight.
@@ -64,7 +65,11 @@ SOON_LEAVE = (_NOW + _D.timedelta(minutes=106, seconds=30)).isoformat()
 
 
 def _board(hero=None):
-    at = lambda h, m=0: f"{TODAY}T{h:02d}:{m:02d}:00"
+    # `d` is days from today, so a fixture can reach into the range a
+    # multi-day tile is configured for.
+    at = lambda h, m=0, d=0: (
+        f"{(_D.date.today() + _D.timedelta(days=d)).isoformat()}"
+        f"T{h:02d}:{m:02d}:00")
     return {
         'now': at(15, 20), 'date_label': 'Saturday, August 8', 'weather': None,
         'temp_now': 71, 'condition': 'sunny', 'condition_emoji': '☀️',
@@ -83,6 +88,11 @@ def _board(hero=None):
         'tiles': [
             {'id': 'drives', 'type': 'drives', 'icon': '🚗', 'label': 'The rest of the day', 'data': {
                 'count': 2, 'next_event_id': 'e1',
+                # The RANGE the tile was configured for. renderSchedule seeds
+                # its day map from these and draws one timeline section per
+                # day; `days` is what tells the client to withhold dateFilter,
+                # the option that narrows that loop back to one.
+                'days': 3, 'start_date': TODAY, 'end_date': DAY_AFTER_NEXT,
                 'schedule': {
                     'date': TODAY,
                     'events': [
@@ -90,8 +100,10 @@ def _board(hero=None):
                          'end': at(17, 30), 'location': 'Academy'},
                         {'id': 'e2', 'title': 'Pickup', 'start': at(17, 45),
                          'end': at(18, 15), 'location': 'Academy'},
+                        {'id': 'e3', 'title': 'Orthodontist', 'start': at(9, 0, 2),
+                         'end': at(10, 0, 2), 'location': 'High Street'},
                     ],
-                    'assignments': {'e1': 'drv1', 'e2': 'drv2'},
+                    'assignments': {'e1': 'drv1', 'e2': 'drv2', 'e3': 'drv1'},
                     'ghost_assignments': {}, 'ghost_drivers': [], 'car_assignments': {},
                     'unassigned': [], 'no_location': [], 'overridden_events': [],
                     'lateness_warnings': [], 'scheduled_errands': [],
@@ -190,6 +202,10 @@ setTimeout(() => {
       mounted: !!tl,
       blocks: tl ? tl.querySelectorAll('[id^="event-"]').length : 0,
       draggable: tl ? tl.querySelectorAll('[draggable="true"]').length : 0,
+      // One per DAY SECTION. renderSchedule draws a complete timeline per day
+      // in its range, and this is the heading each one carries.
+      dayTitles: tl ? [...tl.querySelectorAll('.schedule-date-title')]
+        .map(h => h.textContent.replace(/\s+/g, ' ').trim()) : [],
       text: tl ? tl.textContent.replace(/\s+/g, ' ').trim() : ''
     },
     agenda: {
@@ -416,9 +432,12 @@ def scenario_the_drives_tile_draws_the_real_timeline():
         return
     tl = got['timeline']
     check(tl['mounted'], "the timeline has nowhere to mount")
-    check(tl['blocks'] == 2,
-          f"two drives were sent and {tl['blocks']} were drawn — an empty tile "
-          "reads exactly like a quiet evening")
+    # Three across the fixture's three-day range: two today and one two days
+    # out. The count is every drive the tile was SENT, drawn across however
+    # many day sections the range produced.
+    check(tl['blocks'] == 3,
+          f"three drives were sent and {tl['blocks']} were drawn — an empty "
+          "tile reads exactly like a quiet evening")
     for want in ('Dribble and Swish', 'Sam', 'Vovo', '4:00 PM'):
         check(want in tl['text'],
               f"the timeline drew without {want!r}: {tl['text'][:200]}")
@@ -513,6 +532,40 @@ def scenario_the_map_tile_is_only_a_map():
     check(got['map']['mounted'], "the map has nowhere to mount")
     check(got['map']['listRows'] == 0,
           f"the map tile is listing people again ({got['map']['listRows']} chips)")
+
+
+def scenario_a_multi_day_driving_tile_draws_a_timeline_per_day():
+    """The correction. Multi-day was never a missing capability of the
+    timeline: `renderSchedule` seeds its day map from
+    currentStartDate..currentEndDate and loops `sortedDates.forEach`, drawing
+    one COMPLETE timeline section per day — which is how the Schedule page
+    shows a week in kiosk mode. The board tile was narrowing it away by passing
+    `dateFilter`, and the first attempt at "multiple days" answered a question
+    nobody asked with a flat list instead.
+
+    So this asserts the thing itself, in a real DOM. Asserting the payload
+    alone would have passed for the broken version too.
+
+    THE EMPTY DAY IS SKIPPED, and that is the Schedule page's rule rather than
+    a gap here: in read-only mode a driver column with no real events is
+    hidden, and a date left with no columns is not drawn at all. The fixture
+    covers three days and has drives on two of them, so two sections is the
+    right answer — and it is right because the tile shares that renderer
+    instead of reimplementing it, which is the whole reason the tile calls
+    `renderSchedule` in the first place.
+    """
+    got = _run()
+    if got is None:
+        return
+    titles = got['timeline']['dayTitles']
+    check(len(titles) == 2,
+          f"a 3-day driving tile with drives on two of them drew "
+          f"{len(titles)} day sections: {titles}")
+    check(len(set(titles)) == 2,
+          f"the sections are not two different days: {titles}")
+    check('Orthodontist' in got['timeline']['text'],
+          "the drive two days out was not drawn, so the range reached the "
+          "container but not the events")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

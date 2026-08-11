@@ -1437,16 +1437,32 @@
                         driversMap = {};
                         (data.drivers || []).concat(data.ghost_drivers || [])
                             .forEach(d => { driversMap[d.id] = d; });
-                        const day = new Date(data.date + 'T00:00:00');
-                        currentStartDate = day;
-                        currentEndDate = day;
+                        // THE RANGE, and this is the whole multi-day mechanism.
+                        // `renderSchedule` seeds its day map from
+                        // currentStartDate..currentEndDate and then loops
+                        // `sortedDates.forEach`, drawing one COMPLETE timeline
+                        // section per day into the container — which is exactly
+                        // how the Schedule page shows a week in kiosk mode. So
+                        // several days here is not a summary or a second
+                        // renderer; it is the same drawing, N times.
+                        //
+                        // `dateFilter` is the option that narrows that loop
+                        // back to a single day, so a multi-day tile must NOT
+                        // pass it. Passing it was why this tile looked like it
+                        // could only ever be today.
+                        const first = tile.data.start_date || data.date;
+                        const last = tile.data.end_date || first;
+                        currentStartDate = new Date(first + 'T00:00:00');
+                        currentEndDate = new Date(last + 'T00:00:00');
                         // Errands are drives somebody still has to make. The
                         // page has a switch for them; a board that hid them
                         // would be answering a different question.
                         window.showErrands = tile.data.show_errands !== false;
                         renderSchedule(data, {
                             targetContainerId: 'board-timeline-' + tile.id,
-                            dateFilter: data.date,
+                            // Only when the tile IS one day. Withheld otherwise
+                            // — see above.
+                            dateFilter: (tile.data.days || 1) > 1 ? null : first,
                             // A wall board never drags an event onto another
                             // driver by being leaned against.
                             isReadOnly: true, isKiosk: true

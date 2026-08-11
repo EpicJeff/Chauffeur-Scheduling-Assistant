@@ -175,19 +175,62 @@ def scenario_the_views_are_different_shapes_not_the_same_one():
               f"the list view is not a list: {l.keys()}")
 
 
-def scenario_a_driving_tile_asked_for_a_week_is_not_a_timeline():
-    """The timeline is the Drives page's own renderer and draws exactly one
-    day. Offering "7 days" on it would have been a setting that silently did
-    nothing, so the day count belongs to the list view and says so."""
-    days_opt = next(o for w in home_board.WIDGETS if w['key'] == 'drives'
-                    for o in w['options'] if o['key'] == 'days')
-    check('list' in (days_opt.get('help') or '').lower(),
-          "the drives day count no longer says it is list-view only, so it "
-          "reads as a setting the timeline ignores")
+def scenario_a_driving_tile_asked_for_a_week_draws_a_week_of_timelines():
+    """This was got wrong once and the wrong version shipped for a version.
+
+    `renderSchedule` seeds its day map from currentStartDate..currentEndDate
+    and then loops `sortedDates.forEach`, drawing one COMPLETE timeline section
+    per day — which is exactly how the Schedule page shows a week in kiosk
+    mode. Multi-day was never a missing feature; the tile was narrowing it away
+    by passing `dateFilter`, which is the option that collapses that loop back
+    to a single day.
+
+    So a multi-day timeline tile has to send the RANGE, and the client has to
+    withhold `dateFilter`. Both halves are asserted, because either one alone
+    silently renders today and looks like the setting doing nothing."""
+    # The slice directly, so this holds on an empty household too: a household
+    # with no drivers has no drives tile at all, and that is a different rule.
+    day = datetime.date(2026, 9, 7)
+    sched = {'events': [
+        {'id': 'a', 'start': f'{day}T09:00:00', 'end': f'{day}T10:00:00'},
+        {'id': 'b', 'start': f'{day + datetime.timedelta(days=3)}T09:00:00',
+         'end': f'{day + datetime.timedelta(days=3)}T10:00:00'},
+        {'id': 'far', 'start': f'{day + datetime.timedelta(days=30)}T09:00:00',
+         'end': f'{day + datetime.timedelta(days=30)}T10:00:00'},
+    ]}
+    one = home_board._schedule_slice(day, sched, days=1)
+    five = home_board._schedule_slice(day, sched, days=5)
+    check([e['id'] for e in one['events']] == ['a'],
+          f"a one-day slice stopped being one day: {one['events']}")
+    check([e['id'] for e in five['events']] == ['a', 'b'],
+          f"a five-day slice did not span five days (and must still exclude "
+          f"the one a month out): {[e['id'] for e in five['events']]}")
+
+    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    block = tpl[tpl.index('renderTimelineInto(tile)'):]
+    block = block[:block.index('scrollTimelineToNext(tile.id')]
+    check('tile.data.start_date' in block and 'tile.data.end_date' in block,
+          "the client no longer sets the timeline's date RANGE, so every "
+          "driving tile is one day again whatever it was configured for")
+    check('> 1 ? null :' in block,
+          "the client passes dateFilter unconditionally again — that is the "
+          "option that narrows renderSchedule back to a single day, and it is "
+          "exactly what made multi-day look impossible")
+
+
+def scenario_the_compact_list_is_a_width_answer_not_a_span_answer():
+    """The list view is for a tile too narrow to read an hour rail in. It is
+    NOT the multi-day mechanism — that is the timeline's own loop — and the
+    day count has to work in both."""
     board = home_board.build('[{"type": "drives", "config": {"view": "list", "days": 3}}]')
     data = board['tiles'][0]['data']
     check(data.get('view') == 'list' or data.get('empty'),
           f"a list-view driving tile still returned a timeline: {data.keys()}")
+    days_opt = next(o for w in home_board.WIDGETS if w['key'] == 'drives'
+                    for o in w['options'] if o['key'] == 'days')
+    check('list' not in (days_opt.get('help') or '').lower(),
+          "the drives day count still claims to be list-view only, which is "
+          "the mistake this scenario exists to keep out")
 
 
 def scenario_an_empty_multi_select_means_everyone():

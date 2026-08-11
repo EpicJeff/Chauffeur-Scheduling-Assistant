@@ -115,15 +115,17 @@ WIDGETS = [
     {'key': 'drives', 'icon': '🚗', 'label': 'The rest of the day',
      'blurb': "Every drive still ahead today, and who has it.",
      'options': [
-         # The timeline is the Drives page's own renderer and draws ONE day —
-         # that is what makes it the real thing rather than a lookalike. A tile
-         # asked for a week therefore cannot be a timeline, so the view and the
-         # day count are one decision offered as two fields, and `days` says so.
+         # The timeline is the Drives page's own renderer, and it draws one
+         # section PER DAY in its range — the same multi-day view the Schedule
+         # page shows in kiosk mode. So `days` applies to both shapes, and the
+         # choice between them is about WIDTH, not about span: an hour rail
+         # needs room, and a tile too narrow for one can still say the same
+         # thing as a list.
          _opt('view', 'View', 'choice', 'timeline', choices=[
-             {'value': 'timeline', 'label': 'Timeline (today)'},
-             {'value': 'list', 'label': 'List of drives'}]),
+             {'value': 'timeline', 'label': 'Timeline'},
+             {'value': 'list', 'label': 'Compact list'}]),
          _opt('days', 'Days', 'int', 1, min=1, max=14,
-              help='List view only — the timeline is always today.'),
+              help='One timeline per day, as the Schedule page shows them.'),
          _opt('drivers', 'Drivers', 'select', [], source='drivers', multi=True,
               help='Leave empty for everyone.'),
          _opt('errands', 'Show errands', 'bool', True),
@@ -603,8 +605,17 @@ def _hero_unbuilt(sched: dict) -> bool:
 # --- tile builders --------------------------------------------------------
 # Each returns the tile's payload, or None when it has nothing to say.
 
-def _schedule_slice(day: datetime.date, sched: dict, drivers=None) -> dict:
-    """One day of the cached schedule, in the shape `renderSchedule` reads.
+def _schedule_slice(day: datetime.date, sched: dict, drivers=None,
+                    days: int = 1) -> dict:
+    """A RANGE of the cached schedule, in the shape `renderSchedule` reads.
+
+    `days` is how many days from `day` inclusive. It is not a summary of
+    several days — `renderSchedule` loops `sortedDates.forEach` and draws one
+    complete timeline section PER DAY into its container, which is exactly how
+    the Schedule page shows a week in kiosk mode. The tile hands over the
+    range and the component does the rest; the only thing the caller must do
+    is set `currentStartDate`/`currentEndDate` and NOT pass `dateFilter`,
+    which is the option that narrows the loop back down to one.
 
     The drives tile draws the REAL Drives timeline — the same function, from
     `components/schedule_timeline.html` — and that function wants a schedule
@@ -625,8 +636,13 @@ def _schedule_slice(day: datetime.date, sched: dict, drivers=None) -> dict:
     to leave a gap where it is: a timeline with the day's other drives silently
     removed reads as a free afternoon.
     """
-    events = [e for e in (sched.get('events') or [])
-              if (_parse(e.get('start')) or datetime.datetime.min).date() == day]
+    last = day + datetime.timedelta(days=max(1, days) - 1)
+
+    def in_range(value) -> bool:
+        d = (_parse(value) or datetime.datetime.min).date()
+        return day <= d <= last
+
+    events = [e for e in (sched.get('events') or []) if in_range(e.get('start'))]
     keep = {e.get('id') for e in events}
 
     def prune(edges):
@@ -638,7 +654,7 @@ def _schedule_slice(day: datetime.date, sched: dict, drivers=None) -> dict:
         return out
 
     errands = [er for er in (sched.get('scheduled_errands') or [])
-               if (_parse(er.get('start_time')) or datetime.datetime.min).date() == day]
+               if in_range(er.get('start_time'))]
 
     try:
         completed = storage.get_completed_drives()
@@ -700,6 +716,7 @@ def _tile_drives(now, runs, sched=None, config=None, **_):
     view = _cfg_str(config, 'view', 'timeline') or 'timeline'
     show_errands = _cfg_bool(config, 'errands', True)
     only = set(_cfg_ids(config, 'drivers'))
+    span = _cfg_int(config, 'days', 1, 1, 14)
 
     # Applied to the RUNS as well as to the timeline, so the count, the "next"
     # scroll target and the drawing all agree about whose day this tile is.
@@ -713,12 +730,11 @@ def _tile_drives(now, runs, sched=None, config=None, **_):
     # while the hero read the clock is what let the wall contradict itself.
     rest = [r for r in runs if not r['over']]
 
-    # A list of drives, which is the only shape that can answer "the next few
-    # days" — the timeline is the Drives page's own renderer and draws exactly
-    # one day. Offering "7 days" on a timeline would have been a setting that
-    # silently did nothing.
+    # The COMPACT shape, for a tile too narrow to read a timeline in. Not the
+    # multi-day answer — the timeline does several days natively, one section
+    # per day, which is what the Schedule page shows in kiosk mode — just a
+    # different way of saying the same thing where an hour rail will not fit.
     if view == 'list':
-        span = _cfg_int(config, 'days', 1, 1, 14)
         rows, seen_days = [], set()
         for i in range(span):
             day = now.date() + datetime.timedelta(days=i)
@@ -738,7 +754,10 @@ def _tile_drives(now, runs, sched=None, config=None, **_):
         return {'view': 'list', 'rows': rows[:14], 'count': len(rows),
                 'more': max(0, len(rows) - 14)}
 
-    if not runs:
+    # `runs` is TODAY's. A tile showing a week has plenty to draw on a day when
+    # today happens to be clear, so the nothing-to-say test only applies to a
+    # single-day tile — otherwise a quiet Sunday would blank a whole week.
+    if not runs and span == 1:
         if not storage.get_all_drivers():
             return None                      # no drivers: the feature is unused
         # NOTHING IN THE CACHE AT ALL is not the same claim as a day with no
@@ -749,15 +768,27 @@ def _tile_drives(now, runs, sched=None, config=None, **_):
         if not (sched or {}).get('events'):
             return {'empty': "Waiting for the schedule to be built."}
         return {'empty': "No drives on the schedule today."}
+    if not storage.get_all_drivers():
+        return None
 
     sched = sched if sched is not None else (storage.get_cached_schedule() or {})
+    first = now.date()
     return {
         'view': 'timeline',
         'count': len(rest),
         # Read by the client, which hands it to `renderSchedule` — the page's
         # own errand switch, driven per tile.
         'show_errands': show_errands,
-        'schedule': _schedule_slice(now.date(), sched, drivers=only or None),
+        # The RANGE, which is what makes a multi-day timeline tile possible at
+        # all: `renderSchedule` draws one complete timeline section per day in
+        # its date range, exactly as the Schedule page does in kiosk mode. The
+        # client sets the range from these two and withholds `dateFilter`,
+        # which is the option that narrows that loop back down to one day.
+        'days': span,
+        'start_date': first.isoformat(),
+        'end_date': (first + datetime.timedelta(days=span - 1)).isoformat(),
+        'schedule': _schedule_slice(first, sched, drivers=only or None,
+                                    days=span),
         # Where to scroll the timeline so the tile opens on the part of the day
         # that has not happened. The whole day is drawn — a wall panel showing
         # a drive that finished an hour ago at the top of the tile is showing
