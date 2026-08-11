@@ -1504,6 +1504,35 @@
             });
         };
 
+        // The PWA carries its OWN prompt family — it does not include
+        // components/control_center.html, which is why a promptChoice that
+        // existed only there was undefined here and the Assign button did
+        // nothing at all. Same signature as the shared one, so a caller can
+        // move between surfaces without knowing which modal it got.
+        window.promptChoice = function (title, message, options = []) {
+            return new Promise(resolve => {
+                const rows = (options || []).map((o, i) => `
+                    <button data-pick="${i}"
+                        class="w-full text-left px-4 py-3 rounded-xl bg-gray-950 border border-gray-700
+                               text-gray-100 text-[15px] font-bold active:bg-gray-800">${mfEscape(o.label)}</button>`).join('');
+                _pwaModal(`
+                    <div class="text-gray-100 font-bold text-lg mb-1">${mfEscape(title)}</div>
+                    ${message ? `<div class="text-gray-400 text-sm mb-3 leading-snug">${mfEscape(message)}</div>` : ''}
+                    <div class="flex flex-col gap-2 max-h-[50vh] overflow-y-auto">${rows}</div>
+                    <div class="flex justify-end mt-4">
+                        <button data-no class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Cancel</button>
+                    </div>`, (overlay, close) => {
+                    overlay.querySelectorAll('[data-pick]').forEach(b => {
+                        b.onclick = () => { close(); resolve(options[+b.dataset.pick].value); };
+                    });
+                    overlay.querySelector('[data-no]').onclick = () => { close(); resolve(null); };
+                    overlay.addEventListener('click', e => {
+                        if (e.target === overlay) { close(); resolve(null); }
+                    });
+                });
+            });
+        };
+
         // --- Intake proposals (parents approve/ignore from the Family tab) ---
         let proposalsData = [];
         let proposalTargets = null;  // [{id, label}] lazily fetched once

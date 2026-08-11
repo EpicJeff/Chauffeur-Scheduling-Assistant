@@ -363,9 +363,21 @@ def scenario_the_chore_hand_path_is_reachable():
           "and tonight's occurrence is handed out with a button beside Claim")
     check("isParent && !c.owner" in app,
           "parent-only, and never on a chore somebody owns")
-    cc = open(os.path.join(TPL, 'components', 'control_center.html'), encoding='utf-8').read()
-    check('promptChoice' in cc,
-          "the person picker is a shared modal, not a browser dialog")
+    # REACHABILITY, again. Asserting `promptChoice` existed in
+    # control_center.html passed while the PWA — which does NOT include that
+    # component and carries its own prompt family — threw a ReferenceError the
+    # moment anybody tapped Assign, so the button did nothing at all. Every
+    # page that CALLS it must be able to reach it.
+    for name in ('app.html', 'chores.html', 'errands.html', 'dashboard.html',
+                 'config.html', 'intake.html'):
+        src = open(os.path.join(TPL, name), encoding='utf-8').read()
+        if 'promptChoice(' not in src:
+            continue
+        defines = 'window.promptChoice' in src
+        includes = "include 'components/control_center.html'" in src
+        check(defines or includes,
+              f"{name} calls promptChoice and can actually reach one "
+              f"(defines={defines}, includes control_center={includes})")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
