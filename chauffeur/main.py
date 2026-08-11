@@ -3198,6 +3198,11 @@ def ignored_senders(min_ignored: int = 2):
     from services import email_ingest
     blocklist = (storage.get_settings() or {}).get('ingest_sender_blocklist') or []
     streaks = storage.get_app_state('intake_ignore_streaks') or {}
+    # Dismissals record the ignore COUNT at the moment you said "not now", so
+    # the offer returns on fresh evidence rather than on a timer. Same bar it
+    # had to clear the first time — deciding not to block a sender today is an
+    # answer, and re-asking on the very next ignore would not respect it.
+    dismissed = storage.get_app_state('intake_sender_dismissals') or {}
     by_sender = {}
     for p in storage.get_proposals():
         sender = (p.get('source_from') or '').strip().lower()
@@ -3218,12 +3223,17 @@ def ignored_senders(min_ignored: int = 2):
         if ts >= row['last_ts']:
             row['last_ts'] = ts
             row['last_subject'] = p.get('source_subject') or ''
+    bar = max(1, int(min_ignored or 2))
     out = []
     for row in by_sender.values():
-        if row['ignored'] < max(1, int(min_ignored or 2)):
+        if row['ignored'] < bar:
             continue
         if email_ingest.sender_blocked(row['sender'], blocklist):
             continue                       # already handled, nothing to offer
+        since = row['ignored'] - int(dismissed.get(row['sender']) or 0)
+        if row['sender'] in dismissed and since < bar:
+            continue                       # answered, and nothing new since
+        row['ignored_since_dismissed'] = since if row['sender'] in dismissed else row['ignored']
         at = row['sender'].rfind('@')
         row['domain'] = row['sender'][at:] if at > -1 else ''
         row['streak'] = int(streaks.get(row['sender']) or 0)
@@ -3278,6 +3288,32 @@ def block_ingest_sender(req: IngestBlockRequest):
                             'outcome': f'skip rule {verb} — {what} will be skipped'})
     return {"status": "blocked", "pattern": pattern,
             "ingest_sender_blocklist": current}
+
+
+@app.post("/api/ingest/dismiss-sender")
+def dismiss_ignored_sender(req: IngestBlockRequest):
+    """"Not now" for a sender in the keep-ignoring list.
+
+    The list is a prompt, not a backlog: a row that cannot be answered sits
+    there forever and trains you to stop reading the panel. Dismissing stores
+    the ignore count as it stands, so the offer comes back only when there is
+    fresh evidence — the same number of new ignores it took to appear the
+    first time — rather than on the next single ignore or a timer.
+    """
+    sender = (req.pattern or '').strip().lower()
+    if not sender:
+        raise HTTPException(status_code=400, detail="A sender is required")
+    counts = {}
+    for p in storage.get_proposals('ignored'):
+        s = (p.get('source_from') or '').strip().lower()
+        if s:
+            counts[s] = counts.get(s, 0) + 1
+    dismissed = dict(storage.get_app_state('intake_sender_dismissals') or {})
+    dismissed[sender] = counts.get(sender, 0)
+    storage.set_app_state('intake_sender_dismissals', dismissed)
+    storage.add_ingest_log({'from': sender, 'subject': '(skip rule)',
+                            'outcome': 'dismissed — will ask again if they keep being ignored'})
+    return {"status": "dismissed", "sender": sender, "at_count": dismissed[sender]}
 
 
 @app.post("/api/ingest/unblock-sender")

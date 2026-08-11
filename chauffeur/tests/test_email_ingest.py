@@ -477,6 +477,49 @@ def test_past_ignores_can_still_be_blocked():
     storage.event_proposals_table.truncate()
 
 
+def test_dismissing_a_sender_is_an_answer_that_expires():
+    """"Not now" has to be a real answer or the list becomes a backlog nobody
+    reads. Dismissal records the ignore COUNT, so the offer returns on fresh
+    evidence rather than a timer — and needs the same number of new ignores it
+    took to appear the first time, because re-asking on the very next one
+    would not respect the answer."""
+    print("dismissing a sender ...")
+    import main
+    storage.event_proposals_table.truncate()
+    storage.patch_settings({'ingest_sender_blocklist': []})
+    storage.set_app_state('intake_sender_dismissals', {})
+
+    def _ignored(sender, n):
+        for _ in range(n):
+            pid = storage.add_proposal({'title': 'X', 'source_from': sender})
+            storage.update_proposal(pid, {'status': 'ignored'})
+
+    _ignored('news@spam.com', 4)
+    check(any(r['sender'] == 'news@spam.com' for r in main.ignored_senders()),
+          "offered while unanswered")
+
+    main.dismiss_ignored_sender(main.IngestBlockRequest(pattern='news@spam.com'))
+    check(not any(r['sender'] == 'news@spam.com' for r in main.ignored_senders()),
+          "and gone once you have said not now")
+
+    _ignored('news@spam.com', 1)
+    check(not any(r['sender'] == 'news@spam.com' for r in main.ignored_senders()),
+          "one more ignore is not enough to overturn the answer")
+
+    _ignored('news@spam.com', 1)
+    rows = {r['sender']: r for r in main.ignored_senders()}
+    check('news@spam.com' in rows,
+          "but a fresh pattern of ignoring brings the offer back")
+    check(rows['news@spam.com']['ignored'] == 6
+          and rows['news@spam.com']['ignored_since_dismissed'] == 2,
+          f"reporting both the total and what is new since: {rows['news@spam.com']}")
+
+    check(any('dismissed' in (r.get('outcome') or '') for r in storage.get_ingest_log()),
+          "the dismissal itself is in the record, like every other decision here")
+    storage.set_app_state('intake_sender_dismissals', {})
+    storage.event_proposals_table.truncate()
+
+
 def test_the_block_is_reachable_by_hand():
     """Standing rule: no capability without a hand path. The offer has to be on
     the proposal itself — that is the moment the family is already looking at
@@ -507,6 +550,9 @@ def test_the_block_is_reachable_by_hand():
     check('editSkipRule' in page and 'cancelSkipRuleEdit' in page,
           "a rule can be EDITED, not only removed — fixing a typo or adding a "
           "keyword must not cost you the whole rule")
+    check('dismissSender' in page,
+          "and a sender you are not ready to block can be dismissed, so the "
+          "list stays a prompt instead of becoming a permanent backlog")
 
 
 def test_editing_a_skip_rule():
@@ -635,6 +681,7 @@ if __name__ == '__main__':
     test_the_known_block_tells_the_truth()
     test_time_and_place_rule_has_guards()
     test_past_ignores_can_still_be_blocked()
+    test_dismissing_a_sender_is_an_answer_that_expires()
     test_the_block_is_reachable_by_hand()
     test_editing_a_skip_rule()
     test_log_collapse()

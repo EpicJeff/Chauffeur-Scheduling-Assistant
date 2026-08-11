@@ -307,7 +307,9 @@
                     Senders you keep ignoring</h3>
                 <p class="text-sm text-gray-400 mb-3">Nothing from these has been worth keeping. Blocking one
                     skips its mail before it is read — no proposals, and no AI call spent on it. Every skip is
-                    still recorded in Activity below, and you can unblock in the mailbox settings.</p>
+                    still recorded in Activity below, and you can remove the rule in the mailbox settings.
+                    <b>✕ means not now</b> — the sender leaves this list and only comes back if they keep
+                    being ignored.</p>
                 <div class="bg-gray-800 rounded-xl divide-y divide-gray-700/60 border border-gray-700">
                     <template x-for="s in ignoredSenders" :key="s.sender">
                         <div class="px-5 py-3 flex flex-col md:flex-row md:items-center gap-2 md:gap-4 text-sm">
@@ -322,13 +324,18 @@
                                     <span x-show="s.last_subject" x-text="' · ' + s.last_subject"></span>
                                 </div>
                             </div>
-                            <div class="flex gap-2 shrink-0">
+                            <div class="flex gap-2 shrink-0 items-center">
                                 <button @click="blockPattern(s.sender)"
                                     class="bg-gray-700 hover:bg-gray-600 text-gray-100 font-bold text-xs px-3 py-1.5 rounded-lg">
                                     Block this address</button>
                                 <button @click="blockPattern(s.domain)" x-show="s.domain"
                                     class="bg-gray-700 hover:bg-gray-600 text-gray-100 font-bold text-xs px-3 py-1.5 rounded-lg"
                                     x-text="'Block ' + s.domain"></button>
+                                <!-- "Not now" is a real answer. Without it the row
+                                     sits here forever and the panel trains you to
+                                     stop reading it. -->
+                                <button @click="dismissSender(s)" title="Not now — ask again if they keep being ignored"
+                                    class="text-gray-500 hover:text-gray-200 text-xs font-bold px-2 py-1.5 rounded-lg">✕</button>
                             </div>
                         </div>
                     </template>
@@ -756,6 +763,14 @@
                         const data = await res.json();
                         this.ignoredSenders = Array.isArray(data) ? data : [];
                     } catch (e) { this.ignoredSenders = []; }
+                },
+                async dismissSender(s) {
+                    try {
+                        await fetch(`${this.apiBase}api/ingest/dismiss-sender`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ pattern: s.sender }) });
+                        await Promise.all([this.loadIgnoredSenders(), this.loadLog()]);
+                    } catch (e) { showGlobalAlert("Couldn't dismiss that."); }
                 },
                 // Only rows that name a real sender and aren't already blocked —
                 // a '(poll)' error or a '(blocklist)' note has nothing to block.
