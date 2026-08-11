@@ -107,6 +107,14 @@ def for_run(sched: dict, driver_id: str, event_id: str,
     solver and anything describing another day must not — which the overlay
     also enforces itself, so a tomorrow-digest caller passing live=True gets
     static numbers, not today's rush hour."""
+    # Event stamps are wall-clock local that MAY carry an offset (Google
+    # calendar ISO strings do). Strip rather than convert — the repo-wide
+    # convention (main, watchers, digest all read them this way) — or the
+    # overlay's naive `now` comparison raises and takes My Day down with it.
+    if start is not None and start.tzinfo is not None:
+        start = start.replace(tzinfo=None)
+    if now is not None and now.tzinfo is not None:
+        now = now.replace(tzinfo=None)
     lead = travel_into(sched, driver_id, event_id, from_home_only)
     when = leave_at(start, lead) if lead else None
     if not when:

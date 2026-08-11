@@ -105,6 +105,45 @@ def scenario_the_overlay_moves_the_leave_time_earlier_only():
         storage.get_all_drivers = real_drivers
 
 
+def scenario_an_offset_carrying_start_does_not_take_my_day_down():
+    """Google calendar ISO stamps carry an offset, so member_day's
+    `fromisoformat` hands for_run an AWARE start while the overlay's `now`
+    is naive — which raised TypeError and 500'd /api/members/{id}/day for
+    every kid whose first ride had one. Wall-clock convention: strip, never
+    convert."""
+    _reset()
+    real_settings = storage.get_settings
+    real_drivers = storage.get_all_drivers
+    storage.get_settings = lambda: {'home_location': 'home'}
+    storage.get_all_drivers = lambda: []
+    try:
+        today = datetime.date.today()
+        now = datetime.datetime.combine(today, datetime.time(12, 0))
+        tz = datetime.timezone(datetime.timedelta(hours=-4))
+        aware_start = datetime.datetime.combine(
+            today, datetime.time(17, 0)).replace(tzinfo=tz)
+        sched = {'initial_edges': {'d1': {'ev1': {'travel_mins': 17,
+                                                  'buffer_before_mins': 5}}},
+                 'events': [{'id': 'ev1', 'location': 'apex gym'}]}
+        storage.set_cached_day_of_traffic('home', 'apex gym', 28, 'refine')
+
+        live = leave_by.for_run(sched, 'd1', 'ev1', aware_start,
+                                live=True, now=now)
+        check(live and live['travel_mins'] == 28,
+              f"an aware start reads as its wall-clock time, no raise: {live}")
+        check(live['leave_label'] == '4:27 PM',
+              f"and the departure is the same 4:27 the naive path says: {live}")
+
+        aware_now = now.replace(tzinfo=tz)
+        both = leave_by.for_run(sched, 'd1', 'ev1', aware_start,
+                                live=True, now=aware_now)
+        check(both and both['travel_mins'] == 28,
+              "an aware now is stripped the same way")
+    finally:
+        storage.get_settings = real_settings
+        storage.get_all_drivers = real_drivers
+
+
 def scenario_the_push_fires_early_by_the_delta():
     _reset()
     trigger = time.time() + 1800
