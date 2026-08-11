@@ -426,16 +426,16 @@
                                         </label>
                                     </template>
                                 </div>
-                                <!-- Assign: the other half of the chore economy. Kids CLAIM what
-                                     they want from the pot; a parent can also just hand one over —
-                                     to a kid, or to outside help. An assigned chore is theirs from
-                                     that moment, never sits in the pot, and comes back to them each
-                                     time it recurs. Outside help differs in exactly one way: no
-                                     login, so a parent marks it done for them. -->
-                                <label class="block text-gray-400 mb-1 mt-4 text-sm">Or assign it to somebody</label>
-                                <select x-model="choreEdit.assigned_to"
+                                <!-- OWNER: a permanent arrangement. This chore is that person's
+                                     job — it never enters the pot and comes back to them every time
+                                     it recurs. Work that must happen daily but is only sometimes
+                                     done by the same person stays ownerless and is handed out per
+                                     night with the Assign button instead, or a helper who comes
+                                     twice a week would be given the dishes every day. -->
+                                <label class="block text-gray-400 mb-1 mt-4 text-sm">Owner — whose job is this?</label>
+                                <select x-model="choreEdit.owner"
                                     class="w-full md:w-80 bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                                    <option value="">Nobody — leave it in the pot</option>
+                                    <option value="">Nobody owns it — it lives in the pot</option>
                                     <optgroup label="The household">
                                         <template x-for="m in members.filter(x => x.role !== 'helper')" :key="'a' + m.id">
                                             <option :value="m.id" x-text="m.name"></option>
@@ -447,9 +447,10 @@
                                         </template>
                                     </optgroup>
                                 </select>
-                                <p class="text-[11px] text-gray-500 mt-1">Assigned work skips claiming and
-                                    never appears in the kids' pot. Outside help earns no points — the same
-                                    as an adult doing a chore.</p>
+                                <p class="text-[11px] text-gray-500 mt-1">An owner's chore skips claiming and
+                                    never appears in the kids' pot. Leave it ownerless for work anybody might
+                                    do — a parent can still hand out one night's with <b>Assign</b>. Outside
+                                    help earns no points, the same as an adult doing a chore.</p>
                             </div>
                             <div class="flex gap-2 mt-5">
                                 <button @click="saveChore()"
@@ -560,7 +561,7 @@
                 rewards: [],
                 redemptions: [],
                 editChoreId: null,
-                choreEdit: { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [], assigned_to: '' },
+                choreEdit: { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [], owner: '' },
                 editRewardId: null,
                 rewardEdit: { title: '', description: '', cost: 50, pooled: false, min_share: 0 },
                 poolAmt: {},
@@ -798,11 +799,12 @@
                         });
                     } catch (e) { this.hands = []; }
                 },
-                // An outside hand this chore is assigned to — the case that earns
-                // the one-tap button, since a contact has no login and cannot
-                // mark anything done themselves. A kid marks their own.
+                // An outside hand holding this chore, however they came to hold
+                // it (owner or tonight's assignment). They earn the one-tap
+                // button because a contact has no login and cannot mark
+                // anything done — a kid marks their own.
                 choreHand(c) {
-                    const id = c.assigned_to || '';
+                    const id = c.owner || c.claimed_by || '';
                     if (!String(id).startsWith('assist:')) return null;
                     const h = this.hands.find(x => 'assist:' + x.id === id);
                     return { id: id, name: (h && h.name) || c.claimed_by_name || 'them' };
@@ -839,12 +841,12 @@
                         points: chore.points,
                         recurrence: chore.recurrence || 'once',
                         eligible_member_ids: [...(chore.eligible_member_ids || [])],
-                        assigned_to: chore.assigned_to || '',
+                        owner: chore.owner || '',
                     };
                 },
                 cancelEditChore() {
                     this.editChoreId = null;
-                    this.choreEdit = { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [], assigned_to: '' };
+                    this.choreEdit = { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [], owner: '' };
                 },
                 async saveChore() {
                     if (!(this.choreEdit.title || '').trim()) { showGlobalAlert('Title required'); return; }

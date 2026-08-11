@@ -315,9 +315,38 @@ async def migrate_tile_columns_v21212():
         logger.info(f"Scaled {touched} tile width(s) to the 12-column board")
 
 
+async def migrate_chore_owner_v21730():
+    """`Chore.assigned_to` (v2.172.0) already meant OWNER — it survived every
+    recurrence and was exempt from the stale-claim release — so it is renamed
+    to say so, and `assigned_to` now means the per-instance assignment that
+    the same field could not express: work that must happen daily but is only
+    sometimes done by the same person.
+
+    Keyed on app state and idempotent. The old field is left in place rather
+    than deleted: it costs nothing, and a row that still carries it is how
+    anybody debugging an upgraded database can see where the owner came from.
+    """
+    if storage.get_app_state('chore_owner_migrated_v21730'):
+        return
+    moved = 0
+    with storage.db_lock:
+        for c in storage.chores_table.all():
+            if c.get('assigned_to') and not c.get('owner'):
+                storage.chores_table.update({'owner': c['assigned_to']},
+                                            doc_ids=[c.doc_id])
+                moved += 1
+    storage.set_app_state('chore_owner_migrated_v21730', True)
+    if moved:
+        logger.info(f"v2.173.0 chores: {moved} assignment(s) became owners")
+
+
 async def run_all_migrations():
     """Runs all data migrations in the background after startup"""
     await asyncio.sleep(5) # Let the app start up completely
+    try:
+        await migrate_chore_owner_v21730()
+    except Exception as e:
+        logger.error(f"Error running chore owner migration: {e}")
     try:
         await migrate_geocode_amputation_v2564()
     except Exception as e:

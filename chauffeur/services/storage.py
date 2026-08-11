@@ -1443,17 +1443,18 @@ CHORE_STALE_CLAIM_HOURS = 48
 def _chore_reset_fields(chore: dict = None):
     """The fields that put a chore back in play.
 
-    An ASSIGNED chore comes back to its holder rather than to the pot — "the
-    dishes are Maddie's" is a standing arrangement, and a recurring chore that
-    quietly went up for grabs every night would be a different promise from
-    the one the parent made."""
+    An OWNED chore comes back to its owner; everything else goes back to the
+    pot. That is the line between the two concepts: owning the lawn is an
+    arrangement that outlives any one week, while being assigned tonight's
+    dishes is about tonight — so `assigned_by` is always cleared here, or a
+    helper who comes twice a week would be handed the dishes every day."""
     import time as _t
     base = {'state': 'open', 'claimed_by': None, 'claimed_at': None,
             'done_at': None, 'verified_by': None, 'verified_at': None,
-            'rejected_reason': None, 'reopens_on': None}
-    holder = (chore or {}).get('assigned_to')
-    if holder:
-        base.update({'state': 'claimed', 'claimed_by': holder,
+            'rejected_reason': None, 'reopens_on': None, 'assigned_by': None}
+    owner = (chore or {}).get('owner')
+    if owner:
+        base.update({'state': 'claimed', 'claimed_by': owner,
                      'claimed_at': _t.time()})
     return base
 
@@ -1467,12 +1468,13 @@ def _chore_maintenance():
             if (c.get('state') == 'verified' and c.get('recurrence') != 'once'
                     and c.get('reopens_on') and c['reopens_on'] <= today):
                 chores_table.update(_chore_reset_fields(c), doc_ids=[c.doc_id])
-            elif (c.get('state') == 'claimed' and not c.get('assigned_to')
-                    and c.get('claimed_at')
+            elif (c.get('state') == 'claimed' and not c.get('owner')
+                    and not c.get('assigned_by') and c.get('claimed_at')
                     and now - c['claimed_at'] > CHORE_STALE_CLAIM_HOURS * 3600):
-                # Claimed then ignored: release back to the pot. An ASSIGNED
-                # chore is never released — nobody claimed it, so there is no
-                # claim to go stale, and the standing arrangement stands.
+                # Claimed then ignored: release back to the pot. Neither an
+                # owned chore nor one a parent assigned is ever released —
+                # nobody claimed those, so there is no claim to go stale, and
+                # dropping them would quietly undo somebody's decision.
                 chores_table.update({'state': 'open', 'claimed_by': None,
                                      'claimed_at': None, 'rejected_reason': None},
                                     doc_ids=[c.doc_id])
@@ -1552,6 +1554,11 @@ def unclaim_chore(chore_id: str, member_id: str) -> bool:
         res = chores_table.search(Query().id == chore_id)
         if not res or res[0].get('state') != 'claimed' \
                 or res[0].get('claimed_by') != member_id:
+            return False
+        # You can put back what you picked up; you cannot put back what you
+        # were given. An owned chore is the arrangement itself, and an
+        # assigned one is a parent's decision — both are theirs to undo.
+        if res[0].get('owner') or res[0].get('assigned_by'):
             return False
         chores_table.update({'state': 'open', 'claimed_by': None,
                              'claimed_at': None, 'rejected_reason': None},

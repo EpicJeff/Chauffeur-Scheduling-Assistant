@@ -4659,8 +4659,9 @@ class ChoreCreateRequest(BaseModel):
     points: int = 10
     recurrence: str = 'once'
     eligible_member_ids: list = []
-    # Assigned work rather than the pot: a member id, or 'assist:<id>'.
-    assigned_to: Optional[str] = None
+    # A permanent arrangement — this chore is theirs, every time it recurs.
+    # A member id, or 'assist:<id>'. Per-instance assignment is /assign.
+    owner: Optional[str] = None
 
 def _clean_emoji(v):
     # A glyph, not a caption: cap at 8 chars (covers ZWJ sequences), blank -> None
@@ -4696,23 +4697,33 @@ def list_chores():
             c['claimed_by_name'] = claimant.get('name') if claimant else None
             c['claimed_by_color'] = claimant.get('color_code') if claimant else None
             c['claimed_by_assist'] = False
+        owner = c.get('owner') or ''
+        if owner:
+            o = (contacts.get(_assist_svc.contact_id(owner))
+                 if _assist_svc.is_assist_id(owner) else members.get(owner))
+            c['owner_name'] = (o or {}).get('name')
+        else:
+            c['owner_name'] = None
+        # "Mom gave you this" and "you took this" are different facts about
+        # the day, so the card can tell them apart.
+        c['assigned_by_name'] = (members.get(c.get('assigned_by')) or {}).get('name')
     order = {'done': 0, 'open': 1, 'claimed': 2, 'verified': 3}
     chores.sort(key=lambda c: (order.get(c.get('state'), 9), -(c.get('points') or 0)))
     return chores
 
-def _assigned_chore_fields(assigned_to):
-    """Assigning IS the claim. A chore handed to somebody is theirs from that
-    moment — it never sits in the pot waiting to be picked up, which is the
-    whole difference between 'anyone can take this' and 'this is yours'.
-    Clearing the assignment puts it back up for grabs."""
-    if not assigned_to:
-        return {'assigned_to': None, 'state': 'open', 'claimed_by': None,
-                'claimed_at': None}
-    name, _is_assist = _chore_claimant(assigned_to)
+def _owned_chore_fields(owner):
+    """Owning IS holding it. A chore that is somebody's job never sits in the
+    pot waiting to be picked up — that is the difference between 'anyone can
+    take this' and 'this is yours'. Clearing the owner puts it back up for
+    grabs."""
+    if not owner:
+        return {'owner': None, 'state': 'open', 'claimed_by': None,
+                'claimed_at': None, 'assigned_by': None}
+    name, _is_assist = _chore_claimant(owner)
     if not name:
-        raise HTTPException(status_code=404, detail="Nobody by that id to assign to")
-    return {'assigned_to': assigned_to, 'state': 'claimed',
-            'claimed_by': assigned_to, 'claimed_at': time.time(),
+        raise HTTPException(status_code=404, detail="Nobody by that id to own it")
+    return {'owner': owner, 'state': 'claimed', 'claimed_by': owner,
+            'claimed_at': time.time(), 'assigned_by': None,
             'rejected_reason': None}
 
 @app.post("/api/chores")
@@ -4723,11 +4734,11 @@ def create_chore(req: ChoreCreateRequest, background_tasks: BackgroundTasks):
                   description=req.description or '',
                   points=int(req.points), recurrence=req.recurrence,
                   eligible_member_ids=req.eligible_member_ids or []).model_dump()
-    chore.update(_assigned_chore_fields(req.assigned_to))
+    chore.update(_owned_chore_fields(req.owner))
     storage.add_chore(chore)
-    # An assigned chore is nobody's to pick up, so the "new chore posted" blast
-    # to the eligible kids would be an invitation to something already taken.
-    if not req.assigned_to:
+    # An owned chore is nobody's to pick up, so the "new chore posted" blast to
+    # the eligible kids would be an invitation to something already taken.
+    if not req.owner:
         background_tasks.add_task(_notify_chore_event, 'posted', chore)
     return chore
 
@@ -4741,10 +4752,10 @@ def edit_chore(chore_id: str, req: ChoreCreateRequest):
              'description': req.description or '',
              'points': int(req.points), 'recurrence': req.recurrence,
              'eligible_member_ids': req.eligible_member_ids or []}
-    # Only touch the lifecycle when the assignment actually changed — editing
-    # the title of a chore somebody has already finished must not reset it.
-    if (req.assigned_to or None) != (existing.get('assigned_to') or None):
-        patch.update(_assigned_chore_fields(req.assigned_to))
+    # Only touch the lifecycle when the OWNER actually changed — editing the
+    # title of a chore somebody has already finished must not reset it.
+    if (req.owner or None) != (existing.get('owner') or None):
+        patch.update(_owned_chore_fields(req.owner))
     if not storage.update_chore(chore_id, patch):
         raise HTTPException(status_code=404, detail="Chore not found")
     return {"status": "updated"}
@@ -4824,6 +4835,49 @@ def chore_done_endpoint(chore_id: str, req: ChoreMemberRequest, background_tasks
     background_tasks.add_task(_notify_chore_event, 'done', chore,
                               storage.get_member(req.member_id))
     return chore
+
+class ChoreAssignRequest(BaseModel):
+    member_id: Optional[str] = None    # None/empty puts it back in the pot
+    assigned_by: str                   # the parent doing the assigning
+
+@app.post("/api/chores/{chore_id}/assign")
+def assign_chore_endpoint(chore_id: str, req: ChoreAssignRequest):
+    """Give THIS occurrence to somebody. The other half of the pot.
+
+    Work that has to happen every day but is only sometimes done by the same
+    person — the dishes, when the helper is in twice a week — cannot be owned
+    by her, or it would come back to her on the four days she is not there.
+    So it stays ownerless in the pot, and a parent hands out each night's.
+    Cleared when the chore recurs, so tomorrow's is up for grabs again.
+
+    Assigning is claiming on somebody's behalf, so it reuses the lifecycle
+    exactly; the only new fact is WHO decided, which is what stops the holder
+    handing it straight back."""
+    chore = storage.get_chore(chore_id)
+    if not chore:
+        raise HTTPException(status_code=404, detail="Chore not found")
+    if chore.get('owner'):
+        raise HTTPException(status_code=409,
+                            detail="That chore has an owner — change the owner instead")
+    if not req.member_id:
+        if chore.get('state') not in ('open', 'claimed'):
+            raise HTTPException(status_code=409, detail="That chore isn't in play")
+        storage.update_chore(chore_id, {'state': 'open', 'claimed_by': None,
+                                        'claimed_at': None, 'assigned_by': None})
+        return storage.get_chore(chore_id)
+    name, _is_assist = _chore_claimant(req.member_id)
+    if not name:
+        raise HTTPException(status_code=404, detail="Nobody by that id")
+    eligible = chore.get('eligible_member_ids') or []
+    if eligible and req.member_id not in eligible:
+        raise HTTPException(status_code=403, detail=f"{name} isn't on this chore")
+    if chore.get('state') not in ('open', 'claimed'):
+        raise HTTPException(status_code=409, detail="That chore isn't waiting to be done")
+    storage.update_chore(chore_id, {'state': 'claimed', 'claimed_by': req.member_id,
+                                    'claimed_at': time.time(),
+                                    'assigned_by': req.assigned_by,
+                                    'rejected_reason': None})
+    return storage.get_chore(chore_id)
 
 @app.post("/api/chores/{chore_id}/record")
 def record_chore_endpoint(chore_id: str, req: ChoreMemberRequest,

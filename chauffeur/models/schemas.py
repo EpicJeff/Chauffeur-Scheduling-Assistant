@@ -262,15 +262,25 @@ class Chore(BaseModel):
     points: int = 10
     recurrence: str = 'once'  # once | daily | weekly | monthly
     eligible_member_ids: List[str] = Field(default_factory=list)  # empty = any non-helper
-    # ASSIGNED work, as opposed to the pot. Kids claim what they want; a parent
-    # can also just hand a chore to somebody — a kid, or an outside hand
-    # ("Maddie does the dishes"). An assigned chore never sits in the open pot,
-    # and it returns to its holder each time it recurs rather than going back
-    # up for grabs. Member id, or 'assist:<contact_id>' for outside help, who
-    # differ in exactly one way: no login, so a parent marks it done for them.
-    assigned_to: Optional[str] = None
+    # OWNER — a permanent arrangement, set in the editor. This chore is that
+    # person's job: it never enters the pot, and it returns to them every time
+    # it recurs. "My son mows the lawn." Member id, or 'assist:<contact_id>'.
+    #
+    # Distinct from `assigned_by` below, and the difference is the whole
+    # model: an owner keeps the chore forever, an assignment lasts one
+    # occurrence. Work that must happen daily but is only sometimes done by
+    # the same person — the dishes, when the helper is in twice a week —
+    # stays OWNERLESS in the pot and is assigned per instance, or it would
+    # come back to somebody who is not there.
+    owner: Optional[str] = None
     state: str = 'open'  # open | claimed | done | verified
     claimed_by: Optional[str] = None
+    # Set when a PARENT put this instance on somebody rather than the person
+    # taking it themselves. Two jobs: the holder cannot hand it back (being
+    # given a job is not the same as choosing one), and the card can say "Mom
+    # gave you this" instead of "you took this". Cleared when the chore recurs
+    # — an assignment is about today, not about the arrangement.
+    assigned_by: Optional[str] = None
     claimed_at: Optional[float] = None
     done_at: Optional[float] = None
     verified_by: Optional[str] = None

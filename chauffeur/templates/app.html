@@ -3462,11 +3462,24 @@
                     '')));
             }
 
-            const available = choresData.filter(c => c.state === 'open' && choreEligibleForMe(c));
+            // A parent sees the whole pot, not only what they could take
+            // themselves — they are handing work out, not picking it up.
+            const isParent = currentMemberRole() === 'parent';
+            const available = choresData.filter(c => c.state === 'open'
+                && (isParent || choreEligibleForMe(c)));
             parts.push('<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">Available</div>');
             if (available.length) {
                 available.forEach(c => parts.push(choreCard(c,
-                    btn('Claim', 'bg-blue-600 text-white active:bg-blue-700', `claimChore('${c.id}')`), '')));
+                    (choreEligibleForMe(c)
+                        ? btn('Claim', 'bg-blue-600 text-white active:bg-blue-700', `claimChore('${c.id}')`)
+                        : '')
+                    // Assign hands out THIS occurrence — the answer for work
+                    // that happens daily and is only sometimes done by the
+                    // same person. Parent-only, and never on an owned chore
+                    // (that arrangement is changed in the editor).
+                    + (isParent && !c.owner
+                        ? btn('Assign', 'bg-teal-600 text-white active:bg-teal-700', `openAssignChore('${c.id}')`)
+                        : ''), '')));
             } else {
                 parts.push('<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4">Nothing available right now 🎉</div>');
             }
@@ -3474,11 +3487,56 @@
             const othersClaimed = choresData.filter(c => (c.state === 'claimed' || c.state === 'done') && c.claimed_by !== selectedMemberId);
             if (othersClaimed.length) {
                 parts.push('<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">Taken</div>');
-                othersClaimed.forEach(c => parts.push(choreCard(c, '',
-                    `${mfEscape(c.claimed_by_name || '?')} is on it`)));
+                othersClaimed.forEach(c => parts.push(choreCard(c,
+                    (isParent && c.assigned_by && !c.owner
+                        ? btn('Unassign', 'bg-gray-700 text-gray-100 active:bg-gray-600', `assignChoreTo('${c.id}', null)`)
+                        : ''),
+                    c.owner_name ? `${mfEscape(c.owner_name)}'s job`
+                        : (c.assigned_by_name
+                            ? `${mfEscape(c.assigned_by_name)} gave it to ${mfEscape(c.claimed_by_name || '?')}`
+                            : `${mfEscape(c.claimed_by_name || '?')} is on it`))));
             }
 
             wrap.innerHTML = parts.join('');
+        }
+
+        // Assign this occurrence to somebody: the household, plus outside
+        // hands who help with housework. Outside help has no login, so a
+        // parent will also be the one to mark it done for them.
+        let _assignChoreContacts = null;
+        async function openAssignChore(choreId) {
+            if (_assignChoreContacts === null) {
+                try {
+                    const r = await fetch(`${apiBase}api/assist-contacts`);
+                    const all = r.ok ? await r.json() : [];
+                    _assignChoreContacts = (Array.isArray(all) ? all : []).filter(c => {
+                        const known = c.helps_with || [];
+                        return !known.length || known.includes('housework');
+                    });
+                } catch (e) { _assignChoreContacts = []; }
+            }
+            const people = [
+                ...(membersData || []).filter(m => m.role !== 'helper' && !m.system)
+                    .map(m => ({ id: m.id, label: m.name })),
+                ..._assignChoreContacts.map(c => ({ id: 'assist:' + c.id, label: `${c.name} 🧹` })),
+            ];
+            if (!people.length) { showGlobalAlert('Nobody to assign to yet.'); return; }
+            const pick = await promptChoice('Who is doing it?',
+                'They keep it for this time only — it goes back in the pot when it comes round again.',
+                people.map(p => ({ value: p.id, label: p.label })));
+            if (!pick) return;
+            await assignChoreTo(choreId, pick);
+        }
+
+        async function assignChoreTo(choreId, memberId) {
+            try {
+                const res = await fetch(`${apiBase}api/chores/${choreId}/assign`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: memberId, assigned_by: selectedMemberId }) });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) { showGlobalAlert(data.detail || "Couldn't assign that."); return; }
+                await fetchChores();
+            } catch (e) { showGlobalAlert("Couldn't assign that."); }
         }
 
         async function _chorePost(path, body, headers) {

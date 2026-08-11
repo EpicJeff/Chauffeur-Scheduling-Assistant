@@ -199,19 +199,19 @@ def scenario_an_outside_hand_claims_a_chore_like_any_adult():
     hand_id = assist.make_id(girl['id'])
 
     created = main.create_chore(main.ChoreCreateRequest(
-        title="Do the dishes", recurrence='daily', points=10,
-        assigned_to=hand_id), BackgroundTasks())
+        title="Deep clean the kitchen", recurrence='weekly', points=10,
+        owner=hand_id), BackgroundTasks())
     chore = storage.get_chore(created['id'])
     check(chore['state'] == 'claimed' and chore['claimed_by'] == hand_id,
-          f"assigning IS the claim — it never sits in the pot: {chore['state']}")
+          f"owning IS holding it — it never sits in the pot: {chore['state']}")
 
     # The kids' pot never shows it, because it is not open at all.
     from fastapi import HTTPException
     try:
         main.claim_chore_endpoint(chore['id'], main.ChoreMemberRequest(member_id=kid['id']))
-        check(False, "a kid must not be able to take assigned work")
+        check(False, "a kid must not be able to take somebody's owned chore")
     except HTTPException as e:
-        check(e.status_code == 409, f"assigned work is not claimable: {e.detail}")
+        check(e.status_code == 409, f"owned work is not claimable: {e.detail}")
 
     # One tap records it: a contact has no login, so claim->done cannot be
     # walked by them. That is the ONLY way outside help differs from a kid.
@@ -221,9 +221,10 @@ def scenario_an_outside_hand_claims_a_chore_like_any_adult():
     check(rec['state'] == 'done' and rec['claimed_by'] == hand_id,
           f"recorded as hers, awaiting the usual verification: {rec['state']}")
     rows = {c['title']: c for c in main.list_chores()}
-    check(rows["Do the dishes"]['claimed_by_name'] == 'Maddie'
-          and rows["Do the dishes"]['claimed_by_assist'] is True,
-          f"and she is NAMED, not blank: {rows['Do the dishes']}")
+    row = rows["Deep clean the kitchen"]
+    check(row['claimed_by_name'] == 'Maddie' and row['claimed_by_assist'] is True,
+          f"and she is NAMED, not blank: {row}")
+    check(row['owner_name'] == 'Maddie', f"the owner resolves too: {row['owner_name']}")
 
     res = storage.verify_chore(chore['id'], mom['id'])
     check(res and res['awarded'] == 0,
@@ -238,23 +239,87 @@ def scenario_an_outside_hand_claims_a_chore_like_any_adult():
           "whereas a household task's recurrence needs a due date — which is "
           "why dishes never fitted there, and why a chore is the right home")
 
-    # And it comes back to HER, not to the pot: "the dishes are Maddie's" is a
-    # standing arrangement, and a chore that quietly went up for grabs every
-    # night would be a different promise from the one the parent made.
+    # An OWNED chore comes back to its owner: that is the arrangement.
     with storage.db_lock:
         storage.chores_table.update({'reopens_on': '2000-01-01'},
                                     storage.Query().id == chore['id'])
     # get_all_chores() is what runs _chore_maintenance — the reopen sweep.
     back = next(c for c in storage.get_all_chores() if c['id'] == chore['id'])
     check(back['state'] == 'claimed' and back['claimed_by'] == hand_id,
-          f"the recurrence returns it to its holder: {back['state']}/{back.get('claimed_by')}")
+          f"the recurrence returns it to its owner: {back['state']}/{back.get('claimed_by')}")
 
 
-def scenario_a_parent_can_assign_a_kid_a_chore():
-    """The other half of the concept: kids claim what they want, and a parent
-    can also just hand one over. A kid's assigned chore is theirs to mark done
-    — only outside help needs a parent for that, because they have no login —
-    and it still earns points, because they are still a child doing a chore."""
+def scenario_daily_work_stays_in_the_pot_and_is_assigned_per_night():
+    """The case that forced the split. The dishes have to be done every day,
+    and the helper is only in two or three days a week — so she cannot OWN
+    them, or they would come back to her on the days she is not there. They
+    stay ownerless in the pot, and a parent hands out one night's."""
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+    from models.schemas import FamilyMember
+    _reset()
+    with storage.db_lock:
+        storage.chores_table.truncate()
+    mom = FamilyMember(name="Lorena", role='parent').model_dump()
+    storage.add_member(mom)
+    kid = FamilyMember(name="Ellie", role='child').model_dump()
+    storage.add_member(kid)
+    girl = _contact("Maddie", kinds=['housework'])
+    hand_id = assist.make_id(girl['id'])
+
+    created = main.create_chore(main.ChoreCreateRequest(
+        title="Do the dishes", recurrence='daily', points=5), BackgroundTasks())
+    chore = storage.get_chore(created['id'])
+    check(chore['state'] == 'open' and not chore.get('owner'),
+          "daily work nobody owns sits in the pot")
+
+    # Monday: she is in, so tonight's is hers.
+    main.assign_chore_endpoint(chore['id'], main.ChoreAssignRequest(
+        member_id=hand_id, assigned_by=mom['id']))
+    c = storage.get_chore(chore['id'])
+    check(c['claimed_by'] == hand_id and c['assigned_by'] == mom['id'],
+          f"assigned for tonight, and it is recorded WHO decided: {c.get('assigned_by')}")
+    check(not c.get('owner'), "without becoming her permanent job")
+
+    # A parent's decision is not the holder's to undo.
+    check(not storage.unclaim_chore(chore['id'], hand_id),
+          "the holder cannot hand back work they were given")
+
+    # She has no login, so a parent marks it done; verification reopens it.
+    main.record_chore_endpoint(chore['id'], main.ChoreMemberRequest(member_id=hand_id),
+                               BackgroundTasks())
+    storage.verify_chore(chore['id'], mom['id'])
+    with storage.db_lock:
+        storage.chores_table.update({'reopens_on': '2000-01-01'},
+                                    storage.Query().id == chore['id'])
+    back = next(c for c in storage.get_all_chores() if c['id'] == chore['id'])
+    check(back['state'] == 'open' and not back.get('claimed_by')
+          and not back.get('assigned_by'),
+          f"and TOMORROW it is back in the pot, not handed to somebody who is "
+          f"not there: {back['state']}/{back.get('claimed_by')}")
+
+    # Tuesday: Ellie takes it herself, and earns for it.
+    main.claim_chore_endpoint(chore['id'], main.ChoreMemberRequest(member_id=kid['id']))
+    check(storage.unclaim_chore(chore['id'], kid['id']),
+          "work she CHOSE is hers to put back — the difference the stamp records")
+
+    # An owned chore is not assignable: that arrangement changes in the editor.
+    owned = main.create_chore(main.ChoreCreateRequest(
+        title="Mow the lawn", recurrence='weekly', owner=kid['id']), BackgroundTasks())
+    try:
+        main.assign_chore_endpoint(owned['id'], main.ChoreAssignRequest(
+            member_id=mom['id'], assigned_by=mom['id']))
+        check(False, "an owned chore must not be assignable out from under its owner")
+    except HTTPException as e:
+        check(e.status_code == 409, f"owned work is changed in the editor: {e.detail}")
+
+
+def scenario_a_kid_can_own_a_chore():
+    """"My son mows the lawn every week. I don't want to assign it to him
+    every week and it doesn't need to be up for grabs because no one else
+    can/will do it." A kid marks their own owned work done — only outside
+    help needs a parent for that, because they have no login — and it still
+    earns points, because he is still a child doing a chore."""
     import main
     from fastapi import BackgroundTasks
     from models.schemas import FamilyMember
@@ -268,31 +333,39 @@ def scenario_a_parent_can_assign_a_kid_a_chore():
     storage.add_member(mom)
 
     created = main.create_chore(main.ChoreCreateRequest(
-        title="Take out the trash", points=10, assigned_to=kid['id']),
+        title="Mow the lawn", points=10, recurrence='weekly', owner=kid['id']),
         BackgroundTasks())
     chore = storage.get_chore(created['id'])
-    check(chore['assigned_to'] == kid['id'] and chore['claimed_by'] == kid['id'],
-          "a kid's assigned chore is hers from the moment it is handed over")
+    check(chore['owner'] == kid['id'] and chore['claimed_by'] == kid['id'],
+          "an owned chore is his from the moment the arrangement is made")
     check(storage.mark_chore_done(chore['id'], kid['id']),
-          "and SHE marks it done — no parent needed, unlike outside help")
+          "and HE marks it done — no parent needed, unlike outside help")
     res = storage.verify_chore(chore['id'], mom['id'])
     check(res['awarded'] == 10,
-          f"a child still earns points for assigned work: {res['awarded']}")
+          f"a child still earns points for work he owns: {res['awarded']}")
 
-    # Clearing the assignment puts it back up for grabs.
+    # Clearing the owner puts it back up for grabs.
     main.edit_chore(chore['id'], main.ChoreCreateRequest(
-        title="Take out the trash", points=10, assigned_to=None))
+        title="Mow the lawn", points=10, recurrence='weekly', owner=None))
     check(storage.get_chore(chore['id'])['state'] == 'open',
-          "unassigning returns it to the pot")
+          "removing the owner returns it to the pot")
 
 
 def scenario_the_chore_hand_path_is_reachable():
     chores_ui = open(os.path.join(TPL, 'chores.html'), encoding='utf-8').read()
-    check('choreEdit.assigned_to' in chores_ui and "'assist:' + h.id" in chores_ui,
-          "a chore can be assigned by hand, to a member or an outside hand")
+    check('choreEdit.owner' in chores_ui and "'assist:' + h.id" in chores_ui,
+          "an owner is set by hand in the editor, member or outside hand")
     check('recordChoreFor' in chores_ui and 'did it' in chores_ui,
           "and one tap records that outside help did it, since they cannot "
           "mark it themselves")
+    app = open(os.path.join(TPL, 'app.html'), encoding='utf-8').read()
+    check('openAssignChore' in app and 'Assign' in app,
+          "and tonight's occurrence is handed out with a button beside Claim")
+    check("isParent && !c.owner" in app,
+          "parent-only, and never on a chore somebody owns")
+    cc = open(os.path.join(TPL, 'components', 'control_center.html'), encoding='utf-8').read()
+    check('promptChoice' in cc,
+          "the person picker is a shared modal, not a browser dialog")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

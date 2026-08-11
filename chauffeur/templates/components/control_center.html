@@ -66,6 +66,23 @@
     </div>
 </div>
 
+<!-- Global Choice Modal (shared picker — use window.promptChoice). A list of
+     people or options is a prompt too, and the browser has no dialog for it,
+     so the one place that answers "which one?" lives here beside the other two
+     rather than being rebuilt per page. -->
+<div id="cc-choice-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[110] items-center justify-center p-4"
+    onclick="if(event.target === this) window._ccChoiceResolve && window._ccChoiceResolve(null)">
+    <div class="bg-gray-800 rounded-lg shadow-2xl p-6 max-w-sm w-full border border-gray-700">
+        <h3 id="cc-choice-title" class="text-xl font-bold text-white mb-2">Choose</h3>
+        <p id="cc-choice-message" class="text-gray-300 mb-4 text-sm whitespace-pre-wrap"></p>
+        <div id="cc-choice-options" class="flex flex-col gap-2 max-h-80 overflow-y-auto mb-5"></div>
+        <div class="flex justify-end">
+            <button id="cc-choice-cancel-btn"
+                class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm transition-colors font-bold">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <!-- Chat Help Modal -->
 <div id="chat-help-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[110] items-center justify-center p-4" onclick="if(event.target === this) closeChatHelpModal()">
     <div class="bg-gray-900 rounded-2xl shadow-2xl max-w-7xl w-full border border-gray-700 flex flex-col max-h-[92vh]">
@@ -1394,6 +1411,38 @@ function closeChatHelpModal() {
             modal.classList.remove('hidden');
             modal.classList.add('flex');
             setTimeout(() => field.focus(), 50);
+        });
+    }
+
+    // promptChoice(title, message, [{value, label}]) -> Promise<value|null>
+    window.promptChoice = function(title, message, options = []) {
+        return new Promise(resolve => {
+            const modal = document.getElementById('cc-choice-modal');
+            const list = document.getElementById('cc-choice-options');
+            const cancel = document.getElementById('cc-choice-cancel-btn');
+            document.getElementById('cc-choice-title').textContent = title;
+            document.getElementById('cc-choice-message').textContent = message || '';
+            const finish = (v) => {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+                document.onkeydown = null;
+                window._ccChoiceResolve = null;
+                resolve(v);
+            };
+            window._ccChoiceResolve = finish;
+            list.innerHTML = '';
+            (options || []).forEach(o => {
+                const b = document.createElement('button');
+                b.className = 'w-full text-left px-4 py-3 rounded-lg bg-gray-900 border border-gray-700 '
+                    + 'hover:border-blue-500 text-white font-bold text-sm transition-colors';
+                b.textContent = o.label;
+                b.onclick = () => finish(o.value);
+                list.appendChild(b);
+            });
+            cancel.onclick = () => finish(null);
+            document.onkeydown = (e) => { if (e.key === 'Escape') finish(null); };
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
         });
     }
 </script>
