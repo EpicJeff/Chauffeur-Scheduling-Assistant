@@ -274,15 +274,27 @@
         let _profile = null;
 
         // Append ALL query parameters to nav links (e.g., kiosk=true, theme=ha,
-        // panel=true) — this is what keeps a panel in panel mode as somebody
-        // walks around it.
+        // panel=true) so the address bar and hover target are honest from the
+        // first paint. This is NO LONGER the mechanism that keeps a panel in
+        // panel mode — it cannot be, because it runs once and these pages build
+        // most of their links afterwards. ha_theme.html carries the flags at
+        // click time and latches the session; this is the cosmetic half.
+        //
+        // The skip used to be `!link.href.includes('#')`, which threw away
+        // every link with a FRAGMENT — including /settings' `page#anchor` rows,
+        // which navigate to a different page and were silently exempt. Only a
+        // link that is nothing but a fragment stays on this page.
         document.querySelectorAll('a[href]').forEach(link => {
-            if (link.href && !link.href.includes('javascript:') && !link.href.includes('#')) {
+            const raw = link.getAttribute('href') || '';
+            if (link.href && !link.href.includes('javascript:') && raw.charAt(0) !== '#') {
                 const url = new URL(link.href, window.location.origin);
                 for (const [key, value] of urlParams.entries()) {
                     url.searchParams.set(key, value);
                 }
-                link.href = url.pathname + url.search;
+                // `+ url.hash`, now that fragment links are no longer skipped:
+                // /settings' rows are `page#anchor` and dropping the anchor
+                // would land you at the top of config instead of at the setting.
+                link.href = url.pathname + url.search + url.hash;
             }
         });
 

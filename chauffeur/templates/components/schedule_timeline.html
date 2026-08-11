@@ -1022,8 +1022,15 @@
                             // Multi-day trips render as per-day slice events ({id}_slice_{date});
                             // the trip page only knows the original event id.
                             const tripEventId = ev.id.split('_slice_')[0];
+                            // A JS navigation, not a link — neither nav.html's
+                            // pass nor ha_theme's click interceptor can see it,
+                            // so the display flags are carried by hand or a tap
+                            // on a trip block drops the panel into admin.
+                            const tripHref = window.chfDisplayUrl
+                                ? window.chfDisplayUrl('trip?event_id=' + tripEventId)
+                                : 'trip?event_id=' + tripEventId;
                             colEventsHtml += `
-                                <div id="event-${ev.id}" title="${ev.title}" onclick="window.location.href=\'trip?event_id=${tripEventId}\'"
+                                <div id="event-${ev.id}" title="${ev.title}" onclick="window.location.href=\'${tripHref}\'"
                                      class="absolute right-1 rounded-md overflow-hidden bg-blue-900/20 border border-blue-500/30 hover:bg-blue-900/40 hover:border-blue-500/50 cursor-pointer transition-colors flex flex-col z-0"
                                      style="top: ${drawStartY}px; height: ${drawHeight}px; left: 28px;">
                                     <div class="px-2 py-1 flex-1 overflow-hidden pointer-events-none flex flex-col">

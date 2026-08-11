@@ -10,10 +10,55 @@
     // the first thing in every page's <head>; by DOMContentLoaded the nav and
     // the Alpine components have already made up their minds.
     //
-    // The param is then carried across links by nav.html's existing
-    // propagation, so the whole panel stays in panel mode by walking around.
+    // Carrying the param across links used to be nav.html's job alone, and it
+    // leaked. See the latch and the click interceptor below: children found
+    // their way out of panel mode and onto the admin pages just by tapping.
     (function () {
         const p = new URLSearchParams(window.location.search);
+
+        // ── The latch: panel mode belongs to the DEVICE, not to the URL.
+        //
+        // Reported from the wall: kids kept ending up on the admin side just by
+        // tapping around. The cause is structural rather than one bad link.
+        // nav.html propagates the query onto `a[href]` ONCE, in a
+        // DOMContentLoaded pass — and these pages render almost everything
+        // client-side from API data afterwards, so every link built by a
+        // renderer, an Alpine `:href` or a JS template string is invisible to
+        // it. So is every `window.location.href = 'trips'`. Each of those is a
+        // door out of panel mode, and patching them one at a time is how we got
+        // here: components/moments_hearth.html already carries a hand-fix with
+        // a comment explaining this exact hole.
+        //
+        // The latch makes a missed link harmless instead of load-bearing. Once
+        // a TAB has been in panel mode it stays in panel mode, and a URL that
+        // arrives without the flag gets it back before anything reads it.
+        //
+        // sessionStorage, deliberately, not localStorage: the wall panel's
+        // browser session is the panel's whole life, so it survives everything
+        // that matters, while a laptop that opened one `?panel=true` tab to
+        // preview the board does not get latched into panel mode forever in
+        // every future tab. `?panel=false` is the escape hatch and clears it —
+        // that is how you get to the admin pages ON the panel deliberately.
+        const LATCH = 'chauffeurPanelSession';
+        let latched = false;
+        try {
+            if (p.get('panel') === 'false') {
+                sessionStorage.removeItem(LATCH);
+                p.delete('panel');
+                p.delete('kiosk');
+                latched = true;          // rewrite the address to drop them
+            } else if (p.get('panel') === 'true') {
+                sessionStorage.setItem(LATCH, '1');
+            } else if (sessionStorage.getItem(LATCH) === '1') {
+                p.set('panel', 'true');
+                latched = true;
+            }
+        } catch (e) { /* private mode: the URL is still the source of truth */ }
+        if (latched) {
+            const q = p.toString();
+            history.replaceState(null, '', window.location.pathname
+                + (q ? '?' + q : '') + window.location.hash);
+        }
         // A DISPLAY SURFACE — a wall panel, a kiosk, or an explicitly
         // read-only embed. Pages hide their editing controls on these, and
         // they were each doing it from a DOMContentLoaded handler: the server
@@ -25,6 +70,73 @@
             || p.get('readonly') === 'true') {
             document.documentElement.setAttribute('data-display', '');
         }
+
+        // ── Every link, whenever it was built.
+        //
+        // nav.html's DOMContentLoaded pass can only fix the links that exist at
+        // that moment, and these pages render almost everything client-side
+        // from API data afterwards: a renderer's template string, an Alpine
+        // `:href`, a modal built on open. All invisible to it. Its second hole
+        // is `!href.includes('#')`, which skips any link with a fragment —
+        // /settings' rows are `page#anchor`, so none of them ever carried the
+        // flag either.
+        //
+        // This runs at CLICK time instead, so a card rendered five minutes
+        // later obeys the same rule and nothing has to watch the DOM to do it.
+        // A MutationObserver over these pages would cost more than the whole
+        // fix is worth, on the device that can least afford it.
+        //
+        // Capture phase on `document`, so it runs before any handler that calls
+        // stopPropagation (errands' list chips do exactly that) and before the
+        // browser follows the link. Mutating `href` is enough: the default
+        // action reads the attribute after dispatch finishes. Deliberately NOT
+        // preventDefault + assign — plenty of these anchors carry their own
+        // onclick, and taking the navigation away from them breaks it.
+        //
+        // Above the panel-only return on purpose: a `?kiosk=true` card and a
+        // `?readonly=true` embed leak by exactly the same mechanism. In an
+        // ordinary browser session none of the sticky params are set, so every
+        // click falls straight through.
+        const STICKY = ['panel', 'kiosk', 'readonly', 'theme', 'tabs'];
+        window.chfDisplayUrl = function (href) {
+            try {
+                const url = new URL(href, window.location.href);
+                if (url.origin !== window.location.origin) return href;
+                let changed = false;
+                STICKY.forEach(function (k) {
+                    const v = p.get(k);
+                    if (v !== null && url.searchParams.get(k) !== v) {
+                        url.searchParams.set(k, v);
+                        changed = true;
+                    }
+                });
+                if (!changed) return href;
+                // Rebuilt from the href AS WRITTEN, not from `url.pathname`.
+                // Every internal link in this app is relative on purpose:
+                // under Home Assistant ingress the app lives at
+                // `/api/hassio_ingress/<token>/`, and an absolute `/shopping`
+                // leaves Chauffeur for Home Assistant's own settings. Round
+                // -tripping through URL would have absolutised all of them and
+                // turned a lost query param into a lost application.
+                return href.split('#')[0].split('?')[0] + url.search + url.hash;
+            } catch (e) { return href; }
+        };
+        document.addEventListener('click', function (ev) {
+            const t = ev.target;
+            const a = t && t.closest ? t.closest('a[href]') : null;
+            if (!a) return;
+            const raw = a.getAttribute('href') || '';
+            // A same-page anchor, a javascript:/tel:/mailto: URL, or a link
+            // opening somewhere this tab is not. None of those leave the panel.
+            if (!raw || raw.charAt(0) === '#') return;
+            if (/^(?!https?:)[a-z][a-z0-9+.-]*:/i.test(raw)) return;
+            if (a.target && a.target !== '_self') return;
+            // The ATTRIBUTE, not `a.href`: the property is always absolute, and
+            // writing an absolute path back would break ingress (see above).
+            const fixed = window.chfDisplayUrl(raw);
+            if (fixed !== raw) a.setAttribute('href', fixed);
+        }, true);
+
         if (p.get('panel') !== 'true') return;
         document.documentElement.setAttribute('data-panel', '');
         // The theme has to be on the element BEFORE the first paint or the
