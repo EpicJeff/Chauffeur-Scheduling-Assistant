@@ -207,6 +207,50 @@
                         </div>
                     </div>
 
+                    <!-- Routing & traffic policy (v2.166.0). Facts about the
+                         household, not quota knobs — which is why they sit
+                         apart from the tier limits below. -->
+                    <div x-show="!disableMapbox" x-transition
+                        class="mb-6 p-5 bg-gray-900/50 rounded-xl border border-gray-700">
+                        <h3 class="text-md font-bold text-blue-400 uppercase tracking-wider mb-4">Routing &amp; Traffic</h3>
+                        <div class="space-y-4">
+                            <div class="flex items-center space-x-4">
+                                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                    <input type="checkbox" x-model="trafficLiveEnabled" @change="saveSettings()"
+                                        class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                    </div>
+                                </label>
+                                <span class="text-gray-400 text-sm"><span class="font-semibold text-gray-300">Day-of
+                                        traffic.</span> Re-price each drive with real traffic on its day: a predictive
+                                    pass in the morning and a live check an hour before leaving. Leave-by times and
+                                    Time-to-Leave pushes only ever move <em>earlier</em>. Two small Directions requests
+                                    per drive per day; planning stays on typical times.</span>
+                            </div>
+                            <div class="flex items-center space-x-4" x-show="trafficLiveEnabled" x-transition>
+                                <input type="number" min="0" max="23" x-model="trafficMorningHour"
+                                    @change="saveSettings()"
+                                    class="w-20 bg-gray-900 border border-gray-600 rounded p-2 text-white font-mono text-sm focus:outline-none focus:border-blue-500 shrink-0">
+                                <span class="text-gray-400 text-sm">Hour of the morning pass (0–23). The day's drives
+                                    get their predictive estimates at this hour.</span>
+                            </div>
+                            <div class="flex items-center space-x-4">
+                                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                    <input type="checkbox" x-model="routingAvoidTolls" @change="saveSettings()"
+                                        class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                    </div>
+                                </label>
+                                <span class="text-gray-400 text-sm"><span class="font-semibold text-gray-300">Avoid toll
+                                        roads.</span> Price every drive without tolls — otherwise Mapbox quotes the toll
+                                    route's faster time whether or not you would take it. Flipping this clears every
+                                    cached drive time and re-prices the schedule under the new policy.</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Detailed Mapbox Controls (Visible if Mapbox is enabled globally) -->
                     <div x-show="!disableMapbox" x-transition
                         class="mt-4 mb-6 p-5 bg-gray-900/50 rounded-xl border border-gray-700">
@@ -3721,6 +3765,9 @@
                 enableMapboxMatrix: true,
                 disableMapboxDirections: false,
                 enableMapboxDirections: true,
+                trafficLiveEnabled: true,
+                trafficMorningHour: 6,
+                routingAvoidTolls: false,
                 enableMapboxCategory: true,
                 mapboxMatrixLimit: 90000,
                 mapboxDirectionsLimit: 90000,
@@ -4167,6 +4214,9 @@
                     this.mapboxCategoryLimit = data.mapbox_category_limit || 45000;
                     this.enableMapboxMapLoads = data.enable_mapbox_map_loads !== false;
                     this.mapboxMapLoadsLimit = data.mapbox_map_loads_limit || 45000;
+                    this.trafficLiveEnabled = data.traffic_live_enabled !== false;
+                    this.trafficMorningHour = data.traffic_morning_hour != null ? data.traffic_morning_hour : 6;
+                    this.routingAvoidTolls = data.routing_avoid_tolls === true;
                     this.homeLocation = data.home_location || '';
                     this.publicBaseUrl = data.public_base_url || '';
                     this.haBaseUrl = data.ha_base_url || '';
@@ -4306,6 +4356,9 @@
                             mapbox_category_limit: parseInt(this.mapboxCategoryLimit) || 45000,
                             enable_mapbox_map_loads: this.enableMapboxMapLoads,
                             mapbox_map_loads_limit: parseInt(this.mapboxMapLoadsLimit) || 45000,
+                            traffic_live_enabled: this.trafficLiveEnabled,
+                            traffic_morning_hour: Math.max(0, Math.min(23, parseInt(this.trafficMorningHour, 10) || 0)),
+                            routing_avoid_tolls: this.routingAvoidTolls,
                             home_location: this.homeLocation || '',
                             public_base_url: this.publicBaseUrl || '',
                             ha_base_url: this.haBaseUrl || '',

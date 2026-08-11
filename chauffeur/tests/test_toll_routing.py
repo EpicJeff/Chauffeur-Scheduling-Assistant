@@ -111,6 +111,28 @@ def scenario_the_wiring_cannot_quietly_regress():
           "takes effect against an immortal static cache")
 
 
+def scenario_the_settings_reach_the_model_and_the_page():
+    """Reported: "I don't see the setting on the settings page." The registry
+    is a catalog, not a renderer — a setting is only real once it is (1) a
+    field on the Settings model (the save endpoint DROPS unknown keys
+    silently — the partial-save lesson) and (2) wired on the config page:
+    declared, loaded, saved, and rendered."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    schemas_src = open(os.path.join(root, 'models', 'schemas.py'),
+                       encoding='utf-8').read()
+    for key in ('traffic_live_enabled', 'traffic_morning_hour',
+                'routing_avoid_tolls'):
+        check(key in schemas_src,
+              f"{key} is not a Settings field — the save endpoint silently "
+              "drops keys the model does not carry")
+    config = open(os.path.join(root, 'templates', 'config.html'),
+                  encoding='utf-8').read()
+    for prop in ('trafficLiveEnabled', 'trafficMorningHour', 'routingAvoidTolls'):
+        check(config.count(prop) >= 4,
+              f"{prop} must be declared, loaded, saved AND rendered on the "
+              f"config page — found only {config.count(prop)} mentions")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

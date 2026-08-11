@@ -818,6 +818,16 @@ class Settings(BaseModel):
     mapbox_category_limit: int = 45000
     enable_mapbox_map_loads: bool = True
     mapbox_map_loads_limit: int = 45000
+    # --- Day-of traffic & routing policy (v2.165.0/v2.166.0) ---
+    # Two scheduled driving-traffic buys per leg per day: a predictive pass
+    # at traffic_morning_hour, a live refine an hour before departure.
+    # Leave-by times and pushes only ever move EARLIER.
+    traffic_live_enabled: bool = True
+    traffic_morning_hour: int = 6
+    # Whether this household takes toll roads is a fact about the household.
+    # Flipping it burns every cached duration (storage.clear_route_caches) —
+    # the static cache is immortal, so that is how the policy takes effect.
+    routing_avoid_tolls: bool = False
     llm_provider: str = ""
     llm_gemini_api_key: Optional[str] = None
     llm_gemini_model: str = "gemini-3.5-flash-lite"
