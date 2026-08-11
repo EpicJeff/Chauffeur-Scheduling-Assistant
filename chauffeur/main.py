@@ -3150,8 +3150,22 @@ class ProposalApprove(BaseModel):
     end: Optional[str] = None
     all_day: Optional[bool] = None
     # 'errand' target extras — an errand needs what a proposal doesn't have.
+    # `location` doubles as the event target's location edit.
     location: Optional[str] = None
     duration_mins: Optional[int] = None
+    # Approve-as-configure (event target): the card is the WHOLE editor, so
+    # approving is the last touch — no follow-up trip to Google Calendar for
+    # location/recurrence, no second stop at the schedule inbox for who rides.
+    description: Optional[str] = None
+    recurrence: Optional[str] = None          # daily|weekly|biweekly|monthly
+    recurrence_until: Optional[str] = None    # YYYY-MM-DD, inclusive
+    passenger_ids: Optional[List[str]] = None
+    driver_ids: Optional[List[str]] = None
+
+# The four cadences a family actually types; the weekday/monthday ride on
+# DTSTART, so the rules stay minimal and Google fills in the rest.
+_INTAKE_RRULES = {'daily': 'FREQ=DAILY', 'weekly': 'FREQ=WEEKLY',
+                  'biweekly': 'FREQ=WEEKLY;INTERVAL=2', 'monthly': 'FREQ=MONTHLY'}
 
 @app.get("/api/ingest/config")
 def get_ingest_config():
@@ -3331,7 +3345,8 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
             due = None                 # a task may legitimately have no deadline
         task = HouseholdTask(title=title, due_date=due, source='intake',
                              source_ref=proposal_id,
-                             notes=prop.get('notes') or '').model_dump()
+                             notes=(req.description or '').strip()
+                                   or prop.get('notes') or '').model_dump()
         storage.add_household_task(task)
         storage.update_proposal(proposal_id, {
             'status': 'approved', 'calendar_id': req.calendar_id,
@@ -3361,7 +3376,8 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
         task = KidTask(member_id=member_id, title=title, due_date=due,
                        kind=_task_kind_for(title), source='intake',
                        source_ref=proposal_id,
-                       notes=prop.get('notes') or '').model_dump()
+                       notes=(req.description or '').strip()
+                             or prop.get('notes') or '').model_dump()
         storage.add_kid_task(task)
         storage.update_proposal(proposal_id, {
             'status': 'approved', 'calendar_id': req.calendar_id,
@@ -3371,9 +3387,13 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
         return {"status": "approved", "task_id": task['id'],
                 "message": f"Added to {member.get('name')}'s school list 📚"}
 
+    # Approve-as-configure: an edited description replaces the extracted
+    # notes; the source attribution line survives either way, because "where
+    # did this event come from" is the question a parent asks in October.
     description_parts = []
-    if prop.get('notes'):
-        description_parts.append(prop['notes'])
+    notes = (req.description or '').strip() or (prop.get('notes') or '')
+    if notes:
+        description_parts.append(notes)
     description_parts.append(f"From family email: {prop.get('source_from', '')} — {prop.get('source_subject', '')}")
 
     if all_day:
@@ -3392,22 +3412,64 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
         'description': '\n'.join(description_parts),
         'extendedProperties': {'private': {'intake_proposal_id': proposal_id}},
     }
-    if prop.get('location'):
+    location = (req.location or '').strip() or (prop.get('location') or '').strip()
+    if location:
         # Email-extracted locations are usually bare venue names; resolve to
         # a routable address so the solver can route to the event.
         from services import maps
-        body['location'] = maps.resolve_routable_location(prop['location'])
+        body['location'] = maps.resolve_routable_location(location)
+
+    rec = (req.recurrence or '').strip().lower()
+    if rec:
+        rule = _INTAKE_RRULES.get(rec)
+        if not rule:
+            raise HTTPException(status_code=400,
+                                detail=f"Unknown recurrence '{rec}'")
+        until = (req.recurrence_until or '').strip()
+        if until:
+            try:
+                datetime.strptime(until, '%Y-%m-%d')
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400,
+                                    detail="Recurrence end must be YYYY-MM-DD")
+            # RFC5545: UNTIL's type must match DTSTART's — a DATE for all-day
+            # events, UTC date-time for timed ones.
+            compact = until.replace('-', '')
+            rule += f";UNTIL={compact}" if all_day else f";UNTIL={compact}T235959Z"
+        body['recurrence'] = [f"RRULE:{rule}"]
 
     gid = gcal.insert_event(req.calendar_id, body)
     if not gid:
         raise HTTPException(status_code=502, detail="Google Calendar rejected the event")
+
+    # The Chauffeur half of approval: attendees picked on the card become the
+    # event config, keyed by the new google id — a recurring series' instances
+    # find it through their recurring_event_id fallback. This is what used to
+    # need a second stop at the schedule inbox; with a config in place the
+    # event never lands there. No attendees picked -> no config, and the inbox
+    # stays the honest state for a ride nobody has claimed.
+    conf = {}
+    if req.passenger_ids:
+        conf['passenger_ids'] = [str(x) for x in req.passenger_ids if str(x).strip()]
+    if req.driver_ids:
+        conf['driver_ids'] = [str(x) for x in req.driver_ids if str(x).strip()]
+    conf = {k: v for k, v in conf.items() if v}
+    if conf:
+        storage.set_event_config(gid, conf)
+
     storage.update_proposal(proposal_id, {
         'status': 'approved', 'calendar_id': req.calendar_id,
         'created_event_id': gid, 'title': title, 'start': start, 'end': end,
     })
     _record_intake_feedback(prop, req.calendar_id)
     background_tasks.add_task(trigger_background_refresh)
-    return {"status": "approved", "event_id": gid}
+    bits = [f'Added "{title}" 📅']
+    if rec:
+        bits.append('repeating 🔁')
+    if conf:
+        bits.append('set up for the schedule 🚗')
+    return {"status": "approved", "event_id": gid,
+            "message": ' — '.join(bits) if len(bits) > 1 else bits[0]}
 
 @app.post("/api/proposals/{proposal_id}/ignore")
 def ignore_proposal(proposal_id: str):

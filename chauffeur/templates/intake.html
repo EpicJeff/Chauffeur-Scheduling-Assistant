@@ -95,7 +95,9 @@
                                     <p class="text-xs text-amber-400/80 mt-1" x-show="p.sender_ignores"
                                         x-text="'🤔 You\'ve ignored the last ' + p.sender_ignores + ' from this sender — consider a Gmail filter'"></p>
                                     <!-- Edit-before-approve: fix the extraction instead of
-                                         ignore + manual re-entry. Cleared start time = all-day. -->
+                                         ignore + manual re-entry. Cleared start time = all-day.
+                                         The card is the WHOLE editor — location, notes and
+                                         recurrence too, so approving is the last touch. -->
                                     <div class="grid grid-cols-2 gap-2 mt-3 bg-gray-900/60 border border-gray-700 rounded-lg p-3" x-show="p._editing">
                                         <input type="text" x-model="p._title" placeholder="Title"
                                             class="col-span-2 bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm">
@@ -109,13 +111,31 @@
                                                 class="bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm w-full">
                                         </div>
                                         <p class="col-span-2 text-xs text-gray-500">Clear the start time for an all-day item / a dated to-do.</p>
+                                        <input type="text" x-model="p._location" placeholder="Location (resolved to a routable address)"
+                                            x-show="isCalTarget(p)"
+                                            class="col-span-2 bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm">
+                                        <textarea x-model="p._description" rows="2" placeholder="Notes / description"
+                                            class="col-span-2 bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm"></textarea>
+                                        <select x-model="p._recurrence" x-show="isCalTarget(p)"
+                                            class="bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm">
+                                            <option value="">Doesn't repeat</option>
+                                            <option value="daily">Every day</option>
+                                            <option value="weekly">Weekly</option>
+                                            <option value="biweekly">Every 2 weeks</option>
+                                            <option value="monthly">Monthly</option>
+                                        </select>
+                                        <div class="flex items-center gap-1.5" x-show="isCalTarget(p) && p._recurrence">
+                                            <span class="text-xs text-gray-500 shrink-0">until</span>
+                                            <input type="date" x-model="p._recurUntil"
+                                                class="bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm w-full">
+                                        </div>
                                     </div>
                                 </div>
                                 <div class="flex flex-col gap-2 shrink-0 md:w-72">
                                     <button @click="p._editing = !p._editing"
                                         class="text-xs font-bold text-gray-400 hover:text-white text-left transition-colors"
                                         x-text="p._editing ? '▾ Hide edits' : '✎ Edit details'"></button>
-                                    <select x-model="p._target"
+                                    <select x-model="p._target" @change="onTargetChange(p)"
                                         class="bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-sm w-full">
                                         <option value="" x-text="p.kind === 'task' ? 'Onto a list or calendar?' : 'Onto whose calendar?'"></option>
                                         <template x-for="opt in targetsFor(p)" :key="opt.id + opt.label">
@@ -130,6 +150,33 @@
                                             <input type="number" min="5" step="5" x-model.number="p._errandMins"
                                                 class="bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm w-24">
                                             <span class="text-xs text-gray-400">minutes</span>
+                                        </div>
+                                    </div>
+                                    <!-- Calendar target: attendees ARE the Chauffeur setup. Picking
+                                         who rides here saves the event config on approval, so the
+                                         event never lands in the schedule inbox as "Needs Setup". -->
+                                    <div class="flex flex-col gap-1.5" x-show="isCalTarget(p) && passengerChips.length">
+                                        <span class="text-xs font-bold text-gray-500">Who's going?</span>
+                                        <div class="flex flex-wrap gap-1.5">
+                                            <template x-for="pp in passengerChips" :key="pp.id">
+                                                <button @click="toggleId(p, '_pax', pp.id)"
+                                                    class="px-2.5 py-1 rounded-full text-xs font-bold border transition-colors"
+                                                    :class="(p._pax || []).includes(String(pp.id))
+                                                        ? 'bg-teal-600/40 border-teal-500 text-teal-200'
+                                                        : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-400'"
+                                                    x-text="pp.name"></button>
+                                            </template>
+                                        </div>
+                                        <div class="flex flex-wrap gap-1.5 items-center" x-show="driverChips.length">
+                                            <span class="text-xs text-gray-500">going too:</span>
+                                            <template x-for="dd in driverChips" :key="dd.id">
+                                                <button @click="toggleId(p, '_drv', dd.id)"
+                                                    class="px-2.5 py-1 rounded-full text-xs font-bold border transition-colors"
+                                                    :class="(p._drv || []).includes(String(dd.id))
+                                                        ? 'bg-sky-600/40 border-sky-500 text-sky-200'
+                                                        : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-gray-400'"
+                                                    x-text="dd.name"></button>
+                                            </template>
                                         </div>
                                     </div>
                                     <div class="flex gap-2">
@@ -248,6 +295,8 @@
                 passwordInput: '',
                 calendarTargets: [],
                 taskTargets: [],
+                passengerChips: [],
+                driverChips: [],
                 checking: false,
                 savingConfig: false,
                 uploadingPhoto: false,
@@ -275,8 +324,12 @@
                             if (old) return { ...p, _target: old._target, _editing: old._editing,
                                 _title: old._title, _date: old._date, _startTime: old._startTime,
                                 _endTime: old._endTime, _errandLocation: old._errandLocation,
-                                _errandMins: old._errandMins };
-                            return { ...p, ...this.initEditFields(p), _target: p.calendar_id || '' };
+                                _errandMins: old._errandMins, _location: old._location,
+                                _description: old._description, _recurrence: old._recurrence,
+                                _recurUntil: old._recurUntil, _pax: old._pax, _drv: old._drv };
+                            const fresh = { ...p, ...this.initEditFields(p), _target: p.calendar_id || '' };
+                            if (fresh._target) this.onTargetChange(fresh);   // sender default → pre-check its kid
+                            return fresh;
                         });
                     } catch (e) { this.proposals = []; }
                 },
@@ -291,7 +344,27 @@
                         } catch (e) { /* keep date-only */ }
                     }
                     return { _editing: false, _title: p.title, _date: date, _startTime: startTime,
-                             _endTime: endTime, _errandLocation: p.location || '', _errandMins: 30 };
+                             _endTime: endTime, _errandLocation: p.location || '', _errandMins: 30,
+                             _location: p.location || '', _description: p.notes || '',
+                             _recurrence: '', _recurUntil: '', _pax: [], _drv: [] };
+                },
+                isCalTarget(p) {
+                    const t = p._target || '';
+                    return !!t && t !== 'errand' && t !== 'household_task' && !t.startsWith('tasks:');
+                },
+                toggleId(p, key, id) {
+                    const list = p[key] || (p[key] = []);
+                    const i = list.indexOf(String(id));
+                    if (i >= 0) list.splice(i, 1); else list.push(String(id));
+                },
+                onTargetChange(p) {
+                    // Picking a kid's calendar answers "who's going" for the
+                    // usual case — pre-check that kid, but never override a
+                    // selection the parent already made.
+                    if (!this.isCalTarget(p) || (p._pax || []).length) return;
+                    const owner = this.passengerChips.find(pp =>
+                        (pp.calendar_ids || []).includes(p._target));
+                    if (owner) p._pax = [String(owner.id)];
                 },
                 // The approve body always carries the card's current values —
                 // untouched cards round-trip the extracted ones unchanged.
@@ -320,6 +393,18 @@
                     if (p._target === 'errand') {
                         body.location = (p._errandLocation || '').trim();
                         body.duration_mins = parseInt(p._errandMins) || 30;
+                    }
+                    const desc = (p._description || '').trim();
+                    if (desc) body.description = desc;
+                    if (this.isCalTarget(p)) {
+                        const loc = (p._location || '').trim();
+                        if (loc) body.location = loc;
+                        if (p._recurrence) {
+                            body.recurrence = p._recurrence;
+                            if (p._recurUntil) body.recurrence_until = p._recurUntil;
+                        }
+                        if ((p._pax || []).length) body.passenger_ids = p._pax;
+                        if ((p._drv || []).length) body.driver_ids = p._drv;
                     }
                     return body;
                 },
@@ -351,6 +436,13 @@
                         (Array.isArray(drivers) ? drivers : []).forEach(d =>
                             ((d.calendar_ids || d.calendarIds) || []).forEach(c => opts.push({ id: c, label: `${d.name} — ${c}` })));
                         this.calendarTargets = opts;
+                        // Attendee chips: picking who rides on the card IS the
+                        // Chauffeur setup — saved as the event config on approve.
+                        this.passengerChips = (Array.isArray(passengers) ? passengers : [])
+                            .map(p => ({ id: String(p.id), name: p.name, calendar_ids: p.calendar_ids || [] }));
+                        this.driverChips = (Array.isArray(drivers) ? drivers : [])
+                            .filter(d => !d.is_disabled)
+                            .map(d => ({ id: String(d.id), name: d.name }));
                         // K4b: To-do proposals can land on a kid's school task
                         // list instead of any calendar (never solver load).
                         this.taskTargets = (Array.isArray(members) ? members : [])
