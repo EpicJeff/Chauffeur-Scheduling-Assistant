@@ -164,6 +164,9 @@ def scenario_untouched_cards_round_trip_the_extraction():
 
 
 def scenario_the_hand_path_carries_it_all():
+    """BOTH approval surfaces — /intake and the PWA Family tab — carry the
+    whole editor, and both location fields search real places through the
+    same Mapbox /api/places pair the errands page uses."""
     import os
     tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'templates')
@@ -172,8 +175,20 @@ def scenario_the_hand_path_carries_it_all():
                          ("p._description", "description edit"),
                          ("p._recurrence", "recurrence picker"),
                          ("Who's going?", "attendee chips"),
-                         ("onTargetChange", "picking a kid's calendar pre-checks that kid")):
+                         ("onTargetChange", "picking a kid's calendar pre-checks that kid"),
+                         ("api/places/autocomplete", "Mapbox place search"),
+                         ("api/places/retrieve", "canonical name+address retrieve")):
         check(needle in intake, f"the intake card carries the {what}")
+    app = open(os.path.join(tpl, 'app.html'), encoding='utf-8').read()
+    for needle, what in (("proposalIsCalTarget", "target-aware editor"),
+                         ('data-role="f-loc"', "location edit"),
+                         ('data-role="f-desc"', "description edit"),
+                         ('data-role="f-rec"', "recurrence picker"),
+                         ("data-pax-id", "attendee chips"),
+                         ("prefillProposalPax", "picking a kid's calendar pre-checks that kid"),
+                         ("api/places/autocomplete", "Mapbox place search"),
+                         ("api/places/retrieve", "canonical name+address retrieve")):
+        check(needle in app, f"the PWA approval card carries the {what}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

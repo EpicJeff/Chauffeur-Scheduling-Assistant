@@ -1508,6 +1508,8 @@
         let proposalsData = [];
         let proposalTargets = null;  // [{id, label}] lazily fetched once
         let proposalTaskTargets = [];  // K4b: kid school-list targets for To-do proposals
+        let proposalPaxChips = [];   // approve-as-configure: who rides
+        let proposalDrvChips = [];   // ...and which driver is going too
 
         function escProp(s) {
             const d = document.createElement('div');
@@ -1526,7 +1528,22 @@
                 } catch (e) { /* keep date-only */ }
             }
             return { _editing: false, _title: p.title, _date: date, _startTime: startTime,
-                     _endTime: endTime, _errandLocation: p.location || '', _errandMins: 30 };
+                     _endTime: endTime, _errandLocation: p.location || '', _errandMins: 30,
+                     _location: p.location || '', _description: p.notes || '',
+                     _recurrence: '', _recurUntil: '', _pax: [], _drv: [], _paxInit: false };
+        }
+
+        function proposalIsCalTarget(p) {
+            const t = p._target || '';
+            return !!t && t !== 'errand' && t !== 'household_task' && !t.startsWith('tasks:');
+        }
+
+        // Picking a kid's calendar answers "who's going" for the usual case —
+        // pre-check that kid once, never overriding picks the parent made.
+        function prefillProposalPax(p) {
+            if (!proposalIsCalTarget(p) || (p._pax || []).length) return;
+            const owner = proposalPaxChips.find(pp => (pp.calendar_ids || []).includes(p._target));
+            if (owner) p._pax = [owner.id];
         }
 
         async function fetchProposals() {
@@ -1541,11 +1558,21 @@
                     if (old) return { ...p, _target: old._target, _editing: old._editing,
                         _title: old._title, _date: old._date, _startTime: old._startTime,
                         _endTime: old._endTime, _errandLocation: old._errandLocation,
-                        _errandMins: old._errandMins };
+                        _errandMins: old._errandMins, _location: old._location,
+                        _description: old._description, _recurrence: old._recurrence,
+                        _recurUntil: old._recurUntil, _pax: old._pax || [], _drv: old._drv || [],
+                        _paxInit: old._paxInit };
                     return { ...p, ...initProposalEditFields(p), _target: p.calendar_id || '' };
                 });
             } catch (e) { proposalsData = []; }
             if (proposalsData.length && !proposalTargets) await fetchProposalTargets();
+            // Sender-default targets arrive with the proposal; once the chip
+            // lists exist, fresh rows get their kid pre-checked exactly once.
+            proposalsData.forEach(p => {
+                if (p._paxInit) return;
+                p._paxInit = true;
+                prefillProposalPax(p);
+            });
             renderProposals();
             applyViewVisibility();
         }
@@ -1575,6 +1602,18 @@
                 body.location = (p._errandLocation || '').trim();
                 body.duration_mins = parseInt(p._errandMins) || 30;
             }
+            const desc = (p._description || '').trim();
+            if (desc) body.description = desc;
+            if (proposalIsCalTarget(p)) {
+                const loc = (p._location || '').trim();
+                if (loc) body.location = loc;
+                if (p._recurrence) {
+                    body.recurrence = p._recurrence;
+                    if (p._recurUntil) body.recurrence_until = p._recurUntil;
+                }
+                if ((p._pax || []).length) body.passenger_ids = p._pax;
+                if ((p._drv || []).length) body.driver_ids = p._drv;
+            }
             return body;
         }
 
@@ -1591,6 +1630,11 @@
                         if (!opts.find(o => o.id === c)) opts.push({ id: c, label: d.name });
                     }));
                 proposalTargets = opts;
+                proposalPaxChips = (Array.isArray(passengers) ? passengers : [])
+                    .map(p => ({ id: String(p.id), name: p.name, calendar_ids: p.calendar_ids || [] }));
+                proposalDrvChips = (Array.isArray(drivers) ? drivers : [])
+                    .filter(d => !d.is_disabled)
+                    .map(d => ({ id: String(d.id), name: d.name }));
                 // K4b: To-do proposals can land on a kid's school task list.
                 proposalTaskTargets = (membersData || [])
                     .filter(m => m.role === 'child')
@@ -1634,6 +1678,7 @@
             proposalsData.forEach(p => {
                 const card = document.createElement('div');
                 card.className = 'bg-gray-900 border border-gray-800 rounded-2xl p-3';
+                const calTarget = proposalIsCalTarget(p);
                 const inList = (proposalTargets || []).some(o => o.id === p.calendar_id);
                 const extraOpt = (p.calendar_id && !inList)
                     ? `<option value="${escProp(p.calendar_id)}">Family calendar</option>` : '';
@@ -1661,10 +1706,36 @@
                             <input data-role="f-end" type="time" value="${escProp(p._endTime || '')}" class="${inputCls} w-full min-w-0">
                         </div>
                         <p class="col-span-2 text-xs text-gray-500">Clear the start time for all-day.</p>
+                        <div class="col-span-2 relative ${calTarget ? '' : 'hidden'}">
+                            <input data-role="f-loc" type="text" placeholder="Location" autocomplete="off" value="${escProp(p._location || '')}" class="w-full ${inputCls}">
+                            <div data-role="loc-dd" class="hidden absolute z-20 left-0 right-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-2xl max-h-44 overflow-y-auto"></div>
+                        </div>
+                        <textarea data-role="f-desc" rows="2" placeholder="Notes / description" class="col-span-2 ${inputCls}">${escProp(p._description || '')}</textarea>
+                        <select data-role="f-rec" class="${inputCls} ${calTarget ? '' : 'hidden'}">
+                            <option value="">Doesn't repeat</option>
+                            <option value="daily">Every day</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="biweekly">Every 2 weeks</option>
+                            <option value="monthly">Monthly</option>
+                        </select>
+                        <input data-role="f-recuntil" type="date" title="Repeats until" class="${inputCls} ${calTarget && p._recurrence ? '' : 'hidden'}" value="${escProp(p._recurUntil || '')}">
                     </div>
                     <div data-role="errand-panel" class="flex gap-1.5 mt-2 ${p._target === 'errand' ? '' : 'hidden'}">
-                        <input data-role="f-eloc" type="text" placeholder="Errand location (required)" value="${escProp(p._errandLocation || '')}" class="flex-1 min-w-0 ${inputCls}">
+                        <div class="relative flex-1 min-w-0">
+                            <input data-role="f-eloc" type="text" placeholder="Errand location (required)" autocomplete="off" value="${escProp(p._errandLocation || '')}" class="w-full ${inputCls}">
+                            <div data-role="eloc-dd" class="hidden absolute z-20 left-0 right-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-2xl max-h-44 overflow-y-auto"></div>
+                        </div>
                         <input data-role="f-emins" type="number" min="5" step="5" value="${escProp(p._errandMins || 30)}" class="w-16 ${inputCls}">
+                    </div>
+                    <div data-role="pax-panel" class="mt-2 ${calTarget && proposalPaxChips.length ? '' : 'hidden'}">
+                        <div class="flex flex-wrap gap-1.5 items-center">
+                            <span class="text-xs font-bold text-gray-500">Going:</span>
+                            ${proposalPaxChips.map(pp => `<button data-pax-id="${escProp(pp.id)}" class="${propChipCls((p._pax || []).includes(pp.id), 'teal')}">${escProp(pp.name)}</button>`).join('')}
+                        </div>
+                        ${proposalDrvChips.length ? `<div class="flex flex-wrap gap-1.5 items-center mt-1.5">
+                            <span class="text-xs text-gray-500">with:</span>
+                            ${proposalDrvChips.map(dd => `<button data-drv-id="${escProp(dd.id)}" class="${propChipCls((p._drv || []).includes(dd.id), 'sky')}">${escProp(dd.name)}</button>`).join('')}
+                        </div>` : ''}
                     </div>
                     <div class="flex gap-2 mt-2">
                         <select class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-[16px]" data-role="target">
@@ -1679,9 +1750,11 @@
                 const canApprove = () => !!sel.value && !(sel.value === 'errand' && !(p._errandLocation || '').trim());
                 approveBtn.disabled = !canApprove();
                 sel.onchange = () => {
+                    // Re-render: the errand panel, the attendee chips, the
+                    // location/recurrence visibility all follow the target.
                     p._target = sel.value;
-                    card.querySelector('[data-role="errand-panel"]').classList.toggle('hidden', sel.value !== 'errand');
-                    approveBtn.disabled = !canApprove();
+                    prefillProposalPax(p);
+                    renderProposals();
                 };
                 card.querySelector('[data-role="edit"]').onclick = () => { p._editing = !p._editing; renderProposals(); };
                 const bind = (role, key, after) => {
@@ -1692,12 +1765,102 @@
                 bind('f-date', '_date');
                 bind('f-start', '_startTime');
                 bind('f-end', '_endTime');
-                bind('f-eloc', '_errandLocation', () => { approveBtn.disabled = !canApprove(); });
                 bind('f-emins', '_errandMins');
+                bind('f-desc', '_description');
+                wireProposalLocInput(card, 'f-loc', 'loc-dd', p, '_location');
+                wireProposalLocInput(card, 'f-eloc', 'eloc-dd', p, '_errandLocation',
+                    () => { approveBtn.disabled = !canApprove(); });
+                const rec = card.querySelector('[data-role="f-rec"]');
+                const recUntil = card.querySelector('[data-role="f-recuntil"]');
+                rec.value = p._recurrence || '';
+                rec.onchange = () => {
+                    p._recurrence = rec.value;
+                    recUntil.classList.toggle('hidden', !(calTarget && rec.value));
+                };
+                recUntil.oninput = () => { p._recurUntil = recUntil.value; };
+                card.querySelectorAll('[data-pax-id]').forEach(btn => {
+                    btn.onclick = () => {
+                        toggleProposalId(p, '_pax', btn.dataset.paxId);
+                        btn.className = propChipCls((p._pax || []).includes(btn.dataset.paxId), 'teal');
+                    };
+                });
+                card.querySelectorAll('[data-drv-id]').forEach(btn => {
+                    btn.onclick = () => {
+                        toggleProposalId(p, '_drv', btn.dataset.drvId);
+                        btn.className = propChipCls((p._drv || []).includes(btn.dataset.drvId), 'sky');
+                    };
+                });
                 approveBtn.onclick = () => approveProposal(p.id);
                 card.querySelector('[data-role="ignore"]').onclick = () => ignoreProposal(p.id);
                 wrap.appendChild(card);
             });
+        }
+
+        function propChipCls(selected, tone) {
+            const on = tone === 'sky' ? 'bg-sky-600/40 border-sky-500 text-sky-200'
+                                      : 'bg-teal-600/40 border-teal-500 text-teal-200';
+            return 'px-2.5 py-1 rounded-full text-xs font-bold border transition-colors '
+                + (selected ? on : 'bg-gray-800 border-gray-700 text-gray-400');
+        }
+
+        function toggleProposalId(p, key, id) {
+            const list = p[key] || (p[key] = []);
+            const i = list.indexOf(String(id));
+            if (i >= 0) list.splice(i, 1); else list.push(String(id));
+        }
+
+        // Mapbox place search behind a location field (same /api/places pair
+        // the errands page uses). One session token spans suggest→retrieve —
+        // that is how Mapbox bills a search session — and retrieve hands back
+        // the canonical "Name, address" AND pre-caches its geocode server-side,
+        // so the solver never has to look this place up again.
+        let _propLocTimer = null, _propLocToken = null;
+        function wireProposalLocInput(card, role, ddRole, p, key, after) {
+            const el = card.querySelector(`[data-role="${role}"]`);
+            const dd = card.querySelector(`[data-role="${ddRole}"]`);
+            if (!el || !dd) return;
+            el.oninput = () => {
+                p[key] = el.value;
+                if (after) after();
+                const q = el.value.trim();
+                if (q.length < 3) { dd.classList.add('hidden'); return; }
+                if (!_propLocToken)
+                    _propLocToken = (crypto.randomUUID ? crypto.randomUUID()
+                        : String(Math.random()).slice(2) + Date.now());
+                clearTimeout(_propLocTimer);
+                _propLocTimer = setTimeout(async () => {
+                    try {
+                        const res = await fetch(`${apiBase}api/places/autocomplete?input=${encodeURIComponent(q)}&session_token=${_propLocToken}`);
+                        const data = await res.json();
+                        const items = data.suggestions || [];
+                        if (!items.length) { dd.classList.add('hidden'); return; }
+                        dd.innerHTML = '';
+                        items.forEach(s => {
+                            const row = document.createElement('div');
+                            row.className = 'p-2.5 active:bg-gray-700 cursor-pointer text-sm text-gray-200 border-b border-gray-700 last:border-0';
+                            row.textContent = s.description;
+                            row.onclick = async () => {
+                                dd.classList.add('hidden');
+                                el.value = s.description; p[key] = s.description;
+                                if (s.mapbox_id && _propLocToken) {
+                                    try {
+                                        const r2 = await fetch(`${apiBase}api/places/retrieve?mapbox_id=${encodeURIComponent(s.mapbox_id)}&session_token=${_propLocToken}`);
+                                        if (r2.ok) {
+                                            const d = await r2.json();
+                                            if (d && d.name) { el.value = d.name; p[key] = d.name; }
+                                        }
+                                    } catch (e) { /* the suggestion text still stands */ }
+                                }
+                                _propLocToken = null;
+                                if (after) after();
+                            };
+                            dd.appendChild(row);
+                        });
+                        dd.classList.remove('hidden');
+                    } catch (e) { dd.classList.add('hidden'); }
+                }, 300);
+            };
+            el.onblur = () => setTimeout(() => dd.classList.add('hidden'), 250);
         }
 
         async function approveProposal(id) {

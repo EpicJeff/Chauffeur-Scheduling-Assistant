@@ -111,9 +111,23 @@
                                                 class="bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm w-full">
                                         </div>
                                         <p class="col-span-2 text-xs text-gray-500">Clear the start time for an all-day item / a dated to-do.</p>
-                                        <input type="text" x-model="p._location" placeholder="Location (resolved to a routable address)"
-                                            x-show="isCalTarget(p)"
-                                            class="col-span-2 bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm">
+                                        <!-- Mapbox Search Box behind the field (same /api/places pair the
+                                             errands page uses): picking a suggestion retrieves the canonical
+                                             "Name, address" and pre-caches its geocode for the solver. -->
+                                        <div class="col-span-2 relative" x-show="isCalTarget(p)"
+                                            @click.outside="locSuggest.items = []">
+                                            <input type="text" x-model="p._location" autocomplete="off"
+                                                @input="locInput(p, '_location')" placeholder="Location"
+                                                class="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm">
+                                            <div x-show="locActive(p, '_location')"
+                                                class="absolute z-20 left-0 right-0 mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl max-h-48 overflow-y-auto">
+                                                <template x-for="s in locSuggest.items" :key="s.mapbox_id || s.description">
+                                                    <div @click="locPick(p, '_location', s)"
+                                                        class="p-2.5 hover:bg-gray-600 cursor-pointer text-sm text-gray-200 border-b border-gray-600 last:border-0"
+                                                        x-text="s.description"></div>
+                                                </template>
+                                            </div>
+                                        </div>
                                         <textarea x-model="p._description" rows="2" placeholder="Notes / description"
                                             class="col-span-2 bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm"></textarea>
                                         <select x-model="p._recurrence" x-show="isCalTarget(p)"
@@ -144,8 +158,19 @@
                                     </select>
                                     <!-- Errand target: the two fields an errand needs beyond the proposal -->
                                     <div class="flex flex-col gap-2" x-show="p._target === 'errand'">
-                                        <input type="text" x-model="p._errandLocation" placeholder="Errand location (required)"
-                                            class="bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm w-full">
+                                        <div class="relative" @click.outside="locSuggest.items = []">
+                                            <input type="text" x-model="p._errandLocation" autocomplete="off"
+                                                @input="locInput(p, '_errandLocation')" placeholder="Errand location (required)"
+                                                class="bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm w-full">
+                                            <div x-show="locActive(p, '_errandLocation')"
+                                                class="absolute z-20 left-0 right-0 mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl max-h-48 overflow-y-auto">
+                                                <template x-for="s in locSuggest.items" :key="s.mapbox_id || s.description">
+                                                    <div @click="locPick(p, '_errandLocation', s)"
+                                                        class="p-2.5 hover:bg-gray-600 cursor-pointer text-sm text-gray-200 border-b border-gray-600 last:border-0"
+                                                        x-text="s.description"></div>
+                                                </template>
+                                            </div>
+                                        </div>
                                         <div class="flex items-center gap-2">
                                             <input type="number" min="5" step="5" x-model.number="p._errandMins"
                                                 class="bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm w-24">
@@ -297,6 +322,9 @@
                 taskTargets: [],
                 passengerChips: [],
                 driverChips: [],
+                // One live autocomplete at a time: whichever location field
+                // was typed in last owns the dropdown.
+                locSuggest: { pid: null, field: '', items: [], token: null },
                 checking: false,
                 savingConfig: false,
                 uploadingPhoto: false,
@@ -351,6 +379,52 @@
                 isCalTarget(p) {
                     const t = p._target || '';
                     return !!t && t !== 'errand' && t !== 'household_task' && !t.startsWith('tasks:');
+                },
+                // --- Mapbox place search on the location fields -----------
+                // A session token spans suggest→retrieve (that is how Mapbox
+                // bills a search session); retrieve hands back the canonical
+                // "Name, address" AND pre-caches its geocode server-side, so
+                // the solver never has to look this place up again.
+                _locUuid() {
+                    return 'xxxxxxxxyxxxxyxxxyxxxxxxxxxxxxxx'.replace(/[xy]/g, c => {
+                        const r = Math.random() * 16 | 0;
+                        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+                    });
+                },
+                locInput(p, field) {
+                    this.locSuggest.pid = p.id;
+                    this.locSuggest.field = field;
+                    const q = (p[field] || '').trim();
+                    if (q.length < 3) { this.locSuggest.items = []; return; }
+                    if (!this.locSuggest.token) this.locSuggest.token = this._locUuid();
+                    clearTimeout(this._locTimer);
+                    this._locTimer = setTimeout(async () => {
+                        try {
+                            const res = await fetch(`${this.apiBase}api/places/autocomplete?input=${encodeURIComponent(q)}&session_token=${this.locSuggest.token}`);
+                            const data = await res.json();
+                            // Only show if this field still owns the dropdown.
+                            if (this.locSuggest.pid === p.id && this.locSuggest.field === field)
+                                this.locSuggest.items = data.suggestions || [];
+                        } catch (e) { this.locSuggest.items = []; }
+                    }, 300);
+                },
+                async locPick(p, field, s) {
+                    p[field] = s.description;
+                    this.locSuggest.items = [];
+                    if (s.mapbox_id && this.locSuggest.token) {
+                        try {
+                            const res = await fetch(`${this.apiBase}api/places/retrieve?mapbox_id=${encodeURIComponent(s.mapbox_id)}&session_token=${this.locSuggest.token}`);
+                            if (res.ok) {
+                                const d = await res.json();
+                                if (d && d.name) p[field] = d.name;
+                            }
+                        } catch (e) { /* the suggestion text still stands */ }
+                    }
+                    this.locSuggest.token = null;
+                },
+                locActive(p, field) {
+                    return this.locSuggest.pid === p.id && this.locSuggest.field === field
+                        && this.locSuggest.items.length > 0;
                 },
                 toggleId(p, key, id) {
                     const list = p[key] || (p[key] = []);
