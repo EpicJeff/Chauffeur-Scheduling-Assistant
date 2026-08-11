@@ -314,7 +314,8 @@
                          alternative is scaling the page's typography down to
                          a few pixels. It opens on the next drive rather than
                          on breakfast. -->
-                    <template x-if="t.type === 'drives' && !t.data.empty">
+                    <template x-if="t.type === 'drives' && !t.data.empty
+                                     && t.data.view !== 'list'">
                         <!-- The ids carry the INSTANCE, not the type. Two
                              driving tiles on one board would otherwise be two
                              elements with the same id, and the renderer would
@@ -323,6 +324,36 @@
                         <div :id="'board-timeline-scroll-' + t.id"
                             class="board-timeline-scroll flex-1 min-h-0 overflow-auto tile-scroll">
                             <div :id="'board-timeline-' + t.id" class="board-timeline"></div>
+                        </div>
+                    </template>
+
+                    <!-- Drives as a LIST, which is the only shape that can
+                         answer "the next few days": the timeline is the Drives
+                         page's own renderer and draws exactly one day. A day
+                         heading appears when the day changes, so a week reads
+                         as a week rather than as fourteen undated rows. -->
+                    <template x-if="t.type === 'drives' && !t.data.empty
+                                     && t.data.view === 'list'">
+                        <div class="space-y-1.5">
+                            <template x-for="(r, i) in t.data.rows" :key="r.id + '-' + i">
+                                <div>
+                                    <div x-show="r.first_of_day" class="panel-label mt-2 mb-1"
+                                        x-text="r.day"></div>
+                                    <div class="flex items-baseline gap-2 min-w-0"
+                                        :class="r.done ? 'opacity-45' : ''">
+                                        <span class="text-sm tabular-nums panel-dim shrink-0"
+                                            x-text="r.leave_at || r.at"></span>
+                                        <span class="w-2 h-2 rounded-full shrink-0"
+                                            :style="'background:' + (r.color || '#64748b')"></span>
+                                        <span class="text-base panel-text truncate flex-1"
+                                            x-text="r.title"></span>
+                                        <span class="text-sm panel-dim shrink-0 truncate max-w-[7rem]"
+                                            x-text="r.driver"></span>
+                                    </div>
+                                </div>
+                            </template>
+                            <div x-show="t.data.more" class="text-sm panel-dim pt-1"
+                                x-text="'+' + t.data.more + ' more'"></div>
                         </div>
                     </template>
 
@@ -372,14 +403,20 @@
                                         <span class="text-sm font-bold panel-text" x-text="l.name"></span>
                                         <span class="text-xs panel-dim" x-text="l.open + ' open'"></span>
                                     </div>
-                                    <div class="flex flex-wrap gap-1.5">
-                                        <template x-for="(it, i) in l.items" :key="i">
+                                    <!-- How many things, per instance. A tile
+                                         pinned to one list can afford to name
+                                         twenty; a narrow tile summarising three
+                                         lists wants the counts and nothing
+                                         else, which is what 0 means. -->
+                                    <div class="flex flex-wrap gap-1.5"
+                                        x-show="itemsShown(t, l).length">
+                                        <template x-for="(it, i) in itemsShown(t, l)" :key="i">
                                             <span class="panel-chip text-sm rounded-full px-2.5 py-1"
                                                 x-text="it"></span>
                                         </template>
                                         <span class="text-sm panel-dim px-1 py-1"
-                                            x-show="l.open > l.items.length"
-                                            x-text="'+' + (l.open - l.items.length)"></span>
+                                            x-show="l.open > itemsShown(t, l).length"
+                                            x-text="'+' + (l.open - itemsShown(t, l).length)"></span>
                                     </div>
                                 </div>
                             </template>
@@ -471,7 +508,35 @@
                          columns the tile is wide, so the same markup is one
                          day stacked on a narrow tile and a working week across
                          a wide one. -->
-                    <template x-if="t.type === 'calendar' && !t.data.empty">
+                    <!-- One list, next first. A card per day needs width; a
+                         tile three columns wide gets three words per card, and
+                         the same information down a list is legible. Same rows,
+                         same order, the date on the row instead of over it. -->
+                    <template x-if="t.type === 'calendar' && !t.data.empty
+                                     && t.data.view === 'list'">
+                        <div class="space-y-1.5">
+                            <template x-for="(e, i) in t.data.rows" :key="i">
+                                <div class="flex items-baseline gap-2 min-w-0"
+                                    :class="e.past ? 'opacity-45' : ''">
+                                    <span class="text-sm panel-dim shrink-0 w-10 truncate"
+                                        x-text="e.day"></span>
+                                    <span class="text-sm tabular-nums panel-dim shrink-0"
+                                        x-text="e.all_day ? 'all day' : e.at"></span>
+                                    <span class="w-2 h-2 rounded-full shrink-0"
+                                        :style="'background:' + (e.color || '#64748b')"></span>
+                                    <span class="text-base panel-text truncate flex-1"
+                                        x-text="e.title"></span>
+                                    <span x-show="e.needs_driver"
+                                        class="text-xs font-bold shrink-0 text-red-400">needs a driver</span>
+                                </div>
+                            </template>
+                            <div x-show="t.data.more" class="text-sm panel-dim pt-1"
+                                x-text="'+' + t.data.more + ' more'"></div>
+                        </div>
+                    </template>
+
+                    <template x-if="t.type === 'calendar' && !t.data.empty
+                                     && t.data.view !== 'list'">
                         <div class="grid gap-2 agenda-cards"
                             :style="`--a-lg:${agendaCols(t.id, 'lg')}; --a-md:${agendaCols(t.id, 'md')}`">
                             <template x-for="d in t.data.days" :key="d.date">
@@ -688,7 +753,8 @@
                              made the second one silently unreachable — it would
                              reuse the first one's row. -->
                         <template x-for="(w, i) in draft.panel_widgets" :key="w.id">
-                            <div class="flex items-center gap-2 bg-gray-800/70 rounded-lg px-3 py-2">
+                            <div class="bg-gray-800/70 rounded-lg">
+                            <div class="flex items-center gap-2 px-3 py-2">
                                 <span x-text="widgetMeta(w.type).icon"></span>
                                 <span class="flex-1 min-w-0">
                                     <span class="text-sm font-semibold text-gray-200"
@@ -723,6 +789,13 @@
                                         class="w-12 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-1 py-0.5">
                                     rows
                                 </label>
+                                <!-- Only offered when the type has something to
+                                     ask. A gear on a tile with no options is a
+                                     door onto an empty room. -->
+                                <button x-show="optionsFor(w.type).length"
+                                    @click="expanded = (expanded === w.id ? null : w.id)"
+                                    :class="expanded === w.id ? 'text-sky-300' : 'text-gray-500 hover:text-white'"
+                                    class="px-1" title="Options">⚙</button>
                                 <button @click="move(draft.panel_widgets, i, -1)" :disabled="i === 0"
                                     class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▲</button>
                                 <button @click="move(draft.panel_widgets, i, 1)"
@@ -730,6 +803,94 @@
                                     class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▼</button>
                                 <button @click="removeInstance(i)"
                                     class="text-gray-500 hover:text-red-400 px-1">✕</button>
+                            </div>
+
+                            <!-- This instance's options, rendered FROM THE
+                                 TYPE'S DECLARATION rather than from a form
+                                 written per tile. The pair that drifts apart in
+                                 a system like this is "what the editor offers"
+                                 and "what the builder honours"; one list in
+                                 home_board.WIDGETS is the only real defence, so
+                                 this loop deliberately knows nothing about
+                                 calendars or drivers. -->
+                            <div x-show="expanded === w.id" x-cloak
+                                class="border-t border-gray-700/70 px-3 py-3 space-y-3">
+                                <template x-for="o in optionsFor(w.type)" :key="o.key">
+                                    <div>
+                                        <label class="block text-[0.7rem] font-bold uppercase tracking-wider text-gray-500 mb-1"
+                                            x-text="o.label"></label>
+
+                                        <template x-if="o.type === 'text'">
+                                            <input type="text" :value="cfg(w, o) || ''"
+                                                @input="setCfg(w, o, $event.target.value)"
+                                                :placeholder="widgetMeta(w.type).label"
+                                                class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200">
+                                        </template>
+
+                                        <template x-if="o.type === 'int'">
+                                            <input type="number" :min="o.min" :max="o.max"
+                                                :value="cfg(w, o) === null ? '' : cfg(w, o)"
+                                                @input="setCfg(w, o, $event.target.value)"
+                                                placeholder="—"
+                                                class="w-20 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200">
+                                        </template>
+
+                                        <template x-if="o.type === 'bool'">
+                                            <label class="flex items-center gap-2 text-sm text-gray-300">
+                                                <input type="checkbox" :checked="cfg(w, o)"
+                                                    @change="setCfg(w, o, $event.target.checked)"
+                                                    class="accent-sky-500">
+                                                <span x-text="cfg(w, o) ? 'Yes' : 'No'"></span>
+                                            </label>
+                                        </template>
+
+                                        <template x-if="o.type === 'choice'">
+                                            <select @change="setCfg(w, o, $event.target.value)"
+                                                class="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200">
+                                                <template x-for="c in (o.choices || [])" :key="c.value">
+                                                    <option :value="c.value" x-text="c.label"
+                                                        :selected="c.value === cfg(w, o)"></option>
+                                                </template>
+                                            </select>
+                                        </template>
+
+                                        <!-- One of a live list. The blank entry
+                                             is not decoration: "all of them"
+                                             has to stay reachable after you
+                                             have picked one. -->
+                                        <template x-if="o.type === 'select' && !o.multi">
+                                            <select @change="setCfg(w, o, $event.target.value)"
+                                                class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200">
+                                                <option value="" :selected="!cfg(w, o)">All</option>
+                                                <template x-for="c in sourceRows(o)" :key="c.value">
+                                                    <option :value="c.value" x-text="c.label"
+                                                        :selected="c.value === cfg(w, o)"></option>
+                                                </template>
+                                            </select>
+                                        </template>
+
+                                        <template x-if="o.type === 'select' && o.multi">
+                                            <div class="flex flex-wrap gap-1.5">
+                                                <template x-for="c in sourceRows(o)" :key="c.value">
+                                                    <button type="button" @click="toggleCfgId(w, o, c.value)"
+                                                        :class="(cfg(w, o) || []).includes(c.value)
+                                                            ? 'bg-sky-600 text-white'
+                                                            : 'bg-gray-900 text-gray-400 hover:text-gray-200'"
+                                                        class="text-xs rounded-full px-2.5 py-1 border border-gray-700"
+                                                        x-text="c.label"></button>
+                                                </template>
+                                                <span x-show="!sourceRows(o).length"
+                                                    class="text-xs text-gray-600 italic">
+                                                    Nothing to pick from yet.
+                                                </span>
+                                            </div>
+                                        </template>
+
+                                        <div x-show="o.help" class="text-[0.7rem] text-gray-600 mt-1"
+                                            x-text="o.help"></div>
+                                    </div>
+                                </template>
+                            </div>
                             </div>
                         </template>
                         <div x-show="!draft.panel_widgets.length" class="text-sm text-gray-500 italic">
@@ -966,6 +1127,10 @@
                 // fetch landed.
                 nowTs: Date.now(),
                 saving: false,
+                // Which instance's options panel is open. ONE at a time, by id:
+                // a board with ten tiles and ten expanded forms is a wall of
+                // fields with no way to tell which tile you are editing.
+                expanded: null,
                 draft: {
                     panel_widgets: [], panel_tabs: [], panel_idle_return_seconds: 180,
                     panel_tile_spans: {}, panel_grid_row_height: 240, panel_grid_columns: 12,
@@ -1454,6 +1619,70 @@
 
                 countOfType(type) {
                     return this.draft.panel_widgets.filter(w => w.type === type).length;
+                },
+
+                // --- per-instance options ---------------------------------
+
+                optionsFor(type) {
+                    return this.widgetMeta(type).options || [];
+                },
+
+                // The server sends up to twelve item names per list; how many
+                // of them this instance shows is the instance's own business.
+                // Absent means the old behaviour (all twelve the server
+                // sends), so a board nobody has configured looks as it did.
+                itemsShown(tile, list) {
+                    const n = (tile.data || {}).show_items;
+                    return (list.items || []).slice(0, n === undefined ? 12 : n);
+                },
+
+                // The live contents of a `select` — members, drivers, lists.
+                // An empty source is not an error: a household with no shopping
+                // lists has nothing to pick, and the field says so rather than
+                // pretending to be broken.
+                sourceRows(o) {
+                    return ((this.catalog.sources || {})[o.source]) || [];
+                },
+
+                // Absent means the DECLARED default, which for several options
+                // is deliberately null ("follow the board setting"). Reading it
+                // as 0 or '' would turn "unset" into a real value the moment
+                // anybody opened the panel.
+                cfg(w, o) {
+                    const v = (w.config || {})[o.key];
+                    if (v === undefined) return o.default === undefined ? null : o.default;
+                    return v;
+                },
+
+                // A value equal to the default STOPS BEING STORED. Otherwise
+                // opening the options panel on a tile and closing it again
+                // would write out a full config of numbers nobody chose, and
+                // then those numbers would stop tracking the board default when
+                // the household changed it.
+                setCfg(w, o, raw) {
+                    let v = raw;
+                    if (o.type === 'int') {
+                        v = String(raw).trim() === '' ? null : parseInt(raw, 10);
+                        if (v !== null && Number.isNaN(v)) return;
+                        if (v !== null && o.min !== undefined) v = Math.max(o.min, v);
+                        if (v !== null && o.max !== undefined) v = Math.min(o.max, v);
+                    } else if (o.type === 'bool') {
+                        v = !!raw;
+                    } else if (o.type === 'text' || (o.type === 'select' && !o.multi)) {
+                        v = String(raw == null ? '' : raw);
+                    }
+                    if (!w.config) w.config = {};
+                    const isDefault = (v === null && (o.default === null || o.default === undefined))
+                        || JSON.stringify(v) === JSON.stringify(o.default);
+                    if (isDefault) delete w.config[o.key];
+                    else w.config[o.key] = v;
+                },
+
+                toggleCfgId(w, o, value) {
+                    const cur = (this.cfg(w, o) || []).slice();
+                    const at = cur.indexOf(value);
+                    if (at === -1) cur.push(value); else cur.splice(at, 1);
+                    this.setCfg(w, o, cur);
                 },
 
                 // `calendar`, then `calendar-2`. Mirrors the server's rule in

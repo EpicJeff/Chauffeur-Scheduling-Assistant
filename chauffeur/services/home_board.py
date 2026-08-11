@@ -46,18 +46,103 @@ from typing import Callable, List, Optional
 
 from services import leave_by, storage
 
+# ── The option vocabulary.
+#
+# Every tile type declares what it can be asked, and the editor renders those
+# declarations rather than carrying a hand-built form per type. The point is
+# that a tile's options live NEXT TO the builder that reads them: the pair that
+# drifts apart in a system like this is "what the editor offers" and "what the
+# code honours", and one list is the only real defence.
+#
+#   text    a free string
+#   int     a number, clamped to min/max here and again in the builder
+#   bool    a switch
+#   choice  one of `choices`, which are fixed and known at import
+#   select  one or many of a live list — `source` names it, and the catalog
+#           ships the current contents, because members, drivers, lists and
+#           trips are household data and cannot be enumerated here
+#
+# An option's DEFAULT is what the tile does when nobody has said otherwise, and
+# for several of them that default is "the household setting" rather than a
+# literal — `days` on the calendar starts from `panel_agenda_days`, so a board
+# that has never been configured per-tile behaves exactly as it did before.
+def _opt(key, label, type_, default=None, **extra):
+    o = {'key': key, 'label': label, 'type': type_, 'default': default}
+    o.update(extra)
+    return o
+
+
+# Offered on every tile, appended in `catalog()` rather than repeated fifteen
+# times. Two calendar tiles need different NAMES more than they need anything
+# else — "What's coming" twice is a board that cannot be read.
+TITLE_OPTION = _opt('title', 'Title', 'text', '',
+                    help="What this tile is called on the board. "
+                         "Blank uses the standard name.")
+
+
+def _cfg_int(config, key, default, lo, hi):
+    try:
+        return max(lo, min(hi, int((config or {}).get(key, default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _cfg_bool(config, key, default):
+    v = (config or {}).get(key)
+    return default if v is None else bool(v)
+
+
+def _cfg_str(config, key, default=''):
+    v = (config or {}).get(key)
+    return default if v is None else str(v).strip()
+
+
+def _cfg_ids(config, key):
+    """A multi-select's value. EMPTY MEANS EVERYONE, always, on every tile that
+    takes one — the alternative is a tile that shows nothing until you have
+    ticked somebody, which reads as broken rather than as unconfigured."""
+    v = (config or {}).get(key)
+    if not isinstance(v, list):
+        return []
+    return [str(x) for x in v if str(x).strip()]
+
+
 # The catalog. `label` is what the setup UI calls the tile; `blurb` is the
 # sentence explaining what it is FOR, which is the thing a person picking six
-# of nine tiles actually needs.
+# of nine tiles actually needs. `options` is what one instance of it can be
+# asked; a type with none is a tile that only knows one thing to say.
 WIDGETS = [
     {'key': 'drives', 'icon': '🚗', 'label': 'The rest of the day',
-     'blurb': "Every drive still ahead today, and who has it."},
+     'blurb': "Every drive still ahead today, and who has it.",
+     'options': [
+         # The timeline is the Drives page's own renderer and draws ONE day —
+         # that is what makes it the real thing rather than a lookalike. A tile
+         # asked for a week therefore cannot be a timeline, so the view and the
+         # day count are one decision offered as two fields, and `days` says so.
+         _opt('view', 'View', 'choice', 'timeline', choices=[
+             {'value': 'timeline', 'label': 'Timeline (today)'},
+             {'value': 'list', 'label': 'List of drives'}]),
+         _opt('days', 'Days', 'int', 1, min=1, max=14,
+              help='List view only — the timeline is always today.'),
+         _opt('drivers', 'Drivers', 'select', [], source='drivers', multi=True,
+              help='Leave empty for everyone.'),
+         _opt('errands', 'Show errands', 'bool', True),
+     ]},
     {'key': 'kids', 'icon': '🎒', 'label': 'Each kid',
      'blurb': "The same calm look at the day each child gets in their digest."},
     {'key': 'meals', 'icon': '🍽️', 'label': "Tonight's plate",
      'blurb': "What is planned to eat, once a plate is pinned for the day."},
     {'key': 'shopping', 'icon': '🛒', 'label': 'Lists',
-     'blurb': "How much is open on each shopping list."},
+     'blurb': "How much is open on each shopping list.",
+     'options': [
+         _opt('list', 'List', 'select', '', source='lists',
+              help='One list, or leave empty for all of them.'),
+         # 12 because that is what the tile already showed — the server
+         # sends twelve names and the panel rendered all of them. A new
+         # default here would have been a silent redesign of every board.
+         _opt('items', 'Items shown', 'int', 12, min=0, max=20,
+              help='0 shows the counts only.'),
+     ]},
     {'key': 'chores', 'icon': '⭐', 'label': 'Chore points',
      'blurb': "The points leaderboard, exactly as the chores kiosk shows it."},
     {'key': 'routines', 'icon': '🔁', 'label': 'Streaks',
@@ -69,7 +154,19 @@ WIDGETS = [
     {'key': 'moments', 'icon': '📸', 'label': 'Latest moments',
      'blurb': "Recent photos from the family's events."},
     {'key': 'calendar', 'icon': '📅', 'label': "What's coming",
-     'blurb': "The next few days on the family calendar, drives or not."},
+     'blurb': "The next few days on the family calendar, drives or not.",
+     'options': [
+         _opt('view', 'View', 'choice', 'agenda', choices=[
+             {'value': 'agenda', 'label': 'A card per day'},
+             {'value': 'list', 'label': 'One list, next first'}]),
+         # No literal default: absent means `panel_agenda_days`, so a board
+         # nobody has configured per-tile behaves exactly as it always did.
+         _opt('days', 'Days', 'int', None, min=1, max=14,
+              help='Blank follows the board default.'),
+         _opt('members', 'People', 'select', [], source='members', multi=True,
+              help="Matches each person's own calendars. Empty shows everyone."),
+         _opt('all_day', 'Include all-day events', 'bool', True),
+     ]},
     {'key': 'errands', 'icon': '📋', 'label': 'Errands waiting',
      'blurb': "What still needs doing, past-due first."},
     {'key': 'tasks', 'icon': '📝', 'label': 'The household owes',
@@ -448,7 +545,7 @@ def _hero_unbuilt(sched: dict) -> bool:
 # --- tile builders --------------------------------------------------------
 # Each returns the tile's payload, or None when it has nothing to say.
 
-def _schedule_slice(day: datetime.date, sched: dict) -> dict:
+def _schedule_slice(day: datetime.date, sched: dict, drivers=None) -> dict:
     """One day of the cached schedule, in the shape `renderSchedule` reads.
 
     The drives tile draws the REAL Drives timeline — the same function, from
@@ -463,6 +560,12 @@ def _schedule_slice(day: datetime.date, sched: dict) -> dict:
     and it is a slice rather than the whole thing because the panel does not
     need three weeks of events to draw this afternoon. The edge maps are
     `edges[driver_id][event_id]`, so they prune against the same day's ids.
+
+    `drivers` is the tile's own filter, a set of driver ids or None. It prunes
+    the LANES only — the timeline draws a column per driver — and deliberately
+    not the events, because an event nobody in the filter is driving still has
+    to leave a gap where it is: a timeline with the day's other drives silently
+    removed reads as a free afternoon.
     """
     events = [e for e in (sched.get('events') or [])
               if (_parse(e.get('start')) or datetime.datetime.min).date() == day]
@@ -508,7 +611,8 @@ def _schedule_slice(day: datetime.date, sched: dict) -> dict:
         'calendar_metadata': sched.get('calendar_metadata') or {},
         'home_location': sched.get('home_location') or '',
         'drivers': [d for d in (storage.get_all_drivers() or [])
-                    if not d.get('is_disabled')],
+                    if not d.get('is_disabled')
+                    and (drivers is None or d.get('id') in drivers)],
         'cars': [c for c in (storage.get_all_cars() or []) if not c.get('is_disabled')],
         'completed_drives': completed,
         'in_progress_drives': in_progress,
@@ -521,7 +625,7 @@ def _schedule_slice(day: datetime.date, sched: dict) -> dict:
     }
 
 
-def _tile_drives(now, runs, sched=None, **_):
+def _tile_drives(now, runs, sched=None, config=None, **_):
     """The rest of the day, drawn by the DRIVES PAGE'S OWN TIMELINE.
 
     The first version of this tile drew a timeline of its own — lanes, blocks,
@@ -535,10 +639,47 @@ def _tile_drives(now, runs, sched=None, **_):
     the two halves of the board cannot disagree about what is behind us — and
     the page decides how it looks.
     """
+    view = _cfg_str(config, 'view', 'timeline') or 'timeline'
+    show_errands = _cfg_bool(config, 'errands', True)
+    only = set(_cfg_ids(config, 'drivers'))
+
+    # Applied to the RUNS as well as to the timeline, so the count, the "next"
+    # scroll target and the drawing all agree about whose day this tile is.
+    if only:
+        runs = [r for r in runs if r.get('driver_id') in only]
+    if not show_errands:
+        runs = [r for r in runs if r.get('kind') != 'errand']
+
     # `over`, not `done` — a drive whose end time has passed is not upcoming
     # whether or not anybody remembered to tap it complete. Reading `done` here
     # while the hero read the clock is what let the wall contradict itself.
     rest = [r for r in runs if not r['over']]
+
+    # A list of drives, which is the only shape that can answer "the next few
+    # days" — the timeline is the Drives page's own renderer and draws exactly
+    # one day. Offering "7 days" on a timeline would have been a setting that
+    # silently did nothing.
+    if view == 'list':
+        span = _cfg_int(config, 'days', 1, 1, 14)
+        rows, seen_days = [], set()
+        for i in range(span):
+            day = now.date() + datetime.timedelta(days=i)
+            day_runs = runs if i == 0 else todays_runs(day, sched=sched, now=now)
+            if only:
+                day_runs = [r for r in day_runs if r.get('driver_id') in only]
+            if not show_errands:
+                day_runs = [r for r in day_runs if r.get('kind') != 'errand']
+            for r in day_runs:
+                if i == 0 and r.get('over'):
+                    continue          # today is the rest of the day, as ever
+                rows.append({**r, 'day': day_word(day, now.date()),
+                             'first_of_day': day not in seen_days})
+                seen_days.add(day)
+        if not rows:
+            return {'empty': "No drives on the schedule."}
+        return {'view': 'list', 'rows': rows[:14], 'count': len(rows),
+                'more': max(0, len(rows) - 14)}
+
     if not runs:
         if not storage.get_all_drivers():
             return None                      # no drivers: the feature is unused
@@ -553,8 +694,12 @@ def _tile_drives(now, runs, sched=None, **_):
 
     sched = sched if sched is not None else (storage.get_cached_schedule() or {})
     return {
+        'view': 'timeline',
         'count': len(rest),
-        'schedule': _schedule_slice(now.date(), sched),
+        # Read by the client, which hands it to `renderSchedule` — the page's
+        # own errand switch, driven per tile.
+        'show_errands': show_errands,
+        'schedule': _schedule_slice(now.date(), sched, drivers=only or None),
         # Where to scroll the timeline so the tile opens on the part of the day
         # that has not happened. The whole day is drawn — a wall panel showing
         # a drive that finished an hour ago at the top of the tile is showing
@@ -611,11 +756,22 @@ def _tile_meals(now, **_):
         return None
 
 
-def _tile_shopping(now, **_):
+def _tile_shopping(now, config=None, **_):
     try:
         all_lists = storage.get_shopping_lists()
         if not all_lists:
             return None                       # never made a list: feature unused
+        only = _cfg_str(config, 'list')
+        if only:
+            picked = [l for l in all_lists if l.get('id') == only]
+            # A list somebody deleted since configuring the tile. Saying so is
+            # the only useful thing here: silently falling back to all lists
+            # would look like the setting doing nothing, and hiding the tile
+            # would look like the board being broken.
+            if not picked:
+                return {'empty': "That list is gone."}
+            all_lists = picked
+        show_items = _cfg_int(config, 'items', 12, 0, 20)
         lists = []
         for l in all_lists:
             items = storage.get_shopping_items(l['id'])
@@ -634,7 +790,11 @@ def _tile_shopping(now, **_):
         if not lists:
             return {'empty': "Nothing on the lists."}
         lists.sort(key=lambda x: -x['open'])
-        return {'lists': lists[:3], 'total': sum(l['open'] for l in lists)}
+        # A tile pinned to ONE list is showing that list, so it shows all of
+        # it that fits rather than the top three of one.
+        keep = 1 if only else 3
+        return {'lists': lists[:keep], 'total': sum(l['open'] for l in lists),
+                'show_items': show_items}
     except Exception as e:
         print(f"[home_board] shopping failed: {e}")
         return None
@@ -785,7 +945,28 @@ def agenda_days(settings: dict = None) -> int:
         return AGENDA_DAYS
 
 
-def _tile_calendar(now, sched=None, settings=None, **_):
+def _member_calendar_ids(member_ids: List[str]) -> set:
+    """The Google calendars belonging to these people.
+
+    `FamilyMember.calendar_ids` is the single place a person's calendars are
+    set (Config → People → Identity); Driver and Passenger records carry
+    derived mirrors. Filtering by member therefore means filtering by their
+    calendars, which is also the honest answer to "show me Emma's week": an
+    event is hers if it is on a calendar of hers.
+
+    A member with NO calendars matches nothing, and that is correct rather than
+    a bug to paper over — the alternative, treating "no calendars" as "all
+    calendars", would silently turn a filter into no filter.
+    """
+    wanted = set(member_ids or [])
+    ids = set()
+    for m in (storage.get_all_members() or []):
+        if m.get('id') in wanted:
+            ids.update(m.get('calendar_ids') or [])
+    return ids
+
+
+def _tile_calendar(now, sched=None, settings=None, config=None, **_):
     """What this family is doing, laid out the way the calendar page's AGENDA
     view lays it out: a card per day, the day's events under it by start time.
 
@@ -813,7 +994,18 @@ def _tile_calendar(now, sched=None, settings=None, **_):
         unassigned = set(sched.get('unassigned') or [])
         drivers = _driver_index()
         today = now.date()
-        span = agenda_days(settings)
+        span = _cfg_int(config, 'days', agenda_days(settings), 1, 14)
+        view = _cfg_str(config, 'view', 'agenda') or 'agenda'
+        show_all_day = _cfg_bool(config, 'all_day', True)
+        member_ids = _cfg_ids(config, 'members')
+        # Resolved ONCE, not per event: this reads every member record, and a
+        # busy fortnight is a few hundred events. Empty set = no filter.
+        wanted_cals = _member_calendar_ids(member_ids) if member_ids else set()
+
+        def mine(ev) -> bool:
+            if not member_ids:
+                return True
+            return bool(wanted_cals.intersection(ev.get('calendar_ids') or []))
 
         days = {}
         order = []
@@ -830,6 +1022,10 @@ def _tile_calendar(now, sched=None, settings=None, **_):
             # The trip's own span event covers every day of the trip and would
             # print on all five cards. The trips tile is where a trip belongs.
             if ev.get('event_type') == 'background_trip':
+                continue
+            if ev.get('all_day') and not show_all_day:
+                continue
+            if not mine(ev):
                 continue
             start = _parse(ev.get('start'))
             if not start:
@@ -857,7 +1053,12 @@ def _tile_calendar(now, sched=None, settings=None, **_):
                 'past': bool(not ev.get('all_day') and end < now),
             })
 
-        for er in (sched.get('scheduled_errands') or []):
+        # An errand is household work with a driver, not something on a
+        # person's calendar — so a tile filtered to particular people drops
+        # them rather than guessing that the driver's errands are "theirs".
+        # "Emma's week" containing the household's trip to the tip is worse
+        # than it missing it.
+        for er in ([] if member_ids else (sched.get('scheduled_errands') or [])):
             start = _parse(er.get('start_time'))
             if not start:
                 continue
@@ -877,9 +1078,29 @@ def _tile_calendar(now, sched=None, settings=None, **_):
 
         total = sum(len(v) for v in days.values())
         # Never hidden. A family calendar with a quiet stretch is information;
-        # a calendar tile that vanishes just looks broken.
+        # a calendar tile that vanishes just looks broken. A FILTERED tile says
+        # whose calendar is quiet, because "nothing on the calendar" under a
+        # tile headed "Emma's week" reads as the tile being broken.
         if not total:
-            return {'empty': "Nothing on the calendar for the next few days."}
+            who = ''
+            if member_ids:
+                names = [m.get('name') for m in (storage.get_all_members() or [])
+                         if m.get('id') in set(member_ids) and m.get('name')]
+                who = f" for {', '.join(names)}" if names else ''
+            return {'empty': f"Nothing on the calendar{who} "
+                             f"for the next {span} day{'s' if span != 1 else ''}."}
+
+        # One list, next first — for a narrow tile, where a row of day cards is
+        # three words per card. Same rows, same order, no day headings; the
+        # date rides on the row instead.
+        if view == 'list':
+            rows = sorted((r for v in days.values() for r in v),
+                          key=lambda r: (r['start'], not r['all_day']))
+            for r in rows:
+                d = datetime.date.fromisoformat(r['start'][:10])
+                r['day'] = day_word(d, today)
+            return {'view': 'list', 'rows': rows[:12], 'total': total,
+                    'more': max(0, len(rows) - 12)}
 
         cards = []
         for d in order:
@@ -902,7 +1123,7 @@ def _tile_calendar(now, sched=None, settings=None, **_):
                 'earlier': earlier,
                 'more': max(0, len(rows) - AGENDA_PER_DAY),
             })
-        return {'days': cards, 'total': total}
+        return {'view': 'agenda', 'days': cards, 'total': total}
     except Exception as e:
         print(f"[home_board] calendar failed: {e}")
         return None
@@ -1643,7 +1864,16 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     # disagrees with itself by a few minutes per day is not better than one
     # that disagrees by five.
     sched = storage.get_cached_schedule() or {}
-    for i in range(max(1, agenda_days(settings))):
+    # As deep as the DEEPEST tile asks for, not as deep as the household
+    # setting. Each day is merged in from its own cache row, and a tile
+    # configured for a fortnight against a five-day prefetch would have
+    # rendered nine empty days and looked like a quiet calendar rather than
+    # like a board that had not read that far.
+    depth = max([agenda_days(settings)]
+                + [_cfg_int(i.get('config'), 'days', 1, 1, 14)
+                   for i in instances
+                   if (i.get('config') or {}).get('days') is not None])
+    for i in range(max(1, depth)):
         sched = day_schedule(now.date() + datetime.timedelta(days=i), sched)
     runs = todays_runs(now.date(), sched=sched, now=now)
 
@@ -1777,14 +2007,54 @@ def grid_columns(settings: dict = None) -> int:
         return 12
 
 
+def option_sources() -> dict:
+    """The live contents of every `select` option — the household's people,
+    drivers and lists, as `{value, label}` rows the editor can render without
+    knowing what any of them are.
+
+    Each one is fetched independently and INDEPENDENTLY SURVIVES failure. A
+    board editor that will not open because the shopping service threw is a
+    worse outcome than a picker with nothing in it, and the tile whose source
+    is empty is the only one that should be affected.
+    """
+    out = {'members': [], 'drivers': [], 'lists': []}
+    try:
+        out['members'] = [{'value': m['id'], 'label': m.get('name') or 'Someone'}
+                          for m in (storage.get_all_members() or [])]
+    except Exception as e:
+        print(f"[home_board] member options failed: {e}")
+    try:
+        out['drivers'] = [{'value': d['id'], 'label': d.get('name') or 'Driver'}
+                          for d in (storage.get_all_drivers() or [])]
+    except Exception as e:
+        print(f"[home_board] driver options failed: {e}")
+    try:
+        out['lists'] = [{'value': l['id'], 'label': l.get('name') or 'List'}
+                        for l in (storage.get_shopping_lists() or [])]
+    except Exception as e:
+        print(f"[home_board] list options failed: {e}")
+    return out
+
+
 def catalog() -> dict:
     """Everything the setup UI needs to offer a choice. Includes the defaults
     so the editor can show what "leave it alone" actually means — a picker
     whose empty state is indistinguishable from a deliberate empty selection
-    is how a blank wall panel gets shipped."""
+    is how a blank wall panel gets shipped.
+
+    `title` is appended to every type's options here rather than declared
+    fifteen times: it is the one option that means the same thing everywhere,
+    and it is the one a board with two calendar tiles needs most.
+    """
+    widgets = []
+    for w in WIDGETS:
+        w = dict(w)
+        w['options'] = list(w.get('options') or []) + [TITLE_OPTION]
+        widgets.append(w)
     return {
-        'widgets': WIDGETS,
+        'widgets': widgets,
         'widget_defaults': list(DEFAULT_WIDGETS),
+        'sources': option_sources(),
         'tabs': [{'slug': s, 'label': TAB_LABELS.get(s, s)} for s in NAV_SLUGS],
         'tab_defaults': list(DEFAULT_TABS),
     }
