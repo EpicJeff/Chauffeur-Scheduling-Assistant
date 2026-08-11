@@ -116,6 +116,24 @@ def sender_default(from_addr: str, sender_defaults: list):
     return None
 
 
+def sender_blocked(from_addr: str, blocklist: list):
+    """The entry blocking this sender, or None.
+
+    Deliberately the SAME lowercase-substring test `sender_default` uses, so
+    one matcher governs routing and blocking and the two can never drift. That
+    is also what makes '@teamsnap.com' work as an entry: school and team
+    platforms rotate their sending addresses (`noreply@`, `bounce+7f3a@`), so
+    blocking the literal From line lets the next message straight through and
+    the family concludes the button is broken."""
+    addr = (from_addr or '').lower()
+    for entry in blocklist or []:
+        pattern = (entry.get('pattern') if isinstance(entry, dict) else entry) or ''
+        pattern = str(pattern).strip().lower()
+        if pattern and pattern in addr:
+            return entry if isinstance(entry, dict) else {'pattern': pattern}
+    return None
+
+
 def fetch_new_messages(settings: dict):
     """Fetch messages with UID greater than the stored cursor. Returns
     (messages, error) where each message is {uid, from, subject, text}."""
@@ -470,9 +488,10 @@ def run_ingest() -> dict:
 
 
 def _run_ingest_locked() -> dict:
-    summary = {'checked': 0, 'proposed': 0, 'error': None}
+    summary = {'checked': 0, 'proposed': 0, 'skipped': 0, 'error': None}
     settings = storage.get_settings() or {}
     sender_defaults = settings.get('ingest_sender_defaults') or []
+    blocklist = settings.get('ingest_sender_blocklist') or []
 
     messages, err = fetch_new_messages(settings)
     if err:
@@ -491,6 +510,20 @@ def _run_ingest_locked() -> dict:
     for msg in messages:
         summary['checked'] += 1
         log = {'from': msg['from'], 'subject': msg['subject'][:120]}
+
+        # Blocked senders are skipped BEFORE extraction — that is the whole
+        # saving, one LLM call per message not made. Still counted, still
+        # logged: silent disappearance is what makes mail filters unnerving,
+        # and the day the athletics office starts sending real game schedules
+        # from a blocked address, the Activity list is the evidence.
+        blocked = sender_blocked(msg['from'], blocklist)
+        if blocked:
+            summary['skipped'] += 1
+            storage.add_ingest_log({**log, 'outcome': 'skipped: sender blocked '
+                                                      f"({blocked.get('pattern')})",
+                                    'skipped': True})
+            continue
+
         entry = sender_default(msg['from'], sender_defaults)
         try:
             items = extract_items(msg['subject'], msg['from'], msg['text'], member_names)

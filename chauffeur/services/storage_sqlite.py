@@ -67,6 +67,9 @@ INDEX_SPEC = {
     # solve and every board build, and it is looked up by event_id.
     "assist_contacts": [["id"]],
     "assist_assignments": [["id"], ["event_id"], ["contact_id"]],
+    # Append-only and never read by a solve, so it is indexed for the LOOKUP
+    # ("what has Emma's mom covered for us?"), not for the hot path.
+    "assist_history": [["id"], ["contact_id"], ["event_id"]],
     # Household tasks (load arc A2). Read by owner ("what's on my plate") and
     # by status on every sweep.
     "household_tasks": [["id"], ["assigned_to"], ["status"]],

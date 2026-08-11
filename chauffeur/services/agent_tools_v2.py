@@ -977,12 +977,17 @@ def _find_assist_contact(name: str):
 
 
 def cover_with_assist(event_name: str, contact_name: str = None,
-                      target_date: str = None, clear: bool = False) -> Dict[str, Any]:
+                      target_date: str = None, clear: bool = False,
+                      scope: str = 'instance') -> Dict[str, Any]:
     """Hand a drive to somebody outside the household, or take it back.
 
     Deliberately not an override: an override says "this driver, whatever the
     solver thinks"; this says "not ours at all", and the event leaves the
     optimisation entirely.
+
+    `scope='series'` covers every occurrence — the standing arrangement
+    ("Emma's mom has Tuesdays"), which until now the model could only fake by
+    covering one day and reporting the season handled.
     """
     import datetime
     from services import storage
@@ -1006,8 +1011,16 @@ def cover_with_assist(event_name: str, contact_name: str = None,
         return {"status": "error",
                 "message": f"I couldn't find '{event_name}' that day. On the schedule: {titles}."}
 
+    rec = match.get('recurring_event_id')
+    use_series = (scope == 'series' and bool(rec))
+    key = str(rec) if use_series else match['id']
+
     if clear or not contact_name:
+        # Both keys: "we're driving it after all" must not leave a standing
+        # series row behind to re-cover the occurrence on the next solve.
         storage.clear_assist_assignment(match['id'])
+        if rec:
+            storage.clear_assist_assignment(str(rec))
         return {"status": "success", "schedule_dirty": True,
                 "message": f"{match.get('title')} is back on the family's plate — "
                            f"I'll work out who drives."}
@@ -1019,10 +1032,16 @@ def cover_with_assist(event_name: str, contact_name: str = None,
         return {"status": "error",
                 "message": f"I don't know '{contact_name}'. Outside hands I know: {known}. "
                            f"A parent can add them in Config → People → Outside hands."}
-    storage.set_assist_assignment(match['id'], contact['id'])
+    storage.set_assist_assignment(
+        key, contact['id'], scope=('series' if use_series else 'instance'),
+        event_date=('' if use_series else str(match.get('start') or '')[:10]),
+        event_title=match.get('title') or '')
     who = contact.get('relation_label') or contact.get('name')
+    span = (" every time it comes round" if use_series
+            else f" on {day.strftime('%A %d %b')}")
     return {"status": "success", "schedule_dirty": True,
-            "message": f"{who} is covering {match.get('title')} — I've taken it off the family's plate."}
+            "message": f"{who} is covering {match.get('title')}{span} — "
+                       f"I've taken it off the family's plate."}
 
 
 def get_assist_coverage(target_date: str = None) -> Dict[str, Any]:
@@ -1043,9 +1062,12 @@ def get_assist_coverage(target_date: str = None) -> Dict[str, Any]:
                            f"{day.strftime('%A %d %b')}."}
     by_id = {c['id']: c for c in storage.get_assist_contacts(include_inactive=True)}
     lines = []
+    from services import assist as _assist
     for ev in sched.get('events', []):
-        ev_id = str(ev.get('id'))
-        if ev_id not in assist_map:
+        # Resolved instance-then-series, or a standing arrangement would read
+        # as "nobody is covering anything" here while the solver honours it.
+        covering = _assist.coverage_for(assist_map, ev)
+        if not covering:
             continue
         try:
             start = datetime.datetime.fromisoformat(str(ev.get('start')))
@@ -1054,7 +1076,7 @@ def get_assist_coverage(target_date: str = None) -> Dict[str, Any]:
             stamp = start.strftime('%I:%M %p').lstrip('0')
         except (ValueError, TypeError):
             stamp = ''
-        c = by_id.get(assist_map[ev_id]) or {}
+        c = by_id.get(covering) or {}
         who = c.get('relation_label') or c.get('name') or 'someone'
         phone = f" ({c['phone']})" if c.get('phone') else ''
         lines.append(f"{stamp} {ev.get('title') or 'Event'} — {who}{phone}".strip())
@@ -3016,14 +3038,15 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "cover_with_assist",
-            "description": "Records that somebody OUTSIDE the family is handling a drive — a carpool parent, a neighbour ('Emma's mom is taking them to soccer today', 'the Kellys have practice this week'). The event leaves the solver entirely: no family driver is scheduled and nobody is chased about it. Use clear=true to take it back ('actually we're driving after all').",
+            "description": "Records that somebody OUTSIDE the family is handling a drive — a carpool parent, a neighbour ('Emma's mom is taking them to soccer today', 'the Kellys have soccer from now on'). The event leaves the solver entirely: no family driver is scheduled and nobody is chased about it. Use clear=true to take it back ('actually we're driving after all'), which ends a standing arrangement as well as a one-off.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "event_name": {"type": "string", "description": "The event being covered, as spoken ('soccer', 'the dance class')."},
                     "contact_name": {"type": "string", "description": "Who is covering it — their name OR what the family calls them ('Emma's mom'). Omit when clearing."},
-                    "target_date": {"type": "string", "description": "Which day (default today). Accepts 'tomorrow', 'Friday'."},
-                    "clear": {"type": "boolean", "description": "True to hand the drive back to the family."}
+                    "target_date": {"type": "string", "description": "Which day (default today). Accepts 'tomorrow', 'Friday'. For scope=series this is just the occurrence used to find the event."},
+                    "clear": {"type": "boolean", "description": "True to hand the drive back to the family."},
+                    "scope": {"type": "string", "enum": ["instance", "series"], "description": "instance (default) = only the occurrence on target_date. series = every occurrence of a recurring event, the standing arrangement ('Emma's mom has Tuesdays', 'they're taking soccer this season'). Do NOT use instance for an ongoing arrangement — it covers one day only."}
                 },
                 "required": ["event_name"]
             }

@@ -181,6 +181,81 @@ def test_run_ingest():
         email_ingest.extract_items = real_extract
 
 
+def test_sender_blocklist():
+    """The app used to spot a sender you kept ignoring and send you to Gmail to
+    build a filter — advice, not an action, for something it could settle in
+    one click. Blocking happens BEFORE extraction (so the LLM call is the
+    saving, not just the clicks) and is always recorded, because mail that
+    vanishes without trace is exactly what makes filters unnerving."""
+    print("intake sender blocklist ...")
+    storage.ingest_log_table.truncate()
+    storage.patch_settings({
+        'ingest_email_enabled': True,
+        'ingest_email_user': 'family@test',
+        'ingest_email_password': 'x',
+        'ingest_sender_defaults': [],
+        'ingest_sender_blocklist': [{'pattern': '@teamsnap.com'}],
+    })
+
+    # The matcher: one substring test shared with sender_default, so a domain
+    # entry catches the rotating addresses these platforms actually send from.
+    check(email_ingest.sender_blocked('coach.dan@teamsnap.com',
+                                      [{'pattern': '@teamsnap.com'}]),
+          "a domain entry blocks an address at that domain")
+    check(email_ingest.sender_blocked('bounce+7f3a@teamsnap.com',
+                                      [{'pattern': '@teamsnap.com'}]),
+          "including the machine-generated ones a literal address would miss")
+    check(not email_ingest.sender_blocked('coach@school.org',
+                                          [{'pattern': '@teamsnap.com'}]),
+          "and nothing else")
+
+    real_fetch = email_ingest.fetch_new_messages
+    real_extract = email_ingest.extract_items
+    extracted = []
+    try:
+        email_ingest.fetch_new_messages = lambda settings: ([
+            _fake_msg(21, 'coach.dan@teamsnap.com', 'Game Saturday', 'Game 10am'),
+            _fake_msg(22, 'office@school.org', 'Picture Day', 'Picture day info'),
+        ], None)
+
+        def spy_extract(subject, from_addr, body, names):
+            extracted.append(from_addr)
+            return []
+        email_ingest.extract_items = spy_extract
+
+        s = email_ingest.run_ingest()
+        check(extracted == ['office@school.org'],
+              f"the blocked sender never reaches extraction — that is the whole "
+              f"saving, one LLM call per message not made: {extracted}")
+        check(s['checked'] == 2 and s['skipped'] == 1,
+              f"still counted as seen, not silently dropped: {s}")
+        check(any('skipped: sender blocked' in (r.get('outcome') or '')
+                  for r in storage.get_ingest_log()),
+              "and the skip is in the record, so the day that sender starts "
+              "mailing something real there is evidence rather than a mystery")
+    finally:
+        email_ingest.fetch_new_messages = real_fetch
+        email_ingest.extract_items = real_extract
+        storage.patch_settings({'ingest_sender_blocklist': []})
+
+
+def test_the_block_is_reachable_by_hand():
+    """Standing rule: no capability without a hand path. The offer has to be on
+    the proposal itself — that is the moment the family is already looking at
+    the sender they are tired of."""
+    print("intake blocklist hand path ...")
+    import os
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    page = open(os.path.join(tpl, 'intake.html'), encoding='utf-8').read()
+    check('blockSender' in page and 'senderDomain' in page,
+          "both readings are offered from the card: this address, or the domain")
+    check('Gmail filter' not in page,
+          "and the old 'go build a Gmail filter yourself' advice is gone")
+    check('unblockSender' in page and 'Blocked senders' in page,
+          "the blocklist is visible and reversible on the page that made it")
+
+
 def test_log_collapse():
     print("ingest log collapse ...")
     storage.ingest_log_table.truncate()
@@ -268,6 +343,8 @@ if __name__ == '__main__':
     test_mime_and_allowlist()
     test_normalize()
     test_run_ingest()
+    test_sender_blocklist()
+    test_the_block_is_reachable_by_hand()
     test_log_collapse()
     test_fuzzy_dedup()
     print(f"\n{PASS} passed, {FAIL} failed")

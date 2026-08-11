@@ -92,8 +92,23 @@
                                     <p class="text-xs text-gray-600 mt-1 truncate"
                                         x-text="p.source === 'photo' ? '📸 ' + (p.source_subject || '(photo)')
                                             : '✉️ ' + (p.source_from || '') + ' — ' + (p.source_subject || '')"></p>
-                                    <p class="text-xs text-amber-400/80 mt-1" x-show="p.sender_ignores"
-                                        x-text="'🤔 You\'ve ignored the last ' + p.sender_ignores + ' from this sender — consider a Gmail filter'"></p>
+                                    <!-- The app noticed the pattern; it should also be the
+                                         thing that fixes it. This used to suggest building a
+                                         rule in the mail client instead — advice sending you
+                                         to another app to do real work, for something one
+                                         click here settles. Both readings are offered because
+                                         platforms rotate sending addresses, so blocking the
+                                         literal From line often blocks nothing. -->
+                                    <div class="mt-2 flex flex-wrap items-center gap-2" x-show="p.sender_ignores">
+                                        <span class="text-xs text-amber-400/80"
+                                            x-text="'🤔 You\'ve ignored the last ' + p.sender_ignores + ' from this sender.'"></span>
+                                        <button @click="blockSender(p, false)"
+                                            class="text-xs font-bold px-2 py-1 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20"
+                                            x-text="'Stop reading ' + senderAddress(p)"></button>
+                                        <button @click="blockSender(p, true)" x-show="senderDomain(p)"
+                                            class="text-xs font-bold px-2 py-1 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20"
+                                            x-text="'Stop reading anything from ' + senderDomain(p)"></button>
+                                    </div>
                                     <!-- Edit-before-approve: fix the extraction instead of
                                          ignore + manual re-entry. Cleared start time = all-day.
                                          The card is the WHOLE editor — location, notes and
@@ -263,8 +278,13 @@
                             <span class="text-gray-500 shrink-0 w-36" x-text="tsLabel(row.ts)"></span>
                             <span class="text-gray-300 truncate flex-1"
                                 x-text="(row.subject || '') + (row.from ? ' · ' + row.from : '')"></span>
+                            <!-- A skip is its own colour: a blocked sender must read
+                                 as a decision the family made, not as mail that
+                                 quietly went missing. -->
                             <span class="shrink-0 font-medium"
-                                :class="(row.outcome || '').startsWith('proposed') ? 'text-green-400' : ((row.outcome || '').startsWith('error') ? 'text-red-400' : 'text-gray-500')"
+                                :class="(row.outcome || '').startsWith('proposed') ? 'text-green-400'
+                                    : ((row.outcome || '').startsWith('error') ? 'text-red-400'
+                                    : ((row.outcome || '').startsWith('skipped') || (row.outcome || '').startsWith('blocked') || (row.outcome || '').startsWith('unblocked') ? 'text-amber-400/90' : 'text-gray-500'))"
                                 x-text="row.outcome"></span>
                             <span x-show="(row.count || 1) > 1" class="shrink-0 text-xs font-bold text-gray-500 bg-gray-700/50 px-2 py-0.5 rounded-full"
                                 x-text="'×' + row.count + ' since ' + tsLabel(row.first_ts)"></span>
@@ -329,6 +349,32 @@
                     <button @click="config.ingest_sender_defaults.push({pattern: '', calendar_id: ''})"
                         class="text-blue-400 hover:text-blue-300 font-bold text-sm mb-5">+ Add sender default</button>
 
+                    <!-- Blocked senders. Deliberately NOT hidden away: a filter you
+                         cannot see is the thing that makes mail rules unnerving. -->
+                    <label class="block text-gray-400 mb-1 text-sm font-semibold">Blocked senders</label>
+                    <p class="text-xs text-gray-500 mb-3">Mail matching these is skipped before it is read — no
+                        proposals, and no AI call spent on it. Matching is a substring of the From address, so
+                        "@teamsnap.com" covers every address that platform sends from. Every skip is still recorded
+                        in Activity below, so a block is always visible and always reversible.</p>
+                    <template x-for="(entry, idx) in (config.ingest_sender_blocklist || [])" :key="entry.pattern + idx">
+                        <div class="flex gap-2 mb-2 items-center bg-gray-900 border border-gray-700 rounded-lg p-2.5">
+                            <span class="flex-1 font-mono text-sm text-amber-300" x-text="entry.pattern"></span>
+                            <span class="text-xs text-gray-500" x-show="entry.label" x-text="entry.label"></span>
+                            <button @click="unblockSender(entry.pattern)"
+                                class="text-blue-400 hover:text-blue-300 bg-blue-500/10 px-3 py-1 rounded-lg font-bold text-sm">Unblock</button>
+                        </div>
+                    </template>
+                    <p x-show="!(config.ingest_sender_blocklist || []).length"
+                        class="text-gray-500 text-sm italic mb-5">Nothing blocked. When you keep ignoring a sender,
+                        Chauffeur offers a button on the proposal itself.</p>
+                    <div class="flex gap-2 mb-5">
+                        <input type="text" x-model="blockInput" placeholder="@teamsnap.com"
+                            @keydown.enter="blockPattern(blockInput)"
+                            class="flex-1 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white font-mono text-sm">
+                        <button @click="blockPattern(blockInput)"
+                            class="text-amber-300 hover:text-amber-200 bg-amber-500/10 border border-amber-500/30 px-4 rounded-lg font-bold text-sm">Block</button>
+                    </div>
+
                     <div class="flex gap-3">
                         <button @click="saveConfig()" :disabled="savingConfig"
                             class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold px-6 py-3 rounded-lg transition-colors"
@@ -345,8 +391,9 @@
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
                 proposals: [],
                 log: [],
-                config: { ingest_email_enabled: false, ingest_email_host: 'imap.gmail.com', ingest_email_user: '', has_password: false, ingest_sender_defaults: [] },
+                config: { ingest_email_enabled: false, ingest_email_host: 'imap.gmail.com', ingest_email_user: '', has_password: false, ingest_sender_defaults: [], ingest_sender_blocklist: [] },
                 passwordInput: '',
+                blockInput: '',
                 calendarTargets: [],
                 taskTargets: [],
                 passengerChips: [],
@@ -564,7 +611,53 @@
                         this.config = await res.json();
                         if (!Array.isArray(this.config.ingest_sender_defaults)) this.config.ingest_sender_defaults = [];
                         this.config.ingest_sender_defaults = this.config.ingest_sender_defaults.map(e => ({ pattern: e.pattern || '', calendar_id: e.calendar_id || '' }));
+                        if (!Array.isArray(this.config.ingest_sender_blocklist)) this.config.ingest_sender_blocklist = [];
                     } catch (e) { console.error('config load failed', e); }
+                },
+
+                // --- Blocked senders ---------------------------------------
+                // The From line as stored ("Coach Dan <dan@team.org>" is already
+                // reduced to the address server-side, but a photo proposal has
+                // no sender at all).
+                senderAddress(p) {
+                    return ((p && p.source_from) || '').trim().toLowerCase();
+                },
+                senderDomain(p) {
+                    const at = this.senderAddress(p).lastIndexOf('@');
+                    return at > -1 ? this.senderAddress(p).slice(at) : '';
+                },
+                async blockSender(p, wholeDomain) {
+                    const pattern = wholeDomain ? this.senderDomain(p) : this.senderAddress(p);
+                    if (!pattern) { showGlobalAlert('That proposal has no sender to block.'); return; }
+                    await this.blockPattern(pattern, p.source_subject || '');
+                },
+                async blockPattern(pattern, label) {
+                    pattern = (pattern || '').trim().toLowerCase();
+                    if (!pattern) return;
+                    if (!await promptConfirm('Stop reading this sender?',
+                        `Mail matching "${pattern}" will be skipped before it is read. It stays visible in `
+                        + `Activity, and you can unblock it here at any time.`, 'Block', 'Cancel')) return;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ingest/block-sender`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ pattern, label: label || '' }) });
+                        const data = await res.json();
+                        if (!res.ok) { showGlobalAlert(data.detail || "Couldn't block that sender."); return; }
+                        this.config.ingest_sender_blocklist = data.ingest_sender_blocklist || [];
+                        this.blockInput = '';
+                        await Promise.all([this.loadProposals(), this.loadLog()]);
+                        showGlobalAlert(`Blocked ${pattern} ✉️`, 'success');
+                    } catch (e) { showGlobalAlert("Couldn't block that sender."); }
+                },
+                async unblockSender(pattern) {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ingest/unblock-sender`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ pattern }) });
+                        const data = await res.json();
+                        this.config.ingest_sender_blocklist = data.ingest_sender_blocklist || [];
+                        await this.loadLog();
+                    } catch (e) { showGlobalAlert("Couldn't unblock that sender."); }
                 },
                 async loadTargets() {
                     try {

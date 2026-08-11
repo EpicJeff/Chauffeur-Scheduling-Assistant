@@ -4479,11 +4479,21 @@
                 options);
             if (pick === null || pick === undefined) return;   // '' is a real answer here, null is cancel
 
+            // Recurrence comes from the payload event, not the card: the card is
+            // a hand-built object for rendering and carries only what it draws.
+            const full = ((scheduleData && scheduleData.events) || []).find(e => e.id === evId);
+            let scope = 'instance';
+            if (pick !== ASSIST_NOBODY && full && full.recurring_event_id) {
+                scope = (await promptConfirm('Recurring event',
+                    'Should they cover every time this comes round, or only this one?',
+                    'Every time', 'Just this one')) ? 'series' : 'instance';
+            }
+
             try {
                 const res = await fetch(`${apiBase}api/assist-coverage`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ event_id: evId,
+                    body: JSON.stringify({ event_id: evId, scope: scope,
                                            contact_id: pick === ASSIST_NOBODY ? null : pick })
                 });
                 if (!res.ok) throw new Error('failed');

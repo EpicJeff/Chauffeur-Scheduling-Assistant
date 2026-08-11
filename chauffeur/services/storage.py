@@ -430,7 +430,11 @@ with db_lock:
     status_protocols_table = db.table('status_protocols')
     status_days_table = db.table('status_days')
     assist_contacts_table = db.table('assist_contacts')
+    # Active coverage only. Spent instance rows move to `assist_history`, which
+    # is append-only and never read by a solve — the record survives forever
+    # without the hot path paying for it.
     assist_assignments_table = db.table('assist_assignments')
+    assist_history_table = db.table('assist_history')
     household_tasks_table = db.table('household_tasks')
     requests_table = db.table('requests')
     protected_commitments_table = db.table('protected_commitments')
@@ -1850,32 +1854,118 @@ def delete_assist_contact(contact_id: str):
     and quietly re-enter the solver, which is the false alarm this feature is
     here to kill."""
     with db_lock:
+        gone = [dict(a) for a in assist_assignments_table.search(Query().contact_id == contact_id)]
         assist_contacts_table.remove(Query().id == contact_id)
         assist_assignments_table.remove(Query().contact_id == contact_id)
+    # The history keeps them: deleting a contact removes them from the app, not
+    # from what actually happened.
+    for a in gone:
+        add_assist_history({'event_id': a.get('event_id'), 'contact_id': contact_id,
+                            'scope': a.get('scope') or 'instance',
+                            'event_date': a.get('event_date') or '',
+                            'event_title': a.get('event_title') or '',
+                            'action': 'contact_deleted', 'actor': ''})
 
 def get_assist_assignments() -> List[dict]:
+    """The ACTIVE table only — coverage that can still affect a solve. Past
+    instance rows live in `assist_history` and are never read here, which is
+    what keeps this O(current arrangements) instead of O(every carpool the
+    family has ever agreed to)."""
     with db_lock:
         return [dict(a) for a in assist_assignments_table.all()]
 
 def get_assist_assignment_map() -> dict:
-    """{event_id: contact_id} — what the solver and every surface read."""
+    """{key: contact_id} where key is either an instance event_id or a bare
+    recurring series google id. Callers resolve an event against BOTH via
+    `services.assist.coverage_for` — instance wins, so "Emma's mom has
+    Tuesdays, except this one" is expressible."""
     return {a['event_id']: a['contact_id'] for a in get_assist_assignments()
             if a.get('event_id') and a.get('contact_id')}
 
-def set_assist_assignment(event_id: str, contact_id: str, note: str = "") -> dict:
-    """One contact per event: setting replaces rather than stacking."""
+def add_assist_history(row: dict) -> dict:
+    """Append-only. Every coverage change lands here and nothing ever deletes
+    from it: the family's history of who carried what is the point, and the
+    active table stays small precisely because this one absorbs the past."""
     import time as _time
     import uuid as _uuid
+    row = {'id': _uuid.uuid4().hex, 'ts': _time.time(), **row}
+    with db_lock:
+        assist_history_table.insert(row)
+    return row
+
+def set_assist_assignment(event_id: str, contact_id: str, note: str = "",
+                          scope: str = 'instance', event_date: str = None,
+                          event_title: str = None, actor: str = None) -> dict:
+    """One contact per key: setting replaces rather than stacking.
+
+    `event_date` is stored rather than derived because archiving must be a
+    date comparison over this table alone — looking the date up from the
+    schedule would make the sweep depend on a solve, and a series row has no
+    single date to look up in the first place."""
+    import time as _time
+    import uuid as _uuid
+    scope = 'series' if scope == 'series' else 'instance'
     row = {'id': _uuid.uuid4().hex, 'event_id': event_id, 'contact_id': contact_id,
-           'note': note or "", 'created_at': _time.time()}
+           'note': note or "", 'scope': scope, 'event_date': event_date or '',
+           'event_title': event_title or '', 'created_at': _time.time()}
     with db_lock:
         assist_assignments_table.remove(Query().event_id == event_id)
         assist_assignments_table.insert(row)
+    add_assist_history({'event_id': event_id, 'contact_id': contact_id,
+                        'scope': scope, 'event_date': event_date or '',
+                        'event_title': event_title or '', 'action': 'covered',
+                        'actor': actor or ''})
     return row
 
-def clear_assist_assignment(event_id: str) -> bool:
+def clear_assist_assignment(event_id: str, actor: str = None) -> bool:
     with db_lock:
-        return bool(assist_assignments_table.remove(Query().event_id == event_id))
+        gone = [dict(a) for a in assist_assignments_table.search(Query().event_id == event_id)]
+        removed = bool(assist_assignments_table.remove(Query().event_id == event_id))
+    for a in gone:
+        add_assist_history({'event_id': event_id, 'contact_id': a.get('contact_id'),
+                            'scope': a.get('scope') or 'instance',
+                            'event_date': a.get('event_date') or '',
+                            'event_title': a.get('event_title') or '',
+                            'action': 'cleared', 'actor': actor or ''})
+    return removed
+
+def archive_past_assist_assignments(before_date: str) -> int:
+    """Move spent INSTANCE coverage out of the active table. A series row is a
+    standing arrangement with no end date, so it never archives — it leaves
+    only when somebody clears it. An instance row for a day that has passed
+    can no longer change any solve, and keeping it would make every refresh
+    pay for every carpool ride the family has ever taken."""
+    if not before_date:
+        return 0
+    with db_lock:
+        rows = [dict(a) for a in assist_assignments_table.all()]
+    doomed = [a for a in rows
+              if (a.get('scope') or 'instance') != 'series'
+              and (a.get('event_date') or '') and a['event_date'] < before_date]
+    for a in doomed:
+        add_assist_history({'event_id': a.get('event_id'), 'contact_id': a.get('contact_id'),
+                            'scope': a.get('scope') or 'instance',
+                            'event_date': a.get('event_date') or '',
+                            'event_title': a.get('event_title') or '',
+                            'action': 'archived', 'actor': ''})
+    if doomed:
+        with db_lock:
+            for a in doomed:
+                assist_assignments_table.remove(Query().id == a['id'])
+    return len(doomed)
+
+def get_assist_history(contact_id: str = None, since_ts: float = None,
+                       limit: int = 200) -> List[dict]:
+    """Newest first. The record the family can be shown later — who covered
+    what, when it was agreed, and when it came back."""
+    with db_lock:
+        rows = [dict(a) for a in assist_history_table.all()]
+    if contact_id:
+        rows = [r for r in rows if r.get('contact_id') == contact_id]
+    if since_ts:
+        rows = [r for r in rows if (r.get('ts') or 0) >= since_ts]
+    rows.sort(key=lambda r: r.get('ts') or 0, reverse=True)
+    return rows[:max(1, int(limit or 200))]
 
 # --- Protected commitments (load arc A6) ---
 

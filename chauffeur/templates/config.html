@@ -5312,9 +5312,13 @@
                 async deleteAssistContactUi(c) {
                     // Deleting drops their coverage, which hands those drives
                     // back to the family — say so before it happens.
-                    const extra = c.covering_count
-                        ? ` ${c.covering_count} drive${c.covering_count === 1 ? '' : 's'} will come back to the family.`
-                        : '';
+                    // A standing arrangement is not "1 drive" — saying so would
+                    // understate what comes back by an entire season.
+                    const oneOffs = (c.covering_count || 0) - (c.covering_series || 0);
+                    const bits = [];
+                    if (oneOffs > 0) bits.push(`${oneOffs} drive${oneOffs === 1 ? '' : 's'}`);
+                    if (c.covering_series) bits.push(`${c.covering_series} standing arrangement${c.covering_series === 1 ? '' : 's'} (every occurrence)`);
+                    const extra = bits.length ? ` ${bits.join(' and ')} will come back to the family.` : '';
                     if (!await promptConfirm('Remove them?',
                         `${c.relation_label || c.name} will be removed.${extra}`, 'Remove', 'Keep')) return;
                     try {

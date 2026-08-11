@@ -3177,7 +3177,54 @@ def get_ingest_config():
         'ingest_email_user': s.get('ingest_email_user') or '',
         'has_password': bool(s.get('ingest_email_password')),
         'ingest_sender_defaults': s.get('ingest_sender_defaults') or [],
+        'ingest_sender_blocklist': s.get('ingest_sender_blocklist') or [],
     }
+
+
+class IngestBlockRequest(BaseModel):
+    pattern: str                      # an address or a bare domain fragment
+    label: Optional[str] = ""         # what the family will recognise it as
+
+
+@app.post("/api/ingest/block-sender")
+def block_ingest_sender(req: IngestBlockRequest):
+    """Stop reading mail from an address or a whole domain.
+
+    This exists because the app used to notice a sender the family kept
+    ignoring and then send them to Gmail to build a filter — advice, not an
+    action, for a problem the app could see and fix in one click. Matching is
+    substring, so '@teamsnap.com' blocks every address that platform sends
+    from."""
+    pattern = (req.pattern or '').strip().lower()
+    if not pattern:
+        raise HTTPException(status_code=400, detail="A pattern is required")
+    s = storage.get_settings() or {}
+    current = [e for e in (s.get('ingest_sender_blocklist') or [])
+               if isinstance(e, dict) and (e.get('pattern') or '').strip().lower() != pattern]
+    current.append({'pattern': pattern, 'label': (req.label or '').strip(),
+                    'added_at': time.time()})
+    storage.patch_settings({'ingest_sender_blocklist': current})
+    # The streak was the reason the offer appeared; it has been answered.
+    streaks = storage.get_app_state('intake_ignore_streaks') or {}
+    if streaks:
+        storage.set_app_state('intake_ignore_streaks',
+                              {k: v for k, v in streaks.items() if pattern not in (k or '')})
+    storage.add_ingest_log({'from': pattern, 'subject': '(blocklist)',
+                            'outcome': f'blocked — mail matching {pattern} will be skipped'})
+    return {"status": "blocked", "pattern": pattern,
+            "ingest_sender_blocklist": current}
+
+
+@app.post("/api/ingest/unblock-sender")
+def unblock_ingest_sender(req: IngestBlockRequest):
+    pattern = (req.pattern or '').strip().lower()
+    s = storage.get_settings() or {}
+    current = [e for e in (s.get('ingest_sender_blocklist') or [])
+               if isinstance(e, dict) and (e.get('pattern') or '').strip().lower() != pattern]
+    storage.patch_settings({'ingest_sender_blocklist': current})
+    storage.add_ingest_log({'from': pattern, 'subject': '(blocklist)',
+                            'outcome': f'unblocked — mail matching {pattern} will be read again'})
+    return {"status": "unblocked", "ingest_sender_blocklist": current}
 
 @app.post("/api/ingest/config")
 def set_ingest_config(cfg: IngestConfig):
@@ -3893,12 +3940,19 @@ def household_load(days: int = 30):
 def list_assist_contacts(include_inactive: bool = False):
     from services import assist as assist_svc
     contacts = storage.get_assist_contacts(include_inactive=include_inactive)
-    covered = storage.get_assist_assignment_map()
-    counts = {}
-    for cid in covered.values():
+    counts, series_counts = {}, {}
+    for a in storage.get_assist_assignments():
+        cid = a.get('contact_id')
+        if not cid:
+            continue
         counts[cid] = counts.get(cid, 0) + 1
+        if (a.get('scope') or 'instance') == 'series':
+            series_counts[cid] = series_counts.get(cid, 0) + 1
     for c in contacts:
         c['covering_count'] = counts.get(c['id'], 0)
+        # Counted apart so the delete warning can't say "1 drive comes back"
+        # about a standing every-Tuesday arrangement.
+        c['covering_series'] = series_counts.get(c['id'], 0)
     # `helps_with` is the normalised work-surface list every picker filters on,
     # computed in one place so the synonym table never gets a second copy.
     return assist_svc.decorate(contacts)
@@ -3936,6 +3990,28 @@ class AssistCoverageRequest(BaseModel):
     event_id: str
     contact_id: Optional[str] = None   # None/empty clears the coverage
     note: Optional[str] = ""
+    # 'instance' (this occurrence) | 'series' (every occurrence). Same choice
+    # the event modal already offers for configs and overrides.
+    scope: Optional[str] = 'instance'
+    actor: Optional[str] = None
+
+
+def _assist_event_context(event_id: str):
+    """The cached-schedule event behind an id, plus its split-leg parent. The
+    server resolves the series key and the date itself rather than trusting a
+    client to compute them — otherwise the dashboard, the phone and the agent
+    each get their own chance to key coverage differently."""
+    base = str(event_id or '')
+    for suffix in ('_dropoff', '_pickup'):
+        if base.endswith(suffix):
+            base = base[:-len(suffix)]
+            break
+    sched = storage.get_cached_schedule() or {}
+    for ev in sched.get('events', []):
+        if ev.get('id') == base:
+            return base, ev
+    return base, None
+
 
 @app.post("/api/assist-coverage")
 def set_assist_coverage(req: AssistCoverageRequest, background_tasks: BackgroundTasks):
@@ -3945,20 +4021,52 @@ def set_assist_coverage(req: AssistCoverageRequest, background_tasks: Background
     household driver for the rest of the day, and taking it back puts the
     event in front of the solver again. force_refresh, because the events
     themselves did not change — only who is covering them.
+
+    Scope mirrors event configs and overrides: 'series' writes against the bare
+    `recurring_event_id` so future occurrences — including ones not yet fetched
+    into the sync window — are covered by the same row, and an instance row
+    still wins over it.
     """
     if not req.event_id:
         raise HTTPException(status_code=400, detail="event_id is required")
+    base_id, ev = _assist_event_context(req.event_id)
+    rec = (ev or {}).get('recurring_event_id')
+    scope = 'series' if (req.scope == 'series' and rec) else 'instance'
+    key = str(rec) if scope == 'series' else base_id
+    span = 'every time it comes round' if scope == 'series' else 'this one'
+
     if req.contact_id:
         contact = storage.get_assist_contact(req.contact_id)
         if not contact:
             raise HTTPException(status_code=404, detail="Contact not found")
-        storage.set_assist_assignment(req.event_id, req.contact_id, req.note or "")
-        msg = f"{contact.get('name')} is covering it."
+        storage.set_assist_assignment(
+            key, req.contact_id, req.note or "", scope=scope,
+            # A series row has no single date and must never archive on one.
+            event_date=('' if scope == 'series' else str((ev or {}).get('start') or '')[:10]),
+            event_title=(ev or {}).get('title') or '', actor=req.actor)
+        msg = f"{contact.get('relation_label') or contact.get('name')} is covering {span}."
     else:
-        storage.clear_assist_assignment(req.event_id)
+        # Clearing takes BOTH keys: the family means "we're driving it", and
+        # leaving the series row behind would silently re-cover the occurrence
+        # on the next solve.
+        storage.clear_assist_assignment(base_id, actor=req.actor)
+        if rec:
+            storage.clear_assist_assignment(str(rec), actor=req.actor)
         msg = "Back on the family's plate."
     background_tasks.add_task(trigger_background_refresh, None, None, True)
-    return {"status": "success", "message": msg}
+    return {"status": "success", "message": msg, "scope": scope}
+
+
+@app.get("/api/assist-history")
+def list_assist_history(contact_id: str = None, limit: int = 200):
+    """The permanent record: every hand-over, take-back and archived ride.
+    Nothing in the solve path reads this — it exists to be looked at."""
+    rows = storage.get_assist_history(contact_id=contact_id, limit=limit)
+    names = {c['id']: (c.get('relation_label') or c.get('name'))
+             for c in storage.get_assist_contacts(include_inactive=True)}
+    for r in rows:
+        r['contact_name'] = names.get(r.get('contact_id')) or '(removed)'
+    return rows
 
 @app.get("/api/members")
 def get_members():
@@ -10203,8 +10311,13 @@ def hash_events(events_list, assist_map=None):
         # the day's cache stays valid and the solver keeps a household driver
         # on a ride somebody else is making — the change would appear to do
         # nothing until the next forced refresh.
-        if assist_map and eid in assist_map:
-            parts.append(f"assist:{eid}:{assist_map[eid]}")
+        # Resolved the same way the solver resolves it (instance, then series),
+        # or a series hand-over would leave every daily cache valid and appear
+        # to do nothing until the next forced refresh.
+        if assist_map:
+            _cov = _assist_svc.coverage_for(assist_map, e)
+            if _cov:
+                parts.append(f"assist:{eid}:{_cov}")
         # Optionality and its per-occurrence decision ride the hash for the
         # same reason: ticking Optional or answering attend/skip changes
         # nothing about the EVENT, only about how it should be solved.
@@ -10530,9 +10643,16 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     rules_data = storage.get_all_rules()
     priority_rules_data = storage.get_all_priority_rules()
     overrides_data = [] if ignore_overrides else storage.get_all_overrides()
-    # Outside hands (load arc A1): {event_id: contact_id} for work somebody
-    # outside this household is covering. Read once for the whole refresh; the
-    # per-day slice is taken inside the solve loop.
+    # Outside hands (load arc A1): {key: contact_id} for work somebody outside
+    # this household is covering, keyed by instance id or series google id.
+    # Read once for the whole refresh; the per-day slice is resolved inside the
+    # solve loop. Spent instance rows are retired to the history table first —
+    # the refresh is the sweep that already runs often enough, and yesterday's
+    # carpool cannot change any solve from here on.
+    # Local alias: this function imports `datetime` further down, which makes
+    # the bare name local to the WHOLE body — the same reason `_sd_dt` exists.
+    import datetime as _assist_dt
+    storage.archive_past_assist_assignments(_assist_dt.date.today().isoformat())
     assist_map = storage.get_assist_assignment_map()
 
     enable_standard_rules = settings.get("enable_standard_rules", True)
@@ -11578,8 +11698,16 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # happening today), so it goes back into `events` below; it simply is
         # not ours to solve. This is the whole point of the feature: outside
         # help removes load, and the app previously had no way to be told so.
-        daily_assist = {e.id: assist_map[e.id]
-                        for e in daily_events_to_solve if e.id in assist_map}
+        # Resolved to INSTANCE keys here, once. A series row covers every
+        # occurrence, but the payload every downstream surface reads — digest,
+        # coverage report, timeline, phone — is keyed by the event in front of
+        # it, so the recurrence model stops at this line instead of leaking
+        # into six consumers.
+        daily_assist = {}
+        for e in daily_events_to_solve:
+            cid = _assist_svc.coverage_for(assist_map, e)
+            if cid:
+                daily_assist[e.id] = cid
         assist_events = [e for e in daily_events_to_solve if e.id in daily_assist]
         if daily_assist:
             daily_events_to_solve = [e for e in daily_events_to_solve

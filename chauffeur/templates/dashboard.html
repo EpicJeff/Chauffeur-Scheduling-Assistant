@@ -2085,11 +2085,23 @@
         async function setAssistCoverage(eventId, contactId) {
             const ev = currentEventsMap[eventId];
             if (ev) localSolvingDates.add(ev.start.split('T')[0]);
+            // The same question the event config and the override already ask.
+            // Only on the way IN: taking a drive back always ends the standing
+            // arrangement too, because "we're driving it" answered per-occurrence
+            // would leave the series quietly re-covering it next week.
+            let scope = 'instance';
+            if (contactId && ev && ev.recurring_event_id) {
+                const applyToSeries = await promptConfirm("Recurring Event",
+                    "This is a recurring event. Should they cover ALL instances in the series?",
+                    "Entire Series", "This Instance");
+                if (applyToSeries) scope = 'series';
+            }
             try {
                 const res = await fetch('api/assist-coverage', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ event_id: eventId, contact_id: contactId || null })
+                    body: JSON.stringify({ event_id: eventId, contact_id: contactId || null,
+                                           scope: scope })
                 });
                 if (!res.ok) throw new Error('failed');
                 // Optimistic: paint the change now, then let the re-solve land.

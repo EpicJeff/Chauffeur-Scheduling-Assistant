@@ -271,6 +271,9 @@ ENTRIES: List[dict] = [
        'An app password, never the account password.', page='intake', anchor='settings'),
     _e('ingest_sender_defaults', 'intake', 'Sender routing',
        'Which calendar a given sender usually belongs to.', page='intake', anchor='settings'),
+    _e('ingest_sender_blocklist', 'intake', 'Blocked senders',
+       'Addresses and domains whose mail is skipped instead of read.',
+       page='intake', anchor='settings'),
 
     # --- integrations
     _e('public_base_url', 'integrations', 'Public URL',

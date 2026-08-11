@@ -28,7 +28,8 @@ TODAY = datetime.date.today()
 
 
 def _reset():
-    for t in (storage.assist_contacts_table, storage.assist_assignments_table):
+    for t in (storage.assist_contacts_table, storage.assist_assignments_table,
+              storage.assist_history_table):
         t.truncate()
 
 
@@ -143,6 +144,105 @@ def scenario_coverage_rides_the_daily_hash():
     check(covered != other, "and so must changing WHO covers it")
     check(covered == main.hash_events(events, assist_map={'ev1': 'contact_a'}),
           "while an unchanged day stays cacheable")
+    # The series key is not the event's own id, so a hash that only checked
+    # `eid in assist_map` would leave every daily cache valid and a standing
+    # arrangement would appear to do nothing until the next forced refresh.
+    rec = _Ev('ev1')
+    rec.recurring_event_id = 'rec1'
+    check(main.hash_events([rec], assist_map={'rec1': 'contact_a'}) != main.hash_events([rec]),
+          "a SERIES hand-over must invalidate the day too")
+
+
+def scenario_a_series_arrangement_covers_every_occurrence():
+    """"Emma's mom has Tuesdays" was previously inexpressible: you covered one
+    occurrence at a time, and only the ones already fetched into the sync
+    window, so the arrangement silently lapsed. Scope mirrors what the event
+    modal already asks for configs and overrides."""
+    from services import assist as assist_svc
+    _reset()
+    c = _contact()
+    storage.set_assist_assignment('rec_soccer', c['id'], scope='series',
+                                  event_title='Soccer')
+    amap = storage.get_assist_assignment_map()
+
+    def _occurrence(day):
+        return {'id': f'cal::soccer_{day}', 'recurring_event_id': 'rec_soccer',
+                'start': f'2026-09-{day}T16:00:00'}
+
+    check(assist_svc.coverage_for(amap, _occurrence('01')) == c['id'],
+          "the occurrence in front of us is covered")
+    check(assist_svc.coverage_for(amap, _occurrence('29')) == c['id'],
+          "and so is one further out than the sync window has ever reached — "
+          "which is the whole point of a standing arrangement")
+    check(assist_svc.coverage_for(amap, {'id': 'cal::guitar'}) is None,
+          "an unrelated event is untouched")
+
+
+def scenario_one_occurrence_can_escape_the_series():
+    """The sentence that decides the resolution order: "Emma's mom has
+    Tuesdays, except she can't this one." Instance must win, or the exception
+    is unsayable and the family is back to no feature at all."""
+    from services import assist as assist_svc
+    _reset()
+    her = _contact(name="Sarah Whitfield")
+    him = _contact(name="Dan Reyes", label="Coach Dan")
+    storage.set_assist_assignment('rec_soccer', her['id'], scope='series')
+    storage.set_assist_assignment('cal::soccer_08', him['id'], scope='instance',
+                                  event_date='2026-09-08')
+    amap = storage.get_assist_assignment_map()
+    ev = {'id': 'cal::soccer_08', 'recurring_event_id': 'rec_soccer'}
+    other = {'id': 'cal::soccer_15', 'recurring_event_id': 'rec_soccer'}
+    check(assist_svc.coverage_for(amap, ev) == him['id'],
+          "the instance row wins over the standing arrangement")
+    check(assist_svc.coverage_for(amap, other) == her['id'],
+          "and every other occurrence still belongs to the series")
+
+
+def scenario_spent_coverage_moves_to_history_and_stays_there():
+    """The scaling rule: the active table holds only what can still change a
+    solve. Everything else is kept forever somewhere the hot path never
+    reads."""
+    _reset()
+    c = _contact()
+    storage.set_assist_assignment('cal::old', c['id'], scope='instance',
+                                  event_date='2026-01-05', event_title='Soccer')
+    storage.set_assist_assignment('cal::soon', c['id'], scope='instance',
+                                  event_date='2099-01-05', event_title='Soccer')
+    storage.set_assist_assignment('rec_soccer', c['id'], scope='series',
+                                  event_title='Soccer')
+    moved = storage.archive_past_assist_assignments('2026-06-01')
+    keys = set(storage.get_assist_assignment_map())
+    check(moved == 1 and 'cal::old' not in keys,
+          f"yesterday's ride leaves the active table: {keys}")
+    check('cal::soon' in keys, "a future occurrence stays")
+    check('rec_soccer' in keys,
+          "and a standing arrangement NEVER archives — it has no date to be "
+          "past, and archiving it would silently end the arrangement")
+    hist = storage.get_assist_history()
+    check(any(h['event_id'] == 'cal::old' and h['action'] == 'archived' for h in hist),
+          "the archived ride is in the permanent record")
+    check(sum(1 for h in hist if h['action'] == 'covered') == 3,
+          "as is every hand-over that ever happened")
+    check(any(h.get('event_title') == 'Soccer' for h in hist),
+          "with enough on the row to read it later without a schedule lookup")
+
+
+def scenario_taking_it_back_ends_the_standing_arrangement():
+    """"Actually we're driving it" answered per-occurrence would leave the
+    series row quietly re-covering the same event on the next solve."""
+    from services import assist as assist_svc
+    _reset()
+    c = _contact()
+    storage.set_assist_assignment('rec_soccer', c['id'], scope='series')
+    # What the endpoint and the agent tool both do: clear BOTH keys.
+    storage.clear_assist_assignment('cal::soccer_08')
+    storage.clear_assist_assignment('rec_soccer')
+    amap = storage.get_assist_assignment_map()
+    check(assist_svc.coverage_for(amap, {'id': 'cal::soccer_08',
+                                         'recurring_event_id': 'rec_soccer'}) is None,
+          "the drive really is back on the family's plate")
+    check(any(h['action'] == 'cleared' for h in storage.get_assist_history()),
+          "and the take-back is recorded, not just the hand-over")
 
 
 def scenario_the_no_driver_alarm_does_not_fire_for_covered_rides():

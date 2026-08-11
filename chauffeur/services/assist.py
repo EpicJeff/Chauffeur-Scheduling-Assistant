@@ -53,6 +53,42 @@ _SYNONYMS = {
 ID_PREFIX = 'assist:'
 
 
+# --- Instance vs series -----------------------------------------------------
+# Coverage keys mirror what overrides and event configs already do: an
+# occurrence is keyed by its own event id, a whole series by the bare
+# `recurring_event_id`. Nothing new is invented here on purpose — a family that
+# has learnt "Entire Series / This Instance" from the event modal should not
+# have to learn a second recurrence model for carpools.
+#
+# Resolution is instance-first, which is the rule that makes the useful
+# sentence expressible: "Emma's mom has Tuesdays, except she can't this one."
+
+def coverage_keys(event) -> list:
+    """The keys a coverage row for this event may be stored under, most
+    specific first."""
+    get = event.get if isinstance(event, dict) else lambda k, d=None: getattr(event, k, d)
+    keys = []
+    eid = get('id')
+    if eid:
+        keys.append(str(eid))
+    rec = get('recurring_event_id')
+    if rec and str(rec) not in keys:
+        keys.append(str(rec))
+    return keys
+
+
+def coverage_for(assist_map: dict, event):
+    """The contact id covering this event, or None. Two dict lookups, never a
+    scan — this runs per event on every solve and every board build."""
+    if not assist_map:
+        return None
+    for k in coverage_keys(event):
+        got = assist_map.get(k)
+        if got:
+            return got
+    return None
+
+
 def is_assist_id(value) -> bool:
     return str(value or '').startswith(ID_PREFIX)
 
