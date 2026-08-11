@@ -239,6 +239,54 @@ def test_sender_blocklist():
         storage.patch_settings({'ingest_sender_blocklist': []})
 
 
+def test_past_ignores_can_still_be_blocked():
+    """The offer used to hang off a PENDING proposal card — the transient
+    thing. Ignore everything a sender sends and the cards leave the queue, so
+    the offer disappeared exactly when the family had most thoroughly
+    demonstrated they wanted it. The ledger is never pruned, so the answer
+    reaches back however long ago the ignoring happened."""
+    print("retroactive sender blocking ...")
+    import main
+    storage.event_proposals_table.truncate()
+    storage.patch_settings({'ingest_sender_blocklist': []})
+
+    def _prop(sender, status, title='X'):
+        pid = storage.add_proposal({'title': title, 'source_from': sender,
+                                    'source_subject': 'Weekly newsletter'})
+        storage.update_proposal(pid, {'status': status})
+
+    for _ in range(4):
+        _prop('news@spam-league.com', 'ignored')
+    _prop('office@school.org', 'ignored')
+    _prop('office@school.org', 'approved')
+    _prop('coach@team.org', 'ignored')          # one ignore only
+
+    rows = {r['sender']: r for r in main.ignored_senders(min_ignored=2)}
+    check('news@spam-league.com' in rows and rows['news@spam-league.com']['ignored'] == 4,
+          f"a sender with nothing but ignores is offered, with no live proposal "
+          f"anywhere in the queue: {list(rows)}")
+    check(rows['news@spam-league.com']['domain'] == '@spam-league.com',
+          "and the domain reading is offered alongside the address")
+    check('coach@team.org' not in rows,
+          "a single ignore is not a pattern")
+
+    both = main.ignored_senders(min_ignored=1)
+    school = {r['sender']: r for r in both}.get('office@school.org')
+    check(school and school['approved'] == 1,
+          "a sender you sometimes act on still reports its approvals — a count "
+          "of ignores alone would hide that this one is useful")
+    check([r['sender'] for r in both][-1] == 'office@school.org',
+          "and it sorts last, behind the senders you never keep anything from")
+
+    # Blocking removes it from the offer: there is nothing left to decide.
+    storage.patch_settings({'ingest_sender_blocklist': [{'pattern': '@spam-league.com'}]})
+    after = [r['sender'] for r in main.ignored_senders(min_ignored=2)]
+    check('news@spam-league.com' not in after,
+          f"an already-blocked sender stops being offered: {after}")
+    storage.patch_settings({'ingest_sender_blocklist': []})
+    storage.event_proposals_table.truncate()
+
+
 def test_the_block_is_reachable_by_hand():
     """Standing rule: no capability without a hand path. The offer has to be on
     the proposal itself — that is the moment the family is already looking at
@@ -254,6 +302,12 @@ def test_the_block_is_reachable_by_hand():
           "and the old 'go build a Gmail filter yourself' advice is gone")
     check('unblockSender' in page and 'Blocked senders' in page,
           "the blocklist is visible and reversible on the page that made it")
+    check('ignoredSenders' in page and 'Senders you keep ignoring' in page,
+          "senders ignored in the PAST are reachable too — the offer must not "
+          "depend on a proposal still sitting in the queue")
+    check('canBlockRow' in page,
+          "and Activity rows can block, which is the only place mail that never "
+          "produced a proposal at all is visible")
 
 
 def test_log_collapse():
@@ -344,6 +398,7 @@ if __name__ == '__main__':
     test_normalize()
     test_run_ingest()
     test_sender_blocklist()
+    test_past_ignores_can_still_be_blocked()
     test_the_block_is_reachable_by_hand()
     test_log_collapse()
     test_fuzzy_dedup()

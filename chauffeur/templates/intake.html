@@ -264,6 +264,46 @@
                 </div>
             </section>
 
+            <!-- ===== Senders you keep ignoring =====
+                 The block offer used to hang off a pending proposal card, which
+                 is the transient thing: ignore everything a sender sends and the
+                 cards leave the queue, so the offer vanished at exactly the
+                 moment you had most thoroughly demonstrated you wanted it. This
+                 reads the proposal LEDGER, which is never pruned, so it reaches
+                 back however long ago the ignoring happened. -->
+            <section class="mb-10" x-show="ignoredSenders.length">
+                <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">
+                    Senders you keep ignoring</h3>
+                <p class="text-sm text-gray-400 mb-3">Nothing from these has been worth keeping. Blocking one
+                    skips its mail before it is read — no proposals, and no AI call spent on it. Every skip is
+                    still recorded in Activity below, and you can unblock in the mailbox settings.</p>
+                <div class="bg-gray-800 rounded-xl divide-y divide-gray-700/60 border border-gray-700">
+                    <template x-for="s in ignoredSenders" :key="s.sender">
+                        <div class="px-5 py-3 flex flex-col md:flex-row md:items-center gap-2 md:gap-4 text-sm">
+                            <div class="flex-1 min-w-0">
+                                <div class="font-mono text-gray-200 truncate" x-text="s.sender"></div>
+                                <div class="text-xs text-gray-500 truncate">
+                                    <span x-text="s.ignored + ' ignored'"></span>
+                                    <!-- A sender you sometimes act on is not a sender to
+                                         block, and a count of ignores alone would hide that. -->
+                                    <span x-show="s.approved" class="text-amber-400/90"
+                                        x-text="' · ' + s.approved + ' approved — you do use this one'"></span>
+                                    <span x-show="s.last_subject" x-text="' · ' + s.last_subject"></span>
+                                </div>
+                            </div>
+                            <div class="flex gap-2 shrink-0">
+                                <button @click="blockPattern(s.sender)"
+                                    class="bg-gray-700 hover:bg-gray-600 text-gray-100 font-bold text-xs px-3 py-1.5 rounded-lg">
+                                    Block this address</button>
+                                <button @click="blockPattern(s.domain)" x-show="s.domain"
+                                    class="bg-gray-700 hover:bg-gray-600 text-gray-100 font-bold text-xs px-3 py-1.5 rounded-lg"
+                                    x-text="'Block ' + s.domain"></button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </section>
+
             <!-- ===== Activity log ===== -->
             <section class="mb-10">
                 <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Recent activity
@@ -288,6 +328,13 @@
                                 x-text="row.outcome"></span>
                             <span x-show="(row.count || 1) > 1" class="shrink-0 text-xs font-bold text-gray-500 bg-gray-700/50 px-2 py-0.5 rounded-full"
                                 x-text="'×' + row.count + ' since ' + tsLabel(row.first_ts)"></span>
+                            <!-- The other population entirely: mail that yields nothing
+                                 every time never creates a proposal, so it never shows up
+                                 in the ignore list above — yet it costs an AI call on
+                                 every message. Here is the only place it is visible. -->
+                            <button x-show="canBlockRow(row)" @click="blockPattern(row.from)"
+                                class="shrink-0 text-xs font-bold text-gray-400 hover:text-amber-300 bg-gray-700/40 hover:bg-amber-500/10 px-2 py-0.5 rounded-full transition-colors"
+                                title="Stop reading mail from this sender">Block sender</button>
                         </div>
                     </template>
                 </div>
@@ -407,10 +454,12 @@
                 busyId: null,
                 misfiled: [],
                 refiling: false,
+                ignoredSenders: [],
 
                 async init() {
                     await Promise.all([this.loadProposals(), this.loadLog(), this.loadConfig(),
-                                       this.loadTargets(), this.loadMisfiled()]);
+                                       this.loadTargets(), this.loadMisfiled(),
+                                       this.loadIgnoredSenders()]);
                     // The background poll creates proposals while the page is
                     // open — refresh quietly so they appear without a click.
                     setInterval(() => {
@@ -616,6 +665,22 @@
                 },
 
                 // --- Blocked senders ---------------------------------------
+                async loadIgnoredSenders() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ingest/ignored-senders`);
+                        const data = await res.json();
+                        this.ignoredSenders = Array.isArray(data) ? data : [];
+                    } catch (e) { this.ignoredSenders = []; }
+                },
+                // Only rows that name a real sender and aren't already blocked —
+                // a '(poll)' error or a '(blocklist)' note has nothing to block.
+                canBlockRow(row) {
+                    const from = ((row && row.from) || '').trim().toLowerCase();
+                    if (!from || from.indexOf('@') < 0) return false;
+                    return !(this.config.ingest_sender_blocklist || [])
+                        .some(e => (e.pattern || '') && from.includes(e.pattern));
+                },
+
                 // The From line as stored ("Coach Dan <dan@team.org>" is already
                 // reduced to the address server-side, but a photo proposal has
                 // no sender at all).
@@ -645,7 +710,8 @@
                         if (!res.ok) { showGlobalAlert(data.detail || "Couldn't block that sender."); return; }
                         this.config.ingest_sender_blocklist = data.ingest_sender_blocklist || [];
                         this.blockInput = '';
-                        await Promise.all([this.loadProposals(), this.loadLog()]);
+                        await Promise.all([this.loadProposals(), this.loadLog(),
+                                           this.loadIgnoredSenders()]);
                         showGlobalAlert(`Blocked ${pattern} ✉️`, 'success');
                     } catch (e) { showGlobalAlert("Couldn't block that sender."); }
                 },
@@ -656,7 +722,8 @@
                             body: JSON.stringify({ pattern }) });
                         const data = await res.json();
                         this.config.ingest_sender_blocklist = data.ingest_sender_blocklist || [];
-                        await this.loadLog();
+                        // An unblocked sender becomes offerable again.
+                        await Promise.all([this.loadLog(), this.loadIgnoredSenders()]);
                     } catch (e) { showGlobalAlert("Couldn't unblock that sender."); }
                 },
                 async loadTargets() {
@@ -732,7 +799,9 @@
                     this.busyId = p.id;
                     try {
                         await fetch(`${this.apiBase}api/proposals/${p.id}/ignore`, { method: 'POST' });
-                        await this.loadProposals();
+                        // The ignore that tips a sender over the threshold should
+                        // surface the offer immediately, not on the next page load.
+                        await Promise.all([this.loadProposals(), this.loadIgnoredSenders()]);
                     } finally { this.busyId = null; }
                 },
                 async uploadPhoto(ev) {

@@ -3181,6 +3181,58 @@ def get_ingest_config():
     }
 
 
+@app.get("/api/ingest/ignored-senders")
+def ignored_senders(min_ignored: int = 2):
+    """Senders the family has repeatedly ignored, read from the PROPOSAL
+    LEDGER rather than the live queue.
+
+    The block offer used to hang off a pending proposal card — which is the
+    transient thing. Ignore every proposal from a sender and the cards leave
+    the queue, so the offer disappeared at exactly the moment the family had
+    most thoroughly demonstrated they wanted it. Proposals are never pruned,
+    so the history is complete however long ago the ignoring happened.
+
+    `approved` rides along because a sender you sometimes act on is not a
+    sender to block, and a count of ignores alone would hide that.
+    """
+    from services import email_ingest
+    blocklist = (storage.get_settings() or {}).get('ingest_sender_blocklist') or []
+    streaks = storage.get_app_state('intake_ignore_streaks') or {}
+    by_sender = {}
+    for p in storage.get_proposals():
+        sender = (p.get('source_from') or '').strip().lower()
+        if not sender:
+            continue                       # photo capture has no sender
+        row = by_sender.setdefault(sender, {
+            'sender': sender, 'ignored': 0, 'approved': 0, 'other': 0,
+            'last_subject': '', 'last_ts': 0,
+        })
+        status = p.get('status')
+        if status == 'ignored':
+            row['ignored'] += 1
+        elif status == 'approved':
+            row['approved'] += 1
+        else:
+            row['other'] += 1
+        ts = p.get('created_at') or 0
+        if ts >= row['last_ts']:
+            row['last_ts'] = ts
+            row['last_subject'] = p.get('source_subject') or ''
+    out = []
+    for row in by_sender.values():
+        if row['ignored'] < max(1, int(min_ignored or 2)):
+            continue
+        if email_ingest.sender_blocked(row['sender'], blocklist):
+            continue                       # already handled, nothing to offer
+        at = row['sender'].rfind('@')
+        row['domain'] = row['sender'][at:] if at > -1 else ''
+        row['streak'] = int(streaks.get(row['sender']) or 0)
+        out.append(row)
+    # Most ignored first, and never-approved ahead of sometimes-useful.
+    out.sort(key=lambda r: (r['approved'] > 0, -r['ignored']))
+    return out
+
+
 class IngestBlockRequest(BaseModel):
     pattern: str                      # an address or a bare domain fragment
     label: Optional[str] = ""         # what the family will recognise it as
