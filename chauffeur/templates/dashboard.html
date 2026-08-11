@@ -177,6 +177,28 @@
                             </svg>
                             <div id="view-attendees" class="flex-1 flex flex-wrap gap-2"></div>
                         </div>
+                        <!-- Outside hands (load arc A1). Handing a drive to a carpool
+                             parent is a SCHEDULING decision, so it belongs here in the
+                             view next to who is going. It used to live only behind
+                             "Edit Details", filed between "Start Time Override" and
+                             "Attendance Mode", where nobody looking for it found it. -->
+                        <div id="view-assist-row"
+                            class="hidden items-start text-gray-300 pt-2 border-t border-gray-700 mt-4">
+                            <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor"
+                                viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+                            </svg>
+                            <div class="flex-1">
+                                <label class="block text-gray-400 mb-1 text-xs font-bold tracking-wider uppercase"
+                                    for="view-assist-contact">Hand to someone outside the house</label>
+                                <select id="view-assist-contact"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm focus:outline-none focus:border-teal-500 disabled:opacity-60">
+                                    <option value="">Nobody — the family drives it</option>
+                                </select>
+                                <p id="view-assist-hint" class="text-[10px] text-gray-500 mt-1"></p>
+                            </div>
+                        </div>
                         <div class="flex items-start text-gray-300 pt-2 border-t border-gray-700 mt-4">
                             <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor"
                                 viewBox="0 0 24 24">
@@ -345,9 +367,7 @@
                                     class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-teal-500">
                                     <option value="">Nobody — the family drives it</option>
                                 </select>
-                                <p class="text-[10px] text-gray-500 mt-1">A covered drive leaves the solver
-                                    entirely: no driver is scheduled, nobody is chased about it, and the kids'
-                                    digest says who they are riding with. Saved the moment you choose.</p>
+                                <p id="edit-assist-hint" class="text-[10px] text-gray-500 mt-1"></p>
                             </div>
 
                             <div class="flex flex-col mt-4 bg-gray-900 border border-gray-600 rounded-lg p-3">
@@ -1437,6 +1457,8 @@
                 }
             }
 
+            populateAssistView(ev);
+
             if (ev.needs_triage) {
                 switchToEditMode();
             } else {
@@ -1973,17 +1995,54 @@
         // hiding somebody from a list takes positive information, so nobody
         // silently becomes unusable because a tag was never filled in. This
         // narrows a list; it never refuses an assignment.
+        // The contacts ride along in the schedule payload, but that payload is
+        // only rebuilt by a solve — so somebody who had just added a carpool
+        // parent in Settings opened this picker and found it empty, and stayed
+        // empty until an unrelated re-sync happened to land. The list is tiny;
+        // fetch it on its own account so the picker is never staler than the
+        // modal that opened it. The payload copy remains the fallback, which is
+        // what keeps this working offline and on the read-only surfaces.
+        let _assistContacts = null;
+
+        async function loadAssistContacts() {
+            try {
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const r = await fetch(`${apiBase}api/assist-contacts`);
+                if (r.ok) _assistContacts = await r.json();
+            } catch (e) {
+                console.error('Failed to load outside hands', e);
+            }
+            if (!_assistContacts) _assistContacts = (currentData && currentData.assist_contacts) || [];
+            return _assistContacts;
+        }
+
+        function allAssistContacts() {
+            return _assistContacts || (currentData && currentData.assist_contacts) || [];
+        }
+
         function assistContactsFor(surface) {
-            return ((currentData && currentData.assist_contacts) || []).filter(c => {
+            return allAssistContacts().filter(c => {
                 if (c.active === false) return false;
                 const known = c.helps_with || [];
                 return !known.length || known.includes(surface);
             });
         }
 
-        function populateAssistDropdown(ev) {
-            const sel = document.getElementById('edit-assist-contact');
+        const ASSIST_COVERED_HINT = "A covered drive leaves the solver entirely: no driver is " +
+            "scheduled, nobody is chased about it, and the kids' digest says who they are riding " +
+            "with. Saved the moment you choose.";
+        const ASSIST_EMPTY_HINT = "Nobody outside the house is set up yet — add the carpool " +
+            "parents in Settings → People → Outside hands.";
+
+        // `ids` names the surface: the same picker is drawn in the event view and
+        // in edit mode, because the question "is this one even ours?" comes up in
+        // both places.
+        async function populateAssistDropdown(ev, ids) {
+            const sel = document.getElementById((ids && ids.sel) || 'edit-assist-contact');
+            const row = document.getElementById((ids && ids.row) || 'edit-assist-row');
+            const hint = document.getElementById((ids && ids.hint) || 'edit-assist-hint');
             if (!sel) return;
+            await loadAssistContacts();
             const covered = (currentData && currentData.assist_assignments) || {};
             const current = covered[ev.id] || '';
             const list = assistContactsFor('driving');
@@ -1995,14 +2054,32 @@
             // Whoever covers it now stays selectable even if they are tagged
             // housework-only, or the select would quietly read "nobody".
             if (current && !list.some(c => c.id === current)) {
-                const all = ((currentData && currentData.assist_contacts) || [])
-                    .find(c => c.id === current);
+                const all = allAssistContacts().find(c => c.id === current);
                 if (all) sel.add(new Option(all.name, all.id));
             }
             sel.value = current;
-            const row = document.getElementById('edit-assist-row');
-            if (row) row.style.display = (list.length || current) ? '' : 'none';
+            // An empty list is NOT a reason to vanish. Hiding the control hid the
+            // feature, and left no way to learn that a prerequisite existed at
+            // all — say what is missing and where to go and fix it.
+            sel.disabled = !list.length && !current;
+            if (hint) hint.textContent = sel.disabled ? ASSIST_EMPTY_HINT : ASSIST_COVERED_HINT;
+            if (row) {
+                row.classList.remove('hidden');
+                row.style.display = '';
+            }
             sel.onchange = () => setAssistCoverage(ev.id, sel.value || null);
+        }
+
+        // Kiosk and read-only surfaces get no picker — they display, they do not
+        // decide. Handled here rather than by populate() so the row is positively
+        // hidden rather than left in whatever state a previous event put it in.
+        function populateAssistView(ev) {
+            const row = document.getElementById('view-assist-row');
+            if (!row) return;
+            if (isKiosk || isReadOnly) { row.classList.add('hidden'); row.style.display = 'none'; return; }
+            row.classList.add('flex');
+            populateAssistDropdown(ev, { sel: 'view-assist-contact', row: 'view-assist-row',
+                                         hint: 'view-assist-hint' });
         }
 
         async function setAssistCoverage(eventId, contactId) {

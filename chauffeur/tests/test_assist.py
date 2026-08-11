@@ -284,6 +284,28 @@ def scenario_every_agent_capability_has_a_hand_path():
     check('populateAssistDropdown' in dash and 'edit-assist-contact' in dash,
           "a drive with NO coverage yet can still be handed over — the picker "
           "is filled from the contacts, not from the existing assignments")
+    # Reachability again, one layer further in. The picker was real, filled
+    # correctly, and STILL could not be found: it hid itself whenever the
+    # contact list came back empty, and the list it read was the schedule
+    # payload — only rebuilt by a solve. So a family who had just added a
+    # carpool parent got an invisible control, and no way to learn that a
+    # prerequisite existed. An empty list is a thing to SAY, not to vanish for.
+    check('ASSIST_EMPTY_HINT' in dash and 'Settings → People' in dash,
+          "with nobody set up the picker still shows itself and names the "
+          "missing prerequisite, instead of hiding the feature")
+    check('api/assist-contacts' in dash and 'loadAssistContacts' in dash,
+          "the contacts are fetched on their own account, so the picker is "
+          "never staler than the modal that opened it")
+    check('populateAssistView' in dash and 'view-assist-contact' in dash,
+          "handing a drive over is reachable from the event VIEW — it is a "
+          "scheduling decision, not a detail filed under Edit Details")
+    app = open(os.path.join(tpl, 'app.html'), encoding='utf-8').read()
+    check('handDriveToOutsideHand' in app and 'api/assist-coverage' in app,
+          "and from the PHONE, which is where you are standing when a carpool "
+          "actually gets arranged")
+    check('em-assist-row' in app and 'assist_assignments' in app,
+          "the phone also SAYS who is covering it — a covered drive used to "
+          "show nothing there at all")
     timeline = open(os.path.join(tpl, 'components', 'schedule_timeline.html'),
                     encoding='utf-8').read()
     check('assist_assignments' in timeline and 'assist_contacts' in timeline,

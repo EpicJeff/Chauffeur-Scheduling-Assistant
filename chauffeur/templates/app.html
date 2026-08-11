@@ -4399,6 +4399,101 @@
             }
         }
 
+        // --- Outside hands on a drive (load arc A1) -----------------------
+        // Coverage is keyed by the EVENT, while the phone opens legs — the
+        // dropoff and the pickup are two cards over one soccer practice, and
+        // handing away "the drive" means both.
+        function baseEventId(id) {
+            return String(id || '').replace(/_(dropoff|pickup)$/, '');
+        }
+
+        function assistContactById(cid) {
+            return ((scheduleData && scheduleData.assist_contacts) || []).find(c => c.id === cid) || null;
+        }
+
+        function assistContactLabel(c) {
+            if (!c) return 'Someone outside the house';
+            return c.relation_label ? `${c.name} (${c.relation_label})` : c.name;
+        }
+
+        function populateEventAssist(ev) {
+            const row = document.getElementById('em-assist-row');
+            const btn = document.getElementById('em-assist-btn');
+            if (!row || !btn) return;
+            const evId = baseEventId(ev.id);
+            const coveringId = ((scheduleData && scheduleData.assist_assignments) || {})[evId];
+            const covering = coveringId ? assistContactById(coveringId) : null;
+
+            if (coveringId) {
+                row.style.display = 'block';
+                const phone = covering && covering.phone
+                    ? ` <a href="tel:${mfEscape(covering.phone)}" class="text-teal-400 underline">${mfEscape(covering.phone)}</a>`
+                    : '';
+                document.getElementById('em-assist').innerHTML = mfEscape(assistContactLabel(covering)) + phone;
+            } else {
+                row.style.display = 'none';
+            }
+
+            // An errand is the household's own job, and a kid handing the family's
+            // drives to the neighbours is not a decision they get to make.
+            const canHand = !ev.isErrand && ['parent', 'adult'].includes(currentMemberRole());
+            btn.style.display = canHand ? 'flex' : 'none';
+            if (!canHand) return;
+            document.getElementById('em-assist-btn-label').textContent =
+                coveringId ? 'Change who is covering it' : 'Hand to someone outside';
+            btn.onclick = () => handDriveToOutsideHand(ev);
+        }
+
+        const ASSIST_NOBODY = '__nobody__';
+
+        async function handDriveToOutsideHand(ev) {
+            const evId = baseEventId(ev.id);
+            const current = ((scheduleData && scheduleData.assist_assignments) || {})[evId] || '';
+            // Fetched rather than read off `scheduleData`: that payload is a
+            // cached solve, so somebody who added a carpool parent a minute ago
+            // would open this picker and find it empty.
+            let contacts = null;
+            try {
+                const r = await fetch(`${apiBase}api/assist-contacts`);
+                if (r.ok) contacts = await r.json();
+            } catch (e) { /* fall through to the cached copy */ }
+            if (!contacts) contacts = (scheduleData && scheduleData.assist_contacts) || [];
+
+            // The filter rule, same as every other surface: only a positive
+            // housework-only tag keeps somebody out of a drives list.
+            const drivers = contacts.filter(c => c.active !== false &&
+                (!(c.helps_with || []).length || (c.helps_with || []).includes('driving')));
+            if (!drivers.length && !current) {
+                showGlobalAlert('Nobody outside the house is set up yet — add the carpool parents in Settings → People → Outside hands.');
+                return;
+            }
+
+            const options = drivers.map(c => ({ value: c.id, label: assistContactLabel(c) }));
+            if (current && !drivers.some(c => c.id === current)) {
+                options.push({ value: current, label: assistContactLabel(assistContactById(current)) });
+            }
+            if (current) options.unshift({ value: ASSIST_NOBODY, label: 'Nobody — we drive it' });
+
+            const pick = await promptChoice("Who's driving it?",
+                'A covered drive leaves the schedule entirely: no driver is picked, nobody gets chased about it, and the kids are told who they are riding with.',
+                options);
+            if (pick === null || pick === undefined) return;   // '' is a real answer here, null is cancel
+
+            try {
+                const res = await fetch(`${apiBase}api/assist-coverage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ event_id: evId,
+                                           contact_id: pick === ASSIST_NOBODY ? null : pick })
+                });
+                if (!res.ok) throw new Error('failed');
+                closeEventModal();
+                fetchSchedule(true);
+            } catch (e) {
+                showGlobalAlert("Couldn't change who's covering that.");
+            }
+        }
+
         function openEventModal(titleStr) {
             const ev = JSON.parse(decodeURIComponent(titleStr));
             document.getElementById('em-title').textContent = ev.title;
@@ -4413,6 +4508,8 @@
             } else {
                 driverRow.style.display = 'none';
             }
+
+            populateEventAssist(ev);
 
             const prepRow = document.getElementById('em-prep-row');
             const prepItems = ev.isErrand ? [] : prepItemsFor(ev.id);
@@ -5528,6 +5625,14 @@
                 <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">Driver</p>
                 <div id="em-driver" class="flex flex-wrap gap-2"></div>
             </div>
+            <!-- Outside hands (load arc A1). A covered drive showed the phone
+                 nothing at all, so the one surface you are actually holding when
+                 a carpool gets arranged could neither say who had it nor hand it
+                 over. -->
+            <div class="mb-4" id="em-assist-row" style="display: none">
+                <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">Covered by</p>
+                <div id="em-assist" class="text-sm text-teal-300 font-bold"></div>
+            </div>
             <div class="mb-4" id="em-prep-row" style="display: none">
                 <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">🎒 Bring</p>
                 <div id="em-prep" class="flex flex-wrap gap-1.5"></div>
@@ -5551,6 +5656,14 @@
                         d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
                 </svg>
                 Moments
+            </button>
+            <button id="em-assist-btn" style="display: none"
+                class="w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-teal-500/50 hover:bg-teal-900/20 active:bg-teal-600 text-teal-300 font-bold shadow-md mb-3">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+                </svg>
+                <span id="em-assist-btn-label">Hand to someone outside</span>
             </button>
             <div id="em-claim-container" class="flex-col gap-2 mb-3" style="display: none"></div>
             <button id="em-complete-btn" class="w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-400 font-bold shadow-md hidden">
