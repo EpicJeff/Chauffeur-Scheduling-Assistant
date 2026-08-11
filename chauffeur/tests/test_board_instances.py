@@ -45,10 +45,15 @@ def check(cond, msg):
 # --- the declaration itself ------------------------------------------------
 
 def scenario_every_declared_option_is_a_shape_the_editor_can_draw():
-    """The editor renders options from the declaration and knows five shapes.
-    A sixth invented in home_board would render as nothing at all — a setting
-    that exists, is offered, and cannot be set."""
-    known = {'text', 'int', 'bool', 'choice', 'select'}
+    """The editor renders options from the declaration and knows six shapes.
+    A seventh invented in home_board would render as nothing at all — a setting
+    that exists, is offered, and cannot be set.
+
+    `select` and `entity` are the same idea at two scales, and the split is
+    not cosmetic: `select` draws every option as a chip, which is right for six
+    members and unusable for the two thousand entities an ordinary Home
+    Assistant has. `entity` is a text field with a datalist, fed lazily."""
+    known = {'text', 'int', 'bool', 'choice', 'select', 'entity'}
     for w in home_board.catalog()['widgets']:
         for o in w.get('options') or []:
             check(o.get('type') in known,
@@ -63,6 +68,13 @@ def scenario_every_declared_option_is_a_shape_the_editor_can_draw():
                 check(o.get('source') in home_board.option_sources(),
                       f"{w['key']}.{o['key']} draws from '{o.get('source')}', "
                       f"which option_sources() does not supply")
+            if o['type'] == 'entity':
+                # Fed by ha_options(), NOT by the catalog — the whole reason
+                # this shape exists is to keep thousands of entities out of a
+                # payload every browser loads.
+                check(o.get('source') in ('ha_entities', 'ha_cameras'),
+                      f"{w['key']}.{o['key']} draws from '{o.get('source')}', "
+                      f"which ha_options() does not supply")
 
 
 def scenario_every_declared_option_survives_its_own_builder():
@@ -87,8 +99,9 @@ def scenario_every_declared_option_survives_its_own_builder():
                 cfg[o['key']] = not bool(o.get('default'))
             elif o['type'] == 'choice':
                 cfg[o['key']] = o['choices'][-1]['value']
-            elif o['type'] == 'select':
-                cfg[o['key']] = ['no-such-id'] if o.get('multi') else 'no-such-id'
+            elif o['type'] in ('select', 'entity'):
+                cfg[o['key']] = (['no.such_entity'] if o.get('multi')
+                                 else 'no.such_entity')
         try:
             home_board._BUILDERS[w['key']](
                 now, runs=[], sched={}, settings={}, config=cfg,

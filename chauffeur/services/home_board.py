@@ -236,6 +236,38 @@ WIDGETS = [
               help='Leave empty for everyone.'),
          _opt('cars', 'Show cars', 'bool', True),
      ]},
+    # ── Home Assistant.
+    #
+    # Deliberately NOT in DEFAULT_WIDGETS: a household without HA should never
+    # be shown a tile about it, and one with HA has to choose which entities
+    # matter — there is no sensible default set of somebody else's sensors.
+    #
+    # Neither of these vanishes when HA is missing, unlike the weather tile.
+    # Weather is a tile the board offers you; these are tiles you went and
+    # added, and a thing you deliberately put on the wall disappearing without
+    # explanation is the failure this board's "a quiet feature says so" rule
+    # exists to prevent. They say "Needs Home Assistant" instead.
+    {'key': 'ha', 'icon': '🏠', 'label': 'Home Assistant',
+     'blurb': "Any Home Assistant entities you choose, as a list of readings.",
+     'options': [
+         _opt('entities', 'Entities', 'entity', [], source='ha_entities',
+              multi=True, help='Type to search. Empty shows nothing.'),
+         _opt('show_state_only', 'Values only', 'bool', False,
+              help='Hide the names and show a wall of readings.'),
+         # OFF by default, and that is board rule 3 rather than timidity: a
+         # display does not change what it is displaying. A household that
+         # wants light switches on the wall can say so; nobody gets them by
+         # accident from adding a tile to read a temperature.
+         _opt('interactive', 'Allow tapping to toggle', 'bool', False,
+              help='Lights, switches, fans and helpers only.'),
+     ]},
+    {'key': 'ha_image', 'icon': '📷', 'label': 'Camera or radar',
+     'blurb': "A picture from a Home Assistant camera or image entity.",
+     'options': [
+         _opt('entity', 'Entity', 'entity', '', source='ha_cameras'),
+         _opt('refresh_seconds', 'Refresh every', 'int', 60, min=0, max=3600,
+              help='Seconds. 0 fetches once and leaves it.'),
+     ]},
     {'key': 'intake', 'icon': '📬', 'label': 'Waiting to approve',
      'blurb': "How many intake proposals need a parent. A COUNT only — the "
               "mail itself stays off shared screens."},
@@ -1542,6 +1574,191 @@ def _tile_map(now, runs=None, config=None, **_):
         return None
 
 
+# Domains a tap may act on. An allowlist rather than "anything with a toggle
+# service": a wall panel in a kitchen is reachable by everybody in the house
+# including the people who cannot read yet, and `lock`, `cover` and `alarm_*`
+# are not things a mis-tap should operate.
+HA_TOGGLE_DOMAINS = ('light', 'switch', 'fan', 'input_boolean')
+
+# HA ships mdi icon names, and this app has no mdi font — an `mdi:thermometer`
+# rendered literally is worse than no icon. A glyph per domain is the honest
+# amount of decoration a board can promise for an arbitrary entity.
+_HA_DOMAIN_GLYPH = {
+    'light': '💡', 'switch': '🔌', 'fan': '🌀', 'lock': '🔒', 'cover': '🪟',
+    'climate': '🌡️', 'sensor': '📈', 'binary_sensor': '⚫', 'person': '🧍',
+    'device_tracker': '📍', 'media_player': '🎵', 'camera': '📷',
+    'input_boolean': '🎚️', 'vacuum': '🧹', 'water_heater': '🚿',
+    'weather': '🌤️', 'sun': '☀️', 'update': '⬆️', 'battery': '🔋',
+}
+
+
+def ha_configured() -> bool:
+    """Is there a Home Assistant in this household's life at all?
+
+    Configuration only, no request, instant. Separate from `ha_available()`
+    because the two answer different questions and the board treats them
+    completely differently: NOT CONFIGURED means the feature is unused and the
+    tile should not exist (property 1, the same rule that hides the shopping
+    tile from a household that never made a list), while CONFIGURED BUT
+    UNREACHABLE means a set-up feature is quiet and has to say so.
+    """
+    try:
+        from services import ha_api
+        return ha_api.mode() != 'unconfigured'
+    except Exception:
+        return False
+
+
+def ha_available() -> bool:
+    """Configured AND answering.
+
+    Cheap first, then real: `mode()` answers instantly, `is_available()` makes
+    a request. Asking the expensive question when the cheap one already said
+    there is no Home Assistant is how a household without one ends up waiting
+    on a timeout to draw a board that has nothing to do with Home Assistant.
+    """
+    if not ha_configured():
+        return False
+    try:
+        from services import ha_api
+        return bool(ha_api.is_available())
+    except Exception:
+        return False
+
+
+def ha_options() -> dict:
+    """What the board editor's entity pickers offer.
+
+    NOT part of `option_sources()` and not in the catalog, deliberately: an
+    ordinary Home Assistant has hundreds to thousands of entities, and putting
+    them in the payload every browser loads to edit a board would make the
+    catalog the biggest thing on the page. The editor fetches this once, when
+    somebody actually opens an entity picker.
+
+    `available` is the whole graceful-degradation contract for the editor: a
+    picker that knows HA is absent says so, rather than showing an empty list
+    that is indistinguishable from "no matches".
+    """
+    if not ha_available():
+        return {'available': False, 'entities': [], 'cameras': []}
+    try:
+        from services import ha_api
+        entities, cameras = [], []
+        for s in (ha_api.get_states(ttl=30) or []):
+            eid = s.get('entity_id') or ''
+            if not eid:
+                continue
+            name = (s.get('attributes') or {}).get('friendly_name') or eid
+            row = {'value': eid, 'label': f'{name} — {eid}'}
+            entities.append(row)
+            if eid.split('.', 1)[0] in ('camera', 'image'):
+                cameras.append(row)
+        entities.sort(key=lambda r: r['label'].lower())
+        cameras.sort(key=lambda r: r['label'].lower())
+        return {'available': True, 'entities': entities, 'cameras': cameras}
+    except Exception as e:
+        print(f"[home_board] ha options failed: {e}")
+        return {'available': False, 'entities': [], 'cameras': []}
+
+
+def _tile_ha(now, config=None, **_):
+    """Any Home Assistant entities the household picked, as readings.
+
+    Not a Lovelace card and not pretending to be one: HA's cards are custom
+    elements that need a live `hass` object and an authenticated websocket, and
+    there is no supported way to run one here. What IS portable is the DATA —
+    entity, state, unit — and rendering that in the panel's own vocabulary
+    reads better on this wall than an embedded rectangle of somebody else's
+    theme would.
+    """
+    # No Home Assistant in this household AT ALL: the feature is unused and the
+    # tile does not exist, which is property 1 and the same rule that hides the
+    # shopping tile from a household that never made a list. The palette is
+    # where a household without HA finds out — it marks these two unavailable
+    # rather than letting somebody add a tile that could never appear.
+    if not ha_configured():
+        return None
+    wanted = _cfg_ids(config, 'entities')
+    interactive = _cfg_bool(config, 'interactive', False)
+    if not wanted:
+        # Added but never configured. "Pick some entities" is a thing to do;
+        # an empty card is a puzzle.
+        return {'empty': "Pick some entities in board setup."}
+    # Set up, but not answering right now — restarting, rebooted, off the
+    # network. A configured feature that is quiet says so.
+    if not ha_available():
+        return {'empty': "Needs Home Assistant."}
+    try:
+        from services import ha_api
+        by_id = {s.get('entity_id'): s for s in (ha_api.get_states(ttl=30) or [])}
+        rows = []
+        for eid in wanted:
+            s = by_id.get(eid)
+            domain = eid.split('.', 1)[0]
+            attrs = (s or {}).get('attributes') or {}
+            state = (s or {}).get('state')
+            rows.append({
+                'entity_id': eid,
+                'name': attrs.get('friendly_name') or eid,
+                'glyph': _HA_DOMAIN_GLYPH.get(domain, '•'),
+                'state': state,
+                'unit': attrs.get('unit_of_measurement') or '',
+                # An entity that has been renamed or removed in HA. NAMED
+                # rather than dropped: a row silently disappearing from a wall
+                # is how a household stops trusting the wall, and "this one is
+                # gone" is the only thing that leads anybody to fix it.
+                'missing': s is None,
+                'on': state in ('on', 'home', 'open', 'unlocked', 'playing'),
+                'toggleable': bool(interactive and domain in HA_TOGGLE_DOMAINS
+                                   and s is not None),
+            })
+        return {'rows': rows,
+                'state_only': _cfg_bool(config, 'show_state_only', False),
+                'interactive': interactive}
+    except Exception as e:
+        print(f"[home_board] ha tile failed: {e}")
+        return {'empty': "Could not reach Home Assistant."}
+
+
+def _tile_ha_image(now, config=None, **_):
+    """A camera or image entity, drawn as the tile.
+
+    The picture itself is fetched by the BROWSER, through the app's existing
+    `/api/ha/image` proxy — the board's payload carries a URL, not bytes. A
+    board that inlined camera frames would put a JPEG into every poll of a
+    payload the panel refetches every sixty seconds, and the whole point of
+    `entity_picture` is that it is already a cacheable URL.
+    """
+    if not ha_configured():
+        return None                       # see _tile_ha: unused, not quiet
+    entity = _cfg_str(config, 'entity')
+    if not entity:
+        return {'empty': "Pick a camera in board setup."}
+    if not ha_available():
+        return {'empty': "Needs Home Assistant."}
+    try:
+        from services import ha_api
+        st = ha_api.get_state(entity) or {}
+        picture = (st.get('attributes') or {}).get('entity_picture')
+        if not picture:
+            # A real entity that offers no picture (an unavailable camera, or
+            # an entity that is not a camera at all).
+            return {'empty': "That entity has no picture."}
+        import base64
+        token = base64.urlsafe_b64encode(picture.encode('utf-8')).decode().rstrip('=')
+        return {
+            'name': (st.get('attributes') or {}).get('friendly_name') or entity,
+            # image64, not `?path=`: an encoded-slash query reads like a
+            # traversal probe and gets dropped by some proxies. Same reason
+            # that endpoint exists at all.
+            'url': f'api/ha/image64/{token}',
+            'refresh_seconds': _cfg_int(config, 'refresh_seconds', 60, 0, 3600),
+        }
+    except Exception as e:
+        print(f"[home_board] ha image failed: {e}")
+        return {'empty': "Could not reach Home Assistant."}
+
+
 def _tile_intake(now, **_):
     """A COUNT and nothing else. Intake is mail approvals and IMAP settings —
     an admin surface the kiosk rule keeps off shared screens — but "three
@@ -1569,6 +1786,7 @@ _BUILDERS: dict = {
     'calendar': _tile_calendar, 'errands': _tile_errands, 'tasks': _tile_tasks,
     'trips': _tile_trips,
     'map': _tile_map, 'intake': _tile_intake,
+    'ha': _tile_ha, 'ha_image': _tile_ha_image,
 }
 
 
@@ -2226,10 +2444,17 @@ def catalog() -> dict:
     fifteen times: it is the one option that means the same thing everywhere,
     and it is the one a board with two calendar tiles needs most.
     """
+    ha_ok = ha_configured()
     widgets = []
     for w in WIDGETS:
         w = dict(w)
         w['options'] = list(w.get('options') or []) + [TITLE_OPTION]
+        # The hand path for property 1. These two tiles do not exist without a
+        # Home Assistant, so the palette says so instead of letting somebody
+        # add one and wonder why the wall never shows it.
+        if w['key'] in ('ha', 'ha_image'):
+            w['requires'] = 'Home Assistant'
+            w['available'] = ha_ok
         widgets.append(w)
     return {
         'widgets': widgets,

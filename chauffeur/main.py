@@ -913,6 +913,51 @@ def home_board_catalog():
     from services import home_board
     return home_board.catalog()
 
+@app.get("/api/home_board/ha_options")
+def home_board_ha_options():
+    """The entity pickers' contents, fetched LAZILY by the board editor.
+
+    Kept out of the catalog on purpose: an ordinary Home Assistant has
+    hundreds to thousands of entities, and shipping them in the payload every
+    browser loads to edit a board would make the catalog the biggest thing on
+    the page. Returns `available: false` (not an error) when HA is absent, so
+    the picker can say "not connected" rather than showing an empty list that
+    looks like "no matches".
+    """
+    from services import home_board
+    return home_board.ha_options()
+
+class HAToggleRequest(BaseModel):
+    entity_id: str
+
+@app.post("/api/ha/toggle")
+def ha_toggle(req: HAToggleRequest):
+    """Toggle one entity from the board's Home Assistant tile.
+
+    Domain-allowlisted at the SERVER, not only in the tile that offers the
+    button. The tile decides what to draw a control for; this decides what may
+    actually be operated, and the two are different jobs — a wall panel in a
+    kitchen is reachable by everybody in the house, and `lock`, `cover` and
+    `alarm_*` are not things a mis-tap or a crafted request should work.
+    """
+    from services import home_board, ha_api
+    entity_id = (req.entity_id or '').strip()
+    domain = entity_id.split('.', 1)[0] if '.' in entity_id else ''
+    if domain not in home_board.HA_TOGGLE_DOMAINS:
+        raise HTTPException(status_code=400,
+                            detail=f"{domain or 'that'} entities cannot be "
+                                   f"toggled from the board")
+    if not home_board.ha_available():
+        raise HTTPException(status_code=503, detail="Home Assistant is not reachable")
+    result = ha_api.call_service('homeassistant', 'toggle', {'entity_id': entity_id})
+    if result is None:
+        raise HTTPException(status_code=502, detail="Home Assistant refused that")
+    # No state comes back on purpose. `get_state` reads a 5-second cache and
+    # HA's own state machine may not have settled either, so the honest answer
+    # here is "the service was accepted" — the client flips the row optimistically
+    # and the board's next poll is what makes it true.
+    return {'ok': True}
+
 @app.get("/api/panel/profile")
 def panel_profile(tabs: Optional[str] = None, widgets: Optional[str] = None):
     """What this panel shows, resolved: URL params, then the stored profile,
@@ -4696,7 +4741,12 @@ def post_announce(req: AnnounceRequest):
     # screen doesn't know whose finger tapped it.
     return announce_svc.announce_and_echo(req.room, req.message, recipient=recipient)
 
-_HA_IMAGE_PREFIXES = ('/api/media_player_proxy/', '/api/image_proxy/', '/api/image/')
+# `camera_proxy` joined this list for the board's camera tile (arc 4). It is
+# the same KIND of thing as the three that were already here — an HA image
+# path, fetched with our token, returned as bytes — and the allowlist stays
+# an allowlist: this must not become a generic authenticated proxy into HA.
+_HA_IMAGE_PREFIXES = ('/api/media_player_proxy/', '/api/image_proxy/',
+                      '/api/image/', '/api/camera_proxy/')
 
 @app.get("/api/ha/image64/{encoded}")
 def ha_image64(encoded: str, request: Request):

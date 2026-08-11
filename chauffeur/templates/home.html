@@ -286,10 +286,20 @@
                      Picture tiles never scroll, either. Scrolling a photograph
                      is not reading it, and a mosaic that fills its slot has
                      nothing below the fold by construction. -->
-                <a :href="link(t.type)" :style="spanStyle(t.id)"
-                    class="panel-card rounded-2xl p-4 md:p-5 min-w-0 overflow-x-hidden transition-transform active:scale-[0.985]"
-                    :class="fillsTile(t.type) ? 'flex flex-col overflow-hidden'
-                                             : 'block tile-scroll overflow-y-auto'">
+                <!-- Still an <a>, with NO href when the tile is not a door.
+                     Alpine drops an attribute bound to null, and an anchor
+                     without an href is not interactive content — so it stops
+                     being a link, stops being focusable, and legally contains
+                     the toggle buttons the Home Assistant tile puts inside it.
+                     (A dynamic tag name is a Vue idea; Alpine has nothing like
+                     it, and duplicating four hundred lines of tile body under
+                     two x-ifs to change one tag would be worse than either.) -->
+                <a :href="opens(t.type) ? link(t.type) : null"
+                    :style="spanStyle(t.id)"
+                    class="panel-card rounded-2xl p-4 md:p-5 min-w-0 overflow-x-hidden"
+                    :class="[fillsTile(t.type) ? 'flex flex-col overflow-hidden'
+                                               : 'block tile-scroll overflow-y-auto',
+                             opens(t.type) ? 'transition-transform active:scale-[0.985]' : '']">
                     <div class="flex items-center gap-2 mb-3 shrink-0">
                         <span class="text-lg" x-text="t.icon"></span>
                         <span class="panel-label" x-text="t.label"></span>
@@ -691,6 +701,59 @@
                     </template>
 
                     <!-- waiting to approve -->
+                    <!-- Home Assistant entities, in the panel's own
+                         vocabulary rather than as an embedded card. HA's cards
+                         are custom elements that need a live `hass` object and
+                         an authenticated websocket; the DATA is what travels,
+                         and it reads better here drawn like everything else on
+                         this wall. -->
+                    <template x-if="t.type === 'ha' && !t.data.empty">
+                        <div class="space-y-1.5">
+                            <template x-for="r in t.data.rows" :key="r.entity_id">
+                                <div class="flex items-baseline gap-2 min-w-0">
+                                    <span x-show="!t.data.state_only" class="shrink-0"
+                                        x-text="r.glyph"></span>
+                                    <span x-show="!t.data.state_only"
+                                        class="text-base panel-text truncate flex-1"
+                                        x-text="r.name"></span>
+                                    <!-- A missing entity is NAMED, not dropped.
+                                         A row quietly vanishing from a wall is
+                                         how a household stops trusting it. -->
+                                    <span x-show="r.missing"
+                                        class="text-sm text-amber-400/80 shrink-0">not in HA</span>
+                                    <button x-show="!r.missing && r.toggleable"
+                                        @click="toggleEntity(t, r)"
+                                        :class="r.on ? 'bg-sky-600 text-white'
+                                                     : 'bg-gray-900 text-gray-400'"
+                                        class="shrink-0 text-sm font-bold rounded-full px-3 py-0.5 border border-gray-700"
+                                        x-text="r.on ? 'On' : 'Off'"></button>
+                                    <span x-show="!r.missing && !r.toggleable"
+                                        class="text-base font-bold panel-text shrink-0 tabular-nums"
+                                        x-text="(r.state ?? '—') + (r.unit ? ' ' + r.unit : '')"></span>
+                                    <span x-show="t.data.state_only && !r.missing"
+                                        class="text-sm panel-dim truncate" x-text="r.name"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- A camera or image entity. The picture is fetched by the
+                         BROWSER through the existing /api/ha/image proxy — the
+                         board's payload carries a URL, never bytes, or every
+                         60-second poll would drag a JPEG with it. -->
+                    <template x-if="t.type === 'ha_image' && !t.data.empty">
+                        <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden bg-gray-800">
+                            <img :src="haImageSrc(t)" :alt="t.data.name"
+                                @error="haImageFailed[t.id] = true"
+                                @load="haImageFailed[t.id] = false"
+                                class="absolute inset-0 w-full h-full object-cover">
+                            <div x-show="haImageFailed[t.id]"
+                                class="absolute inset-0 flex items-center justify-center text-base panel-dim px-4 text-center">
+                                No picture from Home Assistant just now.
+                            </div>
+                        </div>
+                    </template>
+
                     <template x-if="t.type === 'intake' && !t.data.empty">
                         <div class="flex items-baseline gap-3">
                             <span class="text-4xl font-black tabular-nums text-indigo-300"
@@ -902,6 +965,53 @@
                                             </div>
                                         </template>
 
+                                        <!-- An ENTITY, which is a select in
+                                             spirit and cannot be one in
+                                             practice: an ordinary Home
+                                             Assistant has hundreds to
+                                             thousands, and the chip grid the
+                                             other multi-selects use would be
+                                             a page of them. A text input with
+                                             a datalist is the browser's own
+                                             answer to "pick one of very many",
+                                             and it costs nothing to render. -->
+                                        <template x-if="o.type === 'entity'">
+                                            <div>
+                                                <div x-show="!haOptions.available"
+                                                    class="text-xs text-amber-400/80 mb-1.5">
+                                                    Home Assistant is not connected, so there is
+                                                    nothing to search. You can still type an
+                                                    entity id.
+                                                </div>
+                                                <div class="flex gap-1.5">
+                                                    <input type="text" :list="'ha-list-' + o.source"
+                                                        :value="o.multi ? '' : (cfg(w, o) || '')"
+                                                        :placeholder="o.multi ? 'sensor.back_garden_temperature' : 'camera.driveway'"
+                                                        @focus="loadHaOptions()"
+                                                        @change="o.multi
+                                                            ? addEntity(w, o, $event.target)
+                                                            : setCfg(w, o, $event.target.value.trim())"
+                                                        class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200">
+                                                </div>
+                                                <!-- One datalist per SOURCE, not per field: two
+                                                     entity fields of the same kind share it, and
+                                                     the browser matches on both value and label. -->
+                                                <datalist :id="'ha-list-' + o.source">
+                                                    <template x-for="c in haRows(o)" :key="c.value">
+                                                        <option :value="c.value" x-text="c.label"></option>
+                                                    </template>
+                                                </datalist>
+                                                <div x-show="o.multi" class="flex flex-wrap gap-1.5 mt-1.5">
+                                                    <template x-for="(id, n) in (cfg(w, o) || [])" :key="id">
+                                                        <button type="button"
+                                                            @click="removeEntity(w, o, n)"
+                                                            class="text-xs rounded-full px-2.5 py-1 border border-gray-700 bg-gray-900 text-gray-300 hover:text-red-300"
+                                                            x-text="entityLabel(o, id) + ' ✕'"></button>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+
                                         <div x-show="o.help" class="text-[0.7rem] text-gray-600 mt-1"
                                             x-text="o.help"></div>
                                     </div>
@@ -920,9 +1030,22 @@
                          different people is the point. -->
                     <div class="flex flex-wrap gap-1.5">
                         <template x-for="c in (catalog.widgets || [])" :key="c.key">
+                            <!-- A tile that cannot exist here is offered
+                                 disabled, with the reason on it. The board
+                                 hides an unconfigured feature's tile (property
+                                 1), so without this a household with no Home
+                                 Assistant could add one from the palette and
+                                 then watch the wall never show it. -->
                             <button @click="addInstance(c.key)"
-                                class="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-full px-3 py-1.5">
+                                :disabled="c.available === false"
+                                :title="c.available === false ? 'Needs ' + c.requires : ''"
+                                class="text-xs rounded-full px-3 py-1.5"
+                                :class="c.available === false
+                                    ? 'bg-gray-900 text-gray-600 cursor-not-allowed'
+                                    : 'bg-gray-800 hover:bg-gray-700 text-gray-300'">
                                 <span x-text="c.icon"></span> <span x-text="c.label"></span>
+                                <span x-show="c.available === false" class="text-gray-600"
+                                    x-text="'· needs ' + c.requires"></span>
                                 <span x-show="countOfType(c.key)" class="text-gray-500"
                                     x-text="'· ' + countOfType(c.key)"></span>
                             </button>
@@ -1143,6 +1266,12 @@
                 // fetch landed.
                 nowTs: Date.now(),
                 saving: false,
+                // The entity pickers' contents. `loaded` rather than a length
+                // check, because "Home Assistant has no entities" and "we have
+                // not asked yet" are different states and only one of them
+                // should keep asking.
+                haOptions: { available: false, entities: [], cameras: [], loaded: false },
+                _haLoading: false,
                 // Which instance's options panel is open. ONE at a time, by id:
                 // a board with ten tiles and ten expanded forms is a wall of
                 // fields with no way to tell which tile you are editing.
@@ -1211,6 +1340,10 @@
                 },
 
                 tick() {
+                    // The camera tiles' cache-buster rides the clock that is
+                    // already running. A wall panel does not need a second
+                    // interval to count the same seconds twice.
+                    this.haImageTick += 1;
                     const d = new Date();
                     let h = d.getHours();
                     this.meridiem = h >= 12 ? 'PM' : 'AM';
@@ -1659,6 +1792,49 @@
                     return this.widgetMeta(type).options || [];
                 },
 
+                // Which tile types are a DOOR. Everything on this board has
+                // been a link to the page it summarises; the Home Assistant
+                // tiles summarise nothing of ours, and a link to a page that
+                // does not exist is a tap that empties the wall.
+                PAGELESS: ['ha', 'ha_image'],
+                opens(type) {
+                    return !this.PAGELESS.includes(type);
+                },
+
+                // Cache-busted on a timer the household chose. A camera URL is
+                // stable, so without this the browser would show one frame
+                // forever; with a 0 they get exactly that, on purpose.
+                haImageTick: 0,
+                haImageFailed: {},
+                haImageSrc(tile) {
+                    const base = this.apiBase + (tile.data.url || '');
+                    const every = tile.data.refresh_seconds || 0;
+                    if (!every) return base;
+                    const bucket = Math.floor(this.haImageTick / every);
+                    return base + (base.includes('?') ? '&' : '?') + 'v=' + bucket;
+                },
+
+                async toggleEntity(tile, row) {
+                    // Flipped here first: the service call is accepted before
+                    // Home Assistant's state machine settles, and the server
+                    // deliberately returns no state rather than a stale one.
+                    // The next board poll is what makes this true.
+                    row.on = !row.on;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/ha/toggle', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ entity_id: row.entity_id })
+                        });
+                        if (!r.ok) throw new Error('refused');
+                    } catch (e) {
+                        row.on = !row.on;            // put it back
+                        if (window.showGlobalAlert) {
+                            showGlobalAlert("Couldn't reach Home Assistant.");
+                        }
+                    }
+                },
+
                 // The server sends up to twelve item names per list; how many
                 // of them this instance shows is the instance's own business.
                 // Absent means the old behaviour (all twelve the server
@@ -1708,6 +1884,53 @@
                         || JSON.stringify(v) === JSON.stringify(o.default);
                     if (isDefault) delete w.config[o.key];
                     else w.config[o.key] = v;
+                },
+
+                // Fetched ONCE, and only when somebody actually opens an
+                // entity picker — the catalog deliberately does not carry
+                // thousands of entities for every browser that loads this page.
+                async loadHaOptions() {
+                    if (this._haLoading || this.haOptions.loaded) return;
+                    this._haLoading = true;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/home_board/ha_options');
+                        const d = await r.json();
+                        this.haOptions = { ...d, loaded: true };
+                    } catch (e) {
+                        // Absent is a state, not an error. The field stays
+                        // typable and says why it cannot help.
+                        this.haOptions = { available: false, entities: [], cameras: [], loaded: true };
+                    }
+                    this._haLoading = false;
+                },
+
+                haRows(o) {
+                    return (o.source === 'ha_cameras'
+                        ? this.haOptions.cameras : this.haOptions.entities) || [];
+                },
+
+                // The friendly name if we know it, the id if we do not — which
+                // is the case for an entity typed by hand, and for one that has
+                // since been renamed in Home Assistant.
+                entityLabel(o, id) {
+                    const row = this.haRows(o).find(r => r.value === id);
+                    return row ? row.label.split(' — ')[0] : id;
+                },
+
+                addEntity(w, o, input) {
+                    const v = (input.value || '').trim();
+                    input.value = '';
+                    if (!v) return;
+                    const cur = (this.cfg(w, o) || []).slice();
+                    if (cur.includes(v)) return;
+                    cur.push(v);
+                    this.setCfg(w, o, cur);
+                },
+
+                removeEntity(w, o, i) {
+                    const cur = (this.cfg(w, o) || []).slice();
+                    cur.splice(i, 1);
+                    this.setCfg(w, o, cur);
                 },
 
                 toggleCfgId(w, o, value) {
