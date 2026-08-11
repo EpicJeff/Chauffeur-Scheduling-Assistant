@@ -3236,6 +3236,9 @@ def ignored_senders(min_ignored: int = 2):
 class IngestBlockRequest(BaseModel):
     pattern: str                      # an address or a bare domain fragment
     label: Optional[str] = ""         # what the family will recognise it as
+    # Empty = skip everything from this sender. Non-empty turns it into a
+    # filter: skip only when the SUBJECT contains one of these.
+    keywords: Optional[List[str]] = None
 
 
 @app.post("/api/ingest/block-sender")
@@ -3250,19 +3253,22 @@ def block_ingest_sender(req: IngestBlockRequest):
     pattern = (req.pattern or '').strip().lower()
     if not pattern:
         raise HTTPException(status_code=400, detail="A pattern is required")
+    keywords = [k.strip().lower() for k in (req.keywords or []) if (k or '').strip()]
     s = storage.get_settings() or {}
     current = [e for e in (s.get('ingest_sender_blocklist') or [])
                if isinstance(e, dict) and (e.get('pattern') or '').strip().lower() != pattern]
     current.append({'pattern': pattern, 'label': (req.label or '').strip(),
-                    'added_at': time.time()})
+                    'keywords': keywords, 'added_at': time.time()})
     storage.patch_settings({'ingest_sender_blocklist': current})
     # The streak was the reason the offer appeared; it has been answered.
     streaks = storage.get_app_state('intake_ignore_streaks') or {}
     if streaks:
         storage.set_app_state('intake_ignore_streaks',
                               {k: v for k, v in streaks.items() if pattern not in (k or '')})
-    storage.add_ingest_log({'from': pattern, 'subject': '(blocklist)',
-                            'outcome': f'blocked — mail matching {pattern} will be skipped'})
+    what = (f'mail from {pattern} whose subject has {", ".join(keywords)}'
+            if keywords else f'mail matching {pattern}')
+    storage.add_ingest_log({'from': pattern, 'subject': '(skip rule)',
+                            'outcome': f'skip rule added — {what} will be skipped'})
     return {"status": "blocked", "pattern": pattern,
             "ingest_sender_blocklist": current}
 
@@ -3274,8 +3280,8 @@ def unblock_ingest_sender(req: IngestBlockRequest):
     current = [e for e in (s.get('ingest_sender_blocklist') or [])
                if isinstance(e, dict) and (e.get('pattern') or '').strip().lower() != pattern]
     storage.patch_settings({'ingest_sender_blocklist': current})
-    storage.add_ingest_log({'from': pattern, 'subject': '(blocklist)',
-                            'outcome': f'unblocked — mail matching {pattern} will be read again'})
+    storage.add_ingest_log({'from': pattern, 'subject': '(skip rule)',
+                            'outcome': f'skip rule removed — mail matching {pattern} will be read again'})
     return {"status": "unblocked", "ingest_sender_blocklist": current}
 
 @app.post("/api/ingest/config")
@@ -3599,6 +3605,51 @@ def list_misfiled_proposals():
             'source_subject': p.get('source_subject') or '',
         })
     return sorted(out, key=lambda r: r.get('start') or '')
+
+@app.get("/api/proposals/skipped")
+def skipped_duplicates(limit: int = 30):
+    """Items intake decided were already on the calendar.
+
+    The hedge that makes aggressive dedupe safe: a skipped duplicate that
+    leaves no trace is indistinguishable from mail that never arrived, so
+    every skip is recorded with what it matched and by which rule, and can be
+    put back. `rule` is worth showing — 'time_place' matched a person, place
+    and minute while ignoring the title, and 'llm' is the model's judgment
+    rather than a mechanical one, so those are the two a parent might want to
+    second-guess."""
+    rows = [p for p in storage.get_proposals('duplicate')]
+    rows.sort(key=lambda p: p.get('created_at') or 0, reverse=True)
+    out = []
+    for p in rows[:max(1, min(int(limit or 30), 200))]:
+        out.append({
+            'id': p.get('id'), 'title': p.get('title'), 'start': p.get('start'),
+            'location': p.get('location') or '',
+            'source_from': p.get('source_from') or '', 'source_subject': p.get('source_subject') or '',
+            'duplicate_of': p.get('duplicate_of') or '',
+            'duplicate_start': p.get('duplicate_start') or '',
+            'duplicate_source': p.get('duplicate_source') or '',
+            'duplicate_rule': p.get('duplicate_rule') or '',
+        })
+    return out
+
+
+@app.post("/api/proposals/{proposal_id}/restore")
+def restore_proposal(proposal_id: str):
+    """Put a skipped duplicate back in the queue — the undo for a wrong call.
+    The duplicate_* fields are kept, not cleared: the record of what the app
+    thought is worth more than a tidy row, and dedupe reads status, not these."""
+    prop = storage.get_proposal(proposal_id)
+    if not prop:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    if prop.get('status') != 'duplicate':
+        raise HTTPException(status_code=400,
+                            detail="That proposal wasn't skipped as a duplicate.")
+    storage.update_proposal(proposal_id, {'status': 'proposed', 'restored_at': time.time()})
+    storage.add_ingest_log({
+        'from': prop.get('source_from') or '', 'subject': prop.get('source_subject') or '',
+        'outcome': f"restored — {prop.get('title')} was not a duplicate after all"})
+    return {"status": "restored"}
+
 
 @app.post("/api/proposals/{proposal_id}/refile")
 def refile_proposal(proposal_id: str, background_tasks: BackgroundTasks):

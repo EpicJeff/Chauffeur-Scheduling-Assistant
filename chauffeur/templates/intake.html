@@ -264,6 +264,37 @@
                 </div>
             </section>
 
+            <!-- ===== Skipped as duplicates =====
+                 The hedge that makes aggressive dedupe safe to ship. A skipped
+                 item that leaves no trace is indistinguishable from mail that
+                 never arrived, so every skip says what it matched and can be
+                 put back. Without this the time+place and model-judgment rules
+                 would be silent failures waiting to happen. -->
+            <section class="mb-10" x-show="skipped.length">
+                <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">
+                    Skipped as duplicates</h3>
+                <p class="text-sm text-gray-400 mb-3">These looked like things already on your calendar, so they
+                    never reached the queue. If one is actually new, put it back — and if that keeps happening,
+                    tell me and I will loosen the rule that caught it.</p>
+                <div class="bg-gray-800 rounded-xl divide-y divide-gray-700/60 border border-gray-700">
+                    <template x-for="d in skipped" :key="d.id">
+                        <div class="px-5 py-3 flex flex-col md:flex-row md:items-center gap-2 md:gap-4 text-sm">
+                            <div class="flex-1 min-w-0">
+                                <div class="text-gray-200 font-medium truncate" x-text="d.title"></div>
+                                <div class="text-xs text-gray-500 truncate">
+                                    <span x-text="(d.start || '').slice(0, 10)"></span>
+                                    <span x-text="' · matched ' + (d.duplicate_of || 'an existing item')"></span>
+                                    <span x-text="' · ' + dupeRuleLabel(d)"></span>
+                                </div>
+                            </div>
+                            <button @click="restore(d)"
+                                class="shrink-0 bg-gray-700 hover:bg-gray-600 text-gray-100 font-bold text-xs px-3 py-1.5 rounded-lg transition-colors">
+                                Propose anyway</button>
+                        </div>
+                    </template>
+                </div>
+            </section>
+
             <!-- ===== Senders you keep ignoring =====
                  The block offer used to hang off a pending proposal card, which
                  is the transient thing: ignore everything a sender sends and the
@@ -398,28 +429,38 @@
 
                     <!-- Blocked senders. Deliberately NOT hidden away: a filter you
                          cannot see is the thing that makes mail rules unnerving. -->
-                    <label class="block text-gray-400 mb-1 text-sm font-semibold">Blocked senders</label>
+                    <label class="block text-gray-400 mb-1 text-sm font-semibold">Skip rules</label>
                     <p class="text-xs text-gray-500 mb-3">Mail matching these is skipped before it is read — no
-                        proposals, and no AI call spent on it. Matching is a substring of the From address, so
-                        "@teamsnap.com" covers every address that platform sends from. Every skip is still recorded
-                        in Activity below, so a block is always visible and always reversible.</p>
+                        proposals, and no AI call spent on it. The sender match is a substring of the From address,
+                        so "@teamsnap.com" covers every address that platform sends from. <b>Leave keywords empty
+                        to skip everything from that sender</b>, or add them to skip only some of it: keywords
+                        match the <b>subject line</b> only, so "@teamsnap.com" + "reminder" drops their reminders
+                        about events you already have from their calendar, while their real announcements still
+                        come through. Every skip is recorded in Activity below, naming the rule that fired.</p>
                     <template x-for="(entry, idx) in (config.ingest_sender_blocklist || [])" :key="entry.pattern + idx">
                         <div class="flex gap-2 mb-2 items-center bg-gray-900 border border-gray-700 rounded-lg p-2.5">
-                            <span class="flex-1 font-mono text-sm text-amber-300" x-text="entry.pattern"></span>
+                            <span class="font-mono text-sm text-amber-300" x-text="entry.pattern"></span>
+                            <span class="flex-1 text-xs text-gray-400"
+                                x-text="(entry.keywords || []).length
+                                    ? 'subject contains: ' + entry.keywords.join(', ')
+                                    : 'everything from this sender'"></span>
                             <span class="text-xs text-gray-500" x-show="entry.label" x-text="entry.label"></span>
                             <button @click="unblockSender(entry.pattern)"
-                                class="text-blue-400 hover:text-blue-300 bg-blue-500/10 px-3 py-1 rounded-lg font-bold text-sm">Unblock</button>
+                                class="text-blue-400 hover:text-blue-300 bg-blue-500/10 px-3 py-1 rounded-lg font-bold text-sm">Remove</button>
                         </div>
                     </template>
                     <p x-show="!(config.ingest_sender_blocklist || []).length"
-                        class="text-gray-500 text-sm italic mb-5">Nothing blocked. When you keep ignoring a sender,
+                        class="text-gray-500 text-sm italic mb-5">No skip rules. When you keep ignoring a sender,
                         Chauffeur offers a button on the proposal itself.</p>
-                    <div class="flex gap-2 mb-5">
+                    <div class="flex flex-col md:flex-row gap-2 mb-5">
                         <input type="text" x-model="blockInput" placeholder="@teamsnap.com"
-                            @keydown.enter="blockPattern(blockInput)"
+                            @keydown.enter="blockPattern(blockInput, '', blockKeywords)"
                             class="flex-1 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white font-mono text-sm">
-                        <button @click="blockPattern(blockInput)"
-                            class="text-amber-300 hover:text-amber-200 bg-amber-500/10 border border-amber-500/30 px-4 rounded-lg font-bold text-sm">Block</button>
+                        <input type="text" x-model="blockKeywords" placeholder="subject keywords (optional): reminder, digest"
+                            @keydown.enter="blockPattern(blockInput, '', blockKeywords)"
+                            class="flex-1 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-sm">
+                        <button @click="blockPattern(blockInput, '', blockKeywords)"
+                            class="text-amber-300 hover:text-amber-200 bg-amber-500/10 border border-amber-500/30 px-4 py-2.5 rounded-lg font-bold text-sm">Add skip rule</button>
                     </div>
 
                     <div class="flex gap-3">
@@ -441,6 +482,7 @@
                 config: { ingest_email_enabled: false, ingest_email_host: 'imap.gmail.com', ingest_email_user: '', has_password: false, ingest_sender_defaults: [], ingest_sender_blocklist: [] },
                 passwordInput: '',
                 blockInput: '',
+                blockKeywords: '',
                 calendarTargets: [],
                 taskTargets: [],
                 passengerChips: [],
@@ -455,15 +497,18 @@
                 misfiled: [],
                 refiling: false,
                 ignoredSenders: [],
+                skipped: [],
 
                 async init() {
                     await Promise.all([this.loadProposals(), this.loadLog(), this.loadConfig(),
                                        this.loadTargets(), this.loadMisfiled(),
-                                       this.loadIgnoredSenders()]);
+                                       this.loadIgnoredSenders(), this.loadSkipped()]);
                     // The background poll creates proposals while the page is
                     // open — refresh quietly so they appear without a click.
                     setInterval(() => {
-                        if (!document.hidden) { this.loadProposals(); this.loadLog(); }
+                        if (!document.hidden) {
+                            this.loadProposals(); this.loadLog(); this.loadSkipped();
+                        }
                     }, 60000);
                     document.addEventListener('visibilitychange', () => {
                         if (!document.hidden) { this.loadProposals(); this.loadLog(); }
@@ -664,6 +709,36 @@
                     } catch (e) { console.error('config load failed', e); }
                 },
 
+                // --- Skipped duplicates ------------------------------------
+                async loadSkipped() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/proposals/skipped`);
+                        const data = await res.json();
+                        this.skipped = Array.isArray(data) ? data : [];
+                    } catch (e) { this.skipped = []; }
+                },
+                // Naming the rule matters: the two a parent might reasonably
+                // disagree with are the title-blind one and the model's call.
+                dupeRuleLabel(d) {
+                    const where = d.duplicate_source === 'event' ? 'on the calendar' : 'already proposed';
+                    if (d.duplicate_rule === 'time_place') return 'same time and place, ' + where;
+                    if (d.duplicate_rule === 'llm') return 'read as the same event';
+                    return 'same title, ' + where;
+                },
+                async restore(d) {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/proposals/${d.id}/restore`,
+                                                { method: 'POST' });
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            showGlobalAlert(err.detail || "Couldn't restore that.");
+                            return;
+                        }
+                        await Promise.all([this.loadProposals(), this.loadSkipped(), this.loadLog()]);
+                        showGlobalAlert('Back in the queue 📥', 'success');
+                    } catch (e) { showGlobalAlert("Couldn't restore that."); }
+                },
+
                 // --- Blocked senders ---------------------------------------
                 async loadIgnoredSenders() {
                     try {
@@ -696,20 +771,27 @@
                     if (!pattern) { showGlobalAlert('That proposal has no sender to block.'); return; }
                     await this.blockPattern(pattern, p.source_subject || '');
                 },
-                async blockPattern(pattern, label) {
+                async blockPattern(pattern, label, keywordsText) {
                     pattern = (pattern || '').trim().toLowerCase();
                     if (!pattern) return;
-                    if (!await promptConfirm('Stop reading this sender?',
-                        `Mail matching "${pattern}" will be skipped before it is read. It stays visible in `
-                        + `Activity, and you can unblock it here at any time.`, 'Block', 'Cancel')) return;
+                    const keywords = (keywordsText || '').split(',')
+                        .map(s => s.trim().toLowerCase()).filter(Boolean);
+                    const scope = keywords.length
+                        ? `Mail from "${pattern}" whose subject contains ${keywords.map(k => `"${k}"`).join(' or ')} `
+                          + `will be skipped. Everything else from them still comes through.`
+                        : `All mail matching "${pattern}" will be skipped before it is read.`;
+                    if (!await promptConfirm('Add this skip rule?',
+                        `${scope} Skips stay visible in Activity, and you can remove the rule here at any time.`,
+                        'Add rule', 'Cancel')) return;
                     try {
                         const res = await fetch(`${this.apiBase}api/ingest/block-sender`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ pattern, label: label || '' }) });
+                            body: JSON.stringify({ pattern, label: label || '', keywords }) });
                         const data = await res.json();
                         if (!res.ok) { showGlobalAlert(data.detail || "Couldn't block that sender."); return; }
                         this.config.ingest_sender_blocklist = data.ingest_sender_blocklist || [];
                         this.blockInput = '';
+                        this.blockKeywords = '';
                         await Promise.all([this.loadProposals(), this.loadLog(),
                                            this.loadIgnoredSenders()]);
                         showGlobalAlert(`Blocked ${pattern} ✉️`, 'success');

@@ -126,7 +126,7 @@ def test_run_ingest():
         ]
         email_ingest.fetch_new_messages = lambda settings: (msgs, None)
 
-        def fake_extract(subject, from_addr, body, names):
+        def fake_extract(subject, from_addr, body, names, **kw):
             if 'teamsnap' in from_addr:
                 return [
                     {'kind': 'event', 'title': 'Soccer Game', 'date': IN_5_DAYS,
@@ -218,7 +218,7 @@ def test_sender_blocklist():
             _fake_msg(22, 'office@school.org', 'Picture Day', 'Picture day info'),
         ], None)
 
-        def spy_extract(subject, from_addr, body, names):
+        def spy_extract(subject, from_addr, body, names, **kw):
             extracted.append(from_addr)
             return []
         email_ingest.extract_items = spy_extract
@@ -229,7 +229,7 @@ def test_sender_blocklist():
               f"saving, one LLM call per message not made: {extracted}")
         check(s['checked'] == 2 and s['skipped'] == 1,
               f"still counted as seen, not silently dropped: {s}")
-        check(any('skipped: sender blocked' in (r.get('outcome') or '')
+        check(any('skipped: matched skip rule' in (r.get('outcome') or '')
                   for r in storage.get_ingest_log()),
               "and the skip is in the record, so the day that sender starts "
               "mailing something real there is evidence rather than a mystery")
@@ -237,6 +237,196 @@ def test_sender_blocklist():
         email_ingest.fetch_new_messages = real_fetch
         email_ingest.extract_items = real_extract
         storage.patch_settings({'ingest_sender_blocklist': []})
+
+
+def test_keyword_skip_rules():
+    """Blocking a whole sender is too blunt for the common case: you subscribe
+    to TeamSnap's calendar, so their REMINDERS are guaranteed duplicates while
+    their announcements are not. Keywords turn blocking into filtering."""
+    print("keyword skip rules ...")
+    rule = [{'pattern': '@teamsnap.com', 'keywords': ['reminder']}]
+    check(email_ingest.sender_blocked('x@teamsnap.com', rule, subject='Reminder: game Saturday'),
+          "a subject keyword fires the rule (case-insensitively)")
+    check(not email_ingest.sender_blocked('x@teamsnap.com', rule, subject='Team photos moved'),
+          "and everything else from that sender still comes through — this is "
+          "a filter, not a block")
+    check(not email_ingest.sender_blocked('x@school.org', rule, subject='Reminder: picture day'),
+          "the keyword alone is not a rule; the sender still has to match")
+    fired = email_ingest.sender_blocked('x@teamsnap.com', rule, subject='REMINDER: game')
+    check(fired.get('matched_keyword') == 'reminder',
+          "the rule says WHICH keyword fired, so the log can explain itself")
+    # No subject context: a keyword rule cannot be evaluated, so it must not
+    # claim the sender is handled (this is what keeps a partially-filtered
+    # sender in the 'senders you keep ignoring' offer).
+    check(not email_ingest.sender_blocked('x@teamsnap.com', rule),
+          "without a subject only unconditional rules can match")
+    check(email_ingest.sender_blocked('x@teamsnap.com', [{'pattern': '@teamsnap.com'}]),
+          "and an empty keyword list is still a plain block")
+
+
+def test_duplicates_are_recorded_not_dropped():
+    """The hedge. Aggressive dedupe is only safe if every skip is visible and
+    reversible — a silently dropped item is indistinguishable from mail that
+    never arrived, which is the one failure a parent cannot debug."""
+    print("duplicates recorded, not dropped ...")
+    storage.event_proposals_table.truncate()
+    storage.ingest_log_table.truncate()
+    storage.patch_settings({
+        'ingest_email_enabled': True, 'ingest_email_user': 'family@test',
+        'ingest_email_password': 'x', 'ingest_sender_defaults': [],
+        'ingest_sender_blocklist': [], 'default_calendar_id': 'family@cal',
+    })
+    day = IN_5_DAYS
+    real_fetch = email_ingest.fetch_new_messages
+    real_extract = email_ingest.extract_items
+    real_cache = storage.get_cached_schedule
+    try:
+        # The family renamed this one after approving it, so the titles no
+        # longer resemble each other at all — only time and place agree.
+        storage.get_cached_schedule = lambda: {'events': [{
+            'id': 'ev1', 'title': 'Lily - picture day',
+            'start': f'{day}T09:00:00', 'end': f'{day}T10:00:00',
+            'location': 'Springfield Elementary, 12 Mill Rd',
+            'calendar_ids': ['family@cal'], 'all_day': False,
+        }]}
+        email_ingest.fetch_new_messages = lambda s: (
+            [_fake_msg(31, 'office@school.org', 'Fall Picture Day', 'body')], None)
+        email_ingest.extract_items = lambda *a, **kw: [{
+            'kind': 'event', 'title': 'Fall Picture Day Reminder - Grades K-5',
+            'date': day, 'start_time': '09:00', 'end_time': '10:00',
+            'location': 'Springfield Elementary', 'confidence': 0.9}]
+
+        s = email_ingest.run_ingest()
+        check(s['proposed'] == 0 and s['duplicates'] == 1,
+              f"caught with no title overlap to work from: {s}")
+        skipped = storage.get_proposals('duplicate')
+        check(len(skipped) == 1 and skipped[0]['duplicate_rule'] == 'time_place',
+              f"and recorded with the rule that caught it: {skipped}")
+        check(skipped[0]['duplicate_of'] == 'Lily - picture day',
+              "naming what it matched, so a wrong call is arguable")
+        check(not storage.get_proposals('proposed'),
+              "it did not reach the queue")
+        check(any('skipped as duplicate' in (r.get('outcome') or '')
+                  for r in storage.get_ingest_log()),
+              "the run says so out loud rather than reporting nothing happened")
+
+        # And the undo: a wrong call is one click from being a real proposal.
+        import main
+        main.restore_proposal(skipped[0]['id'])
+        check(len(storage.get_proposals('proposed')) == 1,
+              "Propose anyway puts it back in the queue")
+        check(storage.get_proposal(skipped[0]['id'])['duplicate_of'] == 'Lily - picture day',
+              "keeping the record of what the app had thought")
+    finally:
+        email_ingest.fetch_new_messages = real_fetch
+        email_ingest.extract_items = real_extract
+        storage.get_cached_schedule = real_cache
+        storage.event_proposals_table.truncate()
+
+
+def test_the_model_annotates_it_never_omits():
+    """The semantic layer, and the one design rule that makes it safe: the
+    model may LABEL an item a duplicate, never delete it. An omitted item
+    never existed, so no hedge could ever show it — a labelled one is
+    recorded, visible and restorable like every other skip."""
+    print("model annotates, never omits ...")
+    storage.event_proposals_table.truncate()
+    storage.patch_settings({
+        'ingest_email_enabled': True, 'ingest_email_user': 'family@test',
+        'ingest_email_password': 'x', 'ingest_sender_defaults': [],
+        'ingest_sender_blocklist': [], 'default_calendar_id': 'family@cal',
+    })
+    day = IN_5_DAYS
+    real_fetch, real_extract = email_ingest.fetch_new_messages, email_ingest.extract_items
+    real_cache = storage.get_cached_schedule
+    seen = {}
+    try:
+        storage.get_cached_schedule = lambda: {'events': [{
+            'id': 'ev1', 'title': 'Lily swim meet', 'start': f'{day}T13:00:00',
+            'end': f'{day}T15:00:00', 'calendar_ids': ['family@cal'], 'all_day': False}]}
+        email_ingest.fetch_new_messages = lambda s: (
+            [_fake_msg(41, 'coach@swim.org', 'Championship info', 'body')], None)
+
+        def fake(subject, from_addr, body, names, known_block='', **kw):
+            seen['known'] = known_block
+            # Nothing mechanical links these: different day-part wording, no
+            # shared tokens, no location on either side.
+            return [{'kind': 'event', 'title': 'Regional Championships',
+                     'date': day, 'start_time': '18:00', 'confidence': 0.9,
+                     'duplicate_of': 'Lily swim meet'}]
+        email_ingest.extract_items = fake
+
+        s = email_ingest.run_ingest()
+        check('Lily swim meet' in (seen.get('known') or ''),
+              f"the calendar is handed to the extraction call that already "
+              f"happens — semantic dedupe costs no extra request: {seen.get('known')!r}")
+        check(s['proposed'] == 0 and s['duplicates'] == 1,
+              f"the model's call is honoured: {s}")
+        rows = storage.get_proposals('duplicate')
+        check(len(rows) == 1 and rows[0]['duplicate_rule'] == 'llm',
+              "and recorded AS the model's judgment, not laundered into a "
+              "mechanical one a parent cannot argue with")
+        check(rows[0]['title'] == 'Regional Championships',
+              "the item itself survives in full — this is the whole point of "
+              "annotate-not-omit")
+    finally:
+        email_ingest.fetch_new_messages = real_fetch
+        email_ingest.extract_items = real_extract
+        storage.get_cached_schedule = real_cache
+        storage.event_proposals_table.truncate()
+
+
+def test_the_known_block_tells_the_truth():
+    """What goes into the prompt as 'already on the calendar' has to BE on the
+    calendar. An ignored proposal is precisely something the family said is
+    not happening; listing it would have the model reason from a lie."""
+    print("known-events block ...")
+    block = email_ingest.known_events_block(
+        [{'title': 'Swim meet', 'start': '2026-09-08T13:00:00'}],
+        [{'title': 'Pending thing', 'start': '2026-09-09T09:00:00'}])
+    check('2026-09-08 13:00 Swim meet' in block, "calendar events, with the clock time")
+    check('Pending thing' in block, "and items already waiting in the queue")
+    check(email_ingest.known_events_block([{'title': 'x', 'start': ''}]) == '',
+      "rows without a usable date are left out rather than half-rendered")
+
+
+def test_time_and_place_rule_has_guards():
+    """The rule is title-blind, so its guards ARE the feature. End time is
+    deliberately not part of the key: normalize_item invents end = start + 1h
+    whenever the email omits one, so requiring it to agree would fail against
+    most real calendar entries."""
+    print("time+place guards ...")
+    day = IN_5_DAYS
+
+    def _prop(**kw):
+        base = {'title': 'Practice', 'start': f'{day}T16:00:00', 'end': f'{day}T17:00:00',
+                'location': 'Riverside Park', 'calendar_id': 'ben@cal', 'all_day': False}
+        base.update(kw)
+        return base
+
+    def _ev(**kw):
+        base = {'title': 'Something else entirely', 'start': f'{day}T16:00:00',
+                'end': f'{day}T18:30:00', 'location': 'Riverside Park, 12 Mill Rd',
+                'calendar_ids': ['ben@cal'], 'all_day': False}
+        base.update(kw)
+        return base
+
+    check(email_ingest._is_duplicate(_prop(), [], [_ev()]),
+          "same minute, same place, disagreeing end times — still one event")
+    check(email_ingest._is_duplicate(_prop(location=None), [], [_ev()]),
+          "no location on the proposal: the shared calendar carries it instead")
+    check(not email_ingest._is_duplicate(
+              _prop(location=None, calendar_id='lily@cal'), [], [_ev()]),
+          "different person, no place to compare — not a duplicate")
+    check(not email_ingest._is_duplicate(_prop(start=f'{day}T16:30:00'), [], [_ev()]),
+          "half an hour apart is a different event; this rule is exact")
+    check(not email_ingest._is_duplicate(
+              _prop(start=day, all_day=True), [], [_ev(start=day, all_day=True)]),
+          "all-day items share midnight, so 'same start' would match everything "
+          "on the day — they are excluded from this rule entirely")
+    check(not email_ingest._is_duplicate(_prop(location='Gym'), [],
+                                         [_ev(location='Gymnasium B', calendar_ids=['x@cal'])]),
+          "a 3-character place name is too weak to carry a title-blind match")
 
 
 def test_past_ignores_can_still_be_blocked():
@@ -308,6 +498,12 @@ def test_the_block_is_reachable_by_hand():
     check('canBlockRow' in page,
           "and Activity rows can block, which is the only place mail that never "
           "produced a proposal at all is visible")
+    check('Skipped as duplicates' in page and 'Propose anyway' in page,
+          "every skipped duplicate is visible and restorable — without this the "
+          "title-blind and model-judged rules would be silent failures")
+    check('blockKeywords' in page and 'subject' in page,
+          "and a skip rule can be narrowed to subject keywords rather than "
+          "blocking a sender outright")
 
 
 def test_log_collapse():
@@ -398,6 +594,11 @@ if __name__ == '__main__':
     test_normalize()
     test_run_ingest()
     test_sender_blocklist()
+    test_keyword_skip_rules()
+    test_duplicates_are_recorded_not_dropped()
+    test_the_model_annotates_it_never_omits()
+    test_the_known_block_tells_the_truth()
+    test_time_and_place_rule_has_guards()
     test_past_ignores_can_still_be_blocked()
     test_the_block_is_reachable_by_hand()
     test_log_collapse()

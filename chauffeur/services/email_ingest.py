@@ -116,21 +116,43 @@ def sender_default(from_addr: str, sender_defaults: list):
     return None
 
 
-def sender_blocked(from_addr: str, blocklist: list):
-    """The entry blocking this sender, or None.
+def sender_blocked(from_addr: str, blocklist: list, subject=None):
+    """The skip rule that catches this message, or None.
 
-    Deliberately the SAME lowercase-substring test `sender_default` uses, so
-    one matcher governs routing and blocking and the two can never drift. That
-    is also what makes '@teamsnap.com' work as an entry: school and team
-    platforms rotate their sending addresses (`noreply@`, `bounce+7f3a@`), so
-    blocking the literal From line lets the next message straight through and
-    the family concludes the button is broken."""
+    The address test is deliberately the SAME lowercase-substring test
+    `sender_default` uses, so one matcher governs routing and skipping and the
+    two can never drift. That is what makes '@teamsnap.com' work as an entry:
+    school and team platforms rotate their sending addresses (`noreply@`,
+    `bounce+7f3a@`), so a literal From-line block lets the next message
+    straight through and the family concludes the button is broken.
+
+    An entry may also carry `keywords`, which turns blocking into FILTERING —
+    the real want is rarely "never hear from TeamSnap" and often "their
+    reminders are useless because I subscribe to their calendar already".
+    Keywords match the SUBJECT only: 'reminder' appears in half of all email
+    footers, and matching the body would quietly eat real announcements.
+
+    `subject=None` means no subject context (e.g. deciding whether a sender is
+    fully handled), and then only unconditional entries can match — you cannot
+    evaluate a keyword rule without the line it tests.
+    """
     addr = (from_addr or '').lower()
+    subj = (subject or '').lower()
     for entry in blocklist or []:
-        pattern = (entry.get('pattern') if isinstance(entry, dict) else entry) or ''
-        pattern = str(pattern).strip().lower()
-        if pattern and pattern in addr:
-            return entry if isinstance(entry, dict) else {'pattern': pattern}
+        if not isinstance(entry, dict):
+            entry = {'pattern': entry}
+        pattern = str(entry.get('pattern') or '').strip().lower()
+        if not pattern or pattern not in addr:
+            continue
+        words = [str(k).strip().lower() for k in (entry.get('keywords') or [])
+                 if str(k).strip()]
+        if not words:
+            return {**entry, 'pattern': pattern, 'matched_keyword': None}
+        if subject is None:
+            continue
+        hit = next((w for w in words if w in subj), None)
+        if hit:
+            return {**entry, 'pattern': pattern, 'matched_keyword': hit}
     return None
 
 
@@ -203,9 +225,18 @@ Return ONLY valid JSON: {"items": [...]}. Each item:
   "member_name": one of the family names below, or null if unclear OR if the
     item is for multiple family members / the whole family,
   "notes": one short sentence of context or null,
-  "confidence": 0.0-1.0
+  "confidence": 0.0-1.0,
+  "duplicate_of": the exact title from ALREADY ON THE CALENDAR below that this
+    item is the same real-world event as, or null
 }
 Rules:
+- ALREADY ON THE CALENDAR lists what the family has for these dates. Reminder
+  emails usually describe something already there, and the family renames
+  things ("Fall Picture Day Reminder" becomes "Lily - picture day"), so match
+  on WHAT AND WHEN, not on wording. Set duplicate_of when it is plainly the
+  same event: same day and the same activity, however differently named.
+  Still return the item — never omit it, and never lower its confidence for
+  this reason. Leave duplicate_of null if you are unsure.
 - Only include items that require this family to BE somewhere or DO something
   by a date (games, practices, concerts, picture day, permission slip due,
   payment due). kind=task for deadlines that are not appointments.
@@ -219,7 +250,34 @@ Rules:
 - Do not include items more than a year away, or in the past."""
 
 
-def extract_items(subject: str, from_addr: str, body: str, member_names: list) -> list:
+KNOWN_EVENTS_CAP = 120
+
+
+def known_events_block(sched_events: list, existing: list = None) -> str:
+    """A compact 'already on the calendar' list for the extraction prompt.
+
+    Rides the extraction call that already happens, so semantic duplicate
+    detection costs ZERO extra LLM requests. Titles and clock times only — the
+    model needs to recognise the event, not schedule it.
+    """
+    seen, lines = set(), []
+    for row in list(sched_events or []) + list(existing or []):
+        start = str(row.get('start') or '')
+        title = (row.get('title') or '').strip()
+        if not title or len(start) < 10:
+            continue
+        stamp = f"{start[:10]} {start[11:16]}".strip() if len(start) > 10 else start[:10]
+        line = f"- {stamp} {title}"
+        if line in seen:
+            continue
+        seen.add(line)
+        lines.append(line)
+    lines.sort()
+    return '\n'.join(lines[:KNOWN_EVENTS_CAP])
+
+
+def extract_items(subject: str, from_addr: str, body: str, member_names: list,
+                  known_block: str = '') -> list:
     """LLM relevance gate + extraction. Returns raw item dicts ([] on error)."""
     from services import model_pools
     settings = storage.get_settings() or {}
@@ -230,7 +288,8 @@ def extract_items(subject: str, from_addr: str, body: str, member_names: list) -
     now = datetime.datetime.now().astimezone()
     prompt = (f"Current date: {now.strftime('%A %Y-%m-%d')}\n"
               f"Family members: {', '.join(member_names) or '(unknown)'}\n\n"
-              f"Email from: {from_addr}\nSubject: {subject}\n\n{body}")
+              + (f"ALREADY ON THE CALENDAR:\n{known_block}\n\n" if known_block else '')
+              + f"Email from: {from_addr}\nSubject: {subject}\n\n{body}")
     # Background tier: nobody is waiting on ingest, so burn the huge gemma
     # quota first (180s cap for its 44-180s latency) and keep the fast lite
     # pool free for interactive chat.
@@ -286,6 +345,9 @@ def normalize_item(item: dict, now=None) -> dict:
             return None
 
     return {
+        # The model's own duplicate call, carried through unjudged — the run
+        # loop decides what to do with it, and always records the item.
+        'duplicate_of': (item.get('duplicate_of') or '').strip() or None,
         'kind': kind,
         'title': title if kind == 'event' else f'📌 {title}',
         'start': start,
@@ -324,39 +386,91 @@ def _titles_similar(a_tokens: set, b_tokens: set, times_match: bool) -> bool:
     return overlap >= (0.6 if times_match else 0.75)
 
 
-def _is_duplicate(prop: dict, existing: list, sched_events: list) -> bool:
-    """Same day as any prior proposal (any status — ignored must stay
-    ignored) or any scheduled event, with the same/contained title OR a
-    near-identical word set. Email reminders routinely rephrase what an ICS
-    feed already created ('Game vs Eagles - U12 Blue' vs 'U12 Blue game vs.
-    Eagles'), so exact/substring matching alone let duplicates through;
-    matching start/end times lower the similarity bar."""
+def _norm_place(s: str) -> str:
+    """A location reduced to something comparable. An email says 'Riverside
+    Park', a calendar says 'Riverside Park, 12 Mill Rd, Springfield' — same
+    place, and neither string contains the other after punctuation."""
+    return re.sub(r'[^a-z0-9]+', ' ', (s or '').lower()).strip()
+
+
+def _places_match(a: str, b: str) -> bool:
+    a, b = _norm_place(a), _norm_place(b)
+    # 4 chars keeps 'gym' or a stray 'st' from matching half the calendar.
+    if len(a) < 4 or len(b) < 4:
+        return False
+    return a == b or a in b or b in a
+
+
+def _same_calendar(prop: dict, other: dict) -> bool:
+    """Whether both land on the same person. The proposal's `calendar_id` is a
+    routing GUESS, so this only ever corroborates — a wrong guess costs a
+    missed dedupe (a visible duplicate), never a wrong one."""
+    cal = (prop.get('calendar_id') or '').strip().lower()
+    if not cal:
+        return False
+    others = other.get('calendar_ids') or ([other.get('calendar_id')]
+                                           if other.get('calendar_id') else [])
+    return cal in {str(c).strip().lower() for c in others if c}
+
+
+def _is_duplicate(prop: dict, existing: list, sched_events: list):
+    """What this proposal duplicates, or None.
+
+    Two independent rules, because they fail in different directions:
+
+    1. TITLE. Same day plus same/contained title or a near-identical word set.
+       Catches rephrasing ('Game vs Eagles - U12 Blue' vs 'U12 Blue game vs.
+       Eagles') but breaks the moment the family RENAMES an approved item —
+       approval writes the edited title back onto the proposal and the
+       calendar, so the next reminder's extraction is compared against your
+       wording, not the school's. Adding a word ("Lily - picture day") drops
+       the overlap under the bar, permanently, for that event.
+    2. TIME + PLACE, title ignored. Same person at the same place at the same
+       minute twice is a double-booking, not two events. Deliberately does NOT
+       key on end time: `normalize_item` invents `end = start + 1h` whenever
+       the email omits one, so requiring it to agree would fail against most
+       real calendar entries. All-day items are excluded — they all share
+       midnight, which would make "same start" meaningless.
+
+    Returns {'title', 'start', 'source', 'rule'} describing the match, so the
+    skip can be shown and undone rather than silently dropped.
+    """
     title = prop['title'].lower().lstrip('📌 ').strip()
     tokens = _title_tokens(title)
     day = prop['start'][:10]
     p_start, p_end = _ts(prop.get('start')), _ts(prop.get('end'))
+    p_timed = not prop.get('all_day') and len(str(prop.get('start') or '')) > 10
 
-    def _same(o_title, o_start, o_end):
-        o_title = (o_title or '').lower().lstrip('📌 ').strip()
-        if not o_title:
-            return False
-        if title == o_title or title in o_title or o_title in title:
-            return True
+    def _rule(other):
+        o_title = (other.get('title') or '').lower().lstrip('📌 ').strip()
+        o_start, o_end = other.get('start'), other.get('end')
+        if o_title and (title == o_title or title in o_title or o_title in title):
+            return 'title'
         times_match = (p_start is not None and (s := _ts(o_start)) is not None
                        and abs(p_start - s) <= 30 * 60
                        and (p_end is None or (e := _ts(o_end)) is None
                             or abs(p_end - e) <= 30 * 60))
-        return _titles_similar(tokens, _title_tokens(o_title), times_match)
+        if o_title and _titles_similar(tokens, _title_tokens(o_title), times_match):
+            return 'title'
+        # Rule 2. Start to the minute, not the 30-minute window rule 1 uses to
+        # relax a title bar — this one carries the decision on its own.
+        o_timed = not other.get('all_day') and len(str(o_start or '')) > 10
+        if (p_timed and o_timed and p_start is not None
+                and (s2 := _ts(o_start)) is not None and abs(p_start - s2) <= 60
+                and (_places_match(prop.get('location'), other.get('location'))
+                     or _same_calendar(prop, other))):
+            return 'time_place'
+        return None
 
-    for p in existing:
-        if (p.get('start') or '')[:10] == day \
-                and _same(p.get('title'), p.get('start'), p.get('end')):
-            return True
-    for ev in sched_events:
-        if (ev.get('start') or '')[:10] == day \
-                and _same(ev.get('title'), ev.get('start'), ev.get('end')):
-            return True
-    return False
+    for source, rows in (('proposal', existing), ('event', sched_events)):
+        for other in rows:
+            if (other.get('start') or '')[:10] != day:
+                continue
+            rule = _rule(other)
+            if rule:
+                return {'title': other.get('title') or '', 'start': other.get('start') or '',
+                        'source': source, 'rule': rule}
+    return None
 
 
 def learned_route(from_addr: str, kind: str):
@@ -422,10 +536,14 @@ def run_photo_ingest(image_b64: str, mime: str, caption: str = '') -> dict:
         return summary
 
     member_names = [m.get('name') for m in storage.get_all_members() if m.get('name')]
+    _known = known_events_block(
+        (storage.get_cached_schedule() or {}).get('events', []),
+        [p for p in storage.get_proposals() if p.get('status') == 'proposed'])
     now = _dt.datetime.now().astimezone()
     prompt = (f"Current date: {now.strftime('%A %Y-%m-%d')}\n"
               f"Family members: {', '.join(member_names) or '(unknown)'}\n\n"
-              "The attached image is a photo of a school/team flyer, schedule,"
+              + (f"ALREADY ON THE CALENDAR:\n{_known}\n\n" if _known else '')
+              + "The attached image is a photo of a school/team flyer, schedule,"
               " permission slip, or a screenshot of a message thread."
               + (f"\nParent's note: {caption}" if caption else "")
               + "\n\nExtract the items from the image.")
@@ -447,10 +565,10 @@ def run_photo_ingest(image_b64: str, mime: str, caption: str = '') -> dict:
 
     existing = storage.get_proposals()
     sched_events = (storage.get_cached_schedule() or {}).get('events', [])
-    dropped = 0
+    dropped = duped = 0
     for item in items:
         prop = normalize_item(item)
-        if prop is None or _is_duplicate(prop, existing, sched_events):
+        if prop is None:
             dropped += 1
             continue
         prop.update({
@@ -461,17 +579,35 @@ def run_photo_ingest(image_b64: str, mime: str, caption: str = '') -> dict:
             'calendar_id': _calendar_for_member_name(prop.get('member_name'))
                 or (settings.get('default_calendar_id') or None),
         })
+        # Same rule as email, same hedge: a photo of a flyer for something
+        # already on the calendar is recorded and restorable, not dropped.
+        match = _is_duplicate(prop, existing, sched_events)
+        if match:
+            prop.update({'status': 'duplicate', 'duplicate_of': match['title'],
+                         'duplicate_start': match['start'],
+                         'duplicate_source': match['source'],
+                         'duplicate_rule': match['rule']})
+            storage.add_proposal(prop)
+            existing.append(prop)
+            duped += 1
+            continue
+        prop.pop('duplicate_of', None)
         storage.add_proposal(prop)
         existing.append(prop)
         summary['proposed'] += 1
+    summary['duplicates'] = duped
 
     n = summary['proposed']
+    bits = []
+    if duped:
+        bits.append(f'{duped} skipped as duplicate')
+    if dropped:
+        bits.append(f'{dropped} dropped as low-confidence')
+    detail = f' ({", ".join(bits)})' if bits else ''
     if n:
-        outcome = f'proposed {n} item{"s" if n != 1 else ""}'
-        if dropped:
-            outcome += f' ({dropped} dropped as duplicate/low-confidence)'
-    elif dropped:
-        outcome = f'nothing new ({dropped} dropped as duplicate/low-confidence)'
+        outcome = f'proposed {n} item{"s" if n != 1 else ""}{detail}'
+    elif bits:
+        outcome = f'nothing new{detail}'
     else:
         outcome = 'no actionable items'
     storage.add_ingest_log({**log, 'outcome': outcome})
@@ -488,7 +624,7 @@ def run_ingest() -> dict:
 
 
 def _run_ingest_locked() -> dict:
-    summary = {'checked': 0, 'proposed': 0, 'skipped': 0, 'error': None}
+    summary = {'checked': 0, 'proposed': 0, 'skipped': 0, 'duplicates': 0, 'error': None}
     settings = storage.get_settings() or {}
     sender_defaults = settings.get('ingest_sender_defaults') or []
     blocklist = settings.get('ingest_sender_blocklist') or []
@@ -506,6 +642,14 @@ def _run_ingest_locked() -> dict:
     member_names = [m.get('name') for m in storage.get_all_members() if m.get('name')]
     existing = storage.get_proposals()
     sched_events = (storage.get_cached_schedule() or {}).get('events', [])
+    # Built once per poll, not per message: the calendar does not change
+    # between two messages of the same batch. Only PENDING proposals join the
+    # real calendar here — an ignored proposal is precisely something the
+    # family said is NOT happening, and listing it as already on the calendar
+    # would be a lie the model reasons from. Deterministic dedupe still checks
+    # every proposal whatever its status.
+    known_block = known_events_block(
+        sched_events, [p for p in existing if p.get('status') == 'proposed'])
 
     for msg in messages:
         summary['checked'] += 1
@@ -516,54 +660,85 @@ def _run_ingest_locked() -> dict:
         # logged: silent disappearance is what makes mail filters unnerving,
         # and the day the athletics office starts sending real game schedules
         # from a blocked address, the Activity list is the evidence.
-        blocked = sender_blocked(msg['from'], blocklist)
+        blocked = sender_blocked(msg['from'], blocklist, subject=msg['subject'])
         if blocked:
             summary['skipped'] += 1
-            storage.add_ingest_log({**log, 'outcome': 'skipped: sender blocked '
-                                                      f"({blocked.get('pattern')})",
+            # Name the keyword that fired: a skip has to read as the rule the
+            # family wrote, not as an unexplained absence.
+            why = (f"{blocked['pattern']} + subject has {blocked['matched_keyword']}"
+                   if blocked.get('matched_keyword') else blocked.get('pattern'))
+            storage.add_ingest_log({**log, 'outcome': f'skipped: matched skip rule ({why})',
                                     'skipped': True})
             continue
 
         entry = sender_default(msg['from'], sender_defaults)
         try:
-            items = extract_items(msg['subject'], msg['from'], msg['text'], member_names)
+            items = extract_items(msg['subject'], msg['from'], msg['text'],
+                                  member_names, known_block=known_block)
         except Exception as e:
             storage.add_ingest_log({**log, 'outcome': f'error: extraction failed ({e})'})
             continue
 
-        proposed_here = dropped = 0
+        proposed_here = dropped = duped = 0
         for item in items:
             prop = normalize_item(item)
             if prop is None:
                 dropped += 1
                 continue
-            if _is_duplicate(prop, existing, sched_events):
-                dropped += 1
-                continue
+            # Routing FIRST, then the duplicate check — the time+place rule
+            # corroborates on the target calendar, which does not exist until
+            # this runs. Judged before it was filled in, that rule was dead.
+            # Tiers: explicit sender default > learned prior (last approved
+            # target for this sender) > LLM member guess > the family's
+            # starred default calendar (whole-family events land there;
+            # attendees get tagged after approval).
             prop.update({
                 'source': 'email',
                 'source_from': msg['from'],
                 'source_subject': msg['subject'][:200],
-                # Routing tiers: explicit sender default > learned prior
-                # (last approved target for this sender) > LLM member guess >
-                # the family's starred default calendar (whole-family events
-                # land there; attendees get tagged after approval).
                 'calendar_id': (entry or {}).get('calendar_id')
                     or learned_route(msg['from'], prop['kind'])
                     or _calendar_for_member_name(prop.get('member_name'))
                     or (settings.get('default_calendar_id') or None),
             })
+
+            match = _is_duplicate(prop, existing, sched_events)
+            if not match and prop.get('duplicate_of'):
+                # The model's own read, kept separate so it is auditable: it
+                # ANNOTATES, it never omits. An item the model believes is
+                # already on the calendar is still recorded, still shown, and
+                # still restorable — an omitted one would simply never exist.
+                match = {'title': str(prop['duplicate_of'])[:200], 'start': '',
+                         'source': 'llm', 'rule': 'llm'}
+            if match:
+                # Recorded, not dropped. A skipped duplicate that leaves no
+                # trace is indistinguishable from mail that never arrived, and
+                # that is the failure the whole hedge exists to prevent.
+                prop.update({'status': 'duplicate', 'duplicate_of': match['title'],
+                             'duplicate_start': match['start'],
+                             'duplicate_source': match['source'],
+                             'duplicate_rule': match['rule']})
+                storage.add_proposal(prop)
+                existing.append(prop)
+                duped += 1
+                continue
+            prop.pop('duplicate_of', None)
             storage.add_proposal(prop)
             existing.append(prop)
             proposed_here += 1
 
         summary['proposed'] += proposed_here
+        summary['duplicates'] += duped
+        bits = []
+        if duped:
+            bits.append(f'{duped} skipped as duplicate')
+        if dropped:
+            bits.append(f'{dropped} dropped as low-confidence')
+        detail = f' ({", ".join(bits)})' if bits else ''
         if proposed_here:
-            outcome = f'proposed {proposed_here} item{"s" if proposed_here != 1 else ""}'
-            if dropped:
-                outcome += f' ({dropped} dropped as duplicate/low-confidence)'
-        elif dropped:
-            outcome = f'nothing new ({dropped} dropped as duplicate/low-confidence)'
+            outcome = f'proposed {proposed_here} item{"s" if proposed_here != 1 else ""}{detail}'
+        elif bits:
+            outcome = f'nothing new{detail}'
         else:
             outcome = 'no actionable items'
         storage.add_ingest_log({**log, 'outcome': outcome})
