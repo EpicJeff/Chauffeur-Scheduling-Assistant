@@ -364,7 +364,11 @@
                                 <div>
                                     <div class="text-sm font-bold mb-1"
                                         :style="'color:' + tone(k.color_code, '#6366f1')" x-text="k.name"></div>
-                                    <template x-for="(line, i) in k.lines.slice(0, 4)" :key="i">
+                                    <!-- Already cut to this instance's line
+                                         count on the server; the slice here is
+                                         a floor for a payload built before the
+                                         option existed. -->
+                                    <template x-for="(line, i) in k.lines.slice(0, t.data.lines || 4)" :key="i">
                                         <div class="text-base panel-text truncate" x-text="line"></div>
                                     </template>
                                 </div>
@@ -386,6 +390,13 @@
                                         class="absolute inset-0 w-full h-full object-cover">
                                     <div class="photo-scrim absolute inset-x-0 bottom-0 px-2 py-1.5"
                                         style="background: linear-gradient(to top, rgba(0,0,0,.85), transparent)">
+                                        <!-- Only sent when the tile covers more
+                                             than one night. A day label over
+                                             tonight's dinner answers a question
+                                             nobody in the kitchen is asking. -->
+                                        <span x-show="d.day"
+                                            class="block text-[0.62rem] font-black uppercase tracking-widest text-white/70"
+                                            x-text="d.day"></span>
                                         <span class="text-sm font-bold text-white" x-text="d.name"></span>
                                     </div>
                                 </div>
@@ -642,6 +653,11 @@
                                             x-text="tr.live ? 'under way now'
                                                 : (tr.draft ? 'draft · ' : '') + (tr.days === 0 ? 'today'
                                                 : (tr.days === 1 ? 'tomorrow' : 'in ' + tr.days + ' days'))"></span>
+                                        <!-- A tile pinned to ONE trip is about
+                                             that trip, so it can afford the
+                                             detail a list of four cannot. -->
+                                        <span x-show="t.data.pinned && tr.location"
+                                            class="text-xs text-white/80 truncate" x-text="tr.location"></span>
                                     </div>
                                 </div>
                             </template>

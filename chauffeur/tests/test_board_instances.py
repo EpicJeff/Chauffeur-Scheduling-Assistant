@@ -18,6 +18,7 @@ an options panel and closes it again.
 
 Run from chauffeur/:  python tests/test_board_instances.py
 """
+import datetime
 import json
 import os
 import re
@@ -62,6 +63,58 @@ def scenario_every_declared_option_is_a_shape_the_editor_can_draw():
                 check(o.get('source') in home_board.option_sources(),
                       f"{w['key']}.{o['key']} draws from '{o.get('source')}', "
                       f"which option_sources() does not supply")
+
+
+def scenario_every_declared_option_survives_its_own_builder():
+    """The sweep. Every type, every option it declares, set to an extreme
+    value at once — the maximum for a number, the opposite of the default for a
+    switch, the last choice, and an id that matches nothing for a picker.
+
+    This is the cheap test that catches the expensive mistake: an option added
+    to `WIDGETS` and never read, or read under a different key, or read in a
+    way that throws on an empty household. A tile whose builder raises is
+    swallowed by `build()` and simply vanishes from the wall — the failure mode
+    with no error anywhere, which is the one this board exists to avoid.
+    """
+    now = datetime.datetime.now()
+    broke = []
+    for w in home_board.WIDGETS:
+        cfg = {}
+        for o in w.get('options') or []:
+            if o['type'] == 'int':
+                cfg[o['key']] = o.get('max') or 3
+            elif o['type'] == 'bool':
+                cfg[o['key']] = not bool(o.get('default'))
+            elif o['type'] == 'choice':
+                cfg[o['key']] = o['choices'][-1]['value']
+            elif o['type'] == 'select':
+                cfg[o['key']] = ['no-such-id'] if o.get('multi') else 'no-such-id'
+        try:
+            home_board._BUILDERS[w['key']](
+                now, runs=[], sched={}, settings={}, config=cfg,
+                kid_digest_fn=lambda: {'kids': {}})
+        except Exception as e:
+            broke.append(f"{w['key']}: {type(e).__name__}: {e}")
+    check(not broke,
+          "these builders raised on their own declared options, so the tile "
+          "would silently disappear from the board:\n    " + "\n    ".join(broke))
+
+
+def scenario_a_configured_tile_is_still_the_tile_it_was():
+    """Every option's default has to reproduce the behaviour that shipped
+    before it existed. A tile that quietly shows six rows where it used to show
+    five is a redesign of every board in the wild, delivered as a bug fix."""
+    was = {'chores': 6, 'routines': 6, 'occasions': 3, 'errands': 5,
+           'tasks': 6, 'moments': 6, 'trips': 4, 'weather': 5, 'shopping': 12}
+    for type_, expected in was.items():
+        opts = {o['key']: o for w in home_board.WIDGETS if w['key'] == type_
+                for o in w['options']}
+        opt = opts.get('count') or opts.get('days') or opts.get('items')
+        check(opt is not None, f"{type_} lost the option that caps its rows")
+        check(opt['default'] == expected,
+              f"{type_}'s row cap now defaults to {opt['default']}, but the "
+              f"tile has always shown {expected} — changing it here silently "
+              f"redesigns every board that never configured this tile")
 
 
 def scenario_every_type_can_at_least_be_named():

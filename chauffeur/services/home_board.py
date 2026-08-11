@@ -129,9 +129,23 @@ WIDGETS = [
          _opt('errands', 'Show errands', 'bool', True),
      ]},
     {'key': 'kids', 'icon': '🎒', 'label': 'Each kid',
-     'blurb': "The same calm look at the day each child gets in their digest."},
+     'blurb': "The same calm look at the day each child gets in their digest.",
+     'options': [
+         _opt('members', 'Children', 'select', [], source='members', multi=True,
+              help='Leave empty for every child.'),
+         _opt('lines', 'Lines each', 'int', 4, min=1, max=8),
+     ]},
     {'key': 'meals', 'icon': '🍽️', 'label': "Tonight's plate",
-     'blurb': "What is planned to eat, once a plate is pinned for the day."},
+     'blurb': "What is planned to eat, once a plate is pinned for the day.",
+     'options': [
+         # Nights, not days: a plate is pinned per date, and 1 is tonight.
+         # More than one turns the tile from "what is on the table" into "what
+         # is planned", which is a different question and a different shape.
+         _opt('nights', 'Nights', 'int', 1, min=1, max=7,
+              help='1 is tonight. More shows the plan ahead.'),
+         _opt('offset', 'Starting', 'int', 0, min=0, max=7,
+              help='0 is today, 1 is tomorrow.'),
+     ]},
     {'key': 'shopping', 'icon': '🛒', 'label': 'Lists',
      'blurb': "How much is open on each shopping list.",
      'options': [
@@ -144,15 +158,38 @@ WIDGETS = [
               help='0 shows the counts only.'),
      ]},
     {'key': 'chores', 'icon': '⭐', 'label': 'Chore points',
-     'blurb': "The points leaderboard, exactly as the chores kiosk shows it."},
+     'blurb': "The points leaderboard, exactly as the chores kiosk shows it.",
+     'options': [
+         _opt('members', 'People', 'select', [], source='members', multi=True,
+              help='Leave empty for everyone with points.'),
+         _opt('count', 'Rows', 'int', 6, min=1, max=12),
+     ]},
     {'key': 'routines', 'icon': '🔁', 'label': 'Streaks',
-     'blurb': "Who has kept their routine going, and for how long."},
+     'blurb': "Who has kept their routine going, and for how long.",
+     'options': [
+         _opt('members', 'People', 'select', [], source='members', multi=True,
+              help='Leave empty for everyone with a routine.'),
+         _opt('count', 'Rows', 'int', 6, min=1, max=12),
+     ]},
     {'key': 'occasions', 'icon': '🎁', 'label': 'Coming up',
-     'blurb': "The next occasion and how many days are left to get ready."},
+     'blurb': "The next occasion and how many days are left to get ready.",
+     'options': [
+         _opt('count', 'Rows', 'int', 3, min=1, max=10),
+         _opt('within_days', 'Within', 'int', None, min=1, max=365,
+              help='Days ahead. Blank shows everything that is coming.'),
+     ]},
     {'key': 'weather', 'icon': '🌤️', 'label': 'The week',
-     'blurb': "A forecast chip per day. Needs a Home Assistant weather entity."},
+     'blurb': "A forecast chip per day. Needs a Home Assistant weather entity.",
+     'options': [
+         _opt('days', 'Days', 'int', 5, min=1, max=7),
+     ]},
     {'key': 'moments', 'icon': '📸', 'label': 'Latest moments',
-     'blurb': "Recent photos from the family's events."},
+     'blurb': "Recent photos from the family's events.",
+     'options': [
+         _opt('count', 'Photos', 'int', 6, min=1, max=12),
+         _opt('within_days', 'Going back', 'int', 30, min=1, max=365,
+              help='Days. A wall of last summer is a screensaver, not a board.'),
+     ]},
     {'key': 'calendar', 'icon': '📅', 'label': "What's coming",
      'blurb': "The next few days on the family calendar, drives or not.",
      'options': [
@@ -168,14 +205,35 @@ WIDGETS = [
          _opt('all_day', 'Include all-day events', 'bool', True),
      ]},
     {'key': 'errands', 'icon': '📋', 'label': 'Errands waiting',
-     'blurb': "What still needs doing, past-due first."},
+     'blurb': "What still needs doing, past-due first.",
+     'options': [
+         _opt('count', 'Rows', 'int', 5, min=1, max=12),
+         _opt('past_due_only', 'Past due only', 'bool', False),
+     ]},
     {'key': 'tasks', 'icon': '📝', 'label': 'The household owes',
      'blurb': "Work with a deadline and nowhere to drive — past due first, "
-              "and what nobody has taken."},
+              "and what nobody has taken.",
+     'options': [
+         _opt('count', 'Rows', 'int', 6, min=1, max=12),
+         _opt('members', 'Owner', 'select', [], source='members', multi=True,
+              help='Leave empty for the whole household.'),
+         _opt('unclaimed_only', 'Only what nobody has taken', 'bool', False),
+     ]},
     {'key': 'trips', 'icon': '🧭', 'label': 'Next trip',
-     'blurb': "The next trip and how long until it starts."},
+     'blurb': "The next trip and how long until it starts.",
+     'options': [
+         _opt('trip', 'Trip', 'select', '', source='trips',
+              help='One trip, or leave empty for whatever is next.'),
+         _opt('count', 'Trips shown', 'int', 4, min=1, max=8,
+              help='Ignored when a single trip is pinned.'),
+     ]},
     {'key': 'map', 'icon': '🗺️', 'label': 'Where everyone is',
-     'blurb': "Who is home, out, or driving. Needs Home Assistant."},
+     'blurb': "Who is home, out, or driving. Needs Home Assistant.",
+     'options': [
+         _opt('members', 'People', 'select', [], source='members', multi=True,
+              help='Leave empty for everyone.'),
+         _opt('cars', 'Show cars', 'bool', True),
+     ]},
     {'key': 'intake', 'icon': '📬', 'label': 'Waiting to approve',
      'blurb': "How many intake proposals need a parent. A COUNT only — the "
               "mail itself stays off shared screens."},
@@ -710,7 +768,7 @@ def _tile_drives(now, runs, sched=None, config=None, **_):
     }
 
 
-def _tile_kids(now, kid_digest_fn=None, **_):
+def _tile_kids(now, kid_digest_fn=None, config=None, **_):
     """The kid digest, which main.py owns (it is the same builder the evening
     DMs use). Passed in rather than imported, because reaching into main from a
     service is the cycle this module is avoiding."""
@@ -721,35 +779,64 @@ def _tile_kids(now, kid_digest_fn=None, **_):
     except Exception as e:
         print(f"[home_board] kid digests failed: {e}")
         return None
+    wanted = set(_cfg_ids(config, 'members'))
+    lines = _cfg_int(config, 'lines', 4, 1, 8)
     kids = [k for k in (digest.get('kids') or {}).values() if k.get('lines')]
+    if wanted:
+        # The digest keys by member id where it has one; a kid the household
+        # filtered to but who has no digest entry simply is not here, which is
+        # the same as any other quiet day.
+        kids = [k for k in kids if k.get('member_id') in wanted]
+    for k in kids:
+        k['lines'] = (k.get('lines') or [])[:lines]
     if not kids:
         # No children in the household is unconfigured; children with a quiet
         # day is a thing worth saying out loud.
         if not any(m.get('role') == 'child' for m in storage.get_all_members()):
             return None
         return {'empty': "Nothing on for the kids today."}
-    return {'label': digest.get('label'), 'kids': kids}
+    return {'label': digest.get('label'), 'kids': kids, 'lines': lines}
 
 
-def _tile_meals(now, **_):
-    """The PINNED plate only. Composing one here would make the wall panel a
-    writer of meal plans, on a timer, forever."""
+def _tile_meals(now, config=None, **_):
+    """The PINNED plates only. Composing one here would make the wall panel a
+    writer of meal plans, on a timer, forever.
+
+    One night is "what is on the table" and reads as a picture of dinner;
+    several is "what is planned" and reads as a list with a day on each row.
+    Same data either way — the only difference is how many dates were asked
+    for, so it is one number rather than a view switch.
+    """
     try:
-        plate = storage.get_plate(now.date().isoformat())
-        items = (plate or {}).get('items') or []
+        nights = _cfg_int(config, 'nights', 1, 1, 7)
+        offset = _cfg_int(config, 'offset', 0, 0, 7)
+        tonight = nights == 1 and offset == 0
+        items, dates, edited = [], [], False
+        for i in range(nights):
+            d = now.date() + datetime.timedelta(days=offset + i)
+            plate = storage.get_plate(d.isoformat()) or {}
+            edited = edited or bool(plate.get('edited'))
+            for it in (plate.get('items') or []):
+                items.append(it)
+                dates.append(d)
         if not items:
             # A household with no dishes has never used meals at all; one with
             # dishes and no plate tonight has simply not decided yet.
             if not storage.get_dishes():
                 return None
-            return {'empty': "Nothing pinned for tonight yet."}
+            return {'empty': "Nothing pinned for tonight yet." if tonight
+                             else "Nothing pinned for those nights yet."}
         dishes = storage.get_dishes_by_ids([i['dish_id'] for i in items])
         by_id = {d['id']: d for d in dishes}
         rows = [{'name': by_id[i['dish_id']].get('short_name')
                          or by_id[i['dish_id']].get('name'),
-                 'image': by_id[i['dish_id']].get('image_url')}
-                for i in items if i['dish_id'] in by_id]
-        return {'dishes': rows, 'edited': bool(plate.get('edited'))} if rows \
+                 'image': by_id[i['dish_id']].get('image_url'),
+                 # Only when there is more than one night to tell apart. A day
+                 # label over tonight's dinner answers a question nobody
+                 # standing in the kitchen is asking.
+                 'day': None if tonight else day_word(dates[n], now.date())}
+                for n, i in enumerate(items) if i['dish_id'] in by_id]
+        return {'dishes': rows, 'edited': edited, 'nights': nights} if rows \
             else {'empty': "Nothing pinned for tonight yet."}
     except Exception as e:
         print(f"[home_board] plate failed: {e}")
@@ -800,11 +887,15 @@ def _tile_shopping(now, config=None, **_):
         return None
 
 
-def _tile_chores(now, **_):
+def _tile_chores(now, config=None, **_):
     try:
         from services import status_tiers
+        wanted = set(_cfg_ids(config, 'members'))
+        count = _cfg_int(config, 'count', 6, 1, 12)
         rows = storage.get_all_point_balances() or []
         rows = [r for r in rows if r.get('member_id')]
+        if wanted:
+            rows = [r for r in rows if r['member_id'] in wanted]
         if not rows:
             # Configured means the household set up the economy at all —
             # chores, or rewards to spend points on. Zeroes across the board
@@ -819,20 +910,24 @@ def _tile_chores(now, **_):
             except Exception:
                 r['status'] = None
         rows.sort(key=lambda r: -(r.get('balance') or 0))
-        return {'balances': rows[:6]}
+        return {'balances': rows[:count]}
     except Exception as e:
         print(f"[home_board] chores failed: {e}")
         return None
 
 
-def _tile_routines(now, **_):
+def _tile_routines(now, config=None, **_):
     try:
+        wanted = set(_cfg_ids(config, 'members'))
+        count = _cfg_int(config, 'count', 6, 1, 12)
         member_ids = {r['member_id'] for r in storage.get_routines()}
         if not member_ids:
             return None
         rows = []
         for m in storage.get_all_members():
             if m['id'] not in member_ids:
+                continue
+            if wanted and m['id'] not in wanted:
                 continue
             rows.append({'name': m.get('name'), 'color_code': m.get('color_code'),
                          'avatar': m.get('avatar'), 'image': m.get('image'),
@@ -841,15 +936,18 @@ def _tile_routines(now, **_):
         if not rows:
             return {'empty': "No streaks going yet."}
         rows.sort(key=lambda r: (-(r['streak'].get('current') or 0), r['name'] or ''))
-        return {'streaks': rows[:6]}
+        return {'streaks': rows[:count]}
     except Exception as e:
         print(f"[home_board] routines failed: {e}")
         return None
 
 
-def _tile_occasions(now, **_):
+def _tile_occasions(now, config=None, **_):
     try:
         today = now.date()
+        count = _cfg_int(config, 'count', 3, 1, 10)
+        within = _cfg_int(config, 'within_days', None, 1, 365) \
+            if (config or {}).get('within_days') is not None else None
         rows = []
         for o in storage.get_occasions(include_done=False) or []:
             anchor = o.get('anchor_date') or o.get('window_start')
@@ -858,6 +956,8 @@ def _tile_occasions(now, **_):
             except (TypeError, ValueError):
                 continue
             if d < today:
+                continue
+            if within is not None and (d - today).days > within:
                 continue
             rows.append({'title': o.get('title') or 'Occasion', 'date': d.isoformat(),
                          'kind': o.get('kind'), 'days': (d - today).days})
@@ -868,13 +968,13 @@ def _tile_occasions(now, **_):
                 return None
             return {'empty': "Nothing coming up."}
         rows.sort(key=lambda r: r['days'])
-        return {'occasions': rows[:3]}
+        return {'occasions': rows[:count]}
     except Exception as e:
         print(f"[home_board] occasions failed: {e}")
         return None
 
 
-def _tile_weather(now, **_):
+def _tile_weather(now, config=None, **_):
     """Needs Home Assistant. The panel is pitched as standalone, so this tile
     disappearing when HA is absent is the designed behaviour, not a gap."""
     try:
@@ -883,7 +983,7 @@ def _tile_weather(now, **_):
         settings = storage.get_settings() or {}
         forecast = ha_api.get_weather_forecast(settings.get('weather_entity') or None)
         days = []
-        for f in (forecast or [])[:5]:
+        for f in (forecast or [])[:_cfg_int(config, 'days', 5, 1, 7)]:
             d = str(f.get('datetime') or '')[:10]
             if not d:
                 continue
@@ -905,16 +1005,18 @@ def _tile_weather(now, **_):
         return None
 
 
-def _tile_moments(now, **_):
+def _tile_moments(now, config=None, **_):
     try:
         from services import presence
+        count = _cfg_int(config, 'count', 6, 1, 12)
+        within = _cfg_int(config, 'within_days', 30, 1, 365)
         # A generous window rather than 48h: on a wall, last week's photo from
         # the game beats an empty frame, and the hearth overlay is what handles
         # "brand new" anyway.
-        rows = presence.recent_moments(hours=24 * 30, limit=6) or []
+        rows = presence.recent_moments(hours=24 * within, limit=count) or []
         rows = [m for m in rows if m.get('media_url') or m.get('poster_url')
                 or (m.get('attachment') or {}).get('url')]
-        return {'moments': rows} if rows else None
+        return {'moments': rows[:count]} if rows else None
     except Exception as e:
         print(f"[home_board] moments failed: {e}")
         return None
@@ -1129,7 +1231,7 @@ def _tile_calendar(now, sched=None, settings=None, config=None, **_):
         return None
 
 
-def _tile_tasks(now, **_):
+def _tile_tasks(now, config=None, **_):
     """Household work with a deadline and no destination (load arc A2).
 
     Past due first, then unclaimed, then the rest. The unclaimed band is the
@@ -1138,6 +1240,9 @@ def _tile_tasks(now, **_):
     notices it.
     """
     try:
+        count = _cfg_int(config, 'count', 6, 1, 12)
+        wanted = set(_cfg_ids(config, 'members'))
+        unclaimed_only = _cfg_bool(config, 'unclaimed_only', False)
         rows = storage.get_household_tasks()
         if not rows and not storage.get_household_tasks(include_done=True):
             return None                       # never made one: feature unused
@@ -1147,6 +1252,15 @@ def _tile_tasks(now, **_):
         names = {m['id']: m.get('name') for m in storage.get_all_members()}
         out = []
         for t in rows:
+            # `unclaimed_only` and an owner filter are opposite questions, so
+            # a tile asked both shows what it was asked LAST: an unclaimed task
+            # has no owner and can never match an owner filter, and a tile that
+            # silently returned nothing would look broken rather than
+            # contradictory.
+            if unclaimed_only and t.get('assigned_to'):
+                continue
+            if wanted and not unclaimed_only and t.get('assigned_to') not in wanted:
+                continue
             due = t.get('due_date')
             out.append({
                 'title': t.get('title') or 'Task',
@@ -1157,15 +1271,17 @@ def _tile_tasks(now, **_):
             })
         out.sort(key=lambda r: (not r['past_due'], not r['unclaimed'],
                                 r['due'] or '9999-99-99'))
-        return {'tasks': out[:6], 'total': len(out),
+        return {'tasks': out[:count], 'total': len(out),
                 'unclaimed': sum(1 for r in out if r['unclaimed'])}
     except Exception as e:
         print(f"[home_board] tasks failed: {e}")
         return None
 
 
-def _tile_errands(now, **_):
+def _tile_errands(now, config=None, **_):
     try:
+        count = _cfg_int(config, 'count', 5, 1, 12)
+        past_due_only = _cfg_bool(config, 'past_due_only', False)
         every = storage.get_all_errands() or []
         if not every:
             return None                       # never made one: feature unused
@@ -1173,16 +1289,19 @@ def _tile_errands(now, **_):
         for er in every:
             if er.get('is_completed') or er.get('status') == 'completed':
                 continue
+            if past_due_only and er.get('status') != 'past_due':
+                continue
             rows.append({'title': er.get('title') or 'Errand',
                          'location': er.get('location') or None,
                          'past_due': er.get('status') == 'past_due',
                          'priority': er.get('priority') or 2})
         if not rows:
-            return {'empty': "Nothing waiting."}
+            return {'empty': ("Nothing past due." if past_due_only
+                              else "Nothing waiting.")}
         # Past-due first, then by priority: a wall panel shows the thing that
         # has already slipped before the thing that has not.
         rows.sort(key=lambda r: (not r['past_due'], r['priority']))
-        return {'errands': rows[:5], 'total': len(rows)}
+        return {'errands': rows[:count], 'total': len(rows)}
     except Exception as e:
         print(f"[home_board] errands failed: {e}")
         return None
@@ -1273,18 +1392,29 @@ def _trip_rows(now) -> List[dict]:
     return rows
 
 
-def _tile_trips(now, **_):
+def _tile_trips(now, config=None, **_):
     try:
         if not (storage.get_all_trip_metadata() or storage.get_cached_trips()):
             return None                       # no trips ever: feature unused
+        pinned = _cfg_str(config, 'trip')
+        count = _cfg_int(config, 'count', 4, 1, 8)
         rows = _trip_rows(now)
-        return {'trips': rows[:4]} if rows else {'empty': "No trips planned."}
+        if pinned:
+            # A trip somebody pinned and has since finished or deleted. Saying
+            # so beats silently showing a different trip under a tile the
+            # household set to one — the same rule the pinned shopping list
+            # follows.
+            rows = [r for r in rows if r.get('id') == pinned]
+            if not rows:
+                return {'empty': "That trip is over."}
+            return {'trips': rows[:1], 'pinned': True}
+        return {'trips': rows[:count]} if rows else {'empty': "No trips planned."}
     except Exception as e:
         print(f"[home_board] trips failed: {e}")
         return None
 
 
-def _tile_map(now, runs=None, **_):
+def _tile_map(now, runs=None, config=None, **_):
     """Where everyone is — as a MAP, with the list as the fallback.
 
     Six names beside six zone words was a table of contents for a map. "Kit:
@@ -1308,10 +1438,14 @@ def _tile_map(now, runs=None, **_):
     try:
         from services import ha_api
         driving = {r['driver_id']: r['title'] for r in (runs or []) if r.get('live')}
+        wanted = set(_cfg_ids(config, 'members'))
+        show_cars = _cfg_bool(config, 'cars', True)
         rows = []
         from services import stages
         for m in storage.get_all_members():
             if m.get('role') == 'helper' or m.get('system'):
+                continue
+            if wanted and m.get('id') not in wanted:
                 continue
             # Stage privacy (load arc A4): the wall panel is the kiosk, and a
             # Navigator's whereabouts belong to the family, not the kitchen
@@ -1352,7 +1486,7 @@ def _tile_map(now, runs=None, **_):
         # as unknown.
         try:
             from services import cars as cars_svc
-            for c in storage.get_all_cars():
+            for c in (storage.get_all_cars() if show_cars else []):
                 if c.get('is_disabled') or not c.get('ha_device_tracker'):
                     continue
                 loc = cars_svc.car_location(c) or {}
@@ -2017,7 +2151,7 @@ def option_sources() -> dict:
     worse outcome than a picker with nothing in it, and the tile whose source
     is empty is the only one that should be affected.
     """
-    out = {'members': [], 'drivers': [], 'lists': []}
+    out = {'members': [], 'drivers': [], 'lists': [], 'trips': []}
     try:
         out['members'] = [{'value': m['id'], 'label': m.get('name') or 'Someone'}
                           for m in (storage.get_all_members() or [])]
@@ -2033,6 +2167,21 @@ def option_sources() -> dict:
                         for l in (storage.get_shopping_lists() or [])]
     except Exception as e:
         print(f"[home_board] list options failed: {e}")
+    try:
+        # Trips as they appear on the board, so pinning one means picking the
+        # row you can already see. Cached trips first (the real, solved ones),
+        # then drafts, deduped by id.
+        seen = set()
+        for t in ((storage.get_cached_trips() or {}).get('trips') or []) \
+                + (storage.get_all_trip_metadata() or []):
+            tid = t.get('id')
+            if not tid or tid in seen:
+                continue
+            seen.add(tid)
+            out['trips'].append({'value': tid,
+                                 'label': t.get('title') or 'Trip'})
+    except Exception as e:
+        print(f"[home_board] trip options failed: {e}")
     return out
 
 
