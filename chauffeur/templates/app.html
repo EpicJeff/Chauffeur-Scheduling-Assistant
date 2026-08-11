@@ -795,7 +795,7 @@
                         class="w-7 h-7 rounded-lg accent-green-500 shrink-0">
                     <span class="text-xl shrink-0">${kidGlyph(item)}</span>
                     <span class="flex-1 text-[15px] font-bold ${item.checked ? 'text-gray-500 line-through' : 'text-gray-100'}">${mfEscape(item.title)}</span>
-                    ${item.time_of_day ? `<span class="text-xs font-bold text-blue-400">${item.time_of_day}</span>` : ''}
+                    ${item.time_of_day ? `<span class="text-xs font-bold text-blue-400">${formatClock(item.time_of_day)}</span>` : ''}
                 </label>`).join('');
             return `
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-1">
@@ -942,7 +942,7 @@
                 <label class="flex items-center gap-3 ${pad} ${interactive ? 'cursor-pointer active:opacity-70' : 'opacity-70'}">
                     ${rowGlyph ? `<span class="${rowGlyph} text-center shrink-0">${kidGlyph(item)}</span>` : ''}
                     <span class="flex-1 text-[${sh.tight ? 15 : 16}px] font-bold ${item.checked ? 'text-gray-500 line-through' : 'text-gray-100'}">${mfEscape(item.title)}</span>
-                    ${item.time_of_day ? `<span class="text-xs font-bold text-gray-500">${item.time_of_day}</span>` : ''}
+                    ${item.time_of_day ? `<span class="text-xs font-bold text-gray-500">${formatClock(item.time_of_day)}</span>` : ''}
                     <input type="checkbox" ${item.checked ? 'checked' : ''} ${interactive ? '' : 'disabled'}
                         onchange="toggleRoutine('${item.id}', this.checked)"
                         class="${box} rounded-full shrink-0" style="accent-color:${kidAccent()}">
@@ -963,7 +963,7 @@
                     </div>
                     <label class="flex items-center gap-3 ${sh.tight ? 'p-3' : 'p-4'} cursor-pointer active:opacity-70">
                         <span class="flex-1 ${sh.tight ? 'text-base' : 'text-lg'} font-black text-gray-100">${mfEscape(firstOpen.title)}</span>
-                        ${firstOpen.time_of_day ? `<span class="text-xs font-bold text-gray-500">${firstOpen.time_of_day}</span>` : ''}
+                        ${firstOpen.time_of_day ? `<span class="text-xs font-bold text-gray-500">${formatClock(firstOpen.time_of_day)}</span>` : ''}
                         <input type="checkbox" onchange="toggleRoutine('${firstOpen.id}', this.checked)"
                             class="${sh.tight ? 'w-7 h-7' : 'w-9 h-9'} rounded-full shrink-0" style="accent-color:${kidAccent()}">
                     </label>
@@ -1945,6 +1945,10 @@
         async function init() {
             updateTabBar();
             applyViewVisibility();
+            // Before anything paints a time: the clock format decides how every
+            // routine row and ride card reads, and a late answer would render
+            // the day once in the wrong format and then flip it.
+            await loadClockFormat();
             await fetchDrivers();
             await fetchMembers();
             const restoredPassenger = !selectedDriverId && selectedMemberId
@@ -4109,8 +4113,37 @@
             }
         }
 
+        // The household's clock, not the browser's. Both of these used to fall
+        // through to the locale default — so a family that had switched the
+        // 24-hour setting on still got 1:30 PM here — and a routine's
+        // `time_of_day` was not formatted at ALL: "07:30" is stored as HH:MM
+        // and was printed straight to the screen, which is why routine times
+        // read as 24-hour everywhere regardless of the setting.
+        let use24h = false;
+        async function loadClockFormat() {
+            try {
+                const res = await fetch(`${apiBase}api/settings`);
+                if (res.ok) use24h = !!(await res.json()).time_format_24h;
+            } catch (e) { /* the locale default is a fine fallback */ }
+        }
+
         function formatTime(isoStr) {
-            return new Date(isoStr).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            return new Date(isoStr).toLocaleTimeString([],
+                { hour: use24h ? '2-digit' : 'numeric', minute: '2-digit', hour12: !use24h });
+        }
+
+        // "07:30" -> "7:30 AM" or "07:30". Stays a pure string transform: the
+        // stored value is a wall-clock time of day with no date, and routing it
+        // through a Date would invent one (and a timezone with it).
+        function formatClock(hhmm) {
+            const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '').trim());
+            if (!m) return hhmm || '';
+            let h = parseInt(m[1], 10);
+            if (isNaN(h) || h > 23) return hhmm;
+            if (use24h) return `${String(h).padStart(2, '0')}:${m[2]}`;
+            const suffix = h < 12 ? 'AM' : 'PM';
+            h = h % 12 || 12;
+            return `${h}:${m[2]} ${suffix}`;
         }
 
         function formatDuration(mins) {

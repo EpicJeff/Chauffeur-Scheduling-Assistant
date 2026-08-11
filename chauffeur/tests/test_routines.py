@@ -252,6 +252,34 @@ def scenario_copy_routine_between_kids():
 
 SCENARIOS.append(scenario_copy_routine_between_kids)
 
+
+def scenario_routine_times_follow_the_households_clock():
+    """`time_of_day` is stored as "HH:MM" and was printed straight to the
+    screen, so every routine time read as 24-hour no matter what the
+    `time_format_24h` setting said. The bug class is rendering a stored clock
+    string RAW — so this checks no surface does it, rather than checking one
+    call site somebody could add a fourth copy beside.
+    """
+    import re as _re
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    for name in ('app.html', 'routines.html'):
+        src = open(os.path.join(tpl, name), encoding='utf-8').read()
+        # `${...time_of_day}` in a template literal, or Alpine x-text on it,
+        # with no formatter in between.
+        raw = _re.findall(r'\$\{[^}]*\.time_of_day\s*\}', src)
+        raw += _re.findall(r'x-text="[^"]*\.time_of_day[^"]*"', src)
+        raw = [r for r in raw if 'formatClock' not in r]
+        check(not raw, f"{name} prints a stored clock string raw: {raw[:3]}")
+        check('formatClock' in src, f"{name} has the household's clock formatter")
+        # And it must actually know the setting, or the formatter is a
+        # 12-hour hardcode wearing a helper's clothes.
+        check('time_format_24h' in src,
+              f"{name} reads the 24-hour setting rather than assuming one")
+
+
+SCENARIOS.append(scenario_routine_times_follow_the_households_clock)
+
 if __name__ == "__main__":
     import traceback
 

@@ -167,7 +167,7 @@
                                             :class="it.checked ? 'border-green-600/60 bg-green-900/20' : 'border-gray-800 bg-gray-900'">
                                             <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 text-sm font-bold"
                                                 :class="it.checked ? 'bg-green-500 border-green-500 text-white' : 'border-gray-600 text-transparent'">✓</div>
-                                            <span class="text-blue-400 font-bold text-xs w-12 shrink-0" x-text="it.time_of_day || ''"></span>
+                                            <span class="text-blue-400 font-bold text-xs w-14 shrink-0" x-text="formatClock(it.time_of_day)"></span>
                                             <span class="text-xl shrink-0" x-text="kidGlyph(it)"></span>
                                             <span class="font-semibold" :class="it.checked ? 'text-gray-400 line-through' : 'text-white'" x-text="it.title"></span>
                                         </button>
@@ -238,8 +238,8 @@
                                     <div>
                                         <!-- Display row -->
                                         <div x-show="editItemId !== r.id" class="flex items-center gap-3 px-5 py-3">
-                                            <span class="text-blue-400 font-bold text-sm w-14 shrink-0"
-                                                x-text="r.time_of_day || '—'"></span>
+                                            <span class="text-blue-400 font-bold text-sm w-20 shrink-0"
+                                                x-text="formatClock(r.time_of_day) || '—'"></span>
                                             <span class="text-lg w-7 text-center shrink-0" x-text="kidGlyph(r)"></span>
                                             <span class="text-white font-semibold" x-text="r.title"></span>
                                             <span class="text-gray-500 text-xs font-bold ml-1"
@@ -586,7 +586,31 @@
                 kitMatches: {},
                 showMatchesKitId: null,
 
+                use24h: false,
+                // The household's clock. A routine's `time_of_day` is stored as
+                // "HH:MM" and was printed raw, so every routine time read as
+                // 24-hour whatever the setting said. Kept a pure string
+                // transform: the value is a wall-clock time with no date, and
+                // routing it through a Date would invent one.
+                formatClock(hhmm) {
+                    const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '').trim());
+                    if (!m) return hhmm || '';
+                    let h = parseInt(m[1], 10);
+                    if (isNaN(h) || h > 23) return hhmm;
+                    if (this.use24h) return `${String(h).padStart(2, '0')}:${m[2]}`;
+                    const suffix = h < 12 ? 'AM' : 'PM';
+                    h = h % 12 || 12;
+                    return `${h}:${m[2]} ${suffix}`;
+                },
+                async loadClockFormat() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/settings`);
+                        if (res.ok) this.use24h = !!(await res.json()).time_format_24h;
+                    } catch (e) { /* 12-hour is the default either way */ }
+                },
+
                 async init() {
+                    await this.loadClockFormat();
                     if (this.isKiosk) {
                         await this.loadStreaks();
                         this._celebrateSweep();   // first call seeds localStorage silently
