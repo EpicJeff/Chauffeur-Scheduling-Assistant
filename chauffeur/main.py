@@ -65,6 +65,7 @@ ensure_vapid_keys()
 
 from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier, StatusProtocol, StatusDay, AssistContact, AssistAssignment, HouseholdTask, ProtectedCommitment
 from services import storage, calendar, maps
+from services import assist as _assist_svc
 from solver import matcher
 from fastapi.templating import Jinja2Templates
 from fastapi import Request
@@ -3733,12 +3734,23 @@ def list_household_tasks(assigned_to: Optional[str] = None,
                                         unassigned_only=unassigned_only)
     today = _dt.date.today().isoformat()
     members = {m['id']: m for m in storage.get_all_members(include_system=True)}
+    # Outside hands hold tasks too (load arc A1 slice 2). Resolving the name
+    # here is what stops an `assist:` holder rendering as "nobody yet", which
+    # is the failure mode of a second id space nobody told the reader about.
+    contacts = {c['id']: c for c in storage.get_assist_contacts(include_inactive=True)}
     for t in tasks:
         due = t.get('due_date')
         t['past_due'] = bool(due and due < today and t.get('status') != 'done')
         t['due_today'] = bool(due and due == today)
-        owner = members.get(t.get('assigned_to') or '')
-        t['assigned_to_name'] = owner.get('name') if owner else None
+        holder = t.get('assigned_to') or ''
+        if _assist_svc.is_assist_id(holder):
+            c = contacts.get(_assist_svc.contact_id(holder))
+            t['assigned_to_name'] = c.get('name') if c else None
+            t['assigned_to_assist'] = True
+        else:
+            owner = members.get(holder)
+            t['assigned_to_name'] = owner.get('name') if owner else None
+            t['assigned_to_assist'] = False
     return tasks
 
 def _refuse_kid_task_assignment(member_id):
@@ -3814,13 +3826,25 @@ def household_load(days: int = 30):
                                        or m.get('role') == 'helper',
                              'tasks': 0, 'drives': 0}
 
+    # Outside hands appear on the assisting side the moment they finish
+    # something — covering is not carrying, so their work is visible and is
+    # never folded into the household's split. The row is created lazily
+    # because a contact who has done nothing this window is not a gap.
+    contacts_by_id = {c['id']: c for c in storage.get_assist_contacts(include_inactive=True)}
     for t in storage.get_household_tasks(include_done=True):
         if t.get('status') != 'done' or not t.get('assigned_to'):
             continue
         done_day = _dt.datetime.fromtimestamp(t.get('completed_at') or 0).date().isoformat()
         if done_day < cutoff:
             continue
-        r = rows.get(t['assigned_to'])
+        holder = t['assigned_to']
+        if _assist_svc.is_assist_id(holder) and holder not in rows:
+            c = contacts_by_id.get(_assist_svc.contact_id(holder))
+            if not c:
+                continue                      # deleted contact: not somebody's load
+            rows[holder] = {'member_id': holder, 'name': c.get('name'),
+                            'assist': True, 'tasks': 0, 'drives': 0}
+        r = rows.get(holder)
         if r:
             r['tasks'] += 1
 
@@ -3867,6 +3891,7 @@ def household_load(days: int = 30):
 
 @app.get("/api/assist-contacts")
 def list_assist_contacts(include_inactive: bool = False):
+    from services import assist as assist_svc
     contacts = storage.get_assist_contacts(include_inactive=include_inactive)
     covered = storage.get_assist_assignment_map()
     counts = {}
@@ -3874,7 +3899,9 @@ def list_assist_contacts(include_inactive: bool = False):
         counts[cid] = counts.get(cid, 0) + 1
     for c in contacts:
         c['covering_count'] = counts.get(c['id'], 0)
-    return contacts
+    # `helps_with` is the normalised work-surface list every picker filters on,
+    # computed in one place so the synonym table never gets a second copy.
+    return assist_svc.decorate(contacts)
 
 @app.post("/api/assist-contacts")
 def create_assist_contact(contact: AssistContact):
@@ -11163,7 +11190,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             # contacts themselves so every surface can name and ring them
             # without a second request.
             "assist_assignments": combined_assist_assignments,
-            "assist_contacts": storage.get_assist_contacts(include_inactive=True),
+            # decorate(): carries `helps_with` so the drives page can offer
+            # only the people who drive, without a second synonym table in JS.
+            "assist_contacts": _assist_svc.decorate(
+                storage.get_assist_contacts(include_inactive=True)),
             "ghost_assignments": combined_ghost_assignments,
             "ghost_drivers": combined_ghost_drivers,
             "route_edges": combined_route_edges,
@@ -11875,7 +11905,10 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                                 "assignments": combined_assignments,
                                 "car_assignments": combined_car_assignments,
                                 "assist_assignments": combined_assist_assignments,
-                                "assist_contacts": storage.get_assist_contacts(include_inactive=True),
+                                # decorate(): carries `helps_with` so the drives page can offer
+            # only the people who drive, without a second synonym table in JS.
+            "assist_contacts": _assist_svc.decorate(
+                storage.get_assist_contacts(include_inactive=True)),
                                 "unassigned": combined_true_unassigned,
                                 "lateness_warnings": combined_lateness_warnings,
                                 "ghost_assignments": combined_ghost_assignments,

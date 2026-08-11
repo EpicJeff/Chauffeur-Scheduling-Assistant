@@ -875,24 +875,39 @@ def claim_household_task(title: str, member_name: str = None,
     and the reason `assigned_to` is optional in the first place."""
     from services import storage
     owner, err = (_find_member_fuzzy(member_name), None) if member_name else (acting_member, None)
-    if member_name and not owner:
-        return {"status": "error",
-                "message": f"I couldn't find '{member_name}'. Family members: {_member_names()}."}
-    if not owner:
+    # Outside hands hold housework too ("get the Kellys' girl to do the
+    # dishes"), so a name that is nobody in the family is tried against the
+    # contacts before it is called unfindable. The hand path offers both in
+    # one dropdown; the agent has to be able to say both or it is the weaker
+    # of the two, which is the same parity rule in the other direction.
+    holder_id = holder_name = None
+    if owner:
+        holder_id, holder_name = owner['id'], owner.get('name')
+    elif member_name:
+        from services import assist as _assist
+        contact = _find_assist_contact(member_name)
+        if contact:
+            holder_id = _assist.make_id(contact['id'])
+            holder_name = contact.get('name')
+    if not holder_id:
+        if member_name:
+            return {"status": "error",
+                    "message": f"I couldn't find '{member_name}'. Family members: {_member_names()}."}
         return {"status": "error",
                 "message": "Who should take it? Tell me a name."}
-    from services import stages
-    block = stages.refuse_task_assignment(owner)
-    if block:
-        return {"status": "error", "message": block}
+    if owner:
+        from services import stages
+        block = stages.refuse_task_assignment(owner)
+        if block:
+            return {"status": "error", "message": block}
     task, rows = _match_task(title)
     if not task:
         open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing'
         return {"status": "error",
                 "message": f"I couldn't pin down '{title}'. Open: {open_titles}."}
-    storage.update_household_task(task['id'], {'assigned_to': owner['id']})
+    storage.update_household_task(task['id'], {'assigned_to': holder_id})
     return {"status": "success",
-            "message": f"{owner.get('name')} has {task.get('title')}."}
+            "message": f"{holder_name} has {task.get('title')}."}
 
 
 def get_household_load(days: int = 30) -> Dict[str, Any]:

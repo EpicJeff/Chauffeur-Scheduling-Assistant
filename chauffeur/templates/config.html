@@ -2041,8 +2041,30 @@
                         </div>
                         <div>
                             <label class="block text-xs font-bold text-gray-400 mb-1">Helps with</label>
-                            <input x-model="assistForm.kinds_text" placeholder="carpool, housework"
+                            <div class="flex gap-2">
+                                <template x-for="s in [{k:'driving',label:'🚗 Driving'},{k:'housework',label:'🧹 Housework'}]" :key="s.k">
+                                    <button type="button" @click="toggleAssistSurface(s.k)"
+                                        class="px-3 py-2 rounded-lg text-sm font-bold border transition-colors"
+                                        :class="assistForm.helps_with.includes(s.k)
+                                            ? 'bg-teal-600/40 border-teal-500 text-teal-200'
+                                            : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'"
+                                        x-text="s.label"></button>
+                                </template>
+                            </div>
+                            <!-- Neither pill lit is not "they do nothing" — it is "nobody
+                                 has said", and an untagged contact is offered everywhere.
+                                 Hiding somebody from a list takes positive information. -->
+                            <p class="text-[11px] text-gray-500 mt-1"
+                                x-text="assistForm.helps_with.length
+                                    ? 'They appear when you go looking for that kind of help.'
+                                    : 'Not set — they appear in every list until you say.'"></p>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 mb-1">Other tags</label>
+                            <input x-model="assistForm.kinds_text" placeholder="tutoring, pets"
                                 class="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                            <p class="text-[11px] text-gray-500 mt-1">Free notes to yourself. Nothing
+                                branches on these — a new kind of help never needs new code.</p>
                         </div>
                         <div>
                             <label class="block text-xs font-bold text-gray-400 mb-1">Arrangement</label>
@@ -3912,7 +3934,7 @@
                 // Outside hands (load arc A1)
                 assistContacts: [],
                 assistForm: { id: null, name: '', relation_label: '', phone: '',
-                              kinds_text: '', relationship: 'reciprocal' },
+                              kinds_text: '', helps_with: [], relationship: 'reciprocal' },
                 statusDays: [],
                 showStatusForm: false,
                 editStatusId: null,
@@ -5238,12 +5260,22 @@
                 },
                 resetAssistForm() {
                     this.assistForm = { id: null, name: '', relation_label: '', phone: '',
-                                        kinds_text: '', relationship: 'reciprocal' };
+                                        kinds_text: '', helps_with: [], relationship: 'reciprocal' };
+                },
+                toggleAssistSurface(k) {
+                    const list = this.assistForm.helps_with;
+                    const i = list.indexOf(k);
+                    if (i >= 0) list.splice(i, 1); else list.push(k);
                 },
                 editAssistContact(c) {
+                    // Both halves come from the server already split: `helps_with`
+                    // is the normalised read of the two work tags, `other_kinds`
+                    // is everything else — so editing never silently drops
+                    // "tutoring", and the synonym table has no JavaScript twin.
                     this.assistForm = {
                         id: c.id, name: c.name || '', relation_label: c.relation_label || '',
-                        phone: c.phone || '', kinds_text: (c.kinds || []).join(', '),
+                        phone: c.phone || '', kinds_text: (c.other_kinds || []).join(', '),
+                        helps_with: [...(c.helps_with || [])],
                         relationship: c.relationship || 'reciprocal',
                     };
                 },
@@ -5256,7 +5288,12 @@
                     const payload = {
                         name: f.name.trim(), relation_label: (f.relation_label || '').trim(),
                         phone: (f.phone || '').trim(), relationship: f.relationship || 'reciprocal',
-                        kinds: (f.kinds_text || '').split(',').map(s => s.trim()).filter(Boolean),
+                        // The pills are stored as ordinary tags: `kinds` stays one
+                        // free list, so nothing new had to be added to the model
+                        // and an old contact tagged "carpool" still reads as a
+                        // driver without a migration.
+                        kinds: [...(f.helps_with || []),
+                                ...(f.kinds_text || '').split(',').map(s => s.trim()).filter(Boolean)],
                     };
                     try {
                         if (f.id) {

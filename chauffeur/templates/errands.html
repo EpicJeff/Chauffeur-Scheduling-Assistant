@@ -1009,6 +1009,11 @@
         // a named grant, and the server refuses it below stage. Held once and
         // shared, so the create form and the editor can never disagree.
         let taskAssignees = [];
+        // Outside hands offered for housework. `helps_with` is the server's
+        // normalised read of their tags, and an untagged contact is offered
+        // everywhere — hiding somebody takes positive information, so nobody
+        // silently becomes unusable because a tag was never filled in.
+        let taskHands = [];
 
         function fillTaskOwnerSelect(el, selectedId, blankLabel, currentName) {
             if (!el) return;
@@ -1019,29 +1024,49 @@
             // eligible (a kid pinned to an earlier stage, a member since
             // removed). Otherwise the select would quietly fall back to
             // "nobody" and saving an unrelated edit would unassign them.
-            if (selectedId && !list.some(m => String(m.id) === String(selectedId))) {
+            const inHouse = list.some(m => String(m.id) === String(selectedId));
+            const inHands = taskHands.some(c => `assist:${c.id}` === String(selectedId));
+            if (selectedId && !inHouse && !inHands) {
                 list.push({ id: selectedId, name: currentName || 'Currently assigned' });
             }
-            list.forEach(m => el.add(new Option(m.name, m.id)));
+            const house = document.createElement('optgroup');
+            house.label = 'The household';
+            list.forEach(m => house.appendChild(new Option(m.name, m.id)));
+            if (list.length) el.appendChild(house);
+            // Outside hands: work handed to somebody who is not in the family
+            // (load arc A1). Their finishing it shows as COVERING on the load
+            // ledger and never as the household carrying it.
+            if (taskHands.length) {
+                const out = document.createElement('optgroup');
+                out.label = 'Outside hands';
+                taskHands.forEach(c => out.appendChild(new Option(
+                    c.relation_label ? `${c.name} (${c.relation_label})` : c.name,
+                    `assist:${c.id}`)));
+                el.appendChild(out);
+            }
             el.value = selectedId || '';
         }
 
         async function fetchHouseholdTasks() {
             try {
-                const [tRes, mRes, lRes] = await Promise.all([
+                const [tRes, mRes, lRes, aRes] = await Promise.all([
                     fetch('api/household-tasks'),
                     fetch('api/members'),
                     fetch('api/household-load?days=30'),
+                    fetch('api/assist-contacts').catch(() => null),
                 ]);
                 householdTasks = tRes.ok ? await tRes.json() : [];
                 const members = mRes.ok ? await mRes.json() : [];
                 taskAssignees = members
                     .filter(m => m.role !== 'child' || (m.capabilities || {}).assignable_tasks)
                     .map(m => ({ id: m.id, name: m.name }));
+                const contacts = (aRes && aRes.ok) ? await aRes.json() : [];
+                taskHands = (Array.isArray(contacts) ? contacts : []).filter(c => {
+                    const known = c.helps_with || [];
+                    return !known.length || known.includes('housework');
+                });
                 const owner = document.getElementById('new-task-owner');
-                if (owner && owner.options.length <= 1) {
-                    taskAssignees.forEach(m => owner.add(new Option(m.name, m.id)));
-                }
+                if (owner) fillTaskOwnerSelect(owner, owner.value, 'Nobody yet');
                 const load = lRes.ok ? await lRes.json() : {};
                 // States it, never scores it: one sentence, no chart.
                 document.getElementById('task-load-line').textContent = load.line || '';

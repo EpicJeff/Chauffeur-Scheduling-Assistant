@@ -274,6 +274,16 @@ def scenario_every_agent_capability_has_a_hand_path():
     dash = open(os.path.join(tpl, 'dashboard.html'), encoding='utf-8').read()
     check('setAssistCoverage' in dash and "startsWith('assist_')" in dash,
           "and a drive can be handed over by hand on the schedule")
+    # REACHABILITY, not presence. This assertion used to stop at the line
+    # above, which a dead function satisfies — and for two versions the only
+    # door to coverage was dropping a drive onto an assist column, while the
+    # columns were built from the coverage that door was supposed to create.
+    # An uncovered drive therefore had no way in at all, and this test passed
+    # the whole time. Anything checking a hand path must ask how the FIRST one
+    # is made.
+    check('populateAssistDropdown' in dash and 'edit-assist-contact' in dash,
+          "a drive with NO coverage yet can still be handed over — the picker "
+          "is filled from the contacts, not from the existing assignments")
     timeline = open(os.path.join(tpl, 'components', 'schedule_timeline.html'),
                     encoding='utf-8').read()
     check('assist_assignments' in timeline and 'assist_contacts' in timeline,

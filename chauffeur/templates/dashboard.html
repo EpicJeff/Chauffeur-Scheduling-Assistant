@@ -333,6 +333,23 @@
                                 </div>
                             </div>
 
+                            <!-- Outside hands (load arc A1). The drag-onto-a-column
+                                 gesture only ever worked for a drive that was ALREADY
+                                 covered — the column is drawn from the coverage — so
+                                 the first hand-over had no door at all. This is it;
+                                 the drag stays as the shortcut it was meant to be. -->
+                            <div class="mb-4" id="edit-assist-row">
+                                <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Hand to
+                                    someone outside the house</label>
+                                <select id="edit-assist-contact"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-teal-500">
+                                    <option value="">Nobody — the family drives it</option>
+                                </select>
+                                <p class="text-[10px] text-gray-500 mt-1">A covered drive leaves the solver
+                                    entirely: no driver is scheduled, nobody is chased about it, and the kids'
+                                    digest says who they are riding with. Saved the moment you choose.</p>
+                            </div>
+
                             <div class="flex flex-col mt-4 bg-gray-900 border border-gray-600 rounded-lg p-3">
                                 <div class="flex items-center mb-3">
                                     <input type="checkbox" id="edit-is-optional"
@@ -1555,6 +1572,7 @@
             // ids are day instances, so linking to one never matches the real trip
             // (get_trip_api matches event_configs by the base {cal}::{google_id}).
             populateTripDropdown(appConfig.trip_id);
+            populateAssistDropdown(ev);
 
             // Passengers
             const paxContainer = document.getElementById('edit-passengers-container');
@@ -1949,6 +1967,43 @@
         // the solver thinks", while this says "not ours at all", and the event
         // leaves the optimisation entirely. Sending it down the override path
         // would keep a household driver notionally on the hook.
+
+        // Only the people who drive. `helps_with` is the server's normalised read
+        // of the contact's tags, and an untagged contact is offered everywhere —
+        // hiding somebody from a list takes positive information, so nobody
+        // silently becomes unusable because a tag was never filled in. This
+        // narrows a list; it never refuses an assignment.
+        function assistContactsFor(surface) {
+            return ((currentData && currentData.assist_contacts) || []).filter(c => {
+                if (c.active === false) return false;
+                const known = c.helps_with || [];
+                return !known.length || known.includes(surface);
+            });
+        }
+
+        function populateAssistDropdown(ev) {
+            const sel = document.getElementById('edit-assist-contact');
+            if (!sel) return;
+            const covered = (currentData && currentData.assist_assignments) || {};
+            const current = covered[ev.id] || '';
+            const list = assistContactsFor('driving');
+            sel.innerHTML = '<option value="">Nobody — the family drives it</option>';
+            list.forEach(c => {
+                const label = c.relation_label ? `${c.name} (${c.relation_label})` : c.name;
+                sel.add(new Option(label, c.id));
+            });
+            // Whoever covers it now stays selectable even if they are tagged
+            // housework-only, or the select would quietly read "nobody".
+            if (current && !list.some(c => c.id === current)) {
+                const all = ((currentData && currentData.assist_contacts) || [])
+                    .find(c => c.id === current);
+                if (all) sel.add(new Option(all.name, all.id));
+            }
+            sel.value = current;
+            const row = document.getElementById('edit-assist-row');
+            if (row) row.style.display = (list.length || current) ? '' : 'none';
+            sel.onchange = () => setAssistCoverage(ev.id, sel.value || null);
+        }
 
         async function setAssistCoverage(eventId, contactId) {
             const ev = currentEventsMap[eventId];
