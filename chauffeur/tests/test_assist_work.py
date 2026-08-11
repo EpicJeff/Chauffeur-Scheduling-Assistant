@@ -174,18 +174,125 @@ def scenario_the_agent_can_hand_housework_over_too():
           f"and a name that is nobody anywhere is still refused: {res}")
 
 
-def scenario_chores_stay_members_only_on_purpose():
-    """Not an oversight. A chore is the KID marketplace — points, self-claim,
-    verification — and a paid helper earning points on the kids' ladder would
-    corrupt the one economy that is deliberately theirs. Housework for a
-    helper is a household task, which is why that door was the one built."""
-    from models.schemas import Chore
-    fields = Chore.model_fields
-    check('eligible_member_ids' in fields and 'claimed_by' in fields,
-          "a chore is claimed by a MEMBER")
+def scenario_an_outside_hand_claims_a_chore_like_any_adult():
+    """Recurring housework — dishes, vacuuming — is a CHORE, and an outside
+    hand is not a new concept in it: an adult already claims a chore and earns
+    nothing (`verify_chore` awards points only to a child), so a contact is
+    the same shape. They widen the id space and change no rule.
+
+    (An earlier version of this file asserted chores were members-only. That
+    was wrong twice over: the points argument was already handled by the
+    role check, and household tasks could not hold the work anyway — their
+    recurrence needs a due date, which dishes do not have.)"""
+    import main
+    from fastapi import BackgroundTasks
+    from models.schemas import Chore, FamilyMember
+    _reset()
+    with storage.db_lock:
+        storage.chores_table.truncate()
+        storage.points_ledger_table.truncate()
+    kid = FamilyMember(name="Ellie", role='child').model_dump()
+    storage.add_member(kid)
+    mom = FamilyMember(name="Lorena", role='parent').model_dump()
+    storage.add_member(mom)
+    girl = _contact("Maddie", kinds=['housework'])
+    hand_id = assist.make_id(girl['id'])
+
+    created = main.create_chore(main.ChoreCreateRequest(
+        title="Do the dishes", recurrence='daily', points=10,
+        assigned_to=hand_id), BackgroundTasks())
+    chore = storage.get_chore(created['id'])
+    check(chore['state'] == 'claimed' and chore['claimed_by'] == hand_id,
+          f"assigning IS the claim — it never sits in the pot: {chore['state']}")
+
+    # The kids' pot never shows it, because it is not open at all.
+    from fastapi import HTTPException
+    try:
+        main.claim_chore_endpoint(chore['id'], main.ChoreMemberRequest(member_id=kid['id']))
+        check(False, "a kid must not be able to take assigned work")
+    except HTTPException as e:
+        check(e.status_code == 409, f"assigned work is not claimable: {e.detail}")
+
+    # One tap records it: a contact has no login, so claim->done cannot be
+    # walked by them. That is the ONLY way outside help differs from a kid.
+    rec = main.record_chore_endpoint(chore['id'],
+                                     main.ChoreMemberRequest(member_id=hand_id),
+                                     BackgroundTasks())
+    check(rec['state'] == 'done' and rec['claimed_by'] == hand_id,
+          f"recorded as hers, awaiting the usual verification: {rec['state']}")
+    rows = {c['title']: c for c in main.list_chores()}
+    check(rows["Do the dishes"]['claimed_by_name'] == 'Maddie'
+          and rows["Do the dishes"]['claimed_by_assist'] is True,
+          f"and she is NAMED, not blank: {rows['Do the dishes']}")
+
+    res = storage.verify_chore(chore['id'], mom['id'])
+    check(res and res['awarded'] == 0,
+          f"she earns nothing — exactly what an adult claiming a chore earns: {res}")
+    check(not storage.points_ledger_table.all(),
+          "so the kids' points economy is untouched")
+
+    # The differentiator that sent us here: a chore recurs with NO deadline.
+    check(res['chore']['reopens_on'],
+          f"and it comes back tomorrow on its own: {res['chore'].get('reopens_on')}")
+    check(storage._next_due(None, 'daily') is None,
+          "whereas a household task's recurrence needs a due date — which is "
+          "why dishes never fitted there, and why a chore is the right home")
+
+    # And it comes back to HER, not to the pot: "the dishes are Maddie's" is a
+    # standing arrangement, and a chore that quietly went up for grabs every
+    # night would be a different promise from the one the parent made.
+    with storage.db_lock:
+        storage.chores_table.update({'reopens_on': '2000-01-01'},
+                                    storage.Query().id == chore['id'])
+    # get_all_chores() is what runs _chore_maintenance — the reopen sweep.
+    back = next(c for c in storage.get_all_chores() if c['id'] == chore['id'])
+    check(back['state'] == 'claimed' and back['claimed_by'] == hand_id,
+          f"the recurrence returns it to its holder: {back['state']}/{back.get('claimed_by')}")
+
+
+def scenario_a_parent_can_assign_a_kid_a_chore():
+    """The other half of the concept: kids claim what they want, and a parent
+    can also just hand one over. A kid's assigned chore is theirs to mark done
+    — only outside help needs a parent for that, because they have no login —
+    and it still earns points, because they are still a child doing a chore."""
+    import main
+    from fastapi import BackgroundTasks
+    from models.schemas import FamilyMember
+    _reset()
+    with storage.db_lock:
+        storage.chores_table.truncate()
+        storage.points_ledger_table.truncate()
+    kid = FamilyMember(name="Ellie", role='child').model_dump()
+    storage.add_member(kid)
+    mom = FamilyMember(name="Lorena", role='parent').model_dump()
+    storage.add_member(mom)
+
+    created = main.create_chore(main.ChoreCreateRequest(
+        title="Take out the trash", points=10, assigned_to=kid['id']),
+        BackgroundTasks())
+    chore = storage.get_chore(created['id'])
+    check(chore['assigned_to'] == kid['id'] and chore['claimed_by'] == kid['id'],
+          "a kid's assigned chore is hers from the moment it is handed over")
+    check(storage.mark_chore_done(chore['id'], kid['id']),
+          "and SHE marks it done — no parent needed, unlike outside help")
+    res = storage.verify_chore(chore['id'], mom['id'])
+    check(res['awarded'] == 10,
+          f"a child still earns points for assigned work: {res['awarded']}")
+
+    # Clearing the assignment puts it back up for grabs.
+    main.edit_chore(chore['id'], main.ChoreCreateRequest(
+        title="Take out the trash", points=10, assigned_to=None))
+    check(storage.get_chore(chore['id'])['state'] == 'open',
+          "unassigning returns it to the pot")
+
+
+def scenario_the_chore_hand_path_is_reachable():
     chores_ui = open(os.path.join(TPL, 'chores.html'), encoding='utf-8').read()
-    check('assist' not in chores_ui.lower(),
-          "and no outside hand appears anywhere in the chore marketplace")
+    check('choreEdit.assigned_to' in chores_ui and "'assist:' + h.id" in chores_ui,
+          "a chore can be assigned by hand, to a member or an outside hand")
+    check('recordChoreFor' in chores_ui and 'did it' in chores_ui,
+          "and one tap records that outside help did it, since they cannot "
+          "mark it themselves")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

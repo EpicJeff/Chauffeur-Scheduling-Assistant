@@ -357,6 +357,15 @@
                                         <p class="text-gray-400 text-sm mt-1" x-text="chore.description" x-show="chore.description"></p>
                                     </div>
                                     <div class="flex space-x-2 shrink-0">
+                                        <!-- An outside hand has no login, so the claim → done pair a kid
+                                             taps through cannot be walked by them. One tap records it and
+                                             leaves the chore in the same `done` state awaiting the same
+                                             verification, which is what reopens it on its cadence. -->
+                                        <template x-if="choreHand(chore) && (chore.state === 'open' || chore.state === 'claimed')">
+                                            <button @click="recordChoreFor(chore.id, choreHand(chore).id, choreHand(chore).name)"
+                                                class="text-teal-300 hover:text-teal-200 bg-teal-500/10 px-3 py-2 rounded-lg font-bold text-sm"
+                                                x-text="choreHand(chore).name + ' did it'"></button>
+                                        </template>
                                         <button x-show="chore.state === 'verified' || chore.state === 'claimed'"
                                             @click="reopenChore(chore)"
                                             class="text-green-500 hover:text-green-400 bg-green-500/10 px-3 py-2 rounded-lg font-bold text-sm">Reopen</button>
@@ -417,6 +426,30 @@
                                         </label>
                                     </template>
                                 </div>
+                                <!-- Assign: the other half of the chore economy. Kids CLAIM what
+                                     they want from the pot; a parent can also just hand one over —
+                                     to a kid, or to outside help. An assigned chore is theirs from
+                                     that moment, never sits in the pot, and comes back to them each
+                                     time it recurs. Outside help differs in exactly one way: no
+                                     login, so a parent marks it done for them. -->
+                                <label class="block text-gray-400 mb-1 mt-4 text-sm">Or assign it to somebody</label>
+                                <select x-model="choreEdit.assigned_to"
+                                    class="w-full md:w-80 bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                    <option value="">Nobody — leave it in the pot</option>
+                                    <optgroup label="The household">
+                                        <template x-for="m in members.filter(x => x.role !== 'helper')" :key="'a' + m.id">
+                                            <option :value="m.id" x-text="m.name"></option>
+                                        </template>
+                                    </optgroup>
+                                    <optgroup label="Outside hands" x-show="hands.length">
+                                        <template x-for="h in hands" :key="'a' + h.id">
+                                            <option :value="'assist:' + h.id" x-text="h.name"></option>
+                                        </template>
+                                    </optgroup>
+                                </select>
+                                <p class="text-[11px] text-gray-500 mt-1">Assigned work skips claiming and
+                                    never appears in the kids' pot. Outside help earns no points — the same
+                                    as an adult doing a chore.</p>
                             </div>
                             <div class="flex gap-2 mt-5">
                                 <button @click="saveChore()"
@@ -522,11 +555,12 @@
                 tools: {},
                 expanded: {},
                 members: [],
+                hands: [],
                 chores: [],
                 rewards: [],
                 redemptions: [],
                 editChoreId: null,
-                choreEdit: { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [] },
+                choreEdit: { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [], assigned_to: '' },
                 editRewardId: null,
                 rewardEdit: { title: '', description: '', cost: 50, pooled: false, min_share: 0 },
                 poolAmt: {},
@@ -752,6 +786,40 @@
                         const res = await fetch(`${this.apiBase}api/members`);
                         this.members = await res.json();
                     } catch (e) { this.members = []; }
+                    try {
+                        const r = await fetch(`${this.apiBase}api/assist-contacts`);
+                        const all = r.ok ? await r.json() : [];
+                        // Housework hands only — an untagged contact is offered
+                        // everywhere, because hiding somebody takes positive
+                        // information (services/assist.py).
+                        this.hands = (Array.isArray(all) ? all : []).filter(c => {
+                            const known = c.helps_with || [];
+                            return !known.length || known.includes('housework');
+                        });
+                    } catch (e) { this.hands = []; }
+                },
+                // An outside hand this chore is assigned to — the case that earns
+                // the one-tap button, since a contact has no login and cannot
+                // mark anything done themselves. A kid marks their own.
+                choreHand(c) {
+                    const id = c.assigned_to || '';
+                    if (!String(id).startsWith('assist:')) return null;
+                    const h = this.hands.find(x => 'assist:' + x.id === id);
+                    return { id: id, name: (h && h.name) || c.claimed_by_name || 'them' };
+                },
+                async recordChoreFor(choreId, holderId, name) {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/chores/${choreId}/record`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ member_id: holderId }) });
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            showGlobalAlert(err.detail || "Couldn't record that.");
+                            return;
+                        }
+                        showGlobalAlert(`Marked done by ${name}.`);
+                        await this.loadChores();
+                    } catch (e) { showGlobalAlert("Couldn't record that."); }
                 },
 
                 // --- Chores ---
@@ -771,11 +839,12 @@
                         points: chore.points,
                         recurrence: chore.recurrence || 'once',
                         eligible_member_ids: [...(chore.eligible_member_ids || [])],
+                        assigned_to: chore.assigned_to || '',
                     };
                 },
                 cancelEditChore() {
                     this.editChoreId = null;
-                    this.choreEdit = { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [] };
+                    this.choreEdit = { title: '', emoji: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [], assigned_to: '' };
                 },
                 async saveChore() {
                     if (!(this.choreEdit.title || '').trim()) { showGlobalAlert('Title required'); return; }

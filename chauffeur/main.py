@@ -4659,6 +4659,8 @@ class ChoreCreateRequest(BaseModel):
     points: int = 10
     recurrence: str = 'once'
     eligible_member_ids: list = []
+    # Assigned work rather than the pot: a member id, or 'assist:<id>'.
+    assigned_to: Optional[str] = None
 
 def _clean_emoji(v):
     # A glyph, not a caption: cap at 8 chars (covers ZWJ sequences), blank -> None
@@ -4678,13 +4680,40 @@ def _validate_chore_fields(req):
 def list_chores():
     chores = storage.get_all_chores()
     members = {m['id']: m for m in storage.get_all_members()}
+    # Outside hands claim chores too — the same shape as an adult claiming one,
+    # earning nothing. Resolving the name here is what stops a chore Maddie did
+    # rendering with a blank claimant.
+    contacts = {c['id']: c for c in storage.get_assist_contacts(include_inactive=True)}
     for c in chores:
-        claimant = members.get(c.get('claimed_by'))
-        c['claimed_by_name'] = claimant.get('name') if claimant else None
-        c['claimed_by_color'] = claimant.get('color_code') if claimant else None
+        holder = c.get('claimed_by') or ''
+        if _assist_svc.is_assist_id(holder):
+            hand = contacts.get(_assist_svc.contact_id(holder))
+            c['claimed_by_name'] = hand.get('name') if hand else None
+            c['claimed_by_color'] = '#64748b'
+            c['claimed_by_assist'] = True
+        else:
+            claimant = members.get(holder)
+            c['claimed_by_name'] = claimant.get('name') if claimant else None
+            c['claimed_by_color'] = claimant.get('color_code') if claimant else None
+            c['claimed_by_assist'] = False
     order = {'done': 0, 'open': 1, 'claimed': 2, 'verified': 3}
     chores.sort(key=lambda c: (order.get(c.get('state'), 9), -(c.get('points') or 0)))
     return chores
+
+def _assigned_chore_fields(assigned_to):
+    """Assigning IS the claim. A chore handed to somebody is theirs from that
+    moment — it never sits in the pot waiting to be picked up, which is the
+    whole difference between 'anyone can take this' and 'this is yours'.
+    Clearing the assignment puts it back up for grabs."""
+    if not assigned_to:
+        return {'assigned_to': None, 'state': 'open', 'claimed_by': None,
+                'claimed_at': None}
+    name, _is_assist = _chore_claimant(assigned_to)
+    if not name:
+        raise HTTPException(status_code=404, detail="Nobody by that id to assign to")
+    return {'assigned_to': assigned_to, 'state': 'claimed',
+            'claimed_by': assigned_to, 'claimed_at': time.time(),
+            'rejected_reason': None}
 
 @app.post("/api/chores")
 def create_chore(req: ChoreCreateRequest, background_tasks: BackgroundTasks):
@@ -4694,18 +4723,29 @@ def create_chore(req: ChoreCreateRequest, background_tasks: BackgroundTasks):
                   description=req.description or '',
                   points=int(req.points), recurrence=req.recurrence,
                   eligible_member_ids=req.eligible_member_ids or []).model_dump()
+    chore.update(_assigned_chore_fields(req.assigned_to))
     storage.add_chore(chore)
-    background_tasks.add_task(_notify_chore_event, 'posted', chore)
+    # An assigned chore is nobody's to pick up, so the "new chore posted" blast
+    # to the eligible kids would be an invitation to something already taken.
+    if not req.assigned_to:
+        background_tasks.add_task(_notify_chore_event, 'posted', chore)
     return chore
 
 @app.put("/api/chores/{chore_id}")
 def edit_chore(chore_id: str, req: ChoreCreateRequest):
     _validate_chore_fields(req)
-    if not storage.update_chore(chore_id, {
-            'title': req.title.strip(), 'emoji': _clean_emoji(req.emoji),
-            'description': req.description or '',
-            'points': int(req.points), 'recurrence': req.recurrence,
-            'eligible_member_ids': req.eligible_member_ids or []}):
+    existing = storage.get_chore(chore_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Chore not found")
+    patch = {'title': req.title.strip(), 'emoji': _clean_emoji(req.emoji),
+             'description': req.description or '',
+             'points': int(req.points), 'recurrence': req.recurrence,
+             'eligible_member_ids': req.eligible_member_ids or []}
+    # Only touch the lifecycle when the assignment actually changed — editing
+    # the title of a chore somebody has already finished must not reset it.
+    if (req.assigned_to or None) != (existing.get('assigned_to') or None):
+        patch.update(_assigned_chore_fields(req.assigned_to))
+    if not storage.update_chore(chore_id, patch):
         raise HTTPException(status_code=404, detail="Chore not found")
     return {"status": "updated"}
 
@@ -4730,13 +4770,30 @@ def reopen_chore_endpoint(chore_id: str, background_tasks: BackgroundTasks):
 class ChoreMemberRequest(BaseModel):
     member_id: str
 
+def _chore_claimant(holder_id: str):
+    """Who is taking this chore — a member, or an outside hand.
+
+    An outside hand is not a new concept here: an adult already claims a chore
+    and earns nothing (`verify_chore` awards points only when the claimant's
+    role is `child`), and a contact is the same shape — somebody who does the
+    work and is not in the points economy. So they widen the id space and
+    change no rule. Returns (name, is_assist) or (None, False) if the id is
+    nobody at all."""
+    if _assist_svc.is_assist_id(holder_id):
+        c = storage.get_assist_contact(_assist_svc.contact_id(holder_id))
+        return ((c or {}).get('name'), True) if c else (None, False)
+    m = storage.get_member(holder_id)
+    if not m:
+        return (None, False)
+    if m.get('role') == 'helper':
+        raise HTTPException(status_code=403, detail="Helpers don't do family chores")
+    return (m.get('name'), False)
+
 @app.post("/api/chores/{chore_id}/claim")
 def claim_chore_endpoint(chore_id: str, req: ChoreMemberRequest):
-    member = storage.get_member(req.member_id)
-    if not member:
+    name, _is_assist = _chore_claimant(req.member_id)
+    if not name:
         raise HTTPException(status_code=404, detail="Member not found")
-    if member.get('role') == 'helper':
-        raise HTTPException(status_code=403, detail="Helpers don't do family chores")
     chore = storage.get_chore(chore_id)
     if not chore:
         raise HTTPException(status_code=404, detail="Chore not found")
@@ -4766,6 +4823,35 @@ def chore_done_endpoint(chore_id: str, req: ChoreMemberRequest, background_tasks
     chore = storage.get_chore(chore_id)
     background_tasks.add_task(_notify_chore_event, 'done', chore,
                               storage.get_member(req.member_id))
+    return chore
+
+@app.post("/api/chores/{chore_id}/record")
+def record_chore_endpoint(chore_id: str, req: ChoreMemberRequest,
+                          background_tasks: BackgroundTasks):
+    """"Maddie did the dishes" — claim and finish in one call.
+
+    An outside hand has no login by definition, so the claim → done pair a kid
+    walks through by tapping cannot be walked by them. A parent records it
+    instead, in one action, and the chore lands in the SAME `done` state
+    awaiting the same verification — which is what reopens it on its cadence.
+    Works for a member too: an adult who just did it without claiming first
+    should not have to pretend they did."""
+    name, _is_assist = _chore_claimant(req.member_id)
+    if not name:
+        raise HTTPException(status_code=404, detail="Nobody by that id")
+    chore = storage.get_chore(chore_id)
+    if not chore:
+        raise HTTPException(status_code=404, detail="Chore not found")
+    eligible = chore.get('eligible_member_ids') or []
+    if eligible and req.member_id not in eligible:
+        raise HTTPException(status_code=403, detail=f"{name} isn't on this chore")
+    if chore.get('state') not in ('open', 'claimed'):
+        raise HTTPException(status_code=409, detail="That chore isn't waiting to be done")
+    storage.update_chore(chore_id, {'state': 'done', 'claimed_by': req.member_id,
+                                    'claimed_at': time.time(), 'done_at': time.time(),
+                                    'rejected_reason': None})
+    chore = storage.get_chore(chore_id)
+    background_tasks.add_task(_notify_chore_event, 'done', chore, None)
     return chore
 
 @app.post("/api/chores/{chore_id}/verify")

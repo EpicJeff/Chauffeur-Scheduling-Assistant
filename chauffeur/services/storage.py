@@ -1440,10 +1440,22 @@ def delete_member_tokens(member_id: str):
 CHORE_CLAIM_CAP = 3
 CHORE_STALE_CLAIM_HOURS = 48
 
-def _chore_reset_fields():
-    return {'state': 'open', 'claimed_by': None, 'claimed_at': None,
+def _chore_reset_fields(chore: dict = None):
+    """The fields that put a chore back in play.
+
+    An ASSIGNED chore comes back to its holder rather than to the pot — "the
+    dishes are Maddie's" is a standing arrangement, and a recurring chore that
+    quietly went up for grabs every night would be a different promise from
+    the one the parent made."""
+    import time as _t
+    base = {'state': 'open', 'claimed_by': None, 'claimed_at': None,
             'done_at': None, 'verified_by': None, 'verified_at': None,
             'rejected_reason': None, 'reopens_on': None}
+    holder = (chore or {}).get('assigned_to')
+    if holder:
+        base.update({'state': 'claimed', 'claimed_by': holder,
+                     'claimed_at': _t.time()})
+    return base
 
 def _chore_maintenance():
     import time
@@ -1454,10 +1466,13 @@ def _chore_maintenance():
         for c in chores_table.all():
             if (c.get('state') == 'verified' and c.get('recurrence') != 'once'
                     and c.get('reopens_on') and c['reopens_on'] <= today):
-                chores_table.update(_chore_reset_fields(), doc_ids=[c.doc_id])
-            elif (c.get('state') == 'claimed' and c.get('claimed_at')
+                chores_table.update(_chore_reset_fields(c), doc_ids=[c.doc_id])
+            elif (c.get('state') == 'claimed' and not c.get('assigned_to')
+                    and c.get('claimed_at')
                     and now - c['claimed_at'] > CHORE_STALE_CLAIM_HOURS * 3600):
-                # Claimed then ignored: release back to the pot.
+                # Claimed then ignored: release back to the pot. An ASSIGNED
+                # chore is never released — nobody claimed it, so there is no
+                # claim to go stale, and the standing arrangement stands.
                 chores_table.update({'state': 'open', 'claimed_by': None,
                                      'claimed_at': None, 'rejected_reason': None},
                                     doc_ids=[c.doc_id])

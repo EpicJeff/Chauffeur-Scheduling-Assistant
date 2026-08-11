@@ -262,6 +262,13 @@ class Chore(BaseModel):
     points: int = 10
     recurrence: str = 'once'  # once | daily | weekly | monthly
     eligible_member_ids: List[str] = Field(default_factory=list)  # empty = any non-helper
+    # ASSIGNED work, as opposed to the pot. Kids claim what they want; a parent
+    # can also just hand a chore to somebody — a kid, or an outside hand
+    # ("Maddie does the dishes"). An assigned chore never sits in the open pot,
+    # and it returns to its holder each time it recurs rather than going back
+    # up for grabs. Member id, or 'assist:<contact_id>' for outside help, who
+    # differ in exactly one way: no login, so a parent marks it done for them.
+    assigned_to: Optional[str] = None
     state: str = 'open'  # open | claimed | done | verified
     claimed_by: Optional[str] = None
     claimed_at: Optional[float] = None
