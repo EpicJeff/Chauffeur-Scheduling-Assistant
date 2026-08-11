@@ -3255,10 +3255,16 @@ def block_ingest_sender(req: IngestBlockRequest):
         raise HTTPException(status_code=400, detail="A pattern is required")
     keywords = [k.strip().lower() for k in (req.keywords or []) if (k or '').strip()]
     s = storage.get_settings() or {}
+    existing = [e for e in (s.get('ingest_sender_blocklist') or [])
+                if isinstance(e, dict) and (e.get('pattern') or '').strip().lower() == pattern]
     current = [e for e in (s.get('ingest_sender_blocklist') or [])
                if isinstance(e, dict) and (e.get('pattern') or '').strip().lower() != pattern]
     current.append({'pattern': pattern, 'label': (req.label or '').strip(),
-                    'keywords': keywords, 'added_at': time.time()})
+                    'keywords': keywords,
+                    # Keep the original date on an edit: when the family first
+                    # decided to stop reading a sender is a different fact from
+                    # when they last adjusted how.
+                    'added_at': (existing[0].get('added_at') if existing else None) or time.time()})
     storage.patch_settings({'ingest_sender_blocklist': current})
     # The streak was the reason the offer appeared; it has been answered.
     streaks = storage.get_app_state('intake_ignore_streaks') or {}
@@ -3267,8 +3273,9 @@ def block_ingest_sender(req: IngestBlockRequest):
                               {k: v for k, v in streaks.items() if pattern not in (k or '')})
     what = (f'mail from {pattern} whose subject has {", ".join(keywords)}'
             if keywords else f'mail matching {pattern}')
+    verb = 'updated' if existing else 'added'
     storage.add_ingest_log({'from': pattern, 'subject': '(skip rule)',
-                            'outcome': f'skip rule added — {what} will be skipped'})
+                            'outcome': f'skip rule {verb} — {what} will be skipped'})
     return {"status": "blocked", "pattern": pattern,
             "ingest_sender_blocklist": current}
 

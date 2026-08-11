@@ -504,6 +504,41 @@ def test_the_block_is_reachable_by_hand():
     check('blockKeywords' in page and 'subject' in page,
           "and a skip rule can be narrowed to subject keywords rather than "
           "blocking a sender outright")
+    check('editSkipRule' in page and 'cancelSkipRuleEdit' in page,
+          "a rule can be EDITED, not only removed — fixing a typo or adding a "
+          "keyword must not cost you the whole rule")
+
+
+def test_editing_a_skip_rule():
+    """A rule is its sender and its keywords, so both have to be changeable.
+    Editing the sender must retire the old pattern, or the original quietly
+    goes on filtering under a name no longer shown as the one you edited."""
+    print("editing a skip rule ...")
+    import main
+    storage.patch_settings({'ingest_sender_blocklist': []})
+    main.block_ingest_sender(main.IngestBlockRequest(pattern='@teamsnap.com'))
+    first = (storage.get_settings() or {})['ingest_sender_blocklist'][0]
+
+    # Same pattern, keywords added: an update, not a second rule.
+    res = main.block_ingest_sender(main.IngestBlockRequest(
+        pattern='@teamsnap.com', keywords=['reminder', 'digest']))
+    rules = res['ingest_sender_blocklist']
+    check(len(rules) == 1 and rules[0]['keywords'] == ['reminder', 'digest'],
+          f"editing replaces the rule rather than stacking a second: {rules}")
+    check(rules[0]['added_at'] == first['added_at'],
+          "and keeps the original date — when you decided to stop reading a "
+          "sender is a different fact from when you last adjusted how")
+    check(any('skip rule updated' in (r.get('outcome') or '')
+              for r in storage.get_ingest_log()),
+          "the log says updated, not added")
+
+    # Narrowed rule really is narrower now.
+    rule = (storage.get_settings() or {})['ingest_sender_blocklist']
+    check(not email_ingest.sender_blocked('x@teamsnap.com', rule, subject='Team photos'),
+          "the edit took effect: their announcements come through again")
+    check(email_ingest.sender_blocked('x@teamsnap.com', rule, subject='Weekly digest'),
+          "while the newly added keyword fires")
+    storage.patch_settings({'ingest_sender_blocklist': []})
 
 
 def test_log_collapse():
@@ -601,6 +636,7 @@ if __name__ == '__main__':
     test_time_and_place_rule_has_guards()
     test_past_ignores_can_still_be_blocked()
     test_the_block_is_reachable_by_hand()
+    test_editing_a_skip_rule()
     test_log_collapse()
     test_fuzzy_dedup()
     print(f"\n{PASS} passed, {FAIL} failed")

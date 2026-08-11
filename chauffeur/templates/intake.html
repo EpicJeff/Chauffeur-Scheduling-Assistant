@@ -445,6 +445,8 @@
                                     ? 'subject contains: ' + entry.keywords.join(', ')
                                     : 'everything from this sender'"></span>
                             <span class="text-xs text-gray-500" x-show="entry.label" x-text="entry.label"></span>
+                            <button @click="editSkipRule(entry)"
+                                class="text-gray-300 hover:text-white bg-gray-700 px-3 py-1 rounded-lg font-bold text-sm">Edit</button>
                             <button @click="unblockSender(entry.pattern)"
                                 class="text-blue-400 hover:text-blue-300 bg-blue-500/10 px-3 py-1 rounded-lg font-bold text-sm">Remove</button>
                         </div>
@@ -452,16 +454,23 @@
                     <p x-show="!(config.ingest_sender_blocklist || []).length"
                         class="text-gray-500 text-sm italic mb-5">No skip rules. When you keep ignoring a sender,
                         Chauffeur offers a button on the proposal itself.</p>
-                    <div class="flex flex-col md:flex-row gap-2 mb-5">
+                    <div class="flex flex-col md:flex-row gap-2 mb-2">
                         <input type="text" x-model="blockInput" placeholder="@teamsnap.com"
                             @keydown.enter="blockPattern(blockInput, '', blockKeywords)"
-                            class="flex-1 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white font-mono text-sm">
+                            class="flex-1 bg-gray-900 border rounded-lg p-2.5 text-white font-mono text-sm"
+                            :class="blockEditing ? 'border-amber-500/60' : 'border-gray-600'">
                         <input type="text" x-model="blockKeywords" placeholder="subject keywords (optional): reminder, digest"
                             @keydown.enter="blockPattern(blockInput, '', blockKeywords)"
-                            class="flex-1 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-sm">
+                            class="flex-1 bg-gray-900 border rounded-lg p-2.5 text-white text-sm"
+                            :class="blockEditing ? 'border-amber-500/60' : 'border-gray-600'">
                         <button @click="blockPattern(blockInput, '', blockKeywords)"
-                            class="text-amber-300 hover:text-amber-200 bg-amber-500/10 border border-amber-500/30 px-4 py-2.5 rounded-lg font-bold text-sm">Add skip rule</button>
+                            class="text-amber-300 hover:text-amber-200 bg-amber-500/10 border border-amber-500/30 px-4 py-2.5 rounded-lg font-bold text-sm"
+                            x-text="blockEditing ? 'Save changes' : 'Add skip rule'"></button>
+                        <button @click="cancelSkipRuleEdit()" x-show="blockEditing"
+                            class="text-gray-400 hover:text-gray-200 bg-gray-700/50 px-4 py-2.5 rounded-lg font-bold text-sm">Cancel</button>
                     </div>
+                    <p class="text-xs mb-5" :class="blockEditing ? 'text-amber-400/80' : 'text-transparent'"
+                        x-text="blockEditing ? ('Editing ' + blockEditing + ' — clearing the keywords makes it skip everything from that sender.') : '·'"></p>
 
                     <div class="flex gap-3">
                         <button @click="saveConfig()" :disabled="savingConfig"
@@ -483,6 +492,7 @@
                 passwordInput: '',
                 blockInput: '',
                 blockKeywords: '',
+                blockEditing: null,
                 calendarTargets: [],
                 taskTargets: [],
                 passengerChips: [],
@@ -771,33 +781,65 @@
                     if (!pattern) { showGlobalAlert('That proposal has no sender to block.'); return; }
                     await this.blockPattern(pattern, p.source_subject || '');
                 },
+                // Editing loads the rule back into the same two fields rather
+                // than opening a second editor — a rule IS its sender and its
+                // keywords, so there is nothing else to show.
+                editSkipRule(entry) {
+                    this.blockEditing = entry.pattern;
+                    this.blockInput = entry.pattern;
+                    this.blockKeywords = (entry.keywords || []).join(', ');
+                },
+                cancelSkipRuleEdit() {
+                    this.blockEditing = null;
+                    this.blockInput = '';
+                    this.blockKeywords = '';
+                },
                 async blockPattern(pattern, label, keywordsText) {
                     pattern = (pattern || '').trim().toLowerCase();
                     if (!pattern) return;
                     const keywords = (keywordsText || '').split(',')
                         .map(s => s.trim().toLowerCase()).filter(Boolean);
-                    const scope = keywords.length
-                        ? `Mail from "${pattern}" whose subject contains ${keywords.map(k => `"${k}"`).join(' or ')} `
-                          + `will be skipped. Everything else from them still comes through.`
-                        : `All mail matching "${pattern}" will be skipped before it is read.`;
-                    if (!await promptConfirm('Add this skip rule?',
-                        `${scope} Skips stay visible in Activity, and you can remove the rule here at any time.`,
-                        'Add rule', 'Cancel')) return;
+                    const editing = this.blockEditing;
+                    // Editing an existing rule needs no confirmation — the
+                    // decision to skip this sender was already made, and this
+                    // is only tuning how. A NEW rule still asks.
+                    if (!editing) {
+                        const scope = keywords.length
+                            ? `Mail from "${pattern}" whose subject contains ${keywords.map(k => `"${k}"`).join(' or ')} `
+                              + `will be skipped. Everything else from them still comes through.`
+                            : `All mail matching "${pattern}" will be skipped before it is read.`;
+                        if (!await promptConfirm('Add this skip rule?',
+                            `${scope} Skips stay visible in Activity, and you can remove the rule here at any time.`,
+                            'Add rule', 'Cancel')) return;
+                    } else if (editing !== pattern) {
+                        // The sender itself was changed, so the old rule has to
+                        // go — saving under a new pattern would otherwise leave
+                        // the original quietly still filtering.
+                        try {
+                            await fetch(`${this.apiBase}api/ingest/unblock-sender`, {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ pattern: editing }) });
+                        } catch (e) { /* the save below still reports failure */ }
+                    }
                     try {
                         const res = await fetch(`${this.apiBase}api/ingest/block-sender`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ pattern, label: label || '', keywords }) });
                         const data = await res.json();
-                        if (!res.ok) { showGlobalAlert(data.detail || "Couldn't block that sender."); return; }
+                        if (!res.ok) { showGlobalAlert(data.detail || "Couldn't save that skip rule."); return; }
                         this.config.ingest_sender_blocklist = data.ingest_sender_blocklist || [];
                         this.blockInput = '';
                         this.blockKeywords = '';
+                        this.blockEditing = null;
                         await Promise.all([this.loadProposals(), this.loadLog(),
                                            this.loadIgnoredSenders()]);
-                        showGlobalAlert(`Blocked ${pattern} ✉️`, 'success');
-                    } catch (e) { showGlobalAlert("Couldn't block that sender."); }
+                        showGlobalAlert(editing ? `Updated ${pattern} ✉️` : `Skipping ${pattern} ✉️`, 'success');
+                    } catch (e) { showGlobalAlert("Couldn't save that skip rule."); }
                 },
                 async unblockSender(pattern) {
+                    // Removing the rule you happen to be editing leaves the
+                    // form pointing at something that no longer exists.
+                    if (this.blockEditing === pattern) this.cancelSkipRuleEdit();
                     try {
                         const res = await fetch(`${this.apiBase}api/ingest/unblock-sender`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
