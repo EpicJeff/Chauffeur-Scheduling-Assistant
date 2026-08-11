@@ -3023,8 +3023,23 @@ def request_redemption(reward_id: str, member_id: str) -> str:
         redemptions_table.insert(redemption)
     return redemption['id']
 
-def decide_redemption(redemption_id: str, decider_member_id: str, approve: bool) -> Optional[dict]:
-    """Approve deducts points via the ledger; deny just closes it."""
+def decide_redemption(redemption_id: str, decider_member_id: str, approve: bool,
+                      override: bool = False) -> Optional[dict]:
+    """Approve deducts points via the ledger; deny just closes it.
+
+    Returns the redemption, None if it isn't pending, or `'insufficient'` when
+    approving would take the child negative and no override was given.
+
+    The request path already holds points against the balance
+    (`get_spendable_points` subtracts pending requests and pool pledges), so a
+    kid cannot ask for more than they would have left. The hole this closes is
+    later: a parent `adjust_points` downward does not cancel existing holds
+    (`reset_points` does — a hold against a zeroed balance can never be
+    honoured), so an approved-months-later request could deduct points that
+    are no longer there. Refusing by default makes the balance mean something;
+    the override exists because a parent saying "have it anyway" is a real
+    decision, and is stamped on the row rather than being invisible.
+    """
     import time
     import uuid as _uuid
     with db_lock:
@@ -3032,8 +3047,15 @@ def decide_redemption(redemption_id: str, decider_member_id: str, approve: bool)
         if not rows or rows[0].get('state') != 'pending':
             return None
         red = dict(rows[0])
+        # Denials never bounds-check: closing a request costs nothing, and
+        # reset_points relies on being able to deny holds against a zero.
+        if approve and not override \
+                and get_points_balance(red['member_id']) < int(red.get('cost', 0)):
+            return 'insufficient'
         updates = {'state': 'approved' if approve else 'denied',
                    'decided_by': decider_member_id, 'decided_at': time.time()}
+        if approve and override:
+            updates['overridden'] = True
         redemptions_table.update(updates, Query().id == redemption_id)
         red.update(updates)
         if approve:

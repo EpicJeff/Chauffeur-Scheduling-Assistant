@@ -5636,15 +5636,27 @@ def redeem_reward(reward_id: str, req: ChoreMemberRequest, background_tasks: Bac
 
 class RedemptionDecision(BaseModel):
     approve: bool
+    # A parent saying "have it anyway" when the points aren't there. Explicit
+    # because the balance should mean something by default.
+    override: Optional[bool] = False
 
 @app.post("/api/redemptions/{redemption_id}/decide")
 def decide_redemption_endpoint(redemption_id: str, req: RedemptionDecision,
                                background_tasks: BackgroundTasks,
                                x_member_token: Optional[str] = Header(None)):
     parent = require_parent_token(x_member_token)
-    red = storage.decide_redemption(redemption_id, parent['id'], req.approve)
+    red = storage.decide_redemption(redemption_id, parent['id'], req.approve,
+                                    override=bool(req.override))
     if red is None:
         raise HTTPException(status_code=409, detail="Redemption is not pending")
+    if red == 'insufficient':
+        pending = storage.get_redemptions(None, 'pending')
+        row = next((r for r in pending if r['id'] == redemption_id), {})
+        balance = storage.get_points_balance(row.get('member_id') or '')
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Not enough points — {balance} available, this costs "
+                    f"{row.get('cost')}. Approve anyway to allow it."))
     kid = storage.get_member(red['member_id'])
     if kid:
         body = f"{red['reward_title']} approved! -{red['cost']} points" if req.approve \

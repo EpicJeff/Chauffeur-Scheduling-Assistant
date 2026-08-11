@@ -300,6 +300,64 @@ def scenario_verification_is_reachable_from_the_admin_page():
           "and it authenticates properly rather than posting unauthenticated")
 
 
+def scenario_a_reward_cannot_be_approved_into_the_red():
+    """Holds already stop a kid REQUESTING more than they have left — spendable
+    subtracts pending requests and pool pledges. The hole was on the other
+    side: approval never re-checked, and a parent adjusting points downward
+    does not cancel existing holds the way a reset does. So a request made
+    when the points were there could still be approved after they were gone."""
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+    _member("kid", "Kid", "child")
+    _member("mom", "Mom", "parent")
+    storage.adjust_points("kid", 100, "seed", "mom")
+    rid = storage.add_reward({"id": "r1", "title": "Movie night", "cost": 60,
+                              "description": "", "pooled": False})
+    check(storage.request_redemption("r1", "kid") not in ('missing', 'pooled', 'insufficient'),
+          "60 of 100 is affordable")
+    # The half that already worked: the first request holds its cost.
+    storage.add_reward({"id": "r2", "title": "Ice cream", "cost": 50,
+                        "description": "", "pooled": False})
+    check(storage.request_redemption("r2", "kid") == 'insufficient',
+          "a second request cannot spend the points the first is holding")
+
+    # Now the parent takes points away without touching the pending request.
+    storage.adjust_points("kid", -70, "lost the tablet", "mom")
+    red = storage.get_redemptions("kid", "pending")[0]
+    check(storage.decide_redemption(red['id'], "mom", True) == 'insufficient',
+          "approving what the balance no longer covers is refused")
+    check(storage.get_points_balance("kid") == 30, "and nothing was deducted")
+
+    mom_token = storage.create_member_token("mom")
+    try:
+        main.decide_redemption_endpoint(red['id'], main.RedemptionDecision(approve=True),
+                                        BackgroundTasks(), mom_token)
+        check(False, "the endpoint must refuse it too")
+    except HTTPException as e:
+        check(e.status_code == 409 and 'Approve anyway' in e.detail,
+              f"409 that says how to proceed rather than a dead end: {e.detail}")
+
+    # Denying is never bounds-checked — closing a request costs nothing, and
+    # reset_points relies on being able to deny holds against a zeroed balance.
+    check(storage.decide_redemption(red['id'], "mom", False)['state'] == 'denied',
+          "a denial always goes through")
+
+    # And the override is a real decision, recorded on the row. Getting back
+    # into this state needs the points to exist AT REQUEST TIME and vanish
+    # afterwards — asking for 60 on a balance of 30 is refused outright, which
+    # is the request-side guard doing its job.
+    storage.adjust_points("kid", 70, "back on the tablet", "mom")
+    check(storage.request_redemption("r1", "kid") not in ('insufficient',),
+          "affordable again once the points are restored")
+    storage.adjust_points("kid", -70, "lost it again", "mom")
+    red2 = storage.get_redemptions("kid", "pending")[0]
+    out = storage.decide_redemption(red2['id'], "mom", True, override=True)
+    check(out['state'] == 'approved' and out.get('overridden') is True,
+          "a parent can still say have it anyway, and it is stamped as such")
+    check(storage.get_points_balance("kid") == -30,
+          "the deduction is the full cost — an override is generous, not free")
+
+
 def scenario_reopen():
     import main
     from fastapi import BackgroundTasks, HTTPException
@@ -350,6 +408,7 @@ def scenario_reopen():
 
 SCENARIOS = [
     scenario_verification_is_reachable_from_the_admin_page,
+    scenario_a_reward_cannot_be_approved_into_the_red,
     scenario_lifecycle_and_points,
     scenario_adults_claimable_but_pointless,
     scenario_claim_cap,

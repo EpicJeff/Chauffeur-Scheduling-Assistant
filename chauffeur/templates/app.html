@@ -3731,15 +3731,26 @@
             fetchChores();
         }
 
-        async function decideRedemption(id, approve) {
+        async function decideRedemption(id, approve, override) {
             const res = await fetch(`${apiBase}api/redemptions/${id}/decide`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Member-Token': memberToken() },
-                body: JSON.stringify({ approve: approve })
+                body: JSON.stringify({ approve: approve, override: !!override })
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                showGlobalAlert(err.detail || 'Could not decide');
+                // The server refuses an approval the balance can't cover. The
+                // parent can still say yes — but it has to be a decision, not a
+                // dead end, or the phone becomes the surface that can't act.
+                if (res.status === 409 && approve && !override
+                        && /Approve anyway/i.test(err.detail || '')) {
+                    if (await promptConfirm('Approve anyway?', err.detail,
+                                            'Approve anyway', 'Cancel')) {
+                        return decideRedemption(id, true, true);
+                    }
+                } else {
+                    showGlobalAlert(err.detail || 'Could not decide');
+                }
             }
             fetchChores();
         }

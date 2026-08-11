@@ -968,21 +968,41 @@
                     return this.balanceOf(r.member_id) >= (r.cost || 0);
                 },
                 async decideRedemption(r, approve) {
-                    // Approving is a deduction the server does not bounds-check,
-                    // so an unaffordable one gets a confirmation rather than a
-                    // silent negative balance. Denying needs no ceremony.
+                    // The server REFUSES an approval the balance can't cover, so
+                    // this confirmation is the override itself rather than a
+                    // warning over a click that would have gone through anyway.
+                    // Denying needs no ceremony — it costs nothing.
+                    let override = false;
                     if (approve && !this.affordsRedemption(r)) {
                         if (!await promptConfirm('Approve anyway?',
                             `${r.member_name} has ${this.balanceOf(r.member_id)} points and this costs `
                             + `${r.cost}. Approving takes the full cost, leaving them negative.`,
                             'Approve anyway', 'Cancel')) return;
+                        override = true;
                     }
                     this.busyRedemptionId = r.id;
                     try {
                         const res = await this._parentPost(`api/redemptions/${r.id}/decide`,
-                                                           { approve: !!approve });
+                                                           { approve: !!approve, override });
                         if (!res) return;
                         const data = await res.json().catch(() => ({}));
+                        // A balance that moved since this list was drawn: the
+                        // server saw the truth we didn't, so ask and retry.
+                        if (res.status === 409 && approve && !override
+                                && /Approve anyway/i.test(data.detail || '')) {
+                            if (await promptConfirm('Approve anyway?', data.detail,
+                                                    'Approve anyway', 'Cancel')) {
+                                const retry = await this._parentPost(
+                                    `api/redemptions/${r.id}/decide`, { approve: true, override: true });
+                                if (retry && retry.ok) {
+                                    await Promise.all([this.loadRedemptions(), this.loadPoints()]);
+                                    showGlobalAlert(`Approved — ${r.cost} points spent 🎁`, 'success');
+                                    return;
+                                }
+                            }
+                            await this.loadPoints();
+                            return;
+                        }
                         if (!res.ok) { showGlobalAlert(data.detail || "Couldn't record that."); return; }
                         await Promise.all([this.loadRedemptions(), this.loadPoints()]);
                         showGlobalAlert(approve
