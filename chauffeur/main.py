@@ -3471,6 +3471,71 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
     return {"status": "approved", "event_id": gid,
             "message": ' — '.join(bits) if len(bits) > 1 else bits[0]}
 
+@app.get("/api/proposals/misfiled")
+def list_misfiled_proposals():
+    """To-dos that were approved onto a CALENDAR and became all-day 📌 events.
+
+    Until v2.170.0 the `household_task` branch of the approve endpoint existed
+    and no dropdown offered it, so a household to-do's only plausible target
+    was somebody's calendar. Those items then landed in the one place nothing
+    in Chauffeur could see.
+
+    Identified from the PROPOSAL LEDGER, not by scanning calendars for the 📌
+    the extractor prepends: the other three approval branches write
+    `created_task_id`/`created_errand_id`, so a task-kind proposal carrying
+    `created_event_id` means exactly "a to-do that became a calendar event".
+    Emoji-matching a calendar would guess back something we already knew, and
+    would collect every legitimate all-day event as a false positive.
+    """
+    out = []
+    for p in storage.get_proposals('approved'):
+        if p.get('kind') != 'task' or not p.get('created_event_id'):
+            continue
+        out.append({
+            'id': p.get('id'),
+            'title': (p.get('title') or '').lstrip('📌').strip() or p.get('title'),
+            'start': p.get('start'), 'notes': p.get('notes') or '',
+            'calendar_id': p.get('calendar_id'),
+            'source_subject': p.get('source_subject') or '',
+        })
+    return sorted(out, key=lambda r: r.get('start') or '')
+
+@app.post("/api/proposals/{proposal_id}/refile")
+def refile_proposal(proposal_id: str, background_tasks: BackgroundTasks):
+    """Move one mis-filed to-do onto the household list and take the stray
+    calendar event back off. Both halves, because leaving the event behind
+    would put one obligation in two places with no rule for which one you
+    complete."""
+    from services import calendar as gcal
+    from models.schemas import HouseholdTask
+    prop = storage.get_proposal(proposal_id)
+    if not prop:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    if prop.get('kind') != 'task' or not prop.get('created_event_id'):
+        raise HTTPException(status_code=400,
+                            detail="That proposal isn't a to-do sitting on a calendar.")
+    due = (prop.get('start') or '')[:10]
+    try:
+        datetime.strptime(due, '%Y-%m-%d')
+    except (ValueError, TypeError):
+        due = None            # a task may legitimately have no deadline
+    # The 📌 is a proposal-display convention; the household list has its own.
+    title = (prop.get('title') or '').lstrip('📌').strip() or prop.get('title')
+    task = HouseholdTask(title=title, due_date=due, source='intake',
+                         source_ref=proposal_id,
+                         notes=prop.get('notes') or '').model_dump()
+    storage.add_household_task(task)
+    removed = gcal.remove_event(prop.get('calendar_id'), prop['created_event_id'])
+    storage.update_proposal(proposal_id, {
+        'calendar_id': 'household_task', 'created_task_id': task['id'],
+        'created_event_id': None,
+    })
+    background_tasks.add_task(trigger_background_refresh)
+    return {"status": "refiled", "task_id": task['id'],
+            "removed_event": bool(removed),
+            "message": f'Moved "{title}" to the household list 📋'
+                       + ('' if removed else ' — the calendar event needs deleting by hand.')}
+
 @app.post("/api/proposals/{proposal_id}/ignore")
 def ignore_proposal(proposal_id: str):
     prop = storage.get_proposal(proposal_id)
@@ -10131,6 +10196,29 @@ def trigger_background_refresh(start_date_str=None, end_date_str=None, force_ref
 
 import threading
 
+def is_display_only_event(e) -> bool:
+    """An event the family must SEE but the solver must never touch.
+
+    All-day events are the whole category today. You cannot be driven to a
+    thing with no time of day, so they carry no scheduling meaning — but they
+    carry a great deal of FAMILY meaning: a no-school day, a birthday, "Dad in
+    Chicago". Those were dropped at fetch and therefore appeared on no screen
+    at all, which made the calendar a view of the driving schedule rather than
+    a view of the family's life.
+
+    The reason they must stay out of the solver is specific and severe: a
+    midnight-to-midnight span overlaps every drive that day, and matcher 3c
+    ("Driver Personal Calendar Overlaps") BANS a driver from any event that
+    truly overlaps one of their personal events. One birthday on a parent's
+    calendar would take them off every drive that day.
+
+    A background trip is the exception: an all-day trip IS scheduling
+    information, and the solver has always been meant to see it.
+    """
+    return (bool(getattr(e, 'all_day', False))
+            and getattr(e, 'event_type', '') != 'background_trip')
+
+
 def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh=False, draft=False):
     try:
         # The single serialization point. Every caller passes through here -
@@ -10251,9 +10339,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     is_trip = True
                     e.event_type = 'background_trip'
                     
-            if getattr(e, 'all_day', False) and not is_trip:
-                continue
-                
+            # All-day events used to be dropped right here, which is why a
+            # no-school day existed on no Chauffeur screen. They now flow on
+            # and are held back one step later — after the UI payload, before
+            # the solver. See is_display_only_event().
             all_fetched_events.append(e)
             
         pass
@@ -10400,6 +10489,15 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             e.trip_id = config.get('trip_id')
             
         all_events_for_ui[e.id] = e
+
+        # The line between "the family's calendar" and "the driving schedule".
+        # Everything above this point is what the family SEES; everything below
+        # it is what the solver reasons about. A display-only event stops here:
+        # it is in the UI payload, and it never reaches the solve set, the
+        # inbox, or driver_events — where a 24-hour span would ban its owner
+        # from every drive that day. See is_display_only_event().
+        if is_display_only_event(e):
+            continue
 
         # 2. Check Passengers (Config -> Rules -> Calendar/Hashtags)
         matched_passengers = []

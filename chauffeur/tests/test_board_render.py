@@ -51,9 +51,16 @@ UNDERWAY_START = (_NOW - _D.timedelta(minutes=53)).isoformat()
 UNDERWAY_END = (_NOW + _D.timedelta(minutes=7)).isoformat()
 # The upcoming case: 2 hr 26 min until it starts, 1 hr 46 min until you have to
 # be out of the door. The exact numbers from the request.
-SOON_START = (_NOW + _D.timedelta(minutes=146)).isoformat()
-SOON_END = (_NOW + _D.timedelta(minutes=206)).isoformat()
-SOON_LEAVE = (_NOW + _D.timedelta(minutes=106)).isoformat()
+#
+# The extra 30 seconds are load-bearing: `_NOW` is stamped at import, but the
+# countdown is computed by jsdom at render time — after this file is written,
+# node is spawned and the page boots. On a whole-minute offset any of that
+# drift crosses a boundary and the pill reads 1 hr 45 min, so the assertion
+# failed at random. Landing mid-minute makes the floor stable for any setup
+# under half a minute, and keeps the exact wording pinned.
+SOON_START = (_NOW + _D.timedelta(minutes=146, seconds=30)).isoformat()
+SOON_END = (_NOW + _D.timedelta(minutes=206, seconds=30)).isoformat()
+SOON_LEAVE = (_NOW + _D.timedelta(minutes=106, seconds=30)).isoformat()
 
 
 def _board(hero=None):

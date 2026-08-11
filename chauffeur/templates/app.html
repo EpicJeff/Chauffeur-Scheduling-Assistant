@@ -1682,9 +1682,13 @@
                 const inList = (proposalTargets || []).some(o => o.id === p.calendar_id);
                 const extraOpt = (p.calendar_id && !inList)
                     ? `<option value="${escProp(p.calendar_id)}">Family calendar</option>` : '';
+                // The household list leads for a to-do: it is the general case
+                // (permission slip, payment, renewal), where a kid's school
+                // list is the specific one.
+                const household = { id: 'household_task', label: '📋 Household list' };
                 const targetList = p.kind === 'task'
-                    ? [...proposalTaskTargets, ...(proposalTargets || [])]
-                    : (proposalTargets || []);
+                    ? [household, ...proposalTaskTargets, ...(proposalTargets || [])]
+                    : [...(proposalTargets || []), household];
                 targetList.push({ id: 'errand', label: '🚗 Drive errand' });
                 const opts = targetList.map(o =>
                     `<option value="${escProp(o.id)}">${escProp(o.label)}</option>`).join('');

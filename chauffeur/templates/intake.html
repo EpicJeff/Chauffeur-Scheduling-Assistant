@@ -220,6 +220,35 @@
                 </div>
             </section>
 
+            <!-- ===== Mis-filed to-dos (the rescue) =====
+                 Approved to-dos that went to a calendar because the household
+                 list wasn't offered as a target. Driven by the proposal ledger,
+                 so this list is exact rather than a guess at what a 📌 means. -->
+            <section class="mb-10" x-show="misfiled.length">
+                <div class="flex items-center justify-between gap-2 flex-wrap mb-3">
+                    <h3 class="text-xs font-black uppercase tracking-widest text-gray-500">
+                        Filed on a calendar by mistake</h3>
+                    <button @click="refileAll()" :disabled="refiling"
+                        class="bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
+                        x-text="refiling ? 'Moving…' : 'Move all to the household list'"></button>
+                </div>
+                <p class="text-sm text-gray-400 mb-3">These were approved as to-dos before the household
+                    list existed as a target, so they became all-day 📌 events on a calendar. Moving one
+                    creates the household task <b>and</b> removes the calendar event, so the job lives in
+                    exactly one place.</p>
+                <div class="bg-gray-800 rounded-xl divide-y divide-gray-700/60 border border-gray-700">
+                    <template x-for="m in misfiled" :key="m.id">
+                        <div class="px-5 py-3 flex items-center gap-4 text-sm">
+                            <span class="text-gray-200 font-medium flex-1 min-w-0 truncate" x-text="m.title"></span>
+                            <span class="text-gray-500 shrink-0" x-text="(m.start || '').slice(0, 10)"></span>
+                            <button @click="refile(m)" :disabled="refiling"
+                                class="shrink-0 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-100 font-bold text-xs px-3 py-1.5 rounded-lg transition-colors">
+                                Move to household list</button>
+                        </div>
+                    </template>
+                </div>
+            </section>
+
             <!-- ===== Activity log ===== -->
             <section class="mb-10">
                 <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Recent activity
@@ -329,9 +358,12 @@
                 savingConfig: false,
                 uploadingPhoto: false,
                 busyId: null,
+                misfiled: [],
+                refiling: false,
 
                 async init() {
-                    await Promise.all([this.loadProposals(), this.loadLog(), this.loadConfig(), this.loadTargets()]);
+                    await Promise.all([this.loadProposals(), this.loadLog(), this.loadConfig(),
+                                       this.loadTargets(), this.loadMisfiled()]);
                     // The background poll creates proposals while the page is
                     // open — refresh quietly so they appear without a click.
                     setInterval(() => {
@@ -482,6 +514,43 @@
                     }
                     return body;
                 },
+                async loadMisfiled() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/proposals/misfiled`);
+                        const data = await res.json();
+                        this.misfiled = Array.isArray(data) ? data : [];
+                    } catch (e) { this.misfiled = []; }
+                },
+                async refile(m) {
+                    this.refiling = true;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/proposals/${m.id}/refile`,
+                                                { method: 'POST' });
+                        const data = await res.json();
+                        if (!res.ok) showGlobalAlert(data.detail || "Couldn't move that one.");
+                        else if (data.message) showGlobalAlert(data.message);
+                        await this.loadMisfiled();
+                    } finally { this.refiling = false; }
+                },
+                async refileAll() {
+                    this.refiling = true;
+                    let moved = 0, failed = 0;
+                    try {
+                        // Sequential on purpose: each one deletes a Google event,
+                        // and a burst of parallel deletes is how you meet a rate
+                        // limit while destroying calendar entries.
+                        for (const m of [...this.misfiled]) {
+                            try {
+                                const res = await fetch(`${this.apiBase}api/proposals/${m.id}/refile`,
+                                                        { method: 'POST' });
+                                res.ok ? moved++ : failed++;
+                            } catch (e) { failed++; }
+                        }
+                        await this.loadMisfiled();
+                        showGlobalAlert(`Moved ${moved} to the household list 📋`
+                            + (failed ? ` — ${failed} couldn't be moved.` : ''));
+                    } finally { this.refiling = false; }
+                },
                 async loadLog() {
                     try {
                         const res = await fetch(`${this.apiBase}api/ingest/log?limit=30`);
@@ -526,9 +595,14 @@
                 },
                 targetsFor(p) {
                     const errand = { id: 'errand', label: '🚗 Drive errand (auto-scheduled)' };
+                    // The household list leads for a to-do: it is the general
+                    // case (permission slip, payment, renewal), where a kid's
+                    // school list is the specific one. Offered on events too —
+                    // an "event" the extractor typed wrong is still work.
+                    const household = { id: 'household_task', label: '📋 Household list' };
                     return p.kind === 'task'
-                        ? [...this.taskTargets, ...this.calendarTargets, errand]
-                        : [...this.calendarTargets, errand];
+                        ? [household, ...this.taskTargets, ...this.calendarTargets, errand]
+                        : [...this.calendarTargets, household, errand];
                 },
                 whenLabel(p) {
                     try {
