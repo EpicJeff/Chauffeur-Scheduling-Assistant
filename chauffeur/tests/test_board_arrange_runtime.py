@@ -92,6 +92,29 @@ b.startArrange();
 
 const cell = b._cell();
 
+// --- Arranging the cards INSIDE a tile is the same gesture one level down.
+// What gets dragged is a PATH — `0.1` is the second card of the first column —
+// because the drawing is an HTML string and there is no object to point at.
+const cardTree = { type: 'horizontal-stack', cards: [
+  { type: 'vertical-stack', cards: [
+    { type: 'gauge', entity: 'sensor.a' },
+    { type: 'gauge', entity: 'sensor.b' } ] },
+  { type: 'gauge', entity: 'sensor.c' } ] };
+const deep = b.cardParent(cardTree, '0.1');
+const top = b.cardParent(cardTree, '1');
+deep.list.splice(0, 0, deep.list.splice(deep.index, 1)[0]);
+const cardOrder = cardTree.cards[0].cards.map(c => c.entity);
+
+const leaf = { kind: 'gauge', name: 'A', value: 1, pct: 0.5, min: 0, max: 2, missing: false };
+// startArrange() above left the board arranging, so the IDLE drawing has to
+// say so explicitly — the handles are markup, and drawing them when nobody is
+// arranging puts them on the wall.
+b.arranging = false;
+const idleDraw = b.drawCard({ kind: 'stack', direction: 'horizontal', cards: [
+  { kind: 'stack', direction: 'vertical', cards: [leaf] }, leaf ] }, []);
+b.arranging = true;
+const armedDraw = b.drawCard({ kind: 'stack', direction: 'vertical', cards: [leaf] }, []);
+
 // While arranging, the DRAFT is the truth.
 const draftSpan = b.spanStyle('drives');
 b.arranging = false;
@@ -121,6 +144,12 @@ console.log(JSON.stringify({
   afterCancel: afterCancel,
   orderAfterCancel: orderAfterCancel,
   arrangingAfterCancel: b.arranging,
+  cardDeepIsColumn: deep.list === cardTree.cards[0].cards && deep.index === 1,
+  cardTopIsRow: top.list === cardTree.cards && top.index === 1,
+  cardReordered: cardOrder,
+  cardPaths: (idleDraw.match(/data-path="[\d.]+"/g) || []),
+  handlesIdle: /nc-card-move/.test(idleDraw),
+  handlesArmed: /nc-card-move/.test(armedDraw) && /nc-card-size/.test(armedDraw),
 }));
 """
 
@@ -206,6 +235,36 @@ def scenario_cancel_puts_everything_back():
     check(got['orderAfterCancel'] == ['drives', 'calendar', 'map'],
           f"cancel did not restore the tile ORDER: {got['orderAfterCancel']}")
     check(got['arrangingAfterCancel'] is False, "cancel left the board in arrange mode")
+
+
+def scenario_the_cards_inside_a_tile_arrange_too():
+    """A tile made of a stack of cards is a layout as much as the board is, and
+    the reason to drag it is the reason tiles got dragging: typing numbers into
+    a list and scrolling up to see what happened is the long way round.
+
+    What moves is a PATH into the config tree. The drawing is one HTML string,
+    so there is no object on the page to point at — `0.1` is the second card of
+    the first column, and it has to address the parsed config or a drag would
+    change something nobody can see.
+    """
+    got = _run()
+    if got is None:
+        return
+    check(got['cardDeepIsColumn'],
+          "a nested path does not resolve to the list its card sits in, so a "
+          "drag would splice the wrong stack")
+    check(got['cardTopIsRow'], "a top-level path resolves to the wrong list")
+    check(got['cardReordered'] == ['sensor.b', 'sensor.a'],
+          f"reordering inside a column did not take: {got['cardReordered']}")
+    check(got['cardPaths'] == ['data-path="0"', 'data-path="0.0"', 'data-path="1"'],
+          f"the drawing does not carry each card's address: {got['cardPaths']}")
+    # The handles are markup, not an overlay — the drawing is a string, so
+    # anything positioned against a cell has to be inside it. Which means they
+    # must NOT be drawn when nobody is arranging.
+    check(not got['handlesIdle'],
+          "the drag handles are drawn on a board nobody is arranging, which "
+          "puts them on the wall")
+    check(got['handlesArmed'], "arrange mode draws no handles inside a tile")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

@@ -692,9 +692,10 @@ console.log(JSON.stringify({
   sparkRounded: spark.includes('43.68') && !spark.includes('43.6834'),
   unitSplit: spark.includes('nc-unit'),
   nestedPlain: nested.includes('class="nc-cell" data-plain'),
-  // A leaf cell is one WITHOUT data-plain. It carries an inline span now,
-  // so it is no longer followed immediately by '>'.
-  leafSurfaced: /class="nc-cell" style=/.test(nested),
+  // A leaf cell is one WITHOUT data-plain. It carries its path and an inline
+  // span now, so what identifies it is the absence of that attribute rather
+  // than whatever happens to follow the class.
+  leafSurfaced: /class="nc-cell" data-path=/.test(nested),
 }));
 """
 
