@@ -37,6 +37,38 @@
         }
         html[data-panel-theme="light"] .panel-chip { background: rgb(3 105 161 / 0.10); }
 
+        /* ── Arrange mode.
+           The board stops being a set of doors and becomes a set of objects,
+           and it has to LOOK different or the first thing anybody does is tap
+           a tile and wonder why nothing happened. */
+        .is-arranging .tile-arranging {
+            cursor: grab;
+            outline: 1px dashed var(--panel-accent);
+            outline-offset: 2px;
+            /* A tile is being dragged by the pointer, so the browser's own
+               idea of what a drag means (scroll, text selection, image drag)
+               has to be off — otherwise a slow drag scrolls the page instead
+               of moving the tile. */
+            touch-action: none;
+            user-select: none;
+        }
+        .is-arranging .tile-arranging:active { cursor: grabbing; }
+        .is-arranging .tile-dragging { opacity: 0.55; }
+        .tile-resize {
+            position: absolute;
+            right: 2px;
+            bottom: 2px;
+            width: 18px;
+            height: 18px;
+            cursor: nwse-resize;
+            touch-action: none;
+            border-right: 3px solid var(--panel-accent);
+            border-bottom: 3px solid var(--panel-accent);
+            border-bottom-right-radius: 6px;
+            opacity: 0.7;
+        }
+        .tile-resize:hover { opacity: 1; }
+
         /* ── The setup card.
            It was the one part of this page painted in literal greys —
            bg-gray-900, border-gray-700, text-gray-200 — while everything above
@@ -325,7 +357,32 @@
              the board must never silently hide what it has to say (you cannot
              tell a clipped tile from a broken one), and a tile that needs
              more room is a tile the household can make taller. -->
+        <!-- ── Arrange, on the board itself.
+             The editor below could always set a tile's width and height, as
+             two number fields in a list that looks nothing like the thing it
+             is describing. Sizing a layout by typing numbers into a list and
+             scrolling up to see what happened is the long way round; this is
+             the short one. Browser only — a wall panel is a display, and a
+             display a four-year-old can rearrange is not a display. -->
+        <div x-show="!isPanel" class="flex items-center justify-end gap-3 mb-3">
+            <span x-show="arranging" class="text-xs ed-note">
+                Drag a tile to move it, or its corner to resize.
+            </span>
+            <button x-show="arranging" @click="finishArrange()"
+                :disabled="saving"
+                class="text-xs font-bold rounded-lg px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white">
+                <span x-text="saving ? 'Saving…' : 'Done'"></span>
+            </button>
+            <button x-show="arranging" @click="cancelArrange()"
+                class="text-xs ed-btn px-2 py-1.5">Cancel</button>
+            <button x-show="!arranging" @click="startArrange()"
+                class="text-xs font-semibold ed-input rounded-lg px-3 py-1.5">
+                ⠿ Arrange tiles
+            </button>
+        </div>
+
         <div id="tile-grid" class="grid gap-4 items-stretch"
+            :class="arranging ? 'is-arranging' : ''"
             :style="`--c-lg:${cols()}; --c-md:${Math.ceil(cols() / 2)};
                      --c-sm:${Math.ceil(cols() / 4)};
                      grid-auto-rows: ${rowHeight()}px`">
@@ -349,16 +406,31 @@
                      (A dynamic tag name is a Vue idea; Alpine has nothing like
                      it, and duplicating four hundred lines of tile body under
                      two x-ifs to change one tag would be worse than either.) -->
-                <a :href="opens(t.type) ? link(t.type) : null"
-                    :style="spanStyle(t.id)"
-                    class="panel-card rounded-2xl p-4 md:p-5 min-w-0 overflow-x-hidden"
+                <a :href="!arranging && opens(t.type) ? link(t.type) : null"
+                    :style="spanStyle(t.id)" :data-tile-id="t.id"
+                    @pointerdown="arranging && startTileDrag($event, t.id)"
+                    class="panel-card rounded-2xl p-4 md:p-5 min-w-0 overflow-x-hidden relative"
                     :class="[fillsTile(t.type) ? 'flex flex-col overflow-hidden'
                                                : 'block tile-scroll overflow-y-auto',
-                             opens(t.type) ? 'transition-transform active:scale-[0.985]' : '']">
+                             !arranging && opens(t.type) ? 'transition-transform active:scale-[0.985]' : '',
+                             arranging ? 'tile-arranging' : '']">
                     <div class="flex items-center gap-2 mb-3 shrink-0">
                         <span class="text-lg" x-text="t.icon"></span>
                         <span class="panel-label" x-text="t.label"></span>
+                        <!-- The size, while arranging. A drag with no readout
+                             is a guess: "4 × 2" is the same number the editor's
+                             fields below take, so the two surfaces are visibly
+                             the same setting rather than two ways to set it. -->
+                        <span x-show="arranging" class="ml-auto text-xs panel-dim tabular-nums"
+                            x-text="spanLabel(t.id)"></span>
                     </div>
+
+                    <!-- The corner. Sized for a mouse rather than a thumb on
+                         purpose: arranging is a browser job, and a handle big
+                         enough for a finger would cover the tile's own content
+                         on every board that is not being arranged. -->
+                    <div x-show="arranging" @pointerdown.stop="startTileResize($event, t.id)"
+                        class="tile-resize" title="Drag to resize"></div>
 
                     <!-- A configured feature that is simply quiet says so. This
                          is a real answer, and it is why tiles no longer vanish
@@ -1603,6 +1675,9 @@
                 // The Add-tile picker: open, and what is typed into its search.
                 picking: false,
                 pickFilter: '',
+                // Laying the board out ON the board. Browser only.
+                arranging: false,
+                _beforeArrange: null,
                 draft: {
                     panel_pages: [], panel_tabs: [], panel_idle_return_seconds: 180,
                     panel_agenda_days: 5,
@@ -1635,7 +1710,19 @@
                 // Weather rides in the clock strip, so it does not also take a
                 // box in the grid.
                 tiles() {
-                    return (this.board.tiles || []).filter(t => t.type !== 'weather');
+                    const list = (this.board.tiles || []).filter(t => t.type !== 'weather');
+                    if (!this.arranging) return list;
+                    // Ordered by the DRAFT while arranging, so dragging a tile
+                    // moves it now rather than after a save and a refetch.
+                    // Tiles the draft does not know about (a type that has
+                    // nothing to say today is absent from the payload, not from
+                    // the board) sort to the end rather than disappearing.
+                    const order = (this.page().widgets || []).map(w => w.id);
+                    const at = id => {
+                        const i = order.indexOf(id);
+                        return i < 0 ? order.length : i;
+                    };
+                    return list.slice().sort((a, b) => at(a.id) - at(b.id));
                 },
 
                 start() {
@@ -1787,7 +1874,12 @@
                 },
 
                 spanStyle(key) {
-                    const s = (this.board.spans || {})[key] || {};
+                    // While arranging, the DRAFT is the truth — that is what
+                    // makes a drag show you the result instead of describing
+                    // it. Everywhere else the server's payload is, because a
+                    // panel has no draft and never will.
+                    const s = ((this.arranging ? this.page().spans
+                                               : this.board.spans) || {})[key] || {};
                     const max = this.cols();
                     const c = Math.min(max, Math.max(1, parseInt(s.cols, 10)
                                                        || this.defaultCols()));
@@ -2139,6 +2231,134 @@
                         out.push({ id, type, config: { ...(w.config || {}) } });
                     });
                     return out;
+                },
+
+                // --- arranging on the board itself ------------------------
+
+                // Entering arrange mode SELECTS the board being looked at.
+                // The editor below can be pointed at any board; dragging tiles
+                // around a picture of one board while writing them into another
+                // is the worst bug this feature could have, so the two are
+                // locked together rather than merely usually agreeing.
+                startArrange() {
+                    const slug = (this.board.page || {}).slug || 'home';
+                    const i = (this.draft.panel_pages || []).findIndex(p => p.slug === slug);
+                    if (i < 0) return;                 // the editor has not loaded yet
+                    this.pageIndex = i;
+                    // A snapshot to put back on Cancel. Structured-cloned so
+                    // the spans object cannot be shared with the live draft —
+                    // the whole point of a cancel is that it undoes the drags.
+                    this._beforeArrange = JSON.parse(JSON.stringify(this.page()));
+                    this.arranging = true;
+                },
+
+                // Saved FIRST, then out of arrange mode. Clearing the flag
+                // first swaps the grid back to the server's spans for the
+                // second or two before the save lands, so every tile visibly
+                // snaps to its old size and then back again.
+                async finishArrange() {
+                    await this.save();
+                    this._beforeArrange = null;
+                    this.arranging = false;
+                },
+
+                cancelArrange() {
+                    if (this._beforeArrange) {
+                        this.draft.panel_pages[this.pageIndex] = this._beforeArrange;
+                    }
+                    this._beforeArrange = null;
+                    this.arranging = false;
+                },
+
+                spanLabel(id) {
+                    const s = (this.page().spans || {})[id] || {};
+                    const c = Math.min(this.cols(), Math.max(1, parseInt(s.cols, 10)
+                                                               || this.defaultCols()));
+                    return `${c} × ${Math.max(1, parseInt(s.rows, 10) || 1)}`;
+                },
+
+                // One grid cell, measured rather than assumed. The board's
+                // column count is a household setting and the gap is a Tailwind
+                // class, so both are read off the live grid — a hard-coded 16px
+                // gap here would drift the moment that class changed and show
+                // up as a resize that runs slightly ahead of the pointer.
+                _cell() {
+                    const grid = document.getElementById('tile-grid');
+                    const cs = grid ? getComputedStyle(grid) : null;
+                    const gap = cs ? (parseFloat(cs.columnGap) || 0) : 16;
+                    const cols = this.cols();
+                    const width = grid ? grid.clientWidth : 0;
+                    return {
+                        col: Math.max(1, (width - gap * (cols - 1)) / cols) + gap,
+                        row: this.rowHeight() + gap,
+                    };
+                },
+
+                // Pointer events rather than HTML5 drag-and-drop, for one
+                // reason: DnD does not fire for touch at all, and the tablet
+                // somebody props up to lay out a board is exactly the device
+                // that would silently do nothing.
+                startTileDrag(e, id) {
+                    if (e.button > 0) return;          // right/middle click is not a drag
+                    const startX = e.clientX, startY = e.clientY;
+                    const el = e.currentTarget;
+                    let dragging = false;
+
+                    const move = (ev) => {
+                        // A few pixels of slack before this becomes a drag.
+                        // Without it, a click on the resize corner or a stray
+                        // twitch reorders the board.
+                        if (!dragging) {
+                            if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
+                            dragging = true;
+                            el.classList.add('tile-dragging');
+                        }
+                        // What is under the pointer, which is the only honest
+                        // way to ask "where would this land": the grid reflows
+                        // as tiles move, so any position computed up front is
+                        // stale by the second frame.
+                        const over = document.elementFromPoint(ev.clientX, ev.clientY);
+                        const target = over && over.closest('[data-tile-id]');
+                        if (!target || target.dataset.tileId === id) return;
+                        const ws = this.page().widgets;
+                        const from = ws.findIndex(w => w.id === id);
+                        const to = ws.findIndex(w => w.id === target.dataset.tileId);
+                        if (from < 0 || to < 0 || from === to) return;
+                        ws.splice(to, 0, ws.splice(from, 1)[0]);
+                    };
+
+                    const up = () => {
+                        window.removeEventListener('pointermove', move);
+                        window.removeEventListener('pointerup', up);
+                        window.removeEventListener('pointercancel', up);
+                        el.classList.remove('tile-dragging');
+                    };
+                    window.addEventListener('pointermove', move);
+                    window.addEventListener('pointerup', up);
+                    window.addEventListener('pointercancel', up);
+                },
+
+                startTileResize(e, id) {
+                    const cell = this._cell();
+                    const startX = e.clientX, startY = e.clientY;
+                    const s = (this.page().spans || {})[id] || {};
+                    const fromCols = Math.max(1, parseInt(s.cols, 10) || this.defaultCols());
+                    const fromRows = Math.max(1, parseInt(s.rows, 10) || 1);
+
+                    const move = (ev) => {
+                        const cols = Math.round((ev.clientX - startX) / cell.col) + fromCols;
+                        const rows = Math.round((ev.clientY - startY) / cell.row) + fromRows;
+                        this.setSpan(id, 'cols', Math.min(this.cols(), Math.max(1, cols)));
+                        this.setSpan(id, 'rows', Math.min(12, Math.max(1, rows)));
+                    };
+                    const up = () => {
+                        window.removeEventListener('pointermove', move);
+                        window.removeEventListener('pointerup', up);
+                        window.removeEventListener('pointercancel', up);
+                    };
+                    window.addEventListener('pointermove', move);
+                    window.addEventListener('pointerup', up);
+                    window.addEventListener('pointercancel', up);
                 },
 
                 // --- the tile picker --------------------------------------
