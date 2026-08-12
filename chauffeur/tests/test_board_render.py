@@ -135,6 +135,26 @@ def _board(hero=None):
                             'avatar': None, 'image': None, 'state': 'not_home',
                             'latitude': 41.5, 'longitude': -81.6, 'is_car': False,
                             'driving': {'leg_title': 'Practice'}}]}},
+            # A GROUP, last on purpose: its cards draw the same bodies the
+            # tiles above draw, so a probe reaching for `.agenda-cards` must
+            # still find the calendar TILE's rather than the calendar CARD's.
+            {'id': 'emma', 'type': 'group', 'icon': '🧩', 'label': 'Emma', 'data': {
+                'label': 'Emma',
+                'cards': [
+                    {'id': 'emma-calendar', 'type': 'calendar', 'icon': '📅',
+                     'label': "Emma's week", 'cols': 6, 'rows': 0, 'config': {},
+                     'data': {'total': 1, 'days': [
+                         {'date': TODAY, 'dom': 8, 'day': 'Today', 'today': True,
+                          'more': 0, 'earlier': 0, 'events': [
+                              {'title': 'Ballet', 'at': '5:00 PM',
+                               'end_at': '6:00 PM', 'all_day': False,
+                               'start': at(17), 'driver': 'Vovo',
+                               'needs_driver': False, 'color': '#8b5cf6',
+                               'kind': 'event', 'past': False}]}]}},
+                    {'id': 'emma-intake', 'type': 'intake', 'icon': '📥',
+                     'label': 'Waiting', 'cols': 6, 'rows': 3, 'config': {},
+                     'data': {'pending': 2}},
+                ]}},
         ],
     }
 
@@ -229,7 +249,19 @@ setTimeout(() => {
       })()
     },
     map: { mounted: !!doc.getElementById('board-map-map'),
-           listRows: doc.querySelectorAll('.panel-chip').length }
+           listRows: doc.querySelectorAll('.panel-chip').length },
+    group: (() => {
+      const g = doc.querySelector('[data-tile-id="emma"] .nc-stack-grid');
+      if (!g) return null;
+      return {
+        free: /nc-free/.test(g.className),
+        cells: [...g.children].filter(c => c.tagName !== 'TEMPLATE').map(c => ({
+          style: c.getAttribute('style') || '',
+          label: (c.querySelector('.panel-label') || {}).textContent,
+          text: c.textContent.replace(/\s+/g, ' ').trim(),
+        })),
+      };
+    })()
   }));
   process.exit(0);
 }, 2500);
@@ -419,8 +451,46 @@ def scenario_the_board_draws_without_throwing():
         return
     check(not got['errors'],
           f"something threw while the board drew itself: {got['errors']}")
-    check(got['tiles'] == ['The rest of the day', "What's coming", 'Where everyone is'],
+    check(got['tiles'] == ['The rest of the day', "What's coming",
+                           'Where everyone is', 'Emma'],
           f"the tiles that came back: {got['tiles']}")
+
+
+def scenario_a_group_draws_its_cards_as_the_tiles_they_are():
+    """The claim the whole group rests on: a card IS the tile, filtered. The
+    calendar card below draws the calendar tile's own body out of the same
+    included file, which is why there is one calendar renderer in this app and
+    not two — and the day two exist is the day they start disagreeing about
+    what an all-day event looks like.
+
+    Sizes come with it. Each card is spans of TWELFTHS OF ITS GROUP, and a card
+    given a height stops the cells stretching so it does not drag its
+    neighbour's height to match — the same rule, and the same reason, as a
+    stack of Home Assistant cards.
+    """
+    got = _run()
+    if got is None:
+        return
+    g = got['group']
+    check(g, "a group tile drew no grid at all")
+    check(len(g['cells']) == 2, f"a group of two cards drew {len(g['cells'])} cells")
+    check(g['cells'][0]['label'] == "Emma's week"
+          and g['cells'][1]['label'] == 'Waiting',
+          f"the cards are not labelled as themselves: {[c['label'] for c in g['cells']]}")
+    # The bodies really are the tiles' bodies, not a smaller drawing of them.
+    check('Ballet' in g['cells'][0]['text'],
+          f"the calendar card drew no calendar: {g['cells'][0]['text'][:200]}")
+    check('waiting for a parent' in g['cells'][1]['text'],
+          f"the intake card drew no intake: {g['cells'][1]['text'][:200]}")
+    check('span 6' in g['cells'][0]['style'] and 'span 6' in g['cells'][1]['style'],
+          f"a card's width did not reach the grid: {[c['style'] for c in g['cells']]}")
+    check('height' not in g['cells'][0]['style'],
+          f"an unsized card was given a height: {g['cells'][0]['style']}")
+    check('calc(3 * var(--nc-row))' in g['cells'][1]['style'],
+          f"a sized card did not get its height: {g['cells'][1]['style']}")
+    check(g['free'],
+          "a group holding a sized card still stretches its cells, so that "
+          "card's height would drag its neighbour's to match")
 
 
 def scenario_the_drives_tile_draws_the_real_timeline():

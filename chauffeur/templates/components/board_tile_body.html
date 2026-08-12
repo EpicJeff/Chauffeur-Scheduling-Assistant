@@ -1,0 +1,555 @@
+<!-- ── What a tile of a given type DRAWS, and nothing else.
+
+     Pulled out of the board's tile loop so that a card inside a group tile can
+     be the same drawing as the tile it used to be. That is the whole point of
+     the group: a chores card aimed at one child is the chores tile, filtered —
+     not a second, smaller renderer that drifts away from it over a year.
+
+     The variable is `t`, in both places, and it carries the same shape either
+     way: `{id, type, icon, label, config, data}`. The board's loop names its
+     tile `t`; a group's cell loop names its card `t` as well, deliberately
+     shadowing it, because that is what lets this file be included in both
+     without a parameter Jinja has no good way to pass.
+
+     The group branch itself is NOT here — an include cannot contain itself,
+     and a group inside a group is refused server-side anyway. -->
+                    <!-- A configured feature that is simply quiet says so. This
+                         is a real answer, and it is why tiles no longer vanish
+                         on a slow day: you cannot tell a hidden tile from a
+                         broken one. -->
+                    <template x-if="t.data.empty">
+                        <div class="text-base panel-dim" x-text="t.data.empty"></div>
+                    </template>
+
+                    <!-- the rest of the day — THE Drives timeline, drawn by
+                         the page's own renderer out of
+                         components/schedule_timeline.html. The tile drew a
+                         smaller timeline of its own for one version and it did
+                         not look like the page it was summarising: different
+                         hour rail, different chips. Two drawings of the same
+                         thing is what a shelf of surfaces must never be.
+                         It scrolls, unlike the other drawn tiles, because the
+                         alternative is scaling the page's typography down to
+                         a few pixels. It opens on the next drive rather than
+                         on breakfast. -->
+                    <template x-if="t.type === 'drives' && !t.data.empty
+                                     && t.data.view !== 'list'">
+                        <!-- The ids carry the INSTANCE, not the type. Two
+                             driving tiles on one board would otherwise be two
+                             elements with the same id, and the renderer would
+                             draw both days into whichever one the document
+                             happened to hand back first. -->
+                        <div :id="'board-timeline-scroll-' + t.id"
+                            class="board-timeline-scroll flex-1 min-h-0 overflow-auto tile-scroll">
+                            <div :id="'board-timeline-' + t.id" class="board-timeline"></div>
+                        </div>
+                    </template>
+
+                    <!-- Drives as a LIST, which is the only shape that can
+                         answer "the next few days": the timeline is the Drives
+                         page's own renderer and draws exactly one day. A day
+                         heading appears when the day changes, so a week reads
+                         as a week rather than as fourteen undated rows. -->
+                    <template x-if="t.type === 'drives' && !t.data.empty
+                                     && t.data.view === 'list'">
+                        <div class="space-y-1.5">
+                            <template x-for="(r, i) in t.data.rows" :key="r.id + '-' + i">
+                                <div>
+                                    <div x-show="r.first_of_day" class="panel-label mt-2 mb-1"
+                                        x-text="r.day"></div>
+                                    <div class="flex items-baseline gap-2 min-w-0"
+                                        :class="r.done ? 'opacity-45' : ''">
+                                        <span class="text-sm tabular-nums panel-dim shrink-0"
+                                            x-text="r.leave_at || r.at"></span>
+                                        <span class="w-2 h-2 rounded-full shrink-0"
+                                            :style="'background:' + (r.color || '#64748b')"></span>
+                                        <span class="text-base panel-text truncate flex-1"
+                                            x-text="r.title"></span>
+                                        <span class="text-sm panel-dim shrink-0 truncate max-w-[7rem]"
+                                            x-text="r.driver"></span>
+                                    </div>
+                                </div>
+                            </template>
+                            <div x-show="t.data.more" class="text-sm panel-dim pt-1"
+                                x-text="'+' + t.data.more + ' more'"></div>
+                        </div>
+                    </template>
+
+                    <!-- each kid -->
+                    <template x-if="t.type === 'kids' && !t.data.empty">
+                        <div class="space-y-3">
+                            <template x-for="k in t.data.kids" :key="k.name">
+                                <div>
+                                    <div class="text-sm font-bold mb-1"
+                                        :style="'color:' + tone(k.color_code, '#6366f1')" x-text="k.name"></div>
+                                    <!-- Already cut to this instance's line
+                                         count on the server; the slice here is
+                                         a floor for a payload built before the
+                                         option existed. -->
+                                    <template x-for="(line, i) in k.lines.slice(0, t.data.lines || 4)" :key="i">
+                                        <div class="text-base panel-text truncate" x-text="line"></div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- tonight's plate, as a mosaic. The picture is not
+                         decoration: a child who cannot read fluently yet learns
+                         what is for dinner from it (arc K1), so the images lead
+                         and the names ride on top of them. -->
+                    <template x-if="t.type === 'meals' && !t.data.empty">
+                        <div class="grid grid-cols-2 gap-2 flex-1 min-h-0"
+                            style="grid-auto-rows: minmax(0, 1fr)">
+                            <template x-for="(d, i) in t.data.dishes" :key="i">
+                                <div class="relative rounded-xl overflow-hidden bg-gray-800 border border-gray-700"
+                                    :style="collageSpan(i, t.data.dishes.length, 2)">
+                                    <img x-show="d.image" :src="d.image" alt=""
+                                        class="absolute inset-0 w-full h-full object-cover">
+                                    <div class="photo-scrim absolute inset-x-0 bottom-0 px-2 py-1.5"
+                                        style="background: linear-gradient(to top, rgba(0,0,0,.85), transparent)">
+                                        <!-- Only sent when the tile covers more
+                                             than one night. A day label over
+                                             tonight's dinner answers a question
+                                             nobody in the kitchen is asking. -->
+                                        <span x-show="d.day"
+                                            class="block text-[0.62rem] font-black uppercase tracking-widest text-white/70"
+                                            x-text="d.day"></span>
+                                        <span class="text-sm font-bold text-white" x-text="d.name"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- lists: the THINGS, as chips. "Groceries — 12" tells you
+                         nothing you can act on walking past. -->
+                    <template x-if="t.type === 'shopping' && !t.data.empty">
+                        <div class="space-y-3">
+                            <template x-for="l in t.data.lists" :key="l.id || l.name">
+                                <div>
+                                    <div class="flex items-baseline gap-2 mb-1.5">
+                                        <span class="text-sm font-bold panel-text" x-text="l.name"></span>
+                                        <span class="text-xs panel-dim" x-text="l.open + ' open'"></span>
+                                    </div>
+                                    <!-- How many things, per instance. A tile
+                                         pinned to one list can afford to name
+                                         twenty; a narrow tile summarising three
+                                         lists wants the counts and nothing
+                                         else, which is what 0 means. -->
+                                    <div class="flex flex-wrap gap-1.5"
+                                        x-show="itemsShown(t, l).length">
+                                        <template x-for="(it, i) in itemsShown(t, l)" :key="i">
+                                            <span class="panel-chip text-sm rounded-full px-2.5 py-1"
+                                                x-text="it"></span>
+                                        </template>
+                                        <span class="text-sm panel-dim px-1 py-1"
+                                            x-show="l.open > itemsShown(t, l).length"
+                                            x-text="'+' + (l.open - itemsShown(t, l).length)"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- chore points -->
+                    <template x-if="t.type === 'chores' && !t.data.empty">
+                        <div class="space-y-1.5">
+                            <template x-for="b in t.data.balances" :key="b.member_id">
+                                <div class="flex items-baseline justify-between gap-3">
+                                    <span class="text-base panel-text truncate">
+                                        <span x-show="b.status && b.status.emoji" x-text="b.status?.emoji"></span>
+                                        <span x-text="b.name"></span>
+                                    </span>
+                                    <span class="text-xl font-black tabular-nums text-blue-300"
+                                        x-text="b.balance"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- streaks -->
+                    <template x-if="t.type === 'routines' && !t.data.empty">
+                        <div class="space-y-1.5">
+                            <template x-for="s in t.data.streaks" :key="s.name">
+                                <div class="flex items-baseline justify-between gap-3">
+                                    <span class="text-base panel-text truncate" x-text="s.name"></span>
+                                    <span class="text-xl font-black tabular-nums text-orange-300"
+                                        x-text="'🔥 ' + (s.streak.current || 0)"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- coming up -->
+                    <template x-if="t.type === 'occasions' && !t.data.empty">
+                        <div class="space-y-2">
+                            <template x-for="o in t.data.occasions" :key="o.title + o.date">
+                                <div class="flex items-baseline justify-between gap-3">
+                                    <span class="text-base panel-text truncate" x-text="o.title"></span>
+                                    <!-- "111 days" alone left you to guess what
+                                         the number counted. -->
+                                    <span class="text-sm font-bold shrink-0"
+                                        :class="o.days <= 3 ? 'text-pink-300' : 'panel-dim'"
+                                        x-text="o.days === 0 ? 'today' : (o.days === 1 ? 'tomorrow' : 'in ' + o.days + ' days')"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- the week -->
+                    <template x-if="t.type === 'weather' && !t.data.empty">
+                        <div class="flex justify-between gap-2">
+                            <template x-for="d in t.data.days" :key="d.day">
+                                <div class="text-center min-w-0">
+                                    <div class="text-xs font-bold panel-dim uppercase" x-text="d.day"></div>
+                                    <div class="text-2xl" x-text="d.emoji"></div>
+                                    <div class="text-sm font-semibold panel-text tabular-nums">
+                                        <span x-text="d.hi !== null ? d.hi + '°' : ''"></span>
+                                        <span class="panel-dim" x-text="d.lo !== null ? d.lo + '°' : ''"></span>
+                                    </div>
+                                    <div class="text-[0.65rem] text-sky-400" x-show="d.rain"
+                                        x-text="d.rain + '%'"></div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- latest moments -->
+                    <template x-if="t.type === 'moments' && !t.data.empty">
+                        <div class="grid grid-cols-3 gap-2 flex-1 min-h-0"
+                            style="grid-auto-rows: minmax(0, 1fr)">
+                            <template x-for="(m, i) in t.data.moments" :key="i">
+                                <div class="relative rounded-xl overflow-hidden bg-gray-800 border border-gray-700"
+                                    :style="collageSpan(i, t.data.moments.length, 3)">
+                                    <img :src="momentSrc(m)" alt=""
+                                        class="absolute inset-0 w-full h-full object-cover">
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- what's coming, as the calendar's AGENDA view: a card
+                         per day rather than a flat list of the next six
+                         things. A list cannot say that Thursday is empty, and
+                         "Thursday is empty" is a thing families read a
+                         calendar to find out. The cards flow into however many
+                         columns the tile is wide, so the same markup is one
+                         day stacked on a narrow tile and a working week across
+                         a wide one. -->
+                    <!-- One list, next first. A card per day needs width; a
+                         tile three columns wide gets three words per card, and
+                         the same information down a list is legible. Same rows,
+                         same order, the date on the row instead of over it. -->
+                    <template x-if="t.type === 'calendar' && !t.data.empty
+                                     && t.data.view === 'list'">
+                        <div class="space-y-1.5">
+                            <template x-for="(e, i) in t.data.rows" :key="i">
+                                <div class="flex items-baseline gap-2 min-w-0"
+                                    :class="e.past ? 'opacity-45' : ''">
+                                    <span class="text-sm panel-dim shrink-0 w-10 truncate"
+                                        x-text="e.day"></span>
+                                    <span class="text-sm tabular-nums panel-dim shrink-0"
+                                        x-text="e.all_day ? 'all day' : e.at"></span>
+                                    <span class="w-2 h-2 rounded-full shrink-0"
+                                        :style="'background:' + (e.color || '#64748b')"></span>
+                                    <span class="text-base panel-text truncate flex-1"
+                                        x-text="e.title"></span>
+                                    <span x-show="e.needs_driver"
+                                        class="text-xs font-bold shrink-0 text-red-400">needs a driver</span>
+                                </div>
+                            </template>
+                            <div x-show="t.data.more" class="text-sm panel-dim pt-1"
+                                x-text="'+' + t.data.more + ' more'"></div>
+                        </div>
+                    </template>
+
+                    <template x-if="t.type === 'calendar' && !t.data.empty
+                                     && t.data.view !== 'list'">
+                        <div class="grid gap-2 agenda-cards"
+                            :style="`--a-lg:${agendaCols(t.id, 'lg')}; --a-md:${agendaCols(t.id, 'md')}`">
+                            <template x-for="d in t.data.days" :key="d.date">
+                                <div class="rounded-xl p-2"
+                                    :style="'border: 1px solid ' + (d.today ? 'var(--panel-accent)' : 'var(--panel-line)')
+                                            + '; background: var(--panel-card-lo)'">
+                                    <div class="flex items-baseline justify-between gap-1 mb-1.5 px-0.5">
+                                        <span class="text-xl font-black panel-text tabular-nums leading-none"
+                                            x-text="d.dom"></span>
+                                        <span class="text-[0.62rem] font-black uppercase tracking-widest truncate"
+                                            :class="d.today ? '' : 'panel-dim'"
+                                            :style="d.today ? 'color: var(--panel-accent)' : ''"
+                                            x-text="d.day"></span>
+                                    </div>
+                                    <div x-show="!d.events.length"
+                                        class="text-xs panel-dim italic px-0.5 py-1">Nothing scheduled</div>
+                                    <div class="text-[0.62rem] panel-dim px-0.5 pb-1" x-show="d.earlier"
+                                        x-text="'+' + d.earlier + ' earlier'"></div>
+                                    <!-- What has already happened stays, greyed.
+                                         Dropping it made a busy morning
+                                         invisible: two things at four in the
+                                         afternoon read as a quiet day rather
+                                         than a day nearly done. -->
+                                    <template x-for="(e, i) in d.events" :key="i">
+                                        <div class="rounded-md px-1.5 py-1 mb-1"
+                                            :class="e.past ? 'opacity-45' : ''"
+                                            :style="'border-left: 3px solid ' + tone(e.color)
+                                                    + '; background: var(--panel-card-lo)'">
+                                            <div class="text-[0.62rem] font-bold panel-dim tabular-nums leading-tight"
+                                                x-text="e.all_day ? 'Entire day' : e.at"></div>
+                                            <div class="text-[0.8rem] font-bold panel-text truncate leading-tight"
+                                                x-text="e.title"></div>
+                                            <div class="text-[0.62rem] truncate leading-tight"
+                                                x-show="e.needs_driver || e.driver"
+                                                :class="e.needs_driver ? 'text-red-400' : 'panel-dim'"
+                                                x-text="e.needs_driver ? '⚠️ needs a driver' : e.driver"></div>
+                                        </div>
+                                    </template>
+                                    <div class="text-[0.62rem] panel-dim px-0.5" x-show="d.more"
+                                        x-text="'+' + d.more + ' more'"></div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- errands waiting -->
+                    <!-- the household owes — work with a deadline and nowhere
+                         to drive. Unclaimed items say so out loud: "nobody has
+                         this and it is due Thursday" is invisible everywhere
+                         else, and a wall is where a household notices it. -->
+                    <template x-if="t.type === 'tasks' && !t.data.empty">
+                        <div class="space-y-1.5">
+                            <template x-for="(e, i) in t.data.tasks" :key="i">
+                                <div class="flex items-baseline gap-2">
+                                    <span class="shrink-0" :class="e.past_due ? 'text-amber-400' : 'panel-dim'"
+                                        x-text="e.past_due ? '!' : '•'"></span>
+                                    <span class="text-base truncate"
+                                        :class="e.past_due ? 'text-amber-200' : 'panel-text'"
+                                        x-text="e.title"></span>
+                                    <span class="text-xs shrink-0"
+                                        :class="e.unclaimed ? 'text-amber-300/80' : 'panel-dim'"
+                                        x-text="e.who || 'nobody yet'"></span>
+                                </div>
+                            </template>
+                            <div class="text-xs panel-dim pt-1" x-show="t.data.total > t.data.tasks.length"
+                                x-text="'and ' + (t.data.total - t.data.tasks.length) + ' more'"></div>
+                        </div>
+                    </template>
+
+                    <template x-if="t.type === 'errands' && !t.data.empty">
+                        <div class="space-y-1.5">
+                            <template x-for="(e, i) in t.data.errands" :key="i">
+                                <div class="flex items-baseline gap-2">
+                                    <span class="shrink-0" :class="e.past_due ? 'text-amber-400' : 'panel-dim'"
+                                        x-text="e.past_due ? '!' : '•'"></span>
+                                    <span class="text-base truncate"
+                                        :class="e.past_due ? 'text-amber-200' : 'panel-text'"
+                                        x-text="e.title"></span>
+                                </div>
+                            </template>
+                            <div class="text-xs panel-dim pt-1" x-show="t.data.total > t.data.errands.length"
+                                x-text="'and ' + (t.data.total - t.data.errands.length) + ' more'"></div>
+                        </div>
+                    </template>
+
+                    <!-- trips as a mosaic, the soonest one leading -->
+                    <template x-if="t.type === 'trips' && !t.data.empty">
+                        <div class="grid grid-cols-2 gap-2 flex-1 min-h-0"
+                            style="grid-auto-rows: minmax(0, 1fr)">
+                            <template x-for="(tr, i) in t.data.trips" :key="i">
+                                <div class="relative rounded-xl overflow-hidden border"
+                                    :class="tr.live ? 'border-emerald-500/60' : 'border-gray-700'"
+                                    style="background: rgb(31 41 55 / .6)"
+                                    :style="collageSpan(i, t.data.trips.length, 2)">
+                                    <img x-show="tr.image" :src="tr.image" alt=""
+                                        class="absolute inset-0 w-full h-full object-cover opacity-70">
+                                    <div class="photo-scrim absolute inset-0 flex flex-col justify-end p-2"
+                                        style="background: linear-gradient(to top, rgba(0,0,0,.85), transparent 70%)">
+                                        <span class="text-sm font-black text-white truncate"
+                                            x-text="tr.title"></span>
+                                        <span class="text-xs font-bold"
+                                            :class="tr.live ? 'text-emerald-300' : 'text-sky-300'"
+                                            x-text="tr.live ? 'under way now'
+                                                : (tr.draft ? 'draft · ' : '') + (tr.days === 0 ? 'today'
+                                                : (tr.days === 1 ? 'tomorrow' : 'in ' + tr.days + ' days'))"></span>
+                                        <!-- A tile pinned to ONE trip is about
+                                             that trip, so it can afford the
+                                             detail a list of four cannot. -->
+                                        <span x-show="t.data.pinned && tr.location"
+                                            class="text-xs text-white/80 truncate" x-text="tr.location"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- where everyone is — the actual map, drawn by the same
+                         component /map uses, from markers the board payload
+                         already carries. Six names beside six zone words was a
+                         table of contents for a map: "not_home" is true and
+                         tells you nothing, a pin two streets away tells you
+                         they are walking back.
+                         The map takes no pointer events: on this board every
+                         tile is a door, and a Leaflet map would swallow the
+                         tap that opens the real one. -->
+                    <template x-if="t.type === 'map' && !t.data.empty">
+                        <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden"
+                            style="border: 1px solid var(--panel-line)">
+                            <div :id="'board-map-' + t.id" class="board-map absolute inset-0 bg-gray-800"
+                                style="pointer-events: none"></div>
+                            <!-- The one thing worth saying over the map: that
+                                 there is nothing on it. A grey rectangle is
+                                 indistinguishable from a map that failed to
+                                 load, which is the same ambiguity the whole
+                                 board is built to avoid. -->
+                            <div x-show="!t.data.mapped"
+                                class="absolute inset-0 flex items-center justify-center text-center px-4">
+                                <span class="text-sm panel-dim">Nobody is sharing a location yet.</span>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- waiting to approve -->
+                    <!-- Home Assistant entities, in the panel's own
+                         vocabulary rather than as an embedded card. HA's cards
+                         are custom elements that need a live `hass` object and
+                         an authenticated websocket; the DATA is what travels,
+                         and it reads better here drawn like everything else on
+                         this wall. -->
+                    <template x-if="t.type === 'ha' && !t.data.empty">
+                        <div class="space-y-1.5">
+                            <template x-for="r in t.data.rows" :key="r.entity_id">
+                                <div class="flex items-baseline gap-2 min-w-0">
+                                    <span x-show="!t.data.state_only" class="shrink-0"
+                                        x-text="r.glyph"></span>
+                                    <span x-show="!t.data.state_only"
+                                        class="text-base panel-text truncate flex-1"
+                                        x-text="r.name"></span>
+                                    <!-- A missing entity is NAMED, not dropped.
+                                         A row quietly vanishing from a wall is
+                                         how a household stops trusting it. -->
+                                    <span x-show="r.missing"
+                                        class="text-sm text-amber-400/80 shrink-0">not in HA</span>
+                                    <button x-show="!r.missing && r.toggleable"
+                                        @click="toggleEntity(t, r)"
+                                        :class="r.on ? 'bg-sky-600 text-white'
+                                                     : 'bg-gray-900 text-gray-400'"
+                                        class="shrink-0 text-sm font-bold rounded-full px-3 py-0.5 border border-gray-700"
+                                        x-text="r.on ? 'On' : 'Off'"></button>
+                                    <span x-show="!r.missing && !r.toggleable"
+                                        class="text-base font-bold panel-text shrink-0 tabular-nums"
+                                        x-text="(r.state ?? '—') + (r.unit ? ' ' + r.unit : '')"></span>
+                                    <span x-show="t.data.state_only && !r.missing"
+                                        class="text-sm panel-dim truncate" x-text="r.name"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- A camera or image entity. The picture is fetched by the
+                         BROWSER through the existing /api/ha/image proxy — the
+                         board's payload carries a URL, never bytes, or every
+                         60-second poll would drag a JPEG with it. -->
+                    <template x-if="t.type === 'ha_image' && !t.data.empty">
+                        <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden bg-gray-800">
+                            <img :src="haImageSrc(t)" :alt="t.data.name"
+                                @error="haImageFailed[t.id] = true"
+                                @load="haImageFailed[t.id] = false"
+                                class="absolute inset-0 w-full h-full object-cover">
+                            <div x-show="haImageFailed[t.id]"
+                                class="absolute inset-0 flex items-center justify-center text-base panel-dim px-4 text-center">
+                                No picture from Home Assistant just now.
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- A real Home Assistant dashboard view, framed. The
+                         honest answer to "render HA cards": you cannot run a
+                         Lovelace card here, so let HA render it and give it a
+                         rectangle. Put one card on a view and point at it.
+
+                         No sandbox attribute: a dashboard needs its own
+                         scripts, its websocket and its storage, and sandboxing
+                         it would produce a blank frame with a mysterious
+                         console error. The frame is HA's own page on HA's own
+                         origin — it is not a place to apply our containment. -->
+                    <template x-if="t.type === 'ha_dashboard' && !t.data.empty">
+                        <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden bg-gray-900">
+                            <iframe :src="haFrameSrc(t)" :title="t.data.url"
+                                @load="haFrameLoaded(t, $event.target)"
+                                class="absolute inset-0 w-full h-full border-0"
+                                referrerpolicy="same-origin"></iframe>
+                        </div>
+                    </template>
+
+                    <!-- A real custom card from Home Assistant, RUNNING —
+                         not a picture of one and not a frame around HA's page.
+                         Everything it needs arrived in the board payload; the
+                         host (static/ha_card_host.js) fetches the card's own
+                         JavaScript, defines the handful of HA elements it
+                         renders into, and hands it a `hass`.
+
+                         The container is deliberately bare. The card brings
+                         its own layout and the tile brings the surface, so
+                         anything drawn here — padding, a second card
+                         background, a heading — would show up as a seam. -->
+                    <template x-if="t.type === 'ha_card' && !t.data.empty">
+                        <div class="flex-1 min-h-0 flex flex-col">
+                            <!-- A BUILT-IN card, drawn by us. Its config fully
+                                 describes it, so there is nothing to fetch and
+                                 nothing to shim — and unlike a hosted card this
+                                 one is in the panel's own vocabulary and can be
+                                 told to fit its tile. -->
+                            <div x-show="t.data.mode === 'native'"
+                                :id="'board-card-native-' + t.id"
+                                class="flex-1 min-h-0 tile-scroll overflow-y-auto"
+                                :class="arranging ? 'cards-arranging' : ''"
+                                x-html="nativeCardHtml(t)"
+                                @pointerdown="arranging && startCardDrag($event, t)"
+                                @click="nativeCardTap($event, t)"></div>
+                            <div x-show="t.data.mode !== 'native'"
+                                :id="'board-card-' + t.id"
+                                class="ha-card-host flex-1 min-h-0 overflow-hidden"></div>
+                            <!-- An entity the card asked for that Home
+                                 Assistant does not have. NAMED, because a
+                                 power flow card missing one sensor draws a
+                                 perfectly plausible diagram with a hole in it
+                                 and nothing anywhere says which number is not
+                                 real. -->
+                            <div x-show="(t.data.missing || []).length"
+                                class="text-xs text-amber-400/80 mt-2 shrink-0 truncate"
+                                x-text="'not in Home Assistant: ' + (t.data.missing || []).join(', ')"></div>
+                        </div>
+                    </template>
+
+                    <!-- Any web page. `sandbox` is deliberately absent, for
+                         the reason the dashboard tile omits it: a page needs
+                         its own scripts and storage, and sandboxing an address
+                         the household typed themselves produces a blank frame
+                         and a console error nobody asked for.
+                         The zoom is a TRANSFORM rather than CSS `zoom`, which
+                         Firefox does not apply to frames — the inverse
+                         width/height keeps the page filling the tile at any
+                         scale. -->
+                    <template x-if="t.type === 'web' && !t.data.empty">
+                        <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden"
+                            style="background: var(--panel-card-hi)">
+                            <iframe :src="webFrameSrc(t)" :title="t.data.url"
+                                :scrolling="t.data.scroll ? 'yes' : 'no'"
+                                :style="`width:${1e4 / t.data.zoom}%;
+                                         height:${1e4 / t.data.zoom}%;
+                                         transform:scale(${t.data.zoom / 100});
+                                         transform-origin: 0 0`"
+                                class="absolute inset-0 border-0"
+                                referrerpolicy="no-referrer"></iframe>
+                        </div>
+                    </template>
+
+                    <template x-if="t.type === 'intake' && !t.data.empty">
+                        <div class="flex items-baseline gap-3">
+                            <span class="text-4xl font-black tabular-nums text-indigo-300"
+                                x-text="t.data.pending"></span>
+                            <span class="text-base panel-dim"
+                                x-text="t.data.pending === 1 ? 'thing waiting for a parent'
+                                        : 'things waiting for a parent'"></span>
+                        </div>
+                    </template>

@@ -20,6 +20,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import tpl_source  # noqa: E402
+
 TPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'templates')
 THEME = open(os.path.join(TPL, 'ha_theme.html'), encoding='utf-8').read()
 CC = open(os.path.join(TPL, 'components', 'control_center.html'), encoding='utf-8').read()
@@ -392,7 +394,7 @@ def scenario_ink_on_a_photograph_is_not_page_ink():
     # state this replaced.
     import glob
     for name in ('home.html', 'shopping.html'):
-        body = open(os.path.join(TPL, name), encoding='utf-8').read()
+        body = tpl_source.read(name)
         check('photo-scrim' in body,
               f"{name} paints a caption over a photograph without the shared "
               f"scrim class")
@@ -590,7 +592,7 @@ def scenario_the_server_can_tap_the_panel_on_the_shoulder():
     check('LAST_PROFILE_TIME' in src and "data: profile" in src
           and "k.startswith('panel_')" in src,
           "panel_* settings saves must emit the profile event")
-    home = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    home = tpl_source.read('home.html')
     check("chf-server-update" in home,
           "the board must repaint on the push, not only on the 60s poll")
     check("HeroCard.html(ssNext, { compact: true })" in NAV

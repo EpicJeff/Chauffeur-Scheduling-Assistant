@@ -27,6 +27,7 @@ os.environ.setdefault('CHAUFFEUR_DATA_DIR',
 TPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    'templates')
 
+import tpl_source  # noqa: E402
 from services import home_board  # noqa: E402
 
 NOW = datetime.datetime(2026, 9, 7, 17, 30)
@@ -187,7 +188,7 @@ def scenario_the_palette_refuses_a_tile_that_could_never_draw():
             check('available' not in w,
                   f"{w['key']} gained an availability flag it does not need")
 
-    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     check("c.available === false" in tpl and ':disabled=' in tpl,
           "the palette no longer disables a tile that cannot exist here")
 
@@ -221,7 +222,7 @@ def scenario_the_editor_picker_knows_the_difference_between_absent_and_empty():
     check(got['available'] is False, f"absent HA reported as available: {got}")
     check(got['entities'] == [] and got['cameras'] == [], f"phantom rows: {got}")
 
-    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     check('haOptions.available' in tpl,
           "the editor no longer branches on whether Home Assistant is there, "
           "so an empty picker looks the same as a disconnected one")
@@ -351,7 +352,7 @@ def scenario_the_camera_tile_has_somewhere_to_draw():
     A tile is given `flex flex-col` only when `fillsTile()` says its content is
     drawn INTO the slot rather than read down a list, which is exactly what a
     camera is."""
-    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     drawn = tpl[tpl.index('DRAWN_TILES:'):]
     drawn = drawn[:drawn.index(']')]
     for type_ in ('ha_image', 'ha_dashboard'):
@@ -444,7 +445,7 @@ def scenario_the_dashboard_tile_needs_no_page_and_no_home_assistant_check():
         NOW, config={'path': 'lovelace/0'}, settings={}))
     check(data is None, f"no Home Assistant, but the frame tile returned {data!r}")
 
-    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     check("'ha_dashboard'" in tpl[tpl.index('PAGELESS:'):tpl.index('PAGELESS:') + 120],
           "the dashboard tile is a link to a Chauffeur page that does not exist")
 
@@ -453,7 +454,7 @@ def scenario_the_frame_is_not_sandboxed():
     """A dashboard needs its own scripts, its websocket and its storage.
     Sandboxing it produces a blank frame and a mysterious console error — and
     it is HA's page on HA's origin, not a place for our containment."""
-    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     frame = tpl[tpl.index("t.type === 'ha_dashboard'"):]
     frame = frame[:frame.index('</template>')]
     check('sandbox' not in frame,
@@ -508,7 +509,7 @@ def scenario_a_tile_with_no_page_is_not_a_link():
     """Every other tile is a door to the page it summarises. These summarise
     nothing of ours, and an <a> to a page that does not exist is a tap that
     empties the wall."""
-    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     check("PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web']" in tpl,
           "the Home Assistant tiles are linking somewhere again")
     check('opens(t.type) ? link(t.type) : null' in tpl,
@@ -584,7 +585,7 @@ def _strip_fn():
     """The `stripHaChrome` method, lifted whole out of the template by brace
     matching so it survives being reformatted."""
     import re as _re
-    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     body = next(b for b in _re.findall(r'<script>(.*?)</script>', tpl, _re.S)
                 if 'function homeBoard()' in b)
     start = body.index('stripHaChrome(frame, tries) {')
@@ -665,7 +666,7 @@ def scenario_the_element_names_it_depends_on_are_written_down():
     rename would keep it green while the wall quietly grew its header back.
     Pinning the literals is the honest half: when HA restructures its frontend
     this fails and names what to go and look at."""
-    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     # Scoped to the stripper itself: some of these names are querySelector
     # arguments and some are CSS selectors inside the injected stylesheet, so
     # the check is for the NAME, not for a quoted string.
@@ -684,7 +685,7 @@ def scenario_hiding_is_skipped_cross_origin_rather_than_attempted():
     """A cross-origin frame's document is not ours to read, and trying throws
     a SecurityError into the console on every load of a tile that was already
     never going to work."""
-    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     fn = tpl[tpl.index('haFrameLoaded(tile, frame) {'):]
     fn = fn[:fn.index('stripHaChrome(frame, tries)')]
     check('tile.data.same_origin' in fn,
@@ -697,7 +698,7 @@ def scenario_the_retry_is_bounded():
     """HA builds its component tree after `load`, so the first attempt misses.
     A MutationObserver inside a live dashboard would run for as long as the
     panel is up, on a Raspberry Pi, for three seconds' worth of benefit."""
-    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     fn = tpl[tpl.index('stripHaChrome(frame, tries) {'):]
     fn = fn[:fn.index('async toggleEntity')]
     # Comments stripped: this rule is EXPLAINED in a comment right here, and a

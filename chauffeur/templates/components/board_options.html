@@ -1,0 +1,233 @@
+{# ── The fields for ONE instance's options, rendered from the type's own
+   declaration. Included by the board's tile list and, one level down, by the
+   card list inside a group tile: a card is an instance, so its options are the
+   same options and asking them twice in two hand-written forms is how "what
+   the editor offers" and "what the builder honours" come apart.
+
+   `OW` is the name of the Alpine variable holding the instance — `w` for a
+   tile, `c` for a card inside a group. It is substituted at COMPILE time
+   rather than rebound with a nested x-data, because everything in here WRITES
+   to that object and a scope that only mostly forwards writes is the kind of
+   bug that shows up as a setting that will not stick. #}
+{% set OW = OW|default('w') %}
+                                <template x-for="o in optionsFor({{ OW }}.type)" :key="o.key">
+                                    <div>
+                                        <label class="block text-[0.7rem] font-bold uppercase tracking-wider ed-note mb-1"
+                                            x-text="o.label"></label>
+
+                                        <template x-if="o.type === 'text'">
+                                            <input type="text" :value="cfg({{ OW }}, o) || ''"
+                                                @input="setCfg({{ OW }}, o, $event.target.value)"
+                                                :placeholder="widgetMeta({{ OW }}.type).label"
+                                                class="w-full ed-input rounded px-2 py-1 text-sm ed-title">
+                                        </template>
+
+                                        <!-- A card config is the one setting
+                                             on this board that is somebody
+                                             else's text, pasted. Monospace and
+                                             tall enough to see a whole card,
+                                             and no spellcheck squiggles under
+                                             entity ids. -->
+                                        <template x-if="o.type === 'yaml'">
+                                            <div>
+                                                <!-- Two ways to say the same
+                                                     thing, and the visual one
+                                                     leads because the other is
+                                                     why anybody asked for this.
+                                                     They share ONE config: the
+                                                     server parses and emits the
+                                                     YAML, so switching back and
+                                                     forth cannot produce a
+                                                     config neither of them
+                                                     meant. -->
+                                                <div class="flex items-center gap-2 mb-2">
+                                                    <button type="button" @click="setCardMode({{ OW }}, 'visual')"
+                                                        :class="cardMode({{ OW }}) === 'visual' ? 'bg-sky-600 text-white' : 'ed-input'"
+                                                        class="text-xs rounded-lg px-2.5 py-1">Visual</button>
+                                                    <button type="button" @click="setCardMode({{ OW }}, 'yaml')"
+                                                        :class="cardMode({{ OW }}) === 'yaml' ? 'bg-sky-600 text-white' : 'ed-input'"
+                                                        class="text-xs rounded-lg px-2.5 py-1">YAML</button>
+                                                    <span class="flex-1"></span>
+                                                    <button type="button" @click="openCardPicker({{ OW }})"
+                                                        class="text-xs ed-input rounded-lg px-2.5 py-1">+ Choose a card</button>
+                                                </div>
+
+                                                <!-- The picker. Native types,
+                                                     and the household's own
+                                                     cards read from
+                                                     `window.customCards` — the
+                                                     registry every bundle
+                                                     pushes to as it loads, and
+                                                     the one HA's own picker
+                                                     reads. A file name cannot
+                                                     tell you which cards it
+                                                     defines: mushroom.js
+                                                     defines about thirty. -->
+                                                <div x-show="picker.open && picker.for === {{ OW }}.id" x-cloak
+                                                    class="ed-panel rounded-lg p-2 mb-2">
+                                                    <input type="text" x-model="picker.filter"
+                                                        placeholder="Search cards..."
+                                                        class="w-full ed-input rounded px-2 py-1.5 text-sm mb-2">
+                                                    <div class="max-h-72 overflow-y-auto space-y-3">
+                                                        <template x-for="group in pickerGroups()" :key="group.name">
+                                                            <div x-show="group.rows.length">
+                                                                <div class="flex items-center gap-2 mb-1">
+                                                                    <span class="text-[0.65rem] font-black uppercase tracking-widest ed-note"
+                                                                        x-text="group.name"></span>
+                                                                    <span class="flex-1 h-px bg-white/10"></span>
+                                                                </div>
+                                                                <template x-for="c in group.rows" :key="c.type">
+                                                                    <button type="button" @click="chooseCard({{ OW }}, c)"
+                                                                        class="w-full text-left rounded-md px-2 py-1.5 hover:bg-white/5">
+                                                                        <span class="text-sm font-semibold ed-title" x-text="c.name"></span>
+                                                                        <span class="block text-[0.7rem] ed-note font-mono" x-text="c.type"></span>
+                                                                        <span x-show="c.description" class="block text-[0.7rem] ed-note"
+                                                                            x-text="c.description"></span>
+                                                                    </button>
+                                                                </template>
+                                                            </div>
+                                                        </template>
+                                                        <div x-show="picker.loading" class="text-xs ed-note px-2 py-3">
+                                                            Asking Home Assistant which cards you have...
+                                                        </div>
+                                                        <div x-show="!picker.loading && !pickerGroups().some(g => g.rows.length)"
+                                                            class="text-xs ed-note px-2 py-3">Nothing matches that.</div>
+                                                    </div>
+                                                </div>
+
+                                                <!-- The card's OWN editor, or
+                                                     ours. A custom card ships
+                                                     one in the bundle we
+                                                     already load; a built-in
+                                                     card's lives inside HA's
+                                                     frontend and cannot be
+                                                     fetched, so those schemas
+                                                     are declared beside the
+                                                     builder that honours them.
+                                                     Both draw through the same
+                                                     ha-form. -->
+                                                <div x-show="cardMode({{ OW }}) === 'visual'" x-cloak>
+                                                    <div :id="'card-editor-' + {{ OW }}.id" class="card-editor"></div>
+                                                    <div x-show="cardEditorNote[{{ OW }}.id]"
+                                                        class="text-[0.7rem] ed-note mt-1" x-text="cardEditorNote[{{ OW }}.id]"></div>
+                                                </div>
+
+                                                <textarea x-show="cardMode({{ OW }}) === 'yaml'" x-cloak
+                                                    :value="cfg({{ OW }}, o) || ''"
+                                                    @input="setCfg({{ OW }}, o, $event.target.value)"
+                                                    rows="10" spellcheck="false"
+                                                    placeholder="type: custom:my-card&#10;entity: sensor.something"
+                                                    class="w-full ed-input rounded px-2 py-1.5 text-xs font-mono leading-relaxed"></textarea>
+                                            </div>
+                                        </template>
+
+                                        <template x-if="o.type === 'int'">
+                                            <input type="number" :min="o.min" :max="o.max"
+                                                :value="cfg({{ OW }}, o) === null ? '' : cfg({{ OW }}, o)"
+                                                @input="setCfg({{ OW }}, o, $event.target.value)"
+                                                placeholder="—"
+                                                class="w-20 ed-input rounded px-2 py-1 text-sm ed-title">
+                                        </template>
+
+                                        <template x-if="o.type === 'bool'">
+                                            <label class="flex items-center gap-2 text-sm ed-title">
+                                                <input type="checkbox" :checked="cfg({{ OW }}, o)"
+                                                    @change="setCfg({{ OW }}, o, $event.target.checked)"
+                                                    class="accent-sky-500">
+                                                <span x-text="cfg({{ OW }}, o) ? 'Yes' : 'No'"></span>
+                                            </label>
+                                        </template>
+
+                                        <template x-if="o.type === 'choice'">
+                                            <select @change="setCfg({{ OW }}, o, $event.target.value)"
+                                                class="ed-input rounded px-2 py-1 text-sm ed-title">
+                                                <template x-for="c in (o.choices || [])" :key="c.value">
+                                                    <option :value="c.value" x-text="c.label"
+                                                        :selected="c.value === cfg({{ OW }}, o)"></option>
+                                                </template>
+                                            </select>
+                                        </template>
+
+                                        <!-- One of a live list. The blank entry
+                                             is not decoration: "all of them"
+                                             has to stay reachable after you
+                                             have picked one. -->
+                                        <template x-if="o.type === 'select' && !o.multi">
+                                            <select @change="setCfg({{ OW }}, o, $event.target.value)"
+                                                class="w-full ed-input rounded px-2 py-1 text-sm ed-title">
+                                                <option value="" :selected="!cfg({{ OW }}, o)">All</option>
+                                                <template x-for="c in sourceRows(o)" :key="c.value">
+                                                    <option :value="c.value" x-text="c.label"
+                                                        :selected="c.value === cfg({{ OW }}, o)"></option>
+                                                </template>
+                                            </select>
+                                        </template>
+
+                                        <template x-if="o.type === 'select' && o.multi">
+                                            <div class="flex flex-wrap gap-1.5">
+                                                <template x-for="c in sourceRows(o)" :key="c.value">
+                                                    <button type="button" @click="toggleCfgId({{ OW }}, o, c.value)"
+                                                        :class="(cfg({{ OW }}, o) || []).includes(c.value)
+                                                            ? 'bg-sky-600 text-white'
+                                                            : 'ed-input'"
+                                                        class="text-xs rounded-full px-2.5 py-1 border border-gray-700"
+                                                        x-text="c.label"></button>
+                                                </template>
+                                                <span x-show="!sourceRows(o).length"
+                                                    class="text-xs ed-note italic">
+                                                    Nothing to pick from yet.
+                                                </span>
+                                            </div>
+                                        </template>
+
+                                        <!-- An ENTITY, which is a select in
+                                             spirit and cannot be one in
+                                             practice: an ordinary Home
+                                             Assistant has hundreds to
+                                             thousands, and the chip grid the
+                                             other multi-selects use would be
+                                             a page of them. A text input with
+                                             a datalist is the browser's own
+                                             answer to "pick one of very many",
+                                             and it costs nothing to render. -->
+                                        <template x-if="o.type === 'entity'">
+                                            <div>
+                                                <div x-show="!haOptions.available"
+                                                    class="text-xs text-amber-400/80 mb-1.5">
+                                                    Home Assistant is not connected, so there is
+                                                    nothing to search. You can still type an
+                                                    entity id.
+                                                </div>
+                                                <div class="flex gap-1.5">
+                                                    <input type="text" :list="'ha-list-' + o.source"
+                                                        :value="o.multi ? '' : (cfg({{ OW }}, o) || '')"
+                                                        :placeholder="o.multi ? 'sensor.back_garden_temperature' : 'camera.driveway'"
+                                                        @focus="loadHaOptions()"
+                                                        @change="o.multi
+                                                            ? addEntity({{ OW }}, o, $event.target)
+                                                            : setCfg({{ OW }}, o, $event.target.value.trim())"
+                                                        class="flex-1 min-w-0 ed-input rounded px-2 py-1 text-sm ed-title">
+                                                </div>
+                                                <!-- One datalist per SOURCE, not per field: two
+                                                     entity fields of the same kind share it, and
+                                                     the browser matches on both value and label. -->
+                                                <datalist :id="'ha-list-' + o.source">
+                                                    <template x-for="c in haRows(o)" :key="c.value">
+                                                        <option :value="c.value" x-text="c.label"></option>
+                                                    </template>
+                                                </datalist>
+                                                <div x-show="o.multi" class="flex flex-wrap gap-1.5 mt-1.5">
+                                                    <template x-for="(id, n) in (cfg({{ OW }}, o) || [])" :key="id">
+                                                        <button type="button"
+                                                            @click="removeEntity({{ OW }}, o, n)"
+                                                            class="text-xs rounded-full px-2.5 py-1 ed-input hover:text-red-300"
+                                                            x-text="entityLabel(o, id) + ' ✕'"></button>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <div x-show="o.help" class="text-[0.7rem] ed-note mt-1"
+                                            x-text="o.help"></div>
+                                    </div>
+                                </template>

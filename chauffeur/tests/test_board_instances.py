@@ -34,6 +34,7 @@ os.environ.setdefault('CHAUFFEUR_DATA_DIR',
 TPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    'templates')
 
+import tpl_source  # noqa: E402
 from services import home_board  # noqa: E402
 
 
@@ -58,7 +59,7 @@ def scenario_every_declared_option_is_a_shape_the_editor_can_draw():
     hard-coded list turns this guard into a second place to remember, and the
     failure it exists to catch — a shape the editor cannot draw — is exactly
     what a stale list would let through."""
-    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     known = set(re.findall(r"o\.type === '([a-z]+)'", tpl))
     check(len(known) >= 6, f"the editor's option shapes could not be read: {known}")
     for w in home_board.catalog()['widgets']:
@@ -286,7 +287,7 @@ def scenario_a_driving_tile_asked_for_a_week_draws_a_week_of_timelines():
           f"a five-day slice did not span five days (and must still exclude "
           f"the one a month out): {[e['id'] for e in five['events']]}")
 
-    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     block = tpl[tpl.index('renderTimelineInto(tile)'):]
     block = block[:block.index('scrollTimelineToNext(tile.id')]
     check('tile.data.start_date' in block and 'tile.data.end_date' in block,
@@ -423,7 +424,7 @@ def _run_editor():
     if not node:
         print('  SKIP  node not installed')
         return None
-    src = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    src = tpl_source.read('home.html')
     body = next(b for b in re.findall(r'<script>(.*?)</script>', src, re.S)
                 if 'function homeBoard()' in b)
     probe = PROBE.replace('__CATALOG__', json.dumps(home_board.catalog()))

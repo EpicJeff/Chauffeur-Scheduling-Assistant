@@ -789,544 +789,38 @@
                     <div x-show="arranging" @pointerdown.stop="startTileResize($event, t.id)"
                         class="tile-resize" title="Drag to resize"></div>
 
-                    <!-- A configured feature that is simply quiet says so. This
-                         is a real answer, and it is why tiles no longer vanish
-                         on a slow day: you cannot tell a hidden tile from a
-                         broken one. -->
-                    <template x-if="t.data.empty">
-                        <div class="text-base panel-dim" x-text="t.data.empty"></div>
-                    </template>
+                    {% include 'components/board_tile_body.html' %}
 
-                    <!-- the rest of the day — THE Drives timeline, drawn by
-                         the page's own renderer out of
-                         components/schedule_timeline.html. The tile drew a
-                         smaller timeline of its own for one version and it did
-                         not look like the page it was summarising: different
-                         hour rail, different chips. Two drawings of the same
-                         thing is what a shelf of surfaces must never be.
-                         It scrolls, unlike the other drawn tiles, because the
-                         alternative is scaling the page's typography down to
-                         a few pixels. It opens on the next drive rather than
-                         on breakfast. -->
-                    <template x-if="t.type === 'drives' && !t.data.empty
-                                     && t.data.view !== 'list'">
-                        <!-- The ids carry the INSTANCE, not the type. Two
-                             driving tiles on one board would otherwise be two
-                             elements with the same id, and the renderer would
-                             draw both days into whichever one the document
-                             happened to hand back first. -->
-                        <div :id="'board-timeline-scroll-' + t.id"
-                            class="board-timeline-scroll flex-1 min-h-0 overflow-auto tile-scroll">
-                            <div :id="'board-timeline-' + t.id" class="board-timeline"></div>
-                        </div>
-                    </template>
-
-                    <!-- Drives as a LIST, which is the only shape that can
-                         answer "the next few days": the timeline is the Drives
-                         page's own renderer and draws exactly one day. A day
-                         heading appears when the day changes, so a week reads
-                         as a week rather than as fourteen undated rows. -->
-                    <template x-if="t.type === 'drives' && !t.data.empty
-                                     && t.data.view === 'list'">
-                        <div class="space-y-1.5">
-                            <template x-for="(r, i) in t.data.rows" :key="r.id + '-' + i">
-                                <div>
-                                    <div x-show="r.first_of_day" class="panel-label mt-2 mb-1"
-                                        x-text="r.day"></div>
-                                    <div class="flex items-baseline gap-2 min-w-0"
-                                        :class="r.done ? 'opacity-45' : ''">
-                                        <span class="text-sm tabular-nums panel-dim shrink-0"
-                                            x-text="r.leave_at || r.at"></span>
-                                        <span class="w-2 h-2 rounded-full shrink-0"
-                                            :style="'background:' + (r.color || '#64748b')"></span>
-                                        <span class="text-base panel-text truncate flex-1"
-                                            x-text="r.title"></span>
-                                        <span class="text-sm panel-dim shrink-0 truncate max-w-[7rem]"
-                                            x-text="r.driver"></span>
+                    <!-- ── A GROUP is a tile that holds CARDS.
+                         The reason it exists is that a board organised only by
+                         content type can only be read one way. Chores, routines
+                         and the calendar each filtered to one child, laid out
+                         together under that child's name, is a view of the
+                         family nobody could build before — and it is the same
+                         drawing as the tiles, which is why the body above is a
+                         file included twice rather than a second renderer.
+                         Each card gets its own SURFACE, on the same twelve
+                         columns the cards inside a Home Assistant stack use, so
+                         "6 columns" means one thing everywhere on this page. -->
+                    <template x-if="t.type === 'group' && !t.data.empty">
+                        <div class="nc-stack-grid" :class="groupFree(t) ? 'nc-free' : ''">
+                            <template x-for="c in (t.data.cards || [])" :key="c.id">
+                                <div class="nc-cell" :style="`grid-column:span ${c.cols};`
+                                    + (c.rows ? `height:calc(${c.rows} * var(--nc-row))` : '')">
+                                    <div class="flex items-center gap-2 mb-2 shrink-0">
+                                        <span class="text-base" x-text="c.icon"></span>
+                                        <span class="panel-label truncate" x-text="c.label"></span>
+                                    </div>
+                                    <!-- The card, drawn as the tile it is. `t`
+                                         is rebound here deliberately: the body
+                                         below is the board's own tile body, and
+                                         it knows the variable by that name. -->
+                                    <div class="min-w-0 flex-1 overflow-y-auto tile-scroll"
+                                        x-data="{ t: c }">
+                                        {% include 'components/board_tile_body.html' %}
                                     </div>
                                 </div>
                             </template>
-                            <div x-show="t.data.more" class="text-sm panel-dim pt-1"
-                                x-text="'+' + t.data.more + ' more'"></div>
-                        </div>
-                    </template>
-
-                    <!-- each kid -->
-                    <template x-if="t.type === 'kids' && !t.data.empty">
-                        <div class="space-y-3">
-                            <template x-for="k in t.data.kids" :key="k.name">
-                                <div>
-                                    <div class="text-sm font-bold mb-1"
-                                        :style="'color:' + tone(k.color_code, '#6366f1')" x-text="k.name"></div>
-                                    <!-- Already cut to this instance's line
-                                         count on the server; the slice here is
-                                         a floor for a payload built before the
-                                         option existed. -->
-                                    <template x-for="(line, i) in k.lines.slice(0, t.data.lines || 4)" :key="i">
-                                        <div class="text-base panel-text truncate" x-text="line"></div>
-                                    </template>
-                                </div>
-                            </template>
-                        </div>
-                    </template>
-
-                    <!-- tonight's plate, as a mosaic. The picture is not
-                         decoration: a child who cannot read fluently yet learns
-                         what is for dinner from it (arc K1), so the images lead
-                         and the names ride on top of them. -->
-                    <template x-if="t.type === 'meals' && !t.data.empty">
-                        <div class="grid grid-cols-2 gap-2 flex-1 min-h-0"
-                            style="grid-auto-rows: minmax(0, 1fr)">
-                            <template x-for="(d, i) in t.data.dishes" :key="i">
-                                <div class="relative rounded-xl overflow-hidden bg-gray-800 border border-gray-700"
-                                    :style="collageSpan(i, t.data.dishes.length, 2)">
-                                    <img x-show="d.image" :src="d.image" alt=""
-                                        class="absolute inset-0 w-full h-full object-cover">
-                                    <div class="photo-scrim absolute inset-x-0 bottom-0 px-2 py-1.5"
-                                        style="background: linear-gradient(to top, rgba(0,0,0,.85), transparent)">
-                                        <!-- Only sent when the tile covers more
-                                             than one night. A day label over
-                                             tonight's dinner answers a question
-                                             nobody in the kitchen is asking. -->
-                                        <span x-show="d.day"
-                                            class="block text-[0.62rem] font-black uppercase tracking-widest text-white/70"
-                                            x-text="d.day"></span>
-                                        <span class="text-sm font-bold text-white" x-text="d.name"></span>
-                                    </div>
-                                </div>
-                            </template>
-                        </div>
-                    </template>
-
-                    <!-- lists: the THINGS, as chips. "Groceries — 12" tells you
-                         nothing you can act on walking past. -->
-                    <template x-if="t.type === 'shopping' && !t.data.empty">
-                        <div class="space-y-3">
-                            <template x-for="l in t.data.lists" :key="l.id || l.name">
-                                <div>
-                                    <div class="flex items-baseline gap-2 mb-1.5">
-                                        <span class="text-sm font-bold panel-text" x-text="l.name"></span>
-                                        <span class="text-xs panel-dim" x-text="l.open + ' open'"></span>
-                                    </div>
-                                    <!-- How many things, per instance. A tile
-                                         pinned to one list can afford to name
-                                         twenty; a narrow tile summarising three
-                                         lists wants the counts and nothing
-                                         else, which is what 0 means. -->
-                                    <div class="flex flex-wrap gap-1.5"
-                                        x-show="itemsShown(t, l).length">
-                                        <template x-for="(it, i) in itemsShown(t, l)" :key="i">
-                                            <span class="panel-chip text-sm rounded-full px-2.5 py-1"
-                                                x-text="it"></span>
-                                        </template>
-                                        <span class="text-sm panel-dim px-1 py-1"
-                                            x-show="l.open > itemsShown(t, l).length"
-                                            x-text="'+' + (l.open - itemsShown(t, l).length)"></span>
-                                    </div>
-                                </div>
-                            </template>
-                        </div>
-                    </template>
-
-                    <!-- chore points -->
-                    <template x-if="t.type === 'chores' && !t.data.empty">
-                        <div class="space-y-1.5">
-                            <template x-for="b in t.data.balances" :key="b.member_id">
-                                <div class="flex items-baseline justify-between gap-3">
-                                    <span class="text-base panel-text truncate">
-                                        <span x-show="b.status && b.status.emoji" x-text="b.status?.emoji"></span>
-                                        <span x-text="b.name"></span>
-                                    </span>
-                                    <span class="text-xl font-black tabular-nums text-blue-300"
-                                        x-text="b.balance"></span>
-                                </div>
-                            </template>
-                        </div>
-                    </template>
-
-                    <!-- streaks -->
-                    <template x-if="t.type === 'routines' && !t.data.empty">
-                        <div class="space-y-1.5">
-                            <template x-for="s in t.data.streaks" :key="s.name">
-                                <div class="flex items-baseline justify-between gap-3">
-                                    <span class="text-base panel-text truncate" x-text="s.name"></span>
-                                    <span class="text-xl font-black tabular-nums text-orange-300"
-                                        x-text="'🔥 ' + (s.streak.current || 0)"></span>
-                                </div>
-                            </template>
-                        </div>
-                    </template>
-
-                    <!-- coming up -->
-                    <template x-if="t.type === 'occasions' && !t.data.empty">
-                        <div class="space-y-2">
-                            <template x-for="o in t.data.occasions" :key="o.title + o.date">
-                                <div class="flex items-baseline justify-between gap-3">
-                                    <span class="text-base panel-text truncate" x-text="o.title"></span>
-                                    <!-- "111 days" alone left you to guess what
-                                         the number counted. -->
-                                    <span class="text-sm font-bold shrink-0"
-                                        :class="o.days <= 3 ? 'text-pink-300' : 'panel-dim'"
-                                        x-text="o.days === 0 ? 'today' : (o.days === 1 ? 'tomorrow' : 'in ' + o.days + ' days')"></span>
-                                </div>
-                            </template>
-                        </div>
-                    </template>
-
-                    <!-- the week -->
-                    <template x-if="t.type === 'weather' && !t.data.empty">
-                        <div class="flex justify-between gap-2">
-                            <template x-for="d in t.data.days" :key="d.day">
-                                <div class="text-center min-w-0">
-                                    <div class="text-xs font-bold panel-dim uppercase" x-text="d.day"></div>
-                                    <div class="text-2xl" x-text="d.emoji"></div>
-                                    <div class="text-sm font-semibold panel-text tabular-nums">
-                                        <span x-text="d.hi !== null ? d.hi + '°' : ''"></span>
-                                        <span class="panel-dim" x-text="d.lo !== null ? d.lo + '°' : ''"></span>
-                                    </div>
-                                    <div class="text-[0.65rem] text-sky-400" x-show="d.rain"
-                                        x-text="d.rain + '%'"></div>
-                                </div>
-                            </template>
-                        </div>
-                    </template>
-
-                    <!-- latest moments -->
-                    <template x-if="t.type === 'moments' && !t.data.empty">
-                        <div class="grid grid-cols-3 gap-2 flex-1 min-h-0"
-                            style="grid-auto-rows: minmax(0, 1fr)">
-                            <template x-for="(m, i) in t.data.moments" :key="i">
-                                <div class="relative rounded-xl overflow-hidden bg-gray-800 border border-gray-700"
-                                    :style="collageSpan(i, t.data.moments.length, 3)">
-                                    <img :src="momentSrc(m)" alt=""
-                                        class="absolute inset-0 w-full h-full object-cover">
-                                </div>
-                            </template>
-                        </div>
-                    </template>
-
-                    <!-- what's coming, as the calendar's AGENDA view: a card
-                         per day rather than a flat list of the next six
-                         things. A list cannot say that Thursday is empty, and
-                         "Thursday is empty" is a thing families read a
-                         calendar to find out. The cards flow into however many
-                         columns the tile is wide, so the same markup is one
-                         day stacked on a narrow tile and a working week across
-                         a wide one. -->
-                    <!-- One list, next first. A card per day needs width; a
-                         tile three columns wide gets three words per card, and
-                         the same information down a list is legible. Same rows,
-                         same order, the date on the row instead of over it. -->
-                    <template x-if="t.type === 'calendar' && !t.data.empty
-                                     && t.data.view === 'list'">
-                        <div class="space-y-1.5">
-                            <template x-for="(e, i) in t.data.rows" :key="i">
-                                <div class="flex items-baseline gap-2 min-w-0"
-                                    :class="e.past ? 'opacity-45' : ''">
-                                    <span class="text-sm panel-dim shrink-0 w-10 truncate"
-                                        x-text="e.day"></span>
-                                    <span class="text-sm tabular-nums panel-dim shrink-0"
-                                        x-text="e.all_day ? 'all day' : e.at"></span>
-                                    <span class="w-2 h-2 rounded-full shrink-0"
-                                        :style="'background:' + (e.color || '#64748b')"></span>
-                                    <span class="text-base panel-text truncate flex-1"
-                                        x-text="e.title"></span>
-                                    <span x-show="e.needs_driver"
-                                        class="text-xs font-bold shrink-0 text-red-400">needs a driver</span>
-                                </div>
-                            </template>
-                            <div x-show="t.data.more" class="text-sm panel-dim pt-1"
-                                x-text="'+' + t.data.more + ' more'"></div>
-                        </div>
-                    </template>
-
-                    <template x-if="t.type === 'calendar' && !t.data.empty
-                                     && t.data.view !== 'list'">
-                        <div class="grid gap-2 agenda-cards"
-                            :style="`--a-lg:${agendaCols(t.id, 'lg')}; --a-md:${agendaCols(t.id, 'md')}`">
-                            <template x-for="d in t.data.days" :key="d.date">
-                                <div class="rounded-xl p-2"
-                                    :style="'border: 1px solid ' + (d.today ? 'var(--panel-accent)' : 'var(--panel-line)')
-                                            + '; background: var(--panel-card-lo)'">
-                                    <div class="flex items-baseline justify-between gap-1 mb-1.5 px-0.5">
-                                        <span class="text-xl font-black panel-text tabular-nums leading-none"
-                                            x-text="d.dom"></span>
-                                        <span class="text-[0.62rem] font-black uppercase tracking-widest truncate"
-                                            :class="d.today ? '' : 'panel-dim'"
-                                            :style="d.today ? 'color: var(--panel-accent)' : ''"
-                                            x-text="d.day"></span>
-                                    </div>
-                                    <div x-show="!d.events.length"
-                                        class="text-xs panel-dim italic px-0.5 py-1">Nothing scheduled</div>
-                                    <div class="text-[0.62rem] panel-dim px-0.5 pb-1" x-show="d.earlier"
-                                        x-text="'+' + d.earlier + ' earlier'"></div>
-                                    <!-- What has already happened stays, greyed.
-                                         Dropping it made a busy morning
-                                         invisible: two things at four in the
-                                         afternoon read as a quiet day rather
-                                         than a day nearly done. -->
-                                    <template x-for="(e, i) in d.events" :key="i">
-                                        <div class="rounded-md px-1.5 py-1 mb-1"
-                                            :class="e.past ? 'opacity-45' : ''"
-                                            :style="'border-left: 3px solid ' + tone(e.color)
-                                                    + '; background: var(--panel-card-lo)'">
-                                            <div class="text-[0.62rem] font-bold panel-dim tabular-nums leading-tight"
-                                                x-text="e.all_day ? 'Entire day' : e.at"></div>
-                                            <div class="text-[0.8rem] font-bold panel-text truncate leading-tight"
-                                                x-text="e.title"></div>
-                                            <div class="text-[0.62rem] truncate leading-tight"
-                                                x-show="e.needs_driver || e.driver"
-                                                :class="e.needs_driver ? 'text-red-400' : 'panel-dim'"
-                                                x-text="e.needs_driver ? '⚠️ needs a driver' : e.driver"></div>
-                                        </div>
-                                    </template>
-                                    <div class="text-[0.62rem] panel-dim px-0.5" x-show="d.more"
-                                        x-text="'+' + d.more + ' more'"></div>
-                                </div>
-                            </template>
-                        </div>
-                    </template>
-
-                    <!-- errands waiting -->
-                    <!-- the household owes — work with a deadline and nowhere
-                         to drive. Unclaimed items say so out loud: "nobody has
-                         this and it is due Thursday" is invisible everywhere
-                         else, and a wall is where a household notices it. -->
-                    <template x-if="t.type === 'tasks' && !t.data.empty">
-                        <div class="space-y-1.5">
-                            <template x-for="(e, i) in t.data.tasks" :key="i">
-                                <div class="flex items-baseline gap-2">
-                                    <span class="shrink-0" :class="e.past_due ? 'text-amber-400' : 'panel-dim'"
-                                        x-text="e.past_due ? '!' : '•'"></span>
-                                    <span class="text-base truncate"
-                                        :class="e.past_due ? 'text-amber-200' : 'panel-text'"
-                                        x-text="e.title"></span>
-                                    <span class="text-xs shrink-0"
-                                        :class="e.unclaimed ? 'text-amber-300/80' : 'panel-dim'"
-                                        x-text="e.who || 'nobody yet'"></span>
-                                </div>
-                            </template>
-                            <div class="text-xs panel-dim pt-1" x-show="t.data.total > t.data.tasks.length"
-                                x-text="'and ' + (t.data.total - t.data.tasks.length) + ' more'"></div>
-                        </div>
-                    </template>
-
-                    <template x-if="t.type === 'errands' && !t.data.empty">
-                        <div class="space-y-1.5">
-                            <template x-for="(e, i) in t.data.errands" :key="i">
-                                <div class="flex items-baseline gap-2">
-                                    <span class="shrink-0" :class="e.past_due ? 'text-amber-400' : 'panel-dim'"
-                                        x-text="e.past_due ? '!' : '•'"></span>
-                                    <span class="text-base truncate"
-                                        :class="e.past_due ? 'text-amber-200' : 'panel-text'"
-                                        x-text="e.title"></span>
-                                </div>
-                            </template>
-                            <div class="text-xs panel-dim pt-1" x-show="t.data.total > t.data.errands.length"
-                                x-text="'and ' + (t.data.total - t.data.errands.length) + ' more'"></div>
-                        </div>
-                    </template>
-
-                    <!-- trips as a mosaic, the soonest one leading -->
-                    <template x-if="t.type === 'trips' && !t.data.empty">
-                        <div class="grid grid-cols-2 gap-2 flex-1 min-h-0"
-                            style="grid-auto-rows: minmax(0, 1fr)">
-                            <template x-for="(tr, i) in t.data.trips" :key="i">
-                                <div class="relative rounded-xl overflow-hidden border"
-                                    :class="tr.live ? 'border-emerald-500/60' : 'border-gray-700'"
-                                    style="background: rgb(31 41 55 / .6)"
-                                    :style="collageSpan(i, t.data.trips.length, 2)">
-                                    <img x-show="tr.image" :src="tr.image" alt=""
-                                        class="absolute inset-0 w-full h-full object-cover opacity-70">
-                                    <div class="photo-scrim absolute inset-0 flex flex-col justify-end p-2"
-                                        style="background: linear-gradient(to top, rgba(0,0,0,.85), transparent 70%)">
-                                        <span class="text-sm font-black text-white truncate"
-                                            x-text="tr.title"></span>
-                                        <span class="text-xs font-bold"
-                                            :class="tr.live ? 'text-emerald-300' : 'text-sky-300'"
-                                            x-text="tr.live ? 'under way now'
-                                                : (tr.draft ? 'draft · ' : '') + (tr.days === 0 ? 'today'
-                                                : (tr.days === 1 ? 'tomorrow' : 'in ' + tr.days + ' days'))"></span>
-                                        <!-- A tile pinned to ONE trip is about
-                                             that trip, so it can afford the
-                                             detail a list of four cannot. -->
-                                        <span x-show="t.data.pinned && tr.location"
-                                            class="text-xs text-white/80 truncate" x-text="tr.location"></span>
-                                    </div>
-                                </div>
-                            </template>
-                        </div>
-                    </template>
-
-                    <!-- where everyone is — the actual map, drawn by the same
-                         component /map uses, from markers the board payload
-                         already carries. Six names beside six zone words was a
-                         table of contents for a map: "not_home" is true and
-                         tells you nothing, a pin two streets away tells you
-                         they are walking back.
-                         The map takes no pointer events: on this board every
-                         tile is a door, and a Leaflet map would swallow the
-                         tap that opens the real one. -->
-                    <template x-if="t.type === 'map' && !t.data.empty">
-                        <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden"
-                            style="border: 1px solid var(--panel-line)">
-                            <div :id="'board-map-' + t.id" class="board-map absolute inset-0 bg-gray-800"
-                                style="pointer-events: none"></div>
-                            <!-- The one thing worth saying over the map: that
-                                 there is nothing on it. A grey rectangle is
-                                 indistinguishable from a map that failed to
-                                 load, which is the same ambiguity the whole
-                                 board is built to avoid. -->
-                            <div x-show="!t.data.mapped"
-                                class="absolute inset-0 flex items-center justify-center text-center px-4">
-                                <span class="text-sm panel-dim">Nobody is sharing a location yet.</span>
-                            </div>
-                        </div>
-                    </template>
-
-                    <!-- waiting to approve -->
-                    <!-- Home Assistant entities, in the panel's own
-                         vocabulary rather than as an embedded card. HA's cards
-                         are custom elements that need a live `hass` object and
-                         an authenticated websocket; the DATA is what travels,
-                         and it reads better here drawn like everything else on
-                         this wall. -->
-                    <template x-if="t.type === 'ha' && !t.data.empty">
-                        <div class="space-y-1.5">
-                            <template x-for="r in t.data.rows" :key="r.entity_id">
-                                <div class="flex items-baseline gap-2 min-w-0">
-                                    <span x-show="!t.data.state_only" class="shrink-0"
-                                        x-text="r.glyph"></span>
-                                    <span x-show="!t.data.state_only"
-                                        class="text-base panel-text truncate flex-1"
-                                        x-text="r.name"></span>
-                                    <!-- A missing entity is NAMED, not dropped.
-                                         A row quietly vanishing from a wall is
-                                         how a household stops trusting it. -->
-                                    <span x-show="r.missing"
-                                        class="text-sm text-amber-400/80 shrink-0">not in HA</span>
-                                    <button x-show="!r.missing && r.toggleable"
-                                        @click="toggleEntity(t, r)"
-                                        :class="r.on ? 'bg-sky-600 text-white'
-                                                     : 'bg-gray-900 text-gray-400'"
-                                        class="shrink-0 text-sm font-bold rounded-full px-3 py-0.5 border border-gray-700"
-                                        x-text="r.on ? 'On' : 'Off'"></button>
-                                    <span x-show="!r.missing && !r.toggleable"
-                                        class="text-base font-bold panel-text shrink-0 tabular-nums"
-                                        x-text="(r.state ?? '—') + (r.unit ? ' ' + r.unit : '')"></span>
-                                    <span x-show="t.data.state_only && !r.missing"
-                                        class="text-sm panel-dim truncate" x-text="r.name"></span>
-                                </div>
-                            </template>
-                        </div>
-                    </template>
-
-                    <!-- A camera or image entity. The picture is fetched by the
-                         BROWSER through the existing /api/ha/image proxy — the
-                         board's payload carries a URL, never bytes, or every
-                         60-second poll would drag a JPEG with it. -->
-                    <template x-if="t.type === 'ha_image' && !t.data.empty">
-                        <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden bg-gray-800">
-                            <img :src="haImageSrc(t)" :alt="t.data.name"
-                                @error="haImageFailed[t.id] = true"
-                                @load="haImageFailed[t.id] = false"
-                                class="absolute inset-0 w-full h-full object-cover">
-                            <div x-show="haImageFailed[t.id]"
-                                class="absolute inset-0 flex items-center justify-center text-base panel-dim px-4 text-center">
-                                No picture from Home Assistant just now.
-                            </div>
-                        </div>
-                    </template>
-
-                    <!-- A real Home Assistant dashboard view, framed. The
-                         honest answer to "render HA cards": you cannot run a
-                         Lovelace card here, so let HA render it and give it a
-                         rectangle. Put one card on a view and point at it.
-
-                         No sandbox attribute: a dashboard needs its own
-                         scripts, its websocket and its storage, and sandboxing
-                         it would produce a blank frame with a mysterious
-                         console error. The frame is HA's own page on HA's own
-                         origin — it is not a place to apply our containment. -->
-                    <template x-if="t.type === 'ha_dashboard' && !t.data.empty">
-                        <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden bg-gray-900">
-                            <iframe :src="haFrameSrc(t)" :title="t.data.url"
-                                @load="haFrameLoaded(t, $event.target)"
-                                class="absolute inset-0 w-full h-full border-0"
-                                referrerpolicy="same-origin"></iframe>
-                        </div>
-                    </template>
-
-                    <!-- A real custom card from Home Assistant, RUNNING —
-                         not a picture of one and not a frame around HA's page.
-                         Everything it needs arrived in the board payload; the
-                         host (static/ha_card_host.js) fetches the card's own
-                         JavaScript, defines the handful of HA elements it
-                         renders into, and hands it a `hass`.
-
-                         The container is deliberately bare. The card brings
-                         its own layout and the tile brings the surface, so
-                         anything drawn here — padding, a second card
-                         background, a heading — would show up as a seam. -->
-                    <template x-if="t.type === 'ha_card' && !t.data.empty">
-                        <div class="flex-1 min-h-0 flex flex-col">
-                            <!-- A BUILT-IN card, drawn by us. Its config fully
-                                 describes it, so there is nothing to fetch and
-                                 nothing to shim — and unlike a hosted card this
-                                 one is in the panel's own vocabulary and can be
-                                 told to fit its tile. -->
-                            <div x-show="t.data.mode === 'native'"
-                                :id="'board-card-native-' + t.id"
-                                class="flex-1 min-h-0 tile-scroll overflow-y-auto"
-                                :class="arranging ? 'cards-arranging' : ''"
-                                x-html="nativeCardHtml(t)"
-                                @pointerdown="arranging && startCardDrag($event, t)"
-                                @click="nativeCardTap($event, t)"></div>
-                            <div x-show="t.data.mode !== 'native'"
-                                :id="'board-card-' + t.id"
-                                class="ha-card-host flex-1 min-h-0 overflow-hidden"></div>
-                            <!-- An entity the card asked for that Home
-                                 Assistant does not have. NAMED, because a
-                                 power flow card missing one sensor draws a
-                                 perfectly plausible diagram with a hole in it
-                                 and nothing anywhere says which number is not
-                                 real. -->
-                            <div x-show="(t.data.missing || []).length"
-                                class="text-xs text-amber-400/80 mt-2 shrink-0 truncate"
-                                x-text="'not in Home Assistant: ' + (t.data.missing || []).join(', ')"></div>
-                        </div>
-                    </template>
-
-                    <!-- Any web page. `sandbox` is deliberately absent, for
-                         the reason the dashboard tile omits it: a page needs
-                         its own scripts and storage, and sandboxing an address
-                         the household typed themselves produces a blank frame
-                         and a console error nobody asked for.
-                         The zoom is a TRANSFORM rather than CSS `zoom`, which
-                         Firefox does not apply to frames — the inverse
-                         width/height keeps the page filling the tile at any
-                         scale. -->
-                    <template x-if="t.type === 'web' && !t.data.empty">
-                        <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden"
-                            style="background: var(--panel-card-hi)">
-                            <iframe :src="webFrameSrc(t)" :title="t.data.url"
-                                :scrolling="t.data.scroll ? 'yes' : 'no'"
-                                :style="`width:${1e4 / t.data.zoom}%;
-                                         height:${1e4 / t.data.zoom}%;
-                                         transform:scale(${t.data.zoom / 100});
-                                         transform-origin: 0 0`"
-                                class="absolute inset-0 border-0"
-                                referrerpolicy="no-referrer"></iframe>
-                        </div>
-                    </template>
-
-                    <template x-if="t.type === 'intake' && !t.data.empty">
-                        <div class="flex items-baseline gap-3">
-                            <span class="text-4xl font-black tabular-nums text-indigo-300"
-                                x-text="t.data.pending"></span>
-                            <span class="text-base panel-dim"
-                                x-text="t.data.pending === 1 ? 'thing waiting for a parent'
-                                        : 'things waiting for a parent'"></span>
                         </div>
                     </template>
                 </a>
@@ -1551,225 +1045,73 @@
                                  calendars or drivers. -->
                             <div x-show="expanded === w.id" x-cloak
                                 class="border-t border-gray-700/70 px-3 py-3 space-y-3">
-                                <template x-for="o in optionsFor(w.type)" :key="o.key">
-                                    <div>
-                                        <label class="block text-[0.7rem] font-bold uppercase tracking-wider ed-note mb-1"
-                                            x-text="o.label"></label>
+                                {% include 'components/board_options.html' %}
 
-                                        <template x-if="o.type === 'text'">
-                                            <input type="text" :value="cfg(w, o) || ''"
-                                                @input="setCfg(w, o, $event.target.value)"
-                                                :placeholder="widgetMeta(w.type).label"
-                                                class="w-full ed-input rounded px-2 py-1 text-sm ed-title">
-                                        </template>
-
-                                        <!-- A card config is the one setting
-                                             on this board that is somebody
-                                             else's text, pasted. Monospace and
-                                             tall enough to see a whole card,
-                                             and no spellcheck squiggles under
-                                             entity ids. -->
-                                        <template x-if="o.type === 'yaml'">
-                                            <div>
-                                                <!-- Two ways to say the same
-                                                     thing, and the visual one
-                                                     leads because the other is
-                                                     why anybody asked for this.
-                                                     They share ONE config: the
-                                                     server parses and emits the
-                                                     YAML, so switching back and
-                                                     forth cannot produce a
-                                                     config neither of them
-                                                     meant. -->
-                                                <div class="flex items-center gap-2 mb-2">
-                                                    <button type="button" @click="setCardMode(w, 'visual')"
-                                                        :class="cardMode(w) === 'visual' ? 'bg-sky-600 text-white' : 'ed-input'"
-                                                        class="text-xs rounded-lg px-2.5 py-1">Visual</button>
-                                                    <button type="button" @click="setCardMode(w, 'yaml')"
-                                                        :class="cardMode(w) === 'yaml' ? 'bg-sky-600 text-white' : 'ed-input'"
-                                                        class="text-xs rounded-lg px-2.5 py-1">YAML</button>
-                                                    <span class="flex-1"></span>
-                                                    <button type="button" @click="openCardPicker(w)"
-                                                        class="text-xs ed-input rounded-lg px-2.5 py-1">+ Choose a card</button>
+                                <!-- ── The cards inside a GROUP.
+                                     The same list as the board's, one level
+                                     down, over the same catalog — a card is an
+                                     instance and its options are the tile's
+                                     options, which is why the block below is
+                                     the same included file with `c` in place
+                                     of `w`. -->
+                                <template x-if="w.type === 'group'">
+                                    <div class="border-t border-gray-700/70 pt-3 space-y-2">
+                                        <div class="text-[0.7rem] font-bold uppercase tracking-wider ed-note">
+                                            Cards in this group
+                                        </div>
+                                        <template x-for="(c, j) in groupCards(w)" :key="c.id">
+                                            <div class="ed-panel rounded-lg">
+                                                <div class="flex items-center gap-2 px-2.5 py-2">
+                                                    <span x-text="widgetMeta(c.type).icon"></span>
+                                                    <span class="flex-1 min-w-0 text-sm ed-title truncate"
+                                                        x-text="instanceLabel(c)"></span>
+                                                    <!-- No silent subjects. A group aimed at
+                                                         somebody, holding a card that cannot be
+                                                         aimed, says so here rather than looking
+                                                         like a filter that failed. -->
+                                                    <span x-show="(w.config || {}).subject && !widgetMeta(c.type).subject"
+                                                        class="text-[0.65rem] text-amber-400/80 shrink-0"
+                                                        title="This card has no people filter, so it shows everyone whatever the group is about.">
+                                                        shows everyone
+                                                    </span>
+                                                    <label class="flex items-center gap-1 text-[0.7rem] ed-note">
+                                                        <input type="number" min="1" max="12" step="1"
+                                                            :value="cardNum(c, 'cols', 12)"
+                                                            @change="setCardNum(c, 'cols', $event.target.value, 12)"
+                                                            class="w-11 ed-input rounded text-xs ed-title px-1 py-0.5">
+                                                        cols
+                                                    </label>
+                                                    <button x-show="optionsFor(c.type).length"
+                                                        @click="cardOpen = (cardOpen === c.id ? null : c.id)"
+                                                        :class="cardOpen === c.id ? 'text-sky-300' : 'ed-btn'"
+                                                        class="px-1" title="Options">⚙</button>
+                                                    <button @click="move(groupCards(w), j, -1)" :disabled="j === 0"
+                                                        class="ed-btn disabled:opacity-25 px-1">▲</button>
+                                                    <button @click="move(groupCards(w), j, 1)"
+                                                        :disabled="j === groupCards(w).length - 1"
+                                                        class="ed-btn disabled:opacity-25 px-1">▼</button>
+                                                    <button @click="removeGroupCard(w, j)"
+                                                        class="ed-btn hover:text-red-400 px-1">✕</button>
                                                 </div>
-
-                                                <!-- The picker. Native types,
-                                                     and the household's own
-                                                     cards read from
-                                                     `window.customCards` — the
-                                                     registry every bundle
-                                                     pushes to as it loads, and
-                                                     the one HA's own picker
-                                                     reads. A file name cannot
-                                                     tell you which cards it
-                                                     defines: mushroom.js
-                                                     defines about thirty. -->
-                                                <div x-show="picker.open && picker.for === w.id" x-cloak
-                                                    class="ed-panel rounded-lg p-2 mb-2">
-                                                    <input type="text" x-model="picker.filter"
-                                                        placeholder="Search cards..."
-                                                        class="w-full ed-input rounded px-2 py-1.5 text-sm mb-2">
-                                                    <div class="max-h-72 overflow-y-auto space-y-3">
-                                                        <template x-for="group in pickerGroups()" :key="group.name">
-                                                            <div x-show="group.rows.length">
-                                                                <div class="flex items-center gap-2 mb-1">
-                                                                    <span class="text-[0.65rem] font-black uppercase tracking-widest ed-note"
-                                                                        x-text="group.name"></span>
-                                                                    <span class="flex-1 h-px bg-white/10"></span>
-                                                                </div>
-                                                                <template x-for="c in group.rows" :key="c.type">
-                                                                    <button type="button" @click="chooseCard(w, c)"
-                                                                        class="w-full text-left rounded-md px-2 py-1.5 hover:bg-white/5">
-                                                                        <span class="text-sm font-semibold ed-title" x-text="c.name"></span>
-                                                                        <span class="block text-[0.7rem] ed-note font-mono" x-text="c.type"></span>
-                                                                        <span x-show="c.description" class="block text-[0.7rem] ed-note"
-                                                                            x-text="c.description"></span>
-                                                                    </button>
-                                                                </template>
-                                                            </div>
-                                                        </template>
-                                                        <div x-show="picker.loading" class="text-xs ed-note px-2 py-3">
-                                                            Asking Home Assistant which cards you have...
-                                                        </div>
-                                                        <div x-show="!picker.loading && !pickerGroups().some(g => g.rows.length)"
-                                                            class="text-xs ed-note px-2 py-3">Nothing matches that.</div>
-                                                    </div>
-                                                </div>
-
-                                                <!-- The card's OWN editor, or
-                                                     ours. A custom card ships
-                                                     one in the bundle we
-                                                     already load; a built-in
-                                                     card's lives inside HA's
-                                                     frontend and cannot be
-                                                     fetched, so those schemas
-                                                     are declared beside the
-                                                     builder that honours them.
-                                                     Both draw through the same
-                                                     ha-form. -->
-                                                <div x-show="cardMode(w) === 'visual'" x-cloak>
-                                                    <div :id="'card-editor-' + w.id" class="card-editor"></div>
-                                                    <div x-show="cardEditorNote[w.id]"
-                                                        class="text-[0.7rem] ed-note mt-1" x-text="cardEditorNote[w.id]"></div>
-                                                </div>
-
-                                                <textarea x-show="cardMode(w) === 'yaml'" x-cloak
-                                                    :value="cfg(w, o) || ''"
-                                                    @input="setCfg(w, o, $event.target.value)"
-                                                    rows="10" spellcheck="false"
-                                                    placeholder="type: custom:my-card&#10;entity: sensor.something"
-                                                    class="w-full ed-input rounded px-2 py-1.5 text-xs font-mono leading-relaxed"></textarea>
-                                            </div>
-                                        </template>
-
-                                        <template x-if="o.type === 'int'">
-                                            <input type="number" :min="o.min" :max="o.max"
-                                                :value="cfg(w, o) === null ? '' : cfg(w, o)"
-                                                @input="setCfg(w, o, $event.target.value)"
-                                                placeholder="—"
-                                                class="w-20 ed-input rounded px-2 py-1 text-sm ed-title">
-                                        </template>
-
-                                        <template x-if="o.type === 'bool'">
-                                            <label class="flex items-center gap-2 text-sm ed-title">
-                                                <input type="checkbox" :checked="cfg(w, o)"
-                                                    @change="setCfg(w, o, $event.target.checked)"
-                                                    class="accent-sky-500">
-                                                <span x-text="cfg(w, o) ? 'Yes' : 'No'"></span>
-                                            </label>
-                                        </template>
-
-                                        <template x-if="o.type === 'choice'">
-                                            <select @change="setCfg(w, o, $event.target.value)"
-                                                class="ed-input rounded px-2 py-1 text-sm ed-title">
-                                                <template x-for="c in (o.choices || [])" :key="c.value">
-                                                    <option :value="c.value" x-text="c.label"
-                                                        :selected="c.value === cfg(w, o)"></option>
-                                                </template>
-                                            </select>
-                                        </template>
-
-                                        <!-- One of a live list. The blank entry
-                                             is not decoration: "all of them"
-                                             has to stay reachable after you
-                                             have picked one. -->
-                                        <template x-if="o.type === 'select' && !o.multi">
-                                            <select @change="setCfg(w, o, $event.target.value)"
-                                                class="w-full ed-input rounded px-2 py-1 text-sm ed-title">
-                                                <option value="" :selected="!cfg(w, o)">All</option>
-                                                <template x-for="c in sourceRows(o)" :key="c.value">
-                                                    <option :value="c.value" x-text="c.label"
-                                                        :selected="c.value === cfg(w, o)"></option>
-                                                </template>
-                                            </select>
-                                        </template>
-
-                                        <template x-if="o.type === 'select' && o.multi">
-                                            <div class="flex flex-wrap gap-1.5">
-                                                <template x-for="c in sourceRows(o)" :key="c.value">
-                                                    <button type="button" @click="toggleCfgId(w, o, c.value)"
-                                                        :class="(cfg(w, o) || []).includes(c.value)
-                                                            ? 'bg-sky-600 text-white'
-                                                            : 'ed-input'"
-                                                        class="text-xs rounded-full px-2.5 py-1 border border-gray-700"
-                                                        x-text="c.label"></button>
-                                                </template>
-                                                <span x-show="!sourceRows(o).length"
-                                                    class="text-xs ed-note italic">
-                                                    Nothing to pick from yet.
-                                                </span>
-                                            </div>
-                                        </template>
-
-                                        <!-- An ENTITY, which is a select in
-                                             spirit and cannot be one in
-                                             practice: an ordinary Home
-                                             Assistant has hundreds to
-                                             thousands, and the chip grid the
-                                             other multi-selects use would be
-                                             a page of them. A text input with
-                                             a datalist is the browser's own
-                                             answer to "pick one of very many",
-                                             and it costs nothing to render. -->
-                                        <template x-if="o.type === 'entity'">
-                                            <div>
-                                                <div x-show="!haOptions.available"
-                                                    class="text-xs text-amber-400/80 mb-1.5">
-                                                    Home Assistant is not connected, so there is
-                                                    nothing to search. You can still type an
-                                                    entity id.
-                                                </div>
-                                                <div class="flex gap-1.5">
-                                                    <input type="text" :list="'ha-list-' + o.source"
-                                                        :value="o.multi ? '' : (cfg(w, o) || '')"
-                                                        :placeholder="o.multi ? 'sensor.back_garden_temperature' : 'camera.driveway'"
-                                                        @focus="loadHaOptions()"
-                                                        @change="o.multi
-                                                            ? addEntity(w, o, $event.target)
-                                                            : setCfg(w, o, $event.target.value.trim())"
-                                                        class="flex-1 min-w-0 ed-input rounded px-2 py-1 text-sm ed-title">
-                                                </div>
-                                                <!-- One datalist per SOURCE, not per field: two
-                                                     entity fields of the same kind share it, and
-                                                     the browser matches on both value and label. -->
-                                                <datalist :id="'ha-list-' + o.source">
-                                                    <template x-for="c in haRows(o)" :key="c.value">
-                                                        <option :value="c.value" x-text="c.label"></option>
-                                                    </template>
-                                                </datalist>
-                                                <div x-show="o.multi" class="flex flex-wrap gap-1.5 mt-1.5">
-                                                    <template x-for="(id, n) in (cfg(w, o) || [])" :key="id">
-                                                        <button type="button"
-                                                            @click="removeEntity(w, o, n)"
-                                                            class="text-xs rounded-full px-2.5 py-1 ed-input hover:text-red-300"
-                                                            x-text="entityLabel(o, id) + ' ✕'"></button>
-                                                    </template>
+                                                <div x-show="cardOpen === c.id" x-cloak
+                                                    class="border-t border-gray-700/70 px-3 py-3 space-y-3">
+                                                    {% with OW = 'c' %}
+                                                        {% include 'components/board_options.html' %}
+                                                    {% endwith %}
                                                 </div>
                                             </div>
                                         </template>
 
-                                        <div x-show="o.help" class="text-[0.7rem] ed-note mt-1"
-                                            x-text="o.help"></div>
+                                        <select @change="addGroupCard(w, $event.target.value);
+                                                         $event.target.value = ''"
+                                            class="w-full ed-input rounded px-2 py-1.5 text-sm">
+                                            <option value="">+ Add a card…</option>
+                                            <template x-for="k in groupAddable()" :key="k.key">
+                                                <option :value="k.key"
+                                                    x-text="k.icon + '  ' + k.label
+                                                            + (k.subject ? '' : '  (shows everyone)')"></option>
+                                            </template>
+                                        </select>
                                     </div>
                                 </template>
                             </div>
@@ -2168,6 +1510,9 @@
                 // a board with ten tiles and ten expanded forms is a wall of
                 // fields with no way to tell which tile you are editing.
                 expanded: null,
+                // The same, one level down: which CARD's options are open
+                // inside the group being edited.
+                cardOpen: null,
                 // Which board the editor is looking at. An INDEX rather than a
                 // slug because a board being renamed changes its slug under the
                 // hand that is typing, and the selection must not jump.
@@ -2490,8 +1835,23 @@
                 // move on. Two of them cannot be drawn concurrently, which is
                 // fine — this is a loop, not a race — but it is the reason the
                 // component cannot simply be instantiated twice.
+                // Everything DRAWN on this board — the tiles, plus the cards
+                // inside every group. A card renders the tile body, so anything
+                // that mounts itself into a tile (a timeline, a map canvas, a
+                // hosted Home Assistant card) has to find the cards too or it
+                // works everywhere except inside a group, which is the kind of
+                // gap that reads as the group being broken.
+                drawnTiles() {
+                    const out = [];
+                    for (const t of (this.board.tiles || [])) {
+                        out.push(t);
+                        for (const c of ((t.data || {}).cards || [])) out.push(c);
+                    }
+                    return out;
+                },
+
                 syncTimeline() {
-                    (this.board.tiles || [])
+                    this.drawnTiles()
                         .filter(t => t.type === 'drives')
                         .forEach(tile => this.renderTimelineInto(tile));
                 },
@@ -2573,7 +1933,7 @@
                 syncCards() {
                     if (!window.ChauffeurHaCards) return;
                     const live = new Set();
-                    for (const tile of (this.board.tiles || [])
+                    for (const tile of this.drawnTiles()
                         .filter(t => t.type === 'ha_card' && t.data && !t.data.empty)) {
                         // A NATIVE tile can still contain custom cards — a
                         // stack of [power flow card, gauge] is the config
@@ -2635,7 +1995,7 @@
                 // choice; six is a slideshow.
                 async syncMap() {
                     const live = new Set();
-                    for (const tile of (this.board.tiles || []).filter(t => t.type === 'map')) {
+                    for (const tile of this.drawnTiles().filter(t => t.type === 'map')) {
                         live.add(tile.id);
                         await this.renderMapInto(tile);
                     }
@@ -3811,6 +3171,70 @@
 
                 countOfType(type) {
                     return this.page().widgets.filter(w => w.type === type).length;
+                },
+
+                // --- groups -----------------------------------------------
+                //
+                // A group's cards are instances, exactly like the board's
+                // tiles: same catalog, same options, same builders. They live
+                // in the group's own config so that nothing else in the
+                // settings had to learn a new shape — a card list is just a
+                // value on a tile that happens to be a container.
+
+                groupCards(w) {
+                    if (!w.config) w.config = {};
+                    if (!Array.isArray(w.config.cards)) w.config.cards = [];
+                    return w.config.cards;
+                },
+
+                // Everything but another group. Nesting is refused server-side
+                // too; offering it here and dropping it there would be a menu
+                // item that does nothing.
+                groupAddable() {
+                    return (this.catalog.widgets || [])
+                        .filter(k => k.key !== 'group' && k.available !== false);
+                },
+
+                addGroupCard(w, type) {
+                    if (!type || type === 'group') return;
+                    const cards = this.groupCards(w);
+                    if (cards.length >= 12) return;
+                    const taken = new Set(cards.map(c => c.id));
+                    let id = type, n = 2;
+                    while (taken.has(id)) id = `${type}-${n++}`;
+                    cards.push({ id, type, config: {} });
+                    this.cardOpen = id;   // straight into its options
+                },
+
+                removeGroupCard(w, j) {
+                    this.groupCards(w).splice(j, 1);
+                },
+
+                // Size, per card, in twelfths of the group. Stored on the
+                // card's own config so it travels with the card, and DELETED
+                // at the default for the same reason tile spans are — a stored
+                // 12 stops tracking the default the day the default moves.
+                cardNum(c, key, dflt) {
+                    const v = (c.config || {})[key];
+                    return v === undefined || v === null ? dflt : v;
+                },
+
+                setCardNum(c, key, raw, dflt) {
+                    let v = parseInt(raw, 10);
+                    if (Number.isNaN(v)) return;
+                    v = Math.max(1, Math.min(12, v));
+                    if (!c.config) c.config = {};
+                    if (v === dflt) delete c.config[key];
+                    else c.config[key] = v;
+                },
+
+                // Does this group hold a card with a height of its own? Same
+                // rule as a stack of Home Assistant cards, and the same reason:
+                // a grid row is as tall as its tallest cell, so one sized card
+                // would drag its neighbours to match unless the cells stop
+                // stretching.
+                groupFree(t) {
+                    return ((t.data || {}).cards || []).some(c => c.rows);
                 },
 
                 // --- per-instance options ---------------------------------

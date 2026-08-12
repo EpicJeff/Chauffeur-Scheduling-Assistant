@@ -18,6 +18,7 @@ Run from chauffeur/:  python tests/test_home_board.py
 import datetime
 
 from harness import check  # noqa: F401  (harness isolates CHAUFFEUR_DATA_DIR)
+import tpl_source
 
 from services import home_board, storage
 
@@ -680,13 +681,14 @@ def scenario_an_unconfigured_feature_has_no_tile():
     orig = storage.get_cached_schedule
     try:
         storage.get_cached_schedule = lambda: {}
-        # `web` is excluded because it is a CONTAINER, not a summary of a
-        # household feature. There is nothing for it to be unconfigured about
-        # except its own address, and a tile somebody just added asking for
-        # one is the opposite of the placeholder this rule forbids — the rule
+        # `web` and `group` are excluded because they are CONTAINERS, not
+        # summaries of a household feature. There is nothing for either to be
+        # unconfigured about except its own contents, and a tile somebody just
+        # added is the opposite of the placeholder this rule forbids — the rule
         # is about features nobody uses, not about a box waiting to be told
-        # what to show.
-        asked = [k for k in home_board.WIDGET_KEYS if k != 'web']
+        # what to show. An empty one that vanished could not be told from one
+        # that had broken, which is the whole reason quiet tiles say so.
+        asked = [k for k in home_board.WIDGET_KEYS if k not in ('web', 'group')]
         board = home_board.build(requested=','.join(asked))
         keys = [t['type'] for t in board['tiles']]
         # The calendar is never hidden — a family calendar is not a feature you
@@ -1192,8 +1194,7 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
     # The grid has to declare the unit, or every span is back to being a
     # consequence of its neighbours. `grid-auto-rows` covers IMPLICIT rows,
     # which is precisely what the last row of the board is made of.
-    tpl = open(os.path.join(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))), 'templates', 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     grid = tpl[tpl.index('<!-- ── The glances.'):]
     grid = grid[:grid.index('</template>')]
     check('grid-auto-rows' in grid,
@@ -1248,8 +1249,7 @@ def scenario_a_page_is_configured_in_one_place():
     a page the panel shows — so the picture rides on the page's own row, the
     way a tile's size rides on the tile's row."""
     import os
-    tpl = open(os.path.join(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))), 'templates', 'home.html'), encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
     setup = tpl[tpl.index('id="panel-setup"'):]
     check('A different picture per page' not in setup,
           "the per-page pictures are a separate list again, so the same "
