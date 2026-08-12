@@ -63,6 +63,15 @@
             gap: 0.75rem;
             align-items: stretch;
         }
+        /* Stretch is the right DEFAULT — a row of cards nobody has sized reads
+           as a row, and ragged bottoms look like a mistake. It is the wrong
+           rule the moment one card is given a height: a grid row is as tall as
+           its tallest cell, and a stretched neighbour grows with it. So
+           dragging one card taller dragged everything beside it, which is
+           exactly the resize the sizes were added to escape. A stack with any
+           sized card in it stops stretching, and each card is the height it
+           was actually given. */
+        .nc-stack-grid.nc-free { align-items: start; }
         /* Each card in a stack gets its own SURFACE.
            Side by side with Home Assistant this was most of the difference:
            HA's stacks are stacks of cards, and ours were a stack of contents
@@ -2859,11 +2868,19 @@
                             // A cell holding another STACK stays plain: a
                             // surface inside a surface is the other way to lose
                             // the boundary this draws.
+                            // Does anything in this stack carry a height of its
+                            // own? If so the stack stops stretching its cells,
+                            // so a card that was made taller does not take its
+                            // neighbours with it.
+                            const free = cards.some(x => x && x.grid && x.grid.rows);
                             const inner = cards.map((x, i) => {
                                 const g = x.grid || {};
                                 const cols = Math.max(1, Math.min(12, g.cols || per));
+                                // `height`, not `min-height`: a minimum can only
+                                // ever grow a card, so dragging the grip upwards
+                                // did nothing and the card looked stuck.
                                 const rows = g.rows
-                                    ? `min-height:calc(${g.rows} * var(--nc-row))`
+                                    ? `height:calc(${g.rows} * var(--nc-row))`
                                     : '';
                                 // WHERE this card lives in the config tree, as
                                 // a path of indexes. A drag has to be able to
@@ -2884,7 +2901,8 @@
                                     style="grid-column:span ${cols};${rows}">${grips}${
                                     this.drawCard(x, at)}</div>`;
                             }).join('');
-                            return `${title}<div class="nc-stack-grid">${inner}</div>`;
+                            return `${title}<div class="nc-stack-grid${
+                                free ? ' nc-free' : ''}">${inner}</div>`;
                         }
                         case 'entities':
                             return title + '<div class="nc-rows">' + (c.rows || []).map(r => {
@@ -3405,6 +3423,11 @@
                     // columns are spans of the grid its own stack lays out on.
                     const colW = ((grid ? grid.clientWidth : 0) - gap * 11) / 12 + gap;
                     const rowH = 56 + gap;                    // --nc-row + gap
+                    // The stack stops stretching for the whole drag, not after
+                    // the re-render: otherwise a card dragged SHORTER sits in a
+                    // row still held open by a neighbour and nothing appears to
+                    // move until the pointer comes up.
+                    if (grid) grid.classList.add('nc-free');
                     const startX = e.clientX, startY = e.clientY;
                     const from = Object.assign({}, card.grid_options || {});
                     const startCols = Number(from.columns) || cell.offsetWidth / colW;
@@ -3420,7 +3443,7 @@
                         // cell is restyled here and the config is only written
                         // when the numbers actually change.
                         cell.style.gridColumn = 'span ' + cols;
-                        cell.style.minHeight = 'calc(' + rows + ' * var(--nc-row))';
+                        cell.style.height = 'calc(' + rows + ' * var(--nc-row))';
                         const key = cols + 'x' + rows;
                         if (key === last) return;
                         last = key;

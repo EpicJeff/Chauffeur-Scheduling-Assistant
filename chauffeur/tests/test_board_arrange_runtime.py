@@ -115,6 +115,13 @@ const idleDraw = b.drawCard({ kind: 'stack', direction: 'horizontal', cards: [
 b.arranging = true;
 const armedDraw = b.drawCard({ kind: 'stack', direction: 'vertical', cards: [leaf] }, []);
 
+// One card given a height, one not — the case where a stretched neighbour used
+// to grow along with the card being dragged.
+const sizedDraw = b.drawCard({ kind: 'stack', direction: 'horizontal', cards: [
+  Object.assign({}, leaf, { grid: { cols: 6, rows: 3 } }), leaf ] }, []);
+const plainDraw = b.drawCard({ kind: 'stack', direction: 'horizontal',
+  cards: [leaf, leaf] }, []);
+
 // While arranging, the DRAFT is the truth.
 const draftSpan = b.spanStyle('drives');
 b.arranging = false;
@@ -150,6 +157,9 @@ console.log(JSON.stringify({
   cardPaths: (idleDraw.match(/data-path="[\d.]+"/g) || []),
   handlesIdle: /nc-card-move/.test(idleDraw),
   handlesArmed: /nc-card-move/.test(armedDraw) && /nc-card-size/.test(armedDraw),
+  sizedFrees: /nc-stack-grid nc-free/.test(sizedDraw),
+  plainStretches: !/nc-free/.test(plainDraw),
+  sizedHeights: (sizedDraw.match(/height:calc\(\d+ \* var\(--nc-row\)\)/g) || []),
 }));
 """
 
@@ -265,6 +275,29 @@ def scenario_the_cards_inside_a_tile_arrange_too():
           "the drag handles are drawn on a board nobody is arranging, which "
           "puts them on the wall")
     check(got['handlesArmed'], "arrange mode draws no handles inside a tile")
+
+
+def scenario_a_card_can_be_sized_without_sizing_its_neighbours():
+    """A grid row is as tall as its tallest cell, and a stretched neighbour
+    grows with it — so dragging one card taller dragged everything beside it,
+    which is the uniform resize the sizes exist to escape. A stack holding any
+    sized card stops stretching; a stack holding none keeps stretching, because
+    ragged bottoms on a row nobody has touched look like a mistake.
+
+    The height is a `height`, not a `min-height`: a minimum can only grow a
+    card, so dragging the grip upwards did nothing and the card looked stuck.
+    """
+    got = _run()
+    if got is None:
+        return
+    check(got['sizedFrees'],
+          "a stack with a sized card still stretches its cells, so resizing "
+          "one card resizes the ones beside it")
+    check(got['plainStretches'],
+          "a stack nobody has sized stopped stretching, which leaves a row of "
+          "cards with ragged bottoms")
+    check(got['sizedHeights'] == ['height:calc(3 * var(--nc-row))'],
+          f"exactly the sized card should carry a height: {got['sizedHeights']}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
