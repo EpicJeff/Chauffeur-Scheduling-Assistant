@@ -469,6 +469,172 @@ def scenario_a_tile_with_no_page_is_not_a_link():
           "the tile's href is unconditional, so a pageless tile is still a link")
 
 
+# --- hiding Home Assistant's own chrome ------------------------------------
+
+CHROME_HARNESS = r"""
+const { JSDOM } = require('jsdom');
+
+// A stand-in for Home Assistant's frontend: the same nesting and the same
+// element names, with real shadow roots. If HA renames one of these, this
+// harness keeps passing and the wall keeps its header — which is why the
+// element names are ALSO pinned as literals in the scenario below.
+const dom = new JSDOM('<!doctype html><html><body></body></html>');
+const d = dom.window.document;
+
+function shadowed(parent, tag) {
+  const el = d.createElement(tag);
+  el.attachShadow({ mode: 'open' });
+  (parent.shadowRoot || parent).appendChild(el);
+  return el;
+}
+const ha = d.createElement('home-assistant');
+ha.attachShadow({ mode: 'open' });
+d.body.appendChild(ha);
+const main = shadowed(ha, 'home-assistant-main');
+const resolver = shadowed(main, 'partial-panel-resolver');
+const panel = d.createElement('ha-panel-lovelace');
+panel.attachShadow({ mode: 'open' });
+resolver.appendChild(panel);          // light DOM, as HA has it
+shadowed(panel, 'hui-root');
+
+const board = { stripHaChrome: __STRIP__ };
+const frame = { contentDocument: d };
+board.stripHaChrome.call(board, frame, 0);
+
+const mainRoot = ha.shadowRoot.querySelector('home-assistant-main').shadowRoot;
+const huiHost = mainRoot.querySelector('partial-panel-resolver')
+  .querySelector('ha-panel-lovelace').shadowRoot;
+const huiRoot = huiHost.querySelector('hui-root').shadowRoot;
+console.log(JSON.stringify({
+  sidebarStyle: !!mainRoot.querySelector('#chf-no-sidebar'),
+  headerStyle: !!huiRoot.querySelector('#chf-no-header'),
+  headerCss: (huiRoot.querySelector('#chf-no-header') || {}).textContent || '',
+  // Run it again: a reload must not stack a second stylesheet in.
+  twice: (function () {
+    board.stripHaChrome.call(board, frame, 0);
+    return mainRoot.querySelectorAll('#chf-no-sidebar').length;
+  })(),
+}));
+"""
+
+
+def _strip_fn():
+    """The `stripHaChrome` method, lifted whole out of the template by brace
+    matching so it survives being reformatted."""
+    import re as _re
+    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    body = next(b for b in _re.findall(r'<script>(.*?)</script>', tpl, _re.S)
+                if 'function homeBoard()' in b)
+    start = body.index('stripHaChrome(frame, tries) {')
+    i = body.index('{', start)
+    depth = 0
+    for j in range(i, len(body)):
+        if body[j] == '{':
+            depth += 1
+        elif body[j] == '}':
+            depth -= 1
+            if depth == 0:
+                return 'function (frame, tries) ' + body[i:j + 1]
+    raise AssertionError('stripHaChrome is unbalanced')
+
+
+def _run_chrome():
+    import json
+    import shutil
+    import subprocess
+    import tempfile as _tf
+    node = shutil.which('node')
+    if not node:
+        print('  SKIP  node not installed')
+        return None
+    with _tf.TemporaryDirectory() as tmp:
+        f = os.path.join(tmp, 'run.js')
+        with open(f, 'w', encoding='utf-8') as fh:
+            fh.write(CHROME_HARNESS.replace('__STRIP__', _strip_fn()))
+        proc = subprocess.run([node, f], capture_output=True, text=True,
+                              cwd=os.path.dirname(TPL))
+    if proc.returncode != 0:
+        if 'Cannot find module' in proc.stderr and 'jsdom' in proc.stderr:
+            print('  SKIP  jsdom not installed')
+            return None
+        raise AssertionError(f"the chrome stripper threw:\n{proc.stderr[-1500:]}")
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def scenario_the_header_and_sidebar_are_actually_removed():
+    """Stock Home Assistant has no query parameter for this — `?kiosk` belongs
+    to the kiosk-mode integration. What we can do instead is reach into the
+    frame, which is same-origin under ingress, and put a stylesheet into each
+    shadow root that owns the thing being hidden. A parent stylesheet cannot:
+    that is precisely what a shadow root is for.
+
+    Run against a stand-in with HA's nesting and real shadow roots, because
+    "did the style land in the right root" is the only claim worth making."""
+    got = _run_chrome()
+    if got is None:
+        return
+    check(got['sidebarStyle'],
+          "no stylesheet reached home-assistant-main's shadow root, so the "
+          "sidebar stays")
+    check(got['headerStyle'],
+          "no stylesheet reached hui-root's shadow root, so the dashboard "
+          "keeps its header")
+    for needed in ('.header', 'app-header', 'display: none'):
+        check(needed in got['headerCss'], f"the header rule lost {needed!r}")
+    check(got['twice'] == 1,
+          f"a reload stacked {got['twice']} stylesheets into the same root")
+
+
+def scenario_the_element_names_it_depends_on_are_written_down():
+    """The harness above builds the tree it expects, so a Home Assistant
+    rename would keep it green while the wall quietly grew its header back.
+    Pinning the literals is the honest half: when HA restructures its frontend
+    this fails and names what to go and look at."""
+    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    # Scoped to the stripper itself: some of these names are querySelector
+    # arguments and some are CSS selectors inside the injected stylesheet, so
+    # the check is for the NAME, not for a quoted string.
+    fn = tpl[tpl.index('stripHaChrome(frame, tries) {'):]
+    fn = fn[:fn.index('async toggleEntity')]
+    for name in ('home-assistant', 'home-assistant-main', 'partial-panel-resolver',
+                 'ha-panel-lovelace', 'hui-root', 'ha-sidebar'):
+        check(name in fn,
+              f"the chrome stripper no longer looks for <{name}> — if Home "
+              f"Assistant renamed it, update the traversal; if we dropped it, "
+              f"the header is coming back")
+
+
+def scenario_hiding_is_skipped_cross_origin_rather_than_attempted():
+    """A cross-origin frame's document is not ours to read, and trying throws
+    a SecurityError into the console on every load of a tile that was already
+    never going to work."""
+    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    fn = tpl[tpl.index('haFrameLoaded(tile, frame) {'):]
+    fn = fn[:fn.index('stripHaChrome(frame, tries)')]
+    check('tile.data.same_origin' in fn,
+          "the chrome stripper runs cross-origin, where it can only throw")
+    check("!== 'hide'" in fn,
+          "the tile no longer honours 'leave the dashboard as it is'")
+
+
+def scenario_the_retry_is_bounded():
+    """HA builds its component tree after `load`, so the first attempt misses.
+    A MutationObserver inside a live dashboard would run for as long as the
+    panel is up, on a Raspberry Pi, for three seconds' worth of benefit."""
+    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    fn = tpl[tpl.index('stripHaChrome(frame, tries) {'):]
+    fn = fn[:fn.index('async toggleEntity')]
+    # Comments stripped: this rule is EXPLAINED in a comment right here, and a
+    # guard that trips on its own rationale is a guard nobody keeps.
+    code = '\n'.join(l for l in fn.splitlines()
+                     if not l.strip().startswith('//'))
+    check('MutationObserver' not in code,
+          "the chrome stripper installs an observer inside the dashboard")
+    check('tries > 0' in fn and 'tries - 1' in fn,
+          "the retry is no longer bounded, so a dashboard that never matches "
+          "retries for as long as the panel is up")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

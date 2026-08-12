@@ -767,6 +767,7 @@
                     <template x-if="t.type === 'ha_dashboard' && !t.data.empty">
                         <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden bg-gray-900">
                             <iframe :src="haFrameSrc(t)" :title="t.data.url"
+                                @load="haFrameLoaded(t, $event.target)"
                                 class="absolute inset-0 w-full h-full border-0"
                                 referrerpolicy="same-origin"></iframe>
                         </div>
@@ -1867,6 +1868,95 @@
                     if (!every) return base;
                     const bucket = Math.floor(this.haImageTick / every);
                     return base + (base.includes('?') ? '&' : '?') + 'v=' + bucket;
+                },
+
+                // ── Hiding Home Assistant's own header and sidebar.
+                //
+                // The difference between "a card on the wall" and "a browser
+                // window on the wall", so it is the default. There is no query
+                // parameter for it in stock HA — `?kiosk` belongs to the
+                // kiosk-mode integration, which is worth installing and which
+                // this tile already supports, since `path` is free text.
+                //
+                // What we can do without it: the frame is SAME-ORIGIN under
+                // ingress, so its document is reachable and a stylesheet can
+                // be put into it. HA's frontend is a tree of web components
+                // with closed-ish shadow roots, so a parent stylesheet cannot
+                // reach the header — the style has to be inserted into each
+                // shadow root that owns the thing being hidden, which is
+                // exactly what kiosk-mode does too.
+                //
+                // This depends on HA's internal element names and WILL need
+                // revisiting when its frontend is restructured. That is an
+                // acceptable trade for a wall panel and a bad one for anything
+                // load-bearing: when it stops working the dashboard simply
+                // comes back with its header, which is the failure you want.
+                haFrameLoaded(tile, frame) {
+                    if ((tile.data.chrome || 'hide') !== 'hide') return;
+                    // Cross-origin: the document is not ours to touch, and the
+                    // frame very likely did not load at all. Nothing to do.
+                    if (!tile.data.same_origin) return;
+                    this.stripHaChrome(frame, 12);
+                },
+
+                stripHaChrome(frame, tries) {
+                    let doc = null;
+                    try { doc = frame.contentDocument; } catch (e) { return; }
+                    if (!doc) return;
+
+                    const put = (root, id, css) => {
+                        if (!root || root.querySelector('#' + id)) return;
+                        const st = doc.createElement('style');
+                        st.id = id;
+                        st.textContent = css;
+                        root.appendChild(st);
+                    };
+
+                    let done = false;
+                    try {
+                        const ha = doc.querySelector('home-assistant');
+                        const main = ha && ha.shadowRoot
+                            && ha.shadowRoot.querySelector('home-assistant-main');
+                        if (main && main.shadowRoot) {
+                            put(main.shadowRoot, 'chf-no-sidebar', `
+                                ha-sidebar, .mdc-drawer { display: none !important; }
+                                :host { --mdc-drawer-width: 0px !important; }
+                                .mdc-drawer-app-content {
+                                    margin-inline-start: 0 !important;
+                                    margin-left: 0 !important;
+                                }
+                            `);
+                        }
+                        const resolver = main && main.shadowRoot
+                            && main.shadowRoot.querySelector('partial-panel-resolver');
+                        const panel = resolver
+                            && resolver.querySelector('ha-panel-lovelace');
+                        const hui = panel && panel.shadowRoot
+                            && panel.shadowRoot.querySelector('hui-root');
+                        if (hui && hui.shadowRoot) {
+                            put(hui.shadowRoot, 'chf-no-header', `
+                                .header, app-header, .toolbar { display: none !important; }
+                                #view, hui-view {
+                                    padding-top: 0 !important;
+                                    min-height: 100vh !important;
+                                }
+                            `);
+                            done = true;
+                        }
+                    } catch (e) {
+                        // HA's internals moved. The dashboard keeps its header,
+                        // which is a visible, harmless, self-explaining result.
+                        return;
+                    }
+
+                    // The frame builds its component tree asynchronously, so
+                    // `load` is early. A BOUNDED retry rather than a
+                    // MutationObserver: this panel is a Raspberry Pi and an
+                    // observer inside a live dashboard would run forever for
+                    // three seconds' worth of benefit.
+                    if (!done && tries > 0) {
+                        setTimeout(() => this.stripHaChrome(frame, tries - 1), 250);
+                    }
                 },
 
                 async toggleEntity(tile, row) {

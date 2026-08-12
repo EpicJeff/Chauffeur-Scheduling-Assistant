@@ -292,7 +292,18 @@ WIDGETS = [
               "different origin and Home Assistant usually refuses to be framed.",
      'options': [
          _opt('path', 'Dashboard view', 'text', '',
-              help='e.g. lovelace/0 or my-panel/cameras'),
+              help='e.g. lovelace/0 or my-panel/cameras. Add ?kiosk if you '
+                   'have the kiosk-mode integration installed.'),
+         # Hiding HA's own header and sidebar is the difference between "a
+         # card on the wall" and "a browser window on the wall", so it is the
+         # default. It works by reaching INTO the frame, which is only
+         # possible same-origin — see the note in home.html for why that is
+         # both fine and fragile.
+         _opt('chrome', "Home Assistant's own chrome", 'choice', 'hide', choices=[
+             {'value': 'hide', 'label': 'Hide the header and sidebar'},
+             {'value': 'as_is', 'label': 'Leave the dashboard as it is'}],
+              help='Hiding only works when the panel is opened through Home '
+                   'Assistant. Cross-origin, nothing here can touch the frame.'),
          _opt('refresh_seconds', 'Reload every', 'int', 0, min=0, max=86400,
               help='Seconds. 0 leaves it alone — a live dashboard updates '
                    'itself and reloading only costs a flash.'),
@@ -1844,6 +1855,7 @@ def _tile_ha_dashboard(now, config=None, settings=None, **_):
         # same-origin is the only arrangement in which Home Assistant reliably
         # agrees to be framed at all.
         'same_origin': not url.startswith(('http://', 'https://')),
+        'chrome': _cfg_str(config, 'chrome', 'hide') or 'hide',
         'refresh_seconds': _cfg_int(config, 'refresh_seconds', 0, 0, 86400),
     }
 
