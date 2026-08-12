@@ -157,6 +157,60 @@ def fetch_binary(path: str):
         return None
 
 
+def core_origins() -> list:
+    """Where Home Assistant's own web server can be reached, in order to try.
+
+    NOT the Supervisor proxy, and that distinction cost a shipped release. The
+    proxy at `http://supervisor/core` forwards `/core/api` and
+    `/core/websocket` and nothing else — it is a proxy to the API, not to Home
+    Assistant. Every existing caller of `fetch_binary` passes an `/api/…` path
+    (see main._HA_IMAGE_PREFIXES), so this limit stayed invisible until
+    something asked for `/local/…` and got a 404 dressed up as "Home Assistant
+    would not hand over that file".
+
+    Add-ons share a network with the Core container, which answers to the
+    hostname `homeassistant` on 8123. That is the route to anything HA serves
+    that is not the API.
+    """
+    out = []
+    if os.environ.get('SUPERVISOR_TOKEN'):
+        out.append('http://homeassistant:8123')
+    base = os.environ.get('HA_BASE_URL', '')
+    if not base:
+        from services import storage
+        base = (storage.get_settings() or {}).get('ha_base_url') or ''
+    base = (base or '').rstrip('/')
+    if base.endswith('/api'):
+        base = base[:-len('/api')]
+    if base and base not in out:
+        out.append(base)
+    return out
+
+
+def fetch_static(path: str):
+    """(content, content_type) for one of HA's UNAUTHENTICATED static files —
+    `/local/…` (which is /config/www), `/hacsfiles/…`, `/static/…` — or None.
+
+    Deliberately tokenless. Home Assistant serves these without auth (its own
+    frontend has to load before anybody has signed in), and the token would not
+    be valid against the Core container directly anyway. Callers validate the
+    path; nothing here should ever be handed a caller's raw input.
+    """
+    if not path.startswith('/'):
+        return None
+    for origin in core_origins():
+        try:
+            resp = requests.get(f"{origin}{path}", timeout=10)
+        except Exception as e:
+            print(f"[ha_api] static {origin}{path[:60]} failed: {e}")
+            continue
+        if resp.status_code < 400:
+            return resp.content, resp.headers.get('Content-Type',
+                                                  'application/octet-stream')
+        print(f"[ha_api] static {origin}{path[:60]} -> {resp.status_code}")
+    return None
+
+
 def get_config_entry_id(domain: str):
     """Config entry id for an integration (e.g. 'music_assistant') — required
     by MA's search/get_library services. Uses HA's config-entries HTTP view

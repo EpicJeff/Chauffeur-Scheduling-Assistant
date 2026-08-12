@@ -257,7 +257,9 @@ def fetch_resource(url):
     from services import ha_api
     if not resource_allowed(url):
         return None
-    result = ha_api.fetch_binary(url)
+    # fetch_STATIC, not fetch_binary: a card's file is not an API path, and
+    # the Supervisor proxy only carries API paths. See ha_api.core_origins.
+    result = ha_api.fetch_static(url)
     if not result:
         return None
     content, _ = result
@@ -280,7 +282,9 @@ def fetch_resource(url):
 
 def _fetch_json(path):
     from services import ha_api
-    result = ha_api.fetch_binary(path)
+    # `/static/mdi/…` is frontend static content, so the same route a card's
+    # own file takes — not the API proxy.
+    result = ha_api.fetch_static(path)
     if not result:
         return None
     try:

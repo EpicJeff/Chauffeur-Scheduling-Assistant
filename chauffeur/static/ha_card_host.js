@@ -215,7 +215,11 @@
             if (type !== 'js') el.type = 'module';
             el.onload = function () { resolve(true); };
             el.onerror = function () {
-                reject(new Error("Home Assistant would not hand over that card's file."));
+                // WITH THE PATH. A script tag's error event carries nothing —
+                // no status, no body — so the only thing this can usefully add
+                // is where it looked, and that is exactly what the next person
+                // debugging it needs in their hand.
+                reject(new Error("Home Assistant would not hand over " + url));
             };
             document.head.appendChild(el);
         });

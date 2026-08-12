@@ -193,6 +193,63 @@ def scenario_no_home_assistant_is_a_sentence_not_a_blank_tile():
         ha_cards.list_resources = real
 
 
+def scenario_a_cards_file_does_not_go_through_the_api_proxy():
+    """The bug that shipped in v2.187.0, pinned.
+
+    `http://supervisor/core` proxies `/core/api` and `/core/websocket` — it is
+    a proxy to Home Assistant's API, not to Home Assistant. A card lives at
+    `/hacsfiles/…` or `/local/…`, neither of which is an API path, so routing
+    it through `fetch_binary` produced a 404 that reached the wall as "Home
+    Assistant would not hand over that card's file".
+
+    Every other caller of `fetch_binary` passes an `/api/…` path, which is why
+    nothing caught this. So the assertion is about WHICH DOOR is used, not
+    about the bytes that come back.
+    """
+    from services import ha_api
+    real_static, real_binary = ha_api.fetch_static, ha_api.fetch_binary
+    asked = []
+    try:
+        ha_api.fetch_static = lambda p: (asked.append(('static', p)), (b'/*card*/', 'x'))[1]
+        ha_api.fetch_binary = lambda p: (asked.append(('binary', p)), (b'', 'x'))[1]
+        out = ha_cards.fetch_resource('/local/community/some-card/some-card.js')
+        check(out and out[0] == b'/*card*/', f"the card's file did not come back: {out}")
+        check(asked == [('static', '/local/community/some-card/some-card.js')],
+              f"a card's file must be fetched as STATIC content, not through "
+              f"the API proxy: {asked}")
+
+        asked.clear()
+        ha_cards.reset_icon_cache()
+        ha_cards.mdi_path('solar-power')
+        check(asked and asked[0][0] == 'static' and asked[0][1].startswith('/static/mdi/'),
+              f"mdi icons are frontend static content too: {asked}")
+    finally:
+        ha_api.fetch_static, ha_api.fetch_binary = real_static, real_binary
+        ha_cards.reset_icon_cache()
+
+
+def scenario_the_static_route_is_home_assistant_itself():
+    """Add-ons reach the Core container directly at `homeassistant:8123`, and
+    the files a card needs are served there WITHOUT authentication — HA's own
+    frontend has to load before anybody has signed in. So no token goes out,
+    and the supervisor URL is not in the list at all."""
+    import os
+    from services import ha_api
+    had = os.environ.get('SUPERVISOR_TOKEN')
+    try:
+        os.environ['SUPERVISOR_TOKEN'] = 'pretend'
+        origins = ha_api.core_origins()
+        check(origins and origins[0] == 'http://homeassistant:8123',
+              f"an add-on's route to HA's own files is the Core container: {origins}")
+        check(not any('supervisor' in o for o in origins),
+              f"the API proxy cannot serve static files and must not be tried: {origins}")
+    finally:
+        if had is None:
+            os.environ.pop('SUPERVISOR_TOKEN', None)
+        else:
+            os.environ['SUPERVISOR_TOKEN'] = had
+
+
 def scenario_an_icon_name_is_never_trusted():
     """The icon endpoint takes a name straight off a card's config and turns it
     into a path on Home Assistant. Anything that is not an mdi name must stop
