@@ -307,6 +307,36 @@
         container.appendChild(p);
     }
 
+    // ── Cards whose layout is a function of their own width.
+    //
+    // Not a niche case: tesla-style-solar-power-card computes
+    // `pxRate = getBoundingClientRect().width / 100` inside render() and sizes
+    // every bubble, line and gap from it. A card like that measures ONCE per
+    // render, and a Lit card only re-renders when a property changes — which
+    // here means when the board next polls, up to a minute later. So a card
+    // mounted before its cell has settled, or sitting in a tile somebody has
+    // just resized, draws its whole diagram against a width that is no longer
+    // true and every element lands slightly wrong.
+    //
+    // Re-assigning `hass` is the smallest thing that makes it re-render, and
+    // re-rendering is what makes it re-measure.
+    function watchWidth(held) {
+        if (!window.ResizeObserver || held.observer) return;
+        var last = held.container.clientWidth;
+        held.observer = new ResizeObserver(function () {
+            var now = held.container.clientWidth;
+            // Whole pixels only. Sub-pixel jitter from a scrollbar appearing
+            // would otherwise re-render every card on the board continuously.
+            if (Math.abs(now - last) < 1) return;
+            last = now;
+            clearTimeout(held.resizeTimer);
+            held.resizeTimer = setTimeout(function () {
+                try { held.el.hass = makeHass(held.spec); } catch (e) { /* gone */ }
+            }, 120);
+        });
+        held.observer.observe(held.container);
+    }
+
     function mount(container, spec) {
         if (!container || !spec) return Promise.resolve(false);
         API.base = spec.apiBase || '';
@@ -349,7 +379,9 @@
             el.style.display = 'block';
             container.textContent = '';
             container.appendChild(el);
-            mounted[spec.id] = { el: el, container: container, signature: signature };
+            var held = { el: el, container: container, signature: signature, spec: spec };
+            mounted[spec.id] = held;
+            watchWidth(held);
             return true;
         }).catch(function (e) {
             delete mounted[spec.id];

@@ -233,6 +233,52 @@ def scenario_everything_drawn_is_escaped():
           f"the markdown subset stopped working: {out}")
 
 
+def scenario_an_icon_follows_what_the_entity_measures():
+    """Reported off a real board: a column of energy sensors all drawn as the
+    same generic eye.
+
+    The domain map only knows that something is a `sensor`. Home Assistant
+    resolves the icon from `device_class` first, which is why its version of
+    the same dashboard has a lightning bolt, a battery and a car on it.
+    """
+    states = {}
+    states.update(st('sensor.exported', '24', device_class='energy',
+                     friendly_name='Exported'))
+    states.update(st('sensor.temp', '71', device_class='temperature'))
+    states.update(st('sensor.plain', '3', friendly_name='Something'))
+    states.update(st('sensor.chosen', '3', icon='mdi:pool', device_class='energy'))
+
+    card = conv.convert({'type': 'entities', 'entities': [
+        'sensor.exported', 'sensor.temp', 'sensor.plain', 'sensor.chosen']}, states)
+    icons = [r['icon'] for r in card['rows']]
+    check(icons[0] == 'mdi:lightning-bolt', f"an energy sensor drew {icons[0]}")
+    check(icons[1] == 'mdi:thermometer', f"a temperature sensor drew {icons[1]}")
+    # No device class and no icon: the domain fallback is the LAST resort, and
+    # it is allowed to be generic.
+    check(icons[2] == 'mdi:eye', f"the fallback changed: {icons[2]}")
+    # An icon somebody chose beats everything, including the class.
+    check(icons[3] == 'mdi:pool', f"the entity's own icon lost: {icons[3]}")
+
+    # A binary sensor's icon carries its STATE — a door icon that does not
+    # change when the door opens is a picture, not a reading.
+    binaries = {}
+    binaries.update(st('binary_sensor.front', 'on', device_class='door'))
+    binaries.update(st('binary_sensor.back', 'off', device_class='door'))
+    rows = conv.convert({'type': 'entities', 'entities':
+                         ['binary_sensor.front', 'binary_sensor.back']}, binaries)['rows']
+    check(rows[0]['icon'] == 'mdi:door-open' and rows[1]['icon'] == 'mdi:door-closed',
+          f"an open door and a closed one look the same: "
+          f"{[r['icon'] for r in rows]}")
+
+    # And the precision an integration asks for travels to the renderer.
+    precise = {}
+    precise.update(st('sensor.meter', '1.23456', device_class='gas',
+                      suggested_display_precision=3))
+    row = conv.convert({'type': 'entities', 'entities': ['sensor.meter']},
+                       precise)['rows'][0]
+    check(row['precision'] == 3, f"the entity's own precision was dropped: {row}")
+
+
 def scenario_a_sensor_card_downsamples_its_own_history():
     """The only card here that is not a pure function of a config and a state.
 
@@ -433,6 +479,30 @@ const out = b.drawCard({
 });
 const gauge = b.drawCard({ kind: 'gauge', name: hostile, unit: hostile,
                            value: 42, pct: 0.42, severity: 'green', missing: false });
+// Numbers, as somebody would write them down.
+const numbers = [
+  [b.fmt('43.6834340349917'), '43.68'],
+  [b.fmt('0.430565965008326538477427'), '0.43'],
+  [b.fmt('1234.5678'), '1,234.57'],
+  [b.fmt('100'), '100'],
+  [b.fmt('100', 2), '100.00'],
+  [b.fmt('3.4', 0), '3'],
+  [b.fmt('on'), 'on'],
+  [b.fmt(null), '—'],
+];
+
+// A smoothed, filled sparkline.
+const spark = b.drawCard({ kind: 'sensor', name: 'Home Usage', icon: 'mdi:home',
+  state: '43.6834340349917', unit: 'kWh', missing: false, hours: 24,
+  points: [1, 3, 2, 5, 4, 6], min: 1, max: 6 });
+
+// A nested stack: the leaf cards get a surface, the cell holding a stack does not.
+const nested = b.drawCard({ kind: 'stack', direction: 'vertical', cards: [
+  { kind: 'stack', direction: 'horizontal', cards: [
+    { kind: 'entities', title: 'A', rows: [] }] },
+  { kind: 'gauge', name: 'B', value: 1, pct: 0.5, min: 0, max: 2, missing: false },
+]});
+
 const stack = b.drawCard({ kind: 'stack', direction: 'grid', columns: 3,
   cards: [{ kind: 'tile', name: 'A', icon: 'mdi:a', state: '1',
             entity_id: 'light.a', toggleable: false, missing: false, on: false }] });
@@ -454,6 +524,14 @@ console.log(JSON.stringify({
   // Two cards in the row means two cells, whatever each card drew inside.
   rowCells: (titledRow.match(/class="nc-cell"/g) || []).length,
   rowKeptTitles: titledRow.includes('Left') && titledRow.includes('Right'),
+  numbers: numbers,
+  sparkSmooth: /C[\d.]+,[\d.]+ /.test(spark),
+  sparkFilled: spark.includes('linearGradient') && spark.includes('url(#ncg'),
+  sparkClosed: spark.includes('L100,30 L0,30 Z'),
+  sparkRounded: spark.includes('43.68') && !spark.includes('43.6834'),
+  unitSplit: spark.includes('nc-unit'),
+  nestedPlain: nested.includes('class="nc-cell" data-plain'),
+  leafSurfaced: /class="nc-cell">/.test(nested),
 }));
 """
 
@@ -498,6 +576,31 @@ def scenario_the_renderer_escapes_what_the_converter_passed_through():
     check(got['rowCells'] == 2,
           f"two cards in a horizontal stack produced {got['rowCells']} cells")
     check(got['rowKeptTitles'], "wrapping the cards dropped their titles")
+
+    # Numbers, as somebody would write them down. An energy sensor's state is
+    # `43.6834340349917`, and printing it whole is the difference between a
+    # dashboard and a debug view — it also makes the row a different width
+    # every time the last digit changes.
+    for got_value, want in got['numbers']:
+        check(got_value == want, f"formatted {got_value!r}, expected {want!r}")
+
+    # The graph. Straight segments between downsampled buckets make a line look
+    # like a seismograph, and every corner is an artefact of the bucketing
+    # rather than anything the sensor did.
+    check(got['sparkSmooth'], "the sparkline is back to straight segments")
+    check(got['sparkFilled'] and got['sparkClosed'],
+          "the sparkline lost the area under it, which is what makes it read "
+          "as a quantity over time rather than as a scratch")
+    check(got['sparkRounded'], "the sensor card is printing a raw float")
+    check(got['unitSplit'],
+          "the unit is the same weight as the value again, which doubles the "
+          "width of every reading and halves how fast one can be read")
+
+    # Each card in a stack gets its own surface — side by side with Home
+    # Assistant that was most of the difference. A cell holding another stack
+    # stays plain, or the surfaces nest.
+    check(got['leafSurfaced'], "a card in a stack has no surface of its own")
+    check(got['nestedPlain'], "a stack inside a stack drew a surface inside a surface")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

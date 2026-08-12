@@ -50,7 +50,29 @@
            horizontal stack of two titled cards lays out as four equal columns
            with the headings in two of them. */
         .nc-row-stack > .nc-cell { flex: 1 1 0; }
-        .nc-cell { min-width: 0; }
+        /* Each card in a stack gets its own SURFACE.
+           Side by side with Home Assistant this was most of the difference:
+           HA's stacks are stacks of cards, and ours were a stack of contents
+           on one flat field, so nothing said where one card ended and the next
+           began. A cell holding another stack stays plain — nesting surfaces
+           inside surfaces is the other way to get this wrong. */
+        .nc-cell {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            background: var(--panel-card-lo);
+            border: 1px solid var(--panel-line);
+            border-radius: 0.6rem;
+            padding: 0.75rem;
+            overflow: hidden;
+        }
+        .nc-cell[data-plain] {
+            background: none;
+            border: 0;
+            border-radius: 0;
+            padding: 0;
+            overflow: visible;
+        }
         .nc-grid { display: grid; gap: 0.75rem; }
         .nc-rows { display: flex; flex-direction: column; gap: 0.4rem; }
         .nc-entity { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
@@ -159,16 +181,48 @@
         .nc-unsupported span { font-size: 0.7rem; opacity: 0.75; }
         /* The sparkline stretches to its cell rather than to a pixel width the
            server would have had to guess when it computed the points. */
-        .nc-sensor { display: flex; flex-direction: column; gap: 0.3rem; }
-        .nc-spark { display: block; width: 100%; height: 3rem; }
-        .nc-spark-empty { font-size: 0.75rem; color: var(--panel-dim); }
-        .nc-spark-range {
+        /* Label small on top, reading large beneath it, graph full-bleed along
+           the bottom. The reading is the only part of this card anybody reads
+           from across a room, and the first cut had it the same size as its
+           own label on the same line. */
+        .nc-sensor { display: flex; flex-direction: column; height: 100%; }
+        .nc-sensor-head {
             display: flex;
+            align-items: flex-start;
             justify-content: space-between;
-            font-size: 0.65rem;
-            color: var(--panel-dim);
-            font-variant-numeric: tabular-nums;
+            gap: 0.5rem;
         }
+        .nc-sensor-name {
+            font-size: 0.85rem;
+            color: var(--panel-fg);
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .nc-sensor-icon { color: var(--panel-dim); flex: 0 0 auto; }
+        .nc-sensor-value { margin: 0.1rem 0 0.35rem; }
+        .nc-sensor-value .nc-state { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
+        /* The unit is not part of the number. Same size and weight as the
+           value, it doubles the width of every reading and halves how fast one
+           can be read. */
+        .nc-unit {
+            font-size: 0.72em;
+            font-weight: 600;
+            color: var(--panel-dim);
+            margin-left: 0.2em;
+        }
+        /* Pushed to the bottom and out to the edges of its cell — the negative
+           margin cancels the cell's own padding, which is what makes it read
+           as part of the card rather than as a picture sitting in it. */
+        .nc-spark {
+            display: block;
+            width: calc(100% + 1.5rem);
+            height: 3.25rem;
+            margin: auto -0.75rem -0.75rem;
+        }
+        .nc-cell:not([data-plain]) > .nc-sensor > .nc-spark { border-radius: 0 0 0.6rem 0.6rem; }
+        .nc-spark-empty { font-size: 0.75rem; color: var(--panel-dim); margin-top: auto; }
         .nc-thermo { text-align: center; }
         .nc-thermo-now {
             font-weight: 800;
@@ -242,12 +296,15 @@
             margin-left: auto;
             margin-right: auto;
         }
+        /* The value sits INSIDE the arc, as it does in Home Assistant. Under
+           it, the semicircle reads as decoration above an unrelated number. */
         .nc-gauge-value {
             font-weight: 800;
             font-size: 1.4rem;
             line-height: 1;
             color: var(--panel-fg);
             font-variant-numeric: tabular-nums;
+            margin-top: -1.4rem;
         }
         .nc-gauge-unit { font-size: 0.8rem; font-weight: 600; margin-left: 0.15rem; color: var(--panel-dim); }
         .nc-gauge-name { font-size: 0.8rem; color: var(--panel-dim); margin-top: 0.15rem; }
@@ -2542,10 +2599,41 @@
                     return `<ha-icon icon="${this.esc(name)}"></ha-icon>`;
                 },
 
+                // A NUMBER, the way somebody would write it down.
+                //
+                // An energy sensor's state is `43.6834340349917`, and printing
+                // it whole is the difference between a dashboard and a debug
+                // view — it also makes the row a different width every time the
+                // last digit changes. Home Assistant's own frontend rounds to
+                // two decimals by default and adds thousands separators, and
+                // this is the same rule so the two surfaces read alike.
+                //
+                // `suggested_display_precision` wins when the integration ships
+                // one, which is how a power sensor gets 0 decimals and a gas
+                // meter gets 3 without anybody configuring anything.
+                fmt(value, precision) {
+                    if (value === null || value === undefined) return '—';
+                    const n = Number(value);
+                    // Not a number, or a state that only looks like one
+                    // ('on', 'home', an empty string): pass it through.
+                    if (value === '' || !isFinite(n)) return String(value);
+                    const digits = (precision === null || precision === undefined)
+                        ? 2 : Math.max(0, Math.min(6, precision));
+                    return n.toLocaleString(undefined, {
+                        maximumFractionDigits: digits,
+                        // Trailing zeros only when the integration asked for
+                        // that precision — 100.00 reads as a measurement,
+                        // 43.68 as a reading, and 55.50 as neither.
+                        minimumFractionDigits: (precision == null) ? 0 : digits,
+                    });
+                },
+
                 reading(row) {
                     if (row.missing) return '<span class="nc-missing">not in HA</span>';
-                    const unit = row.unit ? ' ' + this.esc(row.unit) : '';
-                    return `<span class="nc-state">${this.esc(row.state ?? '—')}${unit}</span>`;
+                    const unit = row.unit
+                        ? `<span class="nc-unit">${this.esc(row.unit)}</span>` : '';
+                    return `<span class="nc-state">${
+                        this.esc(this.fmt(row.state, row.precision))}${unit}</span>`;
                 },
 
                 drawCard(c) {
@@ -2560,8 +2648,12 @@
                             // columns with the headings in two of them. Flex
                             // and grid count children, not cards, and that is
                             // the shape every example in HA's own docs uses.
+                            // A cell holding another STACK stays plain: a
+                            // surface inside a surface inside a surface is the
+                            // other way to lose the boundary this draws.
                             const inner = (c.cards || [])
-                                .map(x => `<div class="nc-cell">${this.drawCard(x)}</div>`)
+                                .map(x => `<div class="nc-cell"${x.kind === 'stack'
+                                    ? ' data-plain' : ''}>${this.drawCard(x)}</div>`)
                                 .join('');
                             if (c.direction === 'horizontal') {
                                 return `${title}<div class="nc-row-stack">${inner}</div>`;
@@ -2670,7 +2762,7 @@
                                 stroke-dasharray="${(len * pct).toFixed(2)} ${len.toFixed(2)}"></path>
                         </svg>
                         <div class="nc-gauge-value">${c.missing ? '—'
-                            : this.esc(c.value ?? '—')}<span class="nc-gauge-unit">${
+                            : this.esc(this.fmt(c.value))}<span class="nc-gauge-unit">${
                             this.esc(c.unit || '')}</span></div>
                         <div class="nc-gauge-name">${this.esc(c.name)}</div>
                       </div>`;
@@ -2682,6 +2774,41 @@
                 // the stack gave it without the points needing to know the
                 // pixel width — which the server, where they are computed,
                 // cannot know.
+                // Laid out the way Home Assistant's own sensor card is, and
+                // for its reasons rather than to copy it: the NAME is a label
+                // and belongs small at the top, the value is what the card is
+                // for and belongs large under it, and the graph is context and
+                // belongs at the bottom running edge to edge.
+                //
+                // The first cut put all three on one line with the icon first,
+                // which made every card in a column the same shape and left the
+                // reading — the only part anybody reads from across a room —
+                // the same size as its label.
+                // Straight segments between samples make a downsampled line
+                // look like a seismograph — every bucket boundary is a corner,
+                // and the corners are an artefact of the bucketing rather than
+                // anything the sensor did. Home Assistant's own graph smooths,
+                // and this is the standard way: Catmull-Rom through the points,
+                // expressed as the cubic beziers SVG can actually draw.
+                //
+                // The 1/6 is what makes the curve pass THROUGH each sample
+                // rather than near it — a graph that rounds off a spike is a
+                // graph that lies about the number printed above it.
+                smoothPath(pts) {
+                    if (!pts.length) return '';
+                    const at = i => pts[Math.max(0, Math.min(pts.length - 1, i))];
+                    const f = n => n.toFixed(2);
+                    let d = `M${f(pts[0][0])},${f(pts[0][1])}`;
+                    for (let i = 0; i < pts.length - 1; i++) {
+                        const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+                        const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+                        const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+                        d += ` C${f(c1[0])},${f(c1[1])} ${f(c2[0])},${f(c2[1])}`
+                           + ` ${f(p2[0])},${f(p2[1])}`;
+                    }
+                    return d;
+                },
+
                 drawSensor(c) {
                     const pts = c.points || [];
                     let graph = '';
@@ -2690,27 +2817,37 @@
                         const span = (hi - lo) || 1;
                         const step = 100 / (pts.length - 1);
                         const xy = pts.map((v, i) =>
-                            `${(i * step).toFixed(2)},${(30 - ((v - lo) / span) * 28).toFixed(2)}`);
+                            [i * step, 30 - ((v - lo) / span) * 27]);
+                        const line = this.smoothPath(xy);
+                        const id = 'ncg' + (this._gradSeq = (this._gradSeq || 0) + 1);
+                        // FILLED, and faded downward. A bare line on a dark
+                        // card reads as a scratch; the area under it is what
+                        // makes it read as a quantity over time, and a flat
+                        // fill competes with the reading sitting above it.
                         graph = `<svg class="nc-spark" viewBox="0 0 100 30"
                                       preserveAspectRatio="none">
-                            <polyline points="${xy.join(' ')}" fill="none"
+                            <defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0" stop-color="var(--panel-accent)" stop-opacity="0.35"></stop>
+                              <stop offset="1" stop-color="var(--panel-accent)" stop-opacity="0.02"></stop>
+                            </linearGradient></defs>
+                            <path d="${line} L100,30 L0,30 Z" fill="url(#${id})"></path>
+                            <path d="${line}" fill="none"
                                 stroke="var(--panel-accent)" stroke-width="1.5"
                                 stroke-linejoin="round" stroke-linecap="round"
-                                vector-effect="non-scaling-stroke"></polyline>
+                                vector-effect="non-scaling-stroke"></path>
                           </svg>`;
                     } else if (pts.length === 0) {
                         // Said, not left blank. A card with an empty rectangle
                         // under it is indistinguishable from one that failed.
                         graph = `<div class="nc-spark-empty">no history yet</div>`;
                     }
-                    const range = (c.min != null && c.max != null && pts.length > 1)
-                        ? `<div class="nc-spark-range"><span>${this.esc(c.min)}</span>`
-                          + `<span>${this.esc(c.max)}</span></div>` : '';
                     return `<div class="nc-sensor">
-                        <div class="nc-entity">${this.icon(c.icon)}
-                          <span class="nc-name">${this.esc(c.name)}</span>
-                          ${this.reading(c)}</div>
-                        ${graph}${range}
+                        <div class="nc-sensor-head">
+                          <span class="nc-sensor-name">${this.esc(c.name)}</span>
+                          <span class="nc-sensor-icon">${this.icon(c.icon)}</span>
+                        </div>
+                        <div class="nc-sensor-value">${this.reading(c)}</div>
+                        ${graph}
                       </div>`;
                 },
 
@@ -2724,8 +2861,8 @@
                     const colour = { warm: '#f97316', cool: '#38bdf8' }[c.tone]
                         || 'var(--panel-accent)';
                     const target = c.target_low != null && c.target_high != null
-                        ? `${this.esc(c.target_low)}–${this.esc(c.target_high)}`
-                        : (c.target != null ? this.esc(c.target) : '—');
+                        ? `${this.esc(this.fmt(c.target_low))}–${this.esc(this.fmt(c.target_high))}`
+                        : (c.target != null ? this.esc(this.fmt(c.target)) : '—');
                     return `<div class="nc-thermo" data-climate="${this.esc(c.entity_id)}">
                         <svg viewBox="0 0 100 56" class="nc-gauge-svg">
                           <path d="M10,50 A40,40 0 0 1 90,50" fill="none"
@@ -2736,7 +2873,7 @@
                                 stroke-dasharray="${(len * pct).toFixed(2)} ${len.toFixed(2)}"></path>
                         </svg>
                         <div class="nc-thermo-now">${c.missing ? '—'
-                            : this.esc(c.current ?? '—')}<span>${this.esc(c.unit || '')}</span></div>
+                            : this.esc(this.fmt(c.current))}<span>${this.esc(c.unit || '')}</span></div>
                         <div class="nc-thermo-row">
                           <button class="nc-step" data-step="-1" type="button">−</button>
                           <span class="nc-thermo-target">${target}</span>
@@ -2755,7 +2892,7 @@
                             + `nothing in this area yet</div></div>`;
                     }
                     const readings = (c.readings || []).map(r =>
-                        `<span class="nc-area-reading">${this.esc(r.state)}${
+                        `<span class="nc-area-reading">${this.esc(this.fmt(r.state))}${
                             r.unit ? this.esc(r.unit) : ''}</span>`).join('');
                     const alerts = (c.alerts || []).map(a =>
                         `<span class="nc-area-alert" title="${this.esc(a.name)}">${

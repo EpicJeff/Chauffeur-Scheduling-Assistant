@@ -72,8 +72,85 @@ _DOMAIN_ICON = {
 _TOGGLE_DOMAINS = ('light', 'switch', 'fan', 'input_boolean')
 
 
+# What an entity MEASURES, which is what Home Assistant picks its icon from.
+#
+# The domain map below only knows that something is a `sensor`, and a board of
+# energy sensors drawn as a column of identical eyes is what that looks like on
+# a wall. HA's frontend resolves the icon from `device_class` first, and this is
+# the same table for the classes a household actually puts on a dashboard.
+_SENSOR_CLASS_ICON = {
+    'energy': 'mdi:lightning-bolt', 'power': 'mdi:flash',
+    'power_factor': 'mdi:angle-acute', 'current': 'mdi:current-ac',
+    'voltage': 'mdi:sine-wave', 'frequency': 'mdi:sine-wave',
+    'battery': 'mdi:battery', 'temperature': 'mdi:thermometer',
+    'humidity': 'mdi:water-percent', 'pressure': 'mdi:gauge',
+    'atmospheric_pressure': 'mdi:thermometer-lines',
+    'illuminance': 'mdi:brightness-5', 'signal_strength': 'mdi:wifi',
+    'timestamp': 'mdi:clock', 'duration': 'mdi:progress-clock',
+    'monetary': 'mdi:cash', 'gas': 'mdi:meter-gas', 'water': 'mdi:water',
+    'carbon_dioxide': 'mdi:molecule-co2', 'carbon_monoxide': 'mdi:molecule-co2',
+    'pm25': 'mdi:molecule', 'pm10': 'mdi:molecule', 'aqi': 'mdi:air-filter',
+    'speed': 'mdi:speedometer', 'wind_speed': 'mdi:weather-windy',
+    'precipitation': 'mdi:weather-rainy',
+    'precipitation_intensity': 'mdi:weather-pouring',
+    'data_size': 'mdi:database', 'data_rate': 'mdi:transmission-tower',
+    'distance': 'mdi:arrow-left-right', 'weight': 'mdi:weight',
+    'volume': 'mdi:car-coolant-level', 'moisture': 'mdi:water-percent',
+    'ph': 'mdi:ph', 'sound_pressure': 'mdi:ear-hearing',
+    'irradiance': 'mdi:sun-wireless', 'enum': 'mdi:format-list-bulleted',
+}
+
+# Binary sensors are the same idea with a state in it: a door icon that does
+# not change when the door opens is a picture, not a reading. (on, off)
+_BINARY_CLASS_ICON = {
+    'motion': ('mdi:motion-sensor', 'mdi:motion-sensor-off'),
+    'occupancy': ('mdi:home', 'mdi:home-outline'),
+    'presence': ('mdi:home', 'mdi:home-outline'),
+    'door': ('mdi:door-open', 'mdi:door-closed'),
+    'garage_door': ('mdi:garage-open', 'mdi:garage'),
+    'window': ('mdi:window-open', 'mdi:window-closed'),
+    'opening': ('mdi:square-outline', 'mdi:square'),
+    'lock': ('mdi:lock-open', 'mdi:lock'),
+    'moisture': ('mdi:water', 'mdi:water-off'),
+    'smoke': ('mdi:smoke', 'mdi:smoke-detector'),
+    'gas': ('mdi:alert-circle', 'mdi:check-circle'),
+    'problem': ('mdi:alert-circle', 'mdi:check-circle'),
+    'safety': ('mdi:alert-circle', 'mdi:check-circle'),
+    'battery': ('mdi:battery-alert', 'mdi:battery'),
+    'connectivity': ('mdi:check-network-outline', 'mdi:close-network-outline'),
+    'running': ('mdi:play', 'mdi:stop'),
+    'power': ('mdi:power-plug', 'mdi:power-plug-off'),
+    'sound': ('mdi:music-note', 'mdi:music-note-off'),
+    'vibration': ('mdi:vibrate', 'mdi:crop-portrait'),
+    'update': ('mdi:package-up', 'mdi:package'),
+    'plug': ('mdi:power-plug', 'mdi:power-plug-off'),
+    'tamper': ('mdi:alert-circle', 'mdi:check-circle'),
+}
+
+
 def _domain(entity_id):
     return str(entity_id or '').split('.', 1)[0]
+
+
+def _icon_for(entity_id, attrs, state):
+    """What Home Assistant would draw for this entity, in this state.
+
+    Order matters and is HA's: the entity's own icon (somebody chose it), then
+    what it measures, then what kind of thing it is. The last of those is the
+    one that produces a column of identical eyes, and it is meant to be the
+    last resort rather than the answer.
+    """
+    if attrs.get('icon'):
+        return attrs['icon']
+    domain = _domain(entity_id)
+    cls = str(attrs.get('device_class') or '').lower()
+    if domain == 'binary_sensor':
+        pair = _BINARY_CLASS_ICON.get(cls)
+        if pair:
+            return pair[0] if str(state or '').lower() == 'on' else pair[1]
+    if cls in _SENSOR_CLASS_ICON:
+        return _SENSOR_CLASS_ICON[cls]
+    return _DOMAIN_ICON.get(domain) or 'mdi:eye'
 
 
 def _row(entity_id, states, name=None, icon=None, secondary=None):
@@ -91,7 +168,11 @@ def _row(entity_id, states, name=None, icon=None, secondary=None):
         'name': name or attrs.get('friendly_name') or entity_id,
         'state': (st or {}).get('state'),
         'unit': attrs.get('unit_of_measurement'),
-        'icon': icon or attrs.get('icon') or _DOMAIN_ICON.get(domain) or 'mdi:eye',
+        'icon': icon or _icon_for(entity_id, attrs, (st or {}).get('state')),
+        # How many decimals the integration wants shown. Absent for most
+        # entities, which is why the renderer's own default (two) is what
+        # actually stops `43.6834340349917` reaching a wall.
+        'precision': attrs.get('suggested_display_precision'),
         'secondary': secondary,
         'missing': st is None,
         'toggleable': domain in _TOGGLE_DOMAINS,
@@ -335,7 +416,7 @@ def _sensor_card(config, states):
             if points:
                 lo, hi = min(points), max(points)
     return {'kind': 'sensor', 'name': row['name'], 'icon': row['icon'],
-            'state': row['state'],
+            'state': row['state'], 'precision': row.get('precision'),
             'unit': config.get('unit') or row.get('unit'),
             'missing': row['missing'], 'points': points,
             'min': lo, 'max': hi, 'hours': hours}
