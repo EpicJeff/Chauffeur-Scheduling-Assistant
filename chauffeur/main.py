@@ -864,7 +864,28 @@ def _shelf_order(request: Request) -> list:
             return []
 
 
+def _shelf_boards(request: Request) -> list:
+    """The household's OTHER boards, as shelf destinations.
+
+    Rendered server-side for the same reason the order is: a shelf that grows
+    two buttons once a fetch lands is a shelf the family watches move. The home
+    board is excluded because it is already the Home button — listing it twice
+    is the kind of thing that reads as a bug rather than as thoroughness.
+
+    Returns [] on any failure. A wall panel with a shelf missing its custom
+    boards is inconvenient; a wall panel with no shelf is stranded.
+    """
+    try:
+        from services import home_board as _hb
+        return [p for p in _hb.page_summaries(storage.get_settings() or {})
+                if p['slug'] != _hb.HOME_SLUG]
+    except Exception as e:
+        print(f"shelf boards resolve failed: {e}")
+        return []
+
+
 templates.env.globals['shelf_order'] = _shelf_order
+templates.env.globals['shelf_boards'] = _shelf_boards
 
 # --- UI Routes ---
 @app.get("/")

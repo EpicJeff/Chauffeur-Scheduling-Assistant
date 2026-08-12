@@ -17,12 +17,16 @@ can now be made.
 Run from chauffeur/:  python tests/test_board_pages.py
 """
 import os
+import re
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault('CHAUFFEUR_DATA_DIR',
                       tempfile.mkdtemp(prefix='chauffeur_pages_'))
+
+TPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                   'templates')
 
 from services import home_board  # noqa: E402
 
@@ -234,6 +238,63 @@ def scenario_the_payload_carries_the_board_it_was_built_for():
     finally:
         storage.get_settings = real
         home_board._CACHE.clear()
+
+
+def scenario_a_board_is_reachable_from_a_wall_panel():
+    """A board nobody can tap is a board that does not exist. The shelf lists
+    the household's own boards ahead of the app's pages — a board is something
+    somebody made on purpose for this wall, and nothing the app ships has a
+    stronger claim on the first buttons than that."""
+    settings = {'panel_pages': [
+        {'slug': 'home', 'name': 'Home', 'widgets': ['drives']},
+        {'slug': 'hallway', 'name': 'Hallway', 'icon': '🚪', 'widgets': ['map']},
+    ]}
+    rows = home_board.page_summaries(settings)
+    check([r['slug'] for r in rows] == ['home', 'hallway'],
+          f"the shelf cannot see every board: {rows}")
+    check(rows[1]['icon'] == '🚪' and rows[1]['name'] == 'Hallway',
+          f"a board reached the shelf without its own name or icon: {rows[1]}")
+    check(rows[1]['tiles'] == 1, f"the summary lost the tile count: {rows[1]}")
+    check(not any('widgets' in r for r in rows),
+          "the shelf is being sent every tile on every board, which is the "
+          "expensive half of the payload and the half it does not use")
+
+
+def scenario_a_board_can_be_named_in_a_tabs_filter():
+    """`?tabs=` is how an HA card says what chrome it wants. Boards join that
+    vocabulary PREFIXED, so a board somebody names "Chores" cannot quietly
+    shadow the Chores page."""
+    settings = {'panel_pages': [
+        {'slug': 'home', 'name': 'Home', 'widgets': ['drives']},
+        {'slug': 'chores', 'name': 'Chores', 'widgets': ['map']},
+    ]}
+    picked = home_board.resolve_tabs('home,board:chores', settings)
+    check(picked == ['home', 'board:chores'],
+          f"a board could not be named in a tabs filter: {picked}")
+    # The page and the board are different destinations with similar names.
+    check(home_board.resolve_tabs('chores', settings) == ['chores'],
+          "a board shadowed the app's own page of the same name")
+    check(home_board.resolve_tabs('board:nope', settings) == list(home_board.DEFAULT_TABS),
+          "a board that does not exist produced a button that goes nowhere")
+
+
+def scenario_every_nav_link_survives_a_two_segment_route():
+    """`/board/{slug}` is the first route in this app that is two path segments
+    deep. Every link in the nav is relative, so a bare `href="chores"` from a
+    board resolves to `/board/chores` and the whole nav goes nowhere — while
+    still looking perfectly fine in the markup."""
+    tpl = open(os.path.join(TPL, 'nav.html'), encoding='utf-8').read()
+    hrefs = re.findall(r'<a\s+href="([^"]*)"', tpl)
+    check(hrefs, "no links found in nav.html — the check itself is broken")
+    for href in hrefs:
+        check(href.startswith('{{ _up }}') or href.startswith('#')
+              or '://' in href,
+              f"nav link {href!r} is not depth-aware, so it breaks on /board/*")
+    # And the climb must be counted against the one-segment case, never from
+    # the root: under ingress the path carries /api/hassio_ingress/<token>/ in
+    # front of everything, and climbing out of that leaves the add-on.
+    check("'/board/' in _path" in tpl,
+          "the nav decides its depth some other way than 'am I on a board'")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

@@ -2375,10 +2375,18 @@ def resolve_tabs(requested: Optional[str] = None, settings: dict = None) -> List
     `?tabs=none` is passed through untouched — that one means "this is an
     embedded card, give it no chrome at all", and it is the one case where
     showing nothing IS the request.
+
+    A household's own boards join the vocabulary as `board:<slug>`, prefixed
+    rather than bare so that a board somebody names "Chores" cannot quietly
+    shadow the Chores page. They are validated against the boards that actually
+    exist, for the same reason the app's own slugs are: an unknown name in this
+    list must vanish, not render a button that goes nowhere.
     """
     if requested is not None and requested.strip().lower() in ('', 'none'):
         return []
     known = set(NAV_SLUGS)
+    known.update(f'board:{p["slug"]}' for p in normalize_pages(settings)
+                 if p['slug'] != HOME_SLUG)
 
     def clean(seq):
         out = []

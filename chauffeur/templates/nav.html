@@ -42,6 +42,21 @@
                'M15 13a3 3 0 11-6 0 3 3 0 016 0z']}
 ] %}
 {% set _path = request.url.path %}
+{#
+  How far to climb before a relative link means anything.
+
+  Every destination in this app was one path segment (`/home`, `/chores`) until
+  custom boards arrived at `/board/{slug}`, which is two — so a bare
+  `href="chores"` from a board resolves to `/board/chores` and every button in
+  the nav goes nowhere. `_up` is prefixed to each of them.
+
+  Counted against the one-segment case rather than from the root, ON PURPOSE:
+  under Home Assistant ingress the path carries `/api/hassio_ingress/<token>/`
+  in front of everything, and a link that climbed out of that would leave the
+  add-on entirely. The same reasoning as home.html's apiBase, which had to
+  learn this first.
+#}
+{% set _up = '../' if '/board/' in _path else '' %}
 
 {# The <nav> element is a bare wrapper so that the top bar and the panel shelf
    are siblings inside it: `?tabs=none` hides the nav and both go with it, and
@@ -64,7 +79,7 @@
                 <div class="hidden md:block">
                     <div class="ml-10 flex items-baseline space-x-4">
                         {% for item in NAV_ITEMS %}
-                        <a href="{{ item.href }}" data-slug="{{ item.slug }}"
+                        <a href="{{ _up }}{{ item.href }}" data-slug="{{ item.slug }}"
                             class="{% if item.match in _path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 {% for d in item.paths %}
@@ -85,7 +100,7 @@
                      removes the one thing a big config page was good at, and
                      this is what replaces it. -->
                 <div class="hidden md:flex items-center" id="find-setting-nav-item">
-                    <a href="settings" title="Find a setting" data-slug="settings"
+                    <a href="{{ _up }}settings" title="Find a setting" data-slug="settings"
                         class="text-gray-400 hover:text-white p-2 rounded-full hover:bg-gray-700 transition-colors">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -95,7 +110,7 @@
                 </div>
                 <!-- Settings Icon (left of the Control Center toggle) -->
                 <div class="hidden md:flex items-center" id="settings-nav-item">
-                    <a href="config"
+                    <a href="{{ _up }}config"
                         class="text-gray-400 hover:text-white p-2 rounded-full hover:bg-gray-700 transition-colors">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -139,7 +154,7 @@
     <div class="md:hidden hidden absolute top-16 left-0 w-full bg-gray-900 border-b border-gray-800 shadow-2xl z-[70]" id="mobile-menu">
         <div class="px-2 pt-2 pb-3 space-y-1 sm:px-3 flex flex-col">
             {% for item in NAV_ITEMS %}
-            <a href="{{ item.href }}" data-slug="{{ item.slug }}"
+            <a href="{{ _up }}{{ item.href }}" data-slug="{{ item.slug }}"
                 class="{% if item.match in _path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     {% for d in item.paths %}
@@ -149,7 +164,7 @@
                 {{ item.label }}
             </a>
             {% endfor %}
-            <a href="config" id="mobile-settings-nav-item"
+            <a href="{{ _up }}config" id="mobile-settings-nav-item"
                 class="{% if 'config' in _path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -160,7 +175,7 @@
                 </svg>
                 Settings
             </a>
-            <a href="settings" id="mobile-find-setting-nav-item" data-slug="settings"
+            <a href="{{ _up }}settings" id="mobile-find-setting-nav-item" data-slug="settings"
                 class="{% if _path.endswith('/settings') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
                 🔎 Find a setting
             </a>
@@ -223,9 +238,31 @@
         {% set _ = SHELF_ITEMS.append(item) %}
       {% endfor %}
     {% endfor %}
+    {#
+      The household's own boards, ahead of the app's pages.
+
+      Order is the argument. A custom board is something somebody made ON
+      PURPOSE for this wall — the hallway board, the kitchen board — and the app
+      has never had a stronger claim on the first buttons than that. They sit
+      right after Home because Home is the same kind of thing: the boards are
+      one group, the app's destinations are another.
+
+      No icon paths, because these carry an emoji the household picked. That is
+      also why they render at a different size — a 28px stroked SVG and an emoji
+      do not agree about their own optical weight, and matching the box rather
+      than the glyph is what keeps the row from looking ragged.
+    #}
+    {% set BOARDS = shelf_boards(request) %}
     <div class="flex items-stretch gap-1" id="panel-shelf-items">
+        {% for board in BOARDS %}
+        <a href="{{ _up }}board/{{ board.slug }}" data-slug="board:{{ board.slug }}"
+            class="flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 rounded-xl transition-colors {% if '/board/' ~ board.slug in _path %}bg-blue-600/25 text-blue-200{% else %}text-gray-400{% endif %}">
+            <span class="h-7 flex items-center justify-center text-2xl leading-none shrink-0">{{ board.icon }}</span>
+            <span class="text-[0.6rem] font-bold uppercase tracking-wide truncate max-w-full">{{ board.name }}</span>
+        </a>
+        {% endfor %}
         {% for item in SHELF_ITEMS %}
-        <a href="{{ item.href }}" data-slug="{{ item.slug }}"
+        <a href="{{ _up }}{{ item.href }}" data-slug="{{ item.slug }}"
             class="flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 rounded-xl transition-colors {% if item.match in _path %}bg-blue-600/25 text-blue-200{% else %}text-gray-400{% endif %}">
             <svg class="w-7 h-7 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
                 {% for d in item.paths %}

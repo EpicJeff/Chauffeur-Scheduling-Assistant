@@ -898,6 +898,17 @@
                                  an idle panel returning to nothing, so it is
                                  offered as un-deletable rather than as a delete
                                  that mysteriously fails. -->
+                            <!-- Order is not decoration here: the panel shelf
+                                 renders the boards in this order, and which
+                                 buttons stay under a thumb rather than behind
+                                 "More" is decided by it. -->
+                            <button type="button" @click="movePage(-1)"
+                                :disabled="pageIndex === 0" title="Earlier on the shelf"
+                                class="text-gray-500 hover:text-white disabled:opacity-25 px-1">◀</button>
+                            <button type="button" @click="movePage(1)"
+                                :disabled="pageIndex === (draft.panel_pages || []).length - 1"
+                                title="Later on the shelf"
+                                class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▶</button>
                             <button type="button" x-show="page().slug !== 'home'"
                                 @click="removePage()"
                                 class="text-xs text-gray-500 hover:text-red-400 px-2 py-1">Delete</button>
@@ -2113,6 +2124,17 @@
                     let n = 2;
                     while (taken.has(`${base}-${n}`)) n += 1;
                     return `${base}-${n}`;
+                },
+
+                movePage(delta) {
+                    const pages = this.draft.panel_pages || [];
+                    const to = this.pageIndex + delta;
+                    if (to < 0 || to >= pages.length) return;
+                    this.move(pages, this.pageIndex, delta);
+                    // The selection follows the board, not the slot. Moving a
+                    // board and then finding yourself editing a different one
+                    // is how somebody puts tiles on the wrong wall.
+                    this.pageIndex = to;
                 },
 
                 async removePage() {
