@@ -851,8 +851,76 @@
 
             <div class="grid gap-6 md:grid-cols-2">
                 <div>
+                    <!-- ── The boards.
+                         A board stopped being THE board: each one carries its
+                         own tiles, grid and picture, so a hallway screen and a
+                         kitchen screen can be different screens rather than the
+                         same screen twice. The first is the wall's own home
+                         board — what /home shows and where an idle panel goes
+                         back to — which is why it cannot be deleted. -->
                     <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
-                        Home board tiles
+                        Boards
+                    </div>
+                    <div class="flex flex-wrap gap-1.5 mb-3">
+                        <template x-for="(p, i) in (draft.panel_pages || [])" :key="p.slug">
+                            <button type="button" @click="pageIndex = i"
+                                :class="pageIndex === i
+                                    ? 'bg-sky-600 text-white border-sky-500'
+                                    : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700'"
+                                class="text-xs rounded-full border px-3 py-1.5">
+                                <span x-text="p.icon"></span>
+                                <span x-text="p.name"></span>
+                                <span class="opacity-60" x-text="'· ' + (p.widgets || []).length"></span>
+                            </button>
+                        </template>
+                        <button type="button" @click="addPage()"
+                            class="text-xs rounded-full border border-dashed border-gray-600 text-gray-400 hover:text-white px-3 py-1.5">
+                            + New board
+                        </button>
+                    </div>
+
+                    <!-- This board's own identity. The address is shown because
+                         it IS the board: a wall panel is a bookmark, so the
+                         thing somebody types into a tablet has to be visible
+                         somewhere they can copy it from. -->
+                    <div class="bg-gray-800/70 rounded-lg p-3 mb-4" x-show="page()">
+                        <div class="flex items-center gap-2">
+                            <input type="text" :value="page().icon"
+                                @input="setPageField('icon', $event.target.value)"
+                                maxlength="4" title="Icon"
+                                class="w-12 text-center bg-gray-900 border border-gray-700 rounded px-1 py-1 text-sm">
+                            <input type="text" :value="page().name"
+                                @input="setPageField('name', $event.target.value)"
+                                placeholder="Board name"
+                                class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200">
+                            <!-- The home board is the panel's resting state and
+                                 the shelf's Home button. Deleting it would leave
+                                 an idle panel returning to nothing, so it is
+                                 offered as un-deletable rather than as a delete
+                                 that mysteriously fails. -->
+                            <button type="button" x-show="page().slug !== 'home'"
+                                @click="removePage()"
+                                class="text-xs text-gray-500 hover:text-red-400 px-2 py-1">Delete</button>
+                        </div>
+                        <div class="mt-2 text-[0.7rem] text-gray-500">
+                            <template x-if="page().slug === 'home'">
+                                <span>The wall panel's home screen — at
+                                    <code class="text-sky-300">/home</code>. An idle panel comes
+                                    back here.</span>
+                            </template>
+                            <template x-if="page().slug !== 'home'">
+                                <span>At <code class="text-sky-300"
+                                    x-text="'/board/' + page().slug"></code></span>
+                            </template>
+                        </div>
+                        <input type="text" :value="page().background"
+                            @input="setPageField('background', $event.target.value)"
+                            placeholder="its own picture — blank uses the one below"
+                            class="mt-2 w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white placeholder-gray-600">
+                    </div>
+
+                    <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
+                        Tiles on <span x-text="page().name"></span>
                     </div>
                     <p class="text-xs text-gray-500 mb-3">
                         In the order they appear. A tile with nothing to say hides itself
@@ -863,9 +931,10 @@
                          measurement rather than however tall the neighbouring
                          tiles turned out. -->
                     <label class="flex items-center gap-2 text-xs text-gray-400 font-semibold mb-2">
-                        The board is
+                        This board is
                         <input type="number" min="1" max="24" step="1"
-                            x-model.number="draft.panel_grid_columns"
+                            :value="page().columns"
+                            @input="setPageField('columns', parseInt($event.target.value, 10))"
                             class="w-14 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-2 py-1">
                         <span class="font-normal text-gray-600">columns wide — tile widths are spans of these</span>
                     </label>
@@ -891,7 +960,8 @@
                              that needs 250 gets 240 and clips, and no amount of
                              re-picking from a list of sevens fixes it. -->
                         <input type="number" min="80" max="600" step="5"
-                            x-model.number="draft.panel_grid_row_height"
+                            :value="page().row_height"
+                            @input="setPageField('row_height', parseInt($event.target.value, 10))"
                             class="w-20 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-2 py-1">
                         <span class="font-normal text-gray-600">pixels tall — a 2-row tile is twice this</span>
                     </label>
@@ -901,7 +971,7 @@
                              so with two calendar tiles a type key would have
                              made the second one silently unreachable — it would
                              reuse the first one's row. -->
-                        <template x-for="(w, i) in draft.panel_widgets" :key="w.id">
+                        <template x-for="(w, i) in page().widgets" :key="w.id">
                             <div class="bg-gray-800/70 rounded-lg">
                             <div class="flex items-center gap-2 px-3 py-2">
                                 <span x-text="widgetMeta(w.type).icon"></span>
@@ -945,10 +1015,10 @@
                                     @click="expanded = (expanded === w.id ? null : w.id)"
                                     :class="expanded === w.id ? 'text-sky-300' : 'text-gray-500 hover:text-white'"
                                     class="px-1" title="Options">⚙</button>
-                                <button @click="move(draft.panel_widgets, i, -1)" :disabled="i === 0"
+                                <button @click="move(page().widgets, i, -1)" :disabled="i === 0"
                                     class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▲</button>
-                                <button @click="move(draft.panel_widgets, i, 1)"
-                                    :disabled="i === draft.panel_widgets.length - 1"
+                                <button @click="move(page().widgets, i, 1)"
+                                    :disabled="i === page().widgets.length - 1"
                                     class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▼</button>
                                 <button @click="removeInstance(i)"
                                     class="text-gray-500 hover:text-red-400 px-1">✕</button>
@@ -1128,7 +1198,7 @@
                             </div>
                             </div>
                         </template>
-                        <div x-show="!draft.panel_widgets.length" class="text-sm text-gray-500 italic">
+                        <div x-show="!page().widgets.length" class="text-sm text-gray-500 italic">
                             None picked — the panel will show every tile but Intake.
                         </div>
                     </div>
@@ -1354,8 +1424,15 @@
                     class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold rounded-xl px-5 py-2.5">
                     <span x-text="saving ? 'Saving…' : 'Save panel setup'"></span>
                 </button>
-                <a :href="'home?panel=true'" target="_blank"
-                    class="text-sm text-sky-300 hover:text-sky-200 underline">Open it as a panel ↗</a>
+                <!-- The board being EDITED, opened as a panel — not always
+                     /home. Somebody who has just built a hallway board wants
+                     to look at the hallway board. -->
+                <!-- Through apiBase, always. A literal '../board/…' is correct
+                     from /home and climbs straight out of the ingress token
+                     from anywhere else. -->
+                <a :href="boardHref(page().slug) + '?panel=true'" target="_blank"
+                    class="text-sm text-sky-300 hover:text-sky-200 underline">
+                    Open <span x-text="page().name"></span> as a panel ↗</a>
             </div>
         </div>
     </div>
@@ -1381,7 +1458,29 @@
         function homeBoard() {
             const params = new URLSearchParams(window.location.search);
             return {
-                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                // `/board/kitchen` is two segments deep, so the relative API
+                // base that works from `/home` would resolve one directory
+                // short and every fetch would 404. Read off the PATH rather
+                // than counted: a trailing slash and a nested route are two
+                // different reasons to climb, and guessing either wrong takes
+                // the whole board down.
+                apiBase: (function () {
+                    const p = window.location.pathname;
+                    let base = p.endsWith('/') ? '../' : '';
+                    // ONE extra level, counted against /home rather than from
+                    // the root. Counting real path segments would break under
+                    // ingress, where /api/hassio_ingress/<token>/ sits in front
+                    // of everything and must NOT be climbed out of.
+                    if (/\/board\/[^/]+\/?$/.test(p)) base += '../';
+                    return base;
+                })(),
+                // Which board this is. The URL is the identity — a wall panel
+                // is a bookmark, so the address has to carry it rather than
+                // any stored "current page", which two panels would fight over.
+                pageSlug: (function () {
+                    const m = window.location.pathname.match(/\/board\/([a-z0-9-]+)/i);
+                    return m ? m[1].toLowerCase() : '';
+                })(),
                 isPanel: params.get('panel') === 'true' || params.get('kiosk') === 'true',
                 isPanelMode: params.get('panel') === 'true',
                 board: {}, hero: {}, catalog: {},
@@ -1407,9 +1506,12 @@
                 // a board with ten tiles and ten expanded forms is a wall of
                 // fields with no way to tell which tile you are editing.
                 expanded: null,
+                // Which board the editor is looking at. An INDEX rather than a
+                // slug because a board being renamed changes its slug under the
+                // hand that is typing, and the selection must not jump.
+                pageIndex: 0,
                 draft: {
-                    panel_widgets: [], panel_tabs: [], panel_idle_return_seconds: 180,
-                    panel_tile_spans: {}, panel_grid_row_height: 240, panel_grid_columns: 12,
+                    panel_pages: [], panel_tabs: [], panel_idle_return_seconds: 180,
                     panel_agenda_days: 5,
                     panel_theme: 'dark', panel_background: '',
                     panel_theme_sunset_offset_minutes: 0,
@@ -1487,9 +1589,11 @@
 
                 async load() {
                     try {
-                        const q = params.get('widgets')
-                            ? '?widgets=' + encodeURIComponent(params.get('widgets')) : '';
-                        const r = await fetch(this.apiBase + 'api/home_board' + q);
+                        const q = new URLSearchParams();
+                        if (params.get('widgets')) q.set('widgets', params.get('widgets'));
+                        if (this.pageSlug) q.set('page', this.pageSlug);
+                        const r = await fetch(this.apiBase + 'api/home_board'
+                            + (q.toString() ? '?' + q : ''));
                         if (!r.ok) return;
                         this.board = await r.json();
                         this.hero = this.board.hero || {};
@@ -1872,26 +1976,28 @@
                 // --- setup (browser only) ---
                 async loadSetup() {
                     try {
-                        const [c, s] = await Promise.all([
+                        const [c, s, pg] = await Promise.all([
                             fetch(this.apiBase + 'api/home_board/catalog').then(r => r.json()),
-                            fetch(this.apiBase + 'api/settings').then(r => r.json())
+                            fetch(this.apiBase + 'api/settings').then(r => r.json()),
+                            fetch(this.apiBase + 'api/home_board/pages').then(r => r.json())
                         ]);
                         this.catalog = c;
                         this.draft = {
-                            // Upgraded on the way in, exactly as the server
-                            // does it: a stored list of type names becomes
-                            // instances whose ids ARE those names, so the sizes
-                            // already stored under them still line up. Saving
-                            // is what writes the new shape back — nothing
-                            // rewrites a household's settings for looking.
-                            panel_widgets: this.toInstances(s.panel_widgets),
+                            // THE SERVER'S pages, not a second migration written
+                            // here. The old board becomes the first page in
+                            // exactly one place; a JavaScript copy of that rule
+                            // would be a second place to get it wrong, and the
+                            // way it would go wrong is a household opening the
+                            // editor and finding a board they do not recognise.
+                            panel_pages: (pg.pages || []).map(p => ({
+                                ...p,
+                                widgets: this.toInstances(p.widgets),
+                                spans: { ...(p.spans || {}) },
+                            })),
                             panel_tabs: (s.panel_tabs || []).slice(),
                             panel_idle_return_seconds:
                                 s.panel_idle_return_seconds === undefined
                                     ? 180 : s.panel_idle_return_seconds,
-                            panel_tile_spans: { ...(s.panel_tile_spans || {}) },
-                            panel_grid_row_height: s.panel_grid_row_height || 240,
-                            panel_grid_columns: s.panel_grid_columns || 12,
                             panel_agenda_days: s.panel_agenda_days || 5,
                             panel_theme: s.panel_theme || 'dark',
                             // `|| 0` would be right for these anyway, but they
@@ -1942,6 +2048,100 @@
                     return out;
                 },
 
+                // --- boards -----------------------------------------------
+
+                // The board being edited. NEVER null: every binding in the
+                // editor reads through this, and an `x-show` guard on each of
+                // them would be forty guards protecting against a state that
+                // should not exist. `loadSettings` always lands at least one
+                // page, and `removePage` refuses to empty the list.
+                page() {
+                    const pages = this.draft.panel_pages || [];
+                    if (!pages.length) return this.blankPage('Home', 'home');
+                    return pages[Math.min(this.pageIndex, pages.length - 1)];
+                },
+
+                // Where a board lives. The home board keeps /home — it is the
+                // panel's resting state and the shelf's Home button, and
+                // moving it to /board/home would break every bookmark and
+                // every HA card that has ever pointed at this app.
+                boardHref(slug) {
+                    return this.apiBase + (slug === 'home' ? 'home' : 'board/' + slug);
+                },
+
+                blankPage(name, slug) {
+                    return {
+                        slug: slug || '', name: name || 'Board', icon: '🗂️',
+                        widgets: [], spans: {},
+                        // Inherited from the board being looked at rather than
+                        // hard-coded: a household that has settled on a 16
+                        // column grid wants their next board to start there,
+                        // not at somebody else's default.
+                        columns: (this.draft.panel_pages || []).length
+                            ? this.page().columns : 12,
+                        row_height: (this.draft.panel_pages || []).length
+                            ? this.page().row_height : 240,
+                        background: '',
+                    };
+                },
+
+                setPageField(key, value) {
+                    const p = this.page();
+                    if (p) p[key] = value;
+                },
+
+                addPage() {
+                    const pages = this.draft.panel_pages || (this.draft.panel_pages = []);
+                    const fresh = this.blankPage('New board', '');
+                    // The slug is the ADDRESS, so it is derived here rather
+                    // than left to the server: the editor prints /board/<slug>
+                    // under the name, and a field that shows nothing until you
+                    // save is a field nobody trusts. The server re-derives and
+                    // de-duplicates anyway, which is what makes this safe to be
+                    // a guess.
+                    fresh.slug = this.freshSlug(fresh.name);
+                    pages.push(fresh);
+                    this.pageIndex = pages.length - 1;
+                },
+
+                freshSlug(name) {
+                    const base = String(name || 'board').toLowerCase()
+                        .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 31)
+                        || 'board';
+                    const taken = new Set((this.draft.panel_pages || []).map(p => p.slug));
+                    if (!taken.has(base)) return base;
+                    let n = 2;
+                    while (taken.has(`${base}-${n}`)) n += 1;
+                    return `${base}-${n}`;
+                },
+
+                async removePage() {
+                    const p = this.page();
+                    if (!p || p.slug === 'home') return;
+                    if (!await promptConfirm('Delete board',
+                        `Delete “${p.name}” and its ${(p.widgets || []).length} tiles?`,
+                        'Delete', 'Keep it')) return;
+                    this.draft.panel_pages.splice(this.draft.panel_pages.indexOf(p), 1);
+                    this.pageIndex = Math.max(0, this.pageIndex - 1);
+                },
+
+                // What actually gets saved. The slug is re-derived for any page
+                // that has not got one, and names are trimmed — a board called
+                // " " is a chip nobody can hit.
+                cleanPages() {
+                    return (this.draft.panel_pages || []).map(p => ({
+                        slug: p.slug,
+                        name: (p.name || '').trim() || 'Board',
+                        icon: (p.icon || '🗂️').trim(),
+                        widgets: p.widgets || [],
+                        spans: p.spans || {},
+                        columns: Math.min(24, Math.max(1, parseInt(p.columns, 10) || 12)),
+                        row_height: Math.min(600, Math.max(80,
+                            parseInt(p.row_height, 10) || 240)),
+                        background: (p.background || '').trim(),
+                    }));
+                },
+
                 widgetMeta(type) {
                     return (this.catalog.widgets || []).find(w => w.key === type)
                         || { key: type, icon: '▫️', label: type, blurb: '' };
@@ -1955,13 +2155,13 @@
                     const own = ((w.config || {}).title || '').trim();
                     if (own) return own;
                     const label = this.widgetMeta(w.type).label;
-                    const same = this.draft.panel_widgets.filter(x => x.type === w.type);
+                    const same = this.page().widgets.filter(x => x.type === w.type);
                     if (same.length < 2) return label;
                     return `${label} (${same.indexOf(w) + 1} of ${same.length})`;
                 },
 
                 countOfType(type) {
-                    return this.draft.panel_widgets.filter(w => w.type === type).length;
+                    return this.page().widgets.filter(w => w.type === type).length;
                 },
 
                 // --- per-instance options ---------------------------------
@@ -2275,7 +2475,7 @@
                 // normalised there agree on what things are called — and so the
                 // FIRST of a type keeps the bare id its sizes are stored under.
                 newInstanceId(type) {
-                    const taken = new Set(this.draft.panel_widgets.map(w => w.id));
+                    const taken = new Set(this.page().widgets.map(w => w.id));
                     if (!taken.has(type)) return type;
                     let n = 2;
                     while (taken.has(`${type}-${n}`)) n++;
@@ -2283,16 +2483,16 @@
                 },
 
                 addInstance(type) {
-                    this.draft.panel_widgets.push(
+                    this.page().widgets.push(
                         { id: this.newInstanceId(type), type, config: {} });
                 },
 
                 removeInstance(i) {
-                    const [gone] = this.draft.panel_widgets.splice(i, 1);
+                    const [gone] = this.page().widgets.splice(i, 1);
                     // Its size goes with it. Leaving the entry behind would
                     // silently re-apply an old width to the next instance that
                     // happened to be given the same id.
-                    if (gone) delete this.draft.panel_tile_spans[gone.id];
+                    if (gone) delete this.page().spans[gone.id];
                 },
 
                 tabMeta(slug) {
@@ -2322,7 +2522,7 @@
                 // Addressed by INSTANCE id — two calendar tiles are two
                 // sizes, and keying this by type gave them one.
                 spanOf(instanceId, axis) {
-                    const span = this.draft.panel_tile_spans[instanceId] || {};
+                    const span = this.page().spans[instanceId] || {};
                     if (span[axis]) return String(span[axis]);
                     // An unsized tile shows the width it is actually DRAWN at,
                     // not 1 — a field reading "1" beside a quarter-width tile
@@ -2333,15 +2533,15 @@
                 setSpan(instanceId, axis, value) {
                     const max = axis === 'cols' ? this.cols() : 12;
                     const n = Math.min(max, Math.max(1, parseInt(value, 10) || 1));
-                    const cur = { ...(this.draft.panel_tile_spans[instanceId] || {}) };
+                    const cur = { ...(this.page().spans[instanceId] || {}) };
                     cur[axis] = n;
                     // A tile back at exactly the default stops being stored,
                     // rather than persisting numbers nobody chose. The default
                     // WIDTH is a quarter of the grid now, not 1.
                     if ((cur.cols || 0) === this.defaultCols() && (cur.rows || 1) === 1) {
-                        delete this.draft.panel_tile_spans[instanceId];
+                        delete this.page().spans[instanceId];
                     } else {
-                        this.draft.panel_tile_spans[instanceId] = cur;
+                        this.page().spans[instanceId] = cur;
                     }
                 },
 
@@ -2361,17 +2561,18 @@
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                                panel_widgets: this.draft.panel_widgets,
+                                // The BOARDS, which is now the whole of what a
+                                // board is. `panel_widgets` and the grid keys
+                                // beside it are not sent any more: the server
+                                // ignores them once pages exist, and writing
+                                // both would be the split brain the migration
+                                // exists to avoid. They stay in settings,
+                                // untouched, as the thing the first page was
+                                // built from.
+                                panel_pages: this.cleanPages(),
                                 panel_tabs: this.draft.panel_tabs,
                                 panel_idle_return_seconds:
                                     Number(this.draft.panel_idle_return_seconds) || 0,
-                                panel_tile_spans: this.draft.panel_tile_spans,
-                                panel_grid_row_height:
-                                    Math.min(600, Math.max(80,
-                                        parseInt(this.draft.panel_grid_row_height, 10) || 240)),
-                                panel_grid_columns:
-                                    Math.min(24, Math.max(1,
-                                        parseInt(this.draft.panel_grid_columns, 10) || 12)),
                                 panel_agenda_days:
                                     Math.min(14, Math.max(1,
                                         parseInt(this.draft.panel_agenda_days, 10) || 5)),

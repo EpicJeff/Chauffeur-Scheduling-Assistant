@@ -956,6 +956,21 @@ class Settings(BaseModel):
     # somebody touches the board. Validating here would reject the old shape
     # that every existing install still has stored.
     panel_widgets: List[Any] = Field(default_factory=list)
+    # Every board the household has: `{slug, name, icon, widgets, spans,
+    # columns, row_height, background}`. The four keys below this one
+    # (`panel_widgets`, `panel_tile_spans`, `panel_grid_*`) are what the FIRST
+    # page is built from when this list is empty, which is the whole migration —
+    # lazy, like the instance shape before it, so a household that never opens
+    # the editor keeps the board it has byte for byte.
+    #
+    # `List[Any]` for the same reason `panel_widgets` is: the shape is versioned
+    # by `home_board.normalize_pages`, and validating it here would reject
+    # stored data the normaliser is perfectly happy to upgrade.
+    #
+    # ONCE THIS IS SET IT WINS ENTIRELY. A half-migrated board reading its
+    # columns from a page and its row height from a legacy key is a split brain
+    # nobody can debug, so there is no such state.
+    panel_pages: List[Any] = Field(default_factory=list)
     panel_tabs: List[str] = Field(default_factory=list)
     # Untouched for this long, any panel page returns to the home board. This
     # is what makes the panel an appliance rather than a browser: whatever

@@ -353,7 +353,14 @@ DEFAULT_WIDGETS = ['drives', 'calendar', 'kids', 'meals', 'map', 'chores',
 # Long enough to collapse several panels onto one build, short enough that
 # checking a chore off in the kitchen and glancing at the wall agrees.
 TTL_SECONDS = 20
-_CACHE = {'key': None, 'at': 0.0, 'data': None}
+# Keyed by board, not one entry, since v2.188: a household with a kitchen panel
+# and a hallway panel polls two different boards on their own offsets, and a
+# single slot would have had them evicting each other every few seconds — each
+# poll a full rebuild, the cache doing worse than nothing. Bounded because the
+# key includes tile config, so a card cycling `?widgets=` could otherwise grow
+# this without limit.
+_CACHE: dict = {}
+_CACHE_MAX = 8
 
 
 # --- small shared helpers -------------------------------------------------
@@ -2155,8 +2162,147 @@ def normalize_instances(raw, settings: dict = None) -> List[dict]:
     return out
 
 
+# --- pages ------------------------------------------------------------------
+#
+# A board stopped being THE board here.
+#
+# Everything above this line was written for one wall panel showing one set of
+# tiles, and the settings say so: `panel_widgets`, `panel_tile_spans`,
+# `panel_grid_columns`, `panel_grid_row_height` are single household-wide keys.
+# That held exactly as long as a tile was a summary of a Chauffeur page. It
+# stopped holding the moment tiles became INSTANCES with their own config and
+# could point at a specific Home Assistant entity: a driveway camera belongs on
+# the hallway panel and nowhere else, and "what is on the board" became a
+# question with more than one right answer per household.
+#
+# So a page is the unit now, and the old keys are what the FIRST page is built
+# from when a household has never made one. That migration is lazy, like
+# `normalize_instances` before it — nothing rewrites anybody's settings behind
+# their back, and a household that never opens the editor keeps the board it
+# has, byte for byte, forever.
+#
+# The rule that makes the rest of this simple: **`panel_pages` wins entirely
+# once it exists.** A half-migrated state where the home page reads its columns
+# from a page and its row height from a legacy key is the kind of split brain
+# that produces a board nobody can explain, so there is no such state.
+
+PAGE_SLUG_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,30}$')
+
+# The first page is the wall's own board — the one `/home` shows, the one a
+# panel returns to when it goes idle, the one the shelf's Home button means.
+# It is reserved rather than merely conventional: a household that renamed it
+# to `kitchen` would have a panel whose idle return goes nowhere.
+HOME_SLUG = 'home'
+
+
+def _slugify(name: str, taken: set) -> str:
+    """A page's address, from its name. `Kitchen Wall` -> `kitchen-wall`."""
+    base = re.sub(r'[^a-z0-9]+', '-', str(name or '').strip().lower()).strip('-')
+    base = base[:31] or 'page'
+    if not PAGE_SLUG_RE.match(base):
+        base = 'page'
+    slug, n = base, 2
+    while slug in taken:
+        slug = f'{base}-{n}'
+        n += 1
+    return slug
+
+
+def _page_from(item: dict, settings: dict, taken: set) -> dict:
+    """One stored page, normalised. Every field has a fallback to the household
+    setting it replaced, so a page saved by an older editor — or hand-written
+    into settings — is a complete page rather than a board with no columns."""
+    name = str(item.get('name') or '').strip() or 'Board'
+    slug = str(item.get('slug') or '').strip().lower()
+    if not PAGE_SLUG_RE.match(slug) or slug in taken:
+        slug = _slugify(item.get('slug') or name, taken)
+    spans = item.get('spans')
+    spans = spans if isinstance(spans, dict) else {}
+    return {
+        'slug': slug,
+        'name': name,
+        'icon': str(item.get('icon') or '🗂️')[:4],
+        # The tiles, through the same normaliser every board has always used —
+        # so a page accepts the old list-of-type-names shape too, and pasting
+        # one board's widgets into another page just works.
+        'widgets': normalize_instances(item.get('widgets'),
+                                       {'panel_tile_spans': spans}),
+        'spans': spans,
+        'columns': _cfg_int(item, 'columns', grid_columns(settings), 1, 24),
+        'row_height': _cfg_int(item, 'row_height', grid_row_height(settings), 80, 600),
+        # Blank means the board's own background, which is itself blank-able.
+        # Two levels of "not set" rather than three: a page either has a
+        # picture of its own or takes the household's.
+        'background': str(item.get('background') or '').strip(),
+    }
+
+
+def _legacy_page(settings: dict) -> dict:
+    """The board this household already has, as a page.
+
+    Built from the pre-pages settings keys and given the reserved home slug, so
+    upgrading changes nothing anybody can see: same tiles, same sizes, same
+    grid, same picture. A household that never opens the editor never learns
+    that pages happened.
+    """
+    return _page_from({
+        'slug': HOME_SLUG,
+        'name': 'Home',
+        'icon': '🏠',
+        'widgets': (settings or {}).get('panel_widgets') or list(DEFAULT_WIDGETS),
+        'spans': (settings or {}).get('panel_tile_spans') or {},
+        'columns': grid_columns(settings),
+        'row_height': grid_row_height(settings),
+        'background': ((settings or {}).get('panel_page_backgrounds') or {}).get(HOME_SLUG) or '',
+    }, settings, set())
+
+
+def normalize_pages(settings: dict = None) -> List[dict]:
+    """Every board this household has, and NEVER an empty list.
+
+    A blank result would be a wall with nothing on it, which is the failure
+    this whole module is built to avoid — so an install with no pages gets the
+    legacy board, and an install whose pages all failed validation gets it too.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    raw = settings.get('panel_pages')
+    pages, taken = [], set()
+    for item in (raw if isinstance(raw, list) else []):
+        if not isinstance(item, dict):
+            continue
+        page = _page_from(item, settings, taken)
+        taken.add(page['slug'])
+        pages.append(page)
+    if not pages:
+        return [_legacy_page(settings)]
+    # SOMETHING has to be the wall's own board. If nothing claims the reserved
+    # slug — a hand-edited setting, or a household that deleted the home page
+    # from a future editor — the first page becomes it rather than the panel
+    # having nowhere to return to.
+    if not any(p['slug'] == HOME_SLUG for p in pages):
+        pages[0]['slug'] = HOME_SLUG
+    return pages
+
+
+def find_page(slug: Optional[str] = None, settings: dict = None) -> dict:
+    """The page a URL asked for, or the home board.
+
+    An unknown slug falls back rather than 404ing, because the address that
+    produces it is a wall panel's bookmark and a deleted page must not leave a
+    screen showing an error. The board it lands on is a real board.
+    """
+    pages = normalize_pages(settings)
+    wanted = str(slug or '').strip().lower()
+    if wanted:
+        for p in pages:
+            if p['slug'] == wanted:
+                return p
+    return next((p for p in pages if p['slug'] == HOME_SLUG), pages[0])
+
+
 def resolve_instances(requested: Optional[str] = None,
-                      settings: dict = None) -> List[dict]:
+                      settings: dict = None,
+                      page: dict = None) -> List[dict]:
     """URL wins, then the stored panel profile, then the default set.
 
     The URL has to win because an HA dashboard card is a second panel with
@@ -2175,6 +2321,10 @@ def resolve_instances(requested: Optional[str] = None,
     An empty result always falls back to the defaults. "Show nothing" is never
     what someone meant by a blank setting, and a blank screen on a wall is
     indistinguishable from a crash.
+
+    `page` is the board being drawn. It beats the household-wide setting and
+    loses to the URL, which keeps the precedence people already know: the
+    address a card was given is still the most specific thing in the system.
     """
     if requested is not None:
         raw = requested.strip()
@@ -2188,6 +2338,11 @@ def resolve_instances(requested: Optional[str] = None,
                 [s.strip().lower() for s in raw.split(',')], settings)
         if picked:
             return picked
+    if page is not None:
+        # A page's tiles are already normalised; an EMPTY page is a real state
+        # (somebody just made it) and must not silently fill with the defaults,
+        # or a new board would arrive with thirteen tiles nobody asked for.
+        return list(page.get('widgets') or [])
     picked = normalize_instances((settings or {}).get('panel_widgets'), settings)
     return picked or normalize_instances(list(DEFAULT_WIDGETS), settings)
 
@@ -2342,7 +2497,17 @@ def sun_theme(settings: dict = None, now: datetime.datetime = None) -> dict:
     return {'theme': 'light', 'next_flip': to_dark.isoformat()}
 
 
-def profile(tabs: Optional[str] = None, widgets: Optional[str] = None) -> dict:
+def page_summaries(settings: dict = None) -> List[dict]:
+    """Every board, without its tiles — what a shelf, a page switcher and the
+    editor's own list all need. The tiles are the expensive part and none of
+    those three surfaces wants them."""
+    return [{'slug': p['slug'], 'name': p['name'], 'icon': p['icon'],
+             'tiles': len(p['widgets'])}
+            for p in normalize_pages(settings)]
+
+
+def profile(tabs: Optional[str] = None, widgets: Optional[str] = None,
+            page: Optional[str] = None) -> dict:
     """Everything a panel needs to know about itself, in one call — so a
     display bolted to a wall can be pointed at a bare URL and still come up
     configured. The alternative is a two-hundred-character bookmark that only
@@ -2368,11 +2533,16 @@ def profile(tabs: Optional[str] = None, widgets: Optional[str] = None) -> dict:
     if theme == 'sun':
         resolved = sun_theme(settings)
         theme, next_flip = resolved['theme'], resolved['next_flip']
+    page_obj = find_page(page, settings)
     return {'tabs': resolve_tabs(tabs, settings),
-            'widgets': resolve_instances(widgets, settings),
-            'spans': settings.get('panel_tile_spans') or {},
-            'row_height': grid_row_height(settings),
-            'columns': grid_columns(settings),
+            'widgets': resolve_instances(widgets, settings, page=page_obj),
+            'spans': page_obj['spans'],
+            'row_height': page_obj['row_height'],
+            'columns': page_obj['columns'],
+            # Every board there is, so the shelf can carry them and a panel can
+            # move between them without a round trip per hop.
+            'pages': page_summaries(settings),
+            'page': page_obj['slug'],
             'theme': theme,
             'next_flip': next_flip,
             'backgrounds': backgrounds(settings),
@@ -2383,18 +2553,23 @@ def profile(tabs: Optional[str] = None, widgets: Optional[str] = None) -> dict:
 
 
 def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
-          now: datetime.datetime = None) -> dict:
+          now: datetime.datetime = None, page: Optional[str] = None) -> dict:
     """The whole board in one payload."""
     now = now or datetime.datetime.now()
     settings = storage.get_settings() or {}
-    instances = resolve_instances(requested, settings)
+    page_obj = find_page(page, settings)
+    instances = resolve_instances(requested, settings, page=page_obj)
 
     # The whole resolved board, config included — two calendar tiles set to
     # different people are different boards and must not share a cached answer.
-    cache_key = json.dumps(instances, sort_keys=True)
-    if (_CACHE['data'] and _CACHE['key'] == cache_key
-            and time.time() - _CACHE['at'] < TTL_SECONDS):
-        return _CACHE['data']
+    # The PAGE rides in the key too: two pages can hold identical tiles and
+    # still differ in the grid they are drawn on, and one cache entry serving
+    # both would draw the kitchen board at the hallway's row height.
+    cache_key = json.dumps([page_obj['slug'], page_obj['columns'],
+                            page_obj['row_height'], instances], sort_keys=True)
+    held = _CACHE.get(cache_key)
+    if held and time.time() - held['at'] < TTL_SECONDS:
+        return held['data']
 
     from services import family_digest
     # `now` threaded through, not left to default: the hero, the tiles and the
@@ -2500,18 +2675,35 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
         'condition': condition,
         'condition_emoji': (family_digest._WEATHER_EMOJI.get(condition or '', '🌤️')
                             if condition else None),
-        'background': _background_url(settings),
+        # The page's own picture, then the household's. A board made for the
+        # hallway is allowed to look different from the one in the kitchen —
+        # that is most of what makes it a different board rather than the same
+        # board with other tiles on it.
+        'background': (_as_background(page_obj['background'])
+                       or _background_url(settings)),
         'statuses': [{'label': s.get('label') or s.get('name'),
                       'emoji': s.get('emoji'), 'note': s.get('note')}
                      for s in statuses][:2],
         'hero': hero,
         'tiles': tiles,
         'widgets': instances,
-        'spans': (settings.get('panel_tile_spans') or {}),
-        'row_height': grid_row_height(settings),
-        'columns': grid_columns(settings),
+        # All four come off the PAGE now. `find_page` guarantees one exists and
+        # that its numbers are already clamped, so there is no branch here for
+        # "no pages configured" — that case produced a page built from the old
+        # settings before any of this ran.
+        'spans': page_obj['spans'],
+        'row_height': page_obj['row_height'],
+        'columns': page_obj['columns'],
+        'page': {'slug': page_obj['slug'], 'name': page_obj['name'],
+                 'icon': page_obj['icon']},
     }
-    _CACHE.update(key=cache_key, at=time.time(), data=data)
+    # Popped before it is set so a rebuilt board moves to the END of the dict:
+    # insertion order is then genuinely "least recently built", and the
+    # eviction below takes the board nobody is looking at.
+    _CACHE.pop(cache_key, None)
+    while len(_CACHE) >= _CACHE_MAX:
+        _CACHE.pop(next(iter(_CACHE)), None)
+    _CACHE[cache_key] = {'at': time.time(), 'data': data}
     return data
 
 

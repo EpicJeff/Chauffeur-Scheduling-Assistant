@@ -897,15 +897,43 @@ def home_board_page(request: Request):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
+@app.get("/board/{slug}")
+def board_page(slug: str, request: Request):
+    """One of the household's OTHER boards.
+
+    The same template as /home, because a page is not a different kind of
+    screen — it is the same screen with a different set of tiles on it. An
+    unknown slug is not a 404: the address that produces one is a wall panel's
+    bookmark pointing at a board somebody deleted, and a screen bolted to a
+    wall showing an error page is worse than the same screen showing the home
+    board. `home_board.find_page` does the falling back.
+    """
+    response = templates.TemplateResponse(request=request, name="home.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
 @app.get("/api/home_board")
-def home_board_api(widgets: Optional[str] = None):
+def home_board_api(widgets: Optional[str] = None, page: Optional[str] = None):
     """The whole board in ONE payload. Six tiles fetching themselves would be
     six requests per tick on a display that runs sixteen hours a day; this is
     one, cached briefly so a second panel costs nothing."""
     from services import home_board
     return home_board.build(
-        requested=widgets,
+        requested=widgets, page=page,
         kid_digest_fn=lambda: _build_kid_digests(_kid_digest_default_date()))
+
+@app.get("/api/home_board/pages")
+def home_board_pages():
+    """Every board this household has, WHOLE — tiles, spans, grid and all.
+
+    Whole rather than summarised because the editor is the caller that
+    matters, and it has to load what it is about to save. A summary endpoint
+    would mean the editor fetching each page separately, or worse, building
+    the migration a second time in JavaScript and disagreeing with the server
+    about what today's board becomes.
+    """
+    from services import home_board
+    return {'pages': home_board.normalize_pages()}
 
 @app.get("/api/home_board/catalog")
 def home_board_catalog():
@@ -959,12 +987,13 @@ def ha_toggle(req: HAToggleRequest):
     return {'ok': True}
 
 @app.get("/api/panel/profile")
-def panel_profile(tabs: Optional[str] = None, widgets: Optional[str] = None):
+def panel_profile(tabs: Optional[str] = None, widgets: Optional[str] = None,
+                  page: Optional[str] = None):
     """What this panel shows, resolved: URL params, then the stored profile,
     then the defaults. The shelf calls this so a display pointed at a bare
     /home?panel=true still comes up configured."""
     from services import home_board
-    return home_board.profile(tabs=tabs, widgets=widgets)
+    return home_board.profile(tabs=tabs, widgets=widgets, page=page)
 
 @app.get("/api/panel/screensaver")
 def panel_screensaver_playlist():

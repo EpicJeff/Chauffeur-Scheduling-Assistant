@@ -307,7 +307,14 @@ globalThis.setInterval = function () { return 0; };
 PROBE = r"""
 const b = homeBoard();
 b.catalog = __CATALOG__;
-b.draft.panel_widgets = [];
+// A board is a PAGE now, so the editor is seeded with one rather than with a
+// bare widget list. Everything below still exercises the same helpers; they
+// simply address the page being edited instead of a single household board.
+b.draft.panel_pages = [{
+  slug: 'home', name: 'Home', icon: 'H',
+  widgets: [], spans: {}, columns: 12, row_height: 240, background: '',
+}];
+b.pageIndex = 0;
 
 const opt = (type, key) =>
   b.optionsFor(type).find(o => o.key === key);
@@ -315,7 +322,7 @@ const opt = (type, key) =>
 // Two calendars, added the way the palette adds them.
 b.addInstance('calendar');
 b.addInstance('calendar');
-const [one, two] = b.draft.panel_widgets;
+const [one, two] = b.page().widgets;
 
 // Set the second to a list of one person's next 3 days.
 b.setCfg(two, opt('calendar', 'view'), 'list');
@@ -324,7 +331,7 @@ b.toggleCfgId(two, opt('calendar', 'members'), 'member-a');
 b.setCfg(two, opt('calendar', 'title'), 'Emma');
 
 // Then put one of them back to exactly the default.
-const drives = (b.addInstance('drives'), b.draft.panel_widgets[2]);
+const drives = (b.addInstance('drives'), b.page().widgets[2]);
 b.setCfg(drives, opt('drives', 'errands'), false);
 b.setCfg(drives, opt('drives', 'errands'), true);   // back to the default
 
@@ -332,20 +339,20 @@ b.setCfg(drives, opt('drives', 'errands'), true);   // back to the default
 b.setCfg(one, opt('calendar', 'days'), '99');
 
 console.log(JSON.stringify({
-  ids: b.draft.panel_widgets.map(w => w.id),
+  ids: b.page().widgets.map(w => w.id),
   untouched: one.config,
   configured: two.config,
   backToDefault: drives.config,
   clamped: one.config.days,
-  labels: b.draft.panel_widgets.map(w => b.instanceLabel(w)),
+  labels: b.page().widgets.map(w => b.instanceLabel(w)),
   counts: { calendar: b.countOfType('calendar'), map: b.countOfType('map') },
   // A tile with no options must not offer a gear.
   gearless: b.optionsFor('intake').filter(o => o.key !== 'title').length,
   // Removing an instance takes its size with it.
   spansAfterRemove: (function () {
-    b.draft.panel_tile_spans = { 'calendar-2': { cols: 6 } };
+    b.page().spans = { 'calendar-2': { cols: 6 } };
     b.removeInstance(1);
-    return b.draft.panel_tile_spans;
+    return b.page().spans;
   })(),
 }));
 """

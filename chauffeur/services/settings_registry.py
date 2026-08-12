@@ -98,6 +98,12 @@ ENTRIES: List[dict] = [
        'of these, so 12 gives you halves, thirds, quarters and sixths — at 4, '
        'a quarter of the board was the narrowest thing you could ask for.',
        page='home', anchor='panel-setup'),
+    _e('panel_pages', 'panel', 'Boards',
+       'Every board this household has — the wall panel\'s home screen plus '
+       'any others you have made. Each one carries its own tiles, layout, '
+       'grid and background, so a hallway board and a kitchen board can be '
+       'genuinely different screens rather than the same screen twice.',
+       page='home', anchor='panel-setup'),
     _e('panel_grid_row_height', 'panel', 'Board row height',
        'What one row of the home board grid is worth, in pixels. Tile sizes '
        'are measured in these, so a 2-row tile is twice this tall — including '
