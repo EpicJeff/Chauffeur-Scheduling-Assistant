@@ -2431,11 +2431,44 @@ def resolve_tabs(requested: Optional[str] = None, settings: dict = None) -> List
         return out
 
     if requested is not None:
+        # An explicit list is EXACTLY what was asked for. A card that says
+        # `?tabs=home,chores` wants two buttons, and quietly adding the
+        # household's boards to it would make that card unconfigurable.
         picked = clean(requested.split(','))
         if picked:
             return picked
-    picked = clean((settings or {}).get('panel_tabs'))
-    return picked or list(DEFAULT_TABS)
+    stored = clean((settings or {}).get('panel_tabs'))
+    if stored:
+        # A CURATED shelf is honoured exactly, boards included — the editor
+        # lists them, so leaving one out is a decision somebody made rather
+        # than an omission to be helpfully repaired. Adding it back would make
+        # the ✕ next to it do nothing.
+        return stored
+    return _with_boards(list(DEFAULT_TABS), settings)
+
+
+def _with_boards(order: List[str], settings: dict = None) -> List[str]:
+    """The household's own boards, folded into a shelf order.
+
+    They have to BE in this list, not merely rendered into the shelf beside it.
+    The panel asks the profile what it shows and then hides every button the
+    answer does not name — so boards that were not in it appeared for a
+    fraction of a second on every load and then vanished, and panel mode is the
+    only place the shelf exists, so that was the only place it showed.
+
+    Right after Home, because Home is the same kind of thing: the boards are
+    one group and the app's destinations are another. A board somebody made on
+    purpose for this wall has a stronger claim on a thumb than anything shipped.
+    """
+    boards = [f'board:{p["slug"]}' for p in normalize_pages(settings)
+              if p['slug'] != HOME_SLUG]
+    boards = [b for b in boards if b not in order]
+    if not boards:
+        return order
+    if HOME_SLUG in order:
+        at = order.index(HOME_SLUG) + 1
+        return order[:at] + boards + order[at:]
+    return boards + order
 
 
 # ── "Follow the sun", and why it is not just `auto` with a better name.
@@ -2856,10 +2889,21 @@ def catalog() -> dict:
             w['requires'] = 'Home Assistant'
             w['available'] = ha_ok
         widgets.append(w)
+    # The shelf's vocabulary, as the editor needs to offer it: the app's own
+    # destinations AND the household's boards. One list, because they end up in
+    # one ordered setting — a board is a shelf button in exactly the way the
+    # Chores page is, and splitting them into two pickers would mean two places
+    # to arrange one row of buttons.
+    settings = storage.get_settings() or {}
+    tabs = [{'slug': s, 'label': TAB_LABELS.get(s, s), 'kind': 'page'}
+            for s in NAV_SLUGS]
+    tabs += [{'slug': f'board:{p["slug"]}', 'label': p['name'],
+              'icon': p['icon'], 'kind': 'board'}
+             for p in normalize_pages(settings) if p['slug'] != HOME_SLUG]
     return {
         'widgets': widgets,
         'widget_defaults': list(DEFAULT_WIDGETS),
         'sources': option_sources(),
-        'tabs': [{'slug': s, 'label': TAB_LABELS.get(s, s)} for s in NAV_SLUGS],
-        'tab_defaults': list(DEFAULT_TABS),
+        'tabs': tabs,
+        'tab_defaults': resolve_tabs(None, settings),
     }

@@ -260,6 +260,124 @@ def scenario_a_board_is_reachable_from_a_wall_panel():
           "expensive half of the payload and the half it does not use")
 
 
+def scenario_a_board_survives_the_panel_asking_what_it_shows():
+    """The bug that shipped in v2.189.0, and the reason it hid.
+
+    A panel with no `?tabs=` asks `/api/panel/profile` what it shows and then
+    HIDES every shelf button the answer does not name. Boards were rendered
+    into the shelf server-side but were not in that answer, so they appeared
+    for a fraction of a second on every load and then vanished — and panel mode
+    is the only place the shelf exists, so it was the only place it showed.
+
+    The v2.189.0 tests checked `resolve_tabs('home,board:chores')` — the
+    EXPLICIT path — and never the default one the wall actually takes.
+    """
+    settings = {'panel_pages': [
+        {'slug': 'home', 'name': 'Home', 'widgets': ['drives']},
+        {'slug': 'hallway', 'name': 'Hallway', 'widgets': ['map']},
+        {'slug': 'kitchen', 'name': 'Kitchen', 'widgets': ['meals']},
+    ]}
+    # No URL param: the wall's own case.
+    tabs = home_board.resolve_tabs(None, settings)
+    for slug in ('board:hallway', 'board:kitchen'):
+        check(slug in tabs,
+              f"{slug} is missing from the panel profile, so the shelf will "
+              f"render it and then hide it: {tabs}")
+    # Right after Home — the boards are one group, the app's pages another.
+    check(tabs.index('board:hallway') == tabs.index('home') + 1,
+          f"the boards are not grouped with Home: {tabs}")
+    check(tabs.index('board:hallway') < tabs.index('board:kitchen'),
+          f"board order is shelf order, and it was not kept: {tabs}")
+
+    # (A shelf somebody has curated is a different case and stays exactly as
+    # they left it — see scenario_a_curated_shelf_is_left_alone.)
+
+    # And the profile — which is what the panel actually reads — agrees.
+    from services import storage
+    real = storage.get_settings
+    try:
+        storage.get_settings = lambda: settings
+        prof = home_board.profile()
+        check('board:hallway' in prof['tabs'],
+              f"the profile the panel reads has no boards in it: {prof['tabs']}")
+    finally:
+        storage.get_settings = real
+
+
+def scenario_an_explicit_tabs_list_is_still_exactly_what_was_asked_for():
+    """The other half. A Home Assistant card that says `?tabs=home,chores`
+    wants two buttons; quietly adding the household's boards would make that
+    card unconfigurable."""
+    settings = {'panel_pages': [
+        {'slug': 'home', 'name': 'Home', 'widgets': ['drives']},
+        {'slug': 'hallway', 'name': 'Hallway', 'widgets': ['map']},
+    ]}
+    check(home_board.resolve_tabs('home,chores', settings) == ['home', 'chores'],
+          "an explicit tabs list picked up boards nobody asked for")
+    check(home_board.resolve_tabs('', settings) == [],
+          "?tabs= (no chrome at all) stopped meaning that")
+
+
+def scenario_the_shelf_editor_can_reach_the_boards():
+    """The hand path. Boards being on the shelf by default is only half of it —
+    a household that wants their hallway board FIRST, or does not want the
+    kitchen one there at all, has to be able to say so in the same list they
+    already order the app's destinations in."""
+    from services import storage
+    real = storage.get_settings
+    try:
+        storage.get_settings = lambda: {'panel_pages': [
+            {'slug': 'home', 'name': 'Home', 'widgets': ['drives']},
+            {'slug': 'hallway', 'name': 'Hallway', 'icon': '🚪', 'widgets': []},
+        ]}
+        cat = home_board.catalog()
+        board = next((t for t in cat['tabs'] if t['slug'] == 'board:hallway'), None)
+        check(board, f"the shelf editor cannot offer a board: {cat['tabs']}")
+        check(board['label'] == 'Hallway' and board['icon'] == '🚪',
+              f"a board reached the editor without its name or icon: {board}")
+        check(board['kind'] == 'board',
+              "a board and a page are indistinguishable in the editor's list, "
+              "and they are not the same thing to arrange")
+        check(all(t.get('kind') for t in cat['tabs']),
+              "some shelf entries do not say which kind they are")
+        # The defaults shown are the ones the panel would ACTUALLY use, so an
+        # untouched shelf and the picker agree about what is on it.
+        check('board:hallway' in cat['tab_defaults'],
+              f"the editor's idea of an untouched shelf omits the boards: "
+              f"{cat['tab_defaults']}")
+    finally:
+        storage.get_settings = real
+
+
+def scenario_a_curated_shelf_is_left_alone():
+    """Once somebody has picked their buttons, that list IS the shelf. Helpfully
+    re-adding a board they removed would make the ✕ beside it do nothing, which
+    is worse than the board being absent."""
+    settings = {'panel_pages': [
+        {'slug': 'home', 'name': 'Home', 'widgets': ['drives']},
+        {'slug': 'hallway', 'name': 'Hallway', 'widgets': ['map']},
+    ], 'panel_tabs': ['home', 'chores']}
+    check(home_board.resolve_tabs(None, settings) == ['home', 'chores'],
+          "a board was added back to a shelf somebody had curated")
+    # And a curated shelf can put a board wherever it likes.
+    ordered = dict(settings, panel_tabs=['board:hallway', 'home'])
+    check(home_board.resolve_tabs(None, ordered) == ['board:hallway', 'home'],
+          "a curated shelf could not put a board first")
+
+
+def scenario_the_shelf_renders_one_list_not_two():
+    """Two loops over two orders is how the boards ended up in a position the
+    profile did not know about. The shelf builds from ONE order that holds both
+    kinds, so what is rendered and what the panel keeps cannot diverge."""
+    tpl = open(os.path.join(TPL, 'nav.html'), encoding='utf-8').read()
+    shelf = tpl[tpl.index('id="panel-shelf-items"'):]
+    shelf = shelf[:shelf.index('panel-shelf-more')]
+    check(shelf.count('{% for slug in _order %}') == 1,
+          "the shelf is no longer built from a single order")
+    check('shelf_boards(request)' in tpl,
+          "the shelf cannot resolve a board slug to a board")
+
+
 def scenario_a_board_can_be_named_in_a_tabs_filter():
     """`?tabs=` is how an HA card says what chrome it wants. Boards join that
     vocabulary PREFIXED, so a board somebody names "Chores" cannot quietly
@@ -274,8 +392,16 @@ def scenario_a_board_can_be_named_in_a_tabs_filter():
     # The page and the board are different destinations with similar names.
     check(home_board.resolve_tabs('chores', settings) == ['chores'],
           "a board shadowed the app's own page of the same name")
-    check(home_board.resolve_tabs('board:nope', settings) == list(home_board.DEFAULT_TABS),
-          "a board that does not exist produced a button that goes nowhere")
+    # An unknown board name is dropped, which empties the request and falls
+    # back to the household's own shelf — boards included, since that is now
+    # what the default IS.
+    fallback = home_board.resolve_tabs('board:nope', settings)
+    check('board:nope' not in fallback,
+          f"a board that does not exist produced a button that goes nowhere: "
+          f"{fallback}")
+    check(fallback == home_board.resolve_tabs(None, settings),
+          f"an all-unknown request did not fall back to the household's shelf: "
+          f"{fallback}")
 
 
 def scenario_every_nav_link_survives_a_two_segment_route():

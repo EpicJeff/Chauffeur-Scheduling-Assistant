@@ -231,37 +231,38 @@
       SHELF_ITEMS is built from NAV_ITEMS, so a new destination is still one
       entry in one list.
     #}
-    {% set _order = shelf_order(request) %}
-    {% set SHELF_ITEMS = [] %}
-    {% for slug in _order %}
-      {% for item in NAV_ITEMS if item.slug == slug %}
-        {% set _ = SHELF_ITEMS.append(item) %}
-      {% endfor %}
-    {% endfor %}
     {#
-      The household's own boards, ahead of the app's pages.
+      ONE order, holding both kinds of destination.
 
-      Order is the argument. A custom board is something somebody made ON
-      PURPOSE for this wall — the hallway board, the kitchen board — and the app
-      has never had a stronger claim on the first buttons than that. They sit
-      right after Home because Home is the same kind of thing: the boards are
-      one group, the app's destinations are another.
+      The boards used to be rendered as their own loop in front of this one,
+      which made the shelf two lists that had to agree about order — and they
+      did not, because only one of them was in the order the profile returns.
+      Worse, the panel asks the profile what it shows and HIDES every button the
+      answer does not name, so the boards appeared for a moment on every load
+      and then vanished. `resolve_tabs` carries `board:<slug>` entries now, and
+      this loop renders whichever kind each slug turns out to be.
 
-      No icon paths, because these carry an emoji the household picked. That is
-      also why they render at a different size — a 28px stroked SVG and an emoji
-      do not agree about their own optical weight, and matching the box rather
-      than the glyph is what keeps the row from looking ragged.
+      Boards carry an emoji the household picked rather than a stroked icon
+      path, which is why they render at a different size: a 28px stroked SVG and
+      an emoji do not agree about their own optical weight, and matching the box
+      rather than the glyph is what keeps the row from looking ragged.
     #}
-    {% set BOARDS = shelf_boards(request) %}
+    {% set _order = shelf_order(request) %}
+    {% set _boards = {} %}
+    {% for b in shelf_boards(request) %}
+      {% set _ = _boards.update({'board:' ~ b.slug: b}) %}
+    {% endfor %}
     <div class="flex items-stretch gap-1" id="panel-shelf-items">
-        {% for board in BOARDS %}
-        <a href="{{ _up }}board/{{ board.slug }}" data-slug="board:{{ board.slug }}"
+        {% for slug in _order %}
+        {% set board = _boards.get(slug) %}
+        {% if board %}
+        <a href="{{ _up }}board/{{ board.slug }}" data-slug="{{ slug }}"
             class="flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 rounded-xl transition-colors {% if '/board/' ~ board.slug in _path %}bg-blue-600/25 text-blue-200{% else %}text-gray-400{% endif %}">
             <span class="h-7 flex items-center justify-center text-2xl leading-none shrink-0">{{ board.icon }}</span>
             <span class="text-[0.6rem] font-bold uppercase tracking-wide truncate max-w-full">{{ board.name }}</span>
         </a>
-        {% endfor %}
-        {% for item in SHELF_ITEMS %}
+        {% else %}
+        {% for item in NAV_ITEMS if item.slug == slug %}
         <a href="{{ _up }}{{ item.href }}" data-slug="{{ item.slug }}"
             class="flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 rounded-xl transition-colors {% if item.match in _path %}bg-blue-600/25 text-blue-200{% else %}text-gray-400{% endif %}">
             <svg class="w-7 h-7 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
@@ -271,6 +272,8 @@
             </svg>
             <span class="text-[0.6rem] font-bold uppercase tracking-wide truncate max-w-full">{{ item.short }}</span>
         </a>
+        {% endfor %}
+        {% endif %}
         {% endfor %}
         <button id="panel-shelf-more" type="button" style="display:none"
             onclick="document.getElementById('panel-shelf-flyout').classList.toggle('hidden')"

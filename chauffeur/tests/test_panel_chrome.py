@@ -118,8 +118,14 @@ def scenario_the_shelf_does_not_flash_the_wrong_buttons():
     check('{% set _order = shelf_order(request) %}' in NAV,
           "the shelf no longer takes its order from the server, so it is back "
           "to being rearranged after the paint")
-    check('{% for item in SHELF_ITEMS %}' in NAV,
+    # One loop over one order, holding both kinds of destination. It used to
+    # be a SHELF_ITEMS list built from NAV_ITEMS; the household's own boards
+    # joined the shelf in v2.189.0 and were rendered as a second loop, which
+    # made the shelf two lists that had to agree about order — and did not.
+    check('{% for slug in _order %}' in NAV,
           "the shelf does not render the server's ordered list")
+    check(NAV.count('{% for slug in _order %}') == 1,
+          "the shelf is built from more than one pass over the order again")
 
 
 def scenario_the_skin_maps_the_greys_the_pages_are_written_in():
