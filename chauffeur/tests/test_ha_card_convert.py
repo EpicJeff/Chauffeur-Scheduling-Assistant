@@ -305,6 +305,94 @@ def scenario_a_state_is_said_the_way_home_assistant_says_it():
     check(said[4] == '3300', f"a numeric reading was mangled: {said[4]!r}")
 
 
+def scenario_a_card_can_say_how_big_it_wants_to_be():
+    """Reported as the thing most noticed: `grid_options` in the YAML did
+    nothing, so every card in a stack was the same size.
+
+    Home Assistant honours these only in a SECTIONS view and ignores them
+    inside a stack. Here they are honoured everywhere, because the complaint is
+    the same either way — there is no other way to say that the flow diagram
+    deserves twice the room of the gauge beneath it.
+    """
+    cfg = {'type': 'vertical-stack', 'cards': [
+        {'type': 'gauge', 'entity': 'sensor.battery',
+         'grid_options': {'columns': 6, 'rows': 3}},
+        {'type': 'gauge', 'entity': 'sensor.battery',
+         'grid_options': {'columns': 'full'}},
+        {'type': 'gauge', 'entity': 'sensor.battery'},
+    ]}
+    cards = conv.convert(cfg, STATES)['cards']
+    check(cards[0]['grid'] == {'cols': 6, 'rows': 3},
+          f"a card's requested size was dropped: {cards[0].get('grid')}")
+    check(cards[1]['grid'] == {'cols': 12},
+          f"`columns: full` did not become the whole width: {cards[1].get('grid')}")
+    check('grid' not in cards[2],
+          "a card that asked for nothing was given a size anyway, which would "
+          "override the stack's own default")
+
+    # Out-of-range and nonsense are clamped rather than passed through to CSS.
+    wild = conv.convert({'type': 'vertical-stack', 'cards': [
+        {'type': 'gauge', 'entity': 'sensor.battery',
+         'grid_options': {'columns': 99, 'rows': 'auto'}},
+        {'type': 'gauge', 'entity': 'sensor.battery',
+         'grid_options': {'columns': -4}},
+        {'type': 'gauge', 'entity': 'sensor.battery', 'grid_options': 'nonsense'},
+    ]}, STATES)['cards']
+    check(wild[0]['grid'] == {'cols': conv.GRID_COLUMNS},
+          f"99 columns was not clamped: {wild[0].get('grid')}")
+    check('rows' not in wild[0]['grid'], "`rows: auto` became a fixed height")
+    check(wild[1]['grid'] == {'cols': 1}, f"a negative span survived: {wild[1]}")
+    check('grid' not in wild[2], f"a non-dict grid_options was read: {wild[2]}")
+
+    # It rides on whatever the card turned out to be, including a stack and a
+    # hosted card — every kind lands in a cell, and the cell is what reads it.
+    mixed = conv.convert({'type': 'horizontal-stack', 'cards': [
+        {'type': 'custom:some-card', 'grid_options': {'columns': 8}},
+        {'type': 'vertical-stack', 'cards': [{'type': 'gauge'}],
+         'grid_options': {'columns': 4}},
+    ]}, STATES, hosts={})['cards']
+    check(mixed[0]['grid'] == {'cols': 8}, f"a hosted card cannot be sized: {mixed[0]}")
+    check(mixed[1]['grid'] == {'cols': 4}, f"a nested stack cannot be sized: {mixed[1]}")
+
+
+def scenario_an_area_card_shows_only_what_it_was_asked_for():
+    """Reported: an area card showed six toggles the YAML never mentioned, and
+    the same card in HA from the same config showed none.
+
+    Controls are opt-in there — they come from `features` — and a card that
+    invents them is worse than one that lacks them: it is the difference
+    between reading a config and guessing at one.
+    """
+    from services import ha_api
+    real_map, real_reg = ha_api.get_area_map, ha_api.get_area_registry
+    try:
+        ha_api.get_area_map = lambda ttl=60: [
+            {'id': 'main', 'name': 'Main House',
+             'entities': ['light.a', 'light.b', 'switch.c', 'sensor.t']}]
+        ha_api.get_area_registry = lambda ttl=300: [
+            {'area_id': 'main', 'name': 'Main House', 'picture': None, 'icon': None}]
+        states = {}
+        for e in ('light.a', 'light.b', 'switch.c'):
+            states.update(st(e, 'on'))
+        states.update(st('sensor.t', '71', device_class='temperature',
+                         unit_of_measurement='°F'))
+
+        plain = conv.convert({'type': 'area', 'area': 'main',
+                              'features_position': 'bottom'}, states)
+        check(plain['toggles'] == [],
+              f"the card invented controls nobody asked for: {plain['toggles']}")
+        # The readings it WAS asked for stay — those are the card's own job.
+        check(len(plain['readings']) == 1,
+              f"the configured sensor classes were dropped too: {plain['readings']}")
+
+        asked = conv.convert({'type': 'area', 'area': 'main',
+                              'features': [{'type': 'area-controls'}]}, states)
+        check(len(asked['toggles']) == 3,
+              f"a card that asked for controls did not get them: {asked['toggles']}")
+    finally:
+        ha_api.get_area_map, ha_api.get_area_registry = real_map, real_reg
+
+
 def scenario_an_area_card_leads_with_its_photograph():
     """`display_type: picture` is the household saying which they want — they
     bothered to upload a photo of the pool house. The picture lives in the AREA
@@ -441,7 +529,10 @@ def scenario_an_area_card_asks_home_assistant_what_is_in_the_room():
                          unit_of_measurement='°F', device_class='temperature'))
         states.update(st('binary_sensor.kitchen_motion', 'on',
                          device_class='motion', friendly_name='Motion'))
-        card = conv.convert({'type': 'area', 'area': 'kitchen'}, states)
+        # `features` asked for, because controls are opt-in — see
+        # scenario_an_area_card_shows_only_what_it_was_asked_for.
+        card = conv.convert({'type': 'area', 'area': 'kitchen',
+                             'features': [{'type': 'area-controls'}]}, states)
         check(card['name'] == 'Kitchen', f"the area lost its name: {card['name']}")
         check([r['class'] for r in card['readings']] == ['temperature'],
               f"the readings are wrong: {card['readings']}")
@@ -589,7 +680,8 @@ console.log(JSON.stringify({
   // attribute and start a new one.
   brokenAttr: /data-toggle="[^"]*"[^>]*onclick/i.test(out),
   gaugeDrawn: gauge.includes('<svg') && gauge.includes('stroke-dasharray'),
-  gridColumns: stack.includes('repeat(3,minmax(0,1fr))'),
+  // A 3-column grid stack on the shared 12-column grid: each card spans 4.
+  gridColumns: stack.includes('grid-column:span 4'),
   // Two cards in the row means two cells, whatever each card drew inside.
   rowCells: (titledRow.match(/class="nc-cell"/g) || []).length,
   rowKeptTitles: titledRow.includes('Left') && titledRow.includes('Right'),
@@ -600,7 +692,9 @@ console.log(JSON.stringify({
   sparkRounded: spark.includes('43.68') && !spark.includes('43.6834'),
   unitSplit: spark.includes('nc-unit'),
   nestedPlain: nested.includes('class="nc-cell" data-plain'),
-  leafSurfaced: /class="nc-cell">/.test(nested),
+  // A leaf cell is one WITHOUT data-plain. It carries an inline span now,
+  // so it is no longer followed immediately by '>'.
+  leafSurfaced: /class="nc-cell" style=/.test(nested),
 }));
 """
 
@@ -637,7 +731,10 @@ def scenario_the_renderer_escapes_what_the_converter_passed_through():
                           "which hides the problem instead of showing it safely")
     check(not got['brokenAttr'], "a quote in an entity id escaped its attribute")
     check(got['gaugeDrawn'], "the gauge no longer draws an arc")
-    check(got['gridColumns'], "a grid stack lost its column count")
+    check(got['gridColumns'],
+          "a 3-column grid stack no longer spans 4 of the shared 12 — a "
+          "card's own grid_options and the stack's own columns have to be "
+          "measured against the same grid or neither means anything")
     # One cell per CARD, not per element. A titled card draws its heading and
     # its body as siblings, and flex/grid count children — so two titled cards
     # in a horizontal stack laid out as FOUR equal columns with the headings in

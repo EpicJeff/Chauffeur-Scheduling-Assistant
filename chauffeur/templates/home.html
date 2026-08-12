@@ -43,13 +43,20 @@
            the panel's own markup. A hosted card wears our colours; these ARE
            our colours. */
         .nc-title { font-weight: 800; margin-bottom: 0.4rem; color: var(--panel-fg); }
-        .nc-stack { display: flex; flex-direction: column; gap: 0.75rem; }
-        .nc-row-stack { display: flex; gap: 0.75rem; align-items: stretch; }
-        /* One cell per CARD. Flex and grid count children, and a titled card
-           draws two of them (its heading and its body), so without this a
-           horizontal stack of two titled cards lays out as four equal columns
-           with the headings in two of them. */
-        .nc-row-stack > .nc-cell { flex: 1 1 0; }
+        /* Every stack is the SAME twelve-column grid; the direction only picks
+           the default span (a vertical stack's card takes all twelve, a
+           horizontal stack's an equal share). That is what lets a card's own
+           `grid_options: {columns: 6, rows: 3}` mean the same thing wherever
+           it sits, which is the whole point of honouring them at all.
+           `--nc-row` is Home Assistant's own section row height, so a `rows`
+           copied out of a dashboard is the height it was there. */
+        .nc-stack-grid {
+            --nc-row: 56px;
+            display: grid;
+            grid-template-columns: repeat(12, minmax(0, 1fr));
+            gap: 0.75rem;
+            align-items: stretch;
+        }
         /* Each card in a stack gets its own SURFACE.
            Side by side with Home Assistant this was most of the difference:
            HA's stacks are stacks of cards, and ours were a stack of contents
@@ -73,7 +80,6 @@
             padding: 0;
             overflow: visible;
         }
-        .nc-grid { display: grid; gap: 0.75rem; }
         .nc-rows { display: flex; flex-direction: column; gap: 0.4rem; }
         .nc-entity { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
         .nc-name {
@@ -1364,11 +1370,16 @@
                          tiles turned out. -->
                     <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-2">
                         This board is
-                        <input type="number" min="1" max="24" step="1"
+                        <input type="number" min="1" max="48" step="1"
                             :value="page().columns"
                             @input="setPageField('columns', parseInt($event.target.value, 10))"
                             class="w-14 ed-input rounded text-xs ed-title px-2 py-1">
-                        <span class="font-normal ed-note">columns wide — tile widths are spans of these</span>
+                        <span class="font-normal ed-note">columns wide — tile widths are spans of these.
+                            <!-- Worth knowing BEFORE the change, not after:
+                                 spans are counts of columns, so doubling the
+                                 grid halves every tile. -->
+                            Changing this does not resize the tiles, so doubling it
+                            halves how wide they look.</span>
                     </label>
                     <!-- Lives with the tiles, not in a settings page: the
                          number only means something next to the width of the
@@ -1391,7 +1402,7 @@
                              the last twenty pixels of a hosted card: the tile
                              that needs 250 gets 240 and clips, and no amount of
                              re-picking from a list of sevens fixes it. -->
-                        <input type="number" min="80" max="600" step="5"
+                        <input type="number" min="40" max="2000" step="5"
                             :value="page().row_height"
                             @input="setPageField('row_height', parseInt($event.target.value, 10))"
                             class="w-20 ed-input rounded text-xs ed-title px-2 py-1">
@@ -2192,7 +2203,7 @@
                 // twice, once here and once on the server.
                 rowHeight() {
                     const n = parseInt(this.board.row_height, 10);
-                    return Math.min(600, Math.max(80, n || 240));
+                    return Math.min(2000, Math.max(40, n || 240));
                 },
 
                 // How many columns the board is divided into. Twelve by
@@ -2202,7 +2213,7 @@
                 // anybody could ask for.
                 cols() {
                     const n = parseInt(this.board.columns, 10);
-                    return Math.min(24, Math.max(1, n || 12));
+                    return Math.min(48, Math.max(1, n || 12));
                 },
 
                 // A tile nobody has sized takes a QUARTER of the board, which
@@ -2670,28 +2681,40 @@
                         ? `<div class="nc-title">${this.esc(c.title)}</div>` : '';
                     switch (c.kind) {
                         case 'stack': {
+                            // EVERY stack is a 12-column grid, and the
+                            // direction only decides the default span. That is
+                            // what makes `grid_options` mean something in all
+                            // three of them: Home Assistant honours those only
+                            // in a sections view, but the complaint they answer
+                            // is the same inside a stack — without them every
+                            // card is the same size and there is no way to say
+                            // the flow diagram deserves twice the room of the
+                            // gauge beneath it.
+                            const cards = c.cards || [];
+                            const per = c.direction === 'horizontal'
+                                ? Math.max(1, Math.floor(12 / Math.max(1, cards.length)))
+                                : (c.direction === 'grid'
+                                    ? Math.max(1, Math.floor(12 / Math.max(1, c.columns || 2)))
+                                    : 12);
                             // Each card gets ONE cell, always. A card with a
                             // title draws two top-level elements — the heading
                             // and the body — so a horizontal stack of two
-                            // titled cards was laying itself out as FOUR equal
-                            // columns with the headings in two of them. Flex
-                            // and grid count children, not cards, and that is
-                            // the shape every example in HA's own docs uses.
+                            // titled cards laid itself out as FOUR equal
+                            // columns. Flex and grid count children, not cards.
                             // A cell holding another STACK stays plain: a
-                            // surface inside a surface inside a surface is the
-                            // other way to lose the boundary this draws.
-                            const inner = (c.cards || [])
-                                .map(x => `<div class="nc-cell"${x.kind === 'stack'
-                                    ? ' data-plain' : ''}>${this.drawCard(x)}</div>`)
-                                .join('');
-                            if (c.direction === 'horizontal') {
-                                return `${title}<div class="nc-row-stack">${inner}</div>`;
-                            }
-                            if (c.direction === 'grid') {
-                                return `${title}<div class="nc-grid" style="grid-template-columns:repeat(${
-                                    Math.max(1, c.columns || 2)},minmax(0,1fr))">${inner}</div>`;
-                            }
-                            return `${title}<div class="nc-stack">${inner}</div>`;
+                            // surface inside a surface is the other way to lose
+                            // the boundary this draws.
+                            const inner = cards.map(x => {
+                                const g = x.grid || {};
+                                const cols = Math.max(1, Math.min(12, g.cols || per));
+                                const rows = g.rows
+                                    ? `min-height:calc(${g.rows} * var(--nc-row))`
+                                    : '';
+                                return `<div class="nc-cell"${x.kind === 'stack'
+                                    ? ' data-plain' : ''} style="grid-column:span ${
+                                    cols};${rows}">${this.drawCard(x)}</div>`;
+                            }).join('');
+                            return `${title}<div class="nc-stack-grid">${inner}</div>`;
                         }
                         case 'entities':
                             return title + '<div class="nc-rows">' + (c.rows || []).map(r => {
@@ -3239,8 +3262,8 @@
                         icon: (p.icon || '🗂️').trim(),
                         widgets: p.widgets || [],
                         spans: p.spans || {},
-                        columns: Math.min(24, Math.max(1, parseInt(p.columns, 10) || 12)),
-                        row_height: Math.min(600, Math.max(80,
+                        columns: Math.min(48, Math.max(1, parseInt(p.columns, 10) || 12)),
+                        row_height: Math.min(2000, Math.max(40,
                             parseInt(p.row_height, 10) || 240)),
                         background: (p.background || '').trim(),
                     }));

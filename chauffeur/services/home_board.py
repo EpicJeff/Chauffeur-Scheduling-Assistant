@@ -2222,6 +2222,26 @@ def normalize_instances(raw, settings: dict = None) -> List[dict]:
 
 PAGE_SLUG_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,30}$')
 
+# The grid's limits, and NEITHER IS TECHNICAL.
+#
+# `grid-auto-rows` takes any length and `repeat(N, …)` takes any count; these
+# are judgement, and the judgement was too tight. They were 80–600 and 24, and
+# the reasoning behind those numbers was "surely nobody wants a taller row than
+# this" — which is the same reasoning that made the row height a menu of seven,
+# and it was wrong there too.
+#
+# What they are now is a guard against values that break the ARITHMETIC rather
+# than the taste: 0 columns divides by zero, a 5px row makes every span
+# meaningless, and a 5000px row on a 1080p panel is a tile nobody can see the
+# bottom of even at one row. Anything inside these is the household's business.
+#
+# Raising COLUMN_MAX is safe for existing boards: stored spans are counts of
+# columns and the board's own column count is a separate setting, so nothing
+# rescales until somebody changes it. (Which they should know before they do —
+# going from 12 to 48 makes every tile a quarter as wide. The editor says so.)
+ROW_MIN, ROW_MAX = 40, 2000
+COLUMN_MAX = 48
+
 # The first page is the wall's own board — the one `/home` shows, the one a
 # panel returns to when it goes idle, the one the shelf's Home button means.
 # It is reserved rather than merely conventional: a household that renamed it
@@ -2262,8 +2282,9 @@ def _page_from(item: dict, settings: dict, taken: set) -> dict:
         'widgets': normalize_instances(item.get('widgets'),
                                        {'panel_tile_spans': spans}),
         'spans': spans,
-        'columns': _cfg_int(item, 'columns', grid_columns(settings), 1, 24),
-        'row_height': _cfg_int(item, 'row_height', grid_row_height(settings), 80, 600),
+        'columns': _cfg_int(item, 'columns', grid_columns(settings), 1, COLUMN_MAX),
+        'row_height': _cfg_int(item, 'row_height', grid_row_height(settings),
+                               ROW_MIN, ROW_MAX),
         # Blank means the board's own background, which is itself blank-able.
         # Two levels of "not set" rather than three: a page either has a
         # picture of its own or takes the household's.
@@ -2803,7 +2824,8 @@ def grid_row_height(settings: dict = None) -> int:
     """
     settings = settings if settings is not None else (storage.get_settings() or {})
     try:
-        return max(80, min(600, int(settings.get('panel_grid_row_height', 240))))
+        return max(ROW_MIN, min(ROW_MAX,
+                                int(settings.get('panel_grid_row_height', 240))))
     except (TypeError, ValueError):
         return 240
 
@@ -2818,7 +2840,7 @@ def grid_columns(settings: dict = None) -> int:
     """
     settings = settings if settings is not None else (storage.get_settings() or {})
     try:
-        return max(1, min(24, int(settings.get('panel_grid_columns', 12))))
+        return max(1, min(COLUMN_MAX, int(settings.get('panel_grid_columns', 12))))
     except (TypeError, ValueError):
         return 12
 

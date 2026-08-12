@@ -246,6 +246,42 @@
         return DOMAIN_ICON[domain] || 'mdi:eye';
     }
 
+    // What `on` MEANS for a binary sensor, per device class. Same table as the
+    // server's, and the duplication is the point: `hass.states` carries raw
+    // states because cards branch on them, so only the DISPLAY is translated.
+    var BINARY_STATE = {
+        motion: ['Detected', 'Clear'], occupancy: ['Detected', 'Clear'],
+        presence: ['Home', 'Away'], moisture: ['Wet', 'Dry'],
+        door: ['Open', 'Closed'], garage_door: ['Open', 'Closed'],
+        window: ['Open', 'Closed'], opening: ['Open', 'Closed'],
+        smoke: ['Detected', 'Clear'], gas: ['Detected', 'Clear'],
+        problem: ['Problem', 'OK'], safety: ['Unsafe', 'Safe'],
+        connectivity: ['Connected', 'Disconnected'],
+        battery: ['Low', 'Normal'], running: ['Running', 'Not running'],
+        lock: ['Unlocked', 'Locked'], tamper: ['Detected', 'Clear'],
+        plug: ['Plugged in', 'Unplugged'], sound: ['Detected', 'Clear'],
+        vibration: ['Detected', 'Clear'], update: ['Available', 'Up-to-date'],
+    };
+    var SAYABLE = ['on', 'off', 'open', 'closed', 'locked', 'unlocked', 'home',
+        'idle', 'jammed', 'opening', 'closing', 'locking', 'unlocking',
+        'unavailable', 'unknown'];
+    function stateLabel(stateObj) {
+        var raw = String((stateObj && stateObj.state) ?? '');
+        if (!raw) return '';
+        var attrs = (stateObj && stateObj.attributes) || {};
+        var low = raw.toLowerCase();
+        var domain = String(stateObj.entity_id || '').split('.')[0];
+        if (domain === 'binary_sensor') {
+            var pair = BINARY_STATE[String(attrs.device_class || '').toLowerCase()];
+            if (pair) return low === 'on' ? pair[0] : (low === 'off' ? pair[1] : raw);
+        }
+        if (low === 'not_home') return 'Away';
+        if (SAYABLE.indexOf(low) >= 0) {
+            return low.charAt(0).toUpperCase() + low.slice(1);
+        }
+        return raw;
+    }
+
     // ── Icons, resolved once per name for the life of the page.
     var iconCache = {};
     function iconPath(name) {
@@ -298,7 +334,17 @@
             // Empty-string localize is HA's own behaviour for an unknown key,
             // and cards written against it use `|| fallback`.
             localize: function () { return ''; },
-            formatEntityState: function (stateObj) { return (stateObj && stateObj.state) || ''; },
+            // The state as a person would say it. A mushroom lock card asks for
+            // this and prints whatever comes back, so returning the raw state
+            // put a lower-case `unlocked` on the wall where Home Assistant says
+            // `Unlocked`.
+            //
+            // The table is a small duplicate of the server's
+            // (ha_card_convert._state_label) and has to be: `hass.states` must
+            // carry the RAW state, because a card branches on `'on'` and
+            // `'unlocked'` to decide what to draw. Only the DISPLAY is pretty,
+            // and only through this function.
+            formatEntityState: function (stateObj) { return stateLabel(stateObj); },
             formatEntityAttributeValue: function (stateObj, attr) {
                 return String(((stateObj || {}).attributes || {})[attr] ?? '');
             },

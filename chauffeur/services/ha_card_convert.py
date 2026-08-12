@@ -555,6 +555,18 @@ def _area_card(config, states):
     ids = area_entities(ref)
     sensor_classes = config.get('sensor_classes') or _AREA_SENSORS
     alert_classes = config.get('alert_classes') or _AREA_ALERTS
+    # CONTROLS ARE OPT-IN, as they are in Home Assistant's own area card: they
+    # come from `features`, and a config that does not ask for them gets a
+    # picture, a name and its readings.
+    #
+    # The first cut put a row of toggles on every area card, which meant a
+    # board showed six switches under "Main House" that the YAML never
+    # mentioned — the same card in HA, from the same config, showed none. A
+    # card that invents controls is worse than one that lacks them: it is the
+    # difference between reading a config and guessing at one.
+    wants_controls = any(
+        'control' in str((f or {}).get('type') if isinstance(f, dict) else f).lower()
+        for f in (config.get('features') or []))
 
     readings, alerts, toggles = [], [], []
     for entity_id in ids:
@@ -577,7 +589,7 @@ def _area_card(config, states):
                                # just walked through.
                                'icon': _icon_for(entity_id, attrs, st.get('state')),
                                'name': attrs.get('friendly_name') or entity_id})
-        elif domain in _AREA_TOGGLES:
+        elif domain in _AREA_TOGGLES and wants_controls:
             toggles.append(_row(entity_id, states))
 
     # The room's own name and PHOTOGRAPH, from the area registry. HA's area
@@ -615,6 +627,45 @@ def _area_card(config, states):
             'unknown': (not ids and not area_entities(ref))}
 
 
+def _grid_options(config):
+    """`grid_options: {columns: 12, rows: 3}` — what a card asked for.
+
+    Home Assistant only honours these in a SECTIONS view, and ignores them
+    inside a stack. Here they are honoured everywhere, because the complaint
+    they answer is the same one either way: without them every card in a stack
+    is the same size, and there is no way to say that the power flow diagram
+    deserves twice the room of the gauge under it.
+
+    `columns: full` and a missing value both mean "whatever the stack's own
+    default is" — a vertical stack's is the full width, a horizontal stack's is
+    an equal share — so a config that never mentions grid options lays out
+    exactly as it did before.
+    """
+    raw = config.get('grid_options') if isinstance(config, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    out = {}
+    cols = raw.get('columns')
+    if isinstance(cols, str) and cols.strip().lower() == 'full':
+        out['cols'] = GRID_COLUMNS
+    else:
+        n = _num(cols)
+        if n is not None:
+            out['cols'] = max(1, min(GRID_COLUMNS, int(n)))
+    rows = raw.get('rows')
+    if not (isinstance(rows, str) and rows.strip().lower() == 'auto'):
+        n = _num(rows)
+        if n is not None:
+            out['rows'] = max(1, min(24, int(n)))
+    return out or None
+
+
+# The grid a stack lays its cards on. Twelve because that is the number Home
+# Assistant's own sections view uses, so a `grid_options` copied out of a
+# dashboard means here what it meant there.
+GRID_COLUMNS = 12
+
+
 def convert(config, states, depth=0, hosts=None):
     """A card config -> a drawing instruction, or None.
 
@@ -640,6 +691,18 @@ def convert(config, states, depth=0, hosts=None):
         return None
     kind = str(config.get('type') or '').strip().lower()
 
+    node = _convert_one(config, states, depth, hosts, kind)
+    if node is not None:
+        # What the card asked for its own size, carried on whatever it turned
+        # out to be — a stack, a gauge, a hosted card, a placeholder. The cell
+        # it lands in is what reads this, and every kind of card lands in one.
+        grid = _grid_options(config)
+        if grid:
+            node['grid'] = grid
+    return node
+
+
+def _convert_one(config, states, depth, hosts, kind):
     if kind.startswith('custom:'):
         tag = kind[len('custom:'):].strip()
         if not tag:

@@ -1155,8 +1155,13 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
     check(home_board.grid_row_height({}) == 240, "an unset row height has a default")
     check(home_board.grid_row_height({'panel_grid_row_height': 200}) == 200,
           "the household's number is used as given")
-    for bad, want in (({'panel_grid_row_height': 5}, 80),
-                      ({'panel_grid_row_height': 5000}, 600),
+    # The clamps are JUDGEMENT, not a technical limit — `grid-auto-rows` takes
+    # any length. They are read from the module rather than written down here,
+    # so widening them is one edit and this still guards what it is for: a
+    # value that breaks the arithmetic (a 5px row makes every span meaningless)
+    # rather than one that offends taste.
+    for bad, want in (({'panel_grid_row_height': 5}, home_board.ROW_MIN),
+                      ({'panel_grid_row_height': 50000}, home_board.ROW_MAX),
                       ({'panel_grid_row_height': 'tall'}, 240)):
         got = home_board.grid_row_height(bad)
         check(got == want, f"{bad} -> {got}, wanted {want}")
@@ -1167,7 +1172,7 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
           "the NARROWEST thing anybody could ask for")
     check(home_board.grid_columns({'panel_grid_columns': 16}) == 16, "and it is settable")
     for bad, want in (({'panel_grid_columns': 0}, 1),
-                      ({'panel_grid_columns': 99}, 24),
+                      ({'panel_grid_columns': 999}, home_board.COLUMN_MAX),
                       ({'panel_grid_columns': None}, 12)):
         got = home_board.grid_columns(bad)
         check(got == want, f"{bad} -> {got}, wanted {want}")
