@@ -1539,3 +1539,8 @@ The last arc of the load program. The finding: **an adult's own life existed in 
 - **Icons had the same bug** — `/static/mdi/…` is frontend static content too, so it went through the same wrong door and would have quietly drawn nothing.
 - **The script-tag failure now names the path it tried.** A `<script>` error event carries no status and no body, so the only useful thing the message can add is where it looked.
 - Tests: `tests/test_ha_cards.py` at 11 scenarios. Two of them assert **which door** is used rather than what comes back — a card's file and an mdi chunk must both go through `fetch_static`, and `core_origins()` must not contain the supervisor proxy at all.
+
+## The row height is a number (v2.187.2)
+
+- **Reported against a hosted card**: the bottom of it clips, and no choice in the row-height menu fixes it. The menu offered seven sizes (120–400) — never a technical limit. `grid-auto-rows` takes any integer and the server has always clamped **80–600**, so the dropdown could not reach two thirds of the valid range, while sitting between two number inputs (columns, agenda days) in the same card.
+- **Now `<input type="number" min=80 max=600 step=5>`.** The save path's clamp already matched the server's, so nothing else moved. A tile that needs 250 can have 250.

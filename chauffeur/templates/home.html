@@ -882,13 +882,18 @@
                     </label>
                     <label class="flex items-center gap-2 text-xs text-gray-400 font-semibold mb-3">
                         One row is
-                        <select x-model.number="draft.panel_grid_row_height"
-                            class="bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-2 py-1">
-                            <template x-for="n in [120,160,200,240,280,320,400]" :key="'rh-' + n">
-                                <option :value="n" x-text="n + ' px'"></option>
-                            </template>
-                        </select>
-                        <span class="font-normal text-gray-600">tall — a 2-row tile is twice this</span>
+                        <!-- A NUMBER, like the two fields above it. The seven
+                             sizes this used to offer were not a technical
+                             limit — the grid takes any integer, and the server
+                             clamps 80–600, so the menu could not even reach
+                             two thirds of the valid range. What it cost was
+                             the last twenty pixels of a hosted card: the tile
+                             that needs 250 gets 240 and clips, and no amount of
+                             re-picking from a list of sevens fixes it. -->
+                        <input type="number" min="80" max="600" step="5"
+                            x-model.number="draft.panel_grid_row_height"
+                            class="w-20 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-2 py-1">
+                        <span class="font-normal text-gray-600">pixels tall — a 2-row tile is twice this</span>
                     </label>
                     <div class="space-y-1.5 mb-3">
                         <!-- Keyed by INSTANCE id, not by type. Alpine uses this
