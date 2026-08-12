@@ -308,6 +308,33 @@ WIDGETS = [
               help='Seconds. 0 leaves it alone — a live dashboard updates '
                    'itself and reloading only costs a flash.'),
      ]},
+    # ── A custom Home Assistant card, actually running.
+    #
+    # The tile above frames HA's page because a Lovelace card "cannot run
+    # outside HA's frontend". That was half true, and this is the other half:
+    # a custom card is a plain custom element, and what it needs — a `hass`
+    # object, a setConfig call, an element library, a set of CSS variables —
+    # can be supplied. services/ha_cards.py holds the reasoning and the limits;
+    # the one worth knowing here is that BUILT-IN card types (gauge, entities,
+    # tile) live inside HA's own bundle and are not loadable, so this tile is
+    # for `type: custom:…` only and says so when handed anything else.
+    {'key': 'ha_card', 'icon': '🃏', 'label': 'A Home Assistant custom card',
+     'blurb': "Paste a custom card's YAML and the real card runs here, "
+              "wearing the panel's colours instead of Home Assistant's.",
+     'options': [
+         _opt('config', 'Card YAML', 'yaml', '',
+              help='The same text Home Assistant shows you under "Show code '
+                   'editor". Must be a type: custom:… card.'),
+         _opt('resource', 'Card file', 'text', '',
+              help='Usually found on its own. Fill this in only if the card '
+                   'lives somewhere unusual, e.g. /local/my-card.js'),
+         # Same default and the same reason as the entity tile's: a display
+         # does not change what it is displaying, and a card that can call
+         # services is a control surface somebody added by accident.
+         _opt('interactive', 'Let the card control things', 'bool', False,
+              help='Lights, switches, fans and helpers only, whatever the '
+                   'card tries to call.'),
+     ]},
     {'key': 'intake', 'icon': '📬', 'label': 'Waiting to approve',
      'blurb': "How many intake proposals need a parent. A COUNT only — the "
               "mail itself stays off shared screens."},
@@ -1860,6 +1887,41 @@ def _tile_ha_dashboard(now, config=None, settings=None, **_):
     }
 
 
+def _tile_ha_card(now, config=None, **_):
+    """A custom Home Assistant card, prepared server-side.
+
+    Everything the browser needs travels in the board payload — the card's
+    config, the states it references, where its file lives — because the board
+    is one request per tick by design and a card's four sensors are just more
+    board data. The browser's only extra fetch is the card's own JavaScript,
+    once per page.
+
+    Every failure here comes back as `empty`, which the panel renders as a
+    sentence. That is the whole difference between this and an iframe: a frame
+    that will not load is a grey rectangle, and a card that will not load can
+    at least say whether the YAML was wrong, the file was missing, or the card
+    itself refused the config.
+    """
+    if not ha_configured():
+        return None                       # see _tile_ha: unused, not quiet
+    raw = _cfg_str(config, 'config')
+    if not raw:
+        return {'empty': "Paste a card's YAML in board setup."}
+    try:
+        from services import ha_cards
+        prepared = ha_cards.prepare(raw, _cfg_str(config, 'resource'))
+    except Exception as e:
+        print(f"[home_board] ha_card prepare failed: {e}")
+        return {'empty': "That card could not be read."}
+    if prepared.get('error'):
+        return {'empty': prepared['error']}
+    # Read by the host when the card calls a service. Server-side it is
+    # enforced again by the endpoint's domain allowlist — the tile decides
+    # what to offer, the server decides what may be operated.
+    prepared['interactive'] = _cfg_bool(config, 'interactive', False)
+    return prepared
+
+
 def _tile_intake(now, **_):
     """A COUNT and nothing else. Intake is mail approvals and IMAP settings —
     an admin surface the kiosk rule keeps off shared screens — but "three
@@ -1888,7 +1950,7 @@ _BUILDERS: dict = {
     'trips': _tile_trips,
     'map': _tile_map, 'intake': _tile_intake,
     'ha': _tile_ha, 'ha_image': _tile_ha_image,
-    'ha_dashboard': _tile_ha_dashboard,
+    'ha_dashboard': _tile_ha_dashboard, 'ha_card': _tile_ha_card,
 }
 
 
@@ -2554,7 +2616,7 @@ def catalog() -> dict:
         # The hand path for property 1. These two tiles do not exist without a
         # Home Assistant, so the palette says so instead of letting somebody
         # add one and wonder why the wall never shows it.
-        if w['key'] in ('ha', 'ha_image', 'ha_dashboard'):
+        if w['key'] in ('ha', 'ha_image', 'ha_dashboard', 'ha_card'):
             w['requires'] = 'Home Assistant'
             w['available'] = ha_ok
         widgets.append(w)

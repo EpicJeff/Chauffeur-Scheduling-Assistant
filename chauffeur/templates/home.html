@@ -8,6 +8,10 @@
     <link href="static/vendor/fonts/inter/inter.css" rel="stylesheet">
     {% include 'ha_theme.html' %}
     <script src="static/vendor/alpine.min.js" defer></script>
+    <!-- The environment a real Home Assistant card wakes up in. Loaded on
+         every board because a card tile can be added without a reload; it
+         defines nothing until a tile asks it to mount something. -->
+    <script src="static/ha_card_host.js" defer></script>
     <style>
         /* Tokens, the background layers and .panel-card/.panel-label all come
            from panel_skin.html now, so every page shares them. What stays here
@@ -32,6 +36,21 @@
             color: var(--panel-fg);
         }
         html[data-panel-theme="light"] .panel-chip { background: rgb(3 105 161 / 0.10); }
+
+        /* A hosted Home Assistant card. The host sets the theme variables on
+           this element and the card inherits them THROUGH its shadow root —
+           custom properties cross that boundary, which is the entire reason a
+           card can be made to match this panel without touching its code.
+
+           Sized, not styled: the card brings its own surface. What is set here
+           is only what a card assumes about the box it was given. */
+        .ha-card-host { display: flex; flex-direction: column; }
+        .ha-card-host > * { flex: 1 1 auto; min-height: 0; }
+        .ha-card-host-error {
+            color: var(--panel-dim);
+            font-size: 0.95rem;
+            line-height: 1.35;
+        }
 
         /* A tile taller than its slot scrolls, but a scrollbar on a wall is
            furniture — the panel is a display first and a control second, and
@@ -773,6 +792,33 @@
                         </div>
                     </template>
 
+                    <!-- A real custom card from Home Assistant, RUNNING —
+                         not a picture of one and not a frame around HA's page.
+                         Everything it needs arrived in the board payload; the
+                         host (static/ha_card_host.js) fetches the card's own
+                         JavaScript, defines the handful of HA elements it
+                         renders into, and hands it a `hass`.
+
+                         The container is deliberately bare. The card brings
+                         its own layout and the tile brings the surface, so
+                         anything drawn here — padding, a second card
+                         background, a heading — would show up as a seam. -->
+                    <template x-if="t.type === 'ha_card' && !t.data.empty">
+                        <div class="flex-1 min-h-0 flex flex-col">
+                            <div :id="'board-card-' + t.id"
+                                class="ha-card-host flex-1 min-h-0 overflow-hidden"></div>
+                            <!-- An entity the card asked for that Home
+                                 Assistant does not have. NAMED, because a
+                                 power flow card missing one sensor draws a
+                                 perfectly plausible diagram with a hole in it
+                                 and nothing anywhere says which number is not
+                                 real. -->
+                            <div x-show="(t.data.missing || []).length"
+                                class="text-xs text-amber-400/80 mt-2 shrink-0 truncate"
+                                x-text="'not in Home Assistant: ' + (t.data.missing || []).join(', ')"></div>
+                        </div>
+                    </template>
+
                     <template x-if="t.type === 'intake' && !t.data.empty">
                         <div class="flex items-baseline gap-3">
                             <span class="text-4xl font-black tabular-nums text-indigo-300"
@@ -923,6 +969,45 @@
                                                 @input="setCfg(w, o, $event.target.value)"
                                                 :placeholder="widgetMeta(w.type).label"
                                                 class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200">
+                                        </template>
+
+                                        <!-- A card config is the one setting
+                                             on this board that is somebody
+                                             else's text, pasted. Monospace and
+                                             tall enough to see a whole card,
+                                             and no spellcheck squiggles under
+                                             entity ids. -->
+                                        <template x-if="o.type === 'yaml'">
+                                            <div>
+                                                <textarea :value="cfg(w, o) || ''"
+                                                    @input="setCfg(w, o, $event.target.value)"
+                                                    rows="8" spellcheck="false"
+                                                    placeholder="type: custom:my-card&#10;entity: sensor.something"
+                                                    class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-xs font-mono text-gray-200 leading-relaxed"></textarea>
+                                                <!-- What this household has
+                                                     actually installed. Asking
+                                                     somebody to remember a
+                                                     card's file path is asking
+                                                     them to go and read HACS
+                                                     in another tab. -->
+                                                <div class="mt-1.5">
+                                                    <button type="button" @click="loadCardResources()"
+                                                        x-show="!cardResources.loaded"
+                                                        class="text-[0.7rem] text-sky-300 hover:text-sky-200">
+                                                        Show the custom cards installed in Home Assistant
+                                                    </button>
+                                                    <div x-show="cardResources.loaded" class="flex flex-wrap gap-1">
+                                                        <template x-for="r in cardResources.rows" :key="r.url">
+                                                            <span class="text-[0.65rem] font-mono text-gray-500 bg-gray-900 rounded px-1.5 py-0.5"
+                                                                x-text="r.name"></span>
+                                                        </template>
+                                                        <span x-show="!cardResources.rows.length"
+                                                            class="text-[0.7rem] text-gray-600 italic">
+                                                            Home Assistant lists no custom card resources.
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </template>
 
                                         <template x-if="o.type === 'int'">
@@ -1295,6 +1380,10 @@
                 isPanel: params.get('panel') === 'true' || params.get('kiosk') === 'true',
                 isPanelMode: params.get('panel') === 'true',
                 board: {}, hero: {}, catalog: {},
+                // Which hosted cards are currently mounted, so one removed
+                // from the board gets torn down rather than left holding a
+                // detached node (the same bookkeeping boardMaps does).
+                cardIds: [],
                 clock: '', seconds: '', meridiem: '', countdown: '', countdownClass: '',
                 // The clock the hero's own state is judged against, ticked
                 // once a second. Alpine re-evaluates a binding when something
@@ -1405,7 +1494,9 @@
                         // map and the timeline both mount into elements that
                         // do not exist until the board they came from has
                         // rendered.
-                        this.$nextTick(() => { this.syncMap(); this.syncTimeline(); });
+                        this.$nextTick(() => {
+                            this.syncMap(); this.syncTimeline(); this.syncCards();
+                        });
                     } catch (e) { /* a wall panel keeps showing the last good board */ }
                 },
 
@@ -1532,7 +1623,7 @@
                 // had nowhere to be drawn. Nothing errored, nothing logged —
                 // the tile just showed its heading over nothing, which is the
                 // failure mode this whole board keeps having to design against.
-                DRAWN_TILES: ['map', 'drives', 'ha_image', 'ha_dashboard'],
+                DRAWN_TILES: ['map', 'drives', 'ha_image', 'ha_dashboard', 'ha_card'],
                 fillsTile(key) {
                     return this.isMosaic(key) || this.DRAWN_TILES.includes(key);
                 },
@@ -1664,6 +1755,43 @@
                     const delta = next.getBoundingClientRect().top
                         - box.getBoundingClientRect().top;
                     box.scrollTop = Math.max(0, box.scrollTop + delta - 12);
+                },
+
+                // --- hosted Home Assistant cards -------------------------
+
+                // One live card per tile, updated in place on every board
+                // poll. The host decides whether that means a rebuild or just
+                // a fresh `hass` — rebuilding a card twenty times a minute
+                // would restart whatever it animates, which on a power flow
+                // card is the entire point of the drawing.
+                //
+                // No await on the mount: a card whose file is slow (or whose
+                // Home Assistant has gone away) must not hold up the rest of
+                // the board's tiles behind it.
+                syncCards() {
+                    if (!window.ChauffeurHaCards) return;
+                    const live = new Set();
+                    for (const tile of (this.board.tiles || [])
+                        .filter(t => t.type === 'ha_card' && t.data && !t.data.empty)) {
+                        const el = document.getElementById('board-card-' + tile.id);
+                        if (!el) continue;
+                        live.add(tile.id);
+                        window.ChauffeurHaCards.mount(el, {
+                            id: tile.id,
+                            tag: tile.data.tag,
+                            resource: tile.data.resource,
+                            resourceType: tile.data.resource_type,
+                            config: tile.data.config,
+                            states: tile.data.states,
+                            interactive: !!tile.data.interactive,
+                            dark: !this.isLight(),
+                            apiBase: this.apiBase,
+                        });
+                    }
+                    (this.cardIds || []).forEach(id => {
+                        if (!live.has(id)) window.ChauffeurHaCards.unmount(id);
+                    });
+                    this.cardIds = Array.from(live);
                 },
 
                 // --- the map tile ----------------------------------------
@@ -1837,11 +1965,33 @@
                     return this.widgetMeta(type).options || [];
                 },
 
+                // The custom cards this Home Assistant has, on demand rather
+                // than on load: it is a websocket round trip to HA for a hint
+                // that only matters while somebody is typing a card config.
+                cardResources: { loaded: false, rows: [] },
+                async loadCardResources() {
+                    this.cardResources.loaded = true;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/ha/card/resources');
+                        const j = r.ok ? await r.json() : { resources: [] };
+                        this.cardResources.rows = (j.resources || []).map(x => ({
+                            url: x.url,
+                            // The file's stem is what a card is CALLED in
+                            // practice — the full /hacsfiles/… path with its
+                            // cache-busting tag is noise at this size.
+                            name: String(x.url).split('?')[0].split('/').pop()
+                                .replace(/\.(js|mjs)$/, ''),
+                        }));
+                    } catch (e) {
+                        this.cardResources.rows = [];
+                    }
+                },
+
                 // Which tile types are a DOOR. Everything on this board has
                 // been a link to the page it summarises; the Home Assistant
                 // tiles summarise nothing of ours, and a link to a page that
                 // does not exist is a tap that empties the wall.
-                PAGELESS: ['ha', 'ha_image', 'ha_dashboard'],
+                PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card'],
                 opens(type) {
                     return !this.PAGELESS.includes(type);
                 },

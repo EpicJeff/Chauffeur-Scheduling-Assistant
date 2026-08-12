@@ -17,3 +17,4 @@ requests
 websockets
 icalendar
 recurring-ical-events
+pyyaml

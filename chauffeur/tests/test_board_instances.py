@@ -52,8 +52,15 @@ def scenario_every_declared_option_is_a_shape_the_editor_can_draw():
     `select` and `entity` are the same idea at two scales, and the split is
     not cosmetic: `select` draws every option as a chip, which is right for six
     members and unusable for the two thousand entities an ordinary Home
-    Assistant has. `entity` is a text field with a datalist, fed lazily."""
-    known = {'text', 'int', 'bool', 'choice', 'select', 'entity'}
+    Assistant has. `entity` is a text field with a datalist, fed lazily.
+
+    The known set is READ OUT OF THE EDITOR rather than written down here. A
+    hard-coded list turns this guard into a second place to remember, and the
+    failure it exists to catch — a shape the editor cannot draw — is exactly
+    what a stale list would let through."""
+    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    known = set(re.findall(r"o\.type === '([a-z]+)'", tpl))
+    check(len(known) >= 6, f"the editor's option shapes could not be read: {known}")
     for w in home_board.catalog()['widgets']:
         for o in w.get('options') or []:
             check(o.get('type') in known,

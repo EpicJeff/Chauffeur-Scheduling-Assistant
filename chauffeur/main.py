@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse, JSONResponse
 import asyncio
 import time
 import uuid as _uuid
@@ -4472,6 +4472,80 @@ def ha_status():
 def ha_entities(domain: str):
     from services import ha_api
     return ha_api.get_entities(domain)
+
+# --- Hosting a real Home Assistant custom card (services/ha_cards.py) ---
+
+@app.get("/api/ha/card/resources")
+def ha_card_resources():
+    """Home Assistant's registered Lovelace resources, so the editor can show
+    which custom cards this household actually has installed. Empty (not an
+    error) when HA is unreachable or its dashboards are in YAML mode."""
+    from services import ha_cards
+    return {'resources': ha_cards.list_resources()}
+
+@app.get("/api/ha/card/resource")
+def ha_card_resource(url: str, request: Request = None):
+    """A card's own JavaScript, served back on THIS origin.
+
+    Same shape of guard as /api/ha/image and for the same reason: this holds a
+    supervisor token, so without a prefix allowlist it is an authenticated hole
+    into Home Assistant. Only the three directories a card can actually be
+    installed into are reachable — see ha_cards.RESOURCE_PREFIXES.
+    """
+    from services import ha_cards
+    ua = ((request.headers.get('user-agent') or '')[:60]) if request else ''
+    if not ha_cards.resource_allowed(url):
+        print(f"[ha_card] REJECTED url={url[:100]} ua={ua}")
+        raise HTTPException(status_code=400, detail="Path not allowed")
+    result = ha_cards.fetch_resource(url)
+    if result is None:
+        raise HTTPException(status_code=502,
+                            detail="Could not fetch that card from Home Assistant")
+    content, content_type = result
+    # A card bundle is immutable per HACS cache-tag, and the tag is in the URL
+    # HA gave us — so this can be cached hard. A wall panel reloading every
+    # night should not re-download a card it already has.
+    return Response(content=content, media_type=content_type,
+                    headers={'Cache-Control': 'max-age=3600'})
+
+@app.get("/api/ha/card/mdi/{name}")
+def ha_card_mdi(name: str):
+    """SVG path data for one mdi icon, out of Home Assistant's own icon
+    chunks. 404 rather than an empty 200 so the browser caches the miss as a
+    miss; the host draws nothing either way."""
+    from services import ha_cards
+    path = ha_cards.mdi_path(name)
+    if not path:
+        raise HTTPException(status_code=404, detail="No such icon")
+    return JSONResponse({'path': path}, headers={'Cache-Control': 'max-age=86400'})
+
+class HaCardServiceRequest(BaseModel):
+    domain: str
+    service: str
+    data: Optional[dict] = None
+
+@app.post("/api/ha/card/service")
+def ha_card_service(req: HaCardServiceRequest):
+    """A hosted card calling a service.
+
+    Allowlisted at the SERVER against the same domains the entity tile's toggle
+    uses. The tile has its own 'let the card control things' switch, but that
+    switch lives in the browser and this does not: a card is somebody else's
+    JavaScript running on a screen in a kitchen, and what it may operate is not
+    a decision to leave in its hands.
+    """
+    from services import home_board, ha_api
+    domain = (req.domain or '').strip()
+    service = (req.service or '').strip()
+    if domain not in home_board.HA_TOGGLE_DOMAINS:
+        raise HTTPException(status_code=400,
+                            detail=f"{domain or 'that'} services cannot be "
+                                   f"called from a board card")
+    if not home_board.ha_available():
+        raise HTTPException(status_code=503, detail="Home Assistant is not reachable")
+    if ha_api.call_service(domain, service, req.data or {}) is None:
+        raise HTTPException(status_code=502, detail="Home Assistant refused that")
+    return {'ok': True}
 
 @app.get("/api/ha/notify_services")
 def ha_notify_services():

@@ -139,7 +139,7 @@ def scenario_the_palette_refuses_a_tile_that_could_never_draw():
     wonder why the wall never shows it."""
     stub = _HA(available=False)
     cat = _with_ha(stub, home_board.catalog)
-    needs_ha = ('ha', 'ha_image', 'ha_dashboard')
+    needs_ha = ('ha', 'ha_image', 'ha_dashboard', 'ha_card')
     for w in cat['widgets']:
         if w['key'] in needs_ha:
             check(w.get('available') is False,
@@ -463,7 +463,7 @@ def scenario_a_tile_with_no_page_is_not_a_link():
     nothing of ours, and an <a> to a page that does not exist is a tap that
     empties the wall."""
     tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
-    check("PAGELESS: ['ha', 'ha_image', 'ha_dashboard']" in tpl,
+    check("PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card']" in tpl,
           "the Home Assistant tiles are linking somewhere again")
     check('opens(t.type) ? link(t.type) : null' in tpl,
           "the tile's href is unconditional, so a pageless tile is still a link")
