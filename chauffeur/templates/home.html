@@ -37,6 +37,116 @@
         }
         html[data-panel-theme="light"] .panel-chip { background: rgb(3 105 161 / 0.10); }
 
+        /* ── Built-in Home Assistant cards, drawn natively.
+           This is the payoff for converting rather than hosting: no borrowed
+           theme variables and no element shims, just the panel's own tokens on
+           the panel's own markup. A hosted card wears our colours; these ARE
+           our colours. */
+        .nc-title { font-weight: 800; margin-bottom: 0.4rem; color: var(--panel-fg); }
+        .nc-stack { display: flex; flex-direction: column; gap: 0.75rem; }
+        .nc-row-stack { display: flex; gap: 0.75rem; align-items: stretch; }
+        .nc-row-stack > * { flex: 1 1 0; min-width: 0; }
+        .nc-grid { display: grid; gap: 0.75rem; }
+        .nc-rows { display: flex; flex-direction: column; gap: 0.4rem; }
+        .nc-entity { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+        .nc-name {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: var(--panel-fg);
+        }
+        .nc-state {
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+            color: var(--panel-fg);
+        }
+        .nc-missing { color: #fbbf24; font-size: 0.8rem; white-space: nowrap; }
+        .nc-divider { height: 1px; background: var(--panel-line); margin: 0.35rem 0; }
+        .nc-section {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--panel-dim);
+            margin-top: 0.35rem;
+        }
+        .nc-glance {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+            gap: 0.6rem;
+            text-align: center;
+        }
+        .nc-glance-item { display: flex; flex-direction: column; align-items: center; gap: 0.15rem; min-width: 0; }
+        .nc-glance-name { font-size: 0.75rem; color: var(--panel-dim); max-width: 100%;
+                          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .nc-tile { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+        .nc-tile-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.25rem;
+            height: 2.25rem;
+            border-radius: 999px;
+            background: var(--panel-card-hi);
+            color: var(--panel-dim);
+            flex: 0 0 auto;
+        }
+        /* An entity that is ON says so with the accent, which is the one piece
+           of state a glance across a kitchen actually resolves. */
+        .nc-tile-icon.is-on { color: var(--panel-accent); }
+        .nc-tile-text { display: flex; flex-direction: column; min-width: 0; }
+        .nc-md { color: var(--panel-fg); font-size: 0.95rem; line-height: 1.4; }
+        .nc-md p { margin: 0 0 0.4rem; }
+        .nc-md ul { margin: 0 0 0.4rem 1rem; list-style: disc; }
+        .nc-md h1, .nc-md h2, .nc-md h3, .nc-md h4 { font-weight: 800; margin: 0.2rem 0; }
+        .nc-md code {
+            background: var(--panel-card-hi);
+            border-radius: 4px;
+            padding: 0 0.25em;
+            font-size: 0.9em;
+        }
+        .nc-picture { position: relative; border-radius: 0.75rem; overflow: hidden; }
+        .nc-picture img { display: block; width: 100%; height: 100%; object-fit: cover; }
+        .nc-picture-bar {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            justify-content: space-between;
+            gap: 0.5rem;
+            padding: 0.35rem 0.6rem;
+            background: rgb(0 0 0 / 0.45);
+            color: #fff;
+            font-size: 0.85rem;
+        }
+        .nc-button {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 0.25rem;
+            padding: 0.75rem 0.5rem;
+            border-radius: 0.75rem;
+            background: var(--panel-card-hi);
+            color: var(--panel-dim);
+        }
+        .nc-button.is-on { color: var(--panel-accent); }
+        .nc-gauge { text-align: center; }
+        .nc-gauge-svg { width: 100%; max-width: 180px; height: auto; }
+        .nc-gauge-value {
+            font-weight: 800;
+            font-size: 1.4rem;
+            line-height: 1;
+            color: var(--panel-fg);
+            font-variant-numeric: tabular-nums;
+        }
+        .nc-gauge-unit { font-size: 0.8rem; font-weight: 600; margin-left: 0.15rem; color: var(--panel-dim); }
+        .nc-gauge-name { font-size: 0.8rem; color: var(--panel-dim); margin-top: 0.15rem; }
+        [data-toggle] { cursor: pointer; }
+
         /* ── Arrange mode.
            The board stops being a set of doors and becomes a set of objects,
            and it has to LOOK different or the first thing anybody does is tap
@@ -913,7 +1023,17 @@
                          background, a heading — would show up as a seam. -->
                     <template x-if="t.type === 'ha_card' && !t.data.empty">
                         <div class="flex-1 min-h-0 flex flex-col">
-                            <div :id="'board-card-' + t.id"
+                            <!-- A BUILT-IN card, drawn by us. Its config fully
+                                 describes it, so there is nothing to fetch and
+                                 nothing to shim — and unlike a hosted card this
+                                 one is in the panel's own vocabulary and can be
+                                 told to fit its tile. -->
+                            <div x-show="t.data.mode === 'native'"
+                                class="flex-1 min-h-0 tile-scroll overflow-y-auto"
+                                x-html="nativeCardHtml(t)"
+                                @click="nativeCardTap($event, t)"></div>
+                            <div x-show="t.data.mode !== 'native'"
+                                :id="'board-card-' + t.id"
                                 class="ha-card-host flex-1 min-h-0 overflow-hidden"></div>
                             <!-- An entity the card asked for that Home
                                  Assistant does not have. NAMED, because a
@@ -2231,6 +2351,161 @@
                         out.push({ id, type, config: { ...(w.config || {}) } });
                     });
                     return out;
+                },
+
+                // --- built-in Home Assistant cards, drawn natively ---------
+                //
+                // The server has already turned the card's config into a
+                // drawing instruction (services/ha_card_convert), so this is
+                // only the drawing. Built as an HTML string rather than as
+                // Alpine templates because the shape is RECURSIVE — a stack
+                // holds cards which may be stacks — and x-for cannot recurse
+                // without a component per level.
+                //
+                // Everything that came from Home Assistant is escaped here.
+                // The one exception is the markdown card, whose html was built
+                // and escaped server-side by the same rule.
+                nativeCardHtml(t) {
+                    const card = (t.data || {}).card;
+                    return card ? this.drawCard(card) : '';
+                },
+
+                esc(s) {
+                    return String(s ?? '').replace(/[&<>"']/g, c => ({
+                        '&': '&amp;', '<': '&lt;', '>': '&gt;',
+                        '"': '&quot;', "'": '&#39;'
+                    }[c]));
+                },
+
+                // An mdi icon, through the same <ha-icon> the card host defines
+                // and the same proxy it reads from. Two icon systems for one
+                // board would be two things to keep working.
+                icon(name) {
+                    return `<ha-icon icon="${this.esc(name)}"></ha-icon>`;
+                },
+
+                reading(row) {
+                    if (row.missing) return '<span class="nc-missing">not in HA</span>';
+                    const unit = row.unit ? ' ' + this.esc(row.unit) : '';
+                    return `<span class="nc-state">${this.esc(row.state ?? '—')}${unit}</span>`;
+                },
+
+                drawCard(c) {
+                    const title = c.title
+                        ? `<div class="nc-title">${this.esc(c.title)}</div>` : '';
+                    switch (c.kind) {
+                        case 'stack': {
+                            const inner = (c.cards || []).map(x => this.drawCard(x)).join('');
+                            if (c.direction === 'horizontal') {
+                                return `${title}<div class="nc-row-stack">${inner}</div>`;
+                            }
+                            if (c.direction === 'grid') {
+                                return `${title}<div class="nc-grid" style="grid-template-columns:repeat(${
+                                    Math.max(1, c.columns || 2)},minmax(0,1fr))">${inner}</div>`;
+                            }
+                            return `${title}<div class="nc-stack">${inner}</div>`;
+                        }
+                        case 'entities':
+                            return title + '<div class="nc-rows">' + (c.rows || []).map(r => {
+                                if (r.kind === 'divider') return '<div class="nc-divider"></div>';
+                                if (r.kind === 'section') {
+                                    return `<div class="nc-section">${this.esc(r.name)}</div>`;
+                                }
+                                return `<div class="nc-entity"${r.toggleable && !r.missing
+                                    ? ` data-toggle="${this.esc(r.entity_id)}"` : ''}>`
+                                    + this.icon(r.icon)
+                                    + `<span class="nc-name">${this.esc(r.name)}</span>`
+                                    + this.reading(r) + '</div>';
+                            }).join('') + '</div>';
+                        case 'glance':
+                            return title + `<div class="nc-glance">` + (c.rows || [])
+                                .filter(r => r.kind === 'entity').map(r =>
+                                    `<div class="nc-glance-item"${r.toggleable && !r.missing
+                                        ? ` data-toggle="${this.esc(r.entity_id)}"` : ''}>`
+                                    + (c.show_name === false ? ''
+                                        : `<span class="nc-glance-name">${this.esc(r.name)}</span>`)
+                                    + this.icon(r.icon)
+                                    + (c.show_state === false ? '' : this.reading(r))
+                                    + '</div>').join('') + '</div>';
+                        case 'tile':
+                            return `<div class="nc-tile"${c.toggleable && !c.missing
+                                ? ` data-toggle="${this.esc(c.entity_id)}"` : ''}>`
+                                + `<span class="nc-tile-icon${c.on ? ' is-on' : ''}">`
+                                + this.icon(c.icon) + '</span>'
+                                + `<span class="nc-tile-text"><span class="nc-name">${
+                                    this.esc(c.name)}</span>${this.reading(c)}</span></div>`;
+                        case 'gauge':
+                            return this.drawGauge(c);
+                        case 'markdown':
+                            // Already escaped server-side, by the same rule.
+                            return title + `<div class="nc-md">${c.html || ''}</div>`;
+                        case 'picture':
+                            return `<div class="nc-picture">`
+                                + (c.picture ? `<img src="${this.esc(
+                                    this.apiBase + 'api/ha/image?path='
+                                    + encodeURIComponent(c.picture))}" alt="">` : '')
+                                + '<div class="nc-picture-bar">'
+                                + (c.show_name === false ? ''
+                                    : `<span>${this.esc(c.name)}</span>`)
+                                + (c.show_state === false ? '' : this.reading(c))
+                                + '</div></div>';
+                        case 'button':
+                            return `<div class="nc-button${c.on ? ' is-on' : ''}"${c.action
+                                ? ` data-toggle="${this.esc(c.entity_id)}"` : ''}>`
+                                + this.icon(c.icon)
+                                + (c.show_name === false ? ''
+                                    : `<span class="nc-name">${this.esc(c.name)}</span>`)
+                                + (c.show_state ? this.reading(c) : '') + '</div>';
+                        default:
+                            return '';
+                    }
+                },
+
+                // An arc rather than a bar, because that is what a gauge card
+                // looks like and the point of this whole exercise is that the
+                // household recognises what they configured.
+                drawGauge(c) {
+                    const pct = c.pct == null ? 0 : c.pct;
+                    // A 180° arc of radius 40, drawn as a stroked path with
+                    // dasharray doing the filling — no arc-flag arithmetic, and
+                    // it animates for free if that is ever wanted.
+                    const len = Math.PI * 40;
+                    const colour = { green: '#22c55e', yellow: '#eab308',
+                        red: '#ef4444' }[c.severity] || 'var(--panel-accent)';
+                    return `<div class="nc-gauge">
+                        <svg viewBox="0 0 100 56" class="nc-gauge-svg">
+                          <path d="M10,50 A40,40 0 0 1 90,50" fill="none"
+                                stroke="var(--panel-line)" stroke-width="9"
+                                stroke-linecap="round"></path>
+                          <path d="M10,50 A40,40 0 0 1 90,50" fill="none"
+                                stroke="${colour}" stroke-width="9" stroke-linecap="round"
+                                stroke-dasharray="${(len * pct).toFixed(2)} ${len.toFixed(2)}"></path>
+                        </svg>
+                        <div class="nc-gauge-value">${c.missing ? '—'
+                            : this.esc(c.value ?? '—')}<span class="nc-gauge-unit">${
+                            this.esc(c.unit || '')}</span></div>
+                        <div class="nc-gauge-name">${this.esc(c.name)}</div>
+                      </div>`;
+                },
+
+                // One handler for the whole card, on the container: the drawing
+                // is an HTML string, so per-element listeners would have to be
+                // re-attached on every board poll. Only entities the SERVER
+                // marked toggleable carry the attribute, and the endpoint
+                // checks the domain again anyway.
+                async nativeCardTap(e, t) {
+                    if (!t.data.interactive) return;
+                    const hit = e.target.closest('[data-toggle]');
+                    if (!hit) return;
+                    e.preventDefault();
+                    try {
+                        await fetch(this.apiBase + 'api/ha/toggle', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ entity_id: hit.dataset.toggle }),
+                        });
+                        this.load();
+                    } catch (err) { /* the next poll is the truth either way */ }
                 },
 
                 // --- arranging on the board itself ------------------------

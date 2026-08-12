@@ -111,3 +111,64 @@ reach HA; whole chunks are cached in memory once fetched, misses included.
 This also removes the constraint recorded in `home_board._HA_DOMAIN_GLYPH` —
 that this app has no way to draw an mdi icon. It now does, and the per-domain
 emoji in the plain entity tile could use it.
+
+---
+
+## Built-in cards, converted (v2.192.0)
+
+The "built-in cards are out of reach" section above is still true about
+*hosting* them, and always will be. What changed is where that leads.
+
+A built-in card's config **completely describes it**. `type: entities` with
+four ids is not a program, it is a request for four rows of name-and-reading.
+So `services/ha_card_convert.py` reads the config and draws it in the panel's
+own vocabulary, and the `ha_card` tile now has two modes:
+
+| Config | Mode | How |
+|---|---|---|
+| `type: custom:…` | `host` | fetch the card's file, shim `hass` and `ha-card` |
+| a supported built-in | `native` | convert the config, draw it ourselves |
+| anything else built-in | error | refused by name, dashboard tile offered |
+
+**Converting is better than hosting, not a consolation prize.** No borrowed CSS
+variables, no element shims, nothing to break when a card author ships an
+update — and the result can be told to fit its tile, which a hosted card
+cannot.
+
+Supported: `entities`, `glance`, `tile`, `gauge`, `markdown`,
+`picture-entity`, `button`, and the three stacks (`vertical-stack`,
+`horizontal-stack`, `grid`) that hold them.
+
+Not supported, and why:
+
+- `history-graph`, `sensor`, `statistic` — need history or the statistics
+  websocket. That is different plumbing, not a different drawing.
+- `thermostat`, `light`, `media-control` — control surfaces with their own
+  interaction models. The board's rule is that a display does not change what
+  it is displaying; these need the tile's interactive switch and a careful
+  think about what a mis-tap costs.
+- `conditional`, `entity-filter` — logic rather than layout. The honest place
+  for that is a tile option.
+
+An unsupported built-in is **refused by name** with the dashboard tile offered
+as the way round. That is what stops "we support most of them" from becoming a
+blank box on a wall.
+
+### Two things worth knowing about the implementation
+
+**Entity discovery is schema-aware here.** `ha_cards.entity_ids` walks a custom
+card's config looking for anything entity-*shaped*, which is right when the
+schema belongs to somebody else. The built-in schema is known, so
+`ha_card_convert.entity_ids` reads the fields that actually hold ids — and a
+row whose `name:` happens to look like an entity id does not become a state
+request.
+
+**Escaping is the renderer's job, and the renderer is a string builder.** The
+converter passes text through unchanged; `drawCard` in home.html escapes on the
+way into markup. The sharp case is an entity id, which goes into an
+*attribute*, where a single quote would end the attribute and start whatever
+the name felt like. Markdown is the exception — it is escaped server-side
+first, then a fixed set of patterns is allowed back in, so nothing can widen
+that set by containing angle brackets. Both halves are tested
+(`test_ha_card_convert.py`, including a node run of the real renderer against
+hostile names, states and entity ids).

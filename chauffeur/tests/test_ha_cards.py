@@ -66,22 +66,29 @@ def scenario_a_bad_config_says_what_is_wrong():
         check(want in err, f"{raw!r} -> {err!r}, expected something about {want!r}")
 
 
-def scenario_built_in_cards_are_refused_by_name():
+def scenario_built_in_cards_take_the_other_road():
     """The limit that matters most, because the YAML looks identical.
 
     `type: gauge` is HA's own card, compiled into its frontend; there is no
-    file to fetch and never will be. Saying so — and saying which kind it is —
-    is the difference between a household picking a different route and a
-    household concluding the feature is broken.
+    file to fetch and never will be. What changed in v2.192.0 is where that
+    leads: a built-in card's config completely describes it, so the common ones
+    are DRAWN (services/ha_card_convert) rather than refused. The ones that are
+    not drawable are still refused by name — see test_ha_card_convert.py, which
+    owns that edge.
+
+    What must not change is the routing: no built-in ever tries to fetch a
+    file, because there is no file.
     """
     check(ha_cards.card_tag({'type': 'custom:my-card'}) == 'my-card',
           "a custom card's element name is the type after 'custom:'")
-    for built_in in ('gauge', 'entities', 'tile', 'picture-glance'):
+    for built_in in ('gauge', 'entities', 'tile', 'picture-glance', 'markdown'):
         check(ha_cards.card_tag({'type': built_in}) is None,
               f"{built_in} is built in and has no loadable element")
         out = ha_cards.prepare(f'type: {built_in}\nentity: sensor.a')
-        check('built-in' in (out.get('error') or ''),
-              f"a {built_in} card must be refused as BUILT-IN, got {out.get('error')!r}")
+        check(out.get('mode') != 'host' and 'resource' not in out,
+              f"a {built_in} card was sent to fetch a file that cannot exist: {out}")
+        check(out.get('mode') == 'native' or out.get('error'),
+              f"a {built_in} card produced neither a drawing nor a reason: {out}")
 
 
 def scenario_only_the_three_card_directories_are_reachable():

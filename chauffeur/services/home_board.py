@@ -348,14 +348,16 @@ WIDGETS = [
     # the one worth knowing here is that BUILT-IN card types (gauge, entities,
     # tile) live inside HA's own bundle and are not loadable, so this tile is
     # for `type: custom:…` only and says so when handed anything else.
-    {'key': 'ha_card', 'icon': '🃏', 'label': 'Custom card',
-     'heading': 'A Home Assistant custom card',
-     'blurb': "Paste a custom card's YAML and the real card runs here, "
-              "wearing the panel's colours instead of Home Assistant's.",
+    {'key': 'ha_card', 'icon': '🃏', 'label': 'Card',
+     'heading': 'A Home Assistant card',
+     'blurb': "Paste any card's YAML. Custom cards run for real; the common "
+              "built-in ones are drawn in the panel's own colours.",
      'options': [
          _opt('config', 'Card YAML', 'yaml', '',
               help='The same text Home Assistant shows you under "Show code '
-                   'editor". Must be a type: custom:… card.'),
+                   'editor". A type: custom:… card is run as itself; '
+                   'entities, glance, tile, gauge, markdown, picture-entity, '
+                   'button and the stacks are drawn natively.'),
          _opt('resource', 'Card file', 'text', '',
               help='Usually found on its own. Fill this in only if the card '
                    'lives somewhere unusual, e.g. /local/my-card.js'),

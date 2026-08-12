@@ -161,7 +161,7 @@ def scenario_a_tile_is_named_for_the_page_it_summarises():
                       ('chores', 'Chores'), ('routines', 'Routines'),
                       ('moments', 'Moments'), ('ha', 'Entities'),
                       ('ha_image', 'Camera or image'),
-                      ('ha_dashboard', 'Dashboard'), ('ha_card', 'Custom card')):
+                      ('ha_dashboard', 'Dashboard'), ('ha_card', 'Card')):
         check(by_key[key]['label'] == name,
               f"{key} is called {by_key[key]['label']!r} in the picker, "
               f"expected {name!r}")

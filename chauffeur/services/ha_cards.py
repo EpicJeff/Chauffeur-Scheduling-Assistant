@@ -372,13 +372,27 @@ def prepare(raw_config, resource_override=''):
 
     tag = card_tag(config)
     if not tag:
-        # Being specific about WHY is worth the extra branch: "gauge is a
-        # built-in card" is actionable ("use the framed dashboard, or a native
-        # tile"), while "could not load" sends somebody hunting for a file.
+        # A BUILT-IN card. Not loadable — `hui-gauge-card` lives inside HA's
+        # frontend bundle — but its config completely describes it, so the ones
+        # worth drawing are drawn natively instead. See ha_card_convert.
+        from services import ha_card_convert
+        kind = str(config.get('type') or '').strip().lower()
+        if kind in ha_card_convert.NATIVE_CARDS:
+            ids = ha_card_convert.entity_ids(config)
+            states = states_for(ids)
+            card = ha_card_convert.convert(config, states)
+            if card:
+                return {'mode': 'native', 'card': card, 'config': config,
+                        'missing': [e for e in ids if e not in states]}
+        # Refused BY NAME, with the way to get it anyway. A built-in that
+        # rendered as an empty box is the failure the whole board is built to
+        # avoid, and "could not load" would send somebody hunting for a file
+        # that was never the problem.
         return {'error': f"`{config.get('type')}` is one of Home Assistant's "
-                         "built-in cards, which live inside its frontend and "
-                         "cannot be loaded on their own. Custom cards "
-                         "(type: custom:…) can."}
+                         "built-in cards. Chauffeur draws some of those itself "
+                         "(entities, glance, tile, gauge, markdown, "
+                         "picture-entity, button and the stacks) — this is not "
+                         "one of them yet, so use a dashboard tile for it."}
 
     override = (resource_override or '').strip()
     row = None if override else resolve_resource(tag)
@@ -394,6 +408,7 @@ def prepare(raw_config, resource_override=''):
     ids = entity_ids(config)
     states = states_for(ids)
     return {
+        'mode': 'host',
         'tag': tag,
         'resource': url,
         'resource_type': (row or {}).get('type') or 'module',
