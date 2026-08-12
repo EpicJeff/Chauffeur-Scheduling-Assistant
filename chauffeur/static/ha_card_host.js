@@ -527,6 +527,106 @@
         });
     }
 
+    // ── Which cards this household actually has.
+    //
+    // There is no server-side answer to this and there cannot be: a file's name
+    // does not tell you which elements it defines — `mushroom.js` defines about
+    // thirty. What every card bundle DOES do, by a convention as old as custom
+    // cards, is push itself onto `window.customCards` as it loads:
+    //
+    //     window.customCards.push({type, name, description, preview})
+    //
+    // which is the registry Home Assistant's own card picker reads. So the way
+    // to find out is to load them and look, and that is all this does.
+    //
+    // Loading every bundle is not free — it is the cost of opening the picker,
+    // once per page — so it happens on demand rather than at board load.
+    function discover(resources, apiBase) {
+        API.base = apiBase || '';
+        defineShims();
+        window.customCards = window.customCards || [];
+        var loads = (resources || []).map(function (r) {
+            // A bundle that will not load must not take the picker with it:
+            // one broken resource would otherwise hide every card the
+            // household has.
+            return loadResource(r.url, r.type).catch(function () { return false; });
+        });
+        return Promise.all(loads).then(function () {
+            var seen = {}, out = [];
+            (window.customCards || []).forEach(function (c) {
+                if (!c || !c.type || seen[c.type]) return;
+                seen[c.type] = true;
+                out.push({ type: c.type, name: c.name || c.type,
+                           description: c.description || '' });
+            });
+            out.sort(function (a, b) { return a.name.localeCompare(b.name); });
+            return out;
+        });
+    }
+
+    // ── A card's OWN visual editor.
+    //
+    // Every card worth configuring ships one, in the bundle we already fetch:
+    //
+    //     static async getConfigElement()
+    //
+    // The editor is an ordinary Lit element that takes `hass` and
+    // `setConfig(config)` and fires `config-changed` with the new config. What
+    // stopped this working was never the editor — it was `ha-form` and the
+    // pickers it renders, which live in HA's frontend. static/ha_form.js is
+    // those, so this is now mostly plumbing.
+    //
+    // `onChange` is called with the card's own idea of its config, which is the
+    // thing worth having: a card validates, fills in defaults and normalises
+    // shorthand on its way through, so what comes back is better than what a
+    // form would have assembled from the fields alone.
+    function mountEditor(container, spec, onChange) {
+        if (!spec || !spec.tag) return Promise.resolve(false);
+        API.base = spec.apiBase || '';
+        defineShims();
+
+        return loadResource(spec.resource, spec.resourceType).then(function () {
+            return Promise.race([
+                window.customElements.whenDefined(spec.tag),
+                new Promise(function (_, reject) {
+                    setTimeout(function () {
+                        reject(new Error('`' + spec.tag + '` never appeared.'));
+                    }, 8000);
+                }),
+            ]);
+        }).then(function () {
+            var ctor = window.customElements.get(spec.tag);
+            if (!ctor || typeof ctor.getConfigElement !== 'function') {
+                // NAMED, not blank. Plenty of cards ship without an editor and
+                // are configured by hand in Home Assistant too — that is a fact
+                // about the card, not a failure here, and the YAML box below is
+                // still the way to configure it.
+                throw new Error('This card has no visual editor of its own. '
+                    + 'Its YAML is the way to configure it.');
+            }
+            return ctor.getConfigElement();
+        }).then(function (el) {
+            if (!el) throw new Error('That card would not open its editor.');
+            el.hass = makeHass(spec);
+            try {
+                el.setConfig(JSON.parse(JSON.stringify(spec.config || {})));
+            } catch (e) {
+                // A card refusing its own config in the EDITOR is the useful
+                // case: it is the sentence that says which line is wrong.
+                throw new Error('The card rejected its config: ' + (e && e.message || e));
+            }
+            el.addEventListener('config-changed', function (e) {
+                if (e && e.detail && e.detail.config) onChange(e.detail.config);
+            });
+            container.textContent = '';
+            container.appendChild(el);
+            return true;
+        }).catch(function (e) {
+            fail(container, (e && e.message) || 'That editor would not load.');
+            return false;
+        });
+    }
+
     function unmount(id) {
         var live = mounted[id];
         if (!live) return;
@@ -536,6 +636,8 @@
 
     window.ChauffeurHaCards = {
         mount: mount,
+        mountEditor: mountEditor,
+        discover: discover,
         unmount: unmount,
         // Exposed for the runtime test, which checks the mapping without a
         // browser: these are contracts (a card reads `--primary-text-color`,

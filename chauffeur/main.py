@@ -4533,6 +4533,57 @@ def ha_card_resources():
     from services import ha_cards
     return {'resources': ha_cards.list_resources()}
 
+@app.get("/api/ha/card/catalog")
+def ha_card_catalog():
+    """Everything the card picker and the visual editor need, in one call.
+
+    `native` are the built-in types this app draws, each with the schema its
+    own editor is rendered from — declared next to the builder that honours it,
+    so a form can never offer a field the drawing ignores.
+
+    `custom` are the cards this household has actually installed, read off Home
+    Assistant's own Lovelace resources. A picker listing cards nobody has is a
+    catalogue rather than a picker.
+    """
+    from services import ha_cards, ha_card_convert
+    native = []
+    for kind in ha_card_convert.editable_cards():
+        native.append({'type': kind, 'schema': ha_card_convert.schema_for(kind)})
+    # The RESOURCES, not the cards. A file's name does not tell you which
+    # elements it defines — `mushroom.js` defines about thirty — and the
+    # answer is not knowable from the server at all. Every card bundle pushes
+    # to `window.customCards` when it loads, which is the registry Home
+    # Assistant's own picker reads; the browser loads these and reads it too.
+    return {'native': native,
+            'resources': ha_cards.list_resources(),
+            'grid_schema': ha_card_convert.GRID_SCHEMA}
+
+class HaCardConfigRequest(BaseModel):
+    yaml_text: Optional[str] = None
+    config: Optional[dict] = None
+
+@app.post("/api/ha/card/config")
+def ha_card_config(req: HaCardConfigRequest):
+    """YAML in, config out — or a config in, YAML out.
+
+    Both directions live on the SERVER because there is no YAML in the browser
+    and adding one would mean two implementations that have to agree about a
+    format with a reputation for surprises. The visual editor works on objects
+    and the tile stores text, so this is the hinge between them, and it being
+    one function is what keeps a round trip through the editor from quietly
+    rewriting somebody's config into something else.
+    """
+    from services import ha_cards
+    if req.config is not None:
+        import yaml as _yaml
+        text = _yaml.safe_dump(req.config, sort_keys=False,
+                               default_flow_style=False, allow_unicode=True)
+        return {'yaml': text.strip()}
+    config, error = ha_cards.parse_config(req.yaml_text or '')
+    if error:
+        return {'error': error}
+    return {'config': config}
+
 @app.get("/api/ha/card/resource")
 def ha_card_resource(url: str, request: Request = None):
     """A card's own JavaScript, served back on THIS origin.

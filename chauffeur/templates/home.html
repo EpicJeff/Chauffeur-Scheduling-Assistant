@@ -12,6 +12,12 @@
          every board because a card tile can be added without a reload; it
          defines nothing until a tile asks it to mount something. -->
     <script src="static/ha_card_host.js" defer></script>
+    <!-- Home Assistant's form layer, which is what a card's own visual
+         editor is built out of. Loaded here rather than on demand
+         because a custom element has to be defined before the editor
+         that renders it is created, and that ordering is not something
+         to leave to a race. -->
+    <script src="static/ha_form.js" defer></script>
     <style>
         /* Tokens, the background layers and .panel-card/.panel-label all come
            from panel_skin.html now, so every page shares them. What stays here
@@ -1468,7 +1474,7 @@
                                     cols
                                 </label>
                                 <label class="flex items-center gap-1 text-[0.7rem] ed-note">
-                                    <input type="number" min="1" max="12" step="1"
+                                    <input type="number" min="1" step="1"
                                         :value="spanOf(w.id, 'rows')"
                                         @change="setSpan(w.id, 'rows', $event.target.value)"
                                         class="w-12 ed-input rounded text-xs ed-title px-1 py-0.5">
@@ -1520,34 +1526,94 @@
                                              entity ids. -->
                                         <template x-if="o.type === 'yaml'">
                                             <div>
-                                                <textarea :value="cfg(w, o) || ''"
-                                                    @input="setCfg(w, o, $event.target.value)"
-                                                    rows="8" spellcheck="false"
-                                                    placeholder="type: custom:my-card&#10;entity: sensor.something"
-                                                    class="w-full ed-input rounded px-2 py-1.5 text-xs font-mono leading-relaxed"></textarea>
-                                                <!-- What this household has
-                                                     actually installed. Asking
-                                                     somebody to remember a
-                                                     card's file path is asking
-                                                     them to go and read HACS
-                                                     in another tab. -->
-                                                <div class="mt-1.5">
-                                                    <button type="button" @click="loadCardResources()"
-                                                        x-show="!cardResources.loaded"
-                                                        class="text-[0.7rem] text-sky-300 hover:text-sky-200">
-                                                        Show the custom cards installed in Home Assistant
-                                                    </button>
-                                                    <div x-show="cardResources.loaded" class="flex flex-wrap gap-1">
-                                                        <template x-for="r in cardResources.rows" :key="r.url">
-                                                            <span class="text-[0.65rem] font-mono ed-input rounded px-1.5 py-0.5"
-                                                                x-text="r.name"></span>
+                                                <!-- Two ways to say the same
+                                                     thing, and the visual one
+                                                     leads because the other is
+                                                     why anybody asked for this.
+                                                     They share ONE config: the
+                                                     server parses and emits the
+                                                     YAML, so switching back and
+                                                     forth cannot produce a
+                                                     config neither of them
+                                                     meant. -->
+                                                <div class="flex items-center gap-2 mb-2">
+                                                    <button type="button" @click="setCardMode(w, 'visual')"
+                                                        :class="cardMode(w) === 'visual' ? 'bg-sky-600 text-white' : 'ed-input'"
+                                                        class="text-xs rounded-lg px-2.5 py-1">Visual</button>
+                                                    <button type="button" @click="setCardMode(w, 'yaml')"
+                                                        :class="cardMode(w) === 'yaml' ? 'bg-sky-600 text-white' : 'ed-input'"
+                                                        class="text-xs rounded-lg px-2.5 py-1">YAML</button>
+                                                    <span class="flex-1"></span>
+                                                    <button type="button" @click="openCardPicker(w)"
+                                                        class="text-xs ed-input rounded-lg px-2.5 py-1">+ Choose a card</button>
+                                                </div>
+
+                                                <!-- The picker. Native types,
+                                                     and the household's own
+                                                     cards read from
+                                                     `window.customCards` — the
+                                                     registry every bundle
+                                                     pushes to as it loads, and
+                                                     the one HA's own picker
+                                                     reads. A file name cannot
+                                                     tell you which cards it
+                                                     defines: mushroom.js
+                                                     defines about thirty. -->
+                                                <div x-show="picker.open && picker.for === w.id" x-cloak
+                                                    class="ed-panel rounded-lg p-2 mb-2">
+                                                    <input type="text" x-model="picker.filter"
+                                                        placeholder="Search cards..."
+                                                        class="w-full ed-input rounded px-2 py-1.5 text-sm mb-2">
+                                                    <div class="max-h-72 overflow-y-auto space-y-3">
+                                                        <template x-for="group in pickerGroups()" :key="group.name">
+                                                            <div x-show="group.rows.length">
+                                                                <div class="flex items-center gap-2 mb-1">
+                                                                    <span class="text-[0.65rem] font-black uppercase tracking-widest ed-note"
+                                                                        x-text="group.name"></span>
+                                                                    <span class="flex-1 h-px bg-white/10"></span>
+                                                                </div>
+                                                                <template x-for="c in group.rows" :key="c.type">
+                                                                    <button type="button" @click="chooseCard(w, c)"
+                                                                        class="w-full text-left rounded-md px-2 py-1.5 hover:bg-white/5">
+                                                                        <span class="text-sm font-semibold ed-title" x-text="c.name"></span>
+                                                                        <span class="block text-[0.7rem] ed-note font-mono" x-text="c.type"></span>
+                                                                        <span x-show="c.description" class="block text-[0.7rem] ed-note"
+                                                                            x-text="c.description"></span>
+                                                                    </button>
+                                                                </template>
+                                                            </div>
                                                         </template>
-                                                        <span x-show="!cardResources.rows.length"
-                                                            class="text-[0.7rem] ed-note italic">
-                                                            Home Assistant lists no custom card resources.
-                                                        </span>
+                                                        <div x-show="picker.loading" class="text-xs ed-note px-2 py-3">
+                                                            Asking Home Assistant which cards you have...
+                                                        </div>
+                                                        <div x-show="!picker.loading && !pickerGroups().some(g => g.rows.length)"
+                                                            class="text-xs ed-note px-2 py-3">Nothing matches that.</div>
                                                     </div>
                                                 </div>
+
+                                                <!-- The card's OWN editor, or
+                                                     ours. A custom card ships
+                                                     one in the bundle we
+                                                     already load; a built-in
+                                                     card's lives inside HA's
+                                                     frontend and cannot be
+                                                     fetched, so those schemas
+                                                     are declared beside the
+                                                     builder that honours them.
+                                                     Both draw through the same
+                                                     ha-form. -->
+                                                <div x-show="cardMode(w) === 'visual'" x-cloak>
+                                                    <div :id="'card-editor-' + w.id" class="card-editor"></div>
+                                                    <div x-show="cardEditorNote[w.id]"
+                                                        class="text-[0.7rem] ed-note mt-1" x-text="cardEditorNote[w.id]"></div>
+                                                </div>
+
+                                                <textarea x-show="cardMode(w) === 'yaml'" x-cloak
+                                                    :value="cfg(w, o) || ''"
+                                                    @input="setCfg(w, o, $event.target.value)"
+                                                    rows="10" spellcheck="false"
+                                                    placeholder="type: custom:my-card&#10;entity: sensor.something"
+                                                    class="w-full ed-input rounded px-2 py-1.5 text-xs font-mono leading-relaxed"></textarea>
                                             </div>
                                         </template>
 
@@ -2064,6 +2130,13 @@
                 // The Add-tile picker: open, and what is typed into its search.
                 picking: false,
                 pickFilter: '',
+                // The CARD editor, which is a different picker for a different
+                // thing: that one adds a tile, this one chooses what a Home
+                // Assistant card tile shows.
+                cardModes: {},
+                cardEditorNote: {},
+                cardCatalog: { loaded: false, native: [], custom: [], grid: [] },
+                picker: { open: false, for: null, filter: '', loading: false },
                 // Laying the board out ON the board. Browser only.
                 arranging: false,
                 _beforeArrange: null,
@@ -3176,7 +3249,7 @@
                         const cols = Math.round((ev.clientX - startX) / cell.col) + fromCols;
                         const rows = Math.round((ev.clientY - startY) / cell.row) + fromRows;
                         this.setSpan(id, 'cols', Math.min(this.cols(), Math.max(1, cols)));
-                        this.setSpan(id, 'rows', Math.min(12, Math.max(1, rows)));
+                        this.setSpan(id, 'rows', Math.max(1, rows));
                     };
                     const up = () => {
                         window.removeEventListener('pointermove', move);
@@ -3186,6 +3259,215 @@
                     window.addEventListener('pointermove', move);
                     window.addEventListener('pointerup', up);
                     window.addEventListener('pointercancel', up);
+                },
+
+                // --- the card editor --------------------------------------
+                //
+                // Two editors behind one surface. A CUSTOM card ships its own
+                // (`getConfigElement`) in the bundle we already fetch, so the
+                // right thing is to run it — its author knows what their card
+                // takes better than any schema written here would. A BUILT-IN
+                // card's editor lives inside Home Assistant's frontend and
+                // cannot be fetched, so its schema is declared next to the
+                // builder that honours it. Both draw through the same
+                // `<ha-form>` (static/ha_form.js), which is what stops a
+                // select looking like one thing here and another there.
+
+                cardMode(w) {
+                    // Visual by default. The YAML box is why anybody asked for
+                    // this, so it is not what they land on.
+                    return this.cardModes[w.id] || 'visual';
+                },
+
+                setCardMode(w, mode) {
+                    this.cardModes[w.id] = mode;
+                    if (mode === 'visual') this.$nextTick(() => this.mountCardEditor(w));
+                },
+
+                // YAML in, object out — on the SERVER. There is no YAML in the
+                // browser, and adding one would be two implementations that
+                // have to agree about a format famous for surprises.
+                async cardConfigOf(w) {
+                    const text = ((w.config || {}).config || '').trim();
+                    if (!text) return {};
+                    try {
+                        const r = await fetch(this.apiBase + 'api/ha/card/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ yaml_text: text }),
+                        });
+                        const j = await r.json();
+                        if (j.error) { this.cardEditorNote[w.id] = j.error; return null; }
+                        return j.config || {};
+                    } catch (e) { return null; }
+                },
+
+                async writeCardConfig(w, config) {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/ha/card/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ config: config }),
+                        });
+                        const j = await r.json();
+                        if (!j.yaml) return;
+                        if (!w.config) w.config = {};
+                        w.config.config = j.yaml;
+                    } catch (e) { /* the YAML box still has the last good text */ }
+                },
+
+                async loadCardCatalog() {
+                    if (this.cardCatalog.loaded) return this.cardCatalog;
+                    const r = await fetch(this.apiBase + 'api/ha/card/catalog');
+                    const j = r.ok ? await r.json() : { native: [], resources: [] };
+                    this.cardCatalog.native = j.native || [];
+                    this.cardCatalog.grid = j.grid_schema || [];
+                    this.cardCatalog.resources = j.resources || [];
+                    this.cardCatalog.loaded = true;
+                    // The entity list the pickers inside the form draw from.
+                    await this.loadHaOptions();
+                    if (window.ChauffeurHaForm) {
+                        window.ChauffeurHaForm.setEntities(
+                            (this.haOptions.entities || []).map(e => ({
+                                value: e.value, label: e.label,
+                            })));
+                    }
+                    return this.cardCatalog;
+                },
+
+                async mountCardEditor(w) {
+                    const host = document.getElementById('card-editor-' + w.id);
+                    if (!host) return;
+                    this.cardEditorNote[w.id] = '';
+                    await this.loadCardCatalog();
+                    const config = await this.cardConfigOf(w);
+                    if (config === null) return;          // the note says why
+                    const type = String(config.type || '').trim();
+                    if (!type) {
+                        host.textContent = '';
+                        this.cardEditorNote[w.id] =
+                            'Choose a card to configure, or write its YAML.';
+                        return;
+                    }
+
+                    // Whatever the editor produces, it lands in the same place:
+                    // the tile's YAML. One config, two ways of writing it.
+                    const onChange = (next) => {
+                        this.writeCardConfig(w, next);
+                    };
+
+                    if (type.startsWith('custom:')) {
+                        const tag = type.slice(7);
+                        const row = (this.cardCatalog.resources || []).find(
+                            r => this.resourceMatches(r.url, tag));
+                        if (!row) {
+                            host.textContent = '';
+                            this.cardEditorNote[w.id] =
+                                'Home Assistant has no resource that looks like ' + tag + '.';
+                            return;
+                        }
+                        this.cardEditorNote[w.id] = '';
+                        window.ChauffeurHaCards.mountEditor(host, {
+                            tag: tag, resource: row.url, resourceType: row.type,
+                            config: config, apiBase: this.apiBase,
+                            dark: !this.isLight(),
+                        }, onChange);
+                        return;
+                    }
+
+                    // A built-in. Its schema came from the server, declared
+                    // beside the code that reads those keys.
+                    const native = (this.cardCatalog.native || [])
+                        .find(n => n.type === type);
+                    host.textContent = '';
+                    if (!native) {
+                        this.cardEditorNote[w.id] =
+                            type + ' has no visual editor here — its YAML is the way.';
+                        return;
+                    }
+                    this.cardEditorNote[w.id] = '';
+                    const form = document.createElement('ha-form');
+                    form.schema = native.schema;
+                    form.data = config;
+                    form.addEventListener('value-changed', (e) => {
+                        e.stopPropagation();
+                        onChange({ ...e.detail.value, type: type });
+                    });
+                    host.appendChild(form);
+
+                    // Size is asked separately because it writes into
+                    // `grid_options` rather than the config's top level —
+                    // folding it in would have put a `columns` field beside the
+                    // grid card's own `columns`.
+                    const size = document.createElement('ha-form');
+                    size.schema = this.cardCatalog.grid;
+                    size.data = config.grid_options || {};
+                    size.addEventListener('value-changed', (e) => {
+                        e.stopPropagation();
+                        const next = { ...config, grid_options: e.detail.value };
+                        if (!Object.keys(e.detail.value || {}).length) delete next.grid_options;
+                        onChange(next);
+                    });
+                    const wrap = document.createElement('details');
+                    wrap.innerHTML = '<summary>Size in its stack</summary>';
+                    wrap.appendChild(size);
+                    host.appendChild(wrap);
+                },
+
+                // Same matching rule the server uses to find a card's file: a
+                // bundle is often named for its family rather than its card.
+                resourceMatches(url, tag) {
+                    let stem = String(url || '').split('?')[0].split('/').pop()
+                        .replace(/\.(js|mjs)$/, '');
+                    const a = stem.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const b = String(tag || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                    return !!a && !!b && (a.includes(b) || b.includes(a));
+                },
+
+                // --- choosing a card --------------------------------------
+
+                async openCardPicker(w) {
+                    this.picker = { open: true, for: w.id, filter: '', loading: true };
+                    await this.loadCardCatalog();
+                    // The custom cards are discovered by LOADING their bundles
+                    // and reading `window.customCards`, which is the registry
+                    // every card pushes to on load and the one HA's own picker
+                    // reads. There is no server-side answer: a file's name does
+                    // not tell you which elements it defines.
+                    this.cardCatalog.custom = await window.ChauffeurHaCards.discover(
+                        this.cardCatalog.resources, this.apiBase);
+                    this.picker.loading = false;
+                },
+
+                pickerGroups() {
+                    const q = (this.picker.filter || '').trim().toLowerCase();
+                    const match = c => !q
+                        || (c.name || '').toLowerCase().includes(q)
+                        || (c.type || '').toLowerCase().includes(q);
+                    const native = (this.cardCatalog.native || []).map(n => ({
+                        type: n.type,
+                        name: n.type.replace(/-/g, ' ').replace(/^./, c => c.toUpperCase()),
+                        description: '',
+                    })).filter(match);
+                    const custom = (this.cardCatalog.custom || []).map(c => ({
+                        type: 'custom:' + c.type, name: c.name || c.type,
+                        description: c.description || '',
+                    })).filter(match);
+                    return [
+                        { name: 'Drawn by Chauffeur', rows: native },
+                        { name: 'Installed in Home Assistant', rows: custom },
+                    ];
+                },
+
+                async chooseCard(w, choice) {
+                    this.picker.open = false;
+                    // A STARTING config, not a blank one — a card that opens
+                    // with its type already set is a card whose editor can draw
+                    // itself immediately, which is the difference between a
+                    // picker and a hint.
+                    await this.writeCardConfig(w, { type: choice.type });
+                    this.cardModes[w.id] = 'visual';
+                    this.$nextTick(() => this.mountCardEditor(w));
                 },
 
                 // --- the tile picker --------------------------------------
@@ -3743,7 +4025,13 @@
                 },
 
                 setSpan(instanceId, axis, value) {
-                    const max = axis === 'cols' ? this.cols() : 12;
+                    // COLUMNS are bounded by the grid — a tile cannot be
+                    // wider than the board. Rows are not: the grid grows
+                    // downward, and 12 was somebody's guess at how tall a
+                    // tile could want to be. It reads as arbitrary at 240px
+                    // a row and as broken at 20, where twelve rows is less
+                    // than a line of text.
+                    const max = axis === 'cols' ? this.cols() : 100000;
                     const n = Math.min(max, Math.max(1, parseInt(value, 10) || 1));
                     const cur = { ...(this.page().spans[instanceId] || {}) };
                     cur[axis] = n;

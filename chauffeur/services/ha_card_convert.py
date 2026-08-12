@@ -633,6 +633,156 @@ def _area_card(config, states):
             'unknown': (not ids and not area_entities(ref))}
 
 
+# The grid a stack lays its cards on. Twelve because that is the number Home
+# Assistant's own sections view uses, so a `grid_options` copied out of a
+# dashboard means here what it meant there.
+GRID_COLUMNS = 12
+
+
+# ── What a built-in card can be ASKED, as a Home Assistant selector schema.
+#
+# A custom card ships its own editor and we host it. A built-in card's editor
+# lives inside HA's frontend bundle and cannot be fetched — the same wall as
+# the card itself. But we are the ones who wrote the converter, so we know
+# exactly which config keys each of these reads, and a schema is cheap to
+# declare next to the builder that honours it.
+#
+# Deliberately the SAME shape Home Assistant uses, so one form renderer
+# (static/ha_form.js) draws both this and a custom card's own schema. Two form
+# layers would be two places for a select to look different from a select.
+#
+# What is NOT here is every option a card supports — it is every option the
+# converter actually reads. A form offering a field the drawing ignores is a
+# worse lie than no form at all.
+_SCHEMAS = {
+    'entities': [
+        {'name': 'title', 'selector': {'text': {}}},
+        {'name': 'entities', 'selector': {'entity': {'multiple': True}}},
+    ],
+    'glance': [
+        {'name': 'title', 'selector': {'text': {}}},
+        {'name': 'entities', 'selector': {'entity': {'multiple': True}}},
+        {'type': 'grid', 'schema': [
+            {'name': 'show_name', 'selector': {'boolean': {}}},
+            {'name': 'show_state', 'selector': {'boolean': {}}},
+        ]},
+    ],
+    'tile': [
+        {'name': 'entity', 'selector': {'entity': {}}},
+        {'type': 'grid', 'schema': [
+            {'name': 'name', 'selector': {'text': {}}},
+            {'name': 'icon', 'selector': {'icon': {}}},
+            {'name': 'vertical', 'selector': {'boolean': {}}},
+        ]},
+    ],
+    'gauge': [
+        {'name': 'entity', 'selector': {'entity': {'domain': 'sensor'}}},
+        {'type': 'grid', 'schema': [
+            {'name': 'name', 'selector': {'text': {}}},
+            {'name': 'unit', 'selector': {'text': {}}},
+            {'name': 'min', 'selector': {'number': {'step': 'any'}}},
+            {'name': 'max', 'selector': {'number': {'step': 'any'}}},
+        ]},
+        {'type': 'expandable', 'title': 'Severity colours', 'schema': [
+            {'name': 'severity', 'selector': {'object': {}}},
+        ]},
+    ],
+    'sensor': [
+        {'name': 'entity', 'selector': {'entity': {'domain': 'sensor'}}},
+        {'type': 'grid', 'schema': [
+            {'name': 'name', 'selector': {'text': {}}},
+            {'name': 'icon', 'selector': {'icon': {}}},
+            {'name': 'graph', 'selector': {'select': {'options': [
+                {'value': 'line', 'label': 'Line'},
+                {'value': 'none', 'label': 'None'}]}}},
+            {'name': 'hours_to_show', 'selector': {'number': {'min': 1, 'max': 168}}},
+            {'name': 'detail', 'selector': {'select': {'options': [
+                {'value': 1, 'label': 'Hourly'},
+                {'value': 2, 'label': 'Fine'}]}}},
+            {'name': 'unit', 'selector': {'text': {}}},
+        ]},
+    ],
+    'thermostat': [
+        {'name': 'entity', 'selector': {'entity': {'domain': 'climate'}}},
+        {'name': 'name', 'selector': {'text': {}}},
+    ],
+    'area': [
+        {'name': 'area', 'selector': {'area': {}}},
+        {'type': 'grid', 'schema': [
+            {'name': 'name', 'selector': {'text': {}}},
+            {'name': 'display_type', 'selector': {'select': {'options': [
+                {'value': 'compact', 'label': 'Name and readings'},
+                {'value': 'picture', 'label': 'Lead with the photograph'}]}}},
+        ]},
+        {'name': 'sensor_classes', 'selector': {'select': {
+            'multiple': True,
+            'options': [{'value': c, 'label': c.replace('_', ' ').title()}
+                        for c in _AREA_SENSORS]}}},
+        {'name': 'alert_classes', 'selector': {'select': {
+            'multiple': True,
+            'options': [{'value': c, 'label': c.replace('_', ' ').title()}
+                        for c in _AREA_ALERTS]}}},
+    ],
+    'markdown': [
+        {'name': 'title', 'selector': {'text': {}}},
+        {'name': 'content', 'selector': {'text': {'multiline': True}}},
+    ],
+    'picture-entity': [
+        {'name': 'entity', 'selector': {'entity': {}}},
+        {'name': 'image', 'selector': {'text': {}}},
+        {'type': 'grid', 'schema': [
+            {'name': 'name', 'selector': {'text': {}}},
+            {'name': 'show_name', 'selector': {'boolean': {}}},
+            {'name': 'show_state', 'selector': {'boolean': {}}},
+        ]},
+    ],
+    'button': [
+        {'name': 'entity', 'selector': {'entity': {}}},
+        {'type': 'grid', 'schema': [
+            {'name': 'name', 'selector': {'text': {}}},
+            {'name': 'icon', 'selector': {'icon': {}}},
+            {'name': 'show_name', 'selector': {'boolean': {}}},
+            {'name': 'show_state', 'selector': {'boolean': {}}},
+        ]},
+    ],
+    'grid': [
+        {'name': 'title', 'selector': {'text': {}}},
+        {'name': 'columns', 'selector': {'number': {'min': 1, 'max': 6}}},
+    ],
+    'vertical-stack': [{'name': 'title', 'selector': {'text': {}}}],
+    'horizontal-stack': [{'name': 'title', 'selector': {'text': {}}}],
+}
+
+# Sizing is the same question for every card, so it is its own small schema
+# rather than thirteen copies — and SEPARATE from the card's own, because it
+# writes into `grid_options` rather than into the config's top level. Folding
+# it in would have put a `columns` field beside the `grid` card's own
+# `columns`, which is one word meaning two things in one form.
+GRID_SCHEMA = [
+    {'type': 'grid', 'schema': [
+        {'name': 'columns', 'selector': {'number': {'min': 1, 'max': GRID_COLUMNS}}},
+        {'name': 'rows', 'selector': {'number': {'min': 1}}},
+    ]},
+]
+
+
+def schema_for(kind):
+    """The editor schema for a built-in card type, or None.
+
+    None means "no visual editor for this one", which the UI has to say out
+    loud rather than showing an empty form.
+    """
+    rows = _SCHEMAS.get(str(kind or '').strip().lower())
+    return list(rows) if rows else None
+
+
+def editable_cards():
+    """Every built-in type with an editor, for the card picker. Sorted so the
+    list is stable — a picker whose order changes between loads is a picker
+    people stop scanning."""
+    return sorted(_SCHEMAS)
+
+
 def _grid_options(config):
     """`grid_options: {columns: 12, rows: 3}` — what a card asked for.
 
@@ -662,14 +812,13 @@ def _grid_options(config):
     if not (isinstance(rows, str) and rows.strip().lower() == 'auto'):
         n = _num(rows)
         if n is not None:
-            out['rows'] = max(1, min(24, int(n)))
+            # Same reasoning as a tile's row span: a stack grows downward, so
+            # a ceiling here is a guess about how tall somebody's card wants to
+            # be. High enough to be a runaway guard and nothing else.
+            out['rows'] = max(1, min(1000, int(n)))
     return out or None
 
 
-# The grid a stack lays its cards on. Twelve because that is the number Home
-# Assistant's own sections view uses, so a `grid_options` copied out of a
-# dashboard means here what it meant there.
-GRID_COLUMNS = 12
 
 
 def convert(config, states, depth=0, hosts=None):
