@@ -107,12 +107,26 @@ def _cfg_ids(config, key):
     return [str(x) for x in v if str(x).strip()]
 
 
-# The catalog. `label` is what the setup UI calls the tile; `blurb` is the
-# sentence explaining what it is FOR, which is the thing a person picking six
-# of nine tiles actually needs. `options` is what one instance of it can be
-# asked; a type with none is a tile that only knows one thing to say.
+# The catalog.
+#
+# `label` is the tile's NAME — and it is the name of the page it summarises,
+# deliberately. It used to be the sentence the tile prints on the wall ("The
+# rest of the day", "Where everyone is"), which read beautifully on a board and
+# was useless in a picker: a household choosing from nineteen of them is asking
+# "which of these is the map", and a list of small poems does not answer that.
+#
+# `heading` is that sentence, kept, because it was doing a second job well. So
+# the picker says Map and the wall says "Where everyone is", and an instance's
+# own `title` still beats both. A tile with no `heading` falls back to `label`,
+# which is right for the ones whose page name is already the best thing to
+# print (Lists).
+#
+# `blurb` is what it is FOR, which is what somebody choosing actually reads.
+# `options` is what one instance can be asked; a type with none is a tile that
+# only knows one thing to say.
 WIDGETS = [
-    {'key': 'drives', 'icon': '🚗', 'label': 'The rest of the day',
+    {'key': 'drives', 'icon': '🚗', 'label': 'Driving schedule',
+     'heading': 'The rest of the day',
      'blurb': "Every drive still ahead today, and who has it.",
      'options': [
          # The timeline is the Drives page's own renderer, and it draws one
@@ -130,14 +144,16 @@ WIDGETS = [
               help='Leave empty for everyone.'),
          _opt('errands', 'Show errands', 'bool', True),
      ]},
-    {'key': 'kids', 'icon': '🎒', 'label': 'Each kid',
+    {'key': 'kids', 'icon': '🎒', 'label': 'Kids',
+     'heading': 'Each kid',
      'blurb': "The same calm look at the day each child gets in their digest.",
      'options': [
          _opt('members', 'Children', 'select', [], source='members', multi=True,
               help='Leave empty for every child.'),
          _opt('lines', 'Lines each', 'int', 4, min=1, max=8),
      ]},
-    {'key': 'meals', 'icon': '🍽️', 'label': "Tonight's plate",
+    {'key': 'meals', 'icon': '🍽️', 'label': 'Meals',
+     'heading': "Tonight's plate",
      'blurb': "What is planned to eat, once a plate is pinned for the day.",
      'options': [
          # Nights, not days: a plate is pinned per date, and 1 is tonight.
@@ -149,6 +165,7 @@ WIDGETS = [
               help='0 is today, 1 is tomorrow.'),
      ]},
     {'key': 'shopping', 'icon': '🛒', 'label': 'Lists',
+     'heading': 'Lists',
      'blurb': "How much is open on each shopping list.",
      'options': [
          _opt('list', 'List', 'select', '', source='lists',
@@ -159,40 +176,46 @@ WIDGETS = [
          _opt('items', 'Items shown', 'int', 12, min=0, max=20,
               help='0 shows the counts only.'),
      ]},
-    {'key': 'chores', 'icon': '⭐', 'label': 'Chore points',
+    {'key': 'chores', 'icon': '⭐', 'label': 'Chores',
+     'heading': 'Chore points',
      'blurb': "The points leaderboard, exactly as the chores kiosk shows it.",
      'options': [
          _opt('members', 'People', 'select', [], source='members', multi=True,
               help='Leave empty for everyone with points.'),
          _opt('count', 'Rows', 'int', 6, min=1, max=12),
      ]},
-    {'key': 'routines', 'icon': '🔁', 'label': 'Streaks',
+    {'key': 'routines', 'icon': '🔁', 'label': 'Routines',
+     'heading': 'Streaks',
      'blurb': "Who has kept their routine going, and for how long.",
      'options': [
          _opt('members', 'People', 'select', [], source='members', multi=True,
               help='Leave empty for everyone with a routine.'),
          _opt('count', 'Rows', 'int', 6, min=1, max=12),
      ]},
-    {'key': 'occasions', 'icon': '🎁', 'label': 'Coming up',
+    {'key': 'occasions', 'icon': '🎁', 'label': 'Occasions',
+     'heading': 'Coming up',
      'blurb': "The next occasion and how many days are left to get ready.",
      'options': [
          _opt('count', 'Rows', 'int', 3, min=1, max=10),
          _opt('within_days', 'Within', 'int', None, min=1, max=365,
               help='Days ahead. Blank shows everything that is coming.'),
      ]},
-    {'key': 'weather', 'icon': '🌤️', 'label': 'The week',
+    {'key': 'weather', 'icon': '🌤️', 'label': 'Weather',
+     'heading': 'The week',
      'blurb': "A forecast chip per day. Needs a Home Assistant weather entity.",
      'options': [
          _opt('days', 'Days', 'int', 5, min=1, max=7),
      ]},
-    {'key': 'moments', 'icon': '📸', 'label': 'Latest moments',
+    {'key': 'moments', 'icon': '📸', 'label': 'Moments',
+     'heading': 'Latest moments',
      'blurb': "Recent photos from the family's events.",
      'options': [
          _opt('count', 'Photos', 'int', 6, min=1, max=12),
          _opt('within_days', 'Going back', 'int', 30, min=1, max=365,
               help='Days. A wall of last summer is a screensaver, not a board.'),
      ]},
-    {'key': 'calendar', 'icon': '📅', 'label': "What's coming",
+    {'key': 'calendar', 'icon': '📅', 'label': 'Calendar',
+     'heading': "What's coming",
      'blurb': "The next few days on the family calendar, drives or not.",
      'options': [
          _opt('view', 'View', 'choice', 'agenda', choices=[
@@ -206,13 +229,15 @@ WIDGETS = [
               help="Matches each person's own calendars. Empty shows everyone."),
          _opt('all_day', 'Include all-day events', 'bool', True),
      ]},
-    {'key': 'errands', 'icon': '📋', 'label': 'Errands waiting',
+    {'key': 'errands', 'icon': '📋', 'label': 'Errands',
+     'heading': 'Errands waiting',
      'blurb': "What still needs doing, past-due first.",
      'options': [
          _opt('count', 'Rows', 'int', 5, min=1, max=12),
          _opt('past_due_only', 'Past due only', 'bool', False),
      ]},
-    {'key': 'tasks', 'icon': '📝', 'label': 'The household owes',
+    {'key': 'tasks', 'icon': '📝', 'label': 'Household tasks',
+     'heading': 'The household owes',
      'blurb': "Work with a deadline and nowhere to drive — past due first, "
               "and what nobody has taken.",
      'options': [
@@ -221,7 +246,8 @@ WIDGETS = [
               help='Leave empty for the whole household.'),
          _opt('unclaimed_only', 'Only what nobody has taken', 'bool', False),
      ]},
-    {'key': 'trips', 'icon': '🧭', 'label': 'Next trip',
+    {'key': 'trips', 'icon': '🧭', 'label': 'Trips',
+     'heading': 'Next trip',
      'blurb': "The next trip and how long until it starts.",
      'options': [
          _opt('trip', 'Trip', 'select', '', source='trips',
@@ -229,7 +255,8 @@ WIDGETS = [
          _opt('count', 'Trips shown', 'int', 4, min=1, max=8,
               help='Ignored when a single trip is pinned.'),
      ]},
-    {'key': 'map', 'icon': '🗺️', 'label': 'Where everyone is',
+    {'key': 'map', 'icon': '🗺️', 'label': 'Map',
+     'heading': 'Where everyone is',
      'blurb': "Who is home, out, or driving. Needs Home Assistant.",
      'options': [
          _opt('members', 'People', 'select', [], source='members', multi=True,
@@ -247,7 +274,8 @@ WIDGETS = [
     # added, and a thing you deliberately put on the wall disappearing without
     # explanation is the failure this board's "a quiet feature says so" rule
     # exists to prevent. They say "Needs Home Assistant" instead.
-    {'key': 'ha', 'icon': '🏠', 'label': 'Home Assistant',
+    {'key': 'ha', 'icon': '🏠', 'label': 'Entities',
+     'heading': 'Home Assistant',
      'blurb': "Any Home Assistant entities you choose, as a list of readings.",
      'options': [
          _opt('entities', 'Entities', 'entity', [], source='ha_entities',
@@ -261,7 +289,8 @@ WIDGETS = [
          _opt('interactive', 'Allow tapping to toggle', 'bool', False,
               help='Lights, switches, fans and helpers only.'),
      ]},
-    {'key': 'ha_image', 'icon': '📷', 'label': 'Camera or radar',
+    {'key': 'ha_image', 'icon': '📷', 'label': 'Camera or image',
+     'heading': 'Camera or radar',
      'blurb': "A picture from a Home Assistant camera or image entity.",
      'options': [
          _opt('entity', 'Entity', 'entity', '', source='ha_cameras'),
@@ -286,7 +315,8 @@ WIDGETS = [
     #     on port 8000 it is a different origin, and HA sends
     #     `X-Frame-Options: SAMEORIGIN`, so the frame will very likely be
     #     refused however well the URL is spelled.
-    {'key': 'ha_dashboard', 'icon': '🧩', 'label': 'A Home Assistant dashboard',
+    {'key': 'ha_dashboard', 'icon': '🧩', 'label': 'Dashboard',
+     'heading': 'A Home Assistant dashboard',
      'blurb': "A dashboard view, framed. Put ONE card on a view and point a "
               "tile at it. Reliable under ingress; a standalone panel is a "
               "different origin and Home Assistant usually refuses to be framed.",
@@ -318,7 +348,8 @@ WIDGETS = [
     # the one worth knowing here is that BUILT-IN card types (gauge, entities,
     # tile) live inside HA's own bundle and are not loadable, so this tile is
     # for `type: custom:…` only and says so when handed anything else.
-    {'key': 'ha_card', 'icon': '🃏', 'label': 'A Home Assistant custom card',
+    {'key': 'ha_card', 'icon': '🃏', 'label': 'Custom card',
+     'heading': 'A Home Assistant custom card',
      'blurb': "Paste a custom card's YAML and the real card runs here, "
               "wearing the panel's colours instead of Home Assistant's.",
      'options': [
@@ -335,7 +366,8 @@ WIDGETS = [
               help='Lights, switches, fans and helpers only, whatever the '
                    'card tries to call.'),
      ]},
-    {'key': 'intake', 'icon': '📬', 'label': 'Waiting to approve',
+    {'key': 'intake', 'icon': '📬', 'label': 'Intake',
+     'heading': 'Waiting to approve',
      'blurb': "How many intake proposals need a parent. A COUNT only — the "
               "mail itself stays off shared screens."},
 ]
@@ -2623,11 +2655,13 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
             meta = next(w for w in WIDGETS if w['key'] == inst['type'])
             tiles.append({'id': inst['id'], 'type': inst['type'],
                           'icon': meta['icon'],
-                          # A configured instance may say what it is better than
-                          # the type does ("Emma's week" beats "What's coming"),
-                          # so a title in the config wins over the catalog's.
+                          # What the WALL says, which is not what the picker
+                          # says. A configured instance still beats both —
+                          # "Emma's week" is better than either "Calendar" or
+                          # "What's coming", and it is the only one of the three
+                          # a household actually chose.
                           'label': (str(config.get('title') or '').strip()
-                                    or meta['label']),
+                                    or meta.get('heading') or meta['label']),
                           'config': config,
                           'data': payload})
 

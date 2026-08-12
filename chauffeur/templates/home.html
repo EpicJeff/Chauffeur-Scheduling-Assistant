@@ -37,6 +37,42 @@
         }
         html[data-panel-theme="light"] .panel-chip { background: rgb(3 105 161 / 0.10); }
 
+        /* ── The setup card.
+           It was the one part of this page painted in literal greys —
+           bg-gray-900, border-gray-700, text-gray-200 — while everything above
+           it ran on --panel-* tokens. In light mode that meant a board that
+           went light and a settings card underneath it that stayed black.
+
+           These six classes are the whole bridge. They are classes rather than
+           token swaps at each call site because the setup block has a couple of
+           hundred of them, and one place to change how an editor input looks is
+           the point of having them at all. */
+        .ed-card {
+            background: var(--panel-card);
+            border: 1px solid var(--panel-line);
+            box-shadow: var(--panel-shadow);
+        }
+        .ed-panel { background: var(--panel-card-lo); }
+        .ed-title { color: var(--panel-fg); }
+        .ed-head { color: var(--panel-accent); }
+        .ed-note { color: var(--panel-dim); }
+        .ed-input {
+            background: var(--panel-card-hi);
+            border: 1px solid var(--panel-line);
+            color: var(--panel-fg);
+        }
+        .ed-input::placeholder { color: var(--panel-dim); opacity: 0.7; }
+        .ed-input:focus {
+            outline: 2px solid var(--panel-accent);
+            outline-offset: -1px;
+        }
+        .ed-btn { color: var(--panel-dim); }
+        .ed-btn:hover:not(:disabled) { color: var(--panel-fg); }
+        /* Inputs inside the setup card inherit the page's colour scheme, so a
+           light panel gets light native controls (spinners, the date picker's
+           calendar) instead of dark ones drawn on a light field. */
+        #panel-setup { color-scheme: light dark; }
+
         /* A hosted Home Assistant card. The host sets the theme variables on
            this element and the card inherits them THROUGH its shadow root —
            custom properties cross that boundary, which is the entire reason a
@@ -837,9 +873,9 @@
              can reconfigure) — this is the browser-side hand path, on the page
              it configures, so you pick the tiles while looking at them. -->
         <div id="panel-setup" x-show="!isPanel"
-            class="mt-10 bg-gray-900/60 border border-gray-800 rounded-2xl p-5 md:p-6">
-            <h2 class="text-lg font-black text-white mb-1">🖥️ Wall panel setup</h2>
-            <p class="text-sm text-gray-500 mb-5 max-w-3xl">
+            class="mt-10 ed-card rounded-2xl p-5 md:p-6">
+            <h2 class="text-lg font-black ed-title mb-1">🖥️ Wall panel setup</h2>
+            <p class="text-sm ed-note mb-5 max-w-3xl">
                 Open any page with <code class="text-sky-300">?panel=true</code> to turn this
                 install into a wall panel: the top bar becomes a shelf of touch-sized buttons
                 along the bottom and everything sized for a mouse gets bigger. What follows is
@@ -849,7 +885,7 @@
                 on the URL still wins, so a Home Assistant card can differ.
             </p>
 
-            <div class="grid gap-6 md:grid-cols-2">
+            <div class="grid gap-6 lg:grid-cols-2">
                 <div>
                     <!-- ── The boards.
                          A board stopped being THE board: each one carries its
@@ -858,7 +894,7 @@
                          same screen twice. The first is the wall's own home
                          board — what /home shows and where an idle panel goes
                          back to — which is why it cannot be deleted. -->
-                    <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
+                    <div class="text-xs font-black uppercase tracking-widest ed-head mb-2">
                         Boards
                     </div>
                     <div class="flex flex-wrap gap-1.5 mb-3">
@@ -866,7 +902,7 @@
                             <button type="button" @click="pageIndex = i"
                                 :class="pageIndex === i
                                     ? 'bg-sky-600 text-white border-sky-500'
-                                    : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700'"
+                                    : 'ed-input hover:brightness-125'"
                                 class="text-xs rounded-full border px-3 py-1.5">
                                 <span x-text="p.icon"></span>
                                 <span x-text="p.name"></span>
@@ -874,7 +910,7 @@
                             </button>
                         </template>
                         <button type="button" @click="addPage()"
-                            class="text-xs rounded-full border border-dashed border-gray-600 text-gray-400 hover:text-white px-3 py-1.5">
+                            class="text-xs rounded-full border border-dashed border-gray-600 ed-btn px-3 py-1.5">
                             + New board
                         </button>
                     </div>
@@ -883,16 +919,16 @@
                          it IS the board: a wall panel is a bookmark, so the
                          thing somebody types into a tablet has to be visible
                          somewhere they can copy it from. -->
-                    <div class="bg-gray-800/70 rounded-lg p-3 mb-4" x-show="page()">
+                    <div class="ed-panel rounded-lg p-3 mb-4" x-show="page()">
                         <div class="flex items-center gap-2">
                             <input type="text" :value="page().icon"
                                 @input="setPageField('icon', $event.target.value)"
                                 maxlength="4" title="Icon"
-                                class="w-12 text-center bg-gray-900 border border-gray-700 rounded px-1 py-1 text-sm">
+                                class="w-12 text-center ed-input rounded px-1 py-1 text-sm">
                             <input type="text" :value="page().name"
                                 @input="setPageField('name', $event.target.value)"
                                 placeholder="Board name"
-                                class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200">
+                                class="flex-1 min-w-0 ed-input rounded px-2 py-1 text-sm ed-title">
                             <!-- The home board is the panel's resting state and
                                  the shelf's Home button. Deleting it would leave
                                  an idle panel returning to nothing, so it is
@@ -904,16 +940,16 @@
                                  "More" is decided by it. -->
                             <button type="button" @click="movePage(-1)"
                                 :disabled="pageIndex === 0" title="Earlier on the shelf"
-                                class="text-gray-500 hover:text-white disabled:opacity-25 px-1">◀</button>
+                                class="ed-btn disabled:opacity-25 px-1">◀</button>
                             <button type="button" @click="movePage(1)"
                                 :disabled="pageIndex === (draft.panel_pages || []).length - 1"
                                 title="Later on the shelf"
-                                class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▶</button>
+                                class="ed-btn disabled:opacity-25 px-1">▶</button>
                             <button type="button" x-show="page().slug !== 'home'"
                                 @click="removePage()"
-                                class="text-xs text-gray-500 hover:text-red-400 px-2 py-1">Delete</button>
+                                class="text-xs ed-note hover:text-red-400 px-2 py-1">Delete</button>
                         </div>
-                        <div class="mt-2 text-[0.7rem] text-gray-500">
+                        <div class="mt-2 text-[0.7rem] ed-note">
                             <template x-if="page().slug === 'home'">
                                 <span>The wall panel's home screen — at
                                     <code class="text-sky-300">/home</code>. An idle panel comes
@@ -927,13 +963,13 @@
                         <input type="text" :value="page().background"
                             @input="setPageField('background', $event.target.value)"
                             placeholder="its own picture — blank uses the one below"
-                            class="mt-2 w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white placeholder-gray-600">
+                            class="mt-2 w-full ed-input rounded px-2 py-1 text-xs placeholder-gray-600">
                     </div>
 
-                    <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
+                    <div class="text-xs font-black uppercase tracking-widest ed-head mb-2">
                         Tiles on <span x-text="page().name"></span>
                     </div>
-                    <p class="text-xs text-gray-500 mb-3">
+                    <p class="text-xs ed-note mb-3">
                         In the order they appear. A tile with nothing to say hides itself
                         regardless — an empty box is worse than a shorter board.
                     </p>
@@ -941,26 +977,26 @@
                          "2 rows" only means something once a row is a fixed
                          measurement rather than however tall the neighbouring
                          tiles turned out. -->
-                    <label class="flex items-center gap-2 text-xs text-gray-400 font-semibold mb-2">
+                    <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-2">
                         This board is
                         <input type="number" min="1" max="24" step="1"
                             :value="page().columns"
                             @input="setPageField('columns', parseInt($event.target.value, 10))"
-                            class="w-14 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-2 py-1">
-                        <span class="font-normal text-gray-600">columns wide — tile widths are spans of these</span>
+                            class="w-14 ed-input rounded text-xs ed-title px-2 py-1">
+                        <span class="font-normal ed-note">columns wide — tile widths are spans of these</span>
                     </label>
                     <!-- Lives with the tiles, not in a settings page: the
                          number only means something next to the width of the
                          tile it fills, and both are on this screen. -->
-                    <label class="flex items-center gap-2 text-xs text-gray-400 font-semibold mb-2">
+                    <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-2">
                         The calendar tile shows
                         <input type="number" min="1" max="14" step="1"
                             x-model.number="draft.panel_agenda_days"
-                            class="w-14 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-2 py-1">
-                        <span class="font-normal text-gray-600">days — each is a card three columns wide, so a
+                            class="w-14 ed-input rounded text-xs ed-title px-2 py-1">
+                        <span class="font-normal ed-note">days — each is a card three columns wide, so a
                             <span x-text="cols()"></span>-column tile fits four of them</span>
                     </label>
-                    <label class="flex items-center gap-2 text-xs text-gray-400 font-semibold mb-3">
+                    <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-3">
                         One row is
                         <!-- A NUMBER, like the two fields above it. The seven
                              sizes this used to offer were not a technical
@@ -973,8 +1009,8 @@
                         <input type="number" min="80" max="600" step="5"
                             :value="page().row_height"
                             @input="setPageField('row_height', parseInt($event.target.value, 10))"
-                            class="w-20 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-2 py-1">
-                        <span class="font-normal text-gray-600">pixels tall — a 2-row tile is twice this</span>
+                            class="w-20 ed-input rounded text-xs ed-title px-2 py-1">
+                        <span class="font-normal ed-note">pixels tall — a 2-row tile is twice this</span>
                     </label>
                     <div class="space-y-1.5 mb-3">
                         <!-- Keyed by INSTANCE id, not by type. Alpine uses this
@@ -983,13 +1019,13 @@
                              made the second one silently unreachable — it would
                              reuse the first one's row. -->
                         <template x-for="(w, i) in page().widgets" :key="w.id">
-                            <div class="bg-gray-800/70 rounded-lg">
-                            <div class="flex items-center gap-2 px-3 py-2">
+                            <div class="ed-panel rounded-lg">
+                            <div class="flex flex-wrap items-center gap-2 px-3 py-2">
                                 <span x-text="widgetMeta(w.type).icon"></span>
                                 <span class="flex-1 min-w-0">
-                                    <span class="text-sm font-semibold text-gray-200"
+                                    <span class="text-sm font-semibold ed-title"
                                         x-text="instanceLabel(w)"></span>
-                                    <span class="block text-[0.7rem] text-gray-500 truncate"
+                                    <span class="block text-[0.7rem] ed-note truncate"
                                         x-text="widgetMeta(w.type).blurb"></span>
                                 </span>
                                 <!-- Size, per tile. A wall board is a layout,
@@ -1005,18 +1041,18 @@
                                      sideways under the hand that was changing
                                      them — a caption that moves the thing you
                                      are aiming at costs more than it explains. -->
-                                <label class="flex items-center gap-1 text-[0.7rem] text-gray-500">
+                                <label class="flex items-center gap-1 text-[0.7rem] ed-note">
                                     <input type="number" min="1" :max="cols()" step="1"
                                         :value="spanOf(w.id, 'cols')"
                                         @change="setSpan(w.id, 'cols', $event.target.value)"
-                                        class="w-12 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-1 py-0.5">
+                                        class="w-12 ed-input rounded text-xs ed-title px-1 py-0.5">
                                     cols
                                 </label>
-                                <label class="flex items-center gap-1 text-[0.7rem] text-gray-500">
+                                <label class="flex items-center gap-1 text-[0.7rem] ed-note">
                                     <input type="number" min="1" max="12" step="1"
                                         :value="spanOf(w.id, 'rows')"
                                         @change="setSpan(w.id, 'rows', $event.target.value)"
-                                        class="w-12 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-1 py-0.5">
+                                        class="w-12 ed-input rounded text-xs ed-title px-1 py-0.5">
                                     rows
                                 </label>
                                 <!-- Only offered when the type has something to
@@ -1024,15 +1060,15 @@
                                      door onto an empty room. -->
                                 <button x-show="optionsFor(w.type).length"
                                     @click="expanded = (expanded === w.id ? null : w.id)"
-                                    :class="expanded === w.id ? 'text-sky-300' : 'text-gray-500 hover:text-white'"
+                                    :class="expanded === w.id ? 'text-sky-300' : 'ed-btn'"
                                     class="px-1" title="Options">⚙</button>
                                 <button @click="move(page().widgets, i, -1)" :disabled="i === 0"
-                                    class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▲</button>
+                                    class="ed-btn disabled:opacity-25 px-1">▲</button>
                                 <button @click="move(page().widgets, i, 1)"
                                     :disabled="i === page().widgets.length - 1"
-                                    class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▼</button>
+                                    class="ed-btn disabled:opacity-25 px-1">▼</button>
                                 <button @click="removeInstance(i)"
-                                    class="text-gray-500 hover:text-red-400 px-1">✕</button>
+                                    class="ed-btn hover:text-red-400 px-1">✕</button>
                             </div>
 
                             <!-- This instance's options, rendered FROM THE
@@ -1047,14 +1083,14 @@
                                 class="border-t border-gray-700/70 px-3 py-3 space-y-3">
                                 <template x-for="o in optionsFor(w.type)" :key="o.key">
                                     <div>
-                                        <label class="block text-[0.7rem] font-bold uppercase tracking-wider text-gray-500 mb-1"
+                                        <label class="block text-[0.7rem] font-bold uppercase tracking-wider ed-note mb-1"
                                             x-text="o.label"></label>
 
                                         <template x-if="o.type === 'text'">
                                             <input type="text" :value="cfg(w, o) || ''"
                                                 @input="setCfg(w, o, $event.target.value)"
                                                 :placeholder="widgetMeta(w.type).label"
-                                                class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200">
+                                                class="w-full ed-input rounded px-2 py-1 text-sm ed-title">
                                         </template>
 
                                         <!-- A card config is the one setting
@@ -1069,7 +1105,7 @@
                                                     @input="setCfg(w, o, $event.target.value)"
                                                     rows="8" spellcheck="false"
                                                     placeholder="type: custom:my-card&#10;entity: sensor.something"
-                                                    class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-xs font-mono text-gray-200 leading-relaxed"></textarea>
+                                                    class="w-full ed-input rounded px-2 py-1.5 text-xs font-mono leading-relaxed"></textarea>
                                                 <!-- What this household has
                                                      actually installed. Asking
                                                      somebody to remember a
@@ -1084,11 +1120,11 @@
                                                     </button>
                                                     <div x-show="cardResources.loaded" class="flex flex-wrap gap-1">
                                                         <template x-for="r in cardResources.rows" :key="r.url">
-                                                            <span class="text-[0.65rem] font-mono text-gray-500 bg-gray-900 rounded px-1.5 py-0.5"
+                                                            <span class="text-[0.65rem] font-mono ed-input rounded px-1.5 py-0.5"
                                                                 x-text="r.name"></span>
                                                         </template>
                                                         <span x-show="!cardResources.rows.length"
-                                                            class="text-[0.7rem] text-gray-600 italic">
+                                                            class="text-[0.7rem] ed-note italic">
                                                             Home Assistant lists no custom card resources.
                                                         </span>
                                                     </div>
@@ -1101,11 +1137,11 @@
                                                 :value="cfg(w, o) === null ? '' : cfg(w, o)"
                                                 @input="setCfg(w, o, $event.target.value)"
                                                 placeholder="—"
-                                                class="w-20 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200">
+                                                class="w-20 ed-input rounded px-2 py-1 text-sm ed-title">
                                         </template>
 
                                         <template x-if="o.type === 'bool'">
-                                            <label class="flex items-center gap-2 text-sm text-gray-300">
+                                            <label class="flex items-center gap-2 text-sm ed-title">
                                                 <input type="checkbox" :checked="cfg(w, o)"
                                                     @change="setCfg(w, o, $event.target.checked)"
                                                     class="accent-sky-500">
@@ -1115,7 +1151,7 @@
 
                                         <template x-if="o.type === 'choice'">
                                             <select @change="setCfg(w, o, $event.target.value)"
-                                                class="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200">
+                                                class="ed-input rounded px-2 py-1 text-sm ed-title">
                                                 <template x-for="c in (o.choices || [])" :key="c.value">
                                                     <option :value="c.value" x-text="c.label"
                                                         :selected="c.value === cfg(w, o)"></option>
@@ -1129,7 +1165,7 @@
                                              have picked one. -->
                                         <template x-if="o.type === 'select' && !o.multi">
                                             <select @change="setCfg(w, o, $event.target.value)"
-                                                class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200">
+                                                class="w-full ed-input rounded px-2 py-1 text-sm ed-title">
                                                 <option value="" :selected="!cfg(w, o)">All</option>
                                                 <template x-for="c in sourceRows(o)" :key="c.value">
                                                     <option :value="c.value" x-text="c.label"
@@ -1144,12 +1180,12 @@
                                                     <button type="button" @click="toggleCfgId(w, o, c.value)"
                                                         :class="(cfg(w, o) || []).includes(c.value)
                                                             ? 'bg-sky-600 text-white'
-                                                            : 'bg-gray-900 text-gray-400 hover:text-gray-200'"
+                                                            : 'ed-input'"
                                                         class="text-xs rounded-full px-2.5 py-1 border border-gray-700"
                                                         x-text="c.label"></button>
                                                 </template>
                                                 <span x-show="!sourceRows(o).length"
-                                                    class="text-xs text-gray-600 italic">
+                                                    class="text-xs ed-note italic">
                                                     Nothing to pick from yet.
                                                 </span>
                                             </div>
@@ -1181,7 +1217,7 @@
                                                         @change="o.multi
                                                             ? addEntity(w, o, $event.target)
                                                             : setCfg(w, o, $event.target.value.trim())"
-                                                        class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200">
+                                                        class="flex-1 min-w-0 ed-input rounded px-2 py-1 text-sm ed-title">
                                                 </div>
                                                 <!-- One datalist per SOURCE, not per field: two
                                                      entity fields of the same kind share it, and
@@ -1195,59 +1231,102 @@
                                                     <template x-for="(id, n) in (cfg(w, o) || [])" :key="id">
                                                         <button type="button"
                                                             @click="removeEntity(w, o, n)"
-                                                            class="text-xs rounded-full px-2.5 py-1 border border-gray-700 bg-gray-900 text-gray-300 hover:text-red-300"
+                                                            class="text-xs rounded-full px-2.5 py-1 ed-input hover:text-red-300"
                                                             x-text="entityLabel(o, id) + ' ✕'"></button>
                                                     </template>
                                                 </div>
                                             </div>
                                         </template>
 
-                                        <div x-show="o.help" class="text-[0.7rem] text-gray-600 mt-1"
+                                        <div x-show="o.help" class="text-[0.7rem] ed-note mt-1"
                                             x-text="o.help"></div>
                                     </div>
                                 </template>
                             </div>
                             </div>
                         </template>
-                        <div x-show="!page().widgets.length" class="text-sm text-gray-500 italic">
+                        <div x-show="!page().widgets.length" class="text-sm ed-note italic">
                             None picked — the panel will show every tile but Intake.
                         </div>
                     </div>
-                    <!-- EVERY tile, every time, including ones already on the
-                         board. The palette used to hide what you had picked,
-                         which was right when a type could only appear once and
-                         is now the thing being fixed: two calendars showing
-                         different people is the point. -->
-                    <div class="flex flex-wrap gap-1.5">
-                        <template x-for="c in (catalog.widgets || [])" :key="c.key">
-                            <!-- A tile that cannot exist here is offered
-                                 disabled, with the reason on it. The board
-                                 hides an unconfigured feature's tile (property
-                                 1), so without this a household with no Home
-                                 Assistant could add one from the palette and
-                                 then watch the wall never show it. -->
-                            <button @click="addInstance(c.key)"
-                                :disabled="c.available === false"
-                                :title="c.available === false ? 'Needs ' + c.requires : ''"
-                                class="text-xs rounded-full px-3 py-1.5"
-                                :class="c.available === false
-                                    ? 'bg-gray-900 text-gray-600 cursor-not-allowed'
-                                    : 'bg-gray-800 hover:bg-gray-700 text-gray-300'">
-                                <span x-text="c.icon"></span> <span x-text="c.label"></span>
-                                <span x-show="c.available === false" class="text-gray-600"
-                                    x-text="'· needs ' + c.requires"></span>
-                                <span x-show="countOfType(c.key)" class="text-gray-500"
-                                    x-text="'· ' + countOfType(c.key)"></span>
-                            </button>
-                        </template>
+                    <!-- ── ONE button, then a picker.
+                         Nineteen chips in a row is not a menu, it is a
+                         paragraph of buttons: everything is the same size and
+                         weight, so nothing reads as "start here" and the
+                         Home Assistant tiles sit in the middle of the family's
+                         own with nothing to say they are a different kind of
+                         thing. One button that opens a list fixes both — the
+                         list has room to be grouped and to carry each tile's
+                         blurb, which is what somebody choosing actually reads. -->
+                    <button type="button" @click="picking = !picking"
+                        class="w-full border border-dashed border-gray-600 hover:border-sky-500
+                               ed-btn rounded-lg py-2 text-sm font-semibold">
+                        <span x-text="picking ? '× Close' : '+ Add tile'"></span>
+                    </button>
+
+                    <div x-show="picking" x-cloak class="mt-2 ed-panel rounded-lg p-2">
+                        <input type="text" x-model="pickFilter" placeholder="Search tiles…"
+                            class="w-full ed-input rounded px-2 py-1.5 text-sm ed-title mb-2">
+                        <div class="max-h-80 overflow-y-auto space-y-3">
+                            <!-- Two groups, and the divider is the point. The
+                                 family's own tiles read household data; the
+                                 Home Assistant ones read somebody else's house.
+                                 Mixed into one alphabet they look like the same
+                                 kind of thing, and they are not. -->
+                            <template x-for="group in pickGroups()" :key="group.name">
+                                <div x-show="group.rows.length">
+                                    <div class="flex items-center gap-2 mb-1.5">
+                                        <span class="text-[0.65rem] font-black uppercase tracking-widest ed-note"
+                                            x-text="group.name"></span>
+                                        <span class="flex-1 h-px bg-white/10"></span>
+                                    </div>
+                                    <div class="space-y-1">
+                                        <template x-for="c in group.rows" :key="c.key">
+                                            <!-- A tile that cannot exist here is
+                                                 offered DISABLED with the reason
+                                                 on it. The board hides an
+                                                 unconfigured feature's tile, so
+                                                 without this a household with no
+                                                 Home Assistant could add one and
+                                                 then watch the wall never show
+                                                 it. -->
+                                            <button type="button" @click="addInstance(c.key)"
+                                                :disabled="c.available === false"
+                                                class="w-full text-left flex items-start gap-2 rounded-md px-2 py-1.5"
+                                                :class="c.available === false
+                                                    ? 'opacity-40 cursor-not-allowed'
+                                                    : 'hover:bg-white/10/70'">
+                                                <span class="shrink-0" x-text="c.icon"></span>
+                                                <span class="min-w-0 flex-1">
+                                                    <span class="text-sm font-semibold ed-title"
+                                                        x-text="c.label"></span>
+                                                    <span x-show="countOfType(c.key)"
+                                                        class="text-[0.7rem] text-sky-300"
+                                                        x-text="' · ' + countOfType(c.key) + ' on this board'"></span>
+                                                    <span x-show="c.available === false"
+                                                        class="text-[0.7rem] text-amber-400/80"
+                                                        x-text="' · needs ' + c.requires"></span>
+                                                    <span class="block text-[0.7rem] ed-note"
+                                                        x-text="c.blurb"></span>
+                                                </span>
+                                            </button>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                            <div x-show="!pickGroups().some(g => g.rows.length)"
+                                class="text-sm ed-note italic px-2 py-3">
+                                Nothing matches “<span x-text="pickFilter"></span>”.
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 <div>
-                    <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
+                    <div class="text-xs font-black uppercase tracking-widest ed-head mb-2">
                         Shelf buttons
                     </div>
-                    <p class="text-xs text-gray-500 mb-3">
+                    <p class="text-xs ed-note mb-3">
                         Left to right along the bottom, in this order. Six or seven fit at a size
                         a thumb can hit on a 10&quot; display and the rest move into a
                         <em>More</em> button — so the order is also the choice of which
@@ -1262,44 +1341,44 @@
                          tile's size rides on the tile's row. -->
                     <div class="space-y-1.5 mb-3">
                         <template x-for="(slug, i) in draft.panel_tabs" :key="slug">
-                            <div class="bg-gray-800/70 rounded-lg px-3 py-2">
+                            <div class="ed-panel rounded-lg px-3 py-2">
                                 <div class="flex items-center gap-2">
-                                    <span class="text-[0.7rem] font-mono text-gray-600 w-4 shrink-0"
+                                    <span class="text-[0.7rem] font-mono ed-note w-4 shrink-0"
                                         x-text="i + 1"></span>
-                                    <span class="flex-1 min-w-0 text-sm font-semibold text-gray-200 truncate"
+                                    <span class="flex-1 min-w-0 text-sm font-semibold ed-title truncate"
                                         x-text="tabMeta(slug).label"></span>
                                     <button @click="move(draft.panel_tabs, i, -1)" :disabled="i === 0"
-                                        class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▲</button>
+                                        class="ed-btn disabled:opacity-25 px-1">▲</button>
                                     <button @click="move(draft.panel_tabs, i, 1)"
                                         :disabled="i === draft.panel_tabs.length - 1"
-                                        class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▼</button>
+                                        class="ed-btn disabled:opacity-25 px-1">▼</button>
                                     <button @click="draft.panel_tabs.splice(i, 1)"
-                                        class="text-gray-500 hover:text-red-400 px-1">✕</button>
+                                        class="ed-btn hover:text-red-400 px-1">✕</button>
                                 </div>
                                 <input type="text"
                                     :value="draft.panel_page_backgrounds[slug] || ''"
                                     @input="setPageBg(slug, $event.target.value)"
                                     placeholder="its own picture — blank uses the board's"
-                                    class="mt-1.5 w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-xs text-white placeholder-gray-600">
+                                    class="mt-1.5 w-full ed-input rounded-lg px-2 py-1 text-xs placeholder-gray-600">
                             </div>
                         </template>
                     </div>
-                    <div x-show="!draft.panel_tabs.length" class="text-sm text-gray-500 italic mb-3">
+                    <div x-show="!draft.panel_tabs.length" class="text-sm ed-note italic mb-3">
                         None picked — the panel will show every destination but Intake.
                     </div>
                     <div class="flex flex-wrap gap-1.5 mb-6">
                         <template x-for="t in unpickedTabs()" :key="t.slug">
                             <button @click="draft.panel_tabs.push(t.slug)"
-                                class="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-full px-3 py-1.5">
+                                class="text-xs ed-input hover:brightness-125 rounded-full px-3 py-1.5">
                                 + <span x-text="t.label"></span>
                             </button>
                         </template>
                     </div>
 
-                    <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
+                    <div class="text-xs font-black uppercase tracking-widest ed-head mb-2">
                         Background
                     </div>
-                    <p class="text-xs text-gray-500 mb-3">
+                    <p class="text-xs ed-note mb-3">
                         The picture behind every page that has not been given its own
                         above. Paste a web address, or just type what you want —
                         <em>mountains at dusk</em>, <em>our town</em> — and one gets found
@@ -1310,13 +1389,13 @@
                          where somebody is standing when they add that tile.
                          (Settings live with the feature — config.html is not a
                          drawer of every knob in the app.) -->
-                    <label class="block text-[0.7rem] font-bold uppercase tracking-wider text-gray-500 mb-1">
+                    <label class="block text-[0.7rem] font-bold uppercase tracking-wider ed-note mb-1">
                         Home Assistant address (for the dashboard tile)
                     </label>
                     <input type="text" x-model="draft.ha_browser_url"
                         placeholder="empty when the panel is opened through Home Assistant"
-                        class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 mb-1">
-                    <p class="text-[0.7rem] text-gray-600 mb-6">
+                        class="w-full ed-input rounded px-2 py-1.5 text-sm ed-title mb-1">
+                    <p class="text-[0.7rem] ed-note mb-6">
                         Leave this empty if you open the panel through Home Assistant —
                         the frame is then on HA's own origin, which is the only
                         arrangement where it reliably loads. On a standalone panel HA
@@ -1325,16 +1404,16 @@
 
                     <input type="text" x-model="draft.panel_background"
                         placeholder="mountains at dusk"
-                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-600 mb-4">
+                        class="w-full ed-input rounded-lg px-3 py-2 placeholder-gray-600 mb-4">
 
                     <!-- The per-page pictures used to live here, in a
                          second list of the same destinations. They are on each
                          page's own row above now. -->
 
-                    <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
+                    <div class="text-xs font-black uppercase tracking-widest ed-head mb-2">
                         Theme
                     </div>
-                    <p class="text-xs text-gray-500 mb-3">
+                    <p class="text-xs ed-note mb-3">
                         Auto follows the device — which inside a Home Assistant dashboard means
                         following HA, but outside one (the app over your tunnel, a browser pointed
                         straight at the panel) it can only see the tablet, and a tablet that was
@@ -1343,7 +1422,7 @@
                         away from the house.
                     </p>
                     <select x-model="draft.panel_theme"
-                        class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white mb-4">
+                        class="ed-input rounded-lg px-3 py-2 text-white mb-4">
                         <option value="dark">Dark</option>
                         <option value="light">Light</option>
                         <option value="auto">Auto (follow the device)</option>
@@ -1351,45 +1430,45 @@
                     </select>
 
                     <div x-show="draft.panel_theme === 'sun'" class="mb-6">
-                        <p class="text-xs text-gray-500 mb-3">
+                        <p class="text-xs ed-note mb-3">
                             Shift either switch to taste. These are two numbers rather than one
                             because they are not the same amount of sky: going dark 30 minutes
                             <em>after</em> sunset matches going light 30 minutes
                             <em>before</em> sunrise, so that pair is +30 and −30.
                         </p>
                         <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-                            <span class="text-sm text-gray-400 w-20">Sunset</span>
+                            <span class="text-sm ed-note w-20">Sunset</span>
                             <input type="number" step="5"
                                 x-model.number="draft.panel_theme_sunset_offset_minutes"
-                                class="w-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
-                            <span class="text-sm text-gray-500">minutes → dark</span>
+                                class="w-24 ed-input rounded-lg px-3 py-2 text-white">
+                            <span class="text-sm ed-note">minutes → dark</span>
                         </div>
                         <div class="flex flex-wrap items-center gap-x-3 gap-y-2 mt-2">
-                            <span class="text-sm text-gray-400 w-20">Sunrise</span>
+                            <span class="text-sm ed-note w-20">Sunrise</span>
                             <input type="number" step="5"
                                 x-model.number="draft.panel_theme_sunrise_offset_minutes"
-                                class="w-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
-                            <span class="text-sm text-gray-500">minutes → light</span>
+                                class="w-24 ed-input rounded-lg px-3 py-2 text-white">
+                            <span class="text-sm ed-note">minutes → light</span>
                         </div>
                     </div>
 
-                    <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
+                    <div class="text-xs font-black uppercase tracking-widest ed-head mb-2">
                         Return home when idle
                     </div>
-                    <p class="text-xs text-gray-500 mb-3">
+                    <p class="text-xs ed-note mb-3">
                         How long the panel sits untouched somewhere else before it goes back to
                         this board. Zero leaves it wherever it was left.
                     </p>
                     <div class="flex items-center gap-2">
                         <input type="number" min="0" step="30" x-model.number="draft.panel_idle_return_seconds"
-                            class="w-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
-                        <span class="text-sm text-gray-500">seconds</span>
+                            class="w-28 ed-input rounded-lg px-3 py-2 text-white">
+                        <span class="text-sm ed-note">seconds</span>
                     </div>
 
-                    <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2 mt-6">
+                    <div class="text-xs font-black uppercase tracking-widest ed-head mb-2 mt-6">
                         Screensaver
                     </div>
-                    <p class="text-xs text-gray-500 mb-3">
+                    <p class="text-xs ed-note mb-3">
                         After a longer idle, the panel dims into a slow photo slideshow with a
                         clock. Pictures can come from your own Moments, from image files in the
                         Home Assistant media folder, or the wallpaper above can slow-pan.
@@ -1404,12 +1483,12 @@
                     <div>
                     <div class="flex items-center gap-2 mb-3">
                         <input type="number" min="0" step="60" x-model.number="draft.panel_screensaver_idle_seconds"
-                            class="w-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
-                        <span class="text-sm text-gray-500">seconds idle before it starts</span>
+                            class="w-28 ed-input rounded-lg px-3 py-2 text-white">
+                        <span class="text-sm ed-note">seconds idle before it starts</span>
                     </div>
                     <div class="flex items-center gap-2 mb-3">
                         <select x-model="draft.panel_screensaver_source"
-                            class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                            class="ed-input rounded-lg px-3 py-2 text-white">
                             <option value="photos">Family Moments photos</option>
                             <option value="media">HA media folder</option>
                             <option value="background">Wallpaper only</option>
@@ -1417,13 +1496,13 @@
                         <template x-if="draft.panel_screensaver_source === 'media'">
                             <input type="text" x-model="draft.panel_screensaver_media_path"
                                 placeholder="subfolder of /media (empty = all)"
-                                class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                                class="flex-1 ed-input rounded-lg px-3 py-2 text-white">
                         </template>
                     </div>
                     <div class="flex items-center gap-2">
                         <input type="number" min="5" max="600" step="5" x-model.number="draft.panel_screensaver_dwell_seconds"
-                            class="w-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
-                        <span class="text-sm text-gray-500">seconds per photo</span>
+                            class="w-28 ed-input rounded-lg px-3 py-2 text-white">
+                        <span class="text-sm ed-note">seconds per photo</span>
                     </div>
                     </div>
                     </template>
@@ -1521,6 +1600,9 @@
                 // slug because a board being renamed changes its slug under the
                 // hand that is typing, and the selection must not jump.
                 pageIndex: 0,
+                // The Add-tile picker: open, and what is typed into its search.
+                picking: false,
+                pickFilter: '',
                 draft: {
                     panel_pages: [], panel_tabs: [], panel_idle_return_seconds: 180,
                     panel_agenda_days: 5,
@@ -2059,6 +2141,24 @@
                     return out;
                 },
 
+                // --- the tile picker --------------------------------------
+
+                // Which tiles read Home Assistant. Taken from the catalog's own
+                // `requires`, not from a list written here: a new HA tile
+                // already has to declare that, and a second list would be a
+                // second place to forget.
+                pickGroups() {
+                    const q = (this.pickFilter || '').trim().toLowerCase();
+                    const match = c => !q
+                        || (c.label || '').toLowerCase().includes(q)
+                        || (c.blurb || '').toLowerCase().includes(q);
+                    const all = (this.catalog.widgets || []).filter(match);
+                    return [
+                        { name: 'This household', rows: all.filter(c => !c.requires) },
+                        { name: 'Home Assistant', rows: all.filter(c => c.requires) },
+                    ];
+                },
+
                 // --- boards -----------------------------------------------
 
                 // The board being edited. NEVER null: every binding in the
@@ -2507,6 +2607,12 @@
                 addInstance(type) {
                     this.page().widgets.push(
                         { id: this.newInstanceId(type), type, config: {} });
+                    // The picker STAYS OPEN. Building a board is adding four or
+                    // five things in a row, and a menu that shuts after each
+                    // one makes that four or five round trips through the same
+                    // button. The count on each row updates, so it is still
+                    // obvious what has just happened.
+                    this.pickFilter = '';
                 },
 
                 removeInstance(i) {

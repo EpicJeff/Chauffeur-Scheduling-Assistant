@@ -146,6 +146,66 @@ def scenario_every_type_can_at_least_be_named():
         check('title' in keys, f"{w['key']} cannot be given a name")
 
 
+def scenario_a_tile_is_named_for_the_page_it_summarises():
+    """`label` is what the PICKER calls a tile, and it is the name of the page
+    it summarises. It used to be the sentence the tile prints on the wall —
+    which reads beautifully on a board and answers nothing in a list of
+    nineteen, where the question is "which of these is the map".
+
+    The sentences were not deleted, they moved to `heading`. Losing them would
+    have been a silent redesign of every board in the wild.
+    """
+    by_key = {w['key']: w for w in home_board.WIDGETS}
+    for key, name in (('drives', 'Driving schedule'), ('calendar', 'Calendar'),
+                      ('map', 'Map'), ('meals', 'Meals'), ('shopping', 'Lists'),
+                      ('chores', 'Chores'), ('routines', 'Routines'),
+                      ('moments', 'Moments'), ('ha', 'Entities'),
+                      ('ha_image', 'Camera or image'),
+                      ('ha_dashboard', 'Dashboard'), ('ha_card', 'Custom card')):
+        check(by_key[key]['label'] == name,
+              f"{key} is called {by_key[key]['label']!r} in the picker, "
+              f"expected {name!r}")
+    for key, said in (('drives', 'The rest of the day'),
+                      ('map', 'Where everyone is'),
+                      ('meals', "Tonight's plate"),
+                      ('calendar', "What's coming")):
+        check(by_key[key].get('heading') == said,
+              f"{key} lost the sentence it prints on the wall: "
+              f"{by_key[key].get('heading')!r}")
+
+
+def scenario_the_wall_says_the_heading_and_the_picker_says_the_name():
+    """Two different jobs, and the tile has to do both. An instance's own title
+    still beats both — it is the only one of the three a household chose."""
+    # The calendar rather than the map: the map needs Home Assistant to have
+    # anything to say, and a tile that returns nothing has no label to check.
+    board = home_board.build('[{"type": "calendar"}]')
+    check(board['tiles'] and board['tiles'][0]['label'] == "What's coming",
+          f"the wall is printing the picker's name: {board['tiles']}")
+    board = home_board.build('[{"type": "calendar", "config": {"title": "Emma"}}]')
+    check(board['tiles'][0]['label'] == 'Emma',
+          f"a configured title lost to the catalog: {board['tiles'][0]['label']!r}")
+    # A tile whose page name already IS the best thing to print falls back
+    # rather than carrying the same string twice.
+    shopping = next(w for w in home_board.WIDGETS if w['key'] == 'shopping')
+    check(shopping.get('heading', shopping['label']) == 'Lists',
+          "the lists tile prints something other than its own name")
+
+
+def scenario_the_picker_separates_home_assistant_from_the_household():
+    """The Add-tile picker groups on `requires`, which the catalog already sets
+    for the HA tiles. A list written in the template would be a second place to
+    forget, and the way it would fail is a new HA tile filed silently under the
+    family's own."""
+    cat = home_board.catalog()
+    ha = [w['key'] for w in cat['widgets'] if w.get('requires')]
+    check(set(ha) == {'ha', 'ha_image', 'ha_dashboard', 'ha_card'},
+          f"the Home Assistant group is wrong: {ha}")
+    for w in cat['widgets']:
+        check(w.get('blurb'), f"{w['key']} has no blurb, so the picker row is "
+                              f"a name with nothing under it")
+
+
 def scenario_a_title_in_the_config_names_the_tile():
     board = home_board.build(
         '[{"type": "calendar", "config": {"title": "Emma\'s week"}}]')
