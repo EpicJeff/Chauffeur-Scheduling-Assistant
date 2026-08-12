@@ -110,7 +110,8 @@ def scenario_no_home_assistant_at_all_means_no_tile():
     where nobody adds a tile that could never draw."""
     stub = _HA(available=False)                     # mode() -> unconfigured
     for type_, config in (('ha', {'entities': ['light.kitchen']}),
-                          ('ha_image', {'entity': 'camera.driveway'})):
+                          ('ha_image', {'entity': 'camera.driveway'}),
+                          ('ha_dashboard', {'path': 'lovelace/0'})):
         data = _with_ha(stub, lambda: home_board._BUILDERS[type_](NOW, config=config))
         check(data is None,
               f"with no Home Assistant configured, the {type_} tile returned "
@@ -138,8 +139,9 @@ def scenario_the_palette_refuses_a_tile_that_could_never_draw():
     wonder why the wall never shows it."""
     stub = _HA(available=False)
     cat = _with_ha(stub, home_board.catalog)
+    needs_ha = ('ha', 'ha_image', 'ha_dashboard')
     for w in cat['widgets']:
-        if w['key'] in ('ha', 'ha_image'):
+        if w['key'] in needs_ha:
             check(w.get('available') is False,
                   f"{w['key']} is offered as available with no Home Assistant")
             check(w.get('requires'), f"{w['key']} does not say what it needs")
@@ -293,6 +295,126 @@ def scenario_the_server_checks_the_domain_too_not_only_the_tile():
 
 # --- the camera tile -------------------------------------------------------
 
+def scenario_the_camera_tile_has_somewhere_to_draw():
+    """The bug that made cameras show nothing at all, and the reason it was
+    invisible: the picture is a `flex-1 min-h-0` box with an absolutely
+    positioned <img> inside it. In a NON-flex parent `flex-1` does nothing, the
+    box is zero pixels tall, and the photograph has nowhere to go. No error, no
+    console line — a heading over nothing.
+
+    A tile is given `flex flex-col` only when `fillsTile()` says its content is
+    drawn INTO the slot rather than read down a list, which is exactly what a
+    camera is."""
+    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    drawn = tpl[tpl.index('DRAWN_TILES:'):]
+    drawn = drawn[:drawn.index(']')]
+    for type_ in ('ha_image', 'ha_dashboard'):
+        check(f"'{type_}'" in drawn,
+              f"{type_} is not a drawn tile, so its container gets no height "
+              f"and the tile renders as a heading over nothing")
+
+
+def scenario_a_camera_does_not_depend_on_a_rotating_token():
+    """`entity_picture` on a camera carries `?token=`, which Home Assistant
+    rotates every few minutes. This board's payload is cached, then cached
+    again by the browser, so a panel can easily be holding a URL whose token
+    has expired. `/api/camera_proxy/<entity_id>` needs no token — the proxy hop
+    carries our bearer."""
+    import base64
+    stub = _HA(states=STATES)
+    data = _with_ha(stub, lambda: home_board._tile_ha_image(
+        NOW, config={'entity': 'camera.driveway'}))
+    token = data['url'].rsplit('/', 1)[-1]
+    path = base64.urlsafe_b64decode(token + '=' * (-len(token) % 4)).decode()
+    check(path == '/api/camera_proxy/camera.driveway',
+          f"the camera tile is still pointing at {path!r}")
+    check('token=' not in path,
+          "the camera URL carries a rotating token that will outlive its cache")
+
+
+def scenario_an_entity_that_is_not_there_says_that_rather_than_no_picture():
+    """'That entity has no picture' and 'that entity does not exist' send a
+    household looking in two different places."""
+    stub = _HA(states=STATES)
+    data = _with_ha(stub, lambda: home_board._tile_ha_image(
+        NOW, config={'entity': 'camera.deleted_last_month'}))
+    check(data.get('empty') == "That entity is not in Home Assistant.",
+          f"a missing entity reported as {data!r}")
+
+
+# --- the dashboard frame ---------------------------------------------------
+
+def scenario_a_dashboard_view_is_framed_not_reimplemented():
+    """The honest answer to "render HA cards". A Lovelace card is a custom
+    element wanting a live `hass` object and an authenticated websocket; it
+    cannot run here. HA rendering it in a frame can."""
+    stub = _HA(states=STATES)
+    data = _with_ha(stub, lambda: home_board._tile_ha_dashboard(
+        NOW, config={'path': 'lovelace/0'}, settings={}))
+    check(data.get('url') == '/lovelace/0',
+          f"with no browser base configured the frame should be root-relative "
+          f"(ingress, same origin), got {data.get('url')!r}")
+    check(data.get('same_origin') is True,
+          "the tile no longer reports that it is relying on being under ingress")
+
+
+def scenario_the_browser_url_is_not_the_server_url():
+    """Under the Supervisor `ha_base_url` is `http://supervisor/core` —
+    correct for us, meaningless in a browser. The frame needs the address a
+    person would type, which is a separate setting on purpose."""
+    stub = _HA(states=STATES)
+    data = _with_ha(stub, lambda: home_board._tile_ha_dashboard(
+        NOW, config={'path': 'lovelace/0'},
+        settings={'ha_browser_url': 'http://homeassistant.local:8123/',
+                  'ha_base_url': 'http://supervisor/core'}))
+    check(data['url'] == 'http://homeassistant.local:8123/lovelace/0',
+          f"the frame used the wrong base: {data['url']}")
+    check(data['same_origin'] is False,
+          "a cross-origin frame is still claiming to be same-origin")
+
+    # And read off the RESOLVED url, not off whether a base is set: a `path`
+    # typed as a full https:// address is cross-origin however empty the
+    # setting is.
+    absolute = _with_ha(stub, lambda: home_board._tile_ha_dashboard(
+        NOW, config={'path': 'https://ha.example/lovelace/0'}, settings={}))
+    check(absolute['same_origin'] is False,
+          "a full https:// path with no base configured reported itself as "
+          "same-origin, which is the one thing it cannot be")
+
+    src = open(os.path.join(os.path.dirname(TPL), 'services', 'home_board.py'),
+               encoding='utf-8').read()
+    block = src[src.index('def ha_browser_base('):]
+    block = block[:block.index('\ndef ')]
+    check('ha_base_url' not in block.split('"""')[-1],
+          "ha_browser_base() reads the SERVER's url, which under the "
+          "Supervisor is http://supervisor/core and is not a browser address")
+
+
+def scenario_the_dashboard_tile_needs_no_page_and_no_home_assistant_check():
+    """Same two rules as the other HA tiles: not a door, and gone entirely
+    when there is no Home Assistant configured."""
+    stub = _HA(available=False)
+    data = _with_ha(stub, lambda: home_board._tile_ha_dashboard(
+        NOW, config={'path': 'lovelace/0'}, settings={}))
+    check(data is None, f"no Home Assistant, but the frame tile returned {data!r}")
+
+    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    check("'ha_dashboard'" in tpl[tpl.index('PAGELESS:'):tpl.index('PAGELESS:') + 120],
+          "the dashboard tile is a link to a Chauffeur page that does not exist")
+
+
+def scenario_the_frame_is_not_sandboxed():
+    """A dashboard needs its own scripts, its websocket and its storage.
+    Sandboxing it produces a blank frame and a mysterious console error — and
+    it is HA's page on HA's origin, not a place for our containment."""
+    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    frame = tpl[tpl.index("t.type === 'ha_dashboard'"):]
+    frame = frame[:frame.index('</template>')]
+    check('sandbox' not in frame,
+          "the dashboard frame is sandboxed, which will render it blank")
+    check('haFrameSrc' in frame, "the frame lost its src binding")
+
+
 def scenario_the_picture_is_a_url_not_bytes():
     """The board payload is refetched every sixty seconds. A tile that inlined
     camera frames would drag a JPEG through every one of those polls."""
@@ -341,7 +463,7 @@ def scenario_a_tile_with_no_page_is_not_a_link():
     nothing of ours, and an <a> to a page that does not exist is a tap that
     empties the wall."""
     tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
-    check("PAGELESS: ['ha', 'ha_image']" in tpl,
+    check("PAGELESS: ['ha', 'ha_image', 'ha_dashboard']" in tpl,
           "the Home Assistant tiles are linking somewhere again")
     check('opens(t.type) ? link(t.type) : null' in tpl,
           "the tile's href is unconditional, so a pageless tile is still a link")

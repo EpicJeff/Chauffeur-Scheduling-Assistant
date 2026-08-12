@@ -268,6 +268,35 @@ WIDGETS = [
          _opt('refresh_seconds', 'Refresh every', 'int', 60, min=0, max=3600,
               help='Seconds. 0 fetches once and leaves it.'),
      ]},
+    # ── A real Home Assistant dashboard, in a frame.
+    #
+    # This is the honest answer to "can you render HA cards". You cannot run a
+    # Lovelace card here — they are custom elements that want a live `hass`
+    # object and an authenticated websocket, and there is no supported way to
+    # host one outside HA's own frontend. What you CAN do is let HA render it,
+    # which is what a household means when they say they want their card: make
+    # a dashboard with one card on it and point a tile at that view.
+    #
+    # It is a frame, so it comes with a frame's rules, and they are worth
+    # knowing before you configure one:
+    #   - It is HOME ASSISTANT'S look, not the panel's. It will not take the
+    #     panel theme, and that is not a bug to be fixed here.
+    #   - It only works where the browser is already signed in to HA. Under
+    #     ingress that is automatic — the panel IS on HA's origin. Standalone
+    #     on port 8000 it is a different origin, and HA sends
+    #     `X-Frame-Options: SAMEORIGIN`, so the frame will very likely be
+    #     refused however well the URL is spelled.
+    {'key': 'ha_dashboard', 'icon': '🧩', 'label': 'A Home Assistant dashboard',
+     'blurb': "A dashboard view, framed. Put ONE card on a view and point a "
+              "tile at it. Reliable under ingress; a standalone panel is a "
+              "different origin and Home Assistant usually refuses to be framed.",
+     'options': [
+         _opt('path', 'Dashboard view', 'text', '',
+              help='e.g. lovelace/0 or my-panel/cameras'),
+         _opt('refresh_seconds', 'Reload every', 'int', 0, min=0, max=86400,
+              help='Seconds. 0 leaves it alone — a live dashboard updates '
+                   'itself and reloading only costs a flash.'),
+     ]},
     {'key': 'intake', 'icon': '📬', 'label': 'Waiting to approve',
      'blurb': "How many intake proposals need a parent. A COUNT only — the "
               "mail itself stays off shared screens."},
@@ -1739,10 +1768,22 @@ def _tile_ha_image(now, config=None, **_):
     try:
         from services import ha_api
         st = ha_api.get_state(entity) or {}
+        if not st:
+            return {'empty': "That entity is not in Home Assistant."}
+        domain = entity.split('.', 1)[0]
         picture = (st.get('attributes') or {}).get('entity_picture')
+        if domain == 'camera':
+            # The camera proxy DIRECTLY, not `entity_picture`. A camera's
+            # entity_picture carries `?token=`, which Home Assistant rotates
+            # every few minutes — and this board's payload is cached, then
+            # cached again by the browser, so the URL a panel is holding can
+            # easily outlive the token in it. `/api/camera_proxy/<entity_id>`
+            # is the authenticated endpoint and needs no token at all, because
+            # the proxy hop already carries our bearer.
+            picture = f'/api/camera_proxy/{entity}'
         if not picture:
-            # A real entity that offers no picture (an unavailable camera, or
-            # an entity that is not a camera at all).
+            # A real entity that offers no picture: an `image` entity that has
+            # never been populated, or something that is not a picture at all.
             return {'empty': "That entity has no picture."}
         import base64
         token = base64.urlsafe_b64encode(picture.encode('utf-8')).decode().rstrip('=')
@@ -1757,6 +1798,54 @@ def _tile_ha_image(now, config=None, **_):
     except Exception as e:
         print(f"[home_board] ha image failed: {e}")
         return {'empty': "Could not reach Home Assistant."}
+
+
+def ha_browser_base(settings: dict = None) -> str:
+    """Where a BROWSER reaches Home Assistant — which is not where the server
+    reaches it.
+
+    `ha_base_url` is the server's route, and under the Supervisor it is
+    `http://supervisor/core`: correct for us, meaningless in a browser. The
+    frame needs the address a person would type.
+
+    Empty is the right default and the useful one: under ingress the panel is
+    already ON Home Assistant's origin, so a root-relative `/lovelace/0`
+    resolves to HA and is same-origin, which is also the only arrangement in
+    which HA will agree to be framed at all.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    return str(settings.get('ha_browser_url') or '').rstrip('/')
+
+
+def _tile_ha_dashboard(now, config=None, settings=None, **_):
+    """A dashboard view of theirs, framed.
+
+    The board sends a URL and nothing else. It deliberately does NOT try to
+    verify the view exists: that would mean fetching HA's frontend from the
+    server, which proves nothing about whether the BROWSER can load it — the
+    frame's two real failure modes are "not signed in" and "refused to be
+    framed", and both are the browser's business, not ours.
+    """
+    if not ha_configured():
+        return None                       # see _tile_ha: unused, not quiet
+    path = _cfg_str(config, 'path')
+    if not path:
+        return {'empty': "Pick a dashboard view in board setup."}
+    base = ha_browser_base(settings)
+    if path.startswith(('http://', 'https://')):
+        url = path
+    else:
+        url = f"{base}/{path.lstrip('/')}"
+    return {
+        'url': url,
+        # Read off the RESOLVED url, not off whether a base is configured — a
+        # `path` typed as a full https:// address is cross-origin however empty
+        # the setting is. Only a root-relative url is same-origin, and
+        # same-origin is the only arrangement in which Home Assistant reliably
+        # agrees to be framed at all.
+        'same_origin': not url.startswith(('http://', 'https://')),
+        'refresh_seconds': _cfg_int(config, 'refresh_seconds', 0, 0, 86400),
+    }
 
 
 def _tile_intake(now, **_):
@@ -1787,6 +1876,7 @@ _BUILDERS: dict = {
     'trips': _tile_trips,
     'map': _tile_map, 'intake': _tile_intake,
     'ha': _tile_ha, 'ha_image': _tile_ha_image,
+    'ha_dashboard': _tile_ha_dashboard,
 }
 
 
@@ -2452,7 +2542,7 @@ def catalog() -> dict:
         # The hand path for property 1. These two tiles do not exist without a
         # Home Assistant, so the palette says so instead of letting somebody
         # add one and wonder why the wall never shows it.
-        if w['key'] in ('ha', 'ha_image'):
+        if w['key'] in ('ha', 'ha_image', 'ha_dashboard'):
             w['requires'] = 'Home Assistant'
             w['available'] = ha_ok
         widgets.append(w)

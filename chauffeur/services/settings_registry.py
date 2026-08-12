@@ -279,6 +279,12 @@ ENTRIES: List[dict] = [
     _e('public_base_url', 'integrations', 'Public URL',
        'The address push notifications and share links point back to.'),
     _e('ha_base_url', 'integrations', 'Home Assistant URL', 'Where Home Assistant lives.'),
+    _e('ha_browser_url', 'panel', 'Home Assistant address for the panel',
+       'Where a BROWSER reaches Home Assistant, for the dashboard tile — '
+       'e.g. http://homeassistant.local:8123. Leave empty when the panel '
+       'is opened through Home Assistant itself, which is the only '
+       'arrangement where framing a dashboard reliably works.',
+       page='home', anchor='panel-setup'),
     _e('ha_token', 'integrations', 'Home Assistant token', 'A long-lived access token.'),
     _e('ma_server_url', 'integrations', 'Music Assistant URL', 'Where Music Assistant lives.'),
     _e('stage_cutoffs', 'kids', 'When the kid stages change',

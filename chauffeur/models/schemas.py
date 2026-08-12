@@ -857,6 +857,13 @@ class Settings(BaseModel):
     public_base_url: str = ""
     ha_base_url: str = ""
     ha_token: str = ""
+    # Where a BROWSER reaches Home Assistant, which is a different question
+    # from where the server does: under the Supervisor `ha_base_url` is
+    # `http://supervisor/core`, correct for us and meaningless in a browser.
+    # Only the board's dashboard-frame tile needs it. Empty means "the panel is
+    # already on Home Assistant's origin" (ingress), which is also the only
+    # arrangement where HA will agree to be framed.
+    ha_browser_url: str = ""
     # Music Assistant server for the Sendspin phone-player relay, e.g.
     # "ws://192.168.1.50:8927". Empty = auto-discover (official add-on
     # hostname, then the HA host on port 8927).

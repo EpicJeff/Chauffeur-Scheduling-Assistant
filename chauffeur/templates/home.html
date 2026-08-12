@@ -754,6 +754,24 @@
                         </div>
                     </template>
 
+                    <!-- A real Home Assistant dashboard view, framed. The
+                         honest answer to "render HA cards": you cannot run a
+                         Lovelace card here, so let HA render it and give it a
+                         rectangle. Put one card on a view and point at it.
+
+                         No sandbox attribute: a dashboard needs its own
+                         scripts, its websocket and its storage, and sandboxing
+                         it would produce a blank frame with a mysterious
+                         console error. The frame is HA's own page on HA's own
+                         origin — it is not a place to apply our containment. -->
+                    <template x-if="t.type === 'ha_dashboard' && !t.data.empty">
+                        <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden bg-gray-900">
+                            <iframe :src="haFrameSrc(t)" :title="t.data.url"
+                                class="absolute inset-0 w-full h-full border-0"
+                                referrerpolicy="same-origin"></iframe>
+                        </div>
+                    </template>
+
                     <template x-if="t.type === 'intake' && !t.data.empty">
                         <div class="flex items-baseline gap-3">
                             <span class="text-4xl font-black tabular-nums text-indigo-300"
@@ -1115,6 +1133,24 @@
                         <em>mountains at dusk</em>, <em>our town</em> — and one gets found
                         for you. Leave it empty for the plain gradient.
                     </p>
+                    <!-- Only the dashboard-frame tile uses this, and it is
+                         here rather than on the config page because this is
+                         where somebody is standing when they add that tile.
+                         (Settings live with the feature — config.html is not a
+                         drawer of every knob in the app.) -->
+                    <label class="block text-[0.7rem] font-bold uppercase tracking-wider text-gray-500 mb-1">
+                        Home Assistant address (for the dashboard tile)
+                    </label>
+                    <input type="text" x-model="draft.ha_browser_url"
+                        placeholder="empty when the panel is opened through Home Assistant"
+                        class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 mb-1">
+                    <p class="text-[0.7rem] text-gray-600 mb-6">
+                        Leave this empty if you open the panel through Home Assistant —
+                        the frame is then on HA's own origin, which is the only
+                        arrangement where it reliably loads. On a standalone panel HA
+                        usually refuses to be framed by another origin whatever you put here.
+                    </p>
+
                     <input type="text" x-model="draft.panel_background"
                         placeholder="mountains at dusk"
                         class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-600 mb-4">
@@ -1488,7 +1524,14 @@
                 // and must never scroll (scrolling a timeline hides the hour
                 // you are standing in). Named separately from the mosaics
                 // because they are not pictures.
-                DRAWN_TILES: ['map', 'drives'],
+                // `ha_image` belongs here and its absence was a real bug: the
+                // camera tile's picture is a `flex-1` box with an absolutely
+                // positioned <img> in it, and in a NON-flex parent `flex-1`
+                // does nothing, so the box was zero pixels tall and the photo
+                // had nowhere to be drawn. Nothing errored, nothing logged —
+                // the tile just showed its heading over nothing, which is the
+                // failure mode this whole board keeps having to design against.
+                DRAWN_TILES: ['map', 'drives', 'ha_image', 'ha_dashboard'],
                 fillsTile(key) {
                     return this.isMosaic(key) || this.DRAWN_TILES.includes(key);
                 },
@@ -1726,6 +1769,7 @@
                             panel_theme_sunrise_offset_minutes:
                                 s.panel_theme_sunrise_offset_minutes ?? 0,
                             panel_background: s.panel_background || '',
+                            ha_browser_url: s.ha_browser_url || '',
                             panel_page_backgrounds: { ...(s.panel_page_backgrounds || {}) },
                             // Same absent-vs-zero discipline as idle return:
                             // stored settings predate the screensaver, so
@@ -1796,7 +1840,7 @@
                 // been a link to the page it summarises; the Home Assistant
                 // tiles summarise nothing of ours, and a link to a page that
                 // does not exist is a tap that empties the wall.
-                PAGELESS: ['ha', 'ha_image'],
+                PAGELESS: ['ha', 'ha_image', 'ha_dashboard'],
                 opens(type) {
                     return !this.PAGELESS.includes(type);
                 },
@@ -1808,6 +1852,17 @@
                 haImageFailed: {},
                 haImageSrc(tile) {
                     const base = this.apiBase + (tile.data.url || '');
+                    const every = tile.data.refresh_seconds || 0;
+                    if (!every) return base;
+                    const bucket = Math.floor(this.haImageTick / every);
+                    return base + (base.includes('?') ? '&' : '?') + 'v=' + bucket;
+                },
+
+                // Same cache-buster as the camera, same shared clock. 0 is
+                // the default and the right one: a dashboard is live already,
+                // and reloading it only costs a flash of white.
+                haFrameSrc(tile) {
+                    const base = tile.data.url || '';
                     const every = tile.data.refresh_seconds || 0;
                     if (!every) return base;
                     const bucket = Math.floor(this.haImageTick / every);
@@ -2056,6 +2111,7 @@
                                     Math.min(240, Math.max(-240,
                                         parseInt(this.draft.panel_theme_sunrise_offset_minutes, 10) || 0)),
                                 panel_background: this.draft.panel_background,
+                                ha_browser_url: (this.draft.ha_browser_url || '').trim(),
                                 panel_page_backgrounds: this.draft.panel_page_backgrounds,
                                 panel_screensaver_enabled: !!this.draft.panel_screensaver_enabled,
                                 panel_screensaver_idle_seconds:
