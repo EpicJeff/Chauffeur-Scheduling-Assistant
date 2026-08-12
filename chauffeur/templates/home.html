@@ -157,6 +157,74 @@
             font-size: 0.85rem;
         }
         .nc-unsupported span { font-size: 0.7rem; opacity: 0.75; }
+        /* The sparkline stretches to its cell rather than to a pixel width the
+           server would have had to guess when it computed the points. */
+        .nc-sensor { display: flex; flex-direction: column; gap: 0.3rem; }
+        .nc-spark { display: block; width: 100%; height: 3rem; }
+        .nc-spark-empty { font-size: 0.75rem; color: var(--panel-dim); }
+        .nc-spark-range {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.65rem;
+            color: var(--panel-dim);
+            font-variant-numeric: tabular-nums;
+        }
+        .nc-thermo { text-align: center; }
+        .nc-thermo-now {
+            font-weight: 800;
+            font-size: 1.6rem;
+            line-height: 1;
+            color: var(--panel-fg);
+            font-variant-numeric: tabular-nums;
+        }
+        .nc-thermo-now span { font-size: 0.8rem; margin-left: 0.1rem; color: var(--panel-dim); }
+        .nc-thermo-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.6rem;
+            margin-top: 0.25rem;
+        }
+        .nc-thermo-target {
+            font-weight: 700;
+            color: var(--panel-fg);
+            font-variant-numeric: tabular-nums;
+            min-width: 3ch;
+        }
+        .nc-step {
+            width: 1.9rem;
+            height: 1.9rem;
+            border-radius: 999px;
+            background: var(--panel-card-hi);
+            color: var(--panel-fg);
+            font-size: 1.1rem;
+            line-height: 1;
+            cursor: pointer;
+        }
+        .nc-thermo-name { font-size: 0.75rem; color: var(--panel-dim); margin-top: 0.2rem; }
+        .nc-thermo-action { color: var(--panel-fg); font-weight: 700; }
+        .nc-area { display: flex; flex-direction: column; gap: 0.4rem; }
+        .nc-area-head { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+        .nc-area-reading {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--panel-fg);
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+        .nc-area-alert { color: #fbbf24; }
+        .nc-area-toggles { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+        .nc-area-toggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2rem;
+            height: 2rem;
+            border-radius: 999px;
+            background: var(--panel-card-hi);
+            color: var(--panel-dim);
+        }
+        .nc-area-toggle.is-on { color: var(--panel-accent); }
         .nc-gauge { text-align: center; }
         /* `margin: 0 auto`, NOT the parent's text-align.
            Tailwind's preflight sets `svg { display: block }`, so the arc is a
@@ -2535,6 +2603,12 @@
                                     this.esc(c.name)}</span>${this.reading(c)}</span></div>`;
                         case 'gauge':
                             return this.drawGauge(c);
+                        case 'sensor':
+                            return this.drawSensor(c);
+                        case 'thermostat':
+                            return this.drawThermostat(c);
+                        case 'area':
+                            return this.drawArea(c);
                         case 'markdown':
                             // Already escaped server-side, by the same rule.
                             return title + `<div class="nc-md">${c.html || ''}</div>`;
@@ -2602,6 +2676,104 @@
                       </div>`;
                 },
 
+                // The reading, then where it has been. The line is drawn in its
+                // OWN coordinate space (0..100 across, 0..30 down) with
+                // preserveAspectRatio="none", so it stretches to whatever cell
+                // the stack gave it without the points needing to know the
+                // pixel width — which the server, where they are computed,
+                // cannot know.
+                drawSensor(c) {
+                    const pts = c.points || [];
+                    let graph = '';
+                    if (pts.length > 1) {
+                        const lo = c.min, hi = c.max;
+                        const span = (hi - lo) || 1;
+                        const step = 100 / (pts.length - 1);
+                        const xy = pts.map((v, i) =>
+                            `${(i * step).toFixed(2)},${(30 - ((v - lo) / span) * 28).toFixed(2)}`);
+                        graph = `<svg class="nc-spark" viewBox="0 0 100 30"
+                                      preserveAspectRatio="none">
+                            <polyline points="${xy.join(' ')}" fill="none"
+                                stroke="var(--panel-accent)" stroke-width="1.5"
+                                stroke-linejoin="round" stroke-linecap="round"
+                                vector-effect="non-scaling-stroke"></polyline>
+                          </svg>`;
+                    } else if (pts.length === 0) {
+                        // Said, not left blank. A card with an empty rectangle
+                        // under it is indistinguishable from one that failed.
+                        graph = `<div class="nc-spark-empty">no history yet</div>`;
+                    }
+                    const range = (c.min != null && c.max != null && pts.length > 1)
+                        ? `<div class="nc-spark-range"><span>${this.esc(c.min)}</span>`
+                          + `<span>${this.esc(c.max)}</span></div>` : '';
+                    return `<div class="nc-sensor">
+                        <div class="nc-entity">${this.icon(c.icon)}
+                          <span class="nc-name">${this.esc(c.name)}</span>
+                          ${this.reading(c)}</div>
+                        ${graph}${range}
+                      </div>`;
+                },
+
+                // The same arc the gauge uses, because they are the same
+                // drawing: a number inside a range. What differs is which
+                // number is big — a thermostat is read for what the room IS,
+                // and set by what it is told to be.
+                drawThermostat(c) {
+                    const len = Math.PI * 40;
+                    const pct = c.pct == null ? 0 : c.pct;
+                    const colour = { warm: '#f97316', cool: '#38bdf8' }[c.tone]
+                        || 'var(--panel-accent)';
+                    const target = c.target_low != null && c.target_high != null
+                        ? `${this.esc(c.target_low)}–${this.esc(c.target_high)}`
+                        : (c.target != null ? this.esc(c.target) : '—');
+                    return `<div class="nc-thermo" data-climate="${this.esc(c.entity_id)}">
+                        <svg viewBox="0 0 100 56" class="nc-gauge-svg">
+                          <path d="M10,50 A40,40 0 0 1 90,50" fill="none"
+                                stroke="var(--panel-line)" stroke-width="9"
+                                stroke-linecap="round"></path>
+                          <path d="M10,50 A40,40 0 0 1 90,50" fill="none"
+                                stroke="${colour}" stroke-width="9" stroke-linecap="round"
+                                stroke-dasharray="${(len * pct).toFixed(2)} ${len.toFixed(2)}"></path>
+                        </svg>
+                        <div class="nc-thermo-now">${c.missing ? '—'
+                            : this.esc(c.current ?? '—')}<span>${this.esc(c.unit || '')}</span></div>
+                        <div class="nc-thermo-row">
+                          <button class="nc-step" data-step="-1" type="button">−</button>
+                          <span class="nc-thermo-target">${target}</span>
+                          <button class="nc-step" data-step="1" type="button">+</button>
+                        </div>
+                        <div class="nc-thermo-name">${this.esc(c.name)}${c.action
+                            ? ` · <span class="nc-thermo-action">${this.esc(c.action)}</span>`
+                            : ''}</div>
+                      </div>`;
+                },
+
+                drawArea(c) {
+                    if (c.empty) {
+                        return `<div class="nc-area"><div class="nc-name">${
+                            this.esc(c.name)}</div><div class="nc-spark-empty">`
+                            + `nothing in this area yet</div></div>`;
+                    }
+                    const readings = (c.readings || []).map(r =>
+                        `<span class="nc-area-reading">${this.esc(r.state)}${
+                            r.unit ? this.esc(r.unit) : ''}</span>`).join('');
+                    const alerts = (c.alerts || []).map(a =>
+                        `<span class="nc-area-alert" title="${this.esc(a.name)}">${
+                            this.icon(a.icon)}</span>`).join('');
+                    const toggles = (c.toggles || []).map(t =>
+                        `<span class="nc-area-toggle${t.on ? ' is-on' : ''}"
+                               data-toggle="${this.esc(t.entity_id)}"
+                               title="${this.esc(t.name)}">${this.icon(t.icon)}</span>`
+                    ).join('');
+                    return `<div class="nc-area">
+                        <div class="nc-area-head">
+                          <span class="nc-name">${this.esc(c.name)}</span>
+                          ${readings}${alerts}
+                        </div>
+                        <div class="nc-area-toggles">${toggles}</div>
+                      </div>`;
+                },
+
                 // One handler for the whole card, on the container: the drawing
                 // is an HTML string, so per-element listeners would have to be
                 // re-attached on every board poll. Only entities the SERVER
@@ -2609,15 +2781,36 @@
                 // checks the domain again anyway.
                 async nativeCardTap(e, t) {
                     if (!t.data.interactive) return;
+                    // A thermostat's arrows send a DIRECTION, never a
+                    // temperature — the step size and the range it may move
+                    // within are read off the entity, on the server.
+                    const step = e.target.closest('[data-step]');
+                    if (step) {
+                        const dial = step.closest('[data-climate]');
+                        if (!dial) return;
+                        e.preventDefault();
+                        await this.post('api/ha/card/climate', {
+                            entity_id: dial.dataset.climate,
+                            step: parseInt(step.dataset.step, 10),
+                        });
+                        return;
+                    }
                     const hit = e.target.closest('[data-toggle]');
                     if (!hit) return;
                     e.preventDefault();
+                    await this.post('api/ha/toggle', { entity_id: hit.dataset.toggle });
+                },
+
+                async post(path, body) {
                     try {
-                        await fetch(this.apiBase + 'api/ha/toggle', {
+                        await fetch(this.apiBase + path, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ entity_id: hit.dataset.toggle }),
+                            body: JSON.stringify(body),
                         });
+                        // Refetched rather than guessed: the board is the
+                        // truth, and a card that flips optimistically and then
+                        // flips back is worse than one that takes a moment.
                         this.load();
                     } catch (err) { /* the next poll is the truth either way */ }
                 },

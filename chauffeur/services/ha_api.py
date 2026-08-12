@@ -211,6 +211,56 @@ def fetch_static(path: str):
     return None
 
 
+_history_cache = {}
+_HISTORY_TTL = 300
+
+
+def get_history(entity_id: str, hours: int = 24) -> list:
+    """[(datetime, state_string)] for one entity over the last `hours`.
+
+    Cached for five minutes, which is not laziness: the board rebuilds every
+    twenty seconds and a graph card would otherwise run a history query per
+    sensor per rebuild, forever, on a display nobody is looking at. A 24-hour
+    line does not visibly change in five minutes.
+
+    `minimal_response` and `no_attributes` are what keep this cheap — the full
+    shape carries every attribute on every sample, and a graph needs a number
+    and a timestamp.
+    """
+    import datetime as _dt
+    key = (entity_id, int(hours))
+    now = time.time()
+    with _cache_lock:
+        held = _history_cache.get(key)
+        if held and now - held[0] < _HISTORY_TTL:
+            return held[1]
+    start = (_dt.datetime.now(_dt.timezone.utc)
+             - _dt.timedelta(hours=max(1, int(hours))))
+    data = _request('GET', f'/history/period/{start.isoformat()}', params={
+        'filter_entity_id': entity_id,
+        'minimal_response': '',
+        'no_attributes': '',
+        'significant_changes_only': '0',
+    })
+    rows = []
+    for series in (data or []):
+        for point in (series or []):
+            stamp = point.get('last_changed') or point.get('last_updated')
+            if stamp and point.get('state') is not None:
+                rows.append((stamp, point.get('state')))
+    with _cache_lock:
+        # A failed fetch caches NOTHING, so a graph that could not load tries
+        # again on the next rebuild rather than showing an empty line for five
+        # minutes because Home Assistant was restarting.
+        if data is not None:
+            _history_cache[key] = (now, rows)
+            if len(_history_cache) > 40:
+                _history_cache.pop(next(iter(_history_cache)), None)
+        elif held:
+            return held[1]
+    return rows
+
+
 def get_config_entry_id(domain: str):
     """Config entry id for an integration (e.g. 'music_assistant') — required
     by MA's search/get_library services. Uses HA's config-entries HTTP view

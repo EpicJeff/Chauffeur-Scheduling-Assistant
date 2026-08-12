@@ -4569,6 +4569,54 @@ def ha_card_mdi(name: str):
         raise HTTPException(status_code=404, detail="No such icon")
     return JSONResponse({'path': path}, headers={'Cache-Control': 'max-age=86400'})
 
+class HaClimateStepRequest(BaseModel):
+    entity_id: str
+    step: int          # -1 or +1; the SIZE comes from the entity, not the caller
+
+@app.post("/api/ha/card/climate")
+def ha_card_climate(req: HaClimateStepRequest):
+    """Nudge a thermostat's setpoint, from a thermostat card.
+
+    Deliberately NOT the generic service endpoint with `climate` added to its
+    allowlist. That endpoint takes a service name and a payload from the
+    browser; this takes a direction, and everything else — which entity
+    attribute is the setpoint, how big a step is, and the range it may move
+    within — is read from Home Assistant here. A wall panel in a kitchen is
+    reachable by everybody in the house, and the difference between "up one"
+    and "set to 92" is the whole safety story.
+
+    Dual-setpoint thermostats (a heat/cool range) are refused rather than
+    guessed at: moving one end of a range without saying which end is a
+    coin flip with somebody's heating bill.
+    """
+    from services import ha_api, home_board
+    if not home_board.ha_available():
+        raise HTTPException(status_code=503, detail="Home Assistant is not reachable")
+    entity_id = (req.entity_id or '').strip()
+    if not entity_id.startswith('climate.'):
+        raise HTTPException(status_code=400, detail="Not a thermostat")
+    state = ha_api.get_state(entity_id) or {}
+    attrs = state.get('attributes') or {}
+    if attrs.get('target_temp_low') is not None:
+        raise HTTPException(status_code=400,
+                            detail="This thermostat has a range, not a setpoint")
+    try:
+        current = float(attrs.get('temperature'))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="That thermostat has no setpoint")
+    try:
+        step = float(attrs.get('target_temp_step') or 0.5)
+    except (TypeError, ValueError):
+        step = 0.5
+    lo = float(attrs.get('min_temp') if attrs.get('min_temp') is not None else 45)
+    hi = float(attrs.get('max_temp') if attrs.get('max_temp') is not None else 95)
+    direction = 1 if (req.step or 0) > 0 else -1
+    wanted = max(lo, min(hi, current + direction * step))
+    if ha_api.call_service('climate', 'set_temperature',
+                           {'entity_id': entity_id, 'temperature': wanted}) is None:
+        raise HTTPException(status_code=502, detail="Home Assistant refused that")
+    return {'ok': True, 'temperature': wanted}
+
 class HaCardServiceRequest(BaseModel):
     domain: str
     service: str

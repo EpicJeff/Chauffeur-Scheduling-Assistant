@@ -44,6 +44,7 @@ import re
 NATIVE_CARDS = {
     'entities', 'glance', 'tile', 'gauge', 'markdown', 'picture-entity',
     'button', 'vertical-stack', 'horizontal-stack', 'grid',
+    'sensor', 'thermostat', 'area',
 }
 
 STACKS = {'vertical-stack': 'vertical', 'horizontal-stack': 'horizontal',
@@ -285,6 +286,183 @@ def _button_card(config, states):
             'show_state': config.get('show_state', False)}
 
 
+def _sensor_card(config, states):
+    """The mini graph card: a reading, and where it has been.
+
+    The only card here that needs HISTORY, which is why it arrived later than
+    the rest — a drawing is a pure function of a config and a state, and this
+    one is not. `ha_api.get_history` caches for five minutes so the board's
+    twenty-second rebuild does not turn into a history query per sensor per
+    rebuild forever.
+
+    Downsampled HERE rather than in the browser. A day of a chatty sensor is
+    thousands of samples, and shipping them to draw a line eighty pixels wide
+    would make the graph the largest thing in the board payload by an order of
+    magnitude.
+    """
+    from services import ha_api
+    entity_id = str(config.get('entity') or '').strip()
+    row = _row(entity_id, states, name=config.get('name'), icon=config.get('icon'))
+    hours = int(_num(config.get('hours_to_show')) or 24)
+    hours = max(1, min(168, hours))
+    # HA's own `detail`: 1 is hourly, 2 is finer. The cap is what keeps a week
+    # at detail 2 from becoming two thousand points nobody can see.
+    detail = 2 if int(_num(config.get('detail')) or 1) >= 2 else 1
+    buckets = min(96, hours * (12 if detail == 2 else 1)) or 1
+
+    points, lo, hi = [], None, None
+    if str(config.get('graph') or 'none').lower() == 'line' and entity_id:
+        import datetime as _dt
+        raw = []
+        for stamp, value in ha_api.get_history(entity_id, hours) or []:
+            num = _num(value)
+            if num is None:
+                continue                      # 'unavailable' is not a datum
+            try:
+                when = _dt.datetime.fromisoformat(str(stamp).replace('Z', '+00:00'))
+            except ValueError:
+                continue
+            raw.append((when.timestamp(), num))
+        if raw:
+            first, last = raw[0][0], raw[-1][0]
+            span = max(1.0, last - first)
+            sums = [[0.0, 0] for _ in range(buckets)]
+            for when, num in raw:
+                i = min(buckets - 1, int((when - first) / span * buckets))
+                sums[i][0] += num
+                sums[i][1] += 1
+            points = [round(s / n, 3) for s, n in sums if n]
+            if points:
+                lo, hi = min(points), max(points)
+    return {'kind': 'sensor', 'name': row['name'], 'icon': row['icon'],
+            'state': row['state'],
+            'unit': config.get('unit') or row.get('unit'),
+            'missing': row['missing'], 'points': points,
+            'min': lo, 'max': hi, 'hours': hours}
+
+
+# What a climate entity is DOING, as against what it is set to. The two
+# disagree constantly — a thermostat set to heat is idle most of the time —
+# and the one somebody walking past wants is the action.
+_HVAC_ACTION_LABEL = {
+    'heating': 'Heating', 'cooling': 'Cooling', 'drying': 'Drying',
+    'fan': 'Fan', 'idle': 'Idle', 'off': 'Off', 'preheating': 'Preheating',
+}
+_HVAC_ACTION_COLOUR = {
+    'heating': 'warm', 'preheating': 'warm', 'cooling': 'cool', 'drying': 'cool',
+}
+
+
+def _thermostat_card(config, states):
+    """A climate entity, as a dial.
+
+    Read-only unless the tile's own interactive switch is on, and even then
+    only the setpoint moves — the mode, the presets and the fan are a control
+    panel, and a control panel on a kitchen wall at child height is a different
+    conversation from a number two arrows can nudge.
+    """
+    entity_id = str(config.get('entity') or '').strip()
+    st = (states or {}).get(entity_id) or {}
+    attrs = st.get('attributes') or {}
+    row = _row(entity_id, states, name=config.get('name'))
+    current = _num(attrs.get('current_temperature'))
+    target = _num(attrs.get('temperature'))
+    lo = _num(attrs.get('target_temp_low'))
+    hi = _num(attrs.get('target_temp_high'))
+    floor = _num(attrs.get('min_temp'))
+    ceiling = _num(attrs.get('max_temp'))
+    floor = 45.0 if floor is None else floor
+    ceiling = 95.0 if ceiling is None else ceiling
+    if ceiling <= floor:
+        ceiling = floor + 1
+    action = str(attrs.get('hvac_action') or '').lower()
+    # The dial's fill tracks the TARGET, because that is the number the arrows
+    # move and the one the drawing has to make legible when it changes.
+    pin = target if target is not None else current
+    pct = None if pin is None else max(0.0, min(1.0, (pin - floor) / (ceiling - floor)))
+    return {'kind': 'thermostat', 'entity_id': entity_id, 'name': row['name'],
+            'missing': row['missing'], 'current': current, 'target': target,
+            'target_low': lo, 'target_high': hi,
+            'min': floor, 'max': ceiling, 'pct': pct,
+            'mode': st.get('state'),
+            'action': _HVAC_ACTION_LABEL.get(action, action.title() or None),
+            'tone': _HVAC_ACTION_COLOUR.get(action),
+            'step': _num(attrs.get('target_temp_step')) or 0.5,
+            'unit': attrs.get('unit_of_measurement') or '°'}
+
+
+# What an area card puts on screen, by device class. HA's own defaults, because
+# a household that has arranged their areas in Home Assistant expects the same
+# card to say the same things here.
+_AREA_SENSORS = ('temperature', 'humidity')
+_AREA_ALERTS = ('motion', 'moisture', 'door', 'window', 'smoke', 'gas')
+_AREA_TOGGLES = ('light', 'switch', 'fan')
+
+
+def area_entities(area_ref):
+    """The entity ids in an area, by id or by name.
+
+    Resolved through `ha_api.get_area_map`, which uses HA's own
+    `area_entities()` template function — that is what picks up entities whose
+    area comes from their DEVICE rather than from themselves, which is most of
+    them, and is exactly the logic not worth reimplementing here.
+    """
+    from services import ha_api
+    want = str(area_ref or '').strip().lower()
+    if not want:
+        return []
+    for area in ha_api.get_area_map() or []:
+        if str(area.get('id') or '').lower() == want \
+                or str(area.get('name') or '').lower() == want:
+            return [e for e in (area.get('entities') or []) if isinstance(e, str)]
+    return []
+
+
+def _area_card(config, states):
+    ref = config.get('area') or config.get('area_id') or ''
+    ids = area_entities(ref)
+    sensor_classes = config.get('sensor_classes') or _AREA_SENSORS
+    alert_classes = config.get('alert_classes') or _AREA_ALERTS
+
+    readings, alerts, toggles = [], [], []
+    for entity_id in ids:
+        st = (states or {}).get(entity_id)
+        if not st:
+            continue
+        attrs = st.get('attributes') or {}
+        cls = str(attrs.get('device_class') or '').lower()
+        domain = _domain(entity_id)
+        if domain == 'sensor' and cls in sensor_classes:
+            readings.append({'class': cls, 'state': st.get('state'),
+                             'unit': attrs.get('unit_of_measurement'),
+                             'name': attrs.get('friendly_name') or entity_id})
+        elif domain == 'binary_sensor' and cls in alert_classes:
+            if str(st.get('state') or '').lower() == 'on':
+                alerts.append({'class': cls,
+                               'icon': attrs.get('icon') or 'mdi:alert',
+                               'name': attrs.get('friendly_name') or entity_id})
+        elif domain in _AREA_TOGGLES:
+            toggles.append(_row(entity_id, states))
+
+    name = config.get('name')
+    if not name:
+        from services import ha_api
+        for area in ha_api.get_area_map() or []:
+            if str(area.get('id') or '').lower() == str(ref).lower():
+                name = area.get('name')
+                break
+    on = [t for t in toggles if t['on']]
+    return {'kind': 'area', 'name': name or str(ref) or 'Area',
+            'picture': config.get('image'),
+            'readings': readings[:3], 'alerts': alerts[:4],
+            'toggles': sorted(toggles, key=lambda t: (not t['on'], t['name']))[:6],
+            'on_count': len(on),
+            # An area nobody has put entities in is a REAL answer and a
+            # different one from an area that does not exist.
+            'empty': (not ids),
+            'unknown': (not ids and not area_entities(ref))}
+
+
 def convert(config, states, depth=0, hosts=None):
     """A card config -> a drawing instruction, or None.
 
@@ -345,6 +523,12 @@ def convert(config, states, depth=0, hosts=None):
         return _picture_entity_card(config, states)
     if kind == 'button':
         return _button_card(config, states)
+    if kind == 'sensor':
+        return _sensor_card(config, states)
+    if kind == 'thermostat':
+        return _thermostat_card(config, states)
+    if kind == 'area':
+        return _area_card(config, states)
     # Named, and it keeps its place in the layout. This is the same rule the
     # top level follows — a card that vanishes silently is indistinguishable
     # from a card that failed — except that inside a stack it also matters that
@@ -376,6 +560,11 @@ def entity_ids(config, depth=0):
         # nothing here knows which of its keys hold entity ids.
         from services import ha_cards
         return list(ha_cards.entity_ids(config))
+    if kind == 'area':
+        # An area card names no entities at all — it names an AREA, and the
+        # entities come from Home Assistant's registry. Without this the card
+        # would be handed an empty states map and draw an empty room.
+        return area_entities(config.get('area') or config.get('area_id') or '')
     for key in ('entity', 'camera_image'):
         val = config.get(key)
         if isinstance(val, str) and '.' in val:

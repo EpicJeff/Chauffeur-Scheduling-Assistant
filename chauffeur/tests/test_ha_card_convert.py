@@ -147,9 +147,9 @@ def scenario_a_real_dashboard_stack_keeps_every_card():
             {'type': 'gauge', 'entity': 'sensor.battery', 'min': 0, 'max': 100},
         ]},
         {'type': 'vertical-stack', 'cards': [
-            {'type': 'sensor', 'graph': 'line', 'entity': 'sensor.solar',
-             'name': 'Solar Energy'},
-            {'type': 'sensor', 'graph': 'line', 'entity': 'sensor.imported'},
+            {'type': 'history-graph', 'entities': ['sensor.solar'],
+             'title': 'Solar Energy'},
+            {'type': 'media-control', 'entity': 'media_player.kitchen'},
         ]},
     ]}
     hosts = {}
@@ -164,12 +164,14 @@ def scenario_a_real_dashboard_stack_keeps_every_card():
           f"the hosted card lost its element name: {left['cards'][0]}")
     check(left['cards'][1]['kind'] == 'gauge', "the gauge stopped converting")
 
-    check(len(right['cards']) == 2, f"the graph column collapsed: {right}")
+    check(len(right['cards']) == 2, f"the column collapsed: {right}")
     for node in right['cards']:
-        check(node['kind'] == 'unsupported' and node['type'] == 'sensor',
+        check(node['kind'] == 'unsupported',
               f"an undrawable card vanished instead of being named: {node}")
     check(right['cards'][0]['name'] == 'Solar Energy',
           "the placeholder does not say which card it stands for")
+    check(right['cards'][0]['type'] == 'history-graph',
+          f"the placeholder does not name the card type: {right['cards'][0]}")
 
     # The host is collected so its file can be resolved once for the tree.
     check(list(hosts) == ['h0'] and hosts['h0']['tag'] ==
@@ -231,11 +233,125 @@ def scenario_everything_drawn_is_escaped():
           f"the markdown subset stopped working: {out}")
 
 
+def scenario_a_sensor_card_downsamples_its_own_history():
+    """The only card here that is not a pure function of a config and a state.
+
+    Downsampled SERVER-side: a day of a chatty sensor is thousands of samples,
+    and shipping them to draw a line eighty pixels wide would make the graph
+    the largest thing in the board payload by an order of magnitude.
+    """
+    from services import ha_api
+    real = ha_api.get_history
+    try:
+        # Four hours of readings, one a minute, with two junk values in it —
+        # 'unavailable' is not a datum and must not become 0 and dent the line.
+        import datetime as dt
+        base = dt.datetime(2026, 8, 12, 6, 0, tzinfo=dt.timezone.utc)
+        rows = []
+        for i in range(240):
+            value = 'unavailable' if i in (7, 88) else str(20 + (i % 60) / 10)
+            rows.append(((base + dt.timedelta(minutes=i)).isoformat(), value))
+        ha_api.get_history = lambda entity_id, hours=24: rows
+
+        card = conv.convert({'type': 'sensor', 'entity': 'sensor.grid_power',
+                             'graph': 'line', 'hours_to_show': 4,
+                             'name': 'Solar'}, STATES)
+        check(card['kind'] == 'sensor' and card['name'] == 'Solar', f"wrong card: {card}")
+        check(1 < len(card['points']) <= 96,
+              f"the history was not downsampled: {len(card['points'])} points")
+        check(all(isinstance(p, float) for p in card['points']),
+              "a non-numeric sample became part of the line")
+        check(card['min'] <= card['max'], f"the range is inverted: {card}")
+        check(card['min'] >= 20.0, f"'unavailable' was counted as a value: {card['min']}")
+
+        # `graph: none` is a reading with no line, and must not query history.
+        asked = []
+        ha_api.get_history = lambda entity_id, hours=24: (asked.append(1), rows)[1]
+        plain = conv.convert({'type': 'sensor', 'entity': 'sensor.grid_power'}, STATES)
+        check(plain['points'] == [] and not asked,
+              "a card with no graph still went and fetched a day of history")
+    finally:
+        ha_api.get_history = real
+
+
+def scenario_a_thermostat_says_what_it_is_doing():
+    """The mode and the ACTION disagree constantly — a thermostat set to heat
+    is idle most of the time — and the one somebody walking past wants is the
+    action."""
+    states = {}
+    states.update(st('climate.hall', 'heat', friendly_name='Hall',
+                     current_temperature=68, temperature=71,
+                     min_temp=45, max_temp=95, target_temp_step=1,
+                     hvac_action='heating'))
+    card = conv.convert({'type': 'thermostat', 'entity': 'climate.hall'}, states)
+    check(card['current'] == 68.0 and card['target'] == 71.0, f"wrong readings: {card}")
+    check(card['action'] == 'Heating' and card['mode'] == 'heat',
+          f"the action and the mode are not both carried: {card}")
+    check(card['tone'] == 'warm', "a heating thermostat is not drawn warm")
+    # The dial tracks the TARGET, which is the number the arrows move.
+    check(abs(card['pct'] - (71 - 45) / (95 - 45)) < 0.001, f"wrong fill: {card['pct']}")
+
+    # A range thermostat carries both ends rather than picking one.
+    states.update(st('climate.range', 'heat_cool', current_temperature=70,
+                     target_temp_low=68, target_temp_high=74,
+                     min_temp=45, max_temp=95))
+    both = conv.convert({'type': 'thermostat', 'entity': 'climate.range'}, states)
+    check(both['target_low'] == 68.0 and both['target_high'] == 74.0,
+          f"a dual setpoint was collapsed: {both}")
+
+    # And a missing entity does not become a thermostat reading 0.
+    gone = conv.convert({'type': 'thermostat', 'entity': 'climate.nope'}, states)
+    check(gone['missing'] and gone['current'] is None,
+          f"a missing thermostat invented a temperature: {gone}")
+
+
+def scenario_an_area_card_asks_home_assistant_what_is_in_the_room():
+    """An area card names no entities at all — it names an AREA, and the
+    entities come from HA's registry. Without resolving that, the card would be
+    handed an empty states map and draw an empty room."""
+    from services import ha_api
+    real = ha_api.get_area_map
+    try:
+        ha_api.get_area_map = lambda ttl=60: [
+            {'id': 'kitchen', 'name': 'Kitchen',
+             'entities': ['light.kitchen', 'sensor.kitchen_temp',
+                          'binary_sensor.kitchen_motion', 'sensor.grid_power']},
+        ]
+        ids = conv.entity_ids({'type': 'area', 'area': 'kitchen'})
+        check('light.kitchen' in ids and 'sensor.kitchen_temp' in ids,
+              f"the area's entities were not requested: {ids}")
+
+        states = dict(STATES)
+        states.update(st('sensor.kitchen_temp', '71',
+                         unit_of_measurement='°F', device_class='temperature'))
+        states.update(st('binary_sensor.kitchen_motion', 'on',
+                         device_class='motion', friendly_name='Motion'))
+        card = conv.convert({'type': 'area', 'area': 'kitchen'}, states)
+        check(card['name'] == 'Kitchen', f"the area lost its name: {card['name']}")
+        check([r['class'] for r in card['readings']] == ['temperature'],
+              f"the readings are wrong: {card['readings']}")
+        check(len(card['alerts']) == 1 and card['alerts'][0]['class'] == 'motion',
+              f"an active alert was missed: {card['alerts']}")
+        check([t['entity_id'] for t in card['toggles']] == ['light.kitchen'],
+              f"the room's switches are wrong: {card['toggles']}")
+        # A sensor in the room that is not a listed class is NOT a reading —
+        # an area card is a summary, not a dump of everything in the room.
+        check(all(r['class'] in ('temperature', 'humidity') for r in card['readings']),
+              "the area card is showing every sensor in the room")
+
+        # An area that does not exist says so rather than drawing a blank room.
+        missing = conv.convert({'type': 'area', 'area': 'nowhere'}, states)
+        check(missing['empty'], f"an unknown area drew as a real one: {missing}")
+    finally:
+        ha_api.get_area_map = real
+
+
 def scenario_an_unsupported_built_in_is_refused_by_name():
     """The edge of the closed set, stated out loud. This is what stops "we
     support most of them" from turning into a blank box on a wall."""
     from services import ha_cards
-    for kind in ('history-graph', 'thermostat', 'statistic', 'media-control'):
+    for kind in ('history-graph', 'statistic', 'media-control', 'light',
+                 'energy-distribution'):
         check(kind not in conv.NATIVE_CARDS, f"{kind} is claimed but untested")
         out = ha_cards.prepare(f'type: {kind}\nentity: sensor.grid_power')
         check(out.get('error'), f"{kind} did not produce an error: {out}")

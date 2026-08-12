@@ -135,17 +135,34 @@ update — and the result can be told to fit its tile, which a hosted card
 cannot.
 
 Supported: `entities`, `glance`, `tile`, `gauge`, `markdown`,
-`picture-entity`, `button`, and the three stacks (`vertical-stack`,
-`horizontal-stack`, `grid`) that hold them.
+`picture-entity`, `button`, `sensor`, `thermostat`, `area`, and the three
+stacks (`vertical-stack`, `horizontal-stack`, `grid`) that hold them.
+
+Three of those need more than a config to draw:
+
+- **`sensor`** is the only card here that is not a pure function of a config
+  and a state - it needs history. `ha_api.get_history` caches for five minutes,
+  because the board rebuilds every twenty seconds and a graph card would
+  otherwise run a history query per sensor per rebuild forever. The line is
+  downsampled server-side (at most 96 buckets). `graph: none` never queries
+  history at all.
+- **`thermostat`** carries the mode AND the action, because they disagree
+  constantly - one set to heat is idle most of the time. Read-only unless the
+  tile's interactive switch is on, and even then only the setpoint moves.
+  `POST /api/ha/card/climate` takes a DIRECTION, not a temperature: the step
+  size and the permitted range are read off the entity server-side, and
+  dual-setpoint thermostats are refused rather than guessed at.
+- **`area`** names no entities at all; it names an area, and the entities come
+  from HA's registry via `ha_api.get_area_map` (which uses HA's own
+  `area_entities()`, so entities inheriting their area from their device are
+  picked up).
 
 Not supported, and why:
 
-- `history-graph`, `sensor`, `statistic` — need history or the statistics
-  websocket. That is different plumbing, not a different drawing.
-- `thermostat`, `light`, `media-control` — control surfaces with their own
-  interaction models. The board's rule is that a display does not change what
-  it is displaying; these need the tile's interactive switch and a careful
-  think about what a mis-tap costs.
+- `history-graph`, `statistic`, `energy-*` - a multi-entity chart, and the
+  statistics websocket, which is different plumbing.
+- `light`, `media-control` - control surfaces with their own interaction
+  models, needing a careful think about what a mis-tap costs.
 - `conditional`, `entity-filter` — logic rather than layout. The honest place
   for that is a tile option.
 
