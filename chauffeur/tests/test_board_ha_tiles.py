@@ -133,6 +133,44 @@ def scenario_home_assistant_being_down_is_not_an_exception():
               f"the {type_} tile returned {data!r} when HA threw")
 
 
+def scenario_locks_are_a_decision_not_a_default():
+    """They were refused outright, on the reasoning that a wall panel in a
+    kitchen is reachable by everybody in the house including the people who
+    cannot read yet. That is a good reason to make it a DECISION and not a good
+    enough reason to make it impossible — a household knows more about its own
+    doors than this file does.
+
+    The important half is that every surface asks the same question. A lock
+    that works from a native card and not from the entity tile is worse than
+    one that works from neither.
+    """
+    check('lock' not in home_board.toggle_domains({}),
+          "locks are operable by default")
+    allowed = home_board.toggle_domains({'panel_allow_unsafe_controls': True})
+    for domain in ('lock', 'cover', 'light', 'switch'):
+        check(domain in allowed, f"{domain} is not operable once allowed")
+
+    # Alarms are not covered and are not a toggle away. Disarming one is the
+    # single control here whose failure mode is not "somebody opened a door
+    # they could have opened anyway".
+    check('alarm_control_panel' not in allowed,
+          "an alarm became operable from a wall panel")
+
+    # And the converter asks home_board rather than keeping its own copy — two
+    # lists is how a lock ends up working from one card and not another.
+    from services import ha_card_convert
+    real = home_board.storage.get_settings
+    try:
+        home_board.storage.get_settings = lambda: {'panel_allow_unsafe_controls': True}
+        row = ha_card_convert.convert(
+            {'type': 'entities', 'entities': ['lock.front']},
+            {'lock.front': {'entity_id': 'lock.front', 'state': 'locked',
+                            'attributes': {}}})['rows'][0]
+        check(row['toggleable'], "a native card refused a lock the household allowed")
+    finally:
+        home_board.storage.get_settings = real
+
+
 def scenario_the_palette_refuses_a_tile_that_could_never_draw():
     """The hand path for the rule above. A household with no Home Assistant
     must not be able to add a Home Assistant tile from the palette and then
@@ -244,21 +282,25 @@ def scenario_a_tile_nobody_configured_says_so():
 
 def scenario_only_safe_domains_are_ever_toggleable():
     """A wall panel in a kitchen is reachable by everybody in the house,
-    including the people who cannot read yet. Locks, covers and alarms are not
-    things a mis-tap should operate."""
+    including the people who cannot read yet. Locks, covers and garages are off
+    this list by DEFAULT and a household can add them deliberately (see
+    scenario_locks_are_a_decision_not_a_default); alarms never can."""
     for domain in ('lock', 'cover', 'alarm_control_panel', 'climate', 'scene'):
         check(domain not in home_board.HA_TOGGLE_DOMAINS,
-              f"'{domain}' entities can be toggled from the wall")
+              f"'{domain}' entities can be toggled from the wall by default")
     for domain in ('light', 'switch', 'fan', 'input_boolean'):
         check(domain in home_board.HA_TOGGLE_DOMAINS,
               f"'{domain}' is no longer toggleable, which is most of the point")
 
 
 def scenario_a_lock_gets_no_button_even_when_tapping_is_on():
+    """Tapping being ON is not the same as locks being allowed: they are two
+    switches because they are two different decisions, and the tile's one must
+    not quietly imply the household's."""
     stub = _HA(states=STATES)
     data = _with_ha(stub, lambda: home_board._tile_ha(
-        NOW, config={'entities': ['light.kitchen', 'lock.front_door'],
-                     'interactive': True}))
+        NOW, settings={}, config={'entities': ['light.kitchen', 'lock.front_door'],
+                                  'interactive': True}))
     rows = {r['entity_id']: r for r in data['rows']}
     check(rows['light.kitchen']['toggleable'] is True,
           "a light got no toggle with tapping switched on")
@@ -286,7 +328,11 @@ def scenario_the_server_checks_the_domain_too_not_only_the_tile():
     src = open(os.path.join(os.path.dirname(TPL), 'main.py'), encoding='utf-8').read()
     block = src[src.index('def ha_toggle('):]
     block = block[:block.index('\n@app.')]
-    check('HA_TOGGLE_DOMAINS' in block,
+    # `toggle_domains()`, not the bare constant: the allowlist is a SETTING
+    # now (a household can allow locks), and an endpoint reading the constant
+    # would refuse what the tiles offer — or, far worse if the names were ever
+    # swapped, allow what they do not.
+    check('toggle_domains()' in block,
           "the toggle endpoint no longer checks the domain allowlist, so any "
           "entity in the house can be operated by a crafted request")
     check('ha_available()' in block,
@@ -463,7 +509,7 @@ def scenario_a_tile_with_no_page_is_not_a_link():
     nothing of ours, and an <a> to a page that does not exist is a tap that
     empties the wall."""
     tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
-    check("PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card']" in tpl,
+    check("PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web']" in tpl,
           "the Home Assistant tiles are linking somewhere again")
     check('opens(t.type) ? link(t.type) : null' in tpl,
           "the tile's href is unconditional, so a pageless tile is still a link")

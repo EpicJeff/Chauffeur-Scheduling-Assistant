@@ -66,10 +66,16 @@ _DOMAIN_ICON = {
     'number': 'mdi:ray-vertex', 'select': 'mdi:format-list-bulleted',
 }
 
-# Domains a tap may operate, kept identical to the entity tile's allowlist —
-# see home_board.HA_TOGGLE_DOMAINS. Duplicated as a name rather than imported
-# because importing home_board from here would be a cycle.
-_TOGGLE_DOMAINS = ('light', 'switch', 'fan', 'input_boolean')
+def _toggle_domains():
+    """Domains a tap may operate, asked of home_board so the answer is the same
+    on every surface — the entity tile, a native card, a hosted card's service
+    call. It is a SETTING now (a household can allow locks), and a second copy
+    of the list here would mean a lock that works from one card and not another.
+
+    Imported inside the function because home_board imports this module.
+    """
+    from services import home_board
+    return home_board.toggle_domains()
 
 
 # What an entity MEASURES, which is what Home Assistant picks its icon from.
@@ -226,7 +232,7 @@ def _row(entity_id, states, name=None, icon=None, secondary=None):
         'precision': attrs.get('suggested_display_precision'),
         'secondary': secondary,
         'missing': st is None,
-        'toggleable': domain in _TOGGLE_DOMAINS,
+        'toggleable': domain in _toggle_domains(),
         'on': str((st or {}).get('state') or '').lower() == 'on',
     }
 

@@ -680,7 +680,14 @@ def scenario_an_unconfigured_feature_has_no_tile():
     orig = storage.get_cached_schedule
     try:
         storage.get_cached_schedule = lambda: {}
-        board = home_board.build(requested=','.join(home_board.WIDGET_KEYS))
+        # `web` is excluded because it is a CONTAINER, not a summary of a
+        # household feature. There is nothing for it to be unconfigured about
+        # except its own address, and a tile somebody just added asking for
+        # one is the opposite of the placeholder this rule forbids — the rule
+        # is about features nobody uses, not about a box waiting to be told
+        # what to show.
+        asked = [k for k in home_board.WIDGET_KEYS if k != 'web']
+        board = home_board.build(requested=','.join(asked))
         keys = [t['type'] for t in board['tiles']]
         # The calendar is never hidden — a family calendar is not a feature you
         # opt into, and a missing calendar tile reads as a broken panel. Every
@@ -1160,7 +1167,7 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
     # so widening them is one edit and this still guards what it is for: a
     # value that breaks the arithmetic (a 5px row makes every span meaningless)
     # rather than one that offends taste.
-    for bad, want in (({'panel_grid_row_height': 5}, home_board.ROW_MIN),
+    for bad, want in (({'panel_grid_row_height': 0}, home_board.ROW_MIN),
                       ({'panel_grid_row_height': 50000}, home_board.ROW_MAX),
                       ({'panel_grid_row_height': 'tall'}, 240)):
         got = home_board.grid_row_height(bad)
@@ -1172,7 +1179,7 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
           "the NARROWEST thing anybody could ask for")
     check(home_board.grid_columns({'panel_grid_columns': 16}) == 16, "and it is settable")
     for bad, want in (({'panel_grid_columns': 0}, 1),
-                      ({'panel_grid_columns': 999}, home_board.COLUMN_MAX),
+                      ({'panel_grid_columns': 99999}, home_board.COLUMN_MAX),
                       ({'panel_grid_columns': None}, 12)):
         got = home_board.grid_columns(bad)
         check(got == want, f"{bad} -> {got}, wanted {want}")

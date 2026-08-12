@@ -992,7 +992,7 @@ def ha_toggle(req: HAToggleRequest):
     from services import home_board, ha_api
     entity_id = (req.entity_id or '').strip()
     domain = entity_id.split('.', 1)[0] if '.' in entity_id else ''
-    if domain not in home_board.HA_TOGGLE_DOMAINS:
+    if domain not in home_board.toggle_domains():
         raise HTTPException(status_code=400,
                             detail=f"{domain or 'that'} entities cannot be "
                                    f"toggled from the board")
@@ -4635,7 +4635,7 @@ def ha_card_service(req: HaCardServiceRequest):
     from services import home_board, ha_api
     domain = (req.domain or '').strip()
     service = (req.service or '').strip()
-    if domain not in home_board.HA_TOGGLE_DOMAINS:
+    if domain not in home_board.toggle_domains():
         raise HTTPException(status_code=400,
                             detail=f"{domain or 'that'} services cannot be "
                                    f"called from a board card")

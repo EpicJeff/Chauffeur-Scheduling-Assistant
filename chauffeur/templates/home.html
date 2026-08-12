@@ -1246,6 +1246,29 @@
                         </div>
                     </template>
 
+                    <!-- Any web page. `sandbox` is deliberately absent, for
+                         the reason the dashboard tile omits it: a page needs
+                         its own scripts and storage, and sandboxing an address
+                         the household typed themselves produces a blank frame
+                         and a console error nobody asked for.
+                         The zoom is a TRANSFORM rather than CSS `zoom`, which
+                         Firefox does not apply to frames — the inverse
+                         width/height keeps the page filling the tile at any
+                         scale. -->
+                    <template x-if="t.type === 'web' && !t.data.empty">
+                        <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden"
+                            style="background: var(--panel-card-hi)">
+                            <iframe :src="webFrameSrc(t)" :title="t.data.url"
+                                :scrolling="t.data.scroll ? 'yes' : 'no'"
+                                :style="`width:${1e4 / t.data.zoom}%;
+                                         height:${1e4 / t.data.zoom}%;
+                                         transform:scale(${t.data.zoom / 100});
+                                         transform-origin: 0 0`"
+                                class="absolute inset-0 border-0"
+                                referrerpolicy="no-referrer"></iframe>
+                        </div>
+                    </template>
+
                     <template x-if="t.type === 'intake' && !t.data.empty">
                         <div class="flex items-baseline gap-3">
                             <span class="text-4xl font-black tabular-nums text-indigo-300"
@@ -1370,7 +1393,7 @@
                          tiles turned out. -->
                     <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-2">
                         This board is
-                        <input type="number" min="1" max="48" step="1"
+                        <input type="number" min="1" step="1"
                             :value="page().columns"
                             @input="setPageField('columns', parseInt($event.target.value, 10))"
                             class="w-14 ed-input rounded text-xs ed-title px-2 py-1">
@@ -1402,7 +1425,7 @@
                              the last twenty pixels of a hosted card: the tile
                              that needs 250 gets 240 and clips, and no amount of
                              re-picking from a list of sevens fixes it. -->
-                        <input type="number" min="40" max="2000" step="5"
+                        <input type="number" min="1" step="5"
                             :value="page().row_height"
                             @input="setPageField('row_height', parseInt($event.target.value, 10))"
                             class="w-20 ed-input rounded text-xs ed-title px-2 py-1">
@@ -1798,6 +1821,22 @@
                     </div>
 
                     <div class="text-xs font-black uppercase tracking-widest ed-head mb-2">
+                        What a tap may do
+                    </div>
+                    <p class="text-xs ed-note mb-3">
+                        Tiles and cards can toggle lights, switches, fans and helpers
+                        when the tile itself allows tapping. Locks, covers, garage doors
+                        and valves are refused unless you say otherwise here — a wall
+                        panel is reachable by everybody in the house. Alarms are never
+                        included and this does not change that.
+                    </p>
+                    <label class="flex items-center gap-2 text-sm ed-title mb-6 cursor-pointer">
+                        <input type="checkbox" x-model="draft.panel_allow_unsafe_controls"
+                            class="accent-sky-500">
+                        <span>Let the board operate locks, covers, garages and valves</span>
+                    </label>
+
+                    <div class="text-xs font-black uppercase tracking-widest ed-head mb-2">
                         Background
                     </div>
                     <p class="text-xs ed-note mb-3">
@@ -2030,6 +2069,7 @@
                 _beforeArrange: null,
                 draft: {
                     panel_pages: [], panel_tabs: [], panel_idle_return_seconds: 180,
+                    panel_allow_unsafe_controls: false,
                     panel_agenda_days: 5,
                     panel_theme: 'dark', panel_background: '',
                     panel_theme_sunset_offset_minutes: 0,
@@ -2203,7 +2243,7 @@
                 // twice, once here and once on the server.
                 rowHeight() {
                     const n = parseInt(this.board.row_height, 10);
-                    return Math.min(2000, Math.max(40, n || 240));
+                    return Math.min(10000, Math.max(1, n || 240));
                 },
 
                 // How many columns the board is divided into. Twelve by
@@ -2213,7 +2253,7 @@
                 // anybody could ask for.
                 cols() {
                     const n = parseInt(this.board.columns, 10);
-                    return Math.min(48, Math.max(1, n || 12));
+                    return Math.min(1000, Math.max(1, n || 12));
                 },
 
                 // A tile nobody has sized takes a QUARTER of the board, which
@@ -2267,7 +2307,7 @@
                 // had nowhere to be drawn. Nothing errored, nothing logged —
                 // the tile just showed its heading over nothing, which is the
                 // failure mode this whole board keeps having to design against.
-                DRAWN_TILES: ['map', 'drives', 'ha_image', 'ha_dashboard', 'ha_card'],
+                DRAWN_TILES: ['map', 'drives', 'ha_image', 'ha_dashboard', 'ha_card', 'web'],
                 fillsTile(key) {
                     return this.isMosaic(key) || this.DRAWN_TILES.includes(key);
                 },
@@ -2559,6 +2599,8 @@
                                 s.panel_idle_return_seconds === undefined
                                     ? 180 : s.panel_idle_return_seconds,
                             panel_agenda_days: s.panel_agenda_days || 5,
+                            panel_allow_unsafe_controls:
+                                !!s.panel_allow_unsafe_controls,
                             panel_theme: s.panel_theme || 'dark',
                             // `|| 0` would be right for these anyway, but they
                             // are offsets: a stored -30 is falsy-adjacent
@@ -3262,8 +3304,8 @@
                         icon: (p.icon || '🗂️').trim(),
                         widgets: p.widgets || [],
                         spans: p.spans || {},
-                        columns: Math.min(48, Math.max(1, parseInt(p.columns, 10) || 12)),
-                        row_height: Math.min(2000, Math.max(40,
+                        columns: Math.min(1000, Math.max(1, parseInt(p.columns, 10) || 12)),
+                        row_height: Math.min(10000, Math.max(1,
                             parseInt(p.row_height, 10) || 240)),
                         background: (p.background || '').trim(),
                     }));
@@ -3323,7 +3365,7 @@
                 // been a link to the page it summarises; the Home Assistant
                 // tiles summarise nothing of ours, and a link to a page that
                 // does not exist is a tap that empties the wall.
-                PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card'],
+                PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web'],
                 opens(type) {
                     return !this.PAGELESS.includes(type);
                 },
@@ -3333,6 +3375,16 @@
                 // forever; with a 0 they get exactly that, on purpose.
                 haImageTick: 0,
                 haImageFailed: {},
+                // Cache-busted off the same tick the camera tile uses,
+                // rather than a second interval counting the same seconds.
+                webFrameSrc(t) {
+                    const every = t.data.refresh_seconds || 0;
+                    if (!every) return t.data.url;
+                    const step = Math.floor(this.haImageTick / Math.max(1, every));
+                    return t.data.url + (t.data.url.includes('?') ? '&' : '?')
+                        + 'chf=' + step;
+                },
+
                 haImageSrc(tile) {
                     const base = this.apiBase + (tile.data.url || '');
                     const every = tile.data.refresh_seconds || 0;
@@ -3736,6 +3788,8 @@
                                 panel_agenda_days:
                                     Math.min(14, Math.max(1,
                                         parseInt(this.draft.panel_agenda_days, 10) || 5)),
+                                panel_allow_unsafe_controls:
+                                    !!this.draft.panel_allow_unsafe_controls,
                                 panel_theme: this.draft.panel_theme,
                                 // Clamped to ±4h. A typo'd 300 is a panel that
                                 // flips in the middle of the afternoon and

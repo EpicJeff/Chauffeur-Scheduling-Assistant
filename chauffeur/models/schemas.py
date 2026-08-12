@@ -939,6 +939,11 @@ class Settings(BaseModel):
     # gets forwarded there). Each entry {pattern, calendar_id} prefills a
     # proposal's target calendar when the pattern appears in the From address.
     ingest_sender_defaults: List[dict] = Field(default_factory=list)
+    # Addresses and domains whose mail is skipped rather than read. Written by
+    # /api/intake's block/unblock endpoints and read by email_ingest — it has
+    # been doing that since intake shipped and was simply never declared here,
+    # which the settings registry's coverage audit is what noticed.
+    ingest_sender_blocklist: List[str] = Field(default_factory=list)
     # --- The wall panel (a Chauffeur-only touch display, no Home Assistant
     # around it). `?panel=true` turns any page into panel mode: the top nav
     # becomes a bottom shelf of touch-sized buttons and everything already
@@ -971,6 +976,14 @@ class Settings(BaseModel):
     # columns from a page and its row height from a legacy key is a split brain
     # nobody can debug, so there is no such state.
     panel_pages: List[Any] = Field(default_factory=list)
+    # Whether a tap on the board may operate a lock, a cover, a garage door or
+    # a valve. OFF by default and a deliberate act to turn on: a wall panel in
+    # a kitchen is reachable by everybody in the house including the people who
+    # cannot read yet. `alarm_control_panel` is not covered by this and is not
+    # a toggle away — disarming an alarm is the one control whose failure mode
+    # is not "somebody opened a door they could have opened anyway".
+    panel_allow_unsafe_controls: bool = False
+
     panel_tabs: List[str] = Field(default_factory=list)
     # Untouched for this long, any panel page returns to the home board. This
     # is what makes the panel an appliance rather than a browser: whatever

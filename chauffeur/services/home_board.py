@@ -368,6 +368,35 @@ WIDGETS = [
               help='Lights, switches, fans and helpers only, whatever the '
                    'card tries to call.'),
      ]},
+    # ── Any web page, in a frame.
+    #
+    # The most generic tile there is, and that is the argument for it: the
+    # dashboard tile already proved a frame is useful, and there is nothing
+    # about a Home Assistant dashboard that makes it the only page worth
+    # putting on a wall. A bus timetable, a school's lunch menu, a webcam a
+    # neighbour runs — none of those will ever have a tile of their own.
+    #
+    # It comes with a frame's rules, and they are in the blurb rather than
+    # only in the code: plenty of sites refuse to be framed at all
+    # (X-Frame-Options / frame-ancestors), and nothing here can change that.
+    {'key': 'web', 'icon': '🌐', 'label': 'Web page',
+     'heading': 'A web page',
+     'blurb': "Any address, in a frame. Sites that refuse to be embedded will "
+              "stay blank — that is their choice and nothing here can change it.",
+     'options': [
+         _opt('url', 'Address', 'text', '',
+              help='https://… — must be https if the panel is, or the browser '
+                   'will block it as mixed content.'),
+         _opt('refresh_seconds', 'Reload every', 'int', 0, min=0, max=86400,
+              help='Seconds. 0 leaves it alone, which is right for anything '
+                   'that updates itself.'),
+         _opt('scroll', 'Let it scroll', 'bool', False,
+              help='Off makes it a picture rather than a page — which is what '
+                   'a wall usually wants.'),
+         _opt('zoom', 'Zoom', 'int', 100, min=25, max=400,
+              help='Per cent. A page built for a laptop is often unreadable at '
+                   'tile size until it is scaled down.'),
+     ]},
     {'key': 'intake', 'icon': '📬', 'label': 'Intake',
      'heading': 'Waiting to approve',
      'blurb': "How many intake proposals need a parent. A COUNT only — the "
@@ -1688,6 +1717,34 @@ def _tile_map(now, runs=None, config=None, **_):
 # are not things a mis-tap should operate.
 HA_TOGGLE_DOMAINS = ('light', 'switch', 'fan', 'input_boolean')
 
+# What a household can ADD to that, deliberately and in one place.
+#
+# These were refused outright, on the reasoning that a wall panel in a kitchen
+# is reachable by everybody in the house including the people who cannot read
+# yet — which is a good reason to make it a decision rather than a default, and
+# not a good enough reason to make it impossible. A household that wants to
+# unlock the pool house from the panel it walks past knows more about its own
+# doors than this file does.
+#
+# `alarm_control_panel` is NOT here and is not a toggle away. Disarming an
+# alarm is the one control on this list whose failure mode is not "somebody
+# opened a door they could have opened anyway".
+HA_UNSAFE_DOMAINS = ('lock', 'cover', 'garage', 'valve')
+
+
+def toggle_domains(settings: dict = None) -> tuple:
+    """Which domains a tap may operate, for THIS household.
+
+    A function rather than a constant because the answer is now a setting, and
+    every caller — the tile, the board endpoint, the hosted-card service
+    endpoint — has to get the same answer or the lock works from one surface
+    and not another.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    if settings.get('panel_allow_unsafe_controls'):
+        return HA_TOGGLE_DOMAINS + HA_UNSAFE_DOMAINS
+    return HA_TOGGLE_DOMAINS
+
 # HA ships mdi icon names, and this app has no mdi font — an `mdi:thermometer`
 # rendered literally is worse than no icon. A glyph per domain is the honest
 # amount of decoration a board can promise for an arbitrary entity.
@@ -1769,7 +1826,7 @@ def ha_options() -> dict:
         return {'available': False, 'entities': [], 'cameras': []}
 
 
-def _tile_ha(now, config=None, **_):
+def _tile_ha(now, config=None, settings=None, **_):
     """Any Home Assistant entities the household picked, as readings.
 
     Not a Lovelace card and not pretending to be one: HA's cards are custom
@@ -1817,7 +1874,7 @@ def _tile_ha(now, config=None, **_):
                 # gone" is the only thing that leads anybody to fix it.
                 'missing': s is None,
                 'on': state in ('on', 'home', 'open', 'unlocked', 'playing'),
-                'toggleable': bool(interactive and domain in HA_TOGGLE_DOMAINS
+                'toggleable': bool(interactive and domain in toggle_domains(settings)
                                    and s is not None),
             })
         return {'rows': rows,
@@ -1963,6 +2020,33 @@ def _tile_ha_card(now, config=None, **_):
     return prepared
 
 
+def _tile_web(now, config=None, **_):
+    """Any web page, framed.
+
+    No Home Assistant anywhere in it, which is why it sits apart from the three
+    HA tiles: a household with no HA still has a bus timetable.
+
+    The URL is checked for a SCHEME and nothing else. This is a frame in the
+    household's own browser, going wherever they typed — there is no server
+    fetch to protect and no token to leak, so a validator here would only be
+    inventing rules about which of their own pages they may look at. `http:` is
+    allowed and left to the browser to complain about, since a panel served
+    over https will block it as mixed content and say so in a way no message
+    here could improve on.
+    """
+    url = _cfg_str(config, 'url')
+    if not url:
+        return {'empty': "Put an address in board setup."}
+    if not url.startswith(('http://', 'https://')):
+        return {'empty': "That needs to start with https:// (or http://)."}
+    return {
+        'url': url,
+        'refresh_seconds': _cfg_int(config, 'refresh_seconds', 0, 0, 86400),
+        'scroll': _cfg_bool(config, 'scroll', False),
+        'zoom': _cfg_int(config, 'zoom', 100, 25, 400),
+    }
+
+
 def _tile_intake(now, **_):
     """A COUNT and nothing else. Intake is mail approvals and IMAP settings —
     an admin surface the kiosk rule keeps off shared screens — but "three
@@ -1992,6 +2076,7 @@ _BUILDERS: dict = {
     'map': _tile_map, 'intake': _tile_intake,
     'ha': _tile_ha, 'ha_image': _tile_ha_image,
     'ha_dashboard': _tile_ha_dashboard, 'ha_card': _tile_ha_card,
+    'web': _tile_web,
 }
 
 
@@ -2222,25 +2307,28 @@ def normalize_instances(raw, settings: dict = None) -> List[dict]:
 
 PAGE_SLUG_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,30}$')
 
-# The grid's limits, and NEITHER IS TECHNICAL.
+# The grid's limits, and there is no technical one.
 #
-# `grid-auto-rows` takes any length and `repeat(N, …)` takes any count; these
-# are judgement, and the judgement was too tight. They were 80–600 and 24, and
-# the reasoning behind those numbers was "surely nobody wants a taller row than
-# this" — which is the same reasoning that made the row height a menu of seven,
-# and it was wrong there too.
+# `grid-auto-rows` takes any length; `repeat(N, …)` takes any count. The cost
+# of a wide grid is O(N) track sizing per layout pass, which at any number a
+# household would type is unmeasurable next to drawing the tiles themselves —
+# the work in a board is proportional to the number of TILES, and that does not
+# change when the grid under them gets finer. A short row is the same story: it
+# creates more implicit rows, and an implicit row with nothing in it costs
+# nothing to lay out.
 #
-# What they are now is a guard against values that break the ARITHMETIC rather
-# than the taste: 0 columns divides by zero, a 5px row makes every span
-# meaningless, and a 5000px row on a 1080p panel is a tile nobody can see the
-# bottom of even at one row. Anything inside these is the household's business.
+# So these are not a judgement about what is sensible any more. They are a
+# guard against a value that would hang the panel it was typed into — a
+# mis-keyed 100000 columns is a hundred thousand grid tracks on a Raspberry Pi,
+# and the wall goes white. Anything a person would actually choose is far
+# inside them.
 #
 # Raising COLUMN_MAX is safe for existing boards: stored spans are counts of
 # columns and the board's own column count is a separate setting, so nothing
 # rescales until somebody changes it. (Which they should know before they do —
 # going from 12 to 48 makes every tile a quarter as wide. The editor says so.)
-ROW_MIN, ROW_MAX = 40, 2000
-COLUMN_MAX = 48
+ROW_MIN, ROW_MAX = 1, 10000
+COLUMN_MAX = 1000
 
 # The first page is the wall's own board — the one `/home` shows, the one a
 # panel returns to when it goes idle, the one the shelf's Home button means.

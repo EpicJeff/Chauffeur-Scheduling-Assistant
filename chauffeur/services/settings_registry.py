@@ -93,10 +93,21 @@ ENTRIES: List[dict] = [
        'left to right. Six or seven fit at a size a thumb can hit; the rest '
        'move into a More button, so the order decides what stays one tap away.',
        page='home', anchor='panel-setup'),
+    # Superseded by `panel_pages`: every board carries its own grid now, and
+    # these three are what the FIRST page is built from when a household has
+    # never made one. They are still real settings — an un-migrated install
+    # reads them — but the control that changes them is the per-board field,
+    # which names the page rather than the key. `ui_marker` is what that
+    # honest exception is for.
     _e('panel_grid_columns', 'panel', 'Board columns',
-       'How many columns the home board is divided into. Tile widths are spans '
-       'of these, so 12 gives you halves, thirds, quarters and sixths — at 4, '
-       'a quarter of the board was the narrowest thing you could ask for.',
+       'How many columns a board is divided into. Tile widths are spans of '
+       'these, so 12 gives you halves, thirds, quarters and sixths. Set per '
+       'board, under Boards.',
+       page='home', anchor='panel-setup', ui_marker="page().columns"),
+    _e('panel_allow_unsafe_controls', 'panel', 'Let the board operate locks',
+       'Whether a tap on a board tile may lock or unlock a door, open a cover '
+       'or a garage, or turn a valve. Off by default because a wall panel is '
+       'reachable by everybody in the house; alarms are never included.',
        page='home', anchor='panel-setup'),
     _e('panel_pages', 'panel', 'Boards',
        'Every board this household has — the wall panel\'s home screen plus '
@@ -105,20 +116,19 @@ ENTRIES: List[dict] = [
        'genuinely different screens rather than the same screen twice.',
        page='home', anchor='panel-setup'),
     _e('panel_grid_row_height', 'panel', 'Board row height',
-       'What one row of the home board grid is worth, in pixels. Tile sizes '
-       'are measured in these, so a 2-row tile is twice this tall — including '
-       'in the bottom row, which is where sizes used to do nothing at all.',
-       page='home', anchor='panel-setup'),
+       'What one row of a board grid is worth, in pixels. Tile sizes are '
+       'measured in these, so a 2-row tile is twice this tall. Set per board, '
+       'under Boards.',
+       page='home', anchor='panel-setup', ui_marker="page().row_height"),
     _e('panel_agenda_days', 'panel', 'Agenda length',
        'How many days the calendar tile shows. Each day is a card three '
        'columns of the board wide, so the tile fits as many across as it is '
        'wide and wraps the rest onto another line.',
        page='home', anchor='panel-setup'),
     _e('panel_tile_spans', 'panel', 'Tile sizes',
-       'How much room each tile gets on the home board — up to four columns '
-       'wide (the full board) and three rows tall. The map and the calendar '
-       'usually earn more than a count.',
-       page='home', anchor='panel-setup'),
+       'How much room each tile gets on its board, in columns and rows. Set on '
+       'the tile itself, or by dragging its corner in Arrange.',
+       page='home', anchor='panel-setup', ui_marker='setSpan'),
     _e('panel_background', 'panel', 'Panel background',
        'The photograph the wall panel floats on. A web address, or just a '
        'phrase like "mountains at dusk" to have one found for you.',
