@@ -359,6 +359,43 @@ def reset_icon_cache():
 
 # --- what a tile needs to render one ----------------------------------------
 
+def _resolve_hosts(hosts, states):
+    """Each custom card found inside a native tree, with its file located.
+
+    The resource list is fetched ONCE for the whole tree — it is a websocket
+    round trip to Home Assistant, and a stack with three custom cards in it
+    would otherwise make three of them on every board rebuild.
+
+    A card whose file cannot be found keeps its place and carries an `error`.
+    The cell it was given still exists, so the columns either side of it do not
+    shuffle up to fill a hole that has no explanation in it.
+    """
+    if not hosts:
+        return {}
+    resources = list_resources()
+    out = {}
+    for host_id, host in hosts.items():
+        row = resolve_resource(host['tag'], resources)
+        url = (row or {}).get('url')
+        entry = {'tag': host['tag'], 'config': host['config'],
+                 # The states this card asked for, out of the ones the whole
+                 # tree already gathered — no second trip for a card that
+                 # shares its sensors with the gauge beside it.
+                 'states': {k: v for k, v in (states or {}).items()
+                            if k in set(entity_ids(host['config']))}}
+        if not url:
+            entry['error'] = (f"Nothing in Home Assistant's resources looks "
+                              f"like it defines `{host['tag']}`.")
+        elif not resource_allowed(url):
+            entry['error'] = ("That card's file is somewhere this cannot "
+                              "fetch from.")
+        else:
+            entry['resource'] = url
+            entry['resource_type'] = (row or {}).get('type') or 'module'
+        out[host_id] = entry
+    return out
+
+
 def prepare(raw_config, resource_override=''):
     """Everything the browser needs to run one card, or an `error` sentence.
 
@@ -380,9 +417,16 @@ def prepare(raw_config, resource_override=''):
         if kind in ha_card_convert.NATIVE_CARDS:
             ids = ha_card_convert.entity_ids(config)
             states = states_for(ids)
-            card = ha_card_convert.convert(config, states)
+            hosts = {}
+            card = ha_card_convert.convert(config, states, hosts=hosts)
             if card:
                 return {'mode': 'native', 'card': card, 'config': config,
+                        # A real dashboard's stacks are MIXED — a custom
+                        # power-flow card above a gauge is the config people
+                        # actually write. Each custom card inside the tree gets
+                        # its file resolved here, once, and the browser runs it
+                        # in the cell the drawing left for it.
+                        'hosts': _resolve_hosts(hosts, states),
                         'missing': [e for e in ids if e not in states]}
         # Refused BY NAME, with the way to get it anyway. A built-in that
         # rendered as an empty box is the failure the whole board is built to

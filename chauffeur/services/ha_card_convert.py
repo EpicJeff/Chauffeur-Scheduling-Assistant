@@ -285,19 +285,44 @@ def _button_card(config, states):
             'show_state': config.get('show_state', False)}
 
 
-def convert(config, states, depth=0):
-    """A built-in card config -> a drawing instruction, or None.
+def convert(config, states, depth=0, hosts=None):
+    """A card config -> a drawing instruction, or None.
 
     Recursive, because the stacks hold other cards. `depth` is a fuse: a config
     that nests itself would otherwise recurse until the stack gives out, and a
     hand-edited YAML file is exactly where that comes from.
+
+    A real dashboard's stacks are MIXED — a custom power-flow card above a
+    gauge, a column of graphs beside it — so this walks over two things it
+    cannot draw itself, rather than dropping them:
+
+      - a `custom:` card becomes a `host` node, which the browser fills by
+        running the card's own JavaScript (services/ha_cards + ha_card_host.js).
+        `hosts` collects them so the caller can resolve each one's file;
+      - anything else becomes an `unsupported` node, which draws as a line
+        naming the type.
+
+    Both of those replaced a silent `None`, and the difference was not subtle:
+    a stack of [custom card, gauge] rendered as a gauge, alone, with nothing
+    anywhere saying the other card had been thrown away.
     """
     if not isinstance(config, dict) or depth > 4:
         return None
     kind = str(config.get('type') or '').strip().lower()
 
+    if kind.startswith('custom:'):
+        tag = kind[len('custom:'):].strip()
+        if not tag:
+            return {'kind': 'unsupported', 'type': 'custom:'}
+        node = {'kind': 'host', 'tag': tag}
+        if hosts is not None:
+            node['host_id'] = f'h{len(hosts)}'
+            hosts[node['host_id']] = {'tag': tag, 'config': config}
+        return node
+
     if kind in STACKS:
-        cards = [convert(c, states, depth + 1) for c in (config.get('cards') or [])]
+        cards = [convert(c, states, depth + 1, hosts)
+                 for c in (config.get('cards') or [])]
         cards = [c for c in cards if c]
         if not cards:
             return None
@@ -320,7 +345,12 @@ def convert(config, states, depth=0):
         return _picture_entity_card(config, states)
     if kind == 'button':
         return _button_card(config, states)
-    return None
+    # Named, and it keeps its place in the layout. This is the same rule the
+    # top level follows — a card that vanishes silently is indistinguishable
+    # from a card that failed — except that inside a stack it also matters that
+    # the columns either side of it do not shuffle up to fill the hole.
+    return {'kind': 'unsupported', 'type': kind or 'card',
+            'name': config.get('name') or config.get('title') or ''}
 
 
 def entity_ids(config, depth=0):
@@ -340,6 +370,12 @@ def entity_ids(config, depth=0):
         for card in (config.get('cards') or []):
             out.extend(entity_ids(card, depth + 1))
         return out
+    if kind.startswith('custom:'):
+        # Somebody else's schema again, so back to the shape-based walk. A
+        # hosted card inside a native stack still needs its states shipped, and
+        # nothing here knows which of its keys hold entity ids.
+        from services import ha_cards
+        return list(ha_cards.entity_ids(config))
     for key in ('entity', 'camera_image'):
         val = config.get(key)
         if isinstance(val, str) and '.' in val:

@@ -1218,8 +1218,13 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
           "tiles drawn INTO their slot (the mosaics, the map, the timeline) are "
           "no longer distinguished from tiles read down a list, so either they "
           "scroll a photograph or every text tile is stretched to fill")
+    # The DECLARATION, not the first mention. This used to search from the
+    # first occurrence of the bare name anywhere in the file, so a comment
+    # that referred to the list — in a stylesheet four hundred lines above it —
+    # moved the window and failed the check with a message about maps.
+    _decl = tpl.index('DRAWN_TILES:')
     for key in ("'map'", "'drives'"):
-        check(key in tpl[tpl.index('DRAWN_TILES'):tpl.index('DRAWN_TILES') + 200],
+        check(key in tpl[_decl:_decl + 200],
               f"{key} is drawn to fit its tile and must be listed as such — "
               "a map given its content height is a map an inch tall")
 

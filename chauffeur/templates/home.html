@@ -45,7 +45,12 @@
         .nc-title { font-weight: 800; margin-bottom: 0.4rem; color: var(--panel-fg); }
         .nc-stack { display: flex; flex-direction: column; gap: 0.75rem; }
         .nc-row-stack { display: flex; gap: 0.75rem; align-items: stretch; }
-        .nc-row-stack > * { flex: 1 1 0; min-width: 0; }
+        /* One cell per CARD. Flex and grid count children, and a titled card
+           draws two of them (its heading and its body), so without this a
+           horizontal stack of two titled cards lays out as four equal columns
+           with the headings in two of them. */
+        .nc-row-stack > .nc-cell { flex: 1 1 0; }
+        .nc-cell { min-width: 0; }
         .nc-grid { display: grid; gap: 0.75rem; }
         .nc-rows { display: flex; flex-direction: column; gap: 0.4rem; }
         .nc-entity { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
@@ -134,6 +139,24 @@
             color: var(--panel-dim);
         }
         .nc-button.is-on { color: var(--panel-accent); }
+        /* The cell a hosted card is mounted into. It has to have a height of
+           its own: a custom card sizes itself to its container, and a container
+           that sizes itself to its (empty) contents is a zero-pixel box — the
+           same failure the camera tile hit when it was missing from
+           DRAWN_TILES. */
+        .nc-host { min-height: 8rem; display: flex; flex-direction: column; }
+        .nc-host > * { flex: 1 1 auto; min-height: 0; }
+        .nc-unsupported {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 0.6rem;
+            border: 1px dashed var(--panel-line);
+            border-radius: 0.6rem;
+            color: var(--panel-dim);
+            font-size: 0.85rem;
+        }
+        .nc-unsupported span { font-size: 0.7rem; opacity: 0.75; }
         .nc-gauge { text-align: center; }
         /* `margin: 0 auto`, NOT the parent's text-align.
            Tailwind's preflight sets `svg { display: block }`, so the arc is a
@@ -1044,6 +1067,7 @@
                                  one is in the panel's own vocabulary and can be
                                  told to fit its tile. -->
                             <div x-show="t.data.mode === 'native'"
+                                :id="'board-card-native-' + t.id"
                                 class="flex-1 min-h-0 tile-scroll overflow-y-auto"
                                 x-html="nativeCardHtml(t)"
                                 @click="nativeCardTap($event, t)"></div>
@@ -2228,6 +2252,31 @@
                     const live = new Set();
                     for (const tile of (this.board.tiles || [])
                         .filter(t => t.type === 'ha_card' && t.data && !t.data.empty)) {
+                        // A NATIVE tile can still contain custom cards — a
+                        // stack of [power flow card, gauge] is the config
+                        // people actually write. Each one has an empty cell
+                        // waiting for it in the drawn html.
+                        if (tile.data.mode === 'native') {
+                            for (const [hostId, host] of
+                                Object.entries(tile.data.hosts || {})) {
+                                const cell = document.querySelector(
+                                    `#board-card-native-${CSS.escape(tile.id)} `
+                                    + `[data-host="${CSS.escape(hostId)}"]`);
+                                if (!cell) continue;
+                                if (host.error) { cell.textContent = host.error; continue; }
+                                const id = tile.id + '/' + hostId;
+                                live.add(id);
+                                window.ChauffeurHaCards.mount(cell, {
+                                    id: id, tag: host.tag,
+                                    resource: host.resource,
+                                    resourceType: host.resource_type,
+                                    config: host.config, states: host.states,
+                                    interactive: !!tile.data.interactive,
+                                    dark: !this.isLight(), apiBase: this.apiBase,
+                                });
+                            }
+                            continue;
+                        }
                         const el = document.getElementById('board-card-' + tile.id);
                         if (!el) continue;
                         live.add(tile.id);
@@ -2436,7 +2485,16 @@
                         ? `<div class="nc-title">${this.esc(c.title)}</div>` : '';
                     switch (c.kind) {
                         case 'stack': {
-                            const inner = (c.cards || []).map(x => this.drawCard(x)).join('');
+                            // Each card gets ONE cell, always. A card with a
+                            // title draws two top-level elements — the heading
+                            // and the body — so a horizontal stack of two
+                            // titled cards was laying itself out as FOUR equal
+                            // columns with the headings in two of them. Flex
+                            // and grid count children, not cards, and that is
+                            // the shape every example in HA's own docs uses.
+                            const inner = (c.cards || [])
+                                .map(x => `<div class="nc-cell">${this.drawCard(x)}</div>`)
+                                .join('');
                             if (c.direction === 'horizontal') {
                                 return `${title}<div class="nc-row-stack">${inner}</div>`;
                             }
@@ -2480,6 +2538,21 @@
                         case 'markdown':
                             // Already escaped server-side, by the same rule.
                             return title + `<div class="nc-md">${c.html || ''}</div>`;
+                        // A CUSTOM card inside a native stack. Nothing is drawn
+                        // here — an empty box is left, and syncCards mounts the
+                        // real card into it once Alpine has put this html on
+                        // the page. That is what makes a mixed stack (a power
+                        // flow card above a gauge) the config it looks like.
+                        case 'host':
+                            return `<div class="nc-host" data-host="${
+                                this.esc(c.host_id || '')}"></div>`;
+                        // Something this app does not draw. NAMED, and keeping
+                        // its cell, so the cards either side do not shuffle up
+                        // to fill a hole with no explanation in it.
+                        case 'unsupported':
+                            return `<div class="nc-unsupported">${
+                                this.esc(c.name || c.type)}<span>${
+                                this.esc(c.type)} is not drawn here</span></div>`;
                         case 'picture':
                             return `<div class="nc-picture">`
                                 + (c.picture ? `<img src="${this.esc(

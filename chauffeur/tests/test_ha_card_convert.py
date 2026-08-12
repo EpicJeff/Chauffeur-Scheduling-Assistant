@@ -127,6 +127,65 @@ def scenario_stacks_nest_and_cannot_run_away():
     conv.convert(deep, STATES)          # must simply return, not raise
 
 
+def scenario_a_real_dashboard_stack_keeps_every_card():
+    """Reported from a real board: a stack rendered ONE of its cards.
+
+    The config was the ordinary shape — a custom power-flow card above a gauge,
+    beside a column of graph cards. `convert` returned None for everything it
+    could not draw itself and the stack filtered those out, so a three-column
+    dashboard collapsed to a single gauge with nothing anywhere saying why.
+
+    Two kinds of passenger have to survive: a `custom:` card (which the browser
+    can run, so it becomes a host node) and a card this app does not draw at
+    all (which becomes a named placeholder, keeping its cell so the columns
+    either side do not shuffle up).
+    """
+    cfg = {'type': 'horizontal-stack', 'cards': [
+        {'type': 'vertical-stack', 'cards': [
+            {'type': 'custom:tesla-style-solar-power-card',
+             'grid_to_house_entity': 'sensor.grid_power'},
+            {'type': 'gauge', 'entity': 'sensor.battery', 'min': 0, 'max': 100},
+        ]},
+        {'type': 'vertical-stack', 'cards': [
+            {'type': 'sensor', 'graph': 'line', 'entity': 'sensor.solar',
+             'name': 'Solar Energy'},
+            {'type': 'sensor', 'graph': 'line', 'entity': 'sensor.imported'},
+        ]},
+    ]}
+    hosts = {}
+    card = conv.convert(cfg, STATES, hosts=hosts)
+    check(len(card['cards']) == 2, f"a column was dropped: {len(card['cards'])}")
+
+    left, right = card['cards']
+    check(len(left['cards']) == 2, f"the left column lost a card: {left}")
+    check(left['cards'][0]['kind'] == 'host',
+          f"the custom card was dropped instead of hosted: {left['cards'][0]}")
+    check(left['cards'][0]['tag'] == 'tesla-style-solar-power-card',
+          f"the hosted card lost its element name: {left['cards'][0]}")
+    check(left['cards'][1]['kind'] == 'gauge', "the gauge stopped converting")
+
+    check(len(right['cards']) == 2, f"the graph column collapsed: {right}")
+    for node in right['cards']:
+        check(node['kind'] == 'unsupported' and node['type'] == 'sensor',
+              f"an undrawable card vanished instead of being named: {node}")
+    check(right['cards'][0]['name'] == 'Solar Energy',
+          "the placeholder does not say which card it stands for")
+
+    # The host is collected so its file can be resolved once for the tree.
+    check(list(hosts) == ['h0'] and hosts['h0']['tag'] ==
+          'tesla-style-solar-power-card', f"hosts not collected: {hosts}")
+    check(left['cards'][0]['host_id'] == 'h0',
+          "the drawing cannot find the host it belongs to")
+
+    # And a hosted card's OWN entities are requested, through the shape-based
+    # walk — its schema belongs to its author, not to us.
+    ids = conv.entity_ids(cfg)
+    check('sensor.grid_power' in ids,
+          f"a hosted card inside a stack gets no states: {ids}")
+    check('sensor.battery' in ids and 'sensor.solar' in ids,
+          f"the native cards' entities went missing: {ids}")
+
+
 def scenario_only_the_entities_a_card_names_are_asked_for():
     """The generic walk in ha_cards looks for anything entity-SHAPED, which is
     right for a custom card's unknown schema. Here the schema is known, so a
@@ -261,6 +320,13 @@ const gauge = b.drawCard({ kind: 'gauge', name: hostile, unit: hostile,
 const stack = b.drawCard({ kind: 'stack', direction: 'grid', columns: 3,
   cards: [{ kind: 'tile', name: 'A', icon: 'mdi:a', state: '1',
             entity_id: 'light.a', toggleable: false, missing: false, on: false }] });
+
+// TITLED cards in a row. A card with a title draws two top-level elements —
+// its heading and its body — and flex counts children, not cards.
+const titledRow = b.drawCard({ kind: 'stack', direction: 'horizontal', cards: [
+  { kind: 'entities', title: 'Left', rows: [] },
+  { kind: 'entities', title: 'Right', rows: [] },
+]});
 console.log(JSON.stringify({
   hasScript: /<script>/i.test(out + gauge + stack),
   escaped: out.includes('&lt;script&gt;'),
@@ -269,6 +335,9 @@ console.log(JSON.stringify({
   brokenAttr: /data-toggle="[^"]*"[^>]*onclick/i.test(out),
   gaugeDrawn: gauge.includes('<svg') && gauge.includes('stroke-dasharray'),
   gridColumns: stack.includes('repeat(3,minmax(0,1fr))'),
+  // Two cards in the row means two cells, whatever each card drew inside.
+  rowCells: (titledRow.match(/class="nc-cell"/g) || []).length,
+  rowKeptTitles: titledRow.includes('Left') && titledRow.includes('Right'),
 }));
 """
 
@@ -306,6 +375,13 @@ def scenario_the_renderer_escapes_what_the_converter_passed_through():
     check(not got['brokenAttr'], "a quote in an entity id escaped its attribute")
     check(got['gaugeDrawn'], "the gauge no longer draws an arc")
     check(got['gridColumns'], "a grid stack lost its column count")
+    # One cell per CARD, not per element. A titled card draws its heading and
+    # its body as siblings, and flex/grid count children — so two titled cards
+    # in a horizontal stack laid out as FOUR equal columns with the headings in
+    # two of them, which is the shape every example in HA's own docs uses.
+    check(got['rowCells'] == 2,
+          f"two cards in a horizontal stack produced {got['rowCells']} cells")
+    check(got['rowKeptTitles'], "wrapping the cards dropped their titles")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
