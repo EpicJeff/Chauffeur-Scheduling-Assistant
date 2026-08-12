@@ -491,7 +491,20 @@ const ha = d.createElement('home-assistant');
 ha.attachShadow({ mode: 'open' });
 d.body.appendChild(ha);
 const main = shadowed(ha, 'home-assistant-main');
-const resolver = shadowed(main, 'partial-panel-resolver');
+// `ha-drawer` sits between main and the content, and its OWN shadow root is
+// where `.mdc-drawer-app-content` lives — the element carrying the margin that
+// leaves a hole where the sidebar was. Missing this level out of the harness
+// is what let "sidebar hidden, gap intact" pass.
+const drawer = shadowed(main, 'ha-drawer');
+const appContent = d.createElement('div');
+appContent.className = 'mdc-drawer-app-content';
+drawer.shadowRoot.appendChild(appContent);
+// LIGHT DOM, as HA has it: `partial-panel-resolver` is a slotted child of
+// ha-drawer, so it lives in home-assistant-main's shadow TREE and
+// `mainRoot.querySelector` finds it. Putting it inside ha-drawer's shadow root
+// instead would be a harness that disagrees with the app it is testing.
+const resolver = d.createElement('partial-panel-resolver');
+drawer.appendChild(resolver);
 const panel = d.createElement('ha-panel-lovelace');
 panel.attachShadow({ mode: 'open' });
 resolver.appendChild(panel);          // light DOM, as HA has it
@@ -502,11 +515,14 @@ const frame = { contentDocument: d };
 board.stripHaChrome.call(board, frame, 0);
 
 const mainRoot = ha.shadowRoot.querySelector('home-assistant-main').shadowRoot;
+const drawerRoot = mainRoot.querySelector('ha-drawer').shadowRoot;
 const huiHost = mainRoot.querySelector('partial-panel-resolver')
   .querySelector('ha-panel-lovelace').shadowRoot;
 const huiRoot = huiHost.querySelector('hui-root').shadowRoot;
 console.log(JSON.stringify({
   sidebarStyle: !!mainRoot.querySelector('#chf-no-sidebar'),
+  gapStyle: !!drawerRoot.querySelector('#chf-no-gap'),
+  gapCss: (drawerRoot.querySelector('#chf-no-gap') || {}).textContent || '',
   headerStyle: !!huiRoot.querySelector('#chf-no-header'),
   headerCss: (huiRoot.querySelector('#chf-no-header') || {}).textContent || '',
   // Run it again: a reload must not stack a second stylesheet in.
@@ -581,6 +597,19 @@ def scenario_the_header_and_sidebar_are_actually_removed():
           "keeps its header")
     for needed in ('.header', 'app-header', 'display: none'):
         check(needed in got['headerCss'], f"the header rule lost {needed!r}")
+
+    # THE GAP, which is a separate failure from the sidebar and was shipped
+    # once on its own: hiding `ha-sidebar` removes the sidebar and leaves the
+    # hole it sat in, because the space is a MARGIN on the content beside it.
+    # That margin is inside `ha-drawer`'s shadow root, one level below the root
+    # the sidebar rule goes into, so a rule aimed at the wrong root matches
+    # nothing and looks like it worked.
+    check(got['gapStyle'],
+          "no stylesheet reached ha-drawer's shadow root, so the sidebar is "
+          "hidden and the empty space it occupied is still there")
+    for needed in ('.mdc-drawer-app-content', 'margin-left: 0',
+                   'margin-inline-start: 0'):
+        check(needed in got['gapCss'], f"the gap rule lost {needed!r}")
     check(got['twice'] == 1,
           f"a reload stacked {got['twice']} stylesheets into the same root")
 
@@ -597,7 +626,8 @@ def scenario_the_element_names_it_depends_on_are_written_down():
     fn = tpl[tpl.index('stripHaChrome(frame, tries) {'):]
     fn = fn[:fn.index('async toggleEntity')]
     for name in ('home-assistant', 'home-assistant-main', 'partial-panel-resolver',
-                 'ha-panel-lovelace', 'hui-root', 'ha-sidebar'):
+                 'ha-panel-lovelace', 'hui-root', 'ha-sidebar', 'ha-drawer',
+                 'mdc-drawer-app-content'):
         check(name in fn,
               f"the chrome stripper no longer looks for <{name}> — if Home "
               f"Assistant renamed it, update the traversal; if we dropped it, "

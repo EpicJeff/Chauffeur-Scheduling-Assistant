@@ -1919,11 +1919,41 @@
                             && ha.shadowRoot.querySelector('home-assistant-main');
                         if (main && main.shadowRoot) {
                             put(main.shadowRoot, 'chf-no-sidebar', `
-                                ha-sidebar, .mdc-drawer { display: none !important; }
+                                ha-sidebar { display: none !important; }
                                 :host { --mdc-drawer-width: 0px !important; }
+                            `);
+                        }
+
+                        // THE GAP. Hiding `ha-sidebar` removes the sidebar and
+                        // leaves the hole it was sitting in, because the space
+                        // is not the sidebar's — it is a margin on the content
+                        // beside it. That margin lives on `.mdc-drawer-app-
+                        // content`, which is inside `ha-drawer`'s OWN shadow
+                        // root, one level below the root the sidebar rule goes
+                        // into. A rule aimed at `home-assistant-main`'s root
+                        // matches nothing, which is exactly what the first cut
+                        // of this did: sidebar gone, gap intact.
+                        //
+                        // `--mdc-drawer-width: 0px` above is not enough on its
+                        // own either. It is what Material's own stylesheet
+                        // would consume, and HA's build does not always route
+                        // the margin through it — so the margin is zeroed
+                        // directly, in the root that owns it.
+                        const drawer = main && main.shadowRoot
+                            && (main.shadowRoot.querySelector('ha-drawer')
+                                || main.shadowRoot.querySelector('app-drawer-layout'));
+                        if (drawer && drawer.shadowRoot) {
+                            put(drawer.shadowRoot, 'chf-no-gap', `
+                                .mdc-drawer, .mdc-drawer-scrim {
+                                    display: none !important;
+                                }
                                 .mdc-drawer-app-content {
-                                    margin-inline-start: 0 !important;
                                     margin-left: 0 !important;
+                                    margin-right: 0 !important;
+                                    margin-inline-start: 0 !important;
+                                    margin-inline-end: 0 !important;
+                                    width: 100% !important;
+                                    max-width: 100% !important;
                                 }
                             `);
                         }
