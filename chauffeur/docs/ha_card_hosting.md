@@ -29,13 +29,12 @@ from its author and no fork of its code.
 
 - **Built-in cards.** `type: gauge` resolves to `hui-gauge-card`, compiled into
   HA's frontend bundle. There is no file to fetch. Only `type: custom:…` cards
-  exist as loadable resources. The tile refuses these **by name** rather than
-  failing to load, because the YAML looks identical and "could not load" would
-  send somebody hunting for a file that was never the problem.
+  exist as loadable resources.
 
   Built-in cards need the other approach: read the config and draw it natively.
-  That is easier, not harder — a built-in card's config fully describes it —
-  but it is a different piece of work.
+  That is easier, not harder — a built-in card's config fully describes it.
+  **That work landed in v2.192.0; see the section at the end of this file.**
+  The tile routes them there, and refuses the ones it cannot draw by name.
 - **Cards that reach into HA's frontend.** Anything calling `loadCardHelpers()`
   or extending `hui-*` classes. It will fail to define, and the tile says so
   after an eight-second wait rather than spinning forever.
