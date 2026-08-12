@@ -330,6 +330,37 @@ def get_area_map(ttl: float = 60) -> list:
         return data
 
 
+_area_meta_cache = {'ts': 0.0, 'data': None}
+
+
+def get_area_registry(ttl: float = 300) -> list:
+    """[{area_id, name, picture, icon}] from HA's area registry.
+
+    Separate from `get_area_map`, which answers "what is IN this area" through
+    the template API. A room's PICTURE and icon are registry fields and the
+    registry is WebSocket-only — there is no template function for them, which
+    is why this is the one thing in this module that cannot come down the same
+    pipe as everything else.
+
+    Cached hard: an area's photograph changes when somebody uploads one, not on
+    a timer, and this costs a websocket connect per call.
+    """
+    now = time.time()
+    with _cache_lock:
+        if _area_meta_cache['data'] is not None \
+                and now - _area_meta_cache['ts'] < ttl:
+            return _area_meta_cache['data']
+    rows = ws_command('config/area_registry/list')
+    if not isinstance(rows, list):
+        return _area_meta_cache['data'] or []
+    out = [{'area_id': r.get('area_id'), 'name': r.get('name'),
+            'picture': r.get('picture'), 'icon': r.get('icon')}
+           for r in rows if isinstance(r, dict)]
+    with _cache_lock:
+        _area_meta_cache.update(ts=now, data=out)
+    return out
+
+
 def _ws_url_and_token():
     token = os.environ.get('SUPERVISOR_TOKEN')
     if token:

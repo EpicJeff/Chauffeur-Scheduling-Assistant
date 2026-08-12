@@ -4918,7 +4918,12 @@ def post_announce(req: AnnounceRequest):
 # path, fetched with our token, returned as bytes — and the allowlist stays
 # an allowlist: this must not become a generic authenticated proxy into HA.
 _HA_IMAGE_PREFIXES = ('/api/media_player_proxy/', '/api/image_proxy/',
-                      '/api/image/', '/api/camera_proxy/')
+                      '/api/image/', '/api/camera_proxy/',
+                      # Area photographs: uploaded through HA's UI they
+                      # land under /api/image/, dropped into the www
+                      # folder by hand they are /local/. Both are
+                      # pictures of a room somebody chose to show.
+                      '/local/')
 
 @app.get("/api/ha/image64/{encoded}")
 def ha_image64(encoded: str, request: Request):
@@ -4961,7 +4966,14 @@ def ha_image(path: str, request: Request = None):
         print(f"[ha_image] REJECTED path={path[:80]} ua={ua}")
         raise HTTPException(status_code=400, detail="Path not allowed")
     started = _time.time()
-    result = ha_api.fetch_binary(path)
+    # `/local/` is /config/www, which HA serves as STATIC content and the
+    # Supervisor's API proxy does not carry — the same distinction the card
+    # loader had to learn in v2.187.1. Area photographs live there when they
+    # were dropped into the www folder rather than uploaded through the UI.
+    if path.startswith('/local/'):
+        result = ha_api.fetch_static(path)
+    else:
+        result = ha_api.fetch_binary(path)
     ms = int((_time.time() - started) * 1000)
     if result is None:
         print(f"[ha_image] UPSTREAM-FAIL {ms}ms path={path[:80]} ua={ua}")

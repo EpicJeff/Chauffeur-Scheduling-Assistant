@@ -74,6 +74,21 @@ Promise.allSettled([
     // A card asking for an unknown translation gets HA's own answer, so the
     // `localize(...) || fallback` every card is written around still works.
     localizeEmpty: ro.localize('ui.card.whatever') === '',
+    // The shape a real card indexes into. Mushroom reads
+    // `translationMetadata.translations[language]` OUTSIDE a try, so an absent
+    // one threw mid-render and left an empty box on the wall — with nothing
+    // anywhere naming the missing field.
+    hasShape: ['translationMetadata', 'entities', 'devices', 'areas', 'config',
+               'themes', 'locale', 'user'].filter(k => !ro[k]),
+    translationsIndexable: !!(ro.translationMetadata.translations
+                              && ro.translationMetadata.translations[ro.language]),
+    // Registries are a websocket away and the board does not ship them. EMPTY
+    // rather than absent: indexing an empty map gives undefined and a card
+    // falls back; indexing `undefined` throws.
+    registriesEmptyNotAbsent: typeof ro.entities === 'object'
+                              && Object.keys(ro.entities).length === 0,
+    formatsAttribute: ro.formatEntityAttributeValue(
+      { attributes: { friendly_name: 'Hall' } }, 'friendly_name') === 'Hall',
   }));
 });
 """
@@ -161,6 +176,30 @@ def scenario_what_we_cannot_do_fails_fast():
     # settles leaves a spinner on the wall forever.
     check(got['statisticsRejected'],
           "a statistics subscription must be refused, not left hanging")
+
+
+def scenario_the_hass_shape_is_complete_enough_to_index_into():
+    """The failure this guards is the worst kind: silent.
+
+    A mushroom lock card rendered as an EMPTY BOX on a real board, because it
+    reads `hass.translationMetadata.translations[language]` outside a try while
+    working out how to format. Nothing in the tile said which field was
+    missing — the card simply drew nothing. That is the argument for filling in
+    the whole shape rather than the parts a known card happens to touch.
+    """
+    got = _run()
+    if got is None:
+        print("  skip  node is not installed")
+        return
+    check(not got['hasShape'],
+          f"a card indexing into these gets undefined and throws: {got['hasShape']}")
+    check(got['translationsIndexable'],
+          "translationMetadata.translations has no entry for the language we "
+          "claim, which is exactly the lookup that emptied a card")
+    check(got['registriesEmptyNotAbsent'],
+          "the entity registry is absent rather than empty — indexing an empty "
+          "map gives undefined and a card falls back; indexing undefined throws")
+    check(got['formatsAttribute'], "formatEntityAttributeValue does not format")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

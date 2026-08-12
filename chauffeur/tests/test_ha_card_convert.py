@@ -279,6 +279,75 @@ def scenario_an_icon_follows_what_the_entity_measures():
     check(row['precision'] == 3, f"the entity's own precision was dropped: {row}")
 
 
+def scenario_a_state_is_said_the_way_home_assistant_says_it():
+    """Reported side-by-side: a motion sensor reading `on` where HA reads
+    `Clear`. That is not merely terser — for a binary sensor, `off` is a word
+    most people read as "the sensor is off" rather than "nothing is moving",
+    which is the opposite of what it means."""
+    states = {}
+    states.update(st('binary_sensor.front', 'off', device_class='motion',
+                     friendly_name='Front Door Motion'))
+    states.update(st('binary_sensor.leak', 'on', device_class='moisture'))
+    states.update(st('lock.pool', 'unlocked', friendly_name='Pool'))
+    states.update(st('light.hall', 'on'))
+    states.update(st('sensor.power', '3300', unit_of_measurement='W'))
+
+    rows = conv.convert({'type': 'entities', 'entities': [
+        'binary_sensor.front', 'binary_sensor.leak', 'lock.pool',
+        'light.hall', 'sensor.power']}, states)['rows']
+    said = [r['state'] for r in rows]
+    check(said[0] == 'Clear', f"a quiet motion sensor reads {said[0]!r}")
+    check(said[1] == 'Wet', f"a wet leak sensor reads {said[1]!r}")
+    check(said[2] == 'Unlocked', f"an unlocked lock reads {said[2]!r}")
+    check(said[3] == 'On', f"a light that is on reads {said[3]!r}")
+    # A NUMBER is not a state to translate. Rounding is the renderer's job and
+    # the raw value has to survive to get there.
+    check(said[4] == '3300', f"a numeric reading was mangled: {said[4]!r}")
+
+
+def scenario_an_area_card_leads_with_its_photograph():
+    """`display_type: picture` is the household saying which they want — they
+    bothered to upload a photo of the pool house. The picture lives in the AREA
+    REGISTRY, which is websocket-only; there is no template function for it,
+    so it is the one thing here that cannot come down the same pipe as the rest.
+    """
+    from services import ha_api
+    real_map, real_reg = ha_api.get_area_map, ha_api.get_area_registry
+    try:
+        ha_api.get_area_map = lambda ttl=60: [
+            {'id': 'pool_house', 'name': 'Pool House',
+             'entities': ['light.pool', 'binary_sensor.pool_motion']}]
+        ha_api.get_area_registry = lambda ttl=300: [
+            {'area_id': 'pool_house', 'name': 'Pool House',
+             'picture': '/api/image/serve/abc/original', 'icon': 'mdi:pool'}]
+        states = {}
+        states.update(st('light.pool', 'on', friendly_name='Pool light'))
+        states.update(st('binary_sensor.pool_motion', 'on', device_class='motion',
+                         friendly_name='Pool motion'))
+
+        card = conv.convert({'type': 'area', 'area': 'pool_house',
+                             'display_type': 'picture',
+                             'alert_classes': ['motion']}, states)
+        check(card['picture'] == '/api/image/serve/abc/original',
+              f"the room's photograph was not found: {card['picture']}")
+        check(card['display'] == 'picture', f"the display type was lost: {card}")
+        check(card['icon'] == 'mdi:pool', f"the area's own icon was lost: {card}")
+        # The alert carries its CLASS's icon. A motion badge drawn as a generic
+        # warning triangle says "something is wrong" about a room somebody has
+        # just walked through.
+        check(card['alerts'][0]['icon'] == 'mdi:motion-sensor',
+              f"an alert drew a generic warning: {card['alerts'][0]}")
+
+        # And a card that did NOT ask for a picture does not become one —
+        # turning every existing area card into a photograph would be
+        # redesigning boards nobody touched.
+        plain = conv.convert({'type': 'area', 'area': 'pool_house'}, states)
+        check(plain['display'] == 'compact',
+              f"an area card promoted itself to a picture: {plain['display']}")
+    finally:
+        ha_api.get_area_map, ha_api.get_area_registry = real_map, real_reg
+
+
 def scenario_a_sensor_card_downsamples_its_own_history():
     """The only card here that is not a pure function of a config and a state.
 

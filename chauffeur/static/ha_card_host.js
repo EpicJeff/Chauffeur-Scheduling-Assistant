@@ -121,6 +121,44 @@
             }
         });
 
+        // The icon for an ENTITY rather than for a name. HA's own frontend
+        // works out which glyph a state deserves — an open door, a charging
+        // battery — and cards that show entities reach for this rather than
+        // for `ha-icon`. Mushroom uses it 23 times, so without it every
+        // mushroom card on the board draws its text and no icon at all.
+        //
+        // The lookup is the same table the native cards use, which is the
+        // point: one icon system for the board, not two that disagree.
+        define('ha-state-icon', class extends HTMLElement {
+            static get observedAttributes() { return ['icon']; }
+            set stateObj(v) { this._state = v; this._render(); }
+            get stateObj() { return this._state; }
+            set hass(v) { /* the state object is what this needs */ }
+            connectedCallback() { this._render(); }
+            attributeChangedCallback() { this._render(); }
+            _render() {
+                if (!this.shadowRoot) {
+                    this.attachShadow({ mode: 'open' });
+                    this.shadowRoot.innerHTML =
+                        '<style>:host{display:inline-flex;align-items:center;' +
+                        'justify-content:center;width:var(--mdc-icon-size,24px);' +
+                        'height:var(--mdc-icon-size,24px);}' +
+                        'svg{width:100%;height:100%;fill:currentColor;}</style><span></span>';
+                }
+                var slot = this.shadowRoot.querySelector('span');
+                var st = this._state || {};
+                var attrs = st.attributes || {};
+                var name = this.getAttribute('icon') || attrs.icon
+                    || domainIcon(String(st.entity_id || ''), attrs, st.state);
+                if (!name) { slot.innerHTML = ''; return; }
+                iconPath(name).then(function (d) {
+                    slot.innerHTML = d
+                        ? '<svg viewBox="0 0 24 24"><path d="' + d + '"></path></svg>'
+                        : '';
+                });
+            }
+        });
+
         // Same picture, path data supplied directly as a property. Cards that
         // bundle their own icons use this one and never touch the network.
         define('ha-svg-icon', class extends HTMLElement {
@@ -186,6 +224,28 @@
         }
     }
 
+    // A per-domain glyph, so an entity with no icon of its own still draws
+    // something. Deliberately SHORT: the server's table
+    // (ha_card_convert._icon_for) is the real one, and it is the one that runs
+    // for every entity a native card shows. This exists only for hosted cards,
+    // which hand us a state object rather than an icon name.
+    var DOMAIN_ICON = {
+        light: 'mdi:lightbulb', switch: 'mdi:toggle-switch', fan: 'mdi:fan',
+        lock: 'mdi:lock', cover: 'mdi:window-shutter', climate: 'mdi:thermostat',
+        sensor: 'mdi:eye', binary_sensor: 'mdi:checkbox-marked-circle',
+        person: 'mdi:account', media_player: 'mdi:speaker', camera: 'mdi:camera',
+        input_boolean: 'mdi:toggle-switch-outline', vacuum: 'mdi:robot-vacuum',
+        scene: 'mdi:palette', script: 'mdi:script-text', automation: 'mdi:robot',
+    };
+    function domainIcon(entityId, attrs, state) {
+        var domain = String(entityId).split('.')[0];
+        if (domain === 'lock') {
+            return String(state).toLowerCase() === 'unlocked'
+                ? 'mdi:lock-open' : 'mdi:lock';
+        }
+        return DOMAIN_ICON[domain] || 'mdi:eye';
+    }
+
     // ── Icons, resolved once per name for the life of the page.
     var iconCache = {};
     function iconPath(name) {
@@ -239,10 +299,41 @@
             // and cards written against it use `|| fallback`.
             localize: function () { return ''; },
             formatEntityState: function (stateObj) { return (stateObj && stateObj.state) || ''; },
+            formatEntityAttributeValue: function (stateObj, attr) {
+                return String(((stateObj || {}).attributes || {})[attr] ?? '');
+            },
+            formatEntityAttributeName: function (stateObj, attr) { return String(attr); },
             language: 'en',
             locale: { language: 'en', number_format: 'language', time_format: 'language' },
-            themes: { darkMode: spec.dark !== false, theme: 'default' },
-            config: { unit_system: {}, version: 'chauffeur' },
+            // Mushroom reads `hass.translationMetadata.translations[language]`
+            // while working out which language to format in, and reads it
+            // OUTSIDE a try — so an absent one threw mid-render and the card
+            // left an empty box on the wall. Nothing about that failure said
+            // which field was missing, which is the argument for filling in
+            // the whole shape rather than the parts a card is known to touch.
+            translationMetadata: {
+                fragments: [],
+                translations: { en: { nativeName: 'English', isRTL: false } },
+            },
+            themes: { darkMode: spec.dark !== false, theme: 'default', themes: {} },
+            config: {
+                unit_system: { temperature: '°F', length: 'mi', mass: 'lb',
+                    volume: 'gal', pressure: 'psi', wind_speed: 'mph',
+                    accumulated_precipitation: 'in' },
+                language: 'en', country: null, currency: 'USD',
+                time_zone: 'local', components: [], state: 'RUNNING',
+                version: 'chauffeur',
+            },
+            // The entity/device/area REGISTRIES, which are a websocket away and
+            // not something the board ships. Empty objects rather than absent:
+            // a card indexing into an empty map gets undefined and falls back,
+            // and a card indexing into `undefined` throws.
+            entities: {},
+            devices: {},
+            areas: {},
+            // Cards build absolute URLs with this (a camera still, an icon).
+            // Root-relative is right under ingress and right standalone.
+            hassUrl: function (path) { return String(path || ''); },
             user: { name: 'Panel', is_admin: false, is_owner: false },
             // A card that wants live statistics is asking for a websocket we
             // are not holding open. Rejecting is what lets it fall back or say

@@ -258,6 +258,35 @@
         .nc-thermo-name { font-size: 0.75rem; color: var(--panel-dim); margin-top: 0.2rem; }
         .nc-thermo-action { color: var(--panel-fg); font-weight: 700; }
         .nc-area { display: flex; flex-direction: column; gap: 0.4rem; }
+        /* A picture card bleeds its photograph to the cell's edges — the
+           negative margins cancel the cell padding, which is what makes it the
+           card's own header rather than an image pasted inside it. */
+        .nc-area.has-picture { gap: 0; }
+        .nc-area-picture {
+            position: relative;
+            margin: -0.75rem -0.75rem 0.5rem;
+            aspect-ratio: 16 / 9;
+            overflow: hidden;
+            background: var(--panel-card-hi);
+        }
+        .nc-area-picture img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .nc-area-badges {
+            position: absolute;
+            top: 0.5rem;
+            left: 0.5rem;
+            display: flex;
+            gap: 0.3rem;
+        }
+        .nc-area-badges .nc-area-alert {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.8rem;
+            height: 1.8rem;
+            border-radius: 999px;
+            background: #f59e0b;
+            color: #1c1917;
+        }
         .nc-area-head { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
         .nc-area-reading {
             font-size: 0.8rem;
@@ -2894,6 +2923,9 @@
                     const readings = (c.readings || []).map(r =>
                         `<span class="nc-area-reading">${this.esc(this.fmt(r.state))}${
                             r.unit ? this.esc(r.unit) : ''}</span>`).join('');
+                    // The alerts sit ON the picture when there is one, as a
+                    // badge, which is how HA shows them — a room you can see is
+                    // a room a badge can point at.
                     const alerts = (c.alerts || []).map(a =>
                         `<span class="nc-area-alert" title="${this.esc(a.name)}">${
                             this.icon(a.icon)}</span>`).join('');
@@ -2902,12 +2934,23 @@
                                data-toggle="${this.esc(t.entity_id)}"
                                title="${this.esc(t.name)}">${this.icon(t.icon)}</span>`
                     ).join('');
-                    return `<div class="nc-area">
+                    // `display_type: picture` leads with the photograph. It is
+                    // the household saying which one they want: they bothered
+                    // to upload a picture of the pool house.
+                    const picture = (c.display === 'picture' && c.picture)
+                        ? `<div class="nc-area-picture">
+                             <img src="${this.esc(this.apiBase + 'api/ha/image?path='
+                                + encodeURIComponent(c.picture))}" alt="">
+                             ${alerts ? `<div class="nc-area-badges">${alerts}</div>` : ''}
+                           </div>` : '';
+                    return `<div class="nc-area${picture ? ' has-picture' : ''}">
+                        ${picture}
                         <div class="nc-area-head">
+                          ${c.icon ? this.icon(c.icon) : ''}
                           <span class="nc-name">${this.esc(c.name)}</span>
-                          ${readings}${alerts}
+                          ${readings}${picture ? '' : alerts}
                         </div>
-                        <div class="nc-area-toggles">${toggles}</div>
+                        ${toggles ? `<div class="nc-area-toggles">${toggles}</div>` : ''}
                       </div>`;
                 },
 

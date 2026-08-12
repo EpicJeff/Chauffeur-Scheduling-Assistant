@@ -153,6 +153,56 @@ def _icon_for(entity_id, attrs, state):
     return _DOMAIN_ICON.get(domain) or 'mdi:eye'
 
 
+# What `on` MEANS, per binary-sensor device class. HA translates these and a
+# board that prints the raw state says "on" where Home Assistant says "Clear" —
+# which for a motion sensor is not just terser, it is the opposite reading to
+# the one somebody glancing at it will take. (on, off)
+_BINARY_CLASS_STATE = {
+    'motion': ('Detected', 'Clear'), 'occupancy': ('Detected', 'Clear'),
+    'presence': ('Home', 'Away'), 'gas': ('Detected', 'Clear'),
+    'smoke': ('Detected', 'Clear'), 'moisture': ('Wet', 'Dry'),
+    'door': ('Open', 'Closed'), 'garage_door': ('Open', 'Closed'),
+    'window': ('Open', 'Closed'), 'opening': ('Open', 'Closed'),
+    'lock': ('Unlocked', 'Locked'), 'problem': ('Problem', 'OK'),
+    'safety': ('Unsafe', 'Safe'), 'tamper': ('Detected', 'Clear'),
+    'connectivity': ('Connected', 'Disconnected'),
+    'battery': ('Low', 'Normal'), 'battery_charging': ('Charging', 'Not charging'),
+    'running': ('Running', 'Not running'), 'power': ('Detected', 'Clear'),
+    'plug': ('Plugged in', 'Unplugged'), 'sound': ('Detected', 'Clear'),
+    'vibration': ('Detected', 'Clear'), 'update': ('Available', 'Up-to-date'),
+    'cold': ('Cold', 'Normal'), 'heat': ('Hot', 'Normal'),
+    'light': ('Detected', 'Clear'), 'moving': ('Moving', 'Not moving'),
+}
+
+
+def _state_label(entity_id, attrs, state):
+    """The state as Home Assistant would SAY it.
+
+    A binary sensor's `on` is a machine's word for it. HA prints "Clear" for a
+    motion sensor that is off — and printing `off` there is not merely terser,
+    it is a word most people read as "the sensor is off" rather than "nothing
+    is moving".
+    """
+    raw = str(state if state is not None else '')
+    if not raw:
+        return raw
+    domain = _domain(entity_id)
+    low = raw.lower()
+    if domain in ('binary_sensor', 'lock', 'input_boolean', 'switch', 'light',
+                  'fan', 'cover', 'person', 'device_tracker'):
+        if domain == 'binary_sensor':
+            pair = _BINARY_CLASS_STATE.get(
+                str(attrs.get('device_class') or '').lower())
+            if pair:
+                return pair[0] if low == 'on' else (pair[1] if low == 'off' else raw)
+        if low in ('on', 'off', 'open', 'closed', 'locked', 'unlocked',
+                   'home', 'not_home', 'unavailable', 'unknown', 'idle',
+                   'jammed', 'opening', 'closing', 'locking', 'unlocking'):
+            return {'not_home': 'Away', 'unavailable': 'Unavailable',
+                    'unknown': 'Unknown'}.get(low, low.replace('_', ' ').title())
+    return raw
+
+
 def _row(entity_id, states, name=None, icon=None, secondary=None):
     """One entity, as a reading. The shape every list-ish card here uses.
 
@@ -166,7 +216,8 @@ def _row(entity_id, states, name=None, icon=None, secondary=None):
     return {
         'entity_id': entity_id,
         'name': name or attrs.get('friendly_name') or entity_id,
-        'state': (st or {}).get('state'),
+        # Said the way HA says it: a motion sensor reads "Clear", not "off".
+        'state': _state_label(entity_id, attrs, (st or {}).get('state')),
         'unit': attrs.get('unit_of_measurement'),
         'icon': icon or _icon_for(entity_id, attrs, (st or {}).get('state')),
         # How many decimals the integration wants shown. Absent for most
@@ -520,21 +571,41 @@ def _area_card(config, states):
         elif domain == 'binary_sensor' and cls in alert_classes:
             if str(st.get('state') or '').lower() == 'on':
                 alerts.append({'class': cls,
-                               'icon': attrs.get('icon') or 'mdi:alert',
+                               # The class's OWN icon — a motion badge that
+                               # draws a generic warning triangle says
+                               # "something is wrong" about a room somebody
+                               # just walked through.
+                               'icon': _icon_for(entity_id, attrs, st.get('state')),
                                'name': attrs.get('friendly_name') or entity_id})
         elif domain in _AREA_TOGGLES:
             toggles.append(_row(entity_id, states))
 
-    name = config.get('name')
+    # The room's own name and PHOTOGRAPH, from the area registry. HA's area
+    # card leads with the picture when `display_type: picture`, and side by
+    # side that is most of what makes it read as a place rather than as a row
+    # of switches — a household that has bothered to upload a photo of the pool
+    # house has already said which one they want.
+    from services import ha_api
+    name, picture, icon = config.get('name'), config.get('image'), None
+    for area in ha_api.get_area_registry() or []:
+        if str(area.get('area_id') or '').lower() == str(ref).lower() \
+                or str(area.get('name') or '').lower() == str(ref).lower():
+            name = name or area.get('name')
+            picture = picture or area.get('picture')
+            icon = area.get('icon')
+            break
     if not name:
-        from services import ha_api
         for area in ha_api.get_area_map() or []:
             if str(area.get('id') or '').lower() == str(ref).lower():
                 name = area.get('name')
                 break
     on = [t for t in toggles if t['on']]
     return {'kind': 'area', 'name': name or str(ref) or 'Area',
-            'picture': config.get('image'),
+            'picture': picture, 'icon': icon,
+            # A picture is only the LEAD when the config asked for one. The
+            # default area card is a text row, and turning every one of them
+            # into a photograph would be redesigning boards nobody touched.
+            'display': str(config.get('display_type') or 'compact').lower(),
             'readings': readings[:3], 'alerts': alerts[:4],
             'toggles': sorted(toggles, key=lambda t: (not t['on'], t['name']))[:6],
             'on_count': len(on),
