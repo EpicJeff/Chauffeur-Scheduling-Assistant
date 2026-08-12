@@ -204,6 +204,35 @@ def scenario_a_built_in_card_comes_back_as_a_drawing_not_a_download():
         ha_cards.states_for = real
 
 
+def scenario_the_gauge_arc_centres_itself():
+    """Reported from a real board: the value and the name centred, the arc sat
+    against the left edge, and the card read as broken rather than as
+    misaligned.
+
+    Tailwind's preflight sets `svg { display: block }`, so the arc is a block
+    box capped at its max-width and the parent's `text-align: center` does
+    nothing to it — while the text beside it centres perfectly, because that is
+    inline. Every other svg on this board is full width, so this is the only
+    place the rule shows, which is exactly why it is worth pinning.
+    """
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates', 'home.html')
+    css = open(tpl, encoding='utf-8').read()
+    block = css[css.index('.nc-gauge-svg'):]
+    block = block[:block.index('}')]
+    check('margin-left: auto' in block and 'margin-right: auto' in block,
+          f"the gauge arc no longer centres itself: {block!r}")
+
+    sheet = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         'static', 'tailwind.css')
+    built = open(sheet, encoding='utf-8').read()
+    if 'svg,video{display:block' not in built:
+        # If preflight ever stops doing this, the auto margins are harmless and
+        # the comment above is stale. Worth saying out loud rather than
+        # silently keeping a workaround for a problem that has gone.
+        print('  note  preflight no longer forces svg to display:block')
+
+
 RENDER_HARNESS = r"""
 globalThis.window = {
   location: { search: '', pathname: '/home' },

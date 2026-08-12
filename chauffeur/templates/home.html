@@ -135,7 +135,22 @@
         }
         .nc-button.is-on { color: var(--panel-accent); }
         .nc-gauge { text-align: center; }
-        .nc-gauge-svg { width: 100%; max-width: 180px; height: auto; }
+        /* `margin: 0 auto`, NOT the parent's text-align.
+           Tailwind's preflight sets `svg { display: block }`, so the arc is a
+           block box capped at 180px and text-align does nothing to it — while
+           the value and the name beside it centre perfectly, because those are
+           inline. The result reads as a card that is broken rather than as one
+           that is misaligned, which is why it is worth a comment: every other
+           svg on this board is full-width, so this is the only place the rule
+           shows up. */
+        .nc-gauge-svg {
+            display: block;
+            width: 100%;
+            max-width: 180px;
+            height: auto;
+            margin-left: auto;
+            margin-right: auto;
+        }
         .nc-gauge-value {
             font-weight: 800;
             font-size: 1.4rem;
