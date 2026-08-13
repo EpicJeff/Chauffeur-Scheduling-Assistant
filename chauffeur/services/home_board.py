@@ -1269,7 +1269,6 @@ def _tile_moments(now, config=None, **_):
 AGENDA_DAYS = 5
 # Per day, before the card says "+3 more". A day card taller than the tile is
 # the tile scrolling for one busy Saturday.
-AGENDA_PER_DAY = 5
 
 
 def agenda_days(settings: dict = None) -> int:
@@ -1311,31 +1310,30 @@ def _member_calendar_ids(member_ids: List[str]) -> set:
 
 # The calendar page's URL vocabulary, which is also the card's. Kept as one
 # table so "month" means the same thing in a query string and in a card config.
+# `agenda` is here too since v2.207: the component owns the agenda now, so the
+# card mounts it like any other view and the last server-side drawing of an
+# agenda is gone. Only `list` is still built into the board payload — it is
+# genuinely a different thing (one line per event for a narrow tile), not a
+# second drawing of the same one.
 _CAL_GRID_VIEWS = {'month': 'dayGridMonth', 'week': 'timeGridWeek',
-                   'day': 'timeGridDay'}
+                   'day': 'timeGridDay', 'agenda': 'agenda'}
 
 
 def _tile_calendar(now, sched=None, settings=None, config=None, **_):
-    """What this family is doing, laid out the way the calendar page's AGENDA
-    view lays it out: a card per day, the day's events under it by start time.
-
-    The drives tile answers "who is taking whom"; this answers "what is on",
+    """The drives tile answers "who is taking whom"; this answers "what is on",
     which on most days is a different list — a dentist appointment nobody
     drives to still belongs on the wall.
 
-    A flat list of the next six things was the wrong shape for that question.
-    It could not say that Thursday is empty, and "empty Thursday" is a thing a
-    family reads a calendar to find out. Day cards say it by existing, which is
-    the same reason the agenda view is built that way.
+    Four of the five views — agenda, month, week, day — are the calendar
+    page's own, mounted from components/family_calendar.html; this builder
+    only resolves their config (which view, whose events, how many days) and
+    the component fetches for itself. The one view still BUILT here is
+    `list`: one line per event for a tile too narrow to hold day cards, which
+    is genuinely a different drawing and not a copy of the page's.
 
-    Today's finished events STAY, greyed. The first cut dropped them, on the
-    reasoning that a card headed Today listing this morning's dentist
-    appointment is a card about the past — and the family's answer was the
-    calendar page's own agenda, which shows the whole day and always has.
-    Dropping them also makes a busy morning invisible: a card showing two
-    things at four in the afternoon reads as a quiet day rather than as a day
-    nearly done. `past` is the flag; the panel greys them and the day still
-    reads as a day.
+    Today's finished events stay, flagged `past` and greyed. Dropping them
+    made a busy morning invisible: a list showing two things at four in the
+    afternoon reads as a quiet day rather than as a day nearly done.
     """
     try:
         sched = sched if sched is not None else (storage.get_cached_schedule() or {})
@@ -1459,40 +1457,15 @@ def _tile_calendar(now, sched=None, settings=None, config=None, **_):
             return {'empty': f"Nothing on the calendar{who} "
                              f"for the next {span} day{'s' if span != 1 else ''}."}
 
-        # One list, next first — for a narrow tile, where a row of day cards is
-        # three words per card. Same rows, same order, no day headings; the
-        # date rides on the row instead.
-        if view == 'list':
-            rows = sorted((r for v in days.values() for r in v),
-                          key=lambda r: (r['start'], not r['all_day']))
-            for r in rows:
-                d = datetime.date.fromisoformat(r['start'][:10])
-                r['day'] = day_word(d, today)
-            return {'view': 'list', 'rows': rows[:12], 'total': total,
-                    'more': max(0, len(rows) - 12)}
-
-        cards = []
-        for d in order:
-            rows = sorted(days[d], key=lambda r: (not r['all_day'], r['start']))
-            # When a day does not fit, what goes is what has already happened —
-            # from the top, oldest first. A tile that dropped this evening's
-            # pickup to keep this morning's school run would be answering the
-            # wrong question, and one that simply cut the day off at five
-            # entries would silently hide the end of it.
-            earlier = 0
-            while len(rows) > AGENDA_PER_DAY and rows[0].get('past'):
-                rows.pop(0)
-                earlier += 1
-            cards.append({
-                'date': d.isoformat(),
-                'dom': d.day,
-                'day': day_word(d, today),
-                'today': d == today,
-                'events': rows[:AGENDA_PER_DAY],
-                'earlier': earlier,
-                'more': max(0, len(rows) - AGENDA_PER_DAY),
-            })
-        return {'view': 'agenda', 'days': cards, 'total': total}
+        # Anything else stored in `view` is a config written by an older
+        # version or by hand; the list is the only payload drawing left.
+        rows = sorted((r for v in days.values() for r in v),
+                      key=lambda r: (r['start'], not r['all_day']))
+        for r in rows:
+            d = datetime.date.fromisoformat(r['start'][:10])
+            r['day'] = day_word(d, today)
+        return {'view': 'list', 'rows': rows[:12], 'total': total,
+                'more': max(0, len(rows) - 12)}
     except Exception as e:
         print(f"[home_board] calendar failed: {e}")
         return None

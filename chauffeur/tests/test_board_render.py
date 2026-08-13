@@ -125,22 +125,13 @@ def _board(hero=None):
                                 {'id': 'drv2', 'name': 'Vovo', 'color_code': '#8b5cf6'}],
                     'cars': [], 'completed_drives': [], 'in_progress_drives': [],
                 }}},
-            {'id': 'calendar', 'type': 'calendar', 'icon': '📅', 'label': "What's coming", 'data': {
-                'total': 1,
-                'days': [
-                    {'date': TODAY, 'dom': 8, 'day': 'Today', 'today': True,
-                     'more': 0, 'earlier': 0, 'events': [
-                         {'title': 'Dentist', 'at': '9:00 AM', 'end_at': '10:00 AM',
-                          'all_day': False, 'start': at(9), 'driver': None,
-                          'needs_driver': False, 'color': '#64748b',
-                          'kind': 'event', 'past': True},
-                         {'title': 'Dribble and Swish', 'at': '4:00 PM',
-                          'end_at': '5:30 PM', 'all_day': False, 'start': at(16),
-                          'driver': 'Sam', 'needs_driver': False,
-                          'color': '#ef4444', 'kind': 'event', 'past': False}]},
-                    {'date': TOMORROW, 'dom': 9, 'day': 'Tomorrow', 'today': False,
-                     'more': 0, 'earlier': 0, 'events': []},
-                ]}},
+            # The calendar tile is a component MOUNT since v2.207: the
+            # agenda is components/family_calendar.html's own drawing, fetched
+            # by the component itself, and nothing rides in the payload.
+            {'id': 'calendar', 'type': 'calendar', 'icon': '📅',
+             'label': "What's coming",
+             'data': {'grid': {'view': 'agenda', 'toolbar': False,
+                               'days': 3, 'only': []}}},
             # A built-in tile with nothing to say. Its message must be drawn
             # ONCE — a tile's data is its card's data, so anything rendering
             # both draws it twice.
@@ -160,17 +151,18 @@ def _board(hero=None):
             {'id': 'mine', 'type': 'custom', 'icon': '🧩', 'label': 'Mornings',
              'locked': False, 'bare': True,
              'config': {'title': 'Mornings', 'bare': True}, 'cards': [
+                 # A LIST card — the one calendar view still drawn from the
+                 # payload since v2.207 (agenda/month/week/day are component
+                 # mounts, probed elsewhere).
                  {'id': 'mine-calendar', 'type': 'calendar', 'icon': '📅',
                   'label': "Emma's week", 'title': "Emma's week",
                   'cols': 6, 'rows': 0, 'config': {},
-                  'data': {'total': 1, 'days': [
-                      {'date': TODAY, 'dom': 8, 'day': 'Today', 'today': True,
-                       'more': 0, 'earlier': 0, 'events': [
-                           {'title': 'Ballet', 'at': '5:00 PM',
-                            'end_at': '6:00 PM', 'all_day': False,
-                            'start': at(17), 'driver': 'Vovo',
-                            'needs_driver': False, 'color': '#8b5cf6',
-                            'kind': 'event', 'past': False}]}]}},
+                  'data': {'view': 'list', 'total': 1, 'more': 0, 'rows': [
+                      {'title': 'Ballet', 'at': '5:00 PM', 'day': 'Today',
+                       'end_at': '6:00 PM', 'all_day': False,
+                       'start': at(17), 'driver': 'Vovo',
+                       'needs_driver': False, 'color': '#8b5cf6',
+                       'kind': 'event', 'past': False}]}},
                  # A calendar card asking for the MONTH grid. Nothing is
                  # drawn from this payload: the element is a mount point and
                  # the shared component fetches its own events.
@@ -258,7 +250,6 @@ setTimeout(() => {
   // Mount points carry the INSTANCE id now, so two driving tiles are two
   // elements rather than two claims on one.
   const tl = doc.getElementById('board-timeline-drives');
-  const ag = doc.querySelector('.agenda-cards');
   console.log(JSON.stringify({
     errors: errors,
     tiles: [...doc.querySelectorAll('#tile-grid > a')]
@@ -273,14 +264,19 @@ setTimeout(() => {
         .map(h => h.textContent.replace(/\s+/g, ' ').trim()) : [],
       text: tl ? tl.textContent.replace(/\s+/g, ' ').trim() : ''
     },
-    agenda: {
-      cards: ag ? [...ag.children].filter(c => c.tagName !== 'TEMPLATE').length : 0,
-      style: ag ? ag.getAttribute('style') : '',
-      text: ag ? ag.textContent.replace(/\s+/g, ' ').trim() : '',
-      // Which rows are greyed, by the title they carry.
-      dimmed: ag ? [...ag.querySelectorAll('.opacity-45')]
-        .map(e => e.textContent.replace(/\s+/g, ' ').trim()) : []
-    },
+    agenda: (() => {
+      // The component's agenda, mounted inside the built-in calendar tile.
+      const host = doc.getElementById('board-calendar-calendar');
+      if (!host) return null;
+      const panel = host.querySelector('.cal-agenda');
+      return {
+        shown: !!(panel && panel.style.display === 'flex'),
+        dayCards: host.querySelectorAll('.agenda-day').length,
+        // A pinned card draws no view switcher.
+        toolbar: !!host.querySelector('[data-ag="view"]'),
+        text: panel ? panel.textContent.replace(/\s+/g, ' ').trim() : '',
+      };
+    })(),
     hero: {
       label: (doc.querySelector('.panel-card .panel-label') || {}).textContent,
       pill: (() => {
@@ -704,27 +700,30 @@ def scenario_the_drives_tile_draws_the_real_timeline():
           "drive by being leaned against")
 
 
-def scenario_a_day_card_is_three_columns_wide_on_the_real_page():
-    """The fix for "the agenda squishes each day down very narrow". The tile is
-    the full twelve columns in this fixture, so four quarter-width day cards go
-    across it."""
+def scenario_the_calendar_tile_is_the_components_own_agenda():
+    """The last of the three agenda drawings died in v2.207: the board's
+    calendar tile now MOUNTS components/family_calendar.html and shows the
+    same hand-drawn agenda the calendar page shows — fetched by the component
+    itself, since the board payload no longer carries anything for it.
+
+    What the old server-drawn day cards promised, the component's must still
+    deliver: a card per day whether or not anything is on it (a quiet day
+    saying so is the reason the agenda is day cards rather than a list), and
+    no view switcher on a card nobody asked to be switchable.
+    """
     got = _run()
     if got is None:
         return
     ag = got['agenda']
-    check(ag['cards'] == 2, f"both day cards drew, got {ag['cards']}")
-    check('--a-lg:4' in (ag['style'] or ''),
-          f"a full-width tile fits four day cards; got {ag['style']!r}")
+    check(ag, "the calendar tile has no component mount at all")
+    check(ag['shown'], "the component agenda is not showing inside the tile")
+    check(ag['dayCards'] == 3,
+          f"a card per configured day, got {ag['dayCards']} for days=3")
     check('Nothing scheduled' in ag['text'],
           "a quiet day has to say so — a card that renders empty is the reason "
           "the agenda is day cards rather than a list")
-    # Today's finished events stay, greyed. Dropping them made a busy morning
-    # invisible: two things left at four in the afternoon read as a quiet day
-    # rather than as a day nearly done.
-    check('Dentist' in ag['text'],
-          f"this morning's appointment vanished off the card: {ag['text'][:160]}")
-    check(len(ag['dimmed']) == 1 and 'Dentist' in ag['dimmed'][0],
-          f"exactly the past events are greyed, got {ag['dimmed']}")
+    check(not ag['toolbar'],
+          "a pinned calendar card is drawing the view switcher anyway")
 
 
 def scenario_the_hero_leads_with_the_leave_time():

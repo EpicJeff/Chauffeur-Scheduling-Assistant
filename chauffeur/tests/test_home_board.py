@@ -698,8 +698,11 @@ def scenario_an_unconfigured_feature_has_no_tile():
         # other tile belongs to something this blank install has not set up.
         check(keys == ['calendar'],
               f"blank install -> the calendar and nothing else, got {keys}")
-        check(board['tiles'][0]['data'].get('empty'),
-              "and it says what it is quiet about")
+        # The quiet message moved with the drawing: the tile is a component
+        # mount now, and the component's agenda says "Nothing scheduled" on
+        # each of its day cards — a real answer, drawn where the days are.
+        check(board['tiles'][0]['data'].get('grid', {}).get('view') == 'agenda',
+              "a blank install's calendar is still the component agenda mount")
         check(board['hero']['next'] is None and not board['hero']['all_done'],
               "no drives at all is distinct from all drives done")
     finally:
@@ -865,15 +868,19 @@ def scenario_the_drives_tile_hands_over_a_schedule_not_a_drawing():
          storage.get_completed_drives, storage.get_in_progress_drives) = orig
 
 
-def scenario_the_calendar_tile_is_an_agenda_of_days():
-    """A flat list of the next six things cannot say that Thursday is empty,
-    and "Thursday is empty" is a thing families read a calendar to find out.
-    The agenda's day cards say it by existing.
+def scenario_the_calendar_card_mounts_views_and_still_builds_the_list():
+    """Since v2.207 the calendar card's agenda, month, week and day are the
+    calendar PAGE's own views: the builder returns mount config — which view,
+    whose events (resolved to the NAMES the pipeline matches on), how many
+    days — and components/family_calendar.html fetches for itself. The last
+    server-drawn agenda is gone; ONE view is still built here, `list`, because
+    one line per event for a narrow tile is genuinely a different drawing.
 
-    Today's finished events STAY, greyed — the calendar page's own agenda shows
-    the whole day and always has. The first cut dropped them, which also made a
-    busy morning invisible: two things left at four in the afternoon read as a
-    quiet day rather than as a day nearly done."""
+    What the list inherits from the old day cards, pinned: the whole day in
+    order, finished events flagged `past` (greyed, never dropped — a busy
+    morning must not read as a quiet day), a trip's own span event excluded
+    (it would print on every row; trips have their own tile), drivers named,
+    and the one thing somebody must act on coloured for it."""
     orig = (storage.get_cached_schedule, storage.get_all_drivers,
             storage.get_all_members)
     try:
@@ -895,50 +902,47 @@ def scenario_the_calendar_tile_is_an_agenda_of_days():
             'scheduled_errands': []}
         storage.get_all_drivers = lambda: [{'id': 'drv1', 'name': 'Sam',
                                             'color_code': '#ff0000'}]
-        storage.get_all_members = lambda *a, **kw: []
+        storage.get_all_members = lambda *a, **kw: [{'id': 'm1', 'name': 'Emma'}]
 
+        # The DEFAULT view is the component's agenda: mount config, no events.
         tile = home_board._tile_calendar(_at(12))
-        days = {d['day']: d for d in tile['days']}
-        check(len(tile['days']) == home_board.AGENDA_DAYS,
-              f"a card per day whether or not it has anything on it, got {len(tile['days'])}")
-        check(len(home_board._tile_calendar(_at(12), settings={'panel_agenda_days': 9})['days']) == 9,
-              "how many days is the household's call — it depends on how wide "
-              "they made the tile and what they use the board for")
+        check(tile == {'grid': {'view': 'agenda', 'toolbar': False,
+                                'days': home_board.AGENDA_DAYS, 'only': []}},
+              f"the default calendar card is not a component agenda mount: {tile}")
+        check(home_board._tile_calendar(
+                  _at(12), settings={'panel_agenda_days': 9})['grid']['days'] == 9,
+              "how many days is the household's call")
         for bad, want in ((0, 1), (99, 14), ('a week', home_board.AGENDA_DAYS)):
             got = home_board.agenda_days({'panel_agenda_days': bad})
             check(got == want, f"agenda_days({bad!r}) -> {got}, wanted {want}")
-        check(days['Today']['today'] and days['Today']['dom'] == datetime.date.today().day,
-              "today knows it is today")
-        titles = [e['title'] for e in days['Today']['events']]
-        check(titles == ['Dentist', 'Practice'],
-              f"the whole day is on the card, in order, got {titles}")
-        by_title = {e['title']: e for e in days['Today']['events']}
+        # The view selector is the card's own switch, and the people filter is
+        # resolved to names — the pipeline matches people by name, and member
+        # ids shipped raw would be a filter that silently never hit.
+        month = home_board._tile_calendar(_at(12), config={
+            'view': 'month', 'view_selector': True, 'members': ['m1']})
+        check(month['grid']['view'] == 'dayGridMonth' and month['grid']['toolbar'],
+              f"a month card did not resolve: {month}")
+        check(month['grid']['only'] == ['Emma'],
+              f"the people filter is not names: {month['grid']['only']}")
+
+        # The list, which is still built here.
+        rows = home_board._tile_calendar(_at(12), config={'view': 'list'})['rows']
+        titles = [r['title'] for r in rows]
+        check(titles == ['Dentist', 'Practice', 'Recital'],
+              f"the whole span in order, got {titles}")
+        by_title = {r['title']: r for r in rows}
         check(by_title['Dentist']['past'] and not by_title['Practice']['past'],
               "what has already happened is flagged for greying, not dropped")
-        check('Disney' not in str(tile),
-              "a trip's own span event would print on all five cards; trips have "
+        check('Disney' not in titles,
+              "a trip's own span event would print on every row; trips have "
               "their own tile")
         check(by_title['Practice']['driver'] == 'Sam',
               "an assigned event names its driver")
-
-        # A day that does not fit loses what has already happened, from the
-        # top. Keeping this morning's school run by dropping this evening's
-        # pickup would be answering the wrong question.
-        busy = {'events': [
-            {'id': f'p{i}', 'title': f'Past {i}', 'start': _at(6 + i).isoformat(),
-             'end': _at(6 + i, 30).isoformat()} for i in range(5)
-        ] + [{'id': 'soon', 'title': 'Pickup', 'start': _at(17).isoformat(),
-              'end': _at(18).isoformat()}],
-            'assignments': {}, 'unassigned': [], 'scheduled_errands': []}
-        card = home_board._tile_calendar(_at(12), sched=busy)['days'][0]
-        shown = [e['title'] for e in card['events']]
-        check('Pickup' in shown and card['earlier'] == 1,
-              f"the day trims from the front: showed {shown}, earlier={card['earlier']}")
-        recital = days['Tomorrow']['events'][0]
-        check(recital['needs_driver'] and recital['color'] == '#ef4444',
-              f"the one thing somebody must act on is coloured for it, got {recital}")
-        check(not any(d['events'] for d in tile['days'][2:]),
-              "the quiet days are present and empty, which is the whole point")
+        check(by_title['Recital']['needs_driver']
+              and by_title['Recital']['color'] == '#ef4444',
+              f"the one thing somebody must act on is coloured for it")
+        check(by_title['Recital']['day'] == 'Tomorrow',
+              f"a list row carries its day word: {by_title['Recital']}")
     finally:
         (storage.get_cached_schedule, storage.get_all_drivers,
          storage.get_all_members) = orig

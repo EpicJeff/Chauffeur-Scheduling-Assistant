@@ -276,52 +276,10 @@
                         </div>
                     </template>
 
-                    <template x-if="t.type === 'calendar' && !t.data.empty
-                                     && t.data.view !== 'list'">
-                        <div class="grid gap-2 agenda-cards"
-                            :style="`--a-lg:${agendaCols(t.id, 'lg')}; --a-md:${agendaCols(t.id, 'md')}`">
-                            <template x-for="d in t.data.days" :key="d.date">
-                                <div class="rounded-xl p-2"
-                                    :style="'border: 1px solid ' + (d.today ? 'var(--panel-accent)' : 'var(--panel-line)')
-                                            + '; background: var(--panel-card-lo)'">
-                                    <div class="flex items-baseline justify-between gap-1 mb-1.5 px-0.5">
-                                        <span class="text-xl font-black panel-text tabular-nums leading-none"
-                                            x-text="d.dom"></span>
-                                        <span class="text-[0.62rem] font-black uppercase tracking-widest truncate"
-                                            :class="d.today ? '' : 'panel-dim'"
-                                            :style="d.today ? 'color: var(--panel-accent)' : ''"
-                                            x-text="d.day"></span>
-                                    </div>
-                                    <div x-show="!d.events.length"
-                                        class="text-xs panel-dim italic px-0.5 py-1">Nothing scheduled</div>
-                                    <div class="text-[0.62rem] panel-dim px-0.5 pb-1" x-show="d.earlier"
-                                        x-text="'+' + d.earlier + ' earlier'"></div>
-                                    <!-- What has already happened stays, greyed.
-                                         Dropping it made a busy morning
-                                         invisible: two things at four in the
-                                         afternoon read as a quiet day rather
-                                         than a day nearly done. -->
-                                    <template x-for="(e, i) in d.events" :key="i">
-                                        <div class="rounded-md px-1.5 py-1 mb-1"
-                                            :class="e.past ? 'opacity-45' : ''"
-                                            :style="'border-left: 3px solid ' + tone(e.color)
-                                                    + '; background: var(--panel-card-lo)'">
-                                            <div class="text-[0.62rem] font-bold panel-dim tabular-nums leading-tight"
-                                                x-text="e.all_day ? 'Entire day' : e.at"></div>
-                                            <div class="text-[0.8rem] font-bold panel-text truncate leading-tight"
-                                                x-text="e.title"></div>
-                                            <div class="text-[0.62rem] truncate leading-tight"
-                                                x-show="e.needs_driver || e.driver"
-                                                :class="e.needs_driver ? 'text-red-400' : 'panel-dim'"
-                                                x-text="e.needs_driver ? '⚠️ needs a driver' : e.driver"></div>
-                                        </div>
-                                    </template>
-                                    <div class="text-[0.62rem] panel-dim px-0.5" x-show="d.more"
-                                        x-text="'+' + d.more + ' more'"></div>
-                                </div>
-                            </template>
-                        </div>
-                    </template>
+<!-- The day-cards drawing that lived here until v2.207 is gone:
+                         the agenda view mounts components/family_calendar.html
+                         like the grids do, so there is ONE agenda in this app.
+                         Only the list view is still drawn from the payload. -->
 
                     <!-- errands waiting -->
                     <!-- the household owes — work with a deadline and nowhere

@@ -64,15 +64,6 @@ b.board = BOARD;
 const map = BOARD.tiles.find(t => t.type === 'map').data;
 
 console.log(JSON.stringify({
-  // A day card is three of twelve board columns, so the count is the
-  // calendar tile's own span measured in quarters.
-  agenda: [
-    { span: 12, lg: b.agendaCols('calendar', 'lg'), md: b.agendaCols('calendar', 'md') }
-  ],
-  agendaBySpan: [12, 9, 6, 3, 1].map(c => {
-    b.board.spans = { calendar: { cols: c } };
-    return { cols: c, across: b.agendaCols('calendar', 'lg') };
-  }),
   mapped: map.mapped,
   fills: ['map', 'drives', 'meals', 'moments', 'trips', 'calendar', 'chores']
     .filter(k => b.fillsTile(k)),
@@ -118,25 +109,6 @@ BOARD = {
 NOW = '2026-08-08T16:30:00'
 
 
-def scenario_a_day_card_is_three_columns_of_the_board():
-    """Reported from the wall: the agenda "squishes each day down very narrow".
-    It was flowing as many days as it had into whatever width the tile was, so
-    seven days in a half-width tile came out at 90px each.
-
-    A day card is three of twelve board columns — a quarter, the same unit a
-    tile is measured in. Widening the tile adds cards; the days that do not fit
-    wrap onto the next line rather than getting thinner."""
-    got = _run(BOARD, NOW)
-    if got is None:
-        return
-    across = {r['cols']: r['across'] for r in got['agendaBySpan']}
-    check(across == {12: 4, 9: 3, 6: 2, 3: 1, 1: 1},
-          f"a card is not a quarter of the board any more: {across}")
-    check(got['agenda'][0]['md'] >= 1,
-          "the mid breakpoint has to resolve to at least one card or the grid "
-          "collapses to zero tracks")
-
-
 def scenario_the_board_no_longer_draws_its_own_timeline():
     """The tile draws the Drives page's renderer now. The helpers that drew the
     board's own version are gone rather than left lying about — two drawings of
@@ -156,7 +128,11 @@ def scenario_the_drawn_tiles_are_the_ones_given_their_slot():
     got = _run(BOARD, NOW)
     if got is None:
         return
-    check(set(got['fills']) == {'map', 'drives', 'meals', 'moments', 'trips'},
+    # `calendar` joined in v2.207, when its views became component mounts: a
+    # month grid drawn into a block-flow tile has no height to claim, and the
+    # agenda scrolls inside its own panel.
+    check(set(got['fills']) == {'map', 'drives', 'meals', 'moments', 'trips',
+                                'calendar'},
           f"the tiles drawn into their slot have drifted: {got['fills']}")
 
 

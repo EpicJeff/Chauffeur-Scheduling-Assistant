@@ -5,19 +5,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Home</title>
-    <link href="static/vendor/fonts/inter/inter.css" rel="stylesheet">
+    {# How far to climb before a relative ASSET means anything — the same
+       arithmetic nav.html does for its links and apiBase does for fetches,
+       which the <head> never got: on /board/{slug} a bare `static/...`
+       resolves to /board/static/... and 404s, so a board loaded with NO
+       stylesheet and NO Alpine — a page of raw, giant, unstyled markup.
+       Counted against the one-segment case on purpose: under ingress the
+       path carries /api/hassio_ingress/<token>/ in front, and climbing from
+       the root would leave the add-on. #}
+    {% set _up = '../' if '/board/' in request.url.path else '' %}
+    <link href="{{ _up }}static/vendor/fonts/inter/inter.css" rel="stylesheet">
     {% include 'ha_theme.html' %}
-    <script src="static/vendor/alpine.min.js" defer></script>
+    <script src="{{ _up }}static/vendor/alpine.min.js" defer></script>
     <!-- The environment a real Home Assistant card wakes up in. Loaded on
          every board because a card tile can be added without a reload; it
          defines nothing until a tile asks it to mount something. -->
-    <script src="static/ha_card_host.js" defer></script>
+    <script src="{{ _up }}static/ha_card_host.js" defer></script>
     <!-- Home Assistant's form layer, which is what a card's own visual
          editor is built out of. Loaded here rather than on demand
          because a custom element has to be defined before the editor
          that renders it is created, and that ordering is not something
          to leave to a race. -->
-    <script src="static/ha_form.js" defer></script>
+    <script src="{{ _up }}static/ha_form.js" defer></script>
     <style>
         /* Tokens, the background layers and .panel-card/.panel-label all come
            from panel_skin.html now, so every page shares them. What stays here
@@ -514,17 +523,11 @@
            The narrow breakpoint keeps the old flow: below 768px the board is a
            single column and a quarter of it is not a card, it is a column of
            text. */
-        .agenda-cards {
-            grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
-            align-content: start;
-        }
 
         @media (min-width: 768px) {
-            .agenda-cards { grid-template-columns: repeat(var(--a-md, 2), minmax(0, 1fr)); }
         }
 
         @media (min-width: 1280px) {
-            .agenda-cards { grid-template-columns: repeat(var(--a-lg, 4), minmax(0, 1fr)); }
         }
 
         /* The Drives timeline is written for a page: a dark card, its own hour
@@ -565,7 +568,7 @@
             #tile-grid { grid-template-columns: repeat(var(--c-lg, 4), minmax(0, 1fr)); }
         }
     </style>
-    <link rel="stylesheet" href="static/tailwind.css">
+    <link rel="stylesheet" href="{{ _up }}static/tailwind.css">
 </head>
 
 <body class="min-h-screen">
@@ -1909,7 +1912,10 @@
                 // had nowhere to be drawn. Nothing errored, nothing logged —
                 // the tile just showed its heading over nothing, which is the
                 // failure mode this whole board keeps having to design against.
-                DRAWN_TILES: ['map', 'drives', 'ha_image', 'ha_dashboard', 'ha_card', 'web'],
+                // `calendar` joined when its views became component mounts:
+                // a month grid drawn into a block-flow tile has no height to
+                // claim, and the agenda scrolls inside its own panel.
+                DRAWN_TILES: ['map', 'drives', 'calendar', 'ha_image', 'ha_dashboard', 'ha_card', 'web'],
                 fillsTile(key) {
                     return this.isMosaic(key) || this.DRAWN_TILES.includes(key);
                 },
@@ -1943,22 +1949,6 @@
 
                 // --- the drives timeline ---------------------------------
 
-                // How many day cards fit across the calendar tile. A card is
-                // three columns of a twelve-column board — a quarter — so the
-                // count is the tile's own span measured in quarters. Widening
-                // the tile adds cards; it does not stretch them.
-                // Per INSTANCE: two calendar tiles of different widths fit a
-                // different number of day cards across, and reading the width
-                // off the type would have given the narrow one the wide one's
-                // layout.
-                agendaCols(instanceId, breakpoint) {
-                    const cols = this.cols();
-                    const across = breakpoint === 'md' ? Math.ceil(cols / 2) : cols;
-                    const s = (this.board.spans || {})[instanceId] || {};
-                    const span = Math.min(across, Math.max(1, parseInt(s.cols, 10)
-                                                              || this.defaultCols()));
-                    return Math.max(1, Math.floor(span * 4 / across));
-                },
 
                 // THE Drives timeline, not a copy of it. The renderer lives in
                 // components/schedule_timeline.html and draws from module state
@@ -2143,7 +2133,14 @@
                         .filter(t => t.type === 'calendar' && t.data && t.data.grid)) {
                         const id = 'board-calendar-' + card.id;
                         live.add(id);
-                        if (this._liveCalendars.has(id)) continue;
+                        if (this._liveCalendars.has(id)) {
+                            // Already mounted: the component fetches its own
+                            // events, so a board poll has to TELL it to look
+                            // again — the payload no longer carries anything
+                            // for it to redraw from.
+                            FamilyCalendar.refresh(id);
+                            continue;
+                        }
                         if (!document.getElementById(id)) continue;
                         const g = card.data.grid;
                         // `only` is a list of NAMES: the pipeline matches people

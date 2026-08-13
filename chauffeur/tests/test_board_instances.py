@@ -224,19 +224,17 @@ def scenario_a_title_in_the_config_names_the_tile():
 
 def scenario_the_calendar_tile_reads_its_own_day_count():
     """Not the household setting — the instance's. Two calendar tiles wanting
-    three days and a fortnight is the case the arc exists for."""
+    three days and a fortnight is the case the arc exists for.
+
+    Since v2.207 the agenda is a component mount, so the day count rides in
+    the mount config for the component to honour, rather than in how many day
+    cards the payload happens to hold."""
     short = home_board.build('[{"type": "calendar", "config": {"days": 2}}]')
     long_ = home_board.build('[{"type": "calendar", "config": {"days": 9}}]')
     for board, n in ((short, 2), (long_, 9)):
         data = board['tiles'][0]['data']
-        got = len(data.get('days') or []) or None
-        # An empty household has no events, so the day COUNT is only visible in
-        # the agenda cards; when there are none the sentence carries it.
-        if got is None:
-            check(f"next {n} day" in (data.get('empty') or ''),
-                  f"a {n}-day tile did not say so: {data}")
-        else:
-            check(got == n, f"a {n}-day tile drew {got} day cards")
+        check((data.get('grid') or {}).get('days') == n,
+              f"a {n}-day tile did not say so: {data}")
 
 
 def scenario_a_blank_day_count_still_follows_the_board():
@@ -251,12 +249,15 @@ def scenario_a_blank_day_count_still_follows_the_board():
 
 
 def scenario_the_views_are_different_shapes_not_the_same_one():
+    """Since v2.207 the agenda is the COMPONENT's view — the payload carries a
+    mount config, not day cards — while the list is still built here, because
+    one line per event for a narrow tile is genuinely a different drawing."""
     agenda = home_board.build('[{"type": "calendar", "config": {"view": "agenda"}}]')
     listed = home_board.build('[{"type": "calendar", "config": {"view": "list"}}]')
     a, l = agenda['tiles'][0]['data'], listed['tiles'][0]['data']
-    if not a.get('empty'):
-        check(a.get('view') == 'agenda' and 'days' in a,
-              f"the agenda view stopped drawing day cards: {a.keys()}")
+    check((a.get('grid') or {}).get('view') == 'agenda',
+          f"the agenda view is not a component mount: {a.keys()}")
+    if not l.get('empty'):
         check(l.get('view') == 'list' and 'rows' in l,
               f"the list view is not a list: {l.keys()}")
 
