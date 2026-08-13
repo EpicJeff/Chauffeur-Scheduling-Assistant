@@ -1,0 +1,574 @@
+{# ── The family calendar grid, mountable more than once.
+
+   FullCalendar's month, week and day views, pulled out of the calendar page so
+   the board can mount one as a card — the same move
+   `components/schedule_timeline.html` made for the Drives timeline, and for the
+   same reason: the alternative is a second, smaller calendar that drifts away
+   from the real one over a year.
+
+   What did NOT come with it, deliberately: the agenda panel, the people
+   legend, and the two modals. Those are the calendar PAGE's chrome. The
+   component takes them as optional callbacks (`onAgenda`, `onEventClick`) and
+   works without any of them, which is what lets a card mount one on a wall
+   panel where there is nothing to click through to.
+
+   The library is 282KB and is injected ON FIRST USE, never by simply including
+   this file. A board showing an agenda-only calendar card downloads none of it.
+#}
+<style>
+/* FullCalendar's own surfaces, restyled onto this app's tokens. These travel
+   with the component: a card mounting a calendar into a tile needs them as much
+   as the page does, and leaving them behind on the page was how the first
+   attempt at this produced an unstyled grid inside a themed board. */
+        /* Premium Glassmorphic Calendar Base */
+        .fc-theme-standard td, .fc-theme-standard th, .fc-theme-standard .fc-scrollgrid { 
+            border-color: rgba(255, 255, 255, 0.08) !important; 
+        }
+        .fc-daygrid-day-number, .fc-col-header-cell-cushion { 
+            color: #cbd5e1 !important; /* slate-300 */
+            text-decoration: none !important; 
+            font-weight: 600; 
+            font-size: 0.95rem;
+            padding: 8px !important;
+        }
+        .fc-day-other .fc-daygrid-day-number {
+            color: #475569 !important; /* slate-600 */
+        }
+        
+        /* Cell Backgrounds */
+        .fc-day { background-color: rgba(30, 41, 59, 0.3) !important; } /* transparent slate-800 */
+        .fc-day-today { background-color: rgba(51, 65, 85, 0.6) !important; } /* slate-700 */
+        
+        /* Event Resets */
+        .fc-event { 
+            border: none !important; 
+            margin: 2px !important; 
+            background: transparent !important; 
+            box-shadow: none !important;
+        }
+        
+        .fc-timegrid-slot { height: 2.5em !important; border-bottom: 1px solid rgba(255,255,255,0.03) !important; }
+        
+        /* Toolbar */
+        .fc .fc-toolbar-title { 
+            font-size: 1.75rem !important; 
+            font-weight: 800; 
+            color: #f8fafc; 
+            letter-spacing: -0.025em; 
+        }
+        .fc .fc-button-primary { 
+            background-color: rgba(51, 65, 85, 0.8) !important; 
+            border-color: rgba(255, 255, 255, 0.1) !important; 
+            backdrop-filter: blur(8px); 
+            -webkit-backdrop-filter: blur(8px);
+            transition: all 0.2s; 
+            color: #cbd5e1 !important;
+            font-weight: 600 !important;
+            text-transform: capitalize !important;
+        }
+        .fc .fc-button-primary:hover { 
+            background-color: rgba(71, 85, 105, 0.9) !important; 
+            color: white !important;
+        }
+        .fc .fc-button-primary:not(:disabled):active, .fc .fc-button-primary:not(:disabled).fc-button-active { 
+            background-color: #3b82f6 !important; /* Blue-500 */
+            color: white !important; 
+            border-color: #2563eb !important;
+        }
+
+        /* Popover (+ more) as a Centered Modal */
+        .fc-popover {
+            position: fixed !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+            width: 90% !important;
+            max-width: 360px !important;
+            background: rgba(15, 23, 42, 0.85) !important;
+            backdrop-filter: blur(16px) !important;
+            -webkit-backdrop-filter: blur(16px) !important;
+            border: 1px solid rgba(255, 255, 255, 0.15) !important;
+            border-radius: 12px !important;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
+            z-index: 100 !important;
+            overflow: hidden !important;
+        }
+        .fc-popover-header {
+            background: rgba(255, 255, 255, 0.05) !important;
+            padding: 12px !important;
+        }
+        .fc-popover-title {
+            color: #f8fafc !important;
+            font-weight: 700 !important;
+            font-size: 1.1rem !important;
+        }
+        .fc-popover-body {
+            max-height: 60vh !important;
+            overflow-y: auto !important;
+            padding: 8px !important;
+        }
+
+        .fc-event-main {
+            border: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: transparent !important;
+            box-shadow: none !important;
+        }
+        .fc-daygrid-event {
+            margin: 2px 0 0 0 !important; /* exactly 2px gap between events */
+            border: none !important;
+            padding: 0 !important;
+            background: transparent !important;
+        }
+
+           taken from the only part of the cell anyone reads. */
+        .fc-daygrid-day-number { padding: 3px 6px !important; }
+        .fc-daygrid-day-bottom { margin-top: 0 !important; }
+
+        /* Nicer styling for the "+X more" buttons */
+        .fc-daygrid-more-link {
+            display: block;
+            margin: 1px 3px !important;
+            padding: 2px 6px !important;
+            background: rgba(59, 130, 246, 0.15) !important;
+            border: 1px solid rgba(59, 130, 246, 0.3) !important;
+            border-radius: 6px !important;
+            color: #60a5fa !important;
+            font-size: 0.75rem !important;
+            font-weight: 700 !important;
+            text-align: center !important;
+            backdrop-filter: blur(4px) !important;
+            -webkit-backdrop-filter: blur(4px) !important;
+            transition: all 0.2s !important;
+        }
+        .fc-daygrid-more-link:hover {
+            background: rgba(59, 130, 246, 0.25) !important;
+            color: #93c5fd !important;
+        }
+
+        body.ha-theme .fc-popover {
+            background: var(--ha-card-bg) !important;
+            border-color: var(--ha-divider) !important;
+        }
+        body.ha-theme .fc-theme-standard td, 
+        body.ha-theme .fc-theme-standard th, 
+        body.ha-theme .fc-theme-standard .fc-scrollgrid { 
+            border-color: var(--ha-divider) !important; 
+        }
+        body.ha-theme .fc-day { background-color: transparent !important; }
+        body.ha-theme .fc-day-today { background-color: color-mix(in srgb, var(--ha-primary-color) 20%, transparent) !important; }
+        body.ha-theme .fc .fc-toolbar-title,
+        body.ha-theme .fc-daygrid-day-number, 
+        body.ha-theme .fc-col-header-cell-cushion {
+            color: var(--ha-primary-text) !important;
+        }
+        body.ha-theme .fc .fc-button-primary { 
+            background-color: var(--ha-card-bg) !important; 
+            border-color: var(--ha-divider) !important; 
+            color: var(--ha-primary-text) !important;
+        }
+        body.ha-theme .fc .fc-button-primary:not(:disabled):active, 
+        body.ha-theme .fc .fc-button-primary:not(:disabled).fc-button-active { 
+            background-color: var(--ha-primary-color) !important; 
+            color: var(--ha-primary-text) !important; 
+            border-color: var(--ha-primary-color) !important;
+        }
+</style>
+<script>
+// One record per mounted calendar. `tuneMonthDensity` measures real cells and
+// raises `dayMaxEvents`; the page's version kept its state in two module
+// variables and read `.fc-daygrid-day-frame` off the DOCUMENT, so a second
+// calendar anywhere on the page measured the first one's cells and set its own
+// density from them.
+const _fcInstances = new Map();
+let _fcLoading = null;
+
+// The 282KB vendored library, fetched at most once and only when a view that
+// needs it is actually mounted. The agenda is hand-drawn and needs none of it,
+// which is the whole reason this is a promise rather than a script tag.
+function loadFullCalendar() {
+    if (window.FullCalendar) return Promise.resolve();
+    if (_fcLoading) return _fcLoading;
+    _fcLoading = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        // Relative, like every other asset here: under Home Assistant ingress
+        // the page lives below /api/hassio_ingress/<token>/ and a rooted path
+        // climbs out of the add-on.
+        s.src = (window.location.pathname.endsWith('/') ? '../' : '')
+            + 'static/vendor/fullcalendar.global.min.js';
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error('FullCalendar failed to load'));
+        document.head.appendChild(s);
+    });
+    return _fcLoading;
+}
+
+// A month cell fits as many chips as it fits, measured once it is on screen,
+// every time the geometry changes. The floor is 2: a month grid that shows no
+// events at all is worse than one that is a little tight, and 2 + the link is
+// the least that reads as a calendar.
+function tuneMonthDensity(inst) {
+    if (!inst || !inst.cal || inst.paused) return;
+    if (inst.cal.view.type !== 'dayGridMonth') return;
+
+    // Scoped to THIS calendar's element. Unscoped, two calendars on one page
+    // measure whichever the document happens to hold first.
+    const root = inst.el;
+    const frame = root.querySelector('.fc-daygrid-day-frame');
+    if (!frame || !frame.clientHeight) return;
+    const top = frame.querySelector('.fc-daygrid-day-top');
+    const chip = root.querySelector('.fc-daygrid-event');
+    const link = root.querySelector('.fc-daygrid-more-link');
+
+    const topH = top ? top.offsetHeight : 26;
+    const chipH = (chip ? chip.offsetHeight : 22) + 2;   // + the 2px gap
+    const linkH = (link ? link.offsetHeight : 20) + 4;   // + its margins
+
+    // Same geometry as last time = same answer. Guards against a
+    // setOption -> re-render -> observer -> setOption loop, which a bare
+    // `cap !== lastCap` check would not catch if the new cap changed the
+    // measurement back.
+    const key = `${frame.clientHeight}:${topH}:${chipH}:${linkH}`;
+    if (key === inst.tuneKey) return;
+    inst.tuneKey = key;
+
+    const cap = Math.max(2, Math.floor((frame.clientHeight - topH - linkH) / chipH));
+    if (cap === inst.cap) return;
+    inst.cap = cap;
+    inst.cal.setOption('dayMaxEvents', cap);   // numeric: chips only, link below
+}
+
+// FullCalendar's "+N more" popover needs a backdrop to read as a layer. The
+// element belongs to whichever surface has one; a card has none, and the
+// observer simply does not run.
+function _wirePopoverBackdrop(inst) {
+    const backdrop = document.getElementById('fc-popover-backdrop');
+    if (!backdrop) return;
+    const observer = new MutationObserver(() => {
+        const popover = inst.el.querySelector('.fc-popover');
+        if (popover) {
+            backdrop.classList.remove('hidden');
+            // Sibling of the popover so the two share a stacking context.
+            if (popover.parentNode && backdrop.parentNode !== popover.parentNode) {
+                popover.parentNode.insertBefore(backdrop, popover);
+            }
+        } else {
+            backdrop.classList.add('hidden');
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    backdrop.addEventListener('click', () => {
+        const closeBtn = inst.el.querySelector('.fc-popover-close');
+        if (closeBtn) closeBtn.click();
+    });
+}
+
+/**
+ * Mount a calendar into an element.
+ *
+ *   targetContainerId  where it goes
+ *   view               'dayGridMonth' | 'timeGridWeek' | 'timeGridDay'
+ *   events             async (startStr, endStr) => FullCalendar event objects
+ *   toolbar            draw FullCalendar's own header (a pinned card says no)
+ *   onAgenda           adds the Agenda button; omit and there is none
+ *   onEventClick       what a tap does; omit and a tap does nothing
+ *   onDatesSet         the host's chance to remember the view
+ */
+async function mountFamilyCalendar(options = {}) {
+    const {
+        targetContainerId = 'calendar',
+        view = 'dayGridMonth',
+        events,
+        toolbar = true,
+        onAgenda = null,
+        onEventClick = null,
+        onDatesSet = null,
+    } = options;
+
+    const el = document.getElementById(targetContainerId);
+    if (!el || !events) return null;
+    await loadFullCalendar();
+
+    // Re-mounting the same element replaces what was there. A board redraw
+    // that left the old instance behind would leak a calendar per poll.
+    const old = _fcInstances.get(targetContainerId);
+    if (old) { try { old.cal.destroy(); } catch (e) {} }
+
+    const inst = { el, cal: null, cap: null, tuneKey: '', paused: false };
+    _fcInstances.set(targetContainerId, inst);
+
+    inst.cal = new FullCalendar.Calendar(el, {
+                initialView: view,
+                customButtons: onAgenda
+                    ? { agendaView: { text: 'Agenda', click: onAgenda } } : {},
+                // `false` removes the bar entirely, which is what a card that has
+                // been pinned to one view wants: a toolbar offering three
+                // other views is three ways to un-configure the card.
+                headerToolbar: toolbar ? {
+                    left: 'prev,next today',
+                    center: 'title',
+                    right: 'dayGridMonth,timeGridWeek,timeGridDay'
+                        + (onAgenda ? ',agendaView' : '')
+                } : false,
+                datesSet: function(arg) {
+                    if (onDatesSet) onDatesSet(arg);
+                    requestAnimationFrame(() => tuneMonthDensity(inst));
+                },
+                height: '100%',
+                slotMinTime: '06:00:00', // Start view slightly later for focus
+                slotMaxTime: '23:00:00',
+                nowIndicator: true,
+                // A floor, not the answer — tuneMonthDensity() measures the
+                // real cell and raises this as soon as the grid is on screen.
+                // Never `true`: see the comment on tuneMonthDensity.
+                dayMaxEvents: 2,
+                windowResize: () => tuneMonthDensity(inst),
+
+                // Custom Event Rendering for modern look
+                eventContent: function(arg) {
+                    const props = arg.event.extendedProps;
+                    const isMonth = arg.view.type === 'dayGridMonth';
+                    const isUnassigned = props.isUnassigned;
+                    const isErrand = props.isErrand;
+                    
+                    let outerWrap = document.createElement('div');
+                    // The timeGrid card; the month and short-event branches below
+                    // replace this wholesale with their own single-row layout.
+                    outerWrap.className = 'flex flex-col w-full overflow-hidden rounded border backdrop-blur-md transition-transform hover:scale-[1.02] cursor-pointer h-full p-2 gap-1';
+
+                    // Base Colors & Borders
+                    let baseColor = arg.event.backgroundColor || '#3b82f6';
+                    if (isUnassigned) {
+                        outerWrap.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(220, 38, 38, 0.4))';
+                        outerWrap.style.borderColor = 'rgba(239, 68, 68, 0.6)';
+                        outerWrap.style.boxShadow = '0 0 8px rgba(239, 68, 68, 0.4)';
+                    } else if (isErrand) {
+                        outerWrap.style.background = 'linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(217, 119, 6, 0.25))';
+                        outerWrap.style.borderColor = 'rgba(245, 158, 11, 0.5)';
+                        outerWrap.style.borderStyle = 'dashed';
+                    } else {
+                        outerWrap.style.background = `linear-gradient(135deg, ${baseColor}aa, ${baseColor}dd)`;
+                        outerWrap.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+                    }
+
+                    // MONTH CHIP — one line, and sized in `rem` so it grows with
+                    // the panel's larger root font instead of staying phone-sized
+                    // on a wall.
+                    //
+                    // It used to be a two-row card pinned at 34px, which is most
+                    // of a day cell once the date number and the "+N more" link
+                    // have taken their share — so FullCalendar's height-based
+                    // limit fit nothing at all and every day rendered as a bare
+                    // "+N more" with a cell of empty space under it. A month cell
+                    // only has to answer WHEN / WHAT / WHO; one line does that in
+                    // half the height, and two or three events now fit where none
+                    // did. The full detail is one tap away in the modal.
+                    if (isMonth) {
+                        outerWrap.className = 'flex flex-row items-center w-full overflow-hidden rounded border cursor-pointer px-1 gap-1 transition-transform hover:scale-[1.02]';
+                        outerWrap.style.height = '1.4rem';
+
+                        if (arg.timeText) {
+                            let mTime = document.createElement('div');
+                            mTime.className = 'font-semibold text-white/90 drop-shadow text-[0.56rem] leading-none shrink-0';
+                            mTime.innerText = arg.timeText;
+                            outerWrap.appendChild(mTime);
+                        }
+
+                        let mTitle = document.createElement('div');
+                        mTitle.className = 'font-bold text-white drop-shadow-md truncate text-[0.62rem] leading-none flex-1 min-w-0';
+                        mTitle.innerText = arg.event.title;
+                        outerWrap.appendChild(mTitle);
+
+                        if (props.passengers && props.passengers.length > 0) {
+                            let mPax = document.createElement('div');
+                            mPax.className = 'flex -space-x-1 overflow-hidden shrink-0';
+                            props.passengers.slice(0, 4).forEach(p => {
+                                let dot = document.createElement('div');
+                                const isPaxHidden = window.hiddenMembers && window.hiddenMembers.has(p.name);
+                                dot.className = `w-1.5 h-1.5 rounded-full border border-white/20 ${isPaxHidden ? 'opacity-30 grayscale border-transparent' : ''}`;
+                                dot.style.backgroundColor = p.color;
+                                dot.title = p.name;
+                                mPax.appendChild(dot);
+                            });
+                            outerWrap.appendChild(mPax);
+                        }
+
+                        let mBadge = document.createElement('div');
+                        if (isUnassigned) {
+                            mBadge.className = 'font-bold bg-red-500 text-white rounded shrink-0 text-[0.5rem] leading-none px-1 py-px';
+                            mBadge.innerText = '⚠️';
+                            mBadge.title = 'Unassigned';
+                        } else if (props.driverName) {
+                            const isDrHidden = window.hiddenMembers && window.hiddenMembers.has(props.driverName);
+                            mBadge.className = `font-bold bg-black/40 text-white rounded shrink-0 truncate max-w-[3.5rem] text-[0.52rem] leading-none px-1 py-px ${isDrHidden ? 'opacity-30 grayscale' : ''}`;
+                            mBadge.innerText = props.driverName;
+                        } else if (isErrand) {
+                            mBadge.className = 'font-bold bg-amber-500/80 text-white rounded shrink-0 text-[0.5rem] leading-none px-1 py-px';
+                            mBadge.innerText = 'Errand';
+                        }
+                        outerWrap.appendChild(mBadge);
+                        return { domNodes: [outerWrap] };
+                    }
+
+                    // Compact single-row layout for short events (≤40 min): the
+                    // stacked time/title/meta rows don't fit in the slot height
+                    // and left the title clipped to nothing. Time is omitted —
+                    // the grid position already shows it; the modal has details.
+                    const _durMins = (arg.event.end && arg.event.start) ? (arg.event.end - arg.event.start) / 60000 : 60;
+                    if (!isMonth && _durMins <= 40) {
+                        outerWrap.className = 'flex flex-row items-center w-full h-full overflow-hidden rounded border backdrop-blur-md cursor-pointer px-1.5 gap-1';
+                        let compactTitle = document.createElement('div');
+                        compactTitle.className = 'font-bold text-white drop-shadow-md truncate text-[11px] flex-1 min-w-0';
+                        compactTitle.innerText = arg.event.title;
+                        outerWrap.appendChild(compactTitle);
+                        if (props.passengers && props.passengers.length > 0) {
+                            let pc = document.createElement('div');
+                            pc.className = 'flex -space-x-1 overflow-hidden shrink-0';
+                            props.passengers.slice(0, 3).forEach(p => {
+                                let dot = document.createElement('div');
+                                dot.className = 'w-2 h-2 rounded-full border border-white/20';
+                                dot.style.backgroundColor = p.color;
+                                dot.title = p.name;
+                                pc.appendChild(dot);
+                            });
+                            outerWrap.appendChild(pc);
+                        }
+                        if (props.carName && !isUnassigned) {
+                            let cb = document.createElement('div');
+                            cb.className = `font-bold rounded shrink-0 text-[8.5px] px-1 ${props.carSwap ? 'bg-amber-500/80 text-white' : 'bg-black/30 text-white/90'}`;
+                            cb.innerText = props.carName + (props.carSwap ? ' ⇄' : '');
+                            cb.title = props.carSwap ? "Car swap: not this driver's usual car" : 'Assigned car';
+                            outerWrap.appendChild(cb);
+                        }
+                        let compactBadge = document.createElement('div');
+                        if (isUnassigned) {
+                            compactBadge.className = 'font-bold bg-red-500 text-white rounded shrink-0 text-[8.5px] px-1';
+                            compactBadge.innerText = '⚠️';
+                            compactBadge.title = 'Unassigned';
+                        } else if (props.driverName) {
+                            compactBadge.className = 'font-bold bg-black/40 text-white rounded shrink-0 text-[9px] px-1 truncate max-w-[52px]';
+                            compactBadge.innerText = props.driverName;
+                        } else if (isErrand) {
+                            compactBadge.className = 'font-bold bg-amber-500/80 text-white rounded shrink-0 text-[8.5px] px-1';
+                            compactBadge.innerText = 'Errand';
+                        }
+                        outerWrap.appendChild(compactBadge);
+                        return { domNodes: [outerWrap] };
+                    }
+
+                    // ── TimeGrid (week/day) from here down: month returned above.
+                    // Header Row (Title & Time)
+                    let headerRow = document.createElement('div');
+                    headerRow.className = 'flex items-start justify-between w-full leading-tight';
+
+                    let titleEl = document.createElement('div');
+                    titleEl.className = 'font-bold text-white drop-shadow-md truncate text-sm mb-1';
+                    titleEl.innerText = arg.event.title;
+
+                    let timeEl = document.createElement('div');
+                    timeEl.className = 'font-semibold text-white/90 drop-shadow flex-shrink-0 text-xs';
+                    timeEl.innerText = arg.timeText || '';
+
+                    headerRow.appendChild(titleEl);
+                    outerWrap.appendChild(timeEl); // Time on its own line for timeGrid
+                    outerWrap.appendChild(headerRow);
+
+                    // Meta Row (Pax & Driver)
+                    let metaRow = document.createElement('div');
+                    metaRow.className = 'flex items-center justify-between mt-auto w-full gap-1 pb-0.5 min-h-[20px] pt-0.5';
+
+                    // Passengers
+                    let paxContainer = document.createElement('div');
+                    paxContainer.className = 'flex -space-x-1.5 overflow-hidden';
+                    if (props.passengers && props.passengers.length > 0) {
+                        props.passengers.forEach(p => {
+                            let dot = document.createElement('div');
+                            const isPaxHidden = window.hiddenMembers && window.hiddenMembers.has(p.name);
+                            dot.className = `w-4 h-4 text-[8px] rounded-full border border-white/20 shadow-sm flex items-center justify-center font-bold text-white uppercase transition-all ${isPaxHidden ? 'opacity-30 grayscale border-transparent' : ''}`;
+                            dot.style.backgroundColor = p.color;
+                            dot.title = p.name;
+                            if (p.name) dot.innerText = p.name.charAt(0);
+                            paxContainer.appendChild(dot);
+                        });
+                    }
+                    metaRow.appendChild(paxContainer);
+
+                    // Car badge (absent for zero-car families). Amber ⇄ accent =
+                    // not this driver's usual car — a real-world key handoff the
+                    // humans need to coordinate.
+                    if (props.carName && !isUnassigned) {
+                        let carBadge = document.createElement('div');
+                        carBadge.className = `font-bold rounded shadow-sm truncate max-w-[80px] text-[9px] px-1.5 py-0.5 ${props.carSwap ? 'bg-amber-500/80 text-white' : 'bg-black/30 text-white/90'}`;
+                        carBadge.innerText = props.carName + (props.carSwap ? ' ⇄' : '');
+                        carBadge.title = props.carSwap ? "Car swap: not this driver's usual car" : 'Assigned car';
+                        metaRow.appendChild(carBadge);
+                    }
+
+                    // Driver Badge
+                    let rightBadge = document.createElement('div');
+                    if (isUnassigned) {
+                        rightBadge.className = 'font-bold bg-red-500 text-white rounded flex items-center shadow-sm text-[9px] px-1.5 py-0.5 gap-0.5';
+                        rightBadge.innerHTML = '⚠️ Unassigned';
+                    } else if (props.driverName) {
+                        const isDrHidden = window.hiddenMembers && window.hiddenMembers.has(props.driverName);
+                        rightBadge.className = `font-bold bg-black/40 text-white rounded backdrop-blur-sm truncate max-w-[60px] shadow-sm transition-all text-[10px] px-2 py-0.5 ${isDrHidden ? 'opacity-30 grayscale border-transparent' : ''}`;
+                        rightBadge.innerText = props.driverName;
+                    } else if (isErrand) {
+                        rightBadge.className = 'font-bold bg-amber-500/80 text-white rounded shadow-sm text-[9px] px-1.5 py-0.5';
+                        rightBadge.innerText = 'Errand';
+                    }
+                    metaRow.appendChild(rightBadge);
+                    outerWrap.appendChild(metaRow);
+
+                    // Location
+                    if (props.location) {
+                        let locRow = document.createElement('div');
+                        locRow.className = 'text-[10px] text-white/80 truncate flex items-center mt-1 font-medium bg-black/10 rounded px-1 py-0.5';
+                        locRow.innerHTML = `<svg class="w-3 h-3 mr-1 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg><span class="truncate">${props.location.split(',')[0]}</span>`;
+                        outerWrap.appendChild(locRow);
+                    }
+
+                    return { domNodes: [outerWrap] };
+                },
+
+                events: async function(info, successCallback, failureCallback) {
+                    try {
+                        successCallback(await events(info.startStr, info.endStr));
+                    } catch (error) {
+                        console.error('Error fetching calendar data:', error);
+                        failureCallback(error);
+                    }
+                },
+
+                eventClick: function(info) {
+                    if (onEventClick) onEventClick(info.event);
+                }    });
+
+    _wirePopoverBackdrop(inst);
+    inst.cal.render();
+
+    // The filter row above the grid renders after the first fetch and wraps to
+    // two lines on a narrow panel, which takes a chip's worth of height out of
+    // every cell. Watching the calendar element covers that, rotation, and the
+    // HA sidebar opening, in one hook.
+    if (window.ResizeObserver) {
+        new ResizeObserver(() => requestAnimationFrame(() => tuneMonthDensity(inst)))
+            .observe(el);
+    }
+    return inst.cal;
+}
+
+window.FamilyCalendar = {
+    mount: mountFamilyCalendar,
+    load: loadFullCalendar,
+    // The agenda panel hides the grid rather than destroying it, and a hidden
+    // calendar measures zero — which `tuneMonthDensity` would read as "one chip
+    // fits" and act on. The host says when it is off screen.
+    pause(id, paused) {
+        const inst = _fcInstances.get(id);
+        if (inst) { inst.paused = !!paused; if (!paused) inst.tuneKey = ''; }
+    },
+    get(id) { return (_fcInstances.get(id) || {}).cal || null; },
+};
+</script>

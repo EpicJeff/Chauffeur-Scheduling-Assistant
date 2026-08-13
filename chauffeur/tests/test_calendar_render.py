@@ -161,6 +161,7 @@ setTimeout(() => {
     // 'flex' and exitAgenda sets 'none'.
     agendaHiddenAtStart: !!(agenda && agenda.style.display === 'none'),
     agendaShown: null, gridHiddenInAgenda: null,
+    dayChips: [],
     storedView: w.localStorage.getItem('chauffeur_cal_view'),
   };
   try { out.eventTitles = w.calendar.getEvents().map(e => e.title).sort(); }
@@ -170,6 +171,11 @@ setTimeout(() => {
     try { w.calendar.changeView(v); out.views.push(w.calendar.view.type); }
     catch (e) { out.views.push('THREW: ' + e.message); }
   }
+  // Left in the DAY view on purpose: `dayMaxEvents` does not apply there, so
+  // this is the one place jsdom will actually paint a chip and the custom
+  // `eventContent` builder can be seen doing its job.
+  out.dayChips = [...doc.querySelectorAll('#calendar .fc-event')]
+    .map(e => e.textContent.replace(/\s+/g, ' ').trim());
   // Agenda is a panel, not a FullCalendar view.
   try {
     w.enterAgenda();
@@ -270,6 +276,33 @@ def scenario_all_four_views_are_reachable():
           "the grid is still drawn underneath the agenda, so both are on screen")
 
 
+def scenario_an_event_is_drawn_by_the_pages_own_builder():
+    """`eventContent` is ~200 lines of hand-built DOM with three branches — a
+    month chip, a compact chip for anything under 40 minutes, and a timeGrid
+    card. It is the single largest thing an extraction moves, and the event
+    STORE assertions above would not notice if it were dropped entirely:
+    FullCalendar falls back to its own default renderer and the events still
+    exist.
+
+    The day view is where jsdom will paint one, because `dayMaxEvents` does
+    not apply there.
+    """
+    got = _run()
+    if got is None:
+        return
+    check(got['dayChips'], "the day view painted no event at all")
+    # The LOCATION is the discriminating signal: FullCalendar's own renderer
+    # draws a time and a title and knows nothing about `extendedProps.location`,
+    # so a chip carrying "Starpath" can only have come from this page's
+    # builder. (The title itself is laid out into a sized row that jsdom, which
+    # measures everything as zero, does not populate — which is why this asserts
+    # on the thing the default renderer could never produce rather than on the
+    # thing both would.)
+    check(any('Starpath' in c for c in got['dayChips']),
+          f"the custom event builder did not draw the location, so the "
+          f"default renderer is in charge: {got['dayChips']}")
+
+
 def scenario_the_people_legend_is_built_from_the_schedule():
     """Filtering by person already exists here — it is the thing most recently
     asked for and already shipped. It is built from the schedule's own members,
@@ -296,6 +329,54 @@ def scenario_a_forced_view_does_not_write_to_local_storage():
     check(forced['storedView'] in (None, ''),
           f"a forced view was remembered as {forced['storedView']!r}, so it "
           f"would follow the household to every other calendar surface")
+
+
+def scenario_the_grid_is_the_shared_component_and_the_library_is_lazy():
+    """The whole point of the extraction, asserted as text because it is a
+    structural claim rather than a behavioural one.
+
+    ONE construction of `FullCalendar.Calendar` in the repo: a second would be
+    the second calendar renderer this move exists to prevent, and it would
+    appear the first time somebody needs a calendar somewhere new.
+
+    And the 282KB library is injected on first MOUNT, never by including the
+    component. That is what lets a board carry an agenda-only calendar card
+    without downloading a month grid it will never draw — the performance
+    requirement this was built to.
+    """
+    import glob
+    tpl_dir = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'templates')
+    builders = []
+    for path in glob.glob(os.path.join(tpl_dir, '**', '*.html'), recursive=True):
+        with open(path, encoding='utf-8') as fh:
+            if 'new FullCalendar.Calendar' in fh.read():
+                builders.append(os.path.basename(path))
+    check(builders == ['family_calendar.html'],
+          f"the calendar is constructed in {builders}, not only in the "
+          f"shared component")
+
+    with open(os.path.join(tpl_dir, 'calendar.html'), encoding='utf-8') as fh:
+        page = fh.read()
+    check('<script src="static/vendor/fullcalendar' not in page,
+          "the calendar page still downloads FullCalendar eagerly, so every "
+          "surface that includes the component pays for it")
+    check('FamilyCalendar.mount(' in page,
+          "the page no longer mounts through the shared component")
+
+    with open(os.path.join(tpl_dir, 'components', 'family_calendar.html'),
+              encoding='utf-8') as fh:
+        comp = fh.read()
+    check(comp.count('fullcalendar.global.min.js') == 1
+          and 'function loadFullCalendar' in comp,
+          "the library is referenced outside the lazy loader")
+    # Scoped measurement: unscoped, two calendars on one page measure whichever
+    # the document happens to hold first, which is the bug that stops a board
+    # from carrying two.
+    check('root.querySelector(\'.fc-daygrid-event\')' in comp
+          and "document.querySelector('.fc-daygrid" not in comp,
+          "the density tuner still measures the document rather than its own "
+          "calendar")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
