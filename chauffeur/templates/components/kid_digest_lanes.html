@@ -32,19 +32,32 @@
 
 {% macro digest_grid() %}
                     <div>
-                        <h3 class="text-lg font-black text-indigo-300 mb-3"
-                            x-text="digestLabel()"></h3>
+                        <!-- Which DAY this is, and it is a caption rather than
+                             a heading: a card's heading belongs to its TILE
+                             (blank means blank, v2.204.1/v2.210), and an <h3>
+                             in here was a second label in a box that already
+                             had one — reported from a wall as text nobody
+                             could find a setting for. It stays because the
+                             strip flips between today and tomorrow at a
+                             server-decided cutover, and a digest of tomorrow's
+                             rides read as today's is worse than a caption. Off
+                             is one toggle away. -->
+                        <div x-show="digestShow('day')"
+                            class="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2"
+                            x-text="digestLabel()"></div>
                         <div class="grid gap-5" :style="'grid-template-columns: repeat(' + digestColumns() + ', minmax(0, 1fr))'">
                             <template x-for="k in digestCards()" :key="'kd-' + k.id">
                                 <div class="bg-gray-800/60 rounded-2xl border border-indigo-900/60 p-4">
-                                    <div class="flex items-center gap-3 pb-2 border-b border-gray-700 mb-3">
+                                    <div x-show="digestShow('header')"
+                                        class="flex items-center gap-3 pb-2 border-b border-gray-700 mb-3">
                                         <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-sm shrink-0 overflow-hidden"
                                             :style="'background-color:' + (k.color_code || '#3b82f6')">
                                             <template x-if="k.image"><img :src="k.image" class="w-full h-full object-cover"></template>
                                             <template x-if="!k.image"><span x-text="k.avatar || (k.name || '?').charAt(0)"></span></template>
                                         </div>
                                         <div class="font-bold text-white flex-1 truncate" x-text="k.name"></div>
-                                        <div x-show="k.streak" class="text-orange-400 font-black text-sm shrink-0">
+                                        <div x-show="digestShow('streak') && k.streak"
+                                            class="text-orange-400 font-black text-sm shrink-0">
                                             <span x-text="k.streak"></span>🔥
                                         </div>
                                     </div>
@@ -52,10 +65,15 @@
                                         <div class="text-sm text-gray-200 mb-1.5" x-text="line"></div>
                                     </template>
                                     <div x-show="!k.lines.length" class="text-sm text-gray-400">No rides — free day! 🎉</div>
-                                    <template x-for="(tline, ti) in (k.tasks || [])" :key="'kdt-' + k.id + '-' + ti">
-                                        <div class="text-sm text-indigo-200 mb-1.5" x-text="tline"></div>
+                                    <template x-if="digestShow('tasks')">
+                                        <div>
+                                            <template x-for="(tline, ti) in (k.tasks || [])" :key="'kdt-' + k.id + '-' + ti">
+                                                <div class="text-sm text-indigo-200 mb-1.5" x-text="tline"></div>
+                                            </template>
+                                        </div>
                                     </template>
-                                    <div x-show="k.routine_count" class="text-xs text-gray-500 mt-2"
+                                    <div x-show="digestShow('routines') && k.routine_count"
+                                        class="text-xs text-gray-500 mt-2"
                                         x-text="'📋 ' + k.routine_count + ' routine thing' + (k.routine_count !== 1 ? 's' : '')"></div>
                                 </div>
                             </template>
@@ -70,7 +88,11 @@
     // exactly the cadence this content moves at.
     function kidDigestCard(t) {
         const data = (t && t.data) || {};
+        const parts = data.parts || {};
         return {
+            // The conversion paradigm, which this card predates: every
+            // visually distinct part is a toggle, absent means shown.
+            digestShow(part) { return parts[part] !== false; },
             digestCards() { return data.kids || []; },
             digestColumns() {
                 // A card knows its tile, not the window. Lanes wrap at four,

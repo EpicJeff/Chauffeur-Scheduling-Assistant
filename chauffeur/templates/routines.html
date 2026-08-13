@@ -552,6 +552,8 @@
                     return (this.kidDigests.label === 'Today' ? '☀️ ' : '🌙 ')
                         + (this.kidDigests.label || 'Tomorrow');
                 },
+                // The page shows every part; a card answers from its config.
+                digestShow(part) { return true; },
                 digestColumns() {
                     const n = this.digestCards().length;
                     if (n <= 1) return 1;

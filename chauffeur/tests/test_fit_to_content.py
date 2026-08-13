@@ -294,6 +294,150 @@ def scenario_the_resize_observer_reaches_the_content():
           "a mutation that replaced the children left the observer watching "
           "detached nodes")
 
+# ── The second harness: a whole BOARD in jsdom, with stub observers that
+# record which tiles were ever watched. jsdom does no layout, so this can say
+# nothing about heights — but "was this tile measured at all" is a structural
+# question, and it is the one both custom-tile fit reports turned out to be.
+BOARD_HARNESS = r"""
+const fs = require('fs');
+const { JSDOM } = require('jsdom');
+process.on('unhandledRejection', () => {});
+const html = fs.readFileSync(process.argv[2], 'utf8')
+  .replace(/<script src="[^"]*"[^>]*><\/script>/g, '')
+  .replace(/<link href="https:[^"]*"[^>]*>/g, '');
+const board = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+const watched = [];
+const errors = [];
+const dom = new JSDOM(html, {
+  runScripts: 'dangerously', pretendToBeVisual: true,
+  url: 'http://localhost/home?panel=true',
+  beforeParse(w) {
+    w.fetch = (u) => Promise.resolve({ ok: true, text: () => Promise.resolve(''),
+      json: () => Promise.resolve(String(u).includes('api/home_board') ? board : {}) });
+    w.showGlobalAlert = () => {};
+    w.matchMedia = () => ({ matches: false, addEventListener() {} });
+    w.EventSource = function () { return { addEventListener() {}, close() {} }; };
+    w.ResizeObserver = class { observe(n) { watched.push(n); } disconnect() {} };
+  }
+});
+const win = dom.window;
+win.addEventListener('error', e => {
+  const m = (e.error && e.error.message) || e.message || '';
+  if (!/EventSource/.test(m)) errors.push(m);
+});
+win.document.addEventListener('DOMContentLoaded', () => {
+  const s = win.document.createElement('script');
+  s.textContent = fs.readFileSync(require.resolve('alpinejs/dist/cdn.js'), 'utf8');
+  win.document.head.appendChild(s);
+});
+setTimeout(() => {
+  // Which TILE elements ended up under an observer.
+  const ids = new Set();
+  for (const n of watched) {
+    const tile = n && n.closest ? n.closest('[data-tile-id]') : null;
+    if (tile) ids.add(tile.dataset.tileId);
+  }
+  console.log(JSON.stringify({ errors: errors.slice(0, 3), watched: [...ids] }));
+  process.exit(0);
+}, 2500);
+"""
+
+# One built-in tile and one CUSTOM tile, both asked to fit. The custom tile's
+# CARD is namespaced `tileid-cardid` — which is exactly how it went missing.
+BOARD = {
+    'tiles': [
+        {'id': 'errand_list', 'type': 'errand_list', 'label': 'Errands',
+         'locked': True, 'bare': False, 'config': {},
+         'data': {'interactive': True, 'parts': {}},
+         'cards': [{'id': 'errand_list', 'type': 'errand_list', 'icon': 'E',
+                    'label': 'Errands', 'title': 'Errands', 'cols': 12,
+                    'rows': 0, 'bare': False, 'config': {},
+                    'data': {'interactive': True, 'parts': {}}}]},
+        {'id': 'custom', 'type': 'custom', 'label': 'Mine', 'locked': False,
+         'bare': False, 'config': {},
+         'cards': [{'id': 'custom-weather', 'type': 'weather', 'icon': 'W',
+                    'label': 'Weather', 'title': '', 'cols': 12, 'rows': 0,
+                    'bare': True, 'config': {},
+                    'data': {'days': [{'day': 'Mon', 'emoji': 'x',
+                                       'hi': 80, 'lo': 60, 'rain': 0}]}}]},
+    ],
+    'spans': {'errand_list': {'cols': 6, 'auto': True},
+              'custom': {'cols': 6, 'auto': True}},
+    'columns': 12, 'row_height': 240, 'gap': 16,
+    'hero': {}, 'page': {'slug': 'home', 'name': 'Home', 'icon': 'H'},
+    'background': '', 'temp_now': None, 'statuses': [],
+}
+
+
+_BOARD_RESULT = {}
+
+
+def _run_board():
+    if _BOARD_RESULT:
+        return _BOARD_RESULT.get('data')
+    _BOARD_RESULT['data'] = None
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node is not installed')
+        return None
+    have = subprocess.run([node, '-e',
+                           "require.resolve('jsdom'); require.resolve('alpinejs')"],
+                          capture_output=True, text=True, cwd=SCRATCH)
+    if have.returncode != 0:
+        print('  skip  jsdom/alpinejs not resolvable')
+        return None
+    import types
+    import main
+    req = types.SimpleNamespace(url=types.SimpleNamespace(path='/home'),
+                                query_params={})
+    page = os.path.join(SCRATCH, 'board.html')
+    with open(page, 'w', encoding='utf-8') as f:
+        f.write(main.templates.env.get_template('home.html').render(
+            request=req, board_slug=''))
+    data = os.path.join(SCRATCH, 'board.json')
+    with open(data, 'w', encoding='utf-8') as f:
+        json.dump(BOARD, f)
+    probe = os.path.join(SCRATCH, 'board_probe.js')
+    with open(probe, 'w', encoding='utf-8') as f:
+        f.write(BOARD_HARNESS)
+    proc = subprocess.run([node, probe, page, data], capture_output=True,
+                          text=True, encoding='utf-8', errors='replace',
+                          cwd=SCRATCH, timeout=180)
+    check(proc.returncode == 0,
+          "the board threw:\n" + proc.stderr[-1500:])
+    _BOARD_RESULT['data'] = json.loads(proc.stdout.strip().splitlines()[-1])
+    return _BOARD_RESULT['data']
+
+
+def scenario_a_custom_tile_fits_too():
+    """The wall's report, twice: fit works on built-in tiles and does nothing
+    on custom ones — the tile just draws at whatever `rows` says.
+
+    `syncAutoTiles` walked `drawnTiles()`, which flattens the board to CARDS.
+    A built-in tile's card keeps the TILE's id (the card IS the tile), so the
+    lookup found the element and fit worked. A custom tile's cards are
+    namespaced `tileid-cardid`, so the tile's own id was never in that list,
+    never looked up, never observed — and a span is a property of a TILE.
+    """
+    got = _run_board()
+    if got is None:
+        return
+    check(not got['errors'],
+          "the board threw while drawing: %s" % (got['errors'],))
+    check('errand_list' in got['watched'],
+          "a built-in tile set to fit was never measured: %s" % (got['watched'],))
+    check('custom' in got['watched'],
+          "a CUSTOM tile set to fit was never measured — it will draw at "
+          "whatever `rows` says: %s" % (got['watched'],))
+    src = tpl_source.read('home.html')
+    fn = src[src.index('syncAutoTiles() {'):]
+    fn = fn[:fn.index(chr(10) + '                },')]
+    # The CALL, not the prose — the comment in there names the helper it
+    # deliberately does not use.
+    check('of this.drawnTiles()' not in fn,
+          "syncAutoTiles walks the flattened CARD list again, so a custom "
+          "tile's own id is not in it")
+
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 

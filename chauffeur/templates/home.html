@@ -2171,7 +2171,15 @@
                 // observer holding a detached node.
                 syncAutoTiles() {
                     const live = new Set();
-                    for (const t of this.drawnTiles()) {
+                    // `board.tiles`, NOT `drawnTiles()`. That helper flattens
+                    // to CARDS, and a card's id is only the tile's for a
+                    // BUILT-IN tile (where the card is the tile); a custom
+                    // tile's cards are namespaced `tileid-cardid`, so its own
+                    // id never appeared in that list. Fit therefore worked on
+                    // every built-in tile and silently did nothing on every
+                    // custom one — which is what a wall reported. A span is a
+                    // property of a TILE, so this walks tiles.
+                    for (const t of this.tiles()) {
                         if (!this.isAuto(t.id, t.type)) continue;
                         const el = document.querySelector(
                             `[data-tile-id="${CSS.escape(t.id)}"]`);

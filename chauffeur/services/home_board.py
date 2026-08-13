@@ -207,6 +207,17 @@ WIDGETS = [
          _opt('members', 'Children', 'select', [], source='members', multi=True,
               help='Leave empty for every child.'),
          _opt('lines', 'Lines each', 'int', 4, min=1, max=8),
+         # The conversion paradigm, which this card predates by a year. The
+         # day caption in particular: it is the one thing in the drawing that
+         # is not about a specific child, and the first household to put this
+         # card on a board went looking for the setting that removed it.
+         _opt('show_day', 'Which day this is', 'bool', True,
+              help='The strip flips between today and tomorrow at the '
+                   'evening cutover, and says which.'),
+         _opt('show_header', 'Name & avatar', 'bool', True),
+         _opt('show_streak', 'The streak count', 'bool', True),
+         _opt('show_tasks', 'School tasks', 'bool', True),
+         _opt('show_routines', 'How many routine things', 'bool', True),
      ]},
     {'key': 'meals', 'icon': '🍽️', 'label': 'Meals',
      'heading': "Tonight's plate",
@@ -1227,7 +1238,9 @@ def _tile_kids(now, kid_digest_fn=None, config=None, **_):
         return {'empty': "Nothing on for the kids today."}
     # No weather: there is a weather CARD, and a payload that quietly carries
     # another card's content is how a board says the same thing twice.
-    return {'label': digest.get('label'), 'kids': kids, 'lines': lines}
+    return {'label': digest.get('label'), 'kids': kids, 'lines': lines,
+            'parts': {p: _cfg_bool(config, f'show_{p}', True)
+                      for p in ('day', 'header', 'streak', 'tasks', 'routines')}}
 
 
 def _tile_meals(now, config=None, **_):
