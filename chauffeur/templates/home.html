@@ -1130,6 +1130,24 @@
                         <span class="font-normal ed-note">pixels apart — spacing only, never part
                             of a tile's height</span>
                     </label>
+                    <!-- The one geometric string attached, said where the
+                         numbers are typed. A tile's lattice footprint is
+                         rows*height + one gutter, so a STACK of tiles beside
+                         one tall tile only bottom-aligns when the extra
+                         gutters are worth a whole number of rows: gutter
+                         divisible by row height. The price of tile heights
+                         that ignore the gutter — the closed geometries both
+                         had worse diseases. -->
+                    <p class="text-[0.7rem] ed-note mb-3 -mt-1"
+                        x-show="page().gap % Math.max(1, page().row_height) !== 0">
+                        ⚠ This gutter is not a multiple of the row height, so stacked
+                        tiles can never bottom-align with a taller neighbour — each
+                        stacked tile adds one gutter the neighbour cannot span. Rows of
+                        <span x-text="page().row_height"></span>px line up with gutters of
+                        0, <span x-text="page().row_height"></span>,
+                        <span x-text="page().row_height * 2"></span>…
+                        (small rows that divide the gutter give fine sizing AND alignment).
+                    </p>
                     <div class="space-y-1.5 mb-3">
                         <!-- Keyed by INSTANCE id, not by type. Alpine uses this
                              key to decide which DOM row belongs to which entry,
