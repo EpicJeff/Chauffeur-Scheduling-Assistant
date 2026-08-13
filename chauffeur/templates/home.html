@@ -1692,22 +1692,51 @@
         // tile stretches to the row area it was given, so `scrollHeight` on it
         // reports whatever we last set — which converges but can never shrink
         // again, so a lane that loses two items would keep its old height for
-        // the life of the page. Summing the children's boxes has no such
-        // feedback: block flow, and their heights do not depend on the tile's.
+        // the life of the page. The children's boxes have no such feedback:
+        // block flow, and their heights do not depend on the tile's.
         //
-        // <template> children are skipped: Alpine leaves them in the DOM as
-        // zero-height markers, and one of them at the top would put the
-        // measurement's origin at y=0.
+        // Which children count is the whole of it, and the first cut of this
+        // got it wrong in a way that collapsed every fit tile to its heading.
+        // A tile's direct children are not its content:
+        //
+        //   * <template> — Alpine's own marker. No box, and x-if inserts the
+        //     real node beside it.
+        //   * <div class="contents"> — the built-in tile's body wrapper, which
+        //     is `display: contents` ON PURPOSE (it exists for Alpine and not
+        //     for layout, because a box between a mosaic and its tile is a box
+        //     that ends up zero pixels tall). It has NO BOX, so measuring it
+        //     returns zeros. Its children are the content.
+        //   * the arrange nameplate and the resize grip — `x-show`, so present
+        //     and `display: none` except while arranging, and absolutely
+        //     positioned when they are shown. Out of flow either way.
+        //
+        // So: descend through `contents`, skip what is not rendered and what is
+        // out of flow, and take the union of what is left. Union rather than
+        // first-to-last, because after all that the content is not reliably the
+        // last child either.
         const boardAuto = { observers: {}, onMeasure: null };
 
+        function autoFlowBoxes(el, out) {
+            for (const kid of el.children) {
+                if (kid.tagName === 'TEMPLATE') continue;
+                const cs = getComputedStyle(kid);
+                if (cs.display === 'none') continue;
+                if (cs.position === 'absolute' || cs.position === 'fixed') continue;
+                if (cs.display === 'contents') { autoFlowBoxes(kid, out); continue; }
+                const r = kid.getBoundingClientRect();
+                if (r.height || r.width) out.push(r);
+            }
+            return out;
+        }
+
         function autoTileHeight(el) {
-            const kids = [...el.children].filter(k => k.tagName !== 'TEMPLATE');
-            if (!kids.length) return 0;
+            const boxes = autoFlowBoxes(el, []);
+            if (!boxes.length) return 0;
             const cs = getComputedStyle(el);
             const padY = (parseFloat(cs.paddingTop) || 0)
                 + (parseFloat(cs.paddingBottom) || 0);
-            const top = kids[0].getBoundingClientRect().top;
-            const bottom = kids[kids.length - 1].getBoundingClientRect().bottom;
+            const top = Math.min(...boxes.map(b => b.top));
+            const bottom = Math.max(...boxes.map(b => b.bottom));
             return Math.max(1, Math.ceil(bottom - top + padY));
         }
 

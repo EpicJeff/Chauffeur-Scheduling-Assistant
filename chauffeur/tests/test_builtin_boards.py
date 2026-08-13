@@ -313,14 +313,13 @@ def scenario_fit_to_content_is_measured_not_guessed():
     tpl = tpl_source.read('home.html')
     check('function autoTileHeight' in tpl,
           "nothing measures a fit-to-content tile")
-    fn = tpl[tpl.index('function autoTileHeight'):]
-    fn = fn[:fn.index(chr(10) + '        }') + 1]
-    check('scrollHeight' not in fn and 'clientHeight' not in fn,
-          "the measurement reads the tile's own box, which it also sets — it "
-          "can converge upward and never shrink again")
-    check("tagName !== 'TEMPLATE'" in fn,
-          "Alpine's zero-height <template> markers are being measured, so a "
-          "tile whose first child is one measures from y=0")
+    # What it measures — which elements, and how — is pinned against a tile
+    # shaped like a real one in tests/test_fit_to_content.py. jsdom does no
+    # layout, so only that harness can tell a measurement that reads the right
+    # elements from one that reads the wrong ones.
+    check('function autoFlowBoxes' in tpl,
+          "the measurement no longer walks for the content, so a `display: "
+          "contents` wrapper or a hidden control is being measured instead")
     # Both observers, because content arrives two different ways: these cards
     # self-fetch (mutation) and the board is responsive (resize).
     check('new ResizeObserver' in tpl and 'new MutationObserver' in tpl,
