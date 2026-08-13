@@ -1,3 +1,4 @@
+{% import 'components/errand_lists.html' as errand_lists %}
 <!DOCTYPE html>
 <html lang="en" class="dark">
 
@@ -6,6 +7,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Errands & Todos</title>
     <link href="static/vendor/fonts/inter/inter.css" rel="stylesheet">
+    <!-- The two lists on this page are the SAME drawing the board's
+         `task_list` and `errand_list` cards render, so the page renders them
+         with Alpine too. Everything else here — the add rows, both editor
+         modals, the location autocomplete — is still the plain script it
+         always was, and is page-only on purpose. -->
+    <script src="static/vendor/alpine.min.js" defer></script>
     {% include 'ha_theme.html' %}
     <style>
         body {
@@ -14,54 +21,10 @@
             overflow: hidden;
         }
         
-        .todo-item {
-            transition: all 0.2s ease-in-out;
-        }
-        
-        .todo-item:hover {
-            transform: translateX(4px);
-            background-color: rgba(55, 65, 81, 0.5);
-        }
-
-        .checkbox-custom {
-            appearance: none;
-            width: 1.25rem;
-            height: 1.25rem;
-            border: 2px solid #6b7280;
-            border-radius: 50%;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            position: relative;
-        }
-
-        .checkbox-custom:checked {
-            background-color: #3b82f6;
-            border-color: #3b82f6;
-        }
-
-        .checkbox-custom:checked::after {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%) rotate(45deg);
-            width: 4px;
-            height: 10px;
-            border: solid white;
-            border-width: 0 2px 2px 0;
-            margin-top: -2px;
-        }
-        
-        .priority-indicator {
-            width: 4px;
-            border-radius: 4px;
-            height: 80%;
-            align-self: center;
-        }
-
-        .priority-1 { background-color: #ef4444; } /* High */
-        .priority-2 { background-color: #f59e0b; } /* Med */
-        .priority-3 { background-color: #3b82f6; } /* Low */
+        /* The row styles that used to live here — .todo-item, .checkbox-custom,
+           .priority-* — went with the hand-rolled renderer. The rows are drawn
+           by components/errand_lists.html now, in Tailwind, because a wall
+           panel renders the same macro and page-local CSS does not travel. */
     </style>
     <link rel="stylesheet" href="static/tailwind.css">
 </head>
@@ -70,7 +33,8 @@
     {% include 'nav.html' %}
 
     <!-- Main Content Area -->
-    <div class="flex-1 flex flex-col overflow-hidden bg-gray-900/50">
+    <div class="flex-1 flex flex-col overflow-hidden bg-gray-900/50"
+        x-data="errandsPage()" x-init="start()">
         
         <!-- Header -->
         <header class="panel-page p-8 pb-4">
@@ -88,7 +52,6 @@
             <div class="bg-gray-800/60 rounded-xl border border-gray-700/50 p-4">
                 <div class="flex items-center justify-between mb-3">
                     <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-widest">The household list</h3>
-                    <span id="task-load-line" class="text-xs text-gray-500 italic"></span>
                 </div>
 
                 <div class="flex flex-wrap gap-2 mb-3">
@@ -109,8 +72,8 @@
                         class="bg-teal-600 hover:bg-teal-500 px-4 py-2 rounded-lg font-semibold text-sm">Add task</button>
                 </div>
 
-                <div id="tasks-list" class="flex flex-col gap-2"></div>
-                <p id="tasks-empty" class="text-gray-500 text-sm italic hidden">Nothing owed right now.</p>
+                {{ errand_lists.task_list(interactive='true', edit='openTaskEditor',
+                                          remove='deleteTask') }}
             </div>
         </div>
 
@@ -150,35 +113,12 @@
             </div>
         </div>
 
-        <!-- Task List -->
+        <!-- The errand list. Rendered from the shared macro, so this page and
+             every `errand_list` card on every board are one drawing — the
+             page passes an editor and the wall does not, and that is the only
+             difference between them. -->
         <div class="flex-1 overflow-y-auto px-8 pb-8">
-                        <div id="past-due-section" class="hidden mb-6">
-                <div class="mb-4 flex items-center gap-4">
-                    <div class="h-px bg-red-900/50 flex-1"></div>
-                    <h3 class="text-sm font-semibold text-red-500 uppercase tracking-widest flex items-center gap-1">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                        Past Due
-                    </h3>
-                    <div class="h-px bg-red-900/50 flex-1"></div>
-                </div>
-                <div id="past-due-errands-list" class="flex flex-col gap-3">
-                    <!-- Dynamically populated -->
-                </div>
-            </div>
-            
-            <div id="errands-list" class="flex flex-col gap-3">
-                <!-- Dynamically populated -->
-            </div>
-            
-            <div class="mt-8 mb-4 flex items-center gap-4">
-                <div class="h-px bg-gray-800 flex-1"></div>
-                <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-widest">Completed</h3>
-                <div class="h-px bg-gray-800 flex-1"></div>
-            </div>
-            
-            <div id="completed-errands-list" class="flex flex-col gap-3 opacity-60">
-                <!-- Dynamically populated -->
-            </div>
+            {{ errand_lists.errand_list(interactive='true', edit='openEditModal') }}
         </div>
     </div>
 
@@ -552,104 +492,42 @@
             currentSessionToken = null;
         }
 
-        let errands = [];
         let globalDrivers = [];
         let globalPassengers = [];
         let currentEditErrand = null;
 
-        async function fetchErrands() {
+        // The page's mount of the shared list logic. `lists` is the ONE place
+        // the two arrays live now — the editors and the add rows read and
+        // reload through it rather than keeping a second copy that drifts by
+        // one tick from what is on the screen.
+        let lists = null;
+
+        function errandsPage() {
+            return {
+                ...errandListsLogic(''),
+                start() {
+                    lists = this;
+                    this.reloadLists();
+                    fetchEditorLists();
+                    fetchTaskAssignees();
+                },
+            };
+        }
+
+        // Only the editors need these, and only this page has editors.
+        async function fetchEditorLists() {
             try {
-                const [errandsRes, driversRes, passRes] = await Promise.all([
-                    fetch('api/errands'),
-                    fetch('api/drivers'),
-                    fetch('api/passengers')
-                ]);
-                errands = await errandsRes.json();
+                const [driversRes, passRes] = await Promise.all([
+                    fetch('api/drivers'), fetch('api/passengers')]);
                 globalDrivers = await driversRes.json();
                 globalPassengers = await passRes.json();
-                renderErrands();
             } catch (err) {
-                console.error("Failed to fetch data", err);
+                console.error("Failed to fetch drivers/passengers", err);
             }
         }
 
-        function renderErrands() {
-            const listEl = document.getElementById('errands-list');
-            const completedEl = document.getElementById('completed-errands-list');
-            const pastDueEl = document.getElementById('past-due-errands-list');
-            const pastDueSection = document.getElementById('past-due-section');
-            
-            listEl.innerHTML = '';
-            completedEl.innerHTML = '';
-            if (pastDueEl) pastDueEl.innerHTML = '';
-            
-            // Sort: Priority (1 to 3), then created_at desc (implicitly by order)
-            const sortedErrands = [...errands].sort((a, b) => {
-                if (a.is_completed !== b.is_completed) return a.is_completed ? 1 : -1;
-                return (a.priority || 2) - (b.priority || 2);
-            });
-
-            sortedErrands.forEach(errand => {
-                const el = document.createElement('div');
-                el.className = `todo-item bg-gray-800 rounded-xl p-4 flex items-center gap-4 border border-gray-700/50 shadow-sm cursor-pointer group`;
-                
-                // Clicking anywhere (except checkbox) opens edit
-                el.onclick = (e) => {
-                    if (e.target.tagName !== 'INPUT' && !e.target.closest('.checkbox-custom')) {
-                        openEditModal(errand);
-                    }
-                };
-
-                const priorityClass = errand.priority === 1 ? 'priority-1' : (errand.priority === 3 ? 'priority-3' : 'priority-2');
-                
-                el.innerHTML = `
-                    <div class="priority-indicator ${priorityClass}"></div>
-                    <input type="checkbox" class="checkbox-custom" ${errand.is_completed ? 'checked' : ''} onchange="toggleComplete('${errand.id}', this.checked)">
-                    <div class="flex-1 min-w-0">
-                        <h4 class="text-white font-medium truncate ${errand.is_completed ? 'line-through text-gray-500' : ''}">${errand.title}</h4>
-                        <div class="flex items-center gap-3 text-xs text-gray-500 mt-1">
-                            ${errand.location ? `<span class="flex items-center gap-1 truncate"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>${errand.location}</span>` : ''}
-                            <span class="flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>${errand.duration_mins}m</span>
-                            ${errand.starts_on && !errand.is_completed ? `<span class="flex items-center gap-1 text-blue-400 font-medium ml-2" title="Requested start date"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>${new Date(errand.starts_on * 1000).toLocaleDateString([], {month: 'short', day: 'numeric'})}</span>` : ''}
-                            ${errand.scheduled_start && !errand.is_completed ? `<span class="flex items-center gap-1 text-green-400 font-medium ml-2" title="Currently scheduled for this time"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>Scheduled: ${new Date(errand.scheduled_start).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})}</span>` : ''}
-                            ${(errand.shopping_lists || []).map(l => `<a href="shopping" onclick="event.stopPropagation()" class="flex items-center gap-1 text-pink-300 font-medium ml-2 hover:text-pink-200" title="The standing list for this errand">🛒 ${l.name}${l.open_count ? ` · ${l.open_count}` : ''}</a>`).join('')}
-                        </div>
-                    </div>
-                `;
-
-                if (errand.is_completed) {
-                    completedEl.appendChild(el);
-                } else if (errand.status === 'past_due' && pastDueEl) {
-                    // Add reschedule button wrapper to past due items
-                    const wrapper = document.createElement('div');
-                    wrapper.className = "flex flex-col gap-2";
-                    wrapper.appendChild(el);
-                    
-                    const controls = document.createElement('div');
-                    controls.className = "flex justify-end gap-2 px-2";
-                    controls.innerHTML = `
-                        <button onclick="rescheduleErrand('${errand.id}')" class="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-white transition-colors">Reschedule</button>
-                    `;
-                    wrapper.appendChild(controls);
-                    
-                    pastDueEl.appendChild(wrapper);
-                } else {
-                    listEl.appendChild(el);
-                }
-            });
-            
-            if (pastDueEl && pastDueEl.children.length > 0) {
-                pastDueSection.classList.remove('hidden');
-            } else if (pastDueSection) {
-                pastDueSection.classList.add('hidden');
-            }
-            
-            if (completedEl.children.length === 0) {
-                completedEl.innerHTML = '<div class="text-center text-sm text-gray-600 py-4">No completed errands yet.</div>';
-            }
-            if (listEl.children.length === 0) {
-                listEl.innerHTML = '<div class="text-center bg-gray-800/50 border border-dashed border-gray-700 rounded-xl py-12 flex flex-col items-center justify-center text-gray-500"><svg class="w-12 h-12 mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 13l4 4L19 7"></path></svg><p>All caught up! Add a new errand above.</p></div>';
-            }
+        function fetchErrands() {
+            return lists ? lists.loadErrands() : Promise.resolve();
         }
 
         // Natural Language Parsing
@@ -709,24 +587,6 @@
             }
         });
         
-        async function rescheduleErrand(id) {
-            const errand = errands.find(e => e.id === id);
-            if (!errand) return;
-            errand.status = 'pending';
-            errand.last_scheduled_end = null;
-            
-            try {
-                await fetch(`api/errands/${errand.doc_id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(errand)
-                });
-                fetchErrands();
-            } catch (err) {
-                console.error(err);
-            }
-        }
-
         async function addErrand() {
             const inputEl = document.getElementById('new-errand-input');
             const text = inputEl.value.trim();
@@ -757,24 +617,9 @@
             }
         });
 
-        async function toggleComplete(id, isCompleted) {
-            const errand = errands.find(e => e.id === id);
-            if (!errand) return;
-            
-            errand.is_completed = isCompleted;
-            renderErrands(); // Optimistic update
-            
-            try {
-                await fetch(`api/errands/${errand.doc_id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(errand)
-                });
-            } catch (err) {
-                console.error(err);
-                fetchErrands(); // Revert on failure
-            }
-        }
+        // (Ticking an errand off and rescheduling a past-due one live in
+        // errandListsLogic now — they are the taps the WALL needs too, and a
+        // second copy here is the drift the shared drawing exists to stop.)
 
         // --- Modal Logic ---
         function renderToggles() {
@@ -909,7 +754,7 @@
 
         async function saveEdit() {
             const id = document.getElementById('edit-id').value;
-            const errand = errands.find(e => e.id === id);
+            const errand = (lists ? lists.errands : []).find(e => e.id === id);
             if (!errand) return;
 
             errand.title = document.getElementById('edit-title').value;
@@ -944,7 +789,6 @@
             errand.group_id = document.getElementById('edit-group-id').value || null;
             
             closeEditModal();
-            renderErrands();
 
             try {
                 await fetch(`api/errands/${errand.doc_id}`, {
@@ -954,26 +798,22 @@
                 });
             } catch (err) {
                 console.error(err);
-                fetchErrands();
             }
+            fetchErrands();
         }
 
         async function deleteErrand() {
-            const id = document.getElementById('edit-id').value;
             const docId = document.getElementById('edit-doc-id').value;
             if (!await promptConfirm('Delete this errand?',
                                      'It is removed from the schedule for everyone.', 'Delete')) return;
-            
-            closeEditModal();
-            errands = errands.filter(e => e.id !== id);
-            renderErrands();
 
+            closeEditModal();
             try {
                 await fetch(`api/errands/${docId}`, { method: 'DELETE' });
             } catch (err) {
                 console.error(err);
-                fetchErrands();
             }
+            fetchErrands();
         }
 
         // --- Household tasks (load arc A2) -------------------------------
@@ -981,7 +821,6 @@
         // this list exists so that work with a deadline and no destination
         // finally has somewhere to be, not to become a project manager.
 
-        let householdTasks = [];
         // Who may hold a household job. Kids appear once their stage grants
         // assignable_tasks (Navigator+) — "being given real household jobs" is
         // a named grant, and the server refuses it below stage. Held once and
@@ -1025,15 +864,15 @@
             el.value = selectedId || '';
         }
 
-        async function fetchHouseholdTasks() {
+        // Who the OWNER dropdowns may offer. The rows themselves — and the
+        // load sentence over them — are the shared drawing's job now; this is
+        // the editors' half, which is the half a wall panel never sees.
+        async function fetchTaskAssignees() {
             try {
-                const [tRes, mRes, lRes, aRes] = await Promise.all([
-                    fetch('api/household-tasks'),
+                const [mRes, aRes] = await Promise.all([
                     fetch('api/members'),
-                    fetch('api/household-load?days=30'),
                     fetch('api/assist-contacts').catch(() => null),
                 ]);
-                householdTasks = tRes.ok ? await tRes.json() : [];
                 const members = mRes.ok ? await mRes.json() : [];
                 taskAssignees = members
                     .filter(m => m.role !== 'child' || (m.capabilities || {}).assignable_tasks)
@@ -1045,41 +884,12 @@
                 });
                 const owner = document.getElementById('new-task-owner');
                 if (owner) fillTaskOwnerSelect(owner, owner.value, 'Nobody yet');
-                const load = lRes.ok ? await lRes.json() : {};
-                // States it, never scores it: one sentence, no chart.
-                document.getElementById('task-load-line').textContent = load.line || '';
-                renderHouseholdTasks();
             } catch (e) { console.error(e); }
         }
 
-        function renderHouseholdTasks() {
-            const list = document.getElementById('tasks-list');
-            const empty = document.getElementById('tasks-empty');
-            if (!list) return;
-            empty.classList.toggle('hidden', householdTasks.length > 0);
-            list.innerHTML = householdTasks.map(t => {
-                const due = t.past_due
-                    ? `<span class="text-red-400 font-semibold">past due</span>`
-                    : (t.due_date ? `<span class="text-gray-400">due ${t.due_date}</span>` : '');
-                // "Nobody yet" is a real, sayable state — not a blank — and it
-                // opens the same editor the ✎ does, rather than silently
-                // reading a dropdown somewhere else on the page.
-                const who = t.assigned_to_name
-                    ? `<span class="text-teal-300">${t.assigned_to_name}</span>`
-                    : `<button onclick="openTaskEditor('${t.id}')" class="text-gray-500 hover:text-teal-300 underline decoration-dotted">nobody yet</button>`;
-                const rec = t.recurrence && t.recurrence !== 'none'
-                    ? `<span class="text-gray-600">· ${t.recurrence}</span>` : '';
-                return `<div class="bg-gray-900 rounded-lg px-3 py-2 flex items-center gap-3">
-                    <input type="checkbox" onchange="completeTask('${t.id}')"
-                        class="w-4 h-4 rounded accent-teal-500 shrink-0">
-                    <span class="flex-1 text-sm text-white">${t.title}</span>
-                    <span class="text-xs flex items-center gap-2">${due} ${who} ${rec}</span>
-                    <button onclick="openTaskEditor('${t.id}')" title="Edit"
-                        class="text-gray-600 hover:text-teal-300 text-xs">✎</button>
-                    <button onclick="deleteTask('${t.id}')"
-                        class="text-gray-600 hover:text-red-400 text-xs">✕</button>
-                </div>`;
-            }).join('');
+        function fetchHouseholdTasks() {
+            if (!lists) return Promise.resolve();
+            return Promise.all([lists.loadTasks(), lists.loadLoadLine()]);
         }
 
         async function addHouseholdTask() {
@@ -1100,22 +910,18 @@
             } catch (e) { showGlobalAlert("Couldn't add that."); }
         }
 
-        async function completeTask(id) {
-            try {
-                const res = await fetch(`api/household-tasks/${id}/complete`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ done: true }) }).then(r => r.json());
-                if (res.message) showGlobalAlert(res.message);
-                await fetchHouseholdTasks();
-            } catch (e) { showGlobalAlert("Couldn't mark that done."); }
-        }
+        // (Ticking a task off lives in errandListsLogic — the wall needs that
+        // tap too, and one copy is the point of the shared drawing.)
 
         // Tap edit → change it → save, the flow the rest of the app uses. This
         // replaces claimTask(), which assigned by reading the CREATE form's
         // owner dropdown when you clicked "nobody yet" on a row — two controls
         // that look unrelated, silently coupled.
-        function openTaskEditor(id) {
-            const t = householdTasks.find(x => x.id === id);
+        //
+        // Takes the TASK, not its id: the row that calls it is holding the
+        // object already, and looking it back up by id was the only reason
+        // this page needed a second copy of the list.
+        function openTaskEditor(t) {
             if (!t) return;
             document.getElementById('task-edit-id').value = t.id;
             document.getElementById('task-edit-title').value = t.title || '';
@@ -1160,22 +966,24 @@
             } catch (e) { showGlobalAlert("Couldn't save that task."); }
         }
 
-        async function deleteTask(id) {
+        // Takes the TASK, for the same reason the editor above does.
+        async function deleteTask(t) {
+            if (!t) return;
             if (!await promptConfirm('Delete this task?', 'It goes for everyone.', 'Delete')) return;
             try {
-                await fetch(`api/household-tasks/${id}`, { method: 'DELETE' });
-                await fetchHouseholdTasks();
+                await fetch(`api/household-tasks/${t.id}`, { method: 'DELETE' });
             } catch (e) { showGlobalAlert("Couldn't delete that."); }
+            await fetchHouseholdTasks();
         }
 
         document.getElementById('new-task-title').addEventListener('keydown', e => {
             if (e.key === 'Enter') addHouseholdTask();
         });
 
-        // Initialize
-        fetchErrands();
-        fetchHouseholdTasks();
+        // (Nothing kicks off here any more: errandsPage()'s x-init does it,
+        // so the lists load exactly once and the page cannot race Alpine.)
     </script>
+    {% include 'components/errand_lists.html' %}
     {% include 'components/control_center.html' %}
     {% include 'components/moments_hearth.html' %}
 </body>

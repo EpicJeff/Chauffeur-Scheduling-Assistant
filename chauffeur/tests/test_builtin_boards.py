@@ -29,12 +29,14 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault('CHAUFFEUR_DATA_DIR',
                       tempfile.mkdtemp(prefix='chauffeur_builtin_'))
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TPL = os.path.join(ROOT, 'templates')
 
+import tpl_source  # noqa: E402
 from services import home_board  # noqa: E402
 
 
@@ -81,15 +83,36 @@ def scenario_a_shipped_board_is_a_real_board():
         check(page['v'] == 5, f"{slug} is not on the current page shape")
 
 
+def scenario_every_card_in_the_catalog_has_something_drawing_it():
+    """The failure mode of adding a card type: the builder ships, the option
+    list ships, the picker offers it — and the tile draws an empty panel,
+    because nothing in the board's body branches on it. Silent, and only
+    visible on a wall.
+
+    `custom` is the one exception: it is the CONTAINER, and its cells are
+    drawn by home.html's own loop rather than by a type branch.
+    """
+    src = tpl_source.read('home.html')
+    for w in home_board.WIDGETS:
+        if w['key'] == 'custom':
+            continue
+        check(f"t.type === '{w['key']}'" in src,
+              f"the {w['key']} card is offered in the picker and drawn by "
+              f"nothing — a tile of it is an empty panel")
+        check(w['key'] in home_board._BUILDERS,
+              f"the {w['key']} card has no builder, so it never reaches a board")
+
+
 def scenario_the_spec_is_never_handed_out():
     """`BUILTIN_PAGES` is module state and `_page_from` hands its spans dict to
     whoever asked. One caller resizing a tile would otherwise resize it for
     every household on the install, for the life of the process."""
     a = home_board.builtin_page('errands', {})
-    a['spans']['errands'] = {'cols': 1, 'rows': 1}
+    first = a['widgets'][0]['id']
+    a['spans'][first] = {'cols': 1, 'rows': 1}
     a['widgets'][0]['config']['count'] = 99
     b = home_board.builtin_page('errands', {})
-    check(b['spans']['errands'] != {'cols': 1, 'rows': 1},
+    check(b['spans'][first] != {'cols': 1, 'rows': 1},
           f"editing one copy of a shipped board edited the spec: {b['spans']}")
     check(b['widgets'][0]['config'].get('count') != 99,
           f"a tile's config leaked back into the spec: {b['widgets'][0]}")
@@ -104,7 +127,7 @@ def scenario_stored_wins_and_nothing_is_stored_until_they_edit():
         {'slug': 'home', 'name': 'Home', 'widgets': ['drives'], 'v': 5},
     ]}
     shipped = home_board.find_page('errands', settings)
-    check([w['type'] for w in shipped['widgets']] == ['tasks', 'errands'],
+    check([w['type'] for w in shipped['widgets']] == ['task_list', 'errand_list'],
           f"the shipped errands board was not used: {shipped['widgets']}")
 
     theirs = {'panel_pages': settings['panel_pages'] + [

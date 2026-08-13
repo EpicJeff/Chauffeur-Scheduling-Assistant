@@ -1644,6 +1644,9 @@
          markup they serve is rendered by board_tile_body's macros. -->
     {% include 'components/chores_lanes.html' %}
     {% include 'components/kid_glyphs.html' %}
+    <!-- Same arrangement for the errands cards: errandListsLogic and its two
+         card wrappers, with board_tile_body rendering the macros. -->
+    {% include 'components/errand_lists.html' %}
     <!-- And the drives tile's timeline, which is the Drives page's own
          renderer. Both tiles are the page's view at tile size rather than a
          second drawing of it. -->
@@ -3824,9 +3827,13 @@
                 // is ink. Nor are the chores-kiosk cards — the lanes hold
                 // buttons of their own (an <a> may only contain them while
                 // it has no href), and the goals strip matches its sibling.
+                // The errands cards join them for the same reason the lanes
+                // did: they hold tick-boxes and buttons, and an <a> may only
+                // contain those while it has no href.
                 PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web',
                            'custom', 'clock', 'hero', 'heading',
-                           'chores_lanes', 'chores_rewards'],
+                           'chores_lanes', 'chores_rewards',
+                           'task_list', 'errand_list'],
                 opens(type) {
                     return !this.PAGELESS.includes(type);
                 },

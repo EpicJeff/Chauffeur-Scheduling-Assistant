@@ -225,9 +225,16 @@ def scenario_every_agent_capability_has_a_hand_path():
     for t in ('add_household_task', 'get_household_tasks', 'complete_household_task',
               'claim_household_task', 'get_household_load'):
         check(t in names, f"{t} is offered to the model")
-    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                       'templates')
-    errands = open(os.path.join(tpl, 'errands.html'), encoding='utf-8').read()
+    # RENDERED, not read off disk. The two lists moved into macros
+    # (components/errand_lists.html) so a board card can be the same drawing,
+    # and a hand-path test that reads only errands.html would go green-to-red
+    # on a refactor that changed nothing a hand can do — or, far worse, pass
+    # forever while looking at a file the buttons had left.
+    import types
+    import main
+    req = types.SimpleNamespace(url=types.SimpleNamespace(path='/errands'),
+                                query_params={})
+    errands = main.templates.env.get_template('errands.html').render(request=req)
     check('addHouseholdTask' in errands and 'openTaskEditor' in errands
           and 'saveTaskEdit' in errands and 'completeTask' in errands,
           "adding, editing/assigning and finishing all work by hand on the "
@@ -237,7 +244,10 @@ def scenario_every_agent_capability_has_a_hand_path():
     # "nobody yet" on a row, so two unrelated-looking controls were coupled.
     check('function claimTask' not in errands,
           "and assigning never again reads the create form's dropdown")
-    check(re.search(r"openTaskEditor\([^)]*\)[^>]*>\s*nobody yet", errands),
+    # The shared macro calls the hook as `(openTaskEditor)(t)` — parenthesised
+    # because Alpine invokes an expression that evaluates to a function, so a
+    # bare name would have opened the editor once per row while drawing.
+    check(re.search(r"openTaskEditor[^>]*>\s*nobody yet", errands),
           "'nobody yet' opens that same editor rather than acting invisibly")
     # Template copy wraps across lines, so compare on collapsed whitespace —
     # a raw substring check on prose is a test that breaks on reformatting.

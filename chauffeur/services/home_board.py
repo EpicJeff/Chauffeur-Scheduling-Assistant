@@ -343,6 +343,49 @@ WIDGETS = [
               help='Leave empty for the whole household.'),
          _opt('unclaimed_only', 'Only what nobody has taken', 'bool', False),
      ]},
+    # ── The errands page, as cards (kiosk-boards arc). The two above are
+    # GLANCES — four rows on a home board saying what is waiting. These two
+    # are the page's actual lists, drawn from the SAME macros the errands page
+    # renders (components/errand_lists.html), with the taps that finish
+    # something and none of the editors: a natural-language errand parser on a
+    # screen with no keyboard is furniture.
+    {'key': 'task_list', 'icon': '🧾', 'label': 'The household list',
+     'heading': '',
+     'blurb': "Every household task, with a tick to finish one. The errands "
+              "page's own list.",
+     'options': [
+         # ON by default: an inert list is the glance tile with extra steps,
+         # and the tick is the whole reason a wall panel has this on it.
+         _opt('interactive', 'Interactive', 'bool', True,
+              help='A tick-box that finishes a task. Off, the list is a '
+                   'display.'),
+         _opt('count', 'Rows', 'int', 12, min=1, max=40),
+         _opt('members', 'Owner', 'select', [], source='members', multi=True,
+              help='Leave empty for the whole household.'),
+         _opt('unclaimed_only', 'Only what nobody has taken', 'bool', False),
+         # THE CONVERSION PARADIGM: every part of the page's drawing is a
+         # toggle, all on by default, so zero-config equals the page.
+         _opt('show_load', 'The load sentence', 'bool', True),
+         _opt('show_due', 'Due dates', 'bool', True),
+         _opt('show_owner', "Who's doing it", 'bool', True),
+         _opt('show_recurrence', 'Repeats', 'bool', True),
+     ]},
+    {'key': 'errand_list', 'icon': '🧭', 'label': 'The errand list',
+     'heading': '',
+     'blurb': "Every errand waiting, past due first, with a tick to finish "
+              "one. The errands page's own list.",
+     'options': [
+         _opt('interactive', 'Interactive', 'bool', True,
+              help='A tick-box that finishes an errand, and Reschedule on '
+                   'anything past due. Off, the list is a display.'),
+         _opt('count', 'Rows per section', 'int', 12, min=1, max=40),
+         _opt('past_due_only', 'Past due only', 'bool', False),
+         _opt('show_past_due', 'The past-due band', 'bool', True),
+         _opt('show_open', 'What is still waiting', 'bool', True),
+         _opt('show_completed', 'What is done', 'bool', True),
+         _opt('show_location', 'Where it is', 'bool', True),
+         _opt('show_when', 'Start and scheduled times', 'bool', True),
+     ]},
     {'key': 'trips', 'icon': '🧭', 'label': 'Trips',
      'heading': 'Next trip',
      'blurb': "The next trip and how long until it starts.",
@@ -1670,6 +1713,47 @@ def _tile_errands(now, config=None, **_):
         return None
 
 
+def _tile_task_list(now, config=None, **_):
+    """The household list as a card. Interactive depth, so the card fetches its
+    own rows (rule 2 — twenty seconds of cached payload is twenty seconds of a
+    ticked box coming back unticked); this is only the mount config.
+
+    It still answers the unconfigured question here, because that is the one
+    thing the client cannot: a household that has never made a task wants no
+    tile, and a household whose list is empty tonight wants to see that it is.
+    """
+    try:
+        if not storage.get_household_tasks() and \
+                not storage.get_household_tasks(include_done=True):
+            return None                       # never made one: feature unused
+        return {'interactive': _cfg_bool(config, 'interactive', True),
+                'count': _cfg_int(config, 'count', 12, 1, 40),
+                'members': _cfg_ids(config, 'members'),
+                'unclaimed_only': _cfg_bool(config, 'unclaimed_only', False),
+                'parts': {p: _cfg_bool(config, f'show_{p}', True)
+                          for p in ('load', 'due', 'owner', 'recurrence')}}
+    except Exception as e:
+        print(f"[home_board] task list failed: {e}")
+        return None
+
+
+def _tile_errand_list(now, config=None, **_):
+    """The errand list as a card. Same shape and the same reasoning as the
+    household list above."""
+    try:
+        if not (storage.get_all_errands() or []):
+            return None                       # never made one: feature unused
+        return {'interactive': _cfg_bool(config, 'interactive', True),
+                'count': _cfg_int(config, 'count', 12, 1, 40),
+                'past_due_only': _cfg_bool(config, 'past_due_only', False),
+                'parts': {p: _cfg_bool(config, f'show_{p}', True)
+                          for p in ('past_due', 'open', 'completed',
+                                    'location', 'when')}}
+    except Exception as e:
+        print(f"[home_board] errand list failed: {e}")
+        return None
+
+
 def _trip_rows(now) -> List[dict]:
     """Trips this install can know about WITHOUT calling Google, newest-first.
 
@@ -2391,6 +2475,7 @@ _BUILDERS: dict = {
     'routines': _tile_routines,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,
     'calendar': _tile_calendar, 'errands': _tile_errands, 'tasks': _tile_tasks,
+    'task_list': _tile_task_list, 'errand_list': _tile_errand_list,
     'trips': _tile_trips,
     'map': _tile_map, 'intake': _tile_intake,
     'ha': _tile_ha, 'ha_image': _tile_ha_image,
@@ -2898,13 +2983,17 @@ BUILTIN_PAGES = {
         # whole distinction the errands page exists to teach, and it is only
         # learnable if both are in front of you.
         'widgets': [
-            {'id': 'tasks', 'type': 'tasks',
-             'config': {'count': 12, 'title': 'The household owes'}},
-            {'id': 'errands', 'type': 'errands',
-             'config': {'count': 12, 'title': 'Errands waiting'}},
+            {'id': 'task_list', 'type': 'task_list',
+             'config': {'title': 'The household owes'}},
+            # `show_completed` off, and this is the one place the paradigm's
+            # "every part defaults on" is overridden — deliberately, and here
+            # rather than in the option's default, so the toggle keeps meaning
+            # "the page shows this". A wall is about what is left.
+            {'id': 'errand_list', 'type': 'errand_list',
+             'config': {'title': 'Errands waiting', 'show_completed': False}},
         ],
-        'spans': {'tasks': {'cols': 6, 'rows': 4},
-                  'errands': {'cols': 6, 'rows': 4}},
+        'spans': {'task_list': {'cols': 6, 'rows': 4},
+                  'errand_list': {'cols': 6, 'rows': 4}},
     },
     'shopping': {
         'name': 'Meals', 'icon': '🛒', 'v': 5, 'columns': 12,

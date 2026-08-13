@@ -1,0 +1,381 @@
+<!-- ── The household list and the errand list, shared drawings.
+
+     One drawing per content type (the board-cards rule): the errands PAGE
+     renders these macros, and so do the `task_list` and `errand_list` board
+     cards, so a wall panel can never drift from the page. What stays on the
+     page is everything these do not draw — the add rows, the two editor
+     modals, the location autocomplete, the driver and passenger constraint
+     toggles. That split is the whole point of the conversion: a wall wants the
+     lists and the taps that finish something, and a natural-language errand
+     parser on a screen with no keyboard is furniture.
+
+     The macros are markup only — pure Alpine, no element ids, no
+     querySelector — and bind to a scope CONTRACT, everything
+     `errandListsLogic()` below returns:
+
+       task_list(interactive, edit):
+           `tasks`, `loadLine`, `completeTask(id)`, plus `listShow(part)`.
+           `interactive` is an Alpine expression: false and the checkbox is
+           not drawn at all (a hidden control still answers querySelector, and
+           a wall board is a display). `edit` is an expression called with a
+           task — the page passes its editor, a card passes nothing, and the
+           row simply stops offering it.
+
+       errand_list(interactive, edit):
+           `errands` and the three slices (`pastDueErrands`, `openErrands`,
+           `doneErrands`), `toggleErrandDone(id, done)`,
+           `rescheduleErrand(id)`, same `listShow` / `edit` contract.
+
+     EVERY SECTION IS OPTIONAL — the conversion paradigm: each visually
+     distinct part of the page's drawing is a toggle on the card, all
+     defaulting on, so zero-config equals the page and a card can be exactly
+     the slice a board wants ("what is past due", nothing else). Parts are
+     'load' / 'due' / 'owner' / 'recurrence' for tasks and 'past_due' / 'open'
+     / 'completed' / 'location' / 'when' for errands.
+
+     A hook is tested as `!!(expr)`, never as `expr`, and that is not style.
+     Alpine INVOKES an expression whose result is a function — it is how
+     `x-text="someMethod"` works — so `x-if="openEditModal"` called the editor
+     once per row while the page was still drawing itself. Wrapping it in `!!`
+     makes the expression a boolean and the reference stays a reference.
+
+     Jinja `import` renders none of this file, so the logic script at the
+     bottom is emitted by `include` exactly once per page. -->
+
+{% macro task_list(interactive='true', edit='null', remove='null') %}
+                <!-- The one sentence the load ledger says out loud. It states
+                     the shape of the week; it never scores anybody, and it is
+                     never a chart. -->
+                <div x-show="listShow('load') && loadLine" class="text-xs text-gray-500 italic mb-2"
+                    x-text="loadLine"></div>
+                <div class="flex flex-col gap-2">
+                    <template x-for="t in tasks" :key="'task-' + t.id">
+                        <div class="bg-gray-900 rounded-lg px-3 py-2 flex items-center gap-3">
+                            <template x-if="{{ interactive }}">
+                                <input type="checkbox" @change="completeTask(t.id)"
+                                    class="w-5 h-5 rounded accent-teal-500 shrink-0">
+                            </template>
+                            <span class="flex-1 text-sm text-white truncate" x-text="t.title"></span>
+                            <span class="text-xs flex items-center gap-2 shrink-0">
+                                <template x-if="listShow('due') && t.past_due">
+                                    <span class="text-red-400 font-semibold">past due</span>
+                                </template>
+                                <template x-if="listShow('due') && !t.past_due && t.due_date">
+                                    <span class="text-gray-400" x-text="'due ' + t.due_date"></span>
+                                </template>
+                                <!-- "Nobody yet" is a real, sayable state, not
+                                     a blank — and on a surface that can edit it
+                                     is the button that assigns it. -->
+                                <template x-if="listShow('owner') && t.assigned_to_name">
+                                    <span class="text-teal-300" x-text="t.assigned_to_name"></span>
+                                </template>
+                                <template x-if="listShow('owner') && !t.assigned_to_name && !!({{ edit }})">
+                                    <button @click="({{ edit }})(t)"
+                                        class="text-gray-500 hover:text-teal-300 underline decoration-dotted">nobody yet</button>
+                                </template>
+                                <template x-if="listShow('owner') && !t.assigned_to_name && !({{ edit }})">
+                                    <span class="text-gray-600">nobody yet</span>
+                                </template>
+                                <template x-if="listShow('recurrence') && t.recurrence && t.recurrence !== 'none'">
+                                    <span class="text-gray-600" x-text="'· ' + t.recurrence"></span>
+                                </template>
+                            </span>
+                            <template x-if="!!({{ edit }})">
+                                <button @click="({{ edit }})(t)" title="Edit"
+                                    class="text-gray-600 hover:text-teal-300 text-xs shrink-0">✎</button>
+                            </template>
+                            <!-- Deleting is a HAND path, not a wall one. The
+                                 page passes it; a card passes nothing, so the
+                                 button is not drawn rather than drawn and
+                                 disabled — a wall panel is reachable by every
+                                 child in the house. -->
+                            <template x-if="!!({{ remove }})">
+                                <button @click="({{ remove }})(t)" title="Delete"
+                                    class="text-gray-600 hover:text-red-400 text-xs shrink-0">✕</button>
+                            </template>
+                        </div>
+                    </template>
+                    <p x-show="!tasks.length" class="text-gray-500 text-sm italic">Nothing owed right now.</p>
+                </div>
+{% endmacro %}
+
+{# One errand row, three times over. Kept as its own macro because the past-due
+   band, the waiting list and the completed list differ by a stripe and a
+   button, and three near-copies of a row is how a location chip ends up in two
+   of them and not the third. #}
+{% macro errand_row(interactive='true', edit='null') %}
+                        <div class="bg-gray-800 rounded-xl p-3 flex items-center gap-3 border border-gray-700/50">
+                            <div class="w-1 self-stretch rounded"
+                                :class="e.priority === 1 ? 'bg-red-500'
+                                    : (e.priority === 3 ? 'bg-blue-500' : 'bg-amber-500')"></div>
+                            <template x-if="{{ interactive }}">
+                                <input type="checkbox" :checked="e.is_completed"
+                                    @change="toggleErrandDone(e.id, $event.target.checked)"
+                                    class="w-5 h-5 rounded-full accent-blue-500 shrink-0">
+                            </template>
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-medium truncate"
+                                    :class="e.is_completed ? 'line-through text-gray-500' : 'text-white'"
+                                    x-text="e.title"></h4>
+                                <div class="flex items-center gap-3 text-xs text-gray-500 mt-0.5 flex-wrap">
+                                    <span x-show="listShow('location') && e.location" class="truncate"
+                                        x-text="'📍 ' + e.location"></span>
+                                    <span x-text="(e.duration_mins || 0) + 'm'"></span>
+                                    <span x-show="listShow('when') && e.starts_on && !e.is_completed"
+                                        class="text-blue-400 font-medium" x-text="'📅 ' + startsOnLabel(e)"></span>
+                                    <span x-show="listShow('when') && e.scheduled_start && !e.is_completed"
+                                        class="text-green-400 font-medium" x-text="'✓ ' + scheduledLabel(e)"></span>
+                                    <template x-for="l in (e.shopping_lists || [])" :key="'sl-' + e.id + '-' + l.name">
+                                        <span class="text-pink-300 font-medium"
+                                            x-text="'🛒 ' + l.name + (l.open_count ? ' · ' + l.open_count : '')"></span>
+                                    </template>
+                                </div>
+                            </div>
+                            <template x-if="!!({{ edit }})">
+                                <button @click="({{ edit }})(e)" title="Edit"
+                                    class="text-gray-600 hover:text-blue-300 text-xs shrink-0">✎</button>
+                            </template>
+                        </div>
+{% endmacro %}
+
+{% macro errand_list(interactive='true', edit='null') %}
+                <div class="flex flex-col gap-3">
+                    <!-- Past due leads, always. A wall panel shows the thing
+                         that has already slipped before the thing that has not. -->
+                    <template x-if="listShow('past_due') && pastDueErrands().length">
+                        <div class="flex flex-col gap-2">
+                            <div class="flex items-center gap-3">
+                                <div class="h-px bg-red-900/50 flex-1"></div>
+                                <h3 class="text-xs font-semibold text-red-500 uppercase tracking-widest">Past due</h3>
+                                <div class="h-px bg-red-900/50 flex-1"></div>
+                            </div>
+                            <template x-for="e in pastDueErrands()" :key="'pd-' + e.id">
+                                <div class="flex flex-col gap-1">
+                                    {{ errand_row(interactive, edit) }}
+                                    <template x-if="{{ interactive }}">
+                                        <div class="flex justify-end">
+                                            <button @click="rescheduleErrand(e.id)"
+                                                class="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-white">Reschedule</button>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <template x-if="listShow('open')">
+                        <div class="flex flex-col gap-2">
+                            <template x-for="e in openErrands()" :key="'open-' + e.id">
+                                <div>{{ errand_row(interactive, edit) }}</div>
+                            </template>
+                            <div x-show="!openErrands().length && !pastDueErrands().length"
+                                class="text-center bg-gray-800/50 border border-dashed border-gray-700 rounded-xl py-8 text-gray-500 text-sm">
+                                All caught up.
+                            </div>
+                        </div>
+                    </template>
+
+                    <template x-if="listShow('completed') && doneErrands().length">
+                        <div class="flex flex-col gap-2 opacity-60">
+                            <div class="flex items-center gap-3 mt-2">
+                                <div class="h-px bg-gray-800 flex-1"></div>
+                                <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Completed</h3>
+                                <div class="h-px bg-gray-800 flex-1"></div>
+                            </div>
+                            <template x-for="e in doneErrands()" :key="'done-' + e.id">
+                                <div>{{ errand_row(interactive, edit) }}</div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+{% endmacro %}
+
+<script>
+    // The list logic: the two arrays, the slices and the taps that finish
+    // something — ONE copy, spread into whichever Alpine component mounts the
+    // macros. The errands page spreads it into errandsPage(); the board wraps
+    // it in taskListCard() / errandListCard() below.
+    //
+    // Both cards SELF-FETCH (board rule 2: a card either rides the payload or
+    // fetches, never both). They have to: the board payload is cached for
+    // twenty seconds, and a checkbox that comes back ticked because the wall
+    // is still serving the answer it built before the tap is worse than no
+    // checkbox at all.
+    function errandListsLogic(apiBase) {
+        return {
+            tasks: [],
+            errands: [],
+            loadLine: '',
+
+            // Which parts of a list draw. The page shows everything; a card
+            // overrides this with its own configuration.
+            listShow(part) { return true; },
+            // What a mount does with a fresh list before it is stored — the
+            // hook a card's member filter and row cap live in.
+            onTasks(rows) { return rows; },
+            onErrands(rows) { return rows; },
+
+            async loadTasks() {
+                try {
+                    const res = await fetch(`${apiBase}api/household-tasks`);
+                    const rows = res.ok ? await res.json() : [];
+                    this.tasks = this.onTasks(Array.isArray(rows) ? rows : []);
+                } catch (e) { this.tasks = []; }
+            },
+            async loadErrands() {
+                try {
+                    const res = await fetch(`${apiBase}api/errands`);
+                    const rows = await res.json();
+                    this.errands = this.onErrands(Array.isArray(rows) ? rows : []);
+                } catch (e) { this.errands = []; }
+            },
+            async loadLoadLine() {
+                // Only ever a sentence. `api/household-load` returns a whole
+                // ledger; the one field anybody reads on a wall is `line`.
+                try {
+                    const res = await fetch(`${apiBase}api/household-load?days=30`);
+                    this.loadLine = res.ok ? ((await res.json()).line || '') : '';
+                } catch (e) { this.loadLine = ''; }
+            },
+            reloadLists() {
+                return Promise.all([this.loadTasks(), this.loadErrands(),
+                                    this.loadLoadLine()]);
+            },
+
+            // --- slices. Past due first, then priority: the same order the
+            // errands tile has always used, and the order a wall is read in.
+            _bySort(rows) {
+                return rows.slice().sort((a, b) => (a.priority || 2) - (b.priority || 2));
+            },
+            pastDueErrands() {
+                return this._bySort(this.errands.filter(
+                    e => !e.is_completed && e.status === 'past_due'));
+            },
+            openErrands() {
+                return this._bySort(this.errands.filter(
+                    e => !e.is_completed && e.status !== 'past_due'));
+            },
+            doneErrands() {
+                return this.errands.filter(e => e.is_completed);
+            },
+            startsOnLabel(e) {
+                return new Date(e.starts_on * 1000)
+                    .toLocaleDateString([], { month: 'short', day: 'numeric' });
+            },
+            scheduledLabel(e) {
+                return new Date(e.scheduled_start).toLocaleString([],
+                    { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+            },
+
+            // --- the taps ---
+            async completeTask(id) {
+                try {
+                    const res = await fetch(`${apiBase}api/household-tasks/${id}/complete`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ done: true })
+                    }).then(r => r.json());
+                    if (res.message) showGlobalAlert(res.message);
+                } catch (e) { showGlobalAlert("Couldn't mark that done."); }
+                await this.loadTasks();
+            },
+            // The whole errand goes back, because that is the shape the PUT
+            // takes. Flipped locally first: a checkbox that waits for a round
+            // trip before it looks ticked reads as a dead panel.
+            async toggleErrandDone(id, done) {
+                const er = this.errands.find(e => e.id === id);
+                if (!er) return;
+                er.is_completed = done;
+                try {
+                    await fetch(`${apiBase}api/errands/${er.doc_id}`, {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(er)
+                    });
+                } catch (e) { /* the reload below is the truth either way */ }
+                await this.loadErrands();
+            },
+            async rescheduleErrand(id) {
+                const er = this.errands.find(e => e.id === id);
+                if (!er) return;
+                er.status = 'pending';
+                er.last_scheduled_end = null;
+                try {
+                    await fetch(`${apiBase}api/errands/${er.doc_id}`, {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(er)
+                    });
+                } catch (e) { /* same */ }
+                await this.loadErrands();
+            },
+        };
+    }
+
+    // How often a card re-reads its list. Long enough that a wall polling all
+    // day is nothing; short enough that a phone in the kitchen ticking a task
+    // off and the panel on the wall agree before anybody notices they don't.
+    const ERRAND_LIST_POLL_MS = 30000;
+
+    function taskListCard(t, apiBase) {
+        const cfg = (t && t.data) || {};
+        const wanted = new Set(cfg.members || []);
+        const parts = cfg.parts || {};
+        return {
+            ...errandListsLogic(apiBase),
+            listsInteractive: cfg.interactive !== false,
+            // Absent means shown, so a card saved before a part existed keeps
+            // drawing everything.
+            listShow(part) { return parts[part] !== false; },
+            onTasks(rows) {
+                // `unclaimed_only` and an owner filter are opposite questions,
+                // so a card asked both answers the one it was asked LAST — an
+                // unclaimed task has no owner and can never match an owner
+                // filter, and a card that silently showed nothing would look
+                // broken rather than contradictory. Same rule as the tile
+                // builder it grew out of.
+                let out = rows;
+                if (cfg.unclaimed_only) out = out.filter(r => !r.assigned_to);
+                else if (wanted.size) out = out.filter(r => wanted.has(r.assigned_to));
+                return out.slice(0, cfg.count || 12);
+            },
+            startLists() {
+                this.loadTasks();
+                if (this.listShow('load')) this.loadLoadLine();
+                setInterval(() => {
+                    this.loadTasks();
+                    if (this.listShow('load')) this.loadLoadLine();
+                }, ERRAND_LIST_POLL_MS);
+            },
+        };
+    }
+
+    function errandListCard(t, apiBase) {
+        const cfg = (t && t.data) || {};
+        const parts = cfg.parts || {};
+        return {
+            ...errandListsLogic(apiBase),
+            listsInteractive: cfg.interactive !== false,
+            listShow(part) {
+                // `past_due_only` is the older option and it wins: a card set
+                // to it is asking for one band, and honouring a `show_open`
+                // that nobody has touched would put the other one back.
+                if (cfg.past_due_only && (part === 'open' || part === 'completed')) return false;
+                return parts[part] !== false;
+            },
+            onErrands(rows) { return rows; },
+            // The cap applies per band rather than to the array, so a long
+            // completed list can never push the past-due band off a wall.
+            _bySort(rows) {
+                const n = cfg.count || 12;
+                return rows.slice()
+                    .sort((a, b) => (a.priority || 2) - (b.priority || 2))
+                    .slice(0, n);
+            },
+            doneErrands() {
+                return this.errands.filter(e => e.is_completed).slice(0, cfg.count || 12);
+            },
+            startLists() {
+                this.loadErrands();
+                setInterval(() => this.loadErrands(), ERRAND_LIST_POLL_MS);
+            },
+        };
+    }
+</script>

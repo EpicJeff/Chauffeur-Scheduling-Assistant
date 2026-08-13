@@ -1,4 +1,5 @@
 {% import 'components/chores_lanes.html' as chores_lanes %}
+{% import 'components/errand_lists.html' as errand_lists %}
 <!-- ── What a tile of a given type DRAWS, and nothing else.
 
      Pulled out of the board's tile loop so that a card inside a group tile can
@@ -476,6 +477,26 @@
                             </template>
                             <div class="text-xs panel-dim pt-1" x-show="t.data.total > t.data.errands.length"
                                 x-text="'and ' + (t.data.total - t.data.errands.length) + ' more'"></div>
+                        </div>
+                    </template>
+
+                    <!-- ── The errands page's own two lists, as cards. The
+                         SAME macros the page renders, self-fetching (an
+                         interactive card cannot ride a twenty-second cache and
+                         still have a tick-box that stays ticked), with none of
+                         the page's editors — the whole point of the
+                         conversion. -->
+                    <template x-if="t.type === 'task_list'">
+                        <div x-data="taskListCard(t, apiBase)" x-init="startLists()"
+                            class="flex-1 min-h-0 overflow-y-auto tile-scroll">
+                            {{ errand_lists.task_list(interactive='listsInteractive') }}
+                        </div>
+                    </template>
+
+                    <template x-if="t.type === 'errand_list'">
+                        <div x-data="errandListCard(t, apiBase)" x-init="startLists()"
+                            class="flex-1 min-h-0 overflow-y-auto tile-scroll">
+                            {{ errand_lists.errand_list(interactive='listsInteractive') }}
                         </div>
                     </template>
 
