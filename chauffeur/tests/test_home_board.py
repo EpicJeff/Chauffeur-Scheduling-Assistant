@@ -1442,14 +1442,25 @@ def scenario_the_chores_kiosk_split_into_cards():
             'pledged': 40, 'cost': 100, 'remaining': 60, 'funded': False,
             'contributions': [], 'min_share': 0, 'short': []}
         lanes = home_board._tile_chores_lanes(None, config={})
-        # The first card to carry `interactive` (rule 3), and it defaults
-        # OFF: a wall is a display first, a kiosk is a decision.
-        check(lanes == {'interactive': False, 'members': []},
+        # The first card to carry `interactive` (rule 3). ON by default —
+        # an inert lanes card is the leaderboard with extra steps.
+        check(lanes['interactive'] is True and lanes['members'] == [],
               f"the lanes mount config is wrong: {lanes}")
+        # The conversion paradigm: every part of the drawing is a toggle,
+        # all on by default, so zero-config equals the kiosk page.
+        check(lanes['parts'] == {'header': True, 'goals': True,
+                                 'rewards': True, 'mine': True,
+                                 'available': True},
+              f"the section toggles are wrong: {lanes['parts']}")
         lanes = home_board._tile_chores_lanes(
-            None, config={'interactive': True, 'members': ['m1']})
-        check(lanes['interactive'] is True and lanes['members'] == ['m1'],
+            None, config={'interactive': False, 'members': ['m1'],
+                          'show_header': False, 'show_goals': False})
+        check(lanes['interactive'] is False and lanes['members'] == ['m1'],
               f"the lanes card lost its config: {lanes}")
+        check(lanes['parts']['header'] is False
+              and lanes['parts']['goals'] is False
+              and lanes['parts']['available'] is True,
+              f"a toggled-off section did not travel: {lanes['parts']}")
         goals = home_board._tile_chores_goals(None, config={})
         check([g['id'] for g in goals['goals']] == ['r1'],
               f"the goals card is not exactly the pooled rewards: {goals}")

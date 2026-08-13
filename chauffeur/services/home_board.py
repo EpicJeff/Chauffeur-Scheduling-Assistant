@@ -248,14 +248,23 @@ WIDGETS = [
      'heading': '',
      'blurb': "The kiosk's per-child lanes: chores, rewards and goals, one column per kid.",
      'options': [
-         # A wall board is a display first; a kiosk board is a control. The
-         # card is inert until somebody decides otherwise — the first card to
-         # carry the `interactive` option (board-cards rule 3).
-         _opt('interactive', 'Interactive', 'bool', False,
+         # ON by default (user decision 2026-08-13): an inert lanes card is
+         # the leaderboard with extra steps — the card's whole purpose is
+         # the tap. Off remains for walls that really are just displays.
+         _opt('interactive', 'Interactive', 'bool', True,
               help='Claim, Done and Redeem buttons on the card. Off, the '
                    'lanes are a display.'),
          _opt('members', 'Children', 'select', [], source='members', multi=True,
               help='Leave empty for everyone.'),
+         # THE CONVERSION PARADIGM: every part of the page's drawing is a
+         # toggle on the card, all on by default — so a card can be exactly
+         # the slice of the kiosk a board wants ("Emma's chores": one
+         # member, header off, title typed).
+         _opt('show_header', 'Name & points', 'bool', True),
+         _opt('show_goals', 'Family goals', 'bool', True),
+         _opt('show_rewards', 'Rewards', 'bool', True),
+         _opt('show_mine', 'Claimed chores', 'bool', True),
+         _opt('show_available', 'Available chores', 'bool', True),
      ]},
     {'key': 'chores_rewards', 'icon': '🎯', 'label': 'Family goals',
      'heading': '',
@@ -1218,8 +1227,11 @@ def _tile_chores_lanes(now, config=None, **_):
         # rewards means the household has not set the economy up.
         if not (storage.get_all_chores() or storage.get_rewards()):
             return None
-        return {'interactive': _cfg_bool(config, 'interactive', False),
-                'members': _cfg_ids(config, 'members')}
+        return {'interactive': _cfg_bool(config, 'interactive', True),
+                'members': _cfg_ids(config, 'members'),
+                'parts': {p: _cfg_bool(config, f'show_{p}', True)
+                          for p in ('header', 'goals', 'rewards',
+                                    'mine', 'available')}}
     except Exception as e:
         print(f"[home_board] chore lanes failed: {e}")
         return None

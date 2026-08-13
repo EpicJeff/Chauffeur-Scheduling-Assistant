@@ -18,6 +18,14 @@
            the buttons and inputs are not drawn at all (a wall board is a
            display; a hidden button still answers querySelector).
 
+           EVERY SECTION OF A LANE IS OPTIONAL — the conversion paradigm
+           (decided 2026-08-13): a card is the page's drawing with each of
+           its parts a toggle, all defaulting on so zero-config equals the
+           page. The scope's `laneShow(part)` gates them; parts are
+           'header' (who & points), 'goals', 'rewards', 'mine', 'available'.
+           The logic's default answers true to everything, which is what the
+           chores page wants; the board card answers from its config.
+
      IDENTITY IS PER LANE. Every action takes the tapped child's member_id
      from its own lane's `b.member_id`, passed per call and never stored.
      Hoisting it to a "current member" is the one unforgivable break — two
@@ -68,6 +76,7 @@
                         <template x-for="(b, idx) in balances" :key="'lane-' + b.member_id">
                             <div class="bg-gray-800/60 rounded-2xl border border-gray-700 p-4 flex flex-col gap-3">
                                 <!-- Lane header: rank, who, earned status, balance -->
+                                <template x-if="laneShow('header')">
                                 <div class="flex items-center gap-3 pb-2 border-b border-gray-700">
                                     <div class="text-lg font-black w-7 text-center shrink-0"
                                         :class="idx === 0 ? 'text-yellow-400' : (idx === 1 ? 'text-gray-300' : (idx === 2 ? 'text-amber-600' : 'text-gray-600'))"
@@ -86,12 +95,13 @@
                                     </div>
                                     <div class="font-black text-blue-400 text-xl shrink-0" x-text="b.balance + ' ⭐'"></div>
                                 </div>
+                                </template>
 
                                 <!-- Rewards & goals FIRST (family request 2026-08-06): the
                                      incentive must stay visible — a long chore list was
                                      pushing rewards off the bottom of the wall panel. -->
                                 <!-- Family goals this child can chip in on -->
-                                <template x-if="pooledGoals().length">
+                                <template x-if="laneShow('goals') && pooledGoals().length">
                                     <div class="space-y-2">
                                         <div class="text-[10px] font-black uppercase tracking-widest text-emerald-400">Family Goals</div>
                                         <template x-for="rw in pooledGoals()" :key="'goal-' + b.member_id + '-' + rw.id">
@@ -126,7 +136,7 @@
                                 </template>
 
                                 <!-- Rewards this child can ask for -->
-                                <template x-if="plainRewards().length">
+                                <template x-if="laneShow('rewards') && plainRewards().length">
                                     <div class="space-y-2">
                                         <div class="text-[10px] font-black uppercase tracking-widest text-indigo-400">Rewards</div>
                                         <div class="grid grid-cols-2 gap-2">
@@ -152,7 +162,7 @@
                                 </template>
 
                                 <!-- This child's claimed / in-progress chores -->
-                                <template x-if="myChoresFor(b.member_id).length">
+                                <template x-if="laneShow('mine') && myChoresFor(b.member_id).length">
                                     <div class="space-y-2">
                                         <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">My chores</div>
                                         <template x-for="c in myChoresFor(b.member_id)" :key="'mine-' + b.member_id + '-' + c.id">
@@ -180,6 +190,7 @@
                                 </template>
 
                                 <!-- Available to claim -->
+                                <template x-if="laneShow('available')">
                                 <div class="space-y-2">
                                     <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">Available</div>
                                     <template x-for="c in availableChoresFor(b.member_id)" :key="'avail-' + b.member_id + '-' + c.id">
@@ -197,6 +208,7 @@
                                     <div x-show="availableChoresFor(b.member_id).length === 0"
                                         class="text-gray-600 text-xs bg-gray-900 border border-gray-800 rounded-xl p-3">Nothing to claim 🎉</div>
                                 </div>
+                                </template>
                             </div>
                         </template>
                     </div>
@@ -220,6 +232,10 @@
             busyRedemptionId: null,
 
             lanesOnBalances(data) { /* mount hook */ },
+
+            // Which parts of a lane draw. The page shows everything; a card
+            // overrides this with its own configuration.
+            laneShow(part) { return true; },
 
             async loadBalances() {
                 try {
@@ -356,9 +372,14 @@
     function choresLanesCard(t, apiBase) {
         const cfg = (t && t.data) || {};
         const wanted = new Set(cfg.members || []);
+        const parts = cfg.parts || {};
         return {
             ...choresLanesLogic(apiBase),
-            lanesInteractive: !!cfg.interactive,
+            lanesInteractive: cfg.interactive !== false,
+            // Each part of a lane is a toggle on the card — the conversion
+            // paradigm. Absent means shown, so a card saved before a part
+            // existed keeps drawing everything.
+            laneShow(part) { return parts[part] !== false; },
             lanesOnBalances(data) {
                 // The card's member filter: "build your own views, filter by
                 // person" is half the reason boards exist. Applied to the
