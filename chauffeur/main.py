@@ -887,6 +887,39 @@ def _shelf_boards(request: Request) -> list:
 templates.env.globals['shelf_order'] = _shelf_order
 templates.env.globals['shelf_boards'] = _shelf_boards
 
+
+def _no_store(response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+def _page_or_board(request: Request, slug: str, name: str):
+    """The admin page in a browser; the BOARD on a wall panel.
+
+    Every shelf button used to open the page — the errands page with its two
+    editors above the lists, the routines page with a form per member — on a
+    screen nobody can type on and everybody in the house can reach. What a wall
+    wants is the lists and the taps that finish something, arranged however that
+    wall likes, which is exactly what a board is. So `?panel=true` on any
+    destination with a board (`home_board.BUILTIN_PAGES`) draws that board
+    instead, from the same template `/home` and `/board/{slug}` use.
+
+    The address does not change, so a panel bookmarked on `/errands?panel=true`
+    keeps working and simply gets the better screen. Three ways out, all of them
+    already spelled:
+      * no `?panel=true` — a browser gets the page it always got;
+      * `?kiosk=true` — the pages that grew their own kiosk mode before boards
+        existed still answer to it, untouched;
+      * `/board/errands` — the same board, editable, which is where the board's
+        own "Open to edit" link points.
+    """
+    from services import home_board as _hb
+    if request.query_params.get('panel') == 'true' and slug in _hb.BUILTIN_PAGES:
+        return _no_store(templates.TemplateResponse(
+            request=request, name="home.html", context={'board_slug': slug}))
+    return _no_store(templates.TemplateResponse(request=request, name=name))
+
+
 # --- UI Routes ---
 @app.get("/")
 def root_redirect(request: Request):
@@ -904,9 +937,7 @@ def dashboard_legacy():
 
 @app.get("/dashboard_v2")
 def dashboard(request: Request):
-    response = templates.TemplateResponse(request=request, name="dashboard.html")
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    return response
+    return _page_or_board(request, "schedule", "dashboard.html")
 
 @app.get("/home")
 def home_board_page(request: Request):
@@ -928,10 +959,13 @@ def board_page(slug: str, request: Request):
     bookmark pointing at a board somebody deleted, and a screen bolted to a
     wall showing an error page is worse than the same screen showing the home
     board. `home_board.find_page` does the falling back.
+
+    A destination's own board (`home_board.BUILTIN_PAGES`) resolves here too,
+    which is what makes it editable: `/errands?panel=true` draws it on the
+    wall, and `/board/errands` is the same board with the editor under it.
     """
-    response = templates.TemplateResponse(request=request, name="home.html")
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    return response
+    return _no_store(templates.TemplateResponse(
+        request=request, name="home.html", context={'board_slug': slug}))
 
 @app.get("/api/home_board")
 def home_board_api(widgets: Optional[str] = None, page: Optional[str] = None):
@@ -955,6 +989,20 @@ def home_board_pages():
     """
     from services import home_board
     return {'pages': home_board.normalize_pages()}
+
+@app.get("/api/home_board/page/{slug}")
+def home_board_one_page(slug: str):
+    """One board, resolved — including a destination's own board before anybody
+    has ever edited it.
+
+    `/api/home_board/pages` is the STORED list and stays that way: shipping the
+    built-in boards in it would mean the editor saving all ten into settings the
+    first time somebody moved one tile, freezing every board this app will ever
+    improve. The editor asks for the one it is actually looking at instead, and
+    saving THAT is what writes it down.
+    """
+    from services import home_board
+    return home_board.find_page(slug)
 
 @app.get("/api/home_board/catalog")
 def home_board_catalog():
@@ -1067,13 +1115,13 @@ def config(request: Request):
 
 @app.get("/calendar", response_class=HTMLResponse)
 def calendar_view(request: Request):
-    return templates.TemplateResponse(request=request, name="calendar.html")
+    return _page_or_board(request, "calendar", "calendar.html")
 
 @app.get("/moments", response_class=HTMLResponse)
 def moments_gallery(request: Request):
     """The Moments gallery — the wall-panel surface for looking BACK at
     moments (the hearth overlay/rail only ever shows the newest)."""
-    return templates.TemplateResponse(request=request, name="moments.html")
+    return _page_or_board(request, "moments", "moments.html")
 
 @app.get("/moment", response_class=HTMLResponse)
 def moment_popup(request: Request):
@@ -1086,11 +1134,11 @@ def moment_popup(request: Request):
 
 @app.get("/errands")
 def errands(request: Request):
-    return templates.TemplateResponse(request=request, name="errands.html")
+    return _page_or_board(request, "errands", "errands.html")
 
 @app.get("/occasions")
 def occasions_page(request: Request):
-    return templates.TemplateResponse(request=request, name="occasions.html")
+    return _page_or_board(request, "occasions", "occasions.html")
 
 @app.get("/settings")
 def settings_page(request: Request):
@@ -1098,15 +1146,11 @@ def settings_page(request: Request):
 
 @app.get("/chores")
 def chores_page(request: Request):
-    response = templates.TemplateResponse(request=request, name="chores.html")
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    return response
+    return _page_or_board(request, "chores", "chores.html")
 
 @app.get("/shopping")
 def shopping_page(request: Request):
-    response = templates.TemplateResponse(request=request, name="shopping.html")
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    return response
+    return _page_or_board(request, "shopping", "shopping.html")
 
 @app.get("/intake")
 def intake_page(request: Request):
@@ -1116,21 +1160,15 @@ def intake_page(request: Request):
 
 @app.get("/routines")
 def routines_page(request: Request):
-    response = templates.TemplateResponse(request=request, name="routines.html")
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    return response
+    return _page_or_board(request, "routines", "routines.html")
 
 @app.get("/map")
 def family_map_page(request: Request):
-    response = templates.TemplateResponse(request=request, name="map.html")
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    return response
+    return _page_or_board(request, "map", "map.html")
 
 @app.get("/trips")
 def trips_list_view(request: Request):
-    response = templates.TemplateResponse(request=request, name="trips.html", context={})
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    return response
+    return _page_or_board(request, "trips", "trips.html")
 
 @app.get("/api/trips")
 def get_all_trips_api():

@@ -610,7 +610,14 @@
     <link rel="stylesheet" href="{{ _up }}static/tailwind.css">
 </head>
 
-<body class="min-h-screen">
+<!-- Which board this page IS, when the address does not say.
+     `/errands?panel=true` renders this template for the errands board and
+     there is no `/board/` in that path to read it out of. Carried on the body
+     rather than inlined into the script below because that script is executed
+     as plain JavaScript by the jsdom tests — a Jinja expression inside it is a
+     syntax error there, and the board's own harness is the last thing that
+     should have to learn about server-side templating. -->
+<body class="min-h-screen" data-board-slug="{{ board_slug or '' }}">
     <div id="panel-bg-image"></div>
     <div id="panel-bg-scrim"></div>
     {% include 'nav.html' %}
@@ -1018,7 +1025,8 @@
                                 class="ed-btn disabled:opacity-25 px-1">▶</button>
                             <button type="button" x-show="page().slug !== 'home'"
                                 @click="removePage()"
-                                class="text-xs ed-note hover:text-red-400 px-2 py-1">Delete</button>
+                                class="text-xs ed-note hover:text-red-400 px-2 py-1"
+                                x-text="isBuiltinPage(page().slug) ? 'Reset' : 'Delete'"></button>
                         </div>
                         <div x-show="iconPicking" class="mt-2 flex flex-wrap items-center gap-1">
                             <template x-for="ic in (catalog.board_icons || [])" :key="ic.key">
@@ -1047,7 +1055,18 @@
                                  forever was a bookmark nobody chose. The shelf
                                  entry follows the rename (setPageSlug), and the
                                  server still validates and de-duplicates. -->
-                            <template x-if="page().slug !== 'home'">
+                            <!-- A destination's own board has a FIXED address:
+                                 it is what `?panel=true` on that destination
+                                 draws, and renaming the slug would leave the
+                                 wall on the shipped board while the household's
+                                 edits sat at an address nothing points to. -->
+                            <template x-if="page().slug !== 'home' && isBuiltinPage(page().slug)">
+                                <span>The Chauffeur page's own board — what a wall panel
+                                    shows at <code class="text-sky-300"
+                                        x-text="'/' + page().slug + '?panel=true'"></code>.
+                                    Reset puts the shipped one back.</span>
+                            </template>
+                            <template x-if="page().slug !== 'home' && !isBuiltinPage(page().slug)">
                                 <span class="inline-flex items-center gap-0.5">At
                                     <code class="text-sky-300">/board/</code><input type="text"
                                         :value="page().slug"
@@ -1599,7 +1618,7 @@
                 <!-- Through apiBase, always. A literal '../board/…' is correct
                      from /home and climbs straight out of the ingress token
                      from anywhere else. -->
-                <a :href="boardHref(page().slug) + '?panel=true'" target="_blank"
+                <a :href="wallHref(page().slug) + '?panel=true'" target="_blank"
                     class="text-sm text-sky-300 hover:text-sky-200 underline">
                     Open <span x-text="page().name"></span> as a panel ↗</a>
                 <!-- The same board with the editor SHOWING. Every other road to
@@ -1661,7 +1680,16 @@
                 // Which board this is. The URL is the identity — a wall panel
                 // is a bookmark, so the address has to carry it rather than
                 // any stored "current page", which two panels would fight over.
+                //
+                // The SERVER says so when it knows: `/errands?panel=true`
+                // renders this template for the errands board, and no amount of
+                // reading `/board/(…)` out of that address would find it. The
+                // regex stays as the answer for /board/<slug> itself, which is
+                // the one route where the slug really is only in the URL.
                 pageSlug: (function () {
+                    const given = (document.body
+                        && document.body.dataset.boardSlug) || '';
+                    if (given) return given.toLowerCase();
                     const m = window.location.pathname.match(/\/board\/([a-z0-9-]+)/i);
                     return m ? m[1].toLowerCase() : '';
                 })(),
@@ -2349,8 +2377,28 @@
                         // while "Add tile" below it silently put tiles on the
                         // home board. Only startArrange() knew to sync.
                         if (this.pageSlug) {
-                            const i = this.draft.panel_pages
+                            let i = this.draft.panel_pages
                                 .findIndex(p => p.slug === this.pageSlug);
+                            // A destination's OWN board (Errands, Chores…) is
+                            // not in settings until somebody edits it — that is
+                            // what lets it keep tracking whatever ships. So the
+                            // editor fetches the resolved one and appends it to
+                            // the draft: nothing is written until Save, and Save
+                            // is exactly the moment it becomes theirs.
+                            if (i < 0) {
+                                const p = await fetch(this.apiBase
+                                    + 'api/home_board/page/' + this.pageSlug)
+                                    .then(r => r.ok ? r.json() : null)
+                                    .catch(() => null);
+                                if (p && p.slug === this.pageSlug) {
+                                    this.draft.panel_pages.push({
+                                        ...p,
+                                        widgets: this.toInstances(p.widgets),
+                                        spans: { ...(p.spans || {}) },
+                                    });
+                                    i = this.draft.panel_pages.length - 1;
+                                }
+                            }
                             if (i >= 0) this.pageIndex = i;
                         }
                     } catch (e) { /* setup stays on defaults */ }
@@ -3319,6 +3367,19 @@
                     return this.apiBase + (slug === 'home' ? 'home' : 'board/' + slug);
                 },
 
+                // The address a WALL should be pointed at. Same board either
+                // way, but a destination's own board belongs at the
+                // destination — /errands?panel=true is the address the shelf
+                // button already goes to, so handing somebody /board/errands to
+                // bookmark would leave two roads to one screen and only one of
+                // them lit up in the nav.
+                wallHref(slug) {
+                    if (this.isBuiltinPage(slug)) {
+                        return this.apiBase + (slug === 'schedule' ? 'dashboard_v2' : slug);
+                    }
+                    return this.boardHref(slug);
+                },
+
                 blankPage(name, slug) {
                     return {
                         slug: slug || '', name: name || 'Board', icon: '🗂️',
@@ -3405,12 +3466,25 @@
                     this.pageIndex = to;
                 },
 
+                // A destination's own board cannot be deleted — the shelf button
+                // for it is not going anywhere — so removing it from settings
+                // means "put back the one that ships". Same one line of code,
+                // an honest different word.
+                isBuiltinPage(slug) {
+                    return (this.catalog.builtin_pages || []).includes(slug);
+                },
+
                 async removePage() {
                     const p = this.page();
                     if (!p || p.slug === 'home') return;
-                    if (!await promptConfirm('Delete board',
-                        `Delete “${p.name}” and its ${(p.widgets || []).length} tiles?`,
-                        'Delete', 'Keep it')) return;
+                    const reset = this.isBuiltinPage(p.slug);
+                    if (!await promptConfirm(
+                        reset ? 'Reset board' : 'Delete board',
+                        reset
+                            ? `Throw away your changes to “${p.name}” and go back `
+                              + `to the board Chauffeur ships?`
+                            : `Delete “${p.name}” and its ${(p.widgets || []).length} tiles?`,
+                        reset ? 'Reset' : 'Delete', 'Keep it')) return;
                     this.draft.panel_pages.splice(this.draft.panel_pages.indexOf(p), 1);
                     this.pageIndex = Math.max(0, this.pageIndex - 1);
                 },

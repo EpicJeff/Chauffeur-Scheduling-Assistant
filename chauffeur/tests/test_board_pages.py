@@ -441,14 +441,21 @@ def scenario_the_shelf_renders_one_list_not_two():
 
 def scenario_a_board_can_be_named_in_a_tabs_filter():
     """`?tabs=` is how an HA card says what chrome it wants. Boards join that
-    vocabulary PREFIXED, so a board somebody names "Chores" cannot quietly
-    shadow the Chores page."""
+    vocabulary PREFIXED, so a board somebody names "Chore wall" cannot quietly
+    shadow the Chores page.
+
+    (A stored page whose slug IS a destination — `chores`, `errands` — is a
+    different thing entirely since the built-in boards arrived: it is that
+    destination's own board, reached by the destination's own shelf button, and
+    it is deliberately not offered a second time as `board:chores`. See
+    test_builtin_boards.)
+    """
     settings = {'panel_pages': [
         {'slug': 'home', 'name': 'Home', 'widgets': ['drives']},
-        {'slug': 'chores', 'name': 'Chores', 'widgets': ['map']},
+        {'slug': 'chore-wall', 'name': 'Chore wall', 'widgets': ['map']},
     ]}
-    picked = home_board.resolve_tabs('home,board:chores', settings)
-    check(picked == ['home', 'board:chores'],
+    picked = home_board.resolve_tabs('home,board:chore-wall', settings)
+    check(picked == ['home', 'board:chore-wall'],
           f"a board could not be named in a tabs filter: {picked}")
     # The page and the board are different destinations with similar names.
     check(home_board.resolve_tabs('chores', settings) == ['chores'],

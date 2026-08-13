@@ -2853,10 +2853,156 @@ def normalize_pages(settings: dict = None) -> List[dict]:
     return pages
 
 
+# ── The app's own destinations, as boards.
+#
+# What the panel shelf did until now: every button on it opened the ADMIN page.
+# The Errands button opened a page whose top half is two editors and a
+# natural-language input; the Routines button opened per-member editing forms.
+# On a screen nobody can type on, mounted where everybody in the house can
+# reach it, that is the wrong half of the page — a wall wants the LISTS, with
+# the taps that finish something, and nothing else.
+#
+# So each destination has a board here. `?panel=true` on that destination draws
+# it instead of the page, and everything a board can do — resize, reorder,
+# retitle, filter to one child, drop a card, add one from anywhere else in the
+# app — applies to it, because it is not a special screen. It is a board.
+#
+# These are DEFAULTS, not fixtures. Nothing is stored until somebody edits one,
+# at which point it is saved into `panel_pages` under this same slug and their
+# version wins forever after (and deleting it there brings this one back). A
+# household that never opens the editor tracks whatever ships, which is the
+# same bargain `DEFAULT_WIDGETS` has always offered.
+#
+# `columns` is stated rather than inherited: a span here is a count of columns,
+# so a household that put their home board on a 24-column grid would otherwise
+# get every one of these at half width.
+BUILTIN_PAGES = {
+    'schedule': {
+        'name': 'Drives', 'icon': '🚗', 'v': 5, 'columns': 12,
+        'widgets': [{'id': 'drives', 'type': 'drives',
+                     'config': {'view': 'timeline', 'days': 1,
+                                'title': 'The rest of the day'}}],
+        'spans': {'drives': {'cols': 12, 'rows': 4}},
+    },
+    'calendar': {
+        'name': 'Calendar', 'icon': '📅', 'v': 5, 'columns': 12,
+        # The view buttons ON: this board IS the calendar page, and the page's
+        # one irreplaceable move is changing what you are looking at.
+        'widgets': [{'id': 'calendar', 'type': 'calendar',
+                     'config': {'view': 'agenda', 'view_selector': True}}],
+        'spans': {'calendar': {'cols': 12, 'rows': 4}},
+    },
+    'errands': {
+        'name': 'Errands', 'icon': '📋', 'v': 5, 'columns': 12,
+        # Side by side, deliberately: "do something" and "go somewhere" is the
+        # whole distinction the errands page exists to teach, and it is only
+        # learnable if both are in front of you.
+        'widgets': [
+            {'id': 'tasks', 'type': 'tasks',
+             'config': {'count': 12, 'title': 'The household owes'}},
+            {'id': 'errands', 'type': 'errands',
+             'config': {'count': 12, 'title': 'Errands waiting'}},
+        ],
+        'spans': {'tasks': {'cols': 6, 'rows': 4},
+                  'errands': {'cols': 6, 'rows': 4}},
+    },
+    'shopping': {
+        'name': 'Meals', 'icon': '🛒', 'v': 5, 'columns': 12,
+        'widgets': [
+            {'id': 'meals', 'type': 'meals',
+             'config': {'nights': 1, 'title': "Tonight's plate"}},
+            {'id': 'shopping', 'type': 'shopping',
+             'config': {'items': 20, 'title': 'Lists'}},
+        ],
+        'spans': {'meals': {'cols': 5, 'rows': 4},
+                  'shopping': {'cols': 7, 'rows': 4}},
+    },
+    'occasions': {
+        'name': 'Occasions', 'icon': '🎁', 'v': 5, 'columns': 12,
+        'widgets': [{'id': 'occasions', 'type': 'occasions',
+                     'config': {'count': 10, 'title': 'Coming up'}}],
+        'spans': {'occasions': {'cols': 12, 'rows': 4}},
+    },
+    'chores': {
+        'name': 'Chores', 'icon': '⭐', 'v': 5, 'columns': 12,
+        # The kiosk's own order: the shared goals across the top, the lanes
+        # under them. The leaderboard is not here because the lanes carry the
+        # rank in their own headers — showing it twice is what the kiosk
+        # already decided against.
+        'widgets': [
+            {'id': 'chores_rewards', 'type': 'chores_rewards', 'config': {}},
+            {'id': 'chores_lanes', 'type': 'chores_lanes',
+             'config': {'interactive': True}},
+        ],
+        'spans': {'chores_rewards': {'cols': 12, 'rows': 1},
+                  'chores_lanes': {'cols': 12, 'rows': 4}},
+    },
+    'routines': {
+        'name': 'Routines', 'icon': '🔁', 'v': 5, 'columns': 12,
+        'widgets': [{'id': 'routines', 'type': 'routines',
+                     'config': {'count': 12, 'title': 'Streaks'}}],
+        'spans': {'routines': {'cols': 12, 'rows': 4}},
+    },
+    'trips': {
+        'name': 'Trips', 'icon': '🧭', 'v': 5, 'columns': 12,
+        'widgets': [{'id': 'trips', 'type': 'trips',
+                     'config': {'count': 6, 'title': 'Trips'}}],
+        'spans': {'trips': {'cols': 12, 'rows': 4}},
+    },
+    'map': {
+        'name': 'Map', 'icon': '🗺️', 'v': 5, 'columns': 12,
+        'widgets': [{'id': 'map', 'type': 'map', 'config': {}}],
+        'spans': {'map': {'cols': 12, 'rows': 5}},
+    },
+    'moments': {
+        'name': 'Moments', 'icon': '📸', 'v': 5, 'columns': 12,
+        'widgets': [{'id': 'moments', 'type': 'moments',
+                     'config': {'count': 9}}],
+        'spans': {'moments': {'cols': 12, 'rows': 5}},
+    },
+}
+
+
+def builtin_page(slug: Optional[str] = None, settings: dict = None):
+    """The board this app ships for one of its own destinations, or None.
+
+    A fresh copy every call — the spec above is module state, and `_page_from`
+    hands its spans dict out to callers who are entitled to edit what they were
+    given. The board's picture still comes from the household's own
+    `panel_page_backgrounds`, keyed by this same slug, so a wall that has put a
+    picture behind its Errands board keeps it whether or not it has ever
+    edited the tiles.
+    """
+    wanted = str(slug or '').strip().lower()
+    spec = BUILTIN_PAGES.get(wanted)
+    if not spec:
+        return None
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    item = json.loads(json.dumps(spec))
+    item['slug'] = wanted
+    item['background'] = ((settings.get('panel_page_backgrounds') or {})
+                          .get(wanted) or '')
+    return _page_from(item, settings, set())
+
+
+def own_boards(settings: dict = None) -> List[dict]:
+    """The household's OWN boards — every page that is neither the wall's home
+    board nor one of the app's own destinations.
+
+    A stored page whose slug IS a destination is that destination's board: the
+    shelf already has a button for it, and offering it a second time as "a
+    board" would put two Errands side by side on a wall and make the editor
+    ask which one you meant.
+    """
+    return [p for p in normalize_pages(settings)
+            if p['slug'] != HOME_SLUG and p['slug'] not in BUILTIN_PAGES]
+
+
 def find_page(slug: Optional[str] = None, settings: dict = None) -> dict:
     """The page a URL asked for, or the home board.
 
-    An unknown slug falls back rather than 404ing, because the address that
+    Stored first, then the shipped board for that destination, then home. An
+    unknown slug falls back rather than 404ing, because the address that
     produces it is a wall panel's bookmark and a deleted page must not leave a
     screen showing an error. The board it lands on is a real board.
     """
@@ -2866,6 +3012,9 @@ def find_page(slug: Optional[str] = None, settings: dict = None) -> dict:
         for p in pages:
             if p['slug'] == wanted:
                 return p
+        built = builtin_page(wanted, settings)
+        if built:
+            return built
     return next((p for p in pages if p['slug'] == HOME_SLUG), pages[0])
 
 
@@ -2954,8 +3103,7 @@ def resolve_tabs(requested: Optional[str] = None, settings: dict = None) -> List
     if requested is not None and requested.strip().lower() in ('', 'none'):
         return []
     known = set(NAV_SLUGS)
-    known.update(f'board:{p["slug"]}' for p in normalize_pages(settings)
-                 if p['slug'] != HOME_SLUG)
+    known.update(f'board:{p["slug"]}' for p in own_boards(settings))
 
     def clean(seq):
         out = []
@@ -2995,8 +3143,7 @@ def _with_boards(order: List[str], settings: dict = None) -> List[str]:
     one group and the app's destinations are another. A board somebody made on
     purpose for this wall has a stronger claim on a thumb than anything shipped.
     """
-    boards = [f'board:{p["slug"]}' for p in normalize_pages(settings)
-              if p['slug'] != HOME_SLUG]
+    boards = [f'board:{p["slug"]}' for p in own_boards(settings)]
     boards = [b for b in boards if b not in order]
     if not boards:
         return order
@@ -3425,7 +3572,7 @@ def catalog() -> dict:
             for s in NAV_SLUGS]
     tabs += [{'slug': f'board:{p["slug"]}', 'label': p['name'],
               'icon': p['icon'], 'kind': 'board'}
-             for p in normalize_pages(settings) if p['slug'] != HOME_SLUG]
+             for p in own_boards(settings)]
     return {
         'widgets': widgets,
         'widget_defaults': list(DEFAULT_WIDGETS),
@@ -3436,4 +3583,8 @@ def catalog() -> dict:
         # visual language. The editor renders these itself, so the paths ride
         # along rather than a name it would have to resolve.
         'board_icons': [{'key': k, 'paths': v} for k, v in BOARD_ICONS.items()],
+        # Which slugs are one of the app's own destinations. The editor needs
+        # it for one word: deleting a board like that does not delete it, it
+        # puts the shipped one back, and "Delete" is the wrong promise.
+        'builtin_pages': sorted(BUILTIN_PAGES),
     }
