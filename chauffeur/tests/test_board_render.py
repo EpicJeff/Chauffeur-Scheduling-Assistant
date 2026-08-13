@@ -158,9 +158,11 @@ def _board(hero=None):
             # `.agenda-cards` must still find the calendar TILE's card rather
             # than this one's.
             {'id': 'mine', 'type': 'custom', 'icon': '🧩', 'label': 'Mornings',
-             'locked': False, 'config': {'title': 'Mornings'}, 'cards': [
+             'locked': False, 'bare': True,
+             'config': {'title': 'Mornings', 'bare': True}, 'cards': [
                  {'id': 'mine-calendar', 'type': 'calendar', 'icon': '📅',
-                  'label': "Emma's week", 'cols': 6, 'rows': 0, 'config': {},
+                  'label': "Emma's week", 'title': "Emma's week",
+                  'cols': 6, 'rows': 0, 'config': {},
                   'data': {'total': 1, 'days': [
                       {'date': TODAY, 'dom': 8, 'day': 'Today', 'today': True,
                        'more': 0, 'earlier': 0, 'events': [
@@ -169,9 +171,10 @@ def _board(hero=None):
                             'start': at(17), 'driver': 'Vovo',
                             'needs_driver': False, 'color': '#8b5cf6',
                             'kind': 'event', 'past': False}]}]}},
+                 # No title typed, so no heading and no row for one.
                  {'id': 'mine-intake', 'type': 'intake', 'icon': '📥',
-                  'label': 'Waiting', 'cols': 6, 'rows': 3, 'config': {},
-                  'data': {'pending': 2}},
+                  'label': 'Waiting', 'title': '', 'cols': 6, 'rows': 3,
+                  'config': {}, 'data': {'pending': 2}},
              ]},
         ],
     }
@@ -286,6 +289,12 @@ setTimeout(() => {
       const txt = el ? el.textContent : '';
       return (txt.match(/Nothing pinned for tonight yet\./g) || []).length;
     })(),
+    bareTile: (() => {
+      const a = doc.querySelector('[data-tile-id="mine"]');
+      const b = doc.querySelector('[data-tile-id="drives"]');
+      return { custom: a ? /panel-card/.test(a.className) : null,
+               builtin: b ? /panel-card/.test(b.className) : null };
+    })(),
     group: (() => {
       const g = doc.querySelector('[data-tile-id="mine"] .nc-stack-grid');
       if (!g) return null;
@@ -293,7 +302,10 @@ setTimeout(() => {
         free: /nc-free/.test(g.className),
         cells: [...g.children].filter(c => c.tagName !== 'TEMPLATE').map(c => ({
           style: c.getAttribute('style') || '',
-          label: (c.querySelector('.panel-label') || {}).textContent,
+          // `|| ''` because JSON.stringify DROPS an undefined value, so a
+          // cell with no heading would arrive with no key at all.
+          label: ((c.querySelector('.panel-label') || {}).textContent || ''),
+          headings: c.querySelectorAll('.panel-label').length,
           text: c.textContent.replace(/\s+/g, ' ').trim(),
         })),
       };
@@ -516,6 +528,41 @@ def scenario_a_built_in_tile_puts_no_box_between_its_content_and_itself():
     check(b['depth'] > 0, "the timeline no longer mounts inside its tile")
 
 
+def scenario_a_card_with_no_title_takes_no_room_for_one():
+    """Two panels and two headings around one card is the clutter this
+    answers. A card already draws what it is; a heading over it reading "A Home
+    Assistant card" is a second label in a box that had one, and the row it
+    sits in is space the card wanted.
+
+    So blank means blank — no heading, no row. Type a title to get one. The
+    editor still calls the card something in its list, because a row in a list
+    of five cards has to be distinguishable; that is a different question from
+    what gets drawn on the wall.
+    """
+    got = _run()
+    if got is None:
+        return
+    cells = got['group']['cells']
+    check(cells[0]['headings'] == 1 and cells[0]['label'] == "Emma's week",
+          f"a titled card lost its heading: {cells[0]}")
+    check(cells[1]['headings'] == 0,
+          f"an untitled card still drew a heading: {cells[1]['label']!r}")
+
+
+def scenario_a_custom_tile_can_drop_its_panel():
+    """A card draws its own surface, so a tile drawing another behind it is a
+    box inside a box. Bare, the cards float on the board. Built-in tiles keep
+    theirs — their card wears no surface of its own, so the tile's IS the
+    surface and removing it would leave content on the wallpaper."""
+    got = _run()
+    if got is None:
+        return
+    check(got['bareTile']['custom'] is False,
+          "a bare custom tile is still drawing a panel behind its cards")
+    check(got['bareTile']['builtin'] is True,
+          "a built-in tile lost the panel that IS its surface")
+
+
 def scenario_a_quiet_tile_says_so_once():
     """A tile's data IS its card's data — that is what a built-in tile is — so
     anything that renders the empty message at both levels prints it twice.
@@ -545,9 +592,10 @@ def scenario_a_custom_tile_draws_its_cards_as_the_content_they_are():
     g = got['group']
     check(g, "a custom tile drew no grid at all")
     check(len(g['cells']) == 2, f"a tile of two cards drew {len(g['cells'])} cells")
-    check(g['cells'][0]['label'] == "Emma's week"
-          and g['cells'][1]['label'] == 'Waiting',
-          f"the cards are not labelled as themselves: {[c['label'] for c in g['cells']]}")
+    # Only the card that was given a title wears one; see the scenario about
+    # blank meaning blank.
+    check(g['cells'][0]['label'] == "Emma's week",
+          f"a titled card is not labelled as itself: {g['cells'][0]['label']!r}")
     # The bodies really are the tiles' bodies, not a smaller drawing of them.
     check('Ballet' in g['cells'][0]['text'],
           f"the calendar card drew no calendar: {g['cells'][0]['text'][:200]}")

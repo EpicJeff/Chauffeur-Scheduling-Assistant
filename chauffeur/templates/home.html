@@ -795,8 +795,9 @@
                 <a :href="!arranging && opens(t.type) ? link(t.type) : null"
                     :style="spanStyle(t.id)" :data-tile-id="t.id"
                     @pointerdown="arranging && startTileDrag($event, t.id)"
-                    class="panel-card rounded-2xl p-4 md:p-5 min-w-0 overflow-x-hidden relative"
-                    :class="[fillsTile(t.type) ? 'flex flex-col overflow-hidden'
+                    class="min-w-0 overflow-x-hidden relative"
+                    :class="[t.bare ? '' : 'panel-card rounded-2xl p-4 md:p-5',
+                             fillsTile(t.type) ? 'flex flex-col overflow-hidden'
                                                : 'block tile-scroll overflow-y-auto',
                              !arranging && opens(t.type) ? 'transition-transform active:scale-[0.985]' : '',
                              arranging ? 'tile-arranging' : '']">
@@ -884,11 +885,19 @@
                                         <!-- A card here names itself; a built-in
                                              card does not, because its tile said
                                              it once already. -->
-                                        <div class="flex items-center gap-2 mb-2 shrink-0"
-                                            x-show="c.config.show_title !== false">
-                                            <span class="text-base" x-text="c.icon"></span>
-                                            <span class="panel-label truncate" x-text="c.label"></span>
-                                        </div>
+                                        <!-- Blank means BLANK. A card already
+                                             draws what it is; a heading over it
+                                             reading "A Home Assistant card" is a
+                                             second label in a box that had one,
+                                             and the row it sits in is space the
+                                             card wanted. Type a title to get
+                                             one. -->
+                                        <template x-if="c.title">
+                                            <div class="flex items-center gap-2 mb-2 shrink-0">
+                                                <span class="text-base" x-text="c.icon"></span>
+                                                <span class="panel-label truncate" x-text="c.title"></span>
+                                            </div>
+                                        </template>
                                         <!-- The card's content, and nothing else.
                                              `t` is rebound deliberately: the body
                                              below is the one drawing of each type

@@ -128,6 +128,36 @@ def scenario_a_custom_tile_holds_several_cards_built_the_same_way():
     check(got['label'] == 'Mornings', f"a titled tile lost its title: {got['label']}")
 
 
+def scenario_a_card_titled_and_a_card_named_are_different_questions():
+    """`label` is what the EDITOR calls a card in a list of them, so it always
+    has an answer — a list of five untitled cards has to be navigable. `title`
+    is what gets DRAWN over it, and blank means draw nothing and take no room.
+
+    Conflating them is what put "A Home Assistant card" over a Home Assistant
+    card: a second label in a box that already had one, and a row of space the
+    card wanted."""
+    got = _with_builders({'ha_card': _Spy(), 'chores': _Spy()}, lambda: _custom(
+        [{'type': 'ha_card'},
+         {'type': 'chores', 'config': {'title': "Emma's jobs"}}]))
+    plain, named = got['cards']
+    check(plain['title'] == '' and plain['label'],
+          f"an untitled card has a title to draw, or no name to be listed "
+          f"under: {plain['title']!r} / {plain['label']!r}")
+    check(named['title'] == "Emma's jobs" and named['label'] == "Emma's jobs",
+          f"a titled card lost it: {named['title']!r}")
+
+
+def scenario_a_custom_tile_can_drop_its_panel():
+    """A card draws its own surface, so a tile drawing another behind it is a
+    box inside a box — which is what two nested panels look like on a wall."""
+    got = _with_builders({'chores': _Spy()}, lambda: _tile(
+        {'id': 'mine', 'type': 'custom',
+         'config': {'bare': True, 'cards': [{'type': 'chores'}]}}))
+    check(got['bare'] is True, "the tile did not take its panel off")
+    check(_custom([{'type': 'chores'}]).get('bare') is False,
+          "a tile nobody asked to be bare lost its panel")
+
+
 def scenario_an_untitled_custom_tile_is_a_plain_panel():
     """Blank means blank. Somebody wanting one surface under three cards is not
     asking for a heading reading "Custom"."""

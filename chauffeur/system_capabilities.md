@@ -1723,3 +1723,10 @@ Three findings from a second side-by-side, one of them a real failure rather tha
 - `FamilyCalendar.pause(id, on)` is wired into the agenda toggle: the agenda hides the grid rather than destroying it, and a hidden calendar measures zero — a geometry the density tuner would otherwise act on.
 - Tests: `test_calendar_render.py` at 6 scenarios, written BEFORE the extraction and unchanged by it — the grid mounts and the schedule reaches it, all four views are reachable, agenda is a panel that replaces the grid, the custom `eventContent` builder is still the one drawing (asserted via the event's LOCATION, which FullCalendar's own renderer knows nothing about), a forced `?view=` never writes to localStorage, and the structural claims above.
 - Next: the calendar card itself — `view` and a show/hide toggle for the view selector — which deletes the board's separate agenda drawing.
+
+## Blank means blank, and a tile can drop its panel (v2.204.1)
+
+- **Two panels and two headings around one card is clutter, photographed off the wall**: a custom tile drawing a surface, a card drawing another inside it, the tile's title above and "A Home Assistant card" above that — over a card that already says what it is.
+- **A card's heading is what you TYPED.** Blank draws nothing and takes no row. This splits two questions that had been one: `label` is what the editor calls a card in a list of five (always has an answer, since a list has to be navigable), `title` is what gets drawn on the wall. The board payload now carries both.
+- **`bare` on a custom tile** removes the panel behind the cards, so they float on the board. Built-in tiles cannot: their single card wears no surface of its own — the tile IS the surface — so removing it would leave content on the wallpaper. Same rule as the untitled tile, one level out.
+- Tests: 2 scenarios in `test_board_cards.py`, 2 real-DOM scenarios in `test_board_render.py` (an untitled card draws zero `.panel-label`s; a bare custom tile has no `panel-card` class while a built-in still does).

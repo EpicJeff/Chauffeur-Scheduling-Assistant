@@ -147,7 +147,14 @@ WIDGETS = [
      'heading': '',
      'container': True,
      'blurb': "An empty tile you fill with cards and lay out yourself.",
-     'options': []},
+     'options': [
+         # Two panels around one card is the clutter this answers: a card
+         # already draws its own surface, so a tile drawing another behind it
+         # is a box inside a box. Bare, the cards float on the board.
+         _opt('bare', 'No panel behind the cards', 'bool', False,
+              help='The cards keep their own surfaces; the tile stops drawing '
+                   'one behind them.'),
+     ]},
     {'key': 'drives', 'icon': '🚗', 'label': 'Driving schedule',
      'heading': 'The rest of the day',
      'blurb': "Every drive still ahead today, and who has it.",
@@ -2168,8 +2175,14 @@ def _build_card(card, now, **kw):
     meta = next(w for w in WIDGETS if w['key'] == card['type'])
     return {
         'id': card['id'], 'type': card['type'], 'icon': meta['icon'],
+        # Two different questions. `label` is what the EDITOR calls this card
+        # in a list of them, so it always has an answer. `title` is what gets
+        # DRAWN over it, and blank means draw nothing and take no room — a
+        # heading reading "A Home Assistant card" over a card that says what it
+        # is, is the second label in a box that already had one.
         'label': (_cfg_str(config, 'title')
                   or meta.get('heading') or meta['label']),
+        'title': _cfg_str(config, 'title'),
         # Twelfths of the TILE, which is the grid this card is laid out on —
         # the same unit a card inside a Home Assistant stack uses, so the
         # number means one thing everywhere on the page.
@@ -2200,6 +2213,7 @@ def _build_tile(inst, now, **kw):
                 # a plain panel, which is what somebody wanting one surface
                 # under three cards is asking for.
                 'label': _cfg_str(config, 'title'),
+                'bare': _cfg_bool(config, 'bare', False),
                 'locked': False, 'cards': cards, 'config': config}
         if not cards:
             # A container somebody added on purpose and has not filled is not
