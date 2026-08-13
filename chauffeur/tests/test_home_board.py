@@ -681,14 +681,16 @@ def scenario_an_unconfigured_feature_has_no_tile():
     orig = storage.get_cached_schedule
     try:
         storage.get_cached_schedule = lambda: {}
-        # `web` and `group` are excluded because they are CONTAINERS, not
-        # summaries of a household feature. There is nothing for either to be
-        # unconfigured about except its own contents, and a tile somebody just
-        # added is the opposite of the placeholder this rule forbids — the rule
-        # is about features nobody uses, not about a box waiting to be told
-        # what to show. An empty one that vanished could not be told from one
-        # that had broken, which is the whole reason quiet tiles say so.
-        asked = [k for k in home_board.WIDGET_KEYS if k not in ('web', 'group')]
+        # CONTAINERS are excluded — `web` (a frame around somebody else's page)
+        # and the custom tile. Neither summarises a household feature, so
+        # there is nothing for either to be unconfigured about except its own
+        # contents, and a tile somebody just added is the opposite of the
+        # placeholder this rule forbids: the rule is about features nobody
+        # uses, not about a box waiting to be told what to show. An empty one
+        # that vanished could not be told from one that had broken, which is
+        # the whole reason quiet tiles say so.
+        skip = home_board.container_types() | {'web'}
+        asked = [k for k in home_board.WIDGET_KEYS if k not in skip]
         board = home_board.build(requested=','.join(asked))
         keys = [t['type'] for t in board['tiles']]
         # The calendar is never hidden — a family calendar is not a feature you
@@ -1146,8 +1148,15 @@ def scenario_the_catalog_offers_only_things_that_exist():
           "every widget explains itself to whoever is picking six of nine")
     check(all(k in home_board.NAV_SLUGS for k in cat['tab_defaults']),
           "every default tab is a real destination")
-    check(all(b['key'] in home_board._BUILDERS for b in cat['widgets']),
-          "every offered widget has a builder behind it")
+    # Every CARD has a builder. A container has none by design — it is not
+    # content, it is the thing content sits in, and `_build_tile` assembles it
+    # out of the cards the household chose.
+    check(all(b['key'] in home_board._BUILDERS
+              for b in cat['widgets'] if not b.get('container')),
+          "every offered card has a builder behind it")
+    check(all(b['key'] not in home_board._BUILDERS
+              for b in cat['widgets'] if b.get('container')),
+          "a container has a builder, so it is pretending to be content")
 
 
 def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():

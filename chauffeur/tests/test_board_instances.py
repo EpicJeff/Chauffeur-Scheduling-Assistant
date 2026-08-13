@@ -98,7 +98,12 @@ def scenario_every_declared_option_survives_its_own_builder():
     """
     now = datetime.datetime.now()
     broke = []
+    # Containers have no builder of their own — a custom tile IS its cards,
+    # and `_build_tile` assembles it. The thing this scenario guards (a type
+    # declaring an option its builder chokes on) applies to the cards.
     for w in home_board.WIDGETS:
+        if w.get('container'):
+            continue
         cfg = {}
         for o in w.get('options') or []:
             if o['type'] == 'int':

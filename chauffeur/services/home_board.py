@@ -125,28 +125,29 @@ def _cfg_ids(config, key):
 # `options` is what one instance can be asked; a type with none is a tile that
 # only knows one thing to say.
 WIDGETS = [
-    # ── The composition primitive.
+    # ── This list is the CARD catalog.
     #
-    # Every other tile here answers "show me X". A board built only out of
-    # those can be read exactly one way — by content type — and the question a
-    # family actually asks is usually about a PERSON: what has Emma got on, what
-    # is she meant to do, where is she. Three tiles filtered to Emma, sitting
-    # next to each other by luck of arrangement, is not that; it is three tiles
-    # that have to be kept adjacent by hand and re-aimed one at a time.
+    # Every entry below draws a piece of content and nothing else — no heading,
+    # no icon, no link out. That chrome belongs to the tile the card sits in,
+    # which is what makes a card usable anywhere: a chores card is the same
+    # drawing whether it is the whole of a built-in Chores tile or one of five
+    # things in a tile somebody assembled.
     #
-    # A group is one tile that holds cards and can be ABOUT somebody. The
-    # subject is set once and inherited by every card that honours it, so
-    # changing who the tile is about re-aims the whole thing.
-    {'key': 'group', 'icon': '🧩', 'label': 'Group',
-     'heading': 'A group of cards',
-     'blurb': "Several tiles inside one, on their own grid — and pointed at "
-              "one person if you want.",
-     'options': [
-         _opt('subject', 'About', 'select', '', source='members',
-              help="Every card inside that can be filtered by person is "
-                   "filtered to them, unless the card says otherwise itself. "
-                   "Leave blank for a group that is not about anybody."),
-     ]},
+    # A TILE is one of two things, and both are containers:
+    #   * a BUILT-IN tile — this list's own entries, offered by name in the
+    #     picker, each one a locked container holding exactly one card of that
+    #     type. Nothing about them changed when cards arrived, which is the
+    #     point: the surface a household already knows still works.
+    #   * a CUSTOM tile — the entry immediately below. Starts empty, takes any
+    #     number of cards, and lays them out on its own grid.
+    #
+    # Because a built-in tile's stored shape is still `{id, type, config}` with
+    # the type naming its one card, no board anywhere needed migrating.
+    {'key': 'custom', 'icon': '🧩', 'label': 'Custom',
+     'heading': '',
+     'container': True,
+     'blurb': "An empty tile you fill with cards and lay out yourself.",
+     'options': []},
     {'key': 'drives', 'icon': '🚗', 'label': 'Driving schedule',
      'heading': 'The rest of the day',
      'blurb': "Every drive still ahead today, and who has it.",
@@ -2089,45 +2090,47 @@ def _tile_intake(now, **_):
         return None
 
 
-# --- groups ---------------------------------------------------------------
+# --- tiles and cards ------------------------------------------------------
 #
-# A group's cards are the same instances the board's tiles are — `{id, type,
-# config}` — built by the same builders and drawn by the same markup. That is
-# the whole design: a chores card aimed at one child IS the chores tile,
-# filtered. Anything else would be a second renderer per type, and the pair
-# that drifts apart in a system like this is always the two drawings of one
-# thing.
+# A CARD draws content. A TILE is a container that holds cards, gives them a
+# grid, and optionally puts a heading over them. Every tile on every board is
+# one of these two shapes:
+#
+#   * BUILT-IN — `{id, type: 'chores', config}`, exactly what boards have always
+#     stored. It is a LOCKED container holding one card of that type, and the
+#     heading and the link out belong to the tile. Nothing about it changed
+#     when cards arrived, so nothing needed migrating.
+#   * CUSTOM — `{id, type: 'custom', config: {title, cards: [...]}}`. Starts
+#     empty, takes any number of cards, lays them out on its own twelve
+#     columns.
+#
+# The reason to split them at all is that the content was previously welded to
+# the chrome around it: there was no way to put a chores list anywhere except
+# inside the tile called Chores. Now the drawing is the same drawing wherever
+# it goes, which is the only version of this that does not end in two
+# renderers per type quietly disagreeing with each other.
 
-GROUP_MAX_CARDS = 12
+CUSTOM_TILE = 'custom'
+TILE_MAX_CARDS = 12
 
 
-def honours_subject(type_: str) -> bool:
-    """Whether a card of this type can be aimed at a person.
+def container_types() -> set:
+    """Tile types that hold cards the household chooses, rather than one the
+    type chose. Declared in the catalog so the picker and the server agree
+    without a second list."""
+    return {w['key'] for w in WIDGETS if w.get('container')}
 
-    Derived from the type's OWN declaration rather than from a second list to
-    keep in step with it: a type honours a subject exactly when it already
-    takes a `members` filter. Six do today (chores, routines, calendar, tasks,
-    kids, map) and a seventh gets it for free the day it declares the option.
 
-    The editor shows this, because a subject that silently does nothing on the
-    card you just added is worse than a group that cannot be aimed at all.
+def normalize_cards(raw) -> List[dict]:
+    """The cards inside one tile, as instances — the same `{id, type, config}`
+    a tile is, because a card and a tile's content are the same thing.
+
+    A container cannot hold a container. Not because it could not be made to
+    work, but because a wall panel is read at a glance from across a room, a
+    layout nested three deep is not read at all, and the markup that draws a
+    card is the markup that draws a tile and cannot include itself.
     """
-    meta = next((w for w in WIDGETS if w['key'] == type_), None)
-    if not meta:
-        return False
-    return any(o.get('key') == 'members' and o.get('source') == 'members'
-               for o in meta.get('options') or [])
-
-
-def normalize_group_cards(raw) -> List[dict]:
-    """The cards inside one group, as instances.
-
-    A group cannot hold a group. Not because it could not be made to work, but
-    because a wall panel is read at a glance from across a room and a layout
-    nested three deep is not read at all — and the markup that draws a card is
-    the markup that draws a tile, which cannot include itself.
-    """
-    known = {w['key'] for w in WIDGETS}
+    known = {w['key'] for w in WIDGETS} - container_types()
     out, taken = [], set()
     for item in raw or []:
         if isinstance(item, str):
@@ -2135,7 +2138,7 @@ def normalize_group_cards(raw) -> List[dict]:
         if not isinstance(item, dict):
             continue
         type_ = str(item.get('type') or '').strip().lower()
-        if type_ not in known or type_ == 'group':
+        if type_ not in known:
             continue
         wanted = str(item.get('id') or '').strip()
         iid = wanted if wanted and wanted not in taken else _instance_id(type_, taken)
@@ -2143,66 +2146,91 @@ def normalize_group_cards(raw) -> List[dict]:
         config = item.get('config')
         out.append({'id': iid, 'type': type_,
                     'config': dict(config) if isinstance(config, dict) else {}})
-        if len(out) >= GROUP_MAX_CARDS:
+        if len(out) >= TILE_MAX_CARDS:
             break
     return out
 
 
-def _tile_group(now, config=None, inst_id='', **kw):
-    config = config or {}
-    subject = _cfg_str(config, 'subject')
-    cards = []
-    for card in normalize_group_cards(config.get('cards')):
-        builder = _BUILDERS.get(card['type'])
-        if not builder:
-            continue
-        cfg = dict(card['config'])
-        # Inheritance, and only where it was ASKED for: a card that names its
-        # own people keeps them. Otherwise re-aiming the group would quietly
-        # overwrite the one card somebody had deliberately pointed elsewhere —
-        # "everyone's calendar, next to Emma's chores" is a real layout.
-        if subject and honours_subject(card['type']) and not _cfg_ids(cfg, 'members'):
-            cfg['members'] = [subject]
-        try:
-            payload = builder(now, config=cfg, **kw)
-        except Exception as e:
-            print(f"[home_board] card '{card['id']}' ({card['type']}) failed: {e}")
-            payload = None
-        if not payload:
-            continue                      # rule 1, one level down
-        meta = next(w for w in WIDGETS if w['key'] == card['type'])
-        cards.append({
-            # Namespaced by the group it is in. A card draws the same markup a
-            # tile draws, element ids and all, and a `calendar` card inside a
-            # group would otherwise answer to the same id as the `calendar`
-            # tile beside it — one map rendered into the other's canvas.
-            'id': f"{inst_id}-{card['id']}" if inst_id else card['id'],
-            'type': card['type'], 'icon': meta['icon'],
-            'label': (_cfg_str(cfg, 'title')
-                      or meta.get('heading') or meta['label']),
-            # Twelfths of the GROUP, which is the grid this card is laid out
-            # on — the same unit a card inside a Home Assistant stack uses, so
-            # the number means one thing on this page.
-            'cols': _cfg_int(card['config'], 'cols', 12, 1, 12),
-            'rows': _cfg_int(card['config'], 'rows', 0, 0, 40),
-            'config': cfg, 'data': payload})
-    # A group about somebody is called after them unless it was given a name.
-    # "Group" on the wall above Emma's chores and Emma's calendar is a label
-    # that says less than the tile below it.
-    name = ''
-    if subject:
-        try:
-            name = next((m.get('name') for m in (storage.get_all_members() or [])
-                         if str(m.get('id')) == subject), '') or ''
-        except Exception as e:
-            print(f"[home_board] group subject name failed: {e}")
-    if not cards:
-        return {'empty': "No cards in this group yet.", 'label': name}
-    return {'cards': cards, 'label': name}
+def _build_card(card, now, **kw):
+    """One card, drawn. Returns None when it has nothing to say — rule 1, which
+    holds for a card in a tile exactly as it held for a tile on a board."""
+    builder = _BUILDERS.get(card['type'])
+    if not builder:
+        return None
+    config = card['config']
+    try:
+        payload = builder(now, config=config, **kw)
+    except Exception as e:
+        print(f"[home_board] card '{card['id']}' ({card['type']}) failed: {e}")
+        return None
+    if not payload:
+        return None
+    meta = next(w for w in WIDGETS if w['key'] == card['type'])
+    return {
+        'id': card['id'], 'type': card['type'], 'icon': meta['icon'],
+        'label': (_cfg_str(config, 'title')
+                  or meta.get('heading') or meta['label']),
+        # Twelfths of the TILE, which is the grid this card is laid out on —
+        # the same unit a card inside a Home Assistant stack uses, so the
+        # number means one thing everywhere on the page.
+        'cols': _cfg_int(config, 'cols', 12, 1, 12),
+        'rows': _cfg_int(config, 'rows', 0, 0, 40),
+        'config': config, 'data': payload}
+
+
+def _build_tile(inst, now, **kw):
+    meta = next((w for w in WIDGETS if w['key'] == inst['type']), None)
+    if not meta:
+        return None
+    config = inst.get('config') or {}
+
+    if inst['type'] in container_types():
+        cards = []
+        for card in normalize_cards(config.get('cards')):
+            # Namespaced by the tile. A card draws the tile body element ids
+            # and all, so a `calendar` card would otherwise answer to the same
+            # id as the `calendar` tile beside it — one map rendered into the
+            # other's canvas.
+            built = _build_card(dict(card, id=f"{inst['id']}-{card['id']}"),
+                                now, **kw)
+            if built:
+                cards.append(built)
+        tile = {'id': inst['id'], 'type': inst['type'], 'icon': meta['icon'],
+                # A heading only if one was typed. An untitled custom tile is
+                # a plain panel, which is what somebody wanting one surface
+                # under three cards is asking for.
+                'label': _cfg_str(config, 'title'),
+                'locked': False, 'cards': cards, 'config': config}
+        if not cards:
+            # A container somebody added on purpose and has not filled is not
+            # an unconfigured feature; a tile that vanished could not be told
+            # from one that had broken.
+            tile['data'] = {'empty': "No cards in this tile yet."}
+        return tile
+
+    # A built-in tile: one card, and the chrome is the tile's.
+    built = _build_card({'id': inst['id'], 'type': inst['type'],
+                         'config': config}, now, **kw)
+    if not built:
+        return None
+    return {
+        'id': inst['id'], 'type': inst['type'], 'icon': meta['icon'],
+        # What the WALL says, which is not what the picker says. A configured
+        # instance still beats both — "Emma's week" is better than either
+        # "Calendar" or "What's coming", and it is the only one of the three a
+        # household actually chose.
+        'label': built['label'], 'locked': True, 'config': config,
+        # Its one card fills the tile: full width, no height of its own, and
+        # no surface of its own either — the tile IS its surface.
+        'cards': [dict(built, cols=12, rows=0)],
+        # The tile's data is its card's data. Kept because a built-in tile
+        # having exactly one card is not an implementation detail, it is what
+        # a built-in tile IS, and everything that reasoned about `tile.data`
+        # before cards existed is still reasoning correctly.
+        'data': built['data']}
 
 
 _BUILDERS: dict = {
-    'group': _tile_group,
     'drives': _tile_drives, 'kids': _tile_kids, 'meals': _tile_meals,
     'shopping': _tile_shopping, 'chores': _tile_chores, 'routines': _tile_routines,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,
@@ -2920,34 +2948,13 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
 
     tiles = []
     for inst in instances:
-        builder = _BUILDERS.get(inst['type'])
-        if not builder:
-            continue
-        config = inst.get('config') or {}
-        try:
-            payload = builder(now, runs=runs, sched=sched, settings=settings,
-                              config=config, kid_digest_fn=kid_digest_fn,
-                              inst_id=inst['id'])
-        except Exception as e:
-            print(f"[home_board] tile '{inst['id']}' ({inst['type']}) failed: {e}")
-            payload = None
-        if payload:  # rule 1: nothing to say -> no tile, no reserved space
-            meta = next(w for w in WIDGETS if w['key'] == inst['type'])
-            tiles.append({'id': inst['id'], 'type': inst['type'],
-                          'icon': meta['icon'],
-                          # What the WALL says, which is not what the picker
-                          # says. A configured instance still beats both —
-                          # "Emma's week" is better than either "Calendar" or
-                          # "What's coming", and it is the only one of the three
-                          # a household actually chose.
-                          # A tile may also NAME ITSELF out of what it built —
-                          # a group about Emma is called Emma. A title somebody
-                          # typed still wins over both.
-                          'label': (str(config.get('title') or '').strip()
-                                    or str(payload.get('label') or '').strip()
-                                    or meta.get('heading') or meta['label']),
-                          'config': config,
-                          'data': payload})
+        # Rule 1 lives one level down now: a card with nothing to say is not
+        # drawn, and a built-in tile whose only card said nothing is not a
+        # tile. Reserved empty space is still the thing being avoided.
+        tile = _build_tile(inst, now, runs=runs, sched=sched, settings=settings,
+                           kid_digest_fn=kid_digest_fn)
+        if tile:
+            tiles.append(tile)
 
     # The kids belong in the hero, not in a tile of their own. The hero band is
     # full width and was spending it restating the drives tile; a column per
@@ -3132,10 +3139,6 @@ def catalog() -> dict:
     for w in WIDGETS:
         w = dict(w)
         w['options'] = list(w.get('options') or []) + [TITLE_OPTION]
-        # Whether a card of this type follows the group's subject. The editor
-        # says so on every card it offers, because a subject that silently does
-        # nothing on half of them is worse than no subject at all.
-        w['subject'] = honours_subject(w['key'])
         # The hand path for property 1. These two tiles do not exist without a
         # Home Assistant, so the palette says so instead of letting somebody
         # add one and wonder why the wall never shows it.

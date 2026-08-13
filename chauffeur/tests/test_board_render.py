@@ -64,6 +64,18 @@ SOON_END = (_NOW + _D.timedelta(minutes=206, seconds=30)).isoformat()
 SOON_LEAVE = (_NOW + _D.timedelta(minutes=106, seconds=30)).isoformat()
 
 
+def _builtin(t):
+    """A built-in tile as the server now ships it: a LOCKED container holding
+    exactly one card of its own type, the card carrying the tile's own id.
+
+    Written as a wrapper rather than spelled out per tile because that is
+    precisely the claim — nothing about a built-in tile changed when cards
+    arrived, so the fixture should not have to say it four times.
+    """
+    return dict(t, locked=True, config=t.get('config', {}),
+                cards=[dict(t, cols=12, rows=0, config=t.get('config', {}))])
+
+
 def _board(hero=None):
     # `d` is days from today, so a fixture can reach into the range a
     # multi-day tile is configured for.
@@ -85,7 +97,7 @@ def _board(hero=None):
                           'driver': 'Vovo', 'color': '#8b5cf6', 'driver_id': 'drv2',
                           'done': False, 'live': False, 'underway': True,
                           'over': False, 'minutes_until': -53, 'minutes_left': 7}},
-        'tiles': [
+        'tiles': [_builtin(t) for t in [
             {'id': 'drives', 'type': 'drives', 'icon': '🚗', 'label': 'The rest of the day', 'data': {
                 'count': 2, 'next_event_id': 'e1',
                 # The RANGE the tile was configured for. renderSchedule seeds
@@ -135,26 +147,27 @@ def _board(hero=None):
                             'avatar': None, 'image': None, 'state': 'not_home',
                             'latitude': 41.5, 'longitude': -81.6, 'is_car': False,
                             'driving': {'leg_title': 'Practice'}}]}},
-            # A GROUP, last on purpose: its cards draw the same bodies the
-            # tiles above draw, so a probe reaching for `.agenda-cards` must
-            # still find the calendar TILE's rather than the calendar CARD's.
-            {'id': 'emma', 'type': 'group', 'icon': '🧩', 'label': 'Emma', 'data': {
-                'label': 'Emma',
-                'cards': [
-                    {'id': 'emma-calendar', 'type': 'calendar', 'icon': '📅',
-                     'label': "Emma's week", 'cols': 6, 'rows': 0, 'config': {},
-                     'data': {'total': 1, 'days': [
-                         {'date': TODAY, 'dom': 8, 'day': 'Today', 'today': True,
-                          'more': 0, 'earlier': 0, 'events': [
-                              {'title': 'Ballet', 'at': '5:00 PM',
-                               'end_at': '6:00 PM', 'all_day': False,
-                               'start': at(17), 'driver': 'Vovo',
-                               'needs_driver': False, 'color': '#8b5cf6',
-                               'kind': 'event', 'past': False}]}]}},
-                    {'id': 'emma-intake', 'type': 'intake', 'icon': '📥',
-                     'label': 'Waiting', 'cols': 6, 'rows': 3, 'config': {},
-                     'data': {'pending': 2}},
-                ]}},
+        ]] + [
+            # A CUSTOM tile, last on purpose: its cards draw the same bodies
+            # the built-in tiles above draw, so a probe reaching for
+            # `.agenda-cards` must still find the calendar TILE's card rather
+            # than this one's.
+            {'id': 'mine', 'type': 'custom', 'icon': '🧩', 'label': 'Mornings',
+             'locked': False, 'config': {'title': 'Mornings'}, 'cards': [
+                 {'id': 'mine-calendar', 'type': 'calendar', 'icon': '📅',
+                  'label': "Emma's week", 'cols': 6, 'rows': 0, 'config': {},
+                  'data': {'total': 1, 'days': [
+                      {'date': TODAY, 'dom': 8, 'day': 'Today', 'today': True,
+                       'more': 0, 'earlier': 0, 'events': [
+                           {'title': 'Ballet', 'at': '5:00 PM',
+                            'end_at': '6:00 PM', 'all_day': False,
+                            'start': at(17), 'driver': 'Vovo',
+                            'needs_driver': False, 'color': '#8b5cf6',
+                            'kind': 'event', 'past': False}]}]}},
+                 {'id': 'mine-intake', 'type': 'intake', 'icon': '📥',
+                  'label': 'Waiting', 'cols': 6, 'rows': 3, 'config': {},
+                  'data': {'pending': 2}},
+             ]},
         ],
     }
 
@@ -251,7 +264,7 @@ setTimeout(() => {
     map: { mounted: !!doc.getElementById('board-map-map'),
            listRows: doc.querySelectorAll('.panel-chip').length },
     group: (() => {
-      const g = doc.querySelector('[data-tile-id="emma"] .nc-stack-grid');
+      const g = doc.querySelector('[data-tile-id="mine"] .nc-stack-grid');
       if (!g) return null;
       return {
         free: /nc-free/.test(g.className),
@@ -452,11 +465,11 @@ def scenario_the_board_draws_without_throwing():
     check(not got['errors'],
           f"something threw while the board drew itself: {got['errors']}")
     check(got['tiles'] == ['The rest of the day', "What's coming",
-                           'Where everyone is', 'Emma'],
+                           'Where everyone is', 'Mornings'],
           f"the tiles that came back: {got['tiles']}")
 
 
-def scenario_a_group_draws_its_cards_as_the_tiles_they_are():
+def scenario_a_custom_tile_draws_its_cards_as_the_content_they_are():
     """The claim the whole group rests on: a card IS the tile, filtered. The
     calendar card below draws the calendar tile's own body out of the same
     included file, which is why there is one calendar renderer in this app and
@@ -472,8 +485,8 @@ def scenario_a_group_draws_its_cards_as_the_tiles_they_are():
     if got is None:
         return
     g = got['group']
-    check(g, "a group tile drew no grid at all")
-    check(len(g['cells']) == 2, f"a group of two cards drew {len(g['cells'])} cells")
+    check(g, "a custom tile drew no grid at all")
+    check(len(g['cells']) == 2, f"a tile of two cards drew {len(g['cells'])} cells")
     check(g['cells'][0]['label'] == "Emma's week"
           and g['cells'][1]['label'] == 'Waiting',
           f"the cards are not labelled as themselves: {[c['label'] for c in g['cells']]}")
@@ -489,7 +502,7 @@ def scenario_a_group_draws_its_cards_as_the_tiles_they_are():
     check('calc(3 * var(--nc-row))' in g['cells'][1]['style'],
           f"a sized card did not get its height: {g['cells'][1]['style']}")
     check(g['free'],
-          "a group holding a sized card still stretches its cells, so that "
+          "a tile holding a sized card still stretches its cells, so that "
           "card's height would drag its neighbour's to match")
 
 

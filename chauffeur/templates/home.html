@@ -392,7 +392,27 @@
             border-bottom-right-radius: 5px;
             opacity: .75;
         }
-        .nc-card-size:hover, .nc-card-move:hover { opacity: 1; }
+        /* The way into a card's own settings, beside the grip that moves it.
+           A layout is judged by looking at it, so the thing that changes a
+           card should be on the card and not in a list further down the page
+           — the same argument that put the drag handles here. */
+        .nc-card-edit {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            z-index: 2;
+            cursor: pointer;
+            font-size: .8rem;
+            line-height: 1;
+            padding: 1px 4px;
+            border-radius: 4px;
+            color: var(--panel-accent);
+            background: var(--panel-card-hi);
+        }
+        .nc-card-size:hover, .nc-card-move:hover, .nc-card-edit:hover { opacity: 1; }
+        /* Every cell in a tile being arranged reads as an object, not just the
+           one under the pointer. */
+        .is-arranging .nc-cell:not([data-plain]) { position: relative; }
 
         /* ── Arrange mode.
            The board stops being a set of doors and becomes a set of objects,
@@ -744,25 +764,34 @@
                      --c-sm:${Math.ceil(cols() / 4)};
                      grid-auto-rows: ${rowHeight()}px`">
             <template x-for="t in tiles()" :key="t.id">
-                <!-- Every tile is a door. A wall panel you cannot touch is a
+                <!-- ── A TILE IS A CONTAINER OF CARDS. Both kinds are.
+                     A BUILT-IN tile is locked and holds exactly one card of
+                     its own type, with the heading and the link out belonging
+                     to the tile — which is why nothing about the boards a
+                     household already built changed when cards arrived. A
+                     CUSTOM tile starts empty, takes any number, and lays them
+                     out on its own twelve columns.
+
+                     Every tile is a door. A wall panel you cannot touch is a
                      poster; tapping a tile takes you to the page it summarises,
-                     and the shelf brings you back (as does the idle return). -->
-                <!-- A picture tile is a COLUMN: header, then a mosaic that
+                     and the shelf brings you back (as does the idle return). A
+                     custom tile has no one page to open, so it is not a door —
+                     the cards in it will grow their own way in.
+
+                     A picture tile is a COLUMN: header, then a mosaic that
                      takes everything left over. The mosaics used to be a fixed
                      stack of 4.75rem rows, so making a tile taller left a band
                      of empty card under the photographs — the one kind of tile
                      where size is the entire point.
                      Picture tiles never scroll, either. Scrolling a photograph
                      is not reading it, and a mosaic that fills its slot has
-                     nothing below the fold by construction. -->
-                <!-- Still an <a>, with NO href when the tile is not a door.
+                     nothing below the fold by construction.
+
+                     Still an <a>, with NO href when the tile is not a door.
                      Alpine drops an attribute bound to null, and an anchor
                      without an href is not interactive content — so it stops
                      being a link, stops being focusable, and legally contains
-                     the toggle buttons the Home Assistant tile puts inside it.
-                     (A dynamic tag name is a Vue idea; Alpine has nothing like
-                     it, and duplicating four hundred lines of tile body under
-                     two x-ifs to change one tag would be worse than either.) -->
+                     the toggle buttons the Home Assistant card puts inside it. -->
                 <a :href="!arranging && opens(t.type) ? link(t.type) : null"
                     :style="spanStyle(t.id)" :data-tile-id="t.id"
                     @pointerdown="arranging && startTileDrag($event, t.id)"
@@ -771,9 +800,16 @@
                                                : 'block tile-scroll overflow-y-auto',
                              !arranging && opens(t.type) ? 'transition-transform active:scale-[0.985]' : '',
                              arranging ? 'tile-arranging' : '']">
-                    <div class="flex items-center gap-2 mb-3 shrink-0">
+                    <!-- A heading only if there is one. A custom tile nobody
+                         named is a plain panel, which is exactly what somebody
+                         wanting one surface under three cards is asking for.
+                         While arranging it appears anyway, because a tile with
+                         no heading and no content yet would otherwise be an
+                         unlabelled empty box in a grid of them. -->
+                    <div class="flex items-center gap-2 mb-3 shrink-0"
+                        x-show="t.label || arranging">
                         <span class="text-lg" x-text="t.icon"></span>
-                        <span class="panel-label" x-text="t.label"></span>
+                        <span class="panel-label" x-text="t.label || widgetMeta(t.type).label"></span>
                         <!-- The size, while arranging. A drag with no readout
                              is a guess: "4 × 2" is the same number the editor's
                              fields below take, so the two surfaces are visibly
@@ -789,41 +825,128 @@
                     <div x-show="arranging" @pointerdown.stop="startTileResize($event, t.id)"
                         class="tile-resize" title="Drag to resize"></div>
 
-                    {% include 'components/board_tile_body.html' %}
-
-                    <!-- ── A GROUP is a tile that holds CARDS.
-                         The reason it exists is that a board organised only by
-                         content type can only be read one way. Chores, routines
-                         and the calendar each filtered to one child, laid out
-                         together under that child's name, is a view of the
-                         family nobody could build before — and it is the same
-                         drawing as the tiles, which is why the body above is a
-                         file included twice rather than a second renderer.
-                         Each card gets its own SURFACE, on the same twelve
-                         columns the cards inside a Home Assistant stack use, so
-                         "6 columns" means one thing everywhere on this page. -->
-                    <template x-if="t.type === 'group' && !t.data.empty">
-                        <div class="nc-stack-grid" :class="groupFree(t) ? 'nc-free' : ''">
-                            <template x-for="c in (t.data.cards || [])" :key="c.id">
-                                <div class="nc-cell" :style="`grid-column:span ${c.cols};`
-                                    + (c.rows ? `height:calc(${c.rows} * var(--nc-row))` : '')">
-                                    <div class="flex items-center gap-2 mb-2 shrink-0">
-                                        <span class="text-base" x-text="c.icon"></span>
-                                        <span class="panel-label truncate" x-text="c.label"></span>
-                                    </div>
-                                    <!-- The card, drawn as the tile it is. `t`
-                                         is rebound here deliberately: the body
-                                         below is the board's own tile body, and
-                                         it knows the variable by that name. -->
-                                    <div class="min-w-0 flex-1 overflow-y-auto tile-scroll"
-                                        x-data="{ t: c }">
-                                        {% include 'components/board_tile_body.html' %}
-                                    </div>
-                                </div>
-                            </template>
-                        </div>
+                    <!-- A container somebody added and has not filled says so.
+                         A tile that vanished could not be told from one that
+                         had broken, which is the same reason a quiet feature
+                         says it is quiet rather than disappearing. -->
+                    <template x-if="t.data && t.data.empty">
+                        <div class="text-base panel-dim" x-text="t.data.empty"></div>
                     </template>
+
+                    <!-- The cards. One grid, twelve columns, whether the tile
+                         holds one card or five — a built-in tile's single card
+                         simply spans all twelve and wears no surface of its
+                         own, because the tile IS its surface. -->
+                    <!-- `flex-1 min-h-0` when the tile's content is DRAWN into
+                         it rather than read down a list: a map or a timeline
+                         is given the tile's full height, and a grid that only
+                         claimed its content's height would hand the map zero
+                         pixels — the same bug the camera tile had. -->
+                    <div class="nc-stack-grid" :data-cards="t.id"
+                        @pointerdown="arranging && !t.locked
+                            && startTileCardDrag($event, t.id)"
+                        :class="[tileFree(t) ? 'nc-free' : '',
+                                 t.locked && fillsTile(t.type) ? 'flex-1 min-h-0' : '']"
+                        x-show="cardsOf(t).length">
+                        <template x-for="c in cardsOf(t)" :key="c.id">
+                            <div class="nc-cell" :data-plain="t.locked ? '' : null"
+                                :data-path="t.locked ? null : c.id"
+                                :style="`grid-column:span ${c.cols};`
+                                    + (c.rows ? `height:calc(${c.rows} * var(--nc-row))` : '')">
+                                <!-- Arrange handles, drawn INTO the cell — the
+                                     drag grip, the resize corner, and the way
+                                     into the card's own settings. A built-in
+                                     tile's card has none: there is nothing to
+                                     reorder it against and nothing to resize
+                                     it within, and its options are already the
+                                     tile's options in the editor below. -->
+                                <template x-if="arranging && !t.locked">
+                                    <div>
+                                        <span class="nc-card-move" title="Drag to reorder">⠿</span>
+                                        <span class="nc-card-size" title="Drag to resize"></span>
+                                        <button type="button" class="nc-card-edit" title="Settings"
+                                            @click.prevent.stop="openCardEditor(t.id, c.id)">✎</button>
+                                    </div>
+                                </template>
+                                <!-- A card in a custom tile names itself; a
+                                     built-in card does not, because the tile
+                                     above already said it once. -->
+                                <div class="flex items-center gap-2 mb-2 shrink-0"
+                                    x-show="!t.locked && c.config.show_title !== false">
+                                    <span class="text-base" x-text="c.icon"></span>
+                                    <span class="panel-label truncate" x-text="c.label"></span>
+                                </div>
+                                <!-- The card's content, and nothing else. `t`
+                                     is rebound deliberately: the body below is
+                                     the one drawing of each type this app has,
+                                     and it knows the variable by that name. -->
+                                <div class="min-w-0" :class="t.locked
+                                        ? (fillsTile(c.type) ? 'flex flex-col flex-1 min-h-0' : '')
+                                        : 'flex-1 overflow-y-auto tile-scroll'"
+                                    x-data="{ t: c }">
+                                    {% include 'components/board_tile_body.html' %}
+                                </div>
+                            </div>
+                        </template>
+                    </div>
                 </a>
+            </template>
+        </div>
+
+        <!-- ── A card's settings, over the board it is sitting on.
+             The list under the board can change the same values, and for a
+             while that was the only way. But a layout is judged by LOOKING at
+             it: scrolling away from the wall to find the row that changes the
+             card you are looking at is the same long way round that dragging
+             replaced. Reached from the ✎ on the card itself, which exists only
+             while arranging.
+             Size applies immediately because the draft draws the grid; the
+             rest applies on Done, because only the server can rebuild what a
+             card SAYS, and that is every other board edit's rule too. -->
+        <div x-show="editing" x-cloak @click.self="closeCardEditor()"
+            @keydown.escape.window="closeCardEditor()"
+            class="fixed inset-0 z-40 flex items-end sm:items-center justify-center p-3 sm:p-6"
+            style="background: rgba(0,0,0,.55)">
+            <template x-if="editing">
+                <div class="ed-card rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="text-lg" x-text="widgetMeta(editing.type).icon"></span>
+                        <span class="text-base font-black ed-title"
+                            x-text="instanceLabel(editing)"></span>
+                        <button type="button" class="ml-auto ed-btn px-2"
+                            @click="closeCardEditor()" title="Close">✕</button>
+                    </div>
+                    <p class="text-xs ed-note mb-4" x-text="widgetMeta(editing.type).blurb"></p>
+
+                    <div class="flex items-center gap-3 mb-4">
+                        <label class="flex items-center gap-1 text-[0.7rem] ed-note">
+                            <input type="number" min="1" max="12" step="1"
+                                :value="cardNum(editing, 'cols', 12)"
+                                @change="setCardNum(editing, 'cols', $event.target.value, 12)"
+                                class="w-14 ed-input rounded text-xs ed-title px-1 py-0.5">
+                            columns of twelve
+                        </label>
+                        <label class="flex items-center gap-1 text-[0.7rem] ed-note">
+                            <input type="number" min="0" max="40" step="1"
+                                :value="cardNum(editing, 'rows', 0)"
+                                @change="setCardNum(editing, 'rows', $event.target.value, 0)"
+                                class="w-14 ed-input rounded text-xs ed-title px-1 py-0.5">
+                            rows (0 fits the content)
+                        </label>
+                    </div>
+
+                    <div class="space-y-3">
+                        {% with OW = 'editing' %}
+                            {% include 'components/board_options.html' %}
+                        {% endwith %}
+                    </div>
+
+                    <button type="button" @click="closeCardEditor()"
+                        class="w-full mt-5 rounded-lg py-2 text-sm font-semibold
+                               bg-sky-600 hover:bg-sky-500 text-white">
+                        Done
+                    </button>
+                </div>
             </template>
         </div>
 
@@ -1054,26 +1177,17 @@
                                      options, which is why the block below is
                                      the same included file with `c` in place
                                      of `w`. -->
-                                <template x-if="w.type === 'group'">
+                                <template x-if="widgetMeta(w.type).container">
                                     <div class="border-t border-gray-700/70 pt-3 space-y-2">
                                         <div class="text-[0.7rem] font-bold uppercase tracking-wider ed-note">
-                                            Cards in this group
+                                            Cards in this tile
                                         </div>
-                                        <template x-for="(c, j) in groupCards(w)" :key="c.id">
+                                        <template x-for="(c, j) in tileCards(w)" :key="c.id">
                                             <div class="ed-panel rounded-lg">
                                                 <div class="flex items-center gap-2 px-2.5 py-2">
                                                     <span x-text="widgetMeta(c.type).icon"></span>
                                                     <span class="flex-1 min-w-0 text-sm ed-title truncate"
                                                         x-text="instanceLabel(c)"></span>
-                                                    <!-- No silent subjects. A group aimed at
-                                                         somebody, holding a card that cannot be
-                                                         aimed, says so here rather than looking
-                                                         like a filter that failed. -->
-                                                    <span x-show="(w.config || {}).subject && !widgetMeta(c.type).subject"
-                                                        class="text-[0.65rem] text-amber-400/80 shrink-0"
-                                                        title="This card has no people filter, so it shows everyone whatever the group is about.">
-                                                        shows everyone
-                                                    </span>
                                                     <label class="flex items-center gap-1 text-[0.7rem] ed-note">
                                                         <input type="number" min="1" max="12" step="1"
                                                             :value="cardNum(c, 'cols', 12)"
@@ -1085,12 +1199,12 @@
                                                         @click="cardOpen = (cardOpen === c.id ? null : c.id)"
                                                         :class="cardOpen === c.id ? 'text-sky-300' : 'ed-btn'"
                                                         class="px-1" title="Options">⚙</button>
-                                                    <button @click="move(groupCards(w), j, -1)" :disabled="j === 0"
+                                                    <button @click="move(tileCards(w), j, -1)" :disabled="j === 0"
                                                         class="ed-btn disabled:opacity-25 px-1">▲</button>
-                                                    <button @click="move(groupCards(w), j, 1)"
-                                                        :disabled="j === groupCards(w).length - 1"
+                                                    <button @click="move(tileCards(w), j, 1)"
+                                                        :disabled="j === tileCards(w).length - 1"
                                                         class="ed-btn disabled:opacity-25 px-1">▼</button>
-                                                    <button @click="removeGroupCard(w, j)"
+                                                    <button @click="removeCard(w, j)"
                                                         class="ed-btn hover:text-red-400 px-1">✕</button>
                                                 </div>
                                                 <div x-show="cardOpen === c.id" x-cloak
@@ -1102,11 +1216,11 @@
                                             </div>
                                         </template>
 
-                                        <select @change="addGroupCard(w, $event.target.value);
+                                        <select @change="addCard(w, $event.target.value);
                                                          $event.target.value = ''"
                                             class="w-full ed-input rounded px-2 py-1.5 text-sm">
                                             <option value="">+ Add a card…</option>
-                                            <template x-for="k in groupAddable()" :key="k.key">
+                                            <template x-for="k in cardTypes()" :key="k.key">
                                                 <option :value="k.key"
                                                     x-text="k.icon + '  ' + k.label
                                                             + (k.subject ? '' : '  (shows everyone)')"></option>
@@ -1835,19 +1949,14 @@
                 // move on. Two of them cannot be drawn concurrently, which is
                 // fine — this is a loop, not a race — but it is the reason the
                 // component cannot simply be instantiated twice.
-                // Everything DRAWN on this board — the tiles, plus the cards
-                // inside every group. A card renders the tile body, so anything
-                // that mounts itself into a tile (a timeline, a map canvas, a
-                // hosted Home Assistant card) has to find the cards too or it
-                // works everywhere except inside a group, which is the kind of
-                // gap that reads as the group being broken.
+                // Everything DRAWN on this board, which is now every CARD in
+                // every tile — a built-in tile's single card included, since
+                // that card carries the tile's own id. Anything that mounts
+                // itself into the page (a timeline, a map canvas, a hosted
+                // Home Assistant card) looks here rather than at the tiles, or
+                // it works everywhere except inside a custom tile.
                 drawnTiles() {
-                    const out = [];
-                    for (const t of (this.board.tiles || [])) {
-                        out.push(t);
-                        for (const c of ((t.data || {}).cards || [])) out.push(c);
-                    }
-                    return out;
+                    return (this.board.tiles || []).flatMap(t => t.cards || []);
                 },
 
                 syncTimeline() {
@@ -3173,31 +3282,33 @@
                     return this.page().widgets.filter(w => w.type === type).length;
                 },
 
-                // --- groups -----------------------------------------------
+                // --- the cards in a tile ----------------------------------
                 //
-                // A group's cards are instances, exactly like the board's
-                // tiles: same catalog, same options, same builders. They live
-                // in the group's own config so that nothing else in the
-                // settings had to learn a new shape — a card list is just a
-                // value on a tile that happens to be a container.
+                // A card is an instance, exactly like a tile: same catalog,
+                // same options, same builders. A custom tile's cards live in
+                // its own config, so nothing else in the settings had to learn
+                // a new shape — a card list is just a value on a tile that
+                // happens to be a container. A BUILT-IN tile has no list at
+                // all; its one card is the tile's own type and config, which
+                // is why no board needed migrating.
 
-                groupCards(w) {
+                tileCards(w) {
                     if (!w.config) w.config = {};
                     if (!Array.isArray(w.config.cards)) w.config.cards = [];
                     return w.config.cards;
                 },
 
-                // Everything but another group. Nesting is refused server-side
-                // too; offering it here and dropping it there would be a menu
-                // item that does nothing.
-                groupAddable() {
+                // Everything but another container. Nesting is refused
+                // server-side too; offering it here and dropping it there
+                // would be a menu item that does nothing.
+                cardTypes() {
                     return (this.catalog.widgets || [])
-                        .filter(k => k.key !== 'group' && k.available !== false);
+                        .filter(k => !k.container && k.available !== false);
                 },
 
-                addGroupCard(w, type) {
-                    if (!type || type === 'group') return;
-                    const cards = this.groupCards(w);
+                addCard(w, type) {
+                    if (!type || this.widgetMeta(type).container) return;
+                    const cards = this.tileCards(w);
                     if (cards.length >= 12) return;
                     const taken = new Set(cards.map(c => c.id));
                     let id = type, n = 2;
@@ -3206,11 +3317,11 @@
                     this.cardOpen = id;   // straight into its options
                 },
 
-                removeGroupCard(w, j) {
-                    this.groupCards(w).splice(j, 1);
+                removeCard(w, j) {
+                    this.tileCards(w).splice(j, 1);
                 },
 
-                // Size, per card, in twelfths of the group. Stored on the
+                // Size, per card, in twelfths of the tile. Stored on the
                 // card's own config so it travels with the card, and DELETED
                 // at the default for the same reason tile spans are — a stored
                 // 12 stops tracking the default the day the default moves.
@@ -3219,22 +3330,179 @@
                     return v === undefined || v === null ? dflt : v;
                 },
 
+                // Columns are twelfths and start at one; rows start at ZERO,
+                // which is not "no height" by accident — it is "as tall as the
+                // content", the only sensible default for a list nobody has
+                // sized. Clamped here rather than trusted, because these are
+                // number inputs and a pasted 900 is a layout the board cannot
+                // be talked out of.
                 setCardNum(c, key, raw, dflt) {
                     let v = parseInt(raw, 10);
                     if (Number.isNaN(v)) return;
-                    v = Math.max(1, Math.min(12, v));
+                    v = key === 'rows' ? Math.max(0, Math.min(40, v))
+                                       : Math.max(1, Math.min(12, v));
                     if (!c.config) c.config = {};
                     if (v === dflt) delete c.config[key];
                     else c.config[key] = v;
                 },
 
-                // Does this group hold a card with a height of its own? Same
+                // Does this tile hold a card with a height of its own? Same
                 // rule as a stack of Home Assistant cards, and the same reason:
                 // a grid row is as tall as its tallest cell, so one sized card
                 // would drag its neighbours to match unless the cells stop
                 // stretching.
-                groupFree(t) {
-                    return ((t.data || {}).cards || []).some(c => c.rows);
+                // The cards of a tile AS DRAWN. While arranging, the draft is
+                // the truth — order and size come from the settings being
+                // edited, so a drag shows its result now rather than after a
+                // save and a refetch. The card's CONTENT still comes from the
+                // server payload, because only the server can build it.
+                cardsOf(t) {
+                    const list = t.cards || [];
+                    if (!this.arranging || t.locked) return list;
+                    const draft = this._cardsOf(t.id);
+                    if (!draft) return list;
+                    const seat = new Map(), cfg = new Map();
+                    draft.forEach((c, i) => {
+                        seat.set(`${t.id}-${c.id}`, i);
+                        cfg.set(`${t.id}-${c.id}`, c.config || {});
+                    });
+                    // A card the draft does not know about sorts to the end
+                    // rather than vanishing mid-drag.
+                    const at = id => seat.has(id) ? seat.get(id) : draft.length;
+                    return list.slice().sort((a, b) => at(a.id) - at(b.id)).map(c => {
+                        const o = cfg.get(c.id);
+                        return o ? { ...c, cols: Number(o.cols) || 12,
+                                     rows: Number(o.rows) || 0 } : c;
+                    });
+                },
+
+                tileFree(t) {
+                    return this.cardsOf(t).some(c => c.rows);
+                },
+
+                // --- arranging the cards inside a custom tile -------------
+                //
+                // The same gesture as the board's, one level down, and against
+                // the DRAFT rather than a parsed config: a tile's cards are
+                // ordinary settings, so a drag here is a splice in
+                // `page().widgets[…].config.cards` and nothing has to be
+                // re-parsed or written back through an API to show its result.
+                //
+                // A card is addressed by its ID, not by an index — the drawn
+                // card carries `data-path`, and an index would go stale the
+                // moment the drag it is describing lands.
+
+                _cardsOf(tileId) {
+                    const w = (this.page().widgets || []).find(x => x.id === tileId);
+                    return w ? this.tileCards(w) : null;
+                },
+
+                startTileCardDrag(e, tileId) {
+                    if (e.button > 0) return;
+                    const grip = e.target.closest('.nc-card-move');
+                    const grab = e.target.closest('.nc-card-size');
+                    const cell = e.target.closest('[data-path]');
+                    if (!cell || (!grip && !grab)) return;
+                    e.preventDefault();
+                    e.stopPropagation();          // never also drag the TILE
+                    const cards = this._cardsOf(tileId);
+                    if (!cards) return;
+                    // The drawn card's id is namespaced by its tile; the
+                    // stored one is not.
+                    const id = String(cell.dataset.path).slice(tileId.length + 1);
+                    const at = cards.findIndex(c => c.id === id);
+                    if (at === -1) return;
+                    return grab ? this.resizeTileCard(e, cards, at, cell)
+                                : this.moveTileCard(e, cards, at, cell, tileId);
+                },
+
+                moveTileCard(e, cards, at, cell, tileId) {
+                    const startX = e.clientX, startY = e.clientY;
+                    let moved = false, from = at;
+                    const move = (ev) => {
+                        if (!moved) {
+                            if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
+                            moved = true;
+                            cell.classList.add('tile-dragging');
+                        }
+                        const over = document.elementFromPoint(ev.clientX, ev.clientY);
+                        const target = over && over.closest('[data-path]');
+                        if (!target || target === cell) return;
+                        const id = String(target.dataset.path).slice(tileId.length + 1);
+                        const to = cards.findIndex(c => c.id === id);
+                        if (to === -1 || to === from) return;
+                        cards.splice(to, 0, cards.splice(from, 1)[0]);
+                        from = to;
+                    };
+                    const up = () => {
+                        window.removeEventListener('pointermove', move);
+                        window.removeEventListener('pointerup', up);
+                        cell.classList.remove('tile-dragging');
+                        if (moved) this.load();   // redraw from the new order
+                    };
+                    window.addEventListener('pointermove', move);
+                    window.addEventListener('pointerup', up);
+                },
+
+                resizeTileCard(e, cards, at, cell) {
+                    const card = cards[at];
+                    const grid = cell.parentElement;
+                    const cs = grid ? getComputedStyle(grid) : null;
+                    const gap = cs ? (parseFloat(cs.columnGap) || 0) : 12;
+                    // A twelfth of the TILE, not of the board: a card's
+                    // columns are spans of the grid its own tile lays out on.
+                    const colW = ((grid ? grid.clientWidth : 0) - gap * 11) / 12 + gap;
+                    const rowH = 56 + gap;                    // --nc-row + gap
+                    // Freed for the whole drag: a card dragged SHORTER sits in
+                    // a row a neighbour is still holding open otherwise, and
+                    // nothing appears to move until the pointer comes up.
+                    if (grid) grid.classList.add('nc-free');
+                    const startX = e.clientX, startY = e.clientY;
+                    const startCols = Number(card.config.cols) || cell.offsetWidth / colW;
+                    const startRows = Number(card.config.rows)
+                        || Math.max(1, Math.round(cell.offsetHeight / rowH));
+                    let dirty = false;
+                    const move = (ev) => {
+                        const cols = Math.max(1, Math.min(12,
+                            Math.round((ev.clientX - startX) / colW + startCols)));
+                        const rows = Math.max(1, Math.min(40,
+                            Math.round((ev.clientY - startY) / rowH + startRows)));
+                        cell.style.gridColumn = 'span ' + cols;
+                        cell.style.height = 'calc(' + rows + ' * var(--nc-row))';
+                        this.setCardNum(card, 'cols', cols, 12);
+                        this.setCardNum(card, 'rows', rows, 0);
+                        dirty = true;
+                    };
+                    const up = () => {
+                        window.removeEventListener('pointermove', move);
+                        window.removeEventListener('pointerup', up);
+                        if (dirty) this.load();
+                    };
+                    window.addEventListener('pointermove', move);
+                    window.addEventListener('pointerup', up);
+                },
+
+                // --- the card settings overlay ----------------------------
+                //
+                // Editing a card where it SITS. The list below the board can
+                // do it too, but a layout is judged by looking at it, and
+                // scrolling away from the wall to find the row that changes it
+                // is the same long way round that dragging replaced.
+                editing: null,          // the card instance being edited
+                editingTile: null,
+
+                openCardEditor(tileId, drawnId) {
+                    const cards = this._cardsOf(tileId);
+                    if (!cards) return;
+                    const id = String(drawnId).slice(tileId.length + 1);
+                    this.editing = cards.find(c => c.id === id) || null;
+                    this.editingTile = tileId;
+                },
+
+                async closeCardEditor() {
+                    this.editing = null;
+                    this.editingTile = null;
+                    await this.load();      // the board redraws with the change
                 },
 
                 // --- per-instance options ---------------------------------
@@ -3269,7 +3537,11 @@
                 // been a link to the page it summarises; the Home Assistant
                 // tiles summarise nothing of ours, and a link to a page that
                 // does not exist is a tap that empties the wall.
-                PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web'],
+                // Tiles that are not doors. The Home Assistant and web tiles
+                // summarise no page of this app; a custom tile summarises
+                // several, so there is no one page for it to open.
+                PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web',
+                           'custom'],
                 opens(type) {
                     return !this.PAGELESS.includes(type);
                 },

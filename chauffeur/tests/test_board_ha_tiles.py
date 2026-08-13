@@ -510,7 +510,11 @@ def scenario_a_tile_with_no_page_is_not_a_link():
     nothing of ours, and an <a> to a page that does not exist is a tap that
     empties the wall."""
     tpl = tpl_source.read('home.html')
-    check("PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web']" in tpl,
+    # `custom` joined them for a different reason worth keeping straight: it
+    # summarises SEVERAL pages, so there is no one page for it to open, where
+    # these summarise none of ours at all.
+    check("PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web',"
+          in tpl and "'custom']" in tpl,
           "the Home Assistant tiles are linking somewhere again")
     check('opens(t.type) ? link(t.type) : null' in tpl,
           "the tile's href is unconditional, so a pageless tile is still a link")
