@@ -171,6 +171,14 @@ def _board(hero=None):
                             'start': at(17), 'driver': 'Vovo',
                             'needs_driver': False, 'color': '#8b5cf6',
                             'kind': 'event', 'past': False}]}]}},
+                 # A calendar card asking for the MONTH grid. Nothing is
+                 # drawn from this payload: the element is a mount point and
+                 # the shared component fetches its own events.
+                 {'id': 'mine-month', 'type': 'calendar', 'icon': '📅',
+                  'label': 'Month', 'title': '', 'cols': 12, 'rows': 6,
+                  'config': {}, 'data': {'grid': {'view': 'dayGridMonth',
+                                                  'toolbar': False,
+                                                  'only': []}}},
                  # No title typed, so no heading and no row for one.
                  {'id': 'mine-intake', 'type': 'intake', 'icon': '📥',
                   'label': 'Waiting', 'title': '', 'cols': 6, 'rows': 3,
@@ -197,6 +205,12 @@ const routes = {
   'api/home_board/catalog': { widgets: [], widget_defaults: [], tabs: [], tab_defaults: [] },
   'api/home_board': board,
   'api/panel/profile': { theme: 'dark', tabs: [], widgets: [], backgrounds: {}, idle_seconds: 180 },
+  // The calendar CARD fetches its own month; nothing is shipped in the board
+  // payload for it, which is the point of the grid views.
+  'api/schedule': { events: [], assignments: {}, drivers: [], passengers: [],
+                    members: [], calendar_metadata: {}, scheduled_errands: [],
+                    car_assignments: {}, cars: [], true_unassigned: [],
+                    matched_rules: {}, diagnostics: {}, prep_by_event: {} },
   'api/settings': { panel_widgets: [], panel_tabs: [], panel_agenda_days: 5 },
 };
 
@@ -212,6 +226,16 @@ const dom = new JSDOM(html, {
     w.showGlobalAlert = () => {};
     w.matchMedia = () => ({ matches: false, addEventListener() {} });
     w.EventSource = function () { return { addEventListener() {}, close() {} }; };
+    // The board injects FullCalendar lazily via a <script src>, which jsdom
+    // will not fetch. Putting it on the window makes `loadFullCalendar()`
+    // short-circuit — the laziness itself is asserted structurally over in
+    // test_calendar_render.py.
+    const fc = process.env.CHF_FULLCALENDAR;
+    if (fc) {
+      const s = w.document.createElement('script');
+      s.textContent = require('fs').readFileSync(fc, 'utf8');
+      w.document.addEventListener('DOMContentLoaded', () => w.document.head.appendChild(s));
+    }
   }
 });
 const w = dom.window;
@@ -284,6 +308,14 @@ setTimeout(() => {
                  return n ? d : -1;
                })() };
     })(),
+    monthCard: (() => {
+      const el = doc.getElementById('board-calendar-mine-month');
+      if (!el) return null;
+      return { mounted: !!el.querySelector('.fc-view-harness'),
+               // A card pinned to a view wants no bar of buttons offering to
+               // un-pin it.
+               toolbar: !!el.querySelector('.fc-toolbar') };
+    })(),
     quiet: (() => {
       const el = doc.querySelector('[data-tile-id="meals"]');
       const txt = el ? el.textContent : '';
@@ -341,6 +373,16 @@ const dom = new JSDOM(html, {
     w.showGlobalAlert = () => {};
     w.matchMedia = () => ({ matches: false, addEventListener() {} });
     w.EventSource = function () { return { addEventListener() {}, close() {} }; };
+    // The board injects FullCalendar lazily via a <script src>, which jsdom
+    // will not fetch. Putting it on the window makes `loadFullCalendar()`
+    // short-circuit — the laziness itself is asserted structurally over in
+    // test_calendar_render.py.
+    const fc = process.env.CHF_FULLCALENDAR;
+    if (fc) {
+      const s = w.document.createElement('script');
+      s.textContent = require('fs').readFileSync(fc, 'utf8');
+      w.document.addEventListener('DOMContentLoaded', () => w.document.head.appendChild(s));
+    }
   }
 });
 const w = dom.window;
@@ -486,8 +528,13 @@ def _run():
     with open(page, 'w', encoding='utf-8') as f:
         f.write(_render_home())
 
+    env = dict(os.environ)
+    fc = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                      'static', 'vendor', 'fullcalendar.global.min.js')
+    if os.path.exists(fc):
+        env['CHF_FULLCALENDAR'] = fc
     proc = subprocess.run([node, probe, page, _board_json()], capture_output=True, text=True,
-                          cwd=SCRATCH, timeout=120)
+                          cwd=SCRATCH, timeout=180, env=env)
     check(proc.returncode == 0, f"the board threw while drawing:\n{proc.stderr[:2000]}")
     _RESULT['data'] = json.loads(proc.stdout.strip().splitlines()[-1])
     return _RESULT['data']
@@ -563,6 +610,27 @@ def scenario_a_custom_tile_can_drop_its_panel():
           "a built-in tile lost the panel that IS its surface")
 
 
+def scenario_a_calendar_card_mounts_the_pages_own_grid():
+    """The month, week and day views asked for on the board — and they are the
+    calendar PAGE's grid, mounted from the shared component, not a smaller copy
+    of it. Nothing is shipped in the board payload for one: a month of events
+    is not something to put inside a response five other cards are waiting on,
+    so the card fetches its own.
+
+    The toolbar is off because the card was pinned to a view, and a bar of
+    buttons offering three other views is three ways to un-pin it from the
+    wall.
+    """
+    got = _run()
+    if got is None:
+        return
+    m = got['monthCard']
+    check(m, "a calendar card asking for a month grid has no mount point")
+    check(m['mounted'], "the shared component did not build a grid in the card")
+    check(not m['toolbar'],
+          "a card pinned to one view is drawing the view switcher anyway")
+
+
 def scenario_a_quiet_tile_says_so_once():
     """A tile's data IS its card's data — that is what a built-in tile is — so
     anything that renders the empty message at both levels prints it twice.
@@ -591,7 +659,8 @@ def scenario_a_custom_tile_draws_its_cards_as_the_content_they_are():
         return
     g = got['group']
     check(g, "a custom tile drew no grid at all")
-    check(len(g['cells']) == 2, f"a tile of two cards drew {len(g['cells'])} cells")
+    # calendar (6 cols), month grid (12), intake (6, three rows tall)
+    check(len(g['cells']) == 3, f"a tile of three cards drew {len(g['cells'])} cells")
     # Only the card that was given a title wears one; see the scenario about
     # blank meaning blank.
     check(g['cells'][0]['label'] == "Emma's week",
@@ -599,14 +668,14 @@ def scenario_a_custom_tile_draws_its_cards_as_the_content_they_are():
     # The bodies really are the tiles' bodies, not a smaller drawing of them.
     check('Ballet' in g['cells'][0]['text'],
           f"the calendar card drew no calendar: {g['cells'][0]['text'][:200]}")
-    check('waiting for a parent' in g['cells'][1]['text'],
-          f"the intake card drew no intake: {g['cells'][1]['text'][:200]}")
-    check('span 6' in g['cells'][0]['style'] and 'span 6' in g['cells'][1]['style'],
+    check('waiting for a parent' in g['cells'][2]['text'],
+          f"the intake card drew no intake: {g['cells'][2]['text'][:200]}")
+    check('span 6' in g['cells'][0]['style'] and 'span 6' in g['cells'][2]['style'],
           f"a card's width did not reach the grid: {[c['style'] for c in g['cells']]}")
     check('height' not in g['cells'][0]['style'],
           f"an unsized card was given a height: {g['cells'][0]['style']}")
-    check('calc(3 * var(--nc-row))' in g['cells'][1]['style'],
-          f"a sized card did not get its height: {g['cells'][1]['style']}")
+    check('calc(3 * var(--nc-row))' in g['cells'][2]['style'],
+          f"a sized card did not get its height: {g['cells'][2]['style']}")
     check(g['free'],
           "a tile holding a sized card still stretches its cells, so that "
           "card's height would drag its neighbour's to match")

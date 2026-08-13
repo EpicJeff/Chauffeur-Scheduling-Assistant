@@ -237,6 +237,18 @@
                          columns the tile is wide, so the same markup is one
                          day stacked on a narrow tile and a working week across
                          a wide one. -->
+                    <!-- ── The month, week and day grids: the calendar PAGE's
+                         own, mounted from components/family_calendar.html.
+                         Nothing is drawn here — the element is the mount
+                         point, `syncCalendars()` puts a calendar in it, and
+                         the 282KB library is fetched only if a card like this
+                         one actually exists on the board. An agenda card
+                         downloads none of it. -->
+                    <template x-if="t.type === 'calendar' && t.data.grid">
+                        <div class="flex-1 min-h-0 board-calendar"
+                            :id="'board-calendar-' + t.id"></div>
+                    </template>
+
                     <!-- One list, next first. A card per day needs width; a
                          tile three columns wide gets three words per card, and
                          the same information down a list is legible. Same rows,

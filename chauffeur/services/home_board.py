@@ -248,9 +248,20 @@ WIDGETS = [
      'heading': "What's coming",
      'blurb': "The next few days on the family calendar, drives or not.",
      'options': [
+         # The four the calendar page offers, plus the board's own two. Month,
+         # week and day are the PAGE's grid, mounted here from the shared
+         # component; agenda and list are drawn from this payload and need no
+         # library at all, which is why an agenda card on a wall panel
+         # downloads nothing.
          _opt('view', 'View', 'choice', 'agenda', choices=[
              {'value': 'agenda', 'label': 'A card per day'},
-             {'value': 'list', 'label': 'One list, next first'}]),
+             {'value': 'list', 'label': 'One list, next first'},
+             {'value': 'month', 'label': 'Month grid'},
+             {'value': 'week', 'label': 'Week grid'},
+             {'value': 'day', 'label': 'One day, by the hour'}]),
+         _opt('view_selector', 'Show the view buttons', 'bool', False,
+              help='Lets somebody change the view on the wall. Off pins the '
+                   'card to the view above.'),
          # No literal default: absent means `panel_agenda_days`, so a board
          # nobody has configured per-tile behaves exactly as it always did.
          _opt('days', 'Days', 'int', None, min=1, max=14,
@@ -1298,6 +1309,12 @@ def _member_calendar_ids(member_ids: List[str]) -> set:
     return ids
 
 
+# The calendar page's URL vocabulary, which is also the card's. Kept as one
+# table so "month" means the same thing in a query string and in a card config.
+_CAL_GRID_VIEWS = {'month': 'dayGridMonth', 'week': 'timeGridWeek',
+                   'day': 'timeGridDay'}
+
+
 def _tile_calendar(now, sched=None, settings=None, config=None, **_):
     """What this family is doing, laid out the way the calendar page's AGENDA
     view lays it out: a card per day, the day's events under it by start time.
@@ -1328,6 +1345,24 @@ def _tile_calendar(now, sched=None, settings=None, config=None, **_):
         today = now.date()
         span = _cfg_int(config, 'days', agenda_days(settings), 1, 14)
         view = _cfg_str(config, 'view', 'agenda') or 'agenda'
+        # The three GRID views are the calendar page's own, mounted from the
+        # shared component. There is nothing for this builder to compute: the
+        # grid fetches the schedule itself, because a month of events is not
+        # something to ship inside a board payload that five other cards are
+        # waiting on. What it does need is the filter, resolved from member ids
+        # to the NAMES the pipeline matches on.
+        if view in _CAL_GRID_VIEWS:
+            names = []
+            wanted = _cfg_ids(config, 'members')
+            if wanted:
+                try:
+                    names = [m.get('name') for m in (storage.get_all_members() or [])
+                             if str(m.get('id')) in wanted and m.get('name')]
+                except Exception as e:
+                    print(f"[home_board] calendar card members failed: {e}")
+            return {'grid': {'view': _CAL_GRID_VIEWS[view],
+                             'toolbar': _cfg_bool(config, 'view_selector', False),
+                             'only': names}}
         show_all_day = _cfg_bool(config, 'all_day', True)
         member_ids = _cfg_ids(config, 'members')
         # Resolved ONCE, not per event: this reads every member record, and a
