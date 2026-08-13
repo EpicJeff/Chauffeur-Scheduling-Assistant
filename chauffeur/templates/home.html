@@ -657,10 +657,16 @@
             </button>
         </div>
 
-        <div id="tile-grid" class="grid gap-4 items-stretch"
+        <!-- The gutter is the board's own number now, not a Tailwind class:
+             a hardcoded gap-4 made tiny row heights read as a secret minimum
+             (a tile spanning R rows crosses R-1 gutters, so 1px rows still
+             stepped ~17px per row). _cell() keeps measuring the live grid,
+             so arranging follows whatever the household set. -->
+        <div id="tile-grid" class="grid items-stretch"
             :class="arranging ? 'is-arranging' : ''"
             :style="`--c-lg:${cols()}; --c-md:${Math.ceil(cols() / 2)};
                      --c-sm:${Math.ceil(cols() / 4)};
+                     gap: ${gapPx()}px;
                      grid-auto-rows: ${rowHeight()}px`">
             <template x-for="t in tiles()" :key="t.id">
                 <!-- ── A TILE IS A CONTAINER OF CARDS. Both kinds are.
@@ -1059,7 +1065,23 @@
                             :value="page().row_height"
                             @input="setPageField('row_height', parseInt($event.target.value, 10))"
                             class="w-20 ed-input rounded text-xs ed-title px-2 py-1">
-                        <span class="font-normal ed-note">pixels tall — a 2-row tile is twice this</span>
+                        <span class="font-normal ed-note">pixels tall — a 2-row tile is twice this,
+                            plus the gaps it spans</span>
+                    </label>
+                    <!-- The gutter, out in the open. It was a hardcoded 16px
+                         Tailwind class, and with tiny rows it read as a secret
+                         minimum — a tile R rows tall crosses R−1 gutters, so
+                         "1 pixel rows" still stepped by seventeen. A number
+                         the household can see is a number that stops lying;
+                         0 is legal and means seamless. -->
+                    <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-3">
+                        Tiles sit
+                        <input type="number" min="0" max="100" step="2"
+                            :value="page().gap"
+                            @input="setPageField('gap', parseInt($event.target.value, 10))"
+                            class="w-20 ed-input rounded text-xs ed-title px-2 py-1">
+                        <span class="font-normal ed-note">pixels apart — the gutter between tiles,
+                            counted inside a multi-row tile's height</span>
                     </label>
                     <div class="space-y-1.5 mb-3">
                         <!-- Keyed by INSTANCE id, not by type. Alpine uses this
@@ -1808,6 +1830,13 @@
                 rowHeight() {
                     const n = parseInt(this.board.row_height, 10);
                     return Math.min(10000, Math.max(1, n || 240));
+                },
+
+                // The gutter between tiles, both axes. 0 is a real answer
+                // (seamless), so only absence falls back.
+                gapPx() {
+                    const n = parseInt(this.board.gap, 10);
+                    return Number.isNaN(n) ? 16 : Math.min(100, Math.max(0, n));
                 },
 
                 // How many columns the board is divided into. Twelve by
@@ -2761,10 +2790,10 @@
                 },
 
                 // One grid cell, measured rather than assumed. The board's
-                // column count is a household setting and the gap is a Tailwind
-                // class, so both are read off the live grid — a hard-coded 16px
-                // gap here would drift the moment that class changed and show
-                // up as a resize that runs slightly ahead of the pointer.
+                // column count and its gutter are both household settings,
+                // so both are read off the live grid — a hard-coded 16px
+                // gap here would drift the moment the setting changed and
+                // show up as a resize that runs slightly ahead of the pointer.
                 _cell() {
                     const grid = document.getElementById('tile-grid');
                     const cs = grid ? getComputedStyle(grid) : null;
@@ -3236,6 +3265,8 @@
                             ? this.page().columns : 12,
                         row_height: (this.draft.panel_pages || []).length
                             ? this.page().row_height : 240,
+                        gap: (this.draft.panel_pages || []).length
+                            ? this.page().gap : 16,
                         background: '',
                     };
                 },
@@ -3328,6 +3359,9 @@
                         columns: Math.min(1000, Math.max(1, parseInt(p.columns, 10) || 12)),
                         row_height: Math.min(10000, Math.max(1,
                             parseInt(p.row_height, 10) || 240)),
+                        // 0 is a real gap (seamless); only absence means 16.
+                        gap: Number.isNaN(parseInt(p.gap, 10)) ? 16
+                            : Math.min(100, Math.max(0, parseInt(p.gap, 10))),
                         background: (p.background || '').trim(),
                     }));
                 },

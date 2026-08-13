@@ -2784,6 +2784,12 @@ def _page_from(item: dict, settings: dict, taken: set) -> dict:
         'columns': columns,
         'row_height': _cfg_int(item, 'row_height', grid_row_height(settings),
                                ROW_MIN, ROW_MAX),
+        # The gutter between tiles, the third number a grid is. It was a
+        # hardcoded Tailwind gap-4 (16px), which made tiny row heights read
+        # as a secret minimum: a tile spanning R rows crosses R-1 gutters,
+        # so 1px rows still stepped ~17px per row and nothing said why.
+        # 0 is legal and means seamless.
+        'gap': _cfg_int(item, 'gap', 16, 0, 100),
         # Blank means the board's own background, which is itself blank-able.
         # Two levels of "not set" rather than three: a page either has a
         # picture of its own or takes the household's.
@@ -3138,6 +3144,7 @@ def profile(tabs: Optional[str] = None, widgets: Optional[str] = None,
             'spans': page_obj['spans'],
             'row_height': page_obj['row_height'],
             'columns': page_obj['columns'],
+            'gap': page_obj['gap'],
             # Every board there is, so the shelf can carry them and a panel can
             # move between them without a round trip per hop.
             'pages': page_summaries(settings),
@@ -3279,6 +3286,7 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
         'spans': page_obj['spans'],
         'row_height': page_obj['row_height'],
         'columns': page_obj['columns'],
+        'gap': page_obj['gap'],
         'page': {'slug': page_obj['slug'], 'name': page_obj['name'],
                  'icon': page_obj['icon']},
     }
