@@ -2150,17 +2150,18 @@
                         // by the name their calendar carries and the card stores
                         // member ids, so the SERVER resolves one into the other
                         // rather than shipping ids the matcher would never hit.
-                        const only = new Set(g.only || []);
                         await FamilyCalendar.mount({
                             targetContainerId: id,
                             view: g.view,
                             toolbar: !!g.toolbar,
-                            // No modal and no legend on a board: a wall panel
-                            // has nowhere to put either, and tapping through to
-                            // the calendar page is the tile's own job.
-                            events: (a, b) => FamilyCalendar.events(a, b, {
-                                base: this.apiBase,
-                                only: only.size ? only : null }),
+                            base: this.apiBase,
+                            only: (g.only && g.only.length) ? g.only : null,
+                            agendaDays: g.days || 7,
+                            // legend and details stay OFF: a wall panel has
+                            // nowhere to put a modal, and taps on a display
+                            // surface should do nothing rather than half of
+                            // something. They become card options the day a
+                            // card wants them.
                         });
                         this._liveCalendars.add(id);
                     }

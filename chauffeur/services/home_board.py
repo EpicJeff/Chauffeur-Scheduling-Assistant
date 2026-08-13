@@ -1362,6 +1362,8 @@ def _tile_calendar(now, sched=None, settings=None, config=None, **_):
                     print(f"[home_board] calendar card members failed: {e}")
             return {'grid': {'view': _CAL_GRID_VIEWS[view],
                              'toolbar': _cfg_bool(config, 'view_selector', False),
+                             'days': _cfg_int(config, 'days',
+                                              agenda_days(settings), 1, 14),
                              'only': names}}
         show_all_day = _cfg_bool(config, 'all_day', True)
         member_ids = _cfg_ids(config, 'members')

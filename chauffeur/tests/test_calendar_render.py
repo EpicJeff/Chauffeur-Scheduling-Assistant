@@ -140,7 +140,9 @@ w._injectFc();
 setTimeout(() => {
   const doc = w.document;
   const grid = doc.getElementById('calendar');
-  const agenda = doc.getElementById('agenda-view');
+  // Component-built DOM: the grid, agenda and legend live inside #calendar.
+  const gridInner = doc.querySelector('#calendar .cal-grid');
+  const agenda = doc.querySelector('#calendar .cal-agenda');
 
   const out = {
     errors: errors,
@@ -155,7 +157,7 @@ setTimeout(() => {
     // an extraction would break is `fetchCalEvents` feeding the events
     // callback, and that is observable.
     eventTitles: [],
-    legend: [...doc.querySelectorAll('#filter-legend button')]
+    legend: [...doc.querySelectorAll('#calendar .cal-legend button')]
       .map(b => b.textContent.trim()),
     // Shown/hidden by inline `display`, not a class — enterAgenda sets
     // 'flex' and exitAgenda sets 'none'.
@@ -164,8 +166,25 @@ setTimeout(() => {
     dayChips: [],
     storedView: w.localStorage.getItem('chauffeur_cal_view'),
   };
-  try { out.eventTitles = w.calendar.getEvents().map(e => e.title).sort(); }
-  catch (e) { out.eventTitles = ['THREW: ' + e.message]; }
+  // Captured BEFORE the view-flipping below mutates anything: the agenda's
+  // own drawing, and what a tap on one of its rows does.
+  out.agendaText = agenda ? agenda.textContent.replace(/\s+/g, ' ').trim().slice(0, 400) : '';
+  out.modalOpen = null; out.modalTitle = '';
+  const evRow = doc.querySelector('#calendar .agenda-event');
+  if (evRow) {
+    evRow.click();
+    const modal = doc.getElementById('simple-event-modal');
+    out.modalOpen = !!(modal && !modal.classList.contains('hidden'));
+    out.modalTitle = ((doc.getElementById('modal-title') || {}).textContent || '');
+  }
+
+  // `window.calendar` is the component's facade; the raw FullCalendar
+  // instance sits behind its `.calendar` getter (and may not exist at all in
+  // agenda view — which is the point of the facade).
+  try {
+    const raw = w.calendar.calendar || w.calendar;
+    out.eventTitles = raw.getEvents().map(e => e.title).sort();
+  } catch (e) { out.eventTitles = ['THREW: ' + e.message]; }
 
   for (const v of ['dayGridMonth', 'timeGridWeek', 'timeGridDay']) {
     try { w.calendar.changeView(v); out.views.push(w.calendar.view.type); }
@@ -176,12 +195,15 @@ setTimeout(() => {
   // `eventContent` builder can be seen doing its job.
   out.dayChips = [...doc.querySelectorAll('#calendar .fc-event')]
     .map(e => e.textContent.replace(/\s+/g, ' ').trim());
-  // Agenda is a panel, not a FullCalendar view.
+  // Agenda is a panel, not a FullCalendar view — reached through the same
+  // changeView the grid views use, which is the parity point: one switcher,
+  // four views, on every surface that mounts the component.
   try {
-    w.enterAgenda();
+    w.calendar.changeView('agenda');
     out.agendaShown = !!(agenda && agenda.style.display === 'flex');
-    out.gridHiddenInAgenda = !!(grid && grid.style.display === 'none');
-    w.exitAgenda('dayGridMonth');
+    out.gridHiddenInAgenda = !!(gridInner && gridInner.style.display === 'none');
+    out.agendaViewType = w.calendar.view.type;
+    w.calendar.changeView('dayGridMonth');
   } catch (e) { out.agendaShown = 'THREW: ' + e.message; }
 
   console.log(JSON.stringify(out));
@@ -274,6 +296,9 @@ def scenario_all_four_views_are_reachable():
           f"the agenda panel did not open: {got['agendaShown']}")
     check(got['gridHiddenInAgenda'],
           "the grid is still drawn underneath the agenda, so both are on screen")
+    check(got.get('agendaViewType') == 'agenda',
+          f"the facade does not report the agenda as the current view: "
+          f"{got.get('agendaViewType')}")
 
 
 def scenario_an_event_is_drawn_by_the_pages_own_builder():
@@ -377,6 +402,28 @@ def scenario_the_grid_is_the_shared_component_and_the_library_is_lazy():
           and "document.querySelector('.fc-daygrid" not in comp,
           "the density tuner still measures the document rather than its own "
           "calendar")
+
+
+def scenario_an_agenda_start_draws_and_taps_open_the_details():
+    """The other half of parity, run with `?view=agenda` — the wall panel's
+    normal morning. The component starts straight in its hand-drawn agenda
+    (the grid is never built until a grid view is asked for, which is the
+    cost model), the events reach the day cards, and tapping a row opens the
+    same details dialog the grid opens — which now exists on every surface
+    that mounts the component, not only on this page."""
+    got = _run('?view=agenda')
+    if got is None:
+        return
+    check(got['startView'] == 'agenda',
+          f"?view=agenda did not start in the agenda: {got['startView']}")
+    check(not got['agendaHiddenAtStart'], "the agenda panel is not showing")
+    check('Ballet' in got['agendaText'],
+          f"the agenda drew no events: {got['agendaText'][:200]!r}")
+    check(got['modalOpen'] is True,
+          f"tapping an agenda row did not open the details dialog: "
+          f"{got['modalOpen']}")
+    check(got['modalTitle'] in ('Ballet', 'Orthodontist'),
+          f"the dialog is not about the tapped event: {got['modalTitle']!r}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
