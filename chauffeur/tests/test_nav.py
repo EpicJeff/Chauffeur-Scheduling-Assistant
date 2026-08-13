@@ -93,12 +93,17 @@ def scenario_all_three_renderers_loop_the_list():
                 if a in section and section.index(a) > 0]
         section = section[:min(ends)] if ends else section
         if what == 'panel shelf':
-            check('SHELF_ITEMS.append(item)' in section
-                  and 'for item in NAV_ITEMS' in section,
-                  "the shelf no longer builds its list from NAV_ITEMS — "
+            # The shelf builds a `SHELF_ITEMS` list of its own until
+            # v2.193.0, when boards joined it: it now loops ONE server-resolved
+            # order (`shelf_order`, which carries `board:<slug>` entries too)
+            # and looks each slug up in NAV_ITEMS. Two loops over two orders is
+            # exactly how the boards ended up in a position the panel profile
+            # did not know about — see test_board_pages.
+            check('{% for slug in _order %}' in section,
+                  "the shelf no longer renders one server-resolved order")
+            check('for item in NAV_ITEMS if item.slug == slug' in section,
+                  "the shelf no longer resolves its slugs against NAV_ITEMS — "
                   "hardcoded copy?")
-            check('{% for item in SHELF_ITEMS %}' in section,
-                  "the shelf does not render the ordered list it just built")
         else:
             check('{% for item in NAV_ITEMS %}' in section,
                   f"the {what} does not loop NAV_ITEMS — hardcoded copy?")
@@ -118,8 +123,8 @@ def scenario_the_shelf_arrives_in_its_final_order():
           "the order is back to being applied after the paint")
     check('{% set _order = shelf_order(request) %}' in BODY,
           "nav.html does not resolve the shelf order at render time")
-    ordered = BODY.index('SHELF_ITEMS.append(item)')
-    rendered = BODY.index('{% for item in SHELF_ITEMS %}')
+    ordered = BODY.index('{% set _order = shelf_order(request) %}')
+    rendered = BODY.index('{% for slug in _order %}')
     check(ordered < rendered, "the shelf is rendered before it is ordered")
 
 

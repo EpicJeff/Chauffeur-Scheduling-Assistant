@@ -1,0 +1,250 @@
+<!-- ── Today's routine, a lane per child. One shared drawing.
+
+     The routines PAGE renders this macro in kiosk mode and the `routines_lanes`
+     board card renders the same one, so a wall can never drift from the page.
+     What stays on the page is the whole admin half — a routine editor per
+     member, the copy-from-somebody-else control, the prep kits — none of which
+     belongs on a screen with no keyboard that every child in the house can
+     reach.
+
+     The macro is markup only — pure Alpine, no element ids — and binds to a
+     scope CONTRACT, everything `routineLanesLogic()` below returns: `streaks`,
+     `dayItemsFor(memberId)`, `toggleRoutineCheck(id, memberId, checked)`,
+     `formatClock`, `kidGlyph`, `laneColumns()` and `routineShow(part)`.
+     `interactive` is an Alpine expression: false and the row is a div rather
+     than a button, because a hidden control still answers querySelector and a
+     wall board is a display.
+
+     IDENTITY IS PER LANE. Every check takes the tapped child's member_id from
+     its own lane's `s.member_id`, passed per call and never stored — the same
+     rule the chores lanes follow, and for the same reason: two children at one
+     kiosk would otherwise stomp each other's taps. The server re-validates
+     that the routine belongs to them.
+
+     Parts (all default on): 'header' (avatar and name), 'status' (the earned
+     tier), 'streak' (the 🔥 count), 'progress' (today's bar), 'items' (the
+     checklist itself).
+
+     Jinja `import` renders none of this file, so the logic script at the
+     bottom is emitted by `include` exactly once per page. -->
+
+{# The inside of one checklist row: a tick, the time, the glyph, the title.
+   Its own macro because the row is a <button> when the lane can be tapped and
+   a <div> when it cannot, and two hand-copied insides is how a glyph ends up
+   in one of them and not the other. #}
+{% macro routine_row() %}
+                                            <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 text-sm font-bold"
+                                                :class="it.checked ? 'bg-green-500 border-green-500 text-white' : 'border-gray-600 text-transparent'">✓</div>
+                                            <span class="text-blue-400 font-bold text-xs w-14 shrink-0" x-text="formatClock(it.time_of_day)"></span>
+                                            <span class="text-xl shrink-0" x-text="kidGlyph(it)"></span>
+                                            <span class="font-semibold" :class="it.checked ? 'text-gray-400 line-through' : 'text-white'" x-text="it.title"></span>
+{% endmacro %}
+
+{% macro lane_grid(interactive='true') %}
+                    <div class="grid gap-5" :style="'grid-template-columns: repeat(' + laneColumns() + ', minmax(0, 1fr))'">
+                        <template x-for="s in streaks" :key="'rlane-' + s.member_id">
+                            <div class="bg-gray-800/60 rounded-2xl border border-gray-700 p-4 flex flex-col gap-3">
+                                <!-- Lane header -->
+                                <template x-if="routineShow('header')">
+                                <div class="flex items-center gap-3 pb-2 border-b border-gray-700">
+                                    <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0 overflow-hidden"
+                                        :style="'background-color:' + (s.color_code || '#3b82f6')">
+                                        <template x-if="s.image"><img :src="s.image" class="w-full h-full object-cover"></template>
+                                        <template x-if="!s.image"><span x-text="s.avatar || (s.name || '?').charAt(0)"></span></template>
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <div class="font-bold text-white text-lg truncate" x-text="s.name"></div>
+                                        <template x-if="routineShow('status') && s.status">
+                                            <span class="inline-block text-[11px] font-bold text-amber-200"
+                                                x-text="s.status.emoji + ' ' + s.status.name"></span>
+                                        </template>
+                                    </div>
+                                    <div class="font-black text-orange-400 text-lg shrink-0"
+                                        x-show="routineShow('streak')">
+                                        <span x-text="s.streak.current"></span>🔥
+                                    </div>
+                                </div>
+                                </template>
+
+                                <!-- Today progress -->
+                                <template x-if="routineShow('progress')">
+                                <div class="flex items-center gap-2">
+                                    <div class="flex-1 bg-gray-900 rounded-full h-2 overflow-hidden">
+                                        <div class="bg-green-500 h-full rounded-full transition-all"
+                                            :style="'width:' + (s.streak.today_total ? Math.round(100 * s.streak.today_done / s.streak.today_total) : 0) + '%'"></div>
+                                    </div>
+                                    <div class="text-xs font-bold shrink-0"
+                                        :class="s.streak.today_complete ? 'text-green-400' : 'text-gray-400'"
+                                        x-text="s.streak.today_total ? (s.streak.today_done + '/' + s.streak.today_total) : 'rest day'"></div>
+                                </div>
+                                </template>
+
+                                <!-- Today's checklist. A row is a BUTTON only
+                                     where it can be tapped: an inert card
+                                     drawing disabled buttons reads as broken
+                                     rather than as a display. -->
+                                <template x-if="routineShow('items')">
+                                <div class="space-y-2">
+                                    <template x-for="it in dayItemsFor(s.member_id)" :key="'rit-' + s.member_id + '-' + it.id">
+                                        <div>
+                                            <!-- A row is a BUTTON where it can be
+                                                 tapped and a DIV where it cannot.
+                                                 Alpine has no dynamic tag, so the
+                                                 two are separate branches over one
+                                                 shared inside (`routine_row`) —
+                                                 an inert card drawing dead buttons
+                                                 reads as broken rather than as a
+                                                 display. -->
+                                            <template x-if="{{ interactive }}">
+                                                <button type="button"
+                                                    @click="toggleRoutineCheck(it.id, s.member_id, !it.checked)"
+                                                    class="w-full text-left border rounded-xl p-3 flex items-center gap-3 transition-colors"
+                                                    :class="it.checked ? 'border-green-600/60 bg-green-900/20' : 'border-gray-800 bg-gray-900'">
+                                                    {{ routine_row() }}
+                                                </button>
+                                            </template>
+                                            <template x-if="!({{ interactive }})">
+                                                <div class="w-full text-left border rounded-xl p-3 flex items-center gap-3"
+                                                    :class="it.checked ? 'border-green-600/60 bg-green-900/20' : 'border-gray-800 bg-gray-900'">
+                                                    {{ routine_row() }}
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
+                                    <div x-show="dayItemsFor(s.member_id).length === 0"
+                                        class="text-gray-600 text-xs bg-gray-900 border border-gray-800 rounded-xl p-3">Nothing today — rest day 🎉</div>
+                                </div>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                    <div x-show="!streaks.length" class="text-gray-500 bg-gray-800 rounded-xl p-6">
+                        No routines set up yet.
+                    </div>
+{% endmacro %}
+
+<script>
+    // The lane logic: the streaks, today's checklist per child, and the one
+    // tap that changes anything — ONE copy, spread into whichever Alpine
+    // component mounts the macro. The routines page spreads it into
+    // routinesPage(); a board card wraps it in routineLanesCard().
+    function routineLanesLogic(apiBase) {
+        return {
+            streaks: [],
+            dayItems: {},          // memberId -> today's checklist
+            use24h: false,
+
+            routineShow(part) { return true; },
+            // Hooks a mount overrides. The page fires the status celebration
+            // from both of these; a card does not, because the celebration is
+            // a full-screen overlay and a wall showing one per tile is not a
+            // celebration, it is a fault.
+            lanesOnStreaks(data) { },
+            lanesOnChecked(memberId, name, tierStatus) { },
+
+            // The household's clock. A routine's `time_of_day` is stored as
+            // "HH:MM" and was printed raw, so every routine time read as
+            // 24-hour whatever the setting said. Kept a pure string transform:
+            // the value is a wall-clock time with no date, and routing it
+            // through a Date would invent one.
+            formatClock(hhmm) {
+                const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '').trim());
+                if (!m) return hhmm || '';
+                let h = parseInt(m[1], 10);
+                if (isNaN(h) || h > 23) return hhmm;
+                if (this.use24h) return `${String(h).padStart(2, '0')}:${m[2]}`;
+                const suffix = h < 12 ? 'AM' : 'PM';
+                h = h % 12 || 12;
+                return `${h}:${m[2]} ${suffix}`;
+            },
+            async loadClockFormat() {
+                try {
+                    const res = await fetch(`${apiBase}api/settings`);
+                    if (res.ok) this.use24h = !!(await res.json()).time_format_24h;
+                } catch (e) { /* 12-hour is the default either way */ }
+            },
+
+            async loadStreaks() {
+                try {
+                    const res = await fetch(`${apiBase}api/routines/streaks`);
+                    const data = await res.json();
+                    this.streaks = Array.isArray(data) ? data : [];
+                    this.lanesOnStreaks(this.streaks);
+                } catch (e) { this.streaks = []; }
+            },
+            // One request per lane, in parallel. Per member because the day
+            // endpoint answers for one child — which is also what keeps the
+            // check that follows honest about whose routine it is.
+            async loadAllDayItems() {
+                const entries = await Promise.all(this.streaks.map(async s => {
+                    try {
+                        const res = await fetch(`${apiBase}api/routines/day?member_id=`
+                            + encodeURIComponent(s.member_id));
+                        const data = await res.json();
+                        return [s.member_id, data.items || []];
+                    } catch (e) { return [s.member_id, []]; }
+                }));
+                const map = {};
+                for (const [id, items] of entries) map[id] = items;
+                this.dayItems = map;
+            },
+            async reloadLanes() {
+                await this.loadStreaks();
+                await this.loadAllDayItems();
+            },
+            dayItemsFor(memberId) { return this.dayItems[memberId] || []; },
+
+            async toggleRoutineCheck(routineId, memberId, checked) {
+                const res = await fetch(`${apiBase}api/routines/${routineId}/check`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: memberId, checked: checked })
+                });
+                if (!res.ok) {
+                    const e = await res.json().catch(() => ({}));
+                    showGlobalAlert(e.detail || 'Could not update');
+                } else {
+                    const data = await res.json().catch(() => ({}));
+                    const s = this.streaks.find(x => x.member_id === memberId);
+                    this.lanesOnChecked(memberId, s ? s.name : '', data.tier_status);
+                }
+                await this.reloadLanes();
+            },
+        };
+    }
+
+    // The same 30 seconds the routines kiosk already polled on: a phone
+    // ticking something off and the wall agreeing before anybody notices.
+    const ROUTINE_LANES_POLL_MS = 30000;
+
+    function routineLanesCard(t, apiBase) {
+        const cfg = (t && t.data) || {};
+        const wanted = new Set(cfg.members || []);
+        const parts = cfg.parts || {};
+        return {
+            ...routineLanesLogic(apiBase),
+            lanesInteractive: cfg.interactive !== false,
+            routineShow(part) { return parts[part] !== false; },
+            lanesOnStreaks(data) {
+                // The card's member filter — "build your own views, filter by
+                // person" is half the reason boards exist. Applied in place so
+                // the day-items fetch below only asks for the lanes drawn.
+                if (wanted.size) {
+                    const keep = data.filter(s => wanted.has(s.member_id));
+                    data.length = 0;
+                    data.push(...keep);
+                }
+            },
+            laneColumns() {
+                // A card does not know the window the way the page does; it
+                // knows its tile. Lanes wrap at four — a tile wider than four
+                // children is a tile that wanted to be the kiosk.
+                return Math.max(1, Math.min(this.streaks.length || 1, 4));
+            },
+            startRoutineLanes() {
+                this.loadClockFormat();
+                this.reloadLanes();
+                setInterval(() => this.reloadLanes(), ROUTINE_LANES_POLL_MS);
+            },
+        };
+    }
+</script>

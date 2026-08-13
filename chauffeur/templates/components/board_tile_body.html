@@ -1,6 +1,7 @@
 {% import 'components/chores_lanes.html' as chores_lanes %}
 {% import 'components/errand_lists.html' as errand_lists %}
 {% import 'components/shopping_lists.html' as shopping_lists %}
+{% import 'components/routine_lanes.html' as routine_lanes %}
 <!-- ── What a tile of a given type DRAWS, and nothing else.
 
      Pulled out of the board's tile loop so that a card inside a group tile can
@@ -352,6 +353,17 @@
                     <template x-if="t.type === 'chores_rewards' && !t.data.empty">
                         <div>
                             {{ chores_lanes.goals_strip(source='(t.data.goals || [])') }}
+                        </div>
+                    </template>
+
+                    <!-- ── The routines kiosk's lanes, as a card: today's
+                         checklist per child with the tap that ticks one off.
+                         The SAME macro the routines page renders; the card
+                         self-fetches on the kiosk's own cadence. -->
+                    <template x-if="t.type === 'routines_lanes'">
+                        <div x-data="routineLanesCard(t, apiBase)" x-init="startRoutineLanes()"
+                            class="flex-1 min-h-0 overflow-y-auto tile-scroll">
+                            {{ routine_lanes.lane_grid(interactive='lanesInteractive') }}
                         </div>
                     </template>
 

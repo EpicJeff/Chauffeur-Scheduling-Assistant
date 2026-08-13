@@ -1650,6 +1650,8 @@
     <!-- And the shopping page's three: mealWeekLogic / shoppingListsLogic and
          their card wrappers. -->
     {% include 'components/shopping_lists.html' %}
+    <!-- And the routines kiosk's lanes. -->
+    {% include 'components/routine_lanes.html' %}
     <!-- And the drives tile's timeline, which is the Drives page's own
          renderer. Both tiles are the page's view at tile size rather than a
          second drawing of it. -->
@@ -3837,7 +3839,8 @@
                            'custom', 'clock', 'hero', 'heading',
                            'chores_lanes', 'chores_rewards',
                            'task_list', 'errand_list',
-                           'shopping_staples', 'shopping_list'],
+                           'shopping_staples', 'shopping_list',
+                           'routines_lanes'],
                 opens(type) {
                     return !this.PAGELESS.includes(type);
                 },

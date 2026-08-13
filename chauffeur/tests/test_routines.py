@@ -261,10 +261,16 @@ def scenario_routine_times_follow_the_households_clock():
     call site somebody could add a fourth copy beside.
     """
     import re as _re
-    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                       'templates')
+    import sys as _sys
+    _here = os.path.dirname(os.path.abspath(__file__))
+    if _here not in _sys.path:
+        _sys.path.insert(0, _here)
+    # Include-inlined: the routines lanes (and their formatClock) moved into
+    # components/routine_lanes.html so the board card draws the same lane the
+    # page does. A surface is what it RENDERS, not what one file holds.
+    import tpl_source
     for name in ('app.html', 'routines.html'):
-        src = open(os.path.join(tpl, name), encoding='utf-8').read()
+        src = tpl_source.read(name)
         # `${...time_of_day}` in a template literal, or Alpine x-text on it,
         # with no formatter in between.
         raw = _re.findall(r'\$\{[^}]*\.time_of_day\s*\}', src)

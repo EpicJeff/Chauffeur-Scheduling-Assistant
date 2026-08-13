@@ -327,6 +327,25 @@ WIDGETS = [
               help='Leave empty for everyone with a routine.'),
          _opt('count', 'Rows', 'int', 6, min=1, max=12),
      ]},
+    # ── The routines kiosk, as a card. `routines` above is the GLANCE — who
+    # has kept theirs going and for how long. This is the kiosk's own lanes:
+    # today's checklist per child, with the tap that ticks one off.
+    {'key': 'routines_lanes', 'icon': '✅', 'label': 'Routine lanes',
+     'heading': '',
+     'blurb': "Today's routine for each child, with a tap to tick one off. "
+              "The routines kiosk's own lanes.",
+     'options': [
+         _opt('interactive', 'Interactive', 'bool', True,
+              help='Tapping a line ticks it off for that child. Off, the '
+                   'lanes are a display.'),
+         _opt('members', 'People', 'select', [], source='members', multi=True,
+              help='Leave empty for everyone with a routine.'),
+         _opt('show_header', 'Name & avatar', 'bool', True),
+         _opt('show_status', 'The earned status', 'bool', True),
+         _opt('show_streak', 'The streak count', 'bool', True),
+         _opt('show_progress', "Today's progress bar", 'bool', True),
+         _opt('show_items', "Today's checklist", 'bool', True),
+     ]},
     {'key': 'occasions', 'icon': '🎁', 'label': 'Occasions',
      'heading': 'Coming up',
      'blurb': "The next occasion and how many days are left to get ready.",
@@ -1424,6 +1443,23 @@ def _tile_routines(now, config=None, **_):
         return {'streaks': rows[:count]}
     except Exception as e:
         print(f"[home_board] routines failed: {e}")
+        return None
+
+
+def _tile_routines_lanes(now, config=None, **_):
+    """The routines kiosk lanes as a card. Interactive depth, so the card
+    fetches its own streaks and per-child checklists (rule 2); this is only the
+    mount config."""
+    try:
+        if not storage.get_routines():
+            return None                       # never made one: feature unused
+        return {'interactive': _cfg_bool(config, 'interactive', True),
+                'members': _cfg_ids(config, 'members'),
+                'parts': {p: _cfg_bool(config, f'show_{p}', True)
+                          for p in ('header', 'status', 'streak',
+                                    'progress', 'items')}}
+    except Exception as e:
+        print(f"[home_board] routine lanes failed: {e}")
         return None
 
 
@@ -2575,7 +2611,7 @@ _BUILDERS: dict = {
     'meals_week': _tile_meals_week, 'shopping_staples': _tile_shopping_staples,
     'shopping_list': _tile_shopping_list,
     'chores_lanes': _tile_chores_lanes, 'chores_rewards': _tile_chores_goals,
-    'routines': _tile_routines,
+    'routines': _tile_routines, 'routines_lanes': _tile_routines_lanes,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,
     'calendar': _tile_calendar, 'errands': _tile_errands, 'tasks': _tile_tasks,
     'task_list': _tile_task_list, 'errand_list': _tile_errand_list,
@@ -3134,11 +3170,18 @@ BUILTIN_PAGES = {
         'spans': {'chores_rewards': {'cols': 12, 'rows': 1},
                   'chores_lanes': {'cols': 12, 'rows': 4}},
     },
+    # The routines kiosk's own order: the day preview each child gets, then
+    # the lanes they tick things off in. The streak leaderboard is not here
+    # because each lane already carries its own 🔥 — the kiosk decided that.
     'routines': {
         'name': 'Routines', 'icon': '🔁', 'v': 5, 'columns': 12,
-        'widgets': [{'id': 'routines', 'type': 'routines',
-                     'config': {'count': 12, 'title': 'Streaks'}}],
-        'spans': {'routines': {'cols': 12, 'rows': 4}},
+        'widgets': [
+            {'id': 'kids', 'type': 'kids', 'config': {'title': 'Each kid'}},
+            {'id': 'routines_lanes', 'type': 'routines_lanes',
+             'config': {'title': 'Today'}},
+        ],
+        'spans': {'kids': {'cols': 12, 'rows': 2},
+                  'routines_lanes': {'cols': 12, 'rows': 4}},
     },
     'trips': {
         'name': 'Trips', 'icon': '🧭', 'v': 5, 'columns': 12,

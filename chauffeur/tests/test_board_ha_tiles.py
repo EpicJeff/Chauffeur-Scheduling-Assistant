@@ -513,9 +513,18 @@ def scenario_a_tile_with_no_page_is_not_a_link():
     # `custom` joined them for a different reason worth keeping straight: it
     # summarises SEVERAL pages, so there is no one page for it to open, where
     # these summarise none of ours at all.
-    check("PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web',"
-          in tpl and "'custom', 'clock', 'hero', 'heading']" in tpl,
-          "the Home Assistant tiles are linking somewhere again")
+    # Checked as a SET rather than as a literal line: the list grew every
+    # time a kiosk page became cards (the lanes and the lists hold buttons of
+    # their own, and an <a> may only contain those while it has no href), and
+    # a substring match on its formatting broke on each of them while proving
+    # nothing about the tiles this scenario is actually named for.
+    import ast
+    listed = tpl[tpl.index('PAGELESS: ['):]
+    listed = ast.literal_eval(listed[listed.index('['):listed.index(']') + 1])
+    for type_ in ('ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web',
+                  'custom', 'clock', 'hero', 'heading'):
+        check(type_ in listed,
+              f"the {type_} tile is linking somewhere again: {listed}")
     check('opens(t.type) ? link(t.type) : null' in tpl,
           "the tile's href is unconditional, so a pageless tile is still a link")
 

@@ -1,3 +1,4 @@
+{% import 'components/routine_lanes.html' as routine_lanes %}
 <!DOCTYPE html>
 <html lang="en" class="dark">
 
@@ -50,10 +51,6 @@
             <!-- ===== Kiosk: compact streak strip + interactive per-child lanes ===== -->
             <template x-if="isKiosk">
                 <div>
-                    <div x-show="streaks.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
-                        No routines set up yet.
-                    </div>
-
                     <!-- 🍽️ Tonight's eating plan (M2). Renders ONLY when the day is
                          actually constrained — the server returns no lines on an
                          ordinary evening (design principle 6), so the wall panel
@@ -103,59 +100,10 @@
                         </div>
                     </div>
 
-                    <!-- Interactive lanes: tap an item to check it off as that child -->
-                    <div class="grid gap-5" :style="'grid-template-columns: repeat(' + laneColumns() + ', minmax(0, 1fr))'">
-                        <template x-for="s in streaks" :key="'lane-' + s.member_id">
-                            <div class="bg-gray-800/60 rounded-2xl border border-gray-700 p-4 flex flex-col gap-3">
-                                <!-- Lane header -->
-                                <div class="flex items-center gap-3 pb-2 border-b border-gray-700">
-                                    <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0 overflow-hidden"
-                                        :style="'background-color:' + (s.color_code || '#3b82f6')">
-                                        <template x-if="s.image"><img :src="s.image" class="w-full h-full object-cover"></template>
-                                        <template x-if="!s.image"><span x-text="s.avatar || (s.name || '?').charAt(0)"></span></template>
-                                    </div>
-                                    <div class="min-w-0 flex-1">
-                                        <div class="font-bold text-white text-lg truncate" x-text="s.name"></div>
-                                        <template x-if="s.status">
-                                            <span class="inline-block text-[11px] font-bold text-amber-200"
-                                                x-text="s.status.emoji + ' ' + s.status.name"></span>
-                                        </template>
-                                    </div>
-                                    <div class="font-black text-orange-400 text-lg shrink-0">
-                                        <span x-text="s.streak.current"></span>🔥
-                                    </div>
-                                </div>
-
-                                <!-- Today progress -->
-                                <div class="flex items-center gap-2">
-                                    <div class="flex-1 bg-gray-900 rounded-full h-2 overflow-hidden">
-                                        <div class="bg-green-500 h-full rounded-full transition-all"
-                                            :style="'width:' + (s.streak.today_total ? Math.round(100 * s.streak.today_done / s.streak.today_total) : 0) + '%'"></div>
-                                    </div>
-                                    <div class="text-xs font-bold shrink-0"
-                                        :class="s.streak.today_complete ? 'text-green-400' : 'text-gray-400'"
-                                        x-text="s.streak.today_total ? (s.streak.today_done + '/' + s.streak.today_total) : 'rest day'"></div>
-                                </div>
-
-                                <!-- Today's checklist -->
-                                <div class="space-y-2">
-                                    <template x-for="it in dayItemsFor(s.member_id)" :key="'it-' + s.member_id + '-' + it.id">
-                                        <button type="button" @click="toggleRoutineCheck(it.id, s.member_id, !it.checked)"
-                                            class="w-full text-left border rounded-xl p-3 flex items-center gap-3 transition-colors"
-                                            :class="it.checked ? 'border-green-600/60 bg-green-900/20' : 'border-gray-800 bg-gray-900'">
-                                            <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 text-sm font-bold"
-                                                :class="it.checked ? 'bg-green-500 border-green-500 text-white' : 'border-gray-600 text-transparent'">✓</div>
-                                            <span class="text-blue-400 font-bold text-xs w-14 shrink-0" x-text="formatClock(it.time_of_day)"></span>
-                                            <span class="text-xl shrink-0" x-text="kidGlyph(it)"></span>
-                                            <span class="font-semibold" :class="it.checked ? 'text-gray-400 line-through' : 'text-white'" x-text="it.title"></span>
-                                        </button>
-                                    </template>
-                                    <div x-show="dayItemsFor(s.member_id).length === 0"
-                                        class="text-gray-600 text-xs bg-gray-900 border border-gray-800 rounded-xl p-3">Nothing today — rest day 🎉</div>
-                                </div>
-                            </div>
-                        </template>
-                    </div>
+                    <!-- Interactive lanes: tap an item to check it off as
+                         that child. The SAME macro the board's
+                         `routines_lanes` card renders — one drawing. -->
+{{ routine_lanes.lane_grid(interactive='true') }}
 
                 </div>
             </template>
@@ -533,8 +481,15 @@
 
     <script>
         function routinesPage() {
+            const base = window.location.pathname.endsWith('/') ? '../' : '';
             return {
-                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                // The lanes' logic — the streaks, today's checklist per child
+                // and the one tap that changes anything. Spread in first, so
+                // `laneColumns` and the two celebration hooks below override
+                // it: the page measures its window and fires the full-screen
+                // status overlay, and a card does neither.
+                ...routineLanesLogic(base),
+                apiBase: base,
                 isKiosk: new URLSearchParams(window.location.search).get('kiosk') === 'true',
                 hideTitle: ['none', 'off', '0', 'false', 'hide'].includes(
                     (new URLSearchParams(window.location.search).get('title') || '').toLowerCase()),
@@ -542,8 +497,6 @@
                 dayNames: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
                 members: [],
                 routines: [],
-                streaks: [],
-                dayItems: {},   // memberId -> today's checklist items (kiosk lanes)
                 kidDigests: { kids: {}, label: '', weather: '' },   // 🌙 strip (K1)
                 mealLines: [],                                     // 🍽️ strip (M2)
                 newRoutineMemberId: '',
@@ -564,43 +517,29 @@
                 kitMatches: {},
                 showMatchesKitId: null,
 
-                use24h: false,
-                // The household's clock. A routine's `time_of_day` is stored as
-                // "HH:MM" and was printed raw, so every routine time read as
-                // 24-hour whatever the setting said. Kept a pure string
-                // transform: the value is a wall-clock time with no date, and
-                // routing it through a Date would invent one.
-                formatClock(hhmm) {
-                    const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '').trim());
-                    if (!m) return hhmm || '';
-                    let h = parseInt(m[1], 10);
-                    if (isNaN(h) || h > 23) return hhmm;
-                    if (this.use24h) return `${String(h).padStart(2, '0')}:${m[2]}`;
-                    const suffix = h < 12 ? 'AM' : 'PM';
-                    h = h % 12 || 12;
-                    return `${h}:${m[2]} ${suffix}`;
-                },
-                async loadClockFormat() {
-                    try {
-                        const res = await fetch(`${this.apiBase}api/settings`);
-                        if (res.ok) this.use24h = !!(await res.json()).time_format_24h;
-                    } catch (e) { /* 12-hour is the default either way */ }
-                },
-
                 async init() {
                     await this.loadClockFormat();
                     if (this.isKiosk) {
-                        await this.loadStreaks();
-                        this._celebrateSweep();   // first call seeds localStorage silently
-                        await this.loadAllDayItems();
+                        await this.reloadLanes();
                         this.loadKidDigests();    // digest content moves slowly: own 5-min cadence
                         this.loadMealPlan();      // same cadence — derived from the same schedule
-                        setInterval(() => this.reloadKiosk(), 30000);
+                        setInterval(() => this.reloadLanes(), 30000);
                         setInterval(() => this.loadKidDigests(), 300000);
                         window.addEventListener('resize', () => { this.winW = window.innerWidth; });
                         return;
                     }
                     await Promise.all([this.loadMembers(), this.loadRoutines(), this.loadStreaks(), this.loadPrepKits()]);
+                },
+
+                // The celebration is this page's, not the shared logic's: it is
+                // a full-screen overlay, and a wall firing one per tile is not
+                // a celebration, it is a fault. The sweep runs on every fresh
+                // leaderboard (the first call seeds localStorage silently);
+                // `lanesOnChecked` fires it at the tap that earned it, and
+                // cannot double-fire because localStorage is written first.
+                lanesOnStreaks(data) { this._celebrateSweep(); },
+                lanesOnChecked(memberId, name, tierStatus) {
+                    maybeCelebrateStatusKiosk(memberId, name, 'routine', tierStatus);
                 },
 
                 _celebrateSweep() {
@@ -612,24 +551,6 @@
                 // --- Kiosk lanes: today's checklist per child, checked off with
                 // that child's identity (per-lane member_id → the /check endpoint,
                 // which validates the routine belongs to them). ---
-                async loadAllDayItems() {
-                    const entries = await Promise.all(this.streaks.map(async s => {
-                        try {
-                            const res = await fetch(`${this.apiBase}api/routines/day?member_id=${encodeURIComponent(s.member_id)}`);
-                            const data = await res.json();
-                            return [s.member_id, data.items || []];
-                        } catch (e) { return [s.member_id, []]; }
-                    }));
-                    const map = {};
-                    for (const [id, items] of entries) map[id] = items;
-                    this.dayItems = map;
-                },
-                async reloadKiosk() {
-                    await this.loadStreaks();
-                    this._celebrateSweep();
-                    await this.loadAllDayItems();
-                },
-                dayItemsFor(memberId) { return this.dayItems[memberId] || []; },
                 async loadKidDigests() {
                     try {
                         const res = await fetch(`${this.apiBase}api/kids/digests`);
@@ -669,24 +590,6 @@
                     const rows = Math.ceil(n / maxFit);
                     return Math.ceil(n / rows);
                 },
-                async toggleRoutineCheck(routineId, memberId, checked) {
-                    const res = await fetch(`${this.apiBase}api/routines/${routineId}/check`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ member_id: memberId, checked: checked })
-                    });
-                    if (!res.ok) {
-                        const e = await res.json().catch(() => ({}));
-                        showGlobalAlert(e.detail || 'Could not update');
-                    } else {
-                        // Instant tier-up at the tap that earned it; the poll sweep
-                        // can't double-fire (localStorage is updated here first).
-                        const data = await res.json().catch(() => ({}));
-                        const s = this.streaks.find(x => x.member_id === memberId);
-                        maybeCelebrateStatusKiosk(memberId, s ? s.name : '', 'routine', data.tier_status);
-                    }
-                    await this.reloadKiosk();
-                },
-
                 async loadMembers() {
                     try {
                         const res = await fetch(`${this.apiBase}api/members`);
@@ -700,13 +603,6 @@
                         this.routines = await res.json();
                     } catch (e) { this.routines = []; }
                 },
-                async loadStreaks() {
-                    try {
-                        const res = await fetch(`${this.apiBase}api/routines/streaks`);
-                        this.streaks = await res.json();
-                    } catch (e) { this.streaks = []; }
-                },
-
                 memberIdsWithItems() {
                     return [...new Set(this.routines.map(r => r.member_id))];
                 },
@@ -1003,6 +899,10 @@
     </script>
 
     {% include 'components/kid_glyphs.html' %}
+    <!-- The lanes' shared logic (routineLanesLogic / routineLanesCard).
+         Script-only emission — the markup it serves is the macro rendered
+         above and, on a board, by board_tile_body. -->
+    {% include 'components/routine_lanes.html' %}
     {% include 'components/status_celebration.html' %}
     {% include 'components/moments_hearth.html' %}
     {% include 'components/control_center.html' %}
