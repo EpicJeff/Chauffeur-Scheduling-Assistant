@@ -1285,6 +1285,32 @@
                                                             class="w-11 ed-input rounded text-xs ed-title px-1 py-0.5">
                                                         cols
                                                     </label>
+                                                    <!-- A card's HEIGHT, and the way back from one.
+                                                         `rows: 0` has always meant "as tall as the
+                                                         content" — but the only thing that ever SET
+                                                         rows was dragging the card's grip in arrange
+                                                         mode, and nothing anywhere could put it back.
+                                                         A card left at a dragged height makes its
+                                                         TILE fit that height, which reads as the
+                                                         tile's fit being broken (reported exactly
+                                                         that way: "says 512px but it's way too tall
+                                                         for the content"). -->
+                                                    <label class="flex items-center gap-1 text-[0.7rem] ed-note"
+                                                        x-show="cardNum(c, 'rows', 0)">
+                                                        <input type="number" min="1" max="40" step="1"
+                                                            :value="cardNum(c, 'rows', 0)"
+                                                            @change="setCardNum(c, 'rows', $event.target.value, 0)"
+                                                            class="w-11 ed-input rounded text-xs ed-title px-1 py-0.5">
+                                                        rows
+                                                    </label>
+                                                    <label class="flex items-center gap-1 text-[0.7rem] ed-note"
+                                                        title="As tall as whatever it is showing">
+                                                        <input type="checkbox"
+                                                            :checked="!cardNum(c, 'rows', 0)"
+                                                            @change="setCardNum(c, 'rows',
+                                                                $event.target.checked ? 0 : 4, 0)">
+                                                        fit
+                                                    </label>
                                                     <!-- Always offered on a CARD (unlike a
                                                          tile's gear): every card carries the
                                                          universal no-panel toggle now, so
@@ -3212,7 +3238,18 @@
                     // very different bugs to go looking for.
                     if (this.isAuto(id, type)) {
                         const px = this.autoPx[id];
-                        return `${c} × fit${px ? ' · ' + px + 'px' : ' · measuring…'}`;
+                        // A tile fitting a card that was DRAGGED to a height
+                        // is the one case where fit looks broken and is not:
+                        // the tile is the right height for a card that is the
+                        // wrong height for its content. Say so here, because
+                        // the fix is one level down and nothing else points
+                        // at it.
+                        const tile = (this.board.tiles || []).find(t => t.id === id);
+                        const sized = (tile && tile.cards || [])
+                            .filter(k => k.rows).length;
+                        const why = sized ? ` · ${sized} card${sized > 1 ? 's' : ''} sized`
+                                          : '';
+                        return `${c} × fit${px ? ' · ' + px + 'px' : ' · measuring…'}${why}`;
                     }
                     return `${c} × ${Math.max(1, parseInt(s.rows, 10) || 1)}`;
                 },

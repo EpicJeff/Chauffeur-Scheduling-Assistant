@@ -478,6 +478,41 @@ def scenario_a_fit_tile_says_what_it_measured():
           "a tile that has not been measured yet is indistinguishable from "
           "one measured at zero")
 
+def scenario_a_card_inside_a_tile_can_fit_too():
+    """The third "fit is broken" report, and it was not the tile.
+
+    A card in a custom tile gets `height: rows * --nc-row` when it has `rows`,
+    and the only thing that ever SET rows was dragging the card's grip in
+    arrange mode — nothing anywhere could put it back. A card left at a
+    dragged height makes its TILE fit that height, which reads exactly as the
+    tile's fit being broken: "says 512px but it's way too tall for the
+    content." The tile was right; the card could not fit its own content.
+
+    `rows: 0` has always meant "as tall as the content". It just had no
+    control.
+    """
+    src = tpl_source.read('home.html')
+    card_row = src[src.index("setCardNum(c, 'cols'"):]
+    card_row = card_row[:card_row.index('title="Options"')]
+    check("setCardNum(c, 'rows'" in card_row,
+          "a card's height cannot be edited, so a dragged one is permanent")
+    check('fit' in card_row,
+          "there is no way to put a dragged card back to fitting its content")
+    # The cell only takes a height when the card HAS one — 0 stays auto.
+    cell = src[src.index('class="nc-cell" :data-path="c.id"'):]
+    cell = cell[:cell.index('</div>')]
+    check('c.rows ?' in cell,
+          "a card's cell is given a height unconditionally, so nothing can be "
+          "content-sized")
+
+    # And the tile's arrange label names the cause, since the fix is one
+    # level down and nothing else points at it.
+    label = src[src.index('spanLabel(id, type) {'):]
+    label = label[:label.index(chr(10) + '                },')]
+    check('sized' in label,
+          "a tile fitting a dragged card looks broken with nothing on screen "
+          "to say the height came from the card")
+
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
