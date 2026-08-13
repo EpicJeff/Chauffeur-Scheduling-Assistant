@@ -240,6 +240,27 @@ WIDGETS = [
               help='Leave empty for everyone with points.'),
          _opt('count', 'Rows', 'int', 6, min=1, max=12),
      ]},
+    # ── The chores kiosk, as cards (board-cards arc): the leaderboard is the
+    # `chores` tile above; these two are the kiosk's other drawings, rendered
+    # from the SAME macros the kiosk page renders
+    # (components/chores_lanes.html), so the wall can never drift from it.
+    {'key': 'chores_lanes', 'icon': '🧒', 'label': 'Chore lanes',
+     'heading': '',
+     'blurb': "The kiosk's per-child lanes: chores, rewards and goals, one column per kid.",
+     'options': [
+         # A wall board is a display first; a kiosk board is a control. The
+         # card is inert until somebody decides otherwise — the first card to
+         # carry the `interactive` option (board-cards rule 3).
+         _opt('interactive', 'Interactive', 'bool', False,
+              help='Claim, Done and Redeem buttons on the card. Off, the '
+                   'lanes are a display.'),
+         _opt('members', 'Children', 'select', [], source='members', multi=True,
+              help='Leave empty for everyone.'),
+     ]},
+    {'key': 'chores_rewards', 'icon': '🎯', 'label': 'Family goals',
+     'heading': '',
+     'blurb': "The pooled-reward thermometers, one per shared goal.",
+     'options': []},
     {'key': 'routines', 'icon': '🔁', 'label': 'Routines',
      'heading': 'Streaks',
      'blurb': "Who has kept their routine going, and for how long.",
@@ -1185,6 +1206,42 @@ def _tile_chores(now, config=None, **_):
         return {'balances': rows[:count]}
     except Exception as e:
         print(f"[home_board] chores failed: {e}")
+        return None
+
+
+def _tile_chores_lanes(now, config=None, **_):
+    """The kiosk lanes as a card. Interactive depth, so the card fetches its
+    own four arrays (rule 2 — a payload that rebuilds under the finger typing
+    a chip-in amount cannot carry them); this is only the mount config."""
+    try:
+        # Same configured-at-all test as the leaderboard: no chores and no
+        # rewards means the household has not set the economy up.
+        if not (storage.get_all_chores() or storage.get_rewards()):
+            return None
+        return {'interactive': _cfg_bool(config, 'interactive', False),
+                'members': _cfg_ids(config, 'members')}
+    except Exception as e:
+        print(f"[home_board] chore lanes failed: {e}")
+        return None
+
+
+def _tile_chores_goals(now, config=None, **_):
+    """The family-goals strip. Display, so it RIDES the board payload (rule
+    2), in the same reward shape the lanes fetch live — which is what lets
+    one macro draw both."""
+    try:
+        goals = []
+        for r in storage.get_rewards():
+            if not r.get('pooled'):
+                continue
+            goals.append({'id': r.get('id'), 'title': r.get('title'),
+                          'cost': r.get('cost'), 'pooled': True,
+                          'pool': storage.get_pool_status(r)})
+        # No pooled rewards = the feature is not set up; the card vanishes
+        # like any unconfigured feature's tile does.
+        return {'goals': goals} if goals else None
+    except Exception as e:
+        print(f"[home_board] family goals failed: {e}")
         return None
 
 
@@ -2317,7 +2374,9 @@ def _build_tile(inst, now, **kw):
 _BUILDERS: dict = {
     'clock': _tile_clock, 'hero': _tile_hero, 'heading': _tile_heading,
     'drives': _tile_drives, 'kids': _tile_kids, 'meals': _tile_meals,
-    'shopping': _tile_shopping, 'chores': _tile_chores, 'routines': _tile_routines,
+    'shopping': _tile_shopping, 'chores': _tile_chores,
+    'chores_lanes': _tile_chores_lanes, 'chores_rewards': _tile_chores_goals,
+    'routines': _tile_routines,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,
     'calendar': _tile_calendar, 'errands': _tile_errands, 'tasks': _tile_tasks,
     'trips': _tile_trips,

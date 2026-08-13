@@ -1,0 +1,387 @@
+<!-- ── The chores lanes and the family-goals strip, shared drawings.
+
+     One drawing per content type (the board-cards rule): the chores page's
+     kiosk mode and the board's chores cards render THESE macros, so the wall
+     can never drift from the page. The macros are markup only — pure Alpine,
+     no element ids, no querySelector — and bind to a scope CONTRACT:
+
+       goals_strip(source):  `source` is an Alpine expression yielding pooled
+           rewards, each `{id, title, pool: {pledged, cost, remaining, funded,
+           contributions: [{member_id, member_name, color_code, amount}]}}`.
+           Display only — chip-in lives in the lanes, identity is per-lane.
+
+       lane_grid(interactive): the scope provides the four arrays
+           (balances / chores / rewards / redemptions), `poolAmt`, the slicing
+           helpers and the kiosk actions — everything `choresLanesLogic()`
+           below returns — plus `laneColumns()`, which each mount computes for
+           its own width. `interactive` is an Alpine expression: when false
+           the buttons and inputs are not drawn at all (a wall board is a
+           display; a hidden button still answers querySelector).
+
+     IDENTITY IS PER LANE. Every action takes the tapped child's member_id
+     from its own lane's `b.member_id`, passed per call and never stored.
+     Hoisting it to a "current member" is the one unforgivable break — two
+     children at one kiosk would stomp each other's taps.
+
+     Jinja `import` renders none of this file, so the logic script at the
+     bottom is emitted by `include` exactly once per page. -->
+
+{% macro goals_strip(source='pooledGoals()') %}
+                    <!-- Family goals strip: one shared thermometer per pooled
+                         reward, segmented per contributor by member color. -->
+                    <div x-show="({{ source }}).length" class="mb-5 grid gap-3"
+                        style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))">
+                        <template x-for="rw in ({{ source }})" :key="'goalstrip-' + rw.id">
+                            <div class="bg-gray-800/60 rounded-2xl p-4 border"
+                                :class="rw.pool.funded ? 'border-emerald-600/60' : 'border-gray-700'">
+                                <div class="flex items-center justify-between gap-2 mb-2">
+                                    <div class="font-bold text-white truncate" x-text="'🎯 ' + rw.title"></div>
+                                    <span class="text-sm font-black text-emerald-300 shrink-0"
+                                        x-text="rw.pool.pledged + '/' + rw.pool.cost + ' ⭐'"></span>
+                                </div>
+                                <div class="h-3 w-full bg-gray-900 rounded-full overflow-hidden flex">
+                                    <template x-for="c in rw.pool.contributions" :key="'seg-' + rw.id + '-' + c.member_id">
+                                        <div class="h-full"
+                                            :style="'width:' + Math.min(100, c.amount / Math.max(1, rw.pool.cost) * 100) + '%;background-color:' + (c.color_code || '#3b82f6')"></div>
+                                    </template>
+                                </div>
+                                <div class="flex items-center justify-between gap-2 mt-2 flex-wrap">
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <template x-for="c in rw.pool.contributions" :key="'chip-' + rw.id + '-' + c.member_id">
+                                            <span class="inline-flex items-center gap-1 text-[11px] font-bold text-gray-300">
+                                                <span class="w-2 h-2 rounded-full" :style="'background-color:' + (c.color_code || '#3b82f6')"></span>
+                                                <span x-text="(c.member_name || '?') + ' ' + c.amount"></span>
+                                            </span>
+                                        </template>
+                                        <span x-show="!rw.pool.contributions.length" class="text-[11px] text-gray-600">No pledges yet</span>
+                                    </div>
+                                    <span class="text-[11px] font-black" :class="rw.pool.funded ? 'text-emerald-300' : 'text-gray-400'"
+                                        x-text="rw.pool.funded ? 'Funded! Ask a parent 🎉' : rw.pool.remaining + ' ⭐ to go'"></span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+{% endmacro %}
+
+{% macro lane_grid(interactive='true') %}
+                    <div class="grid gap-5" :style="'grid-template-columns: repeat(' + laneColumns() + ', minmax(0, 1fr))'">
+                        <template x-for="(b, idx) in balances" :key="'lane-' + b.member_id">
+                            <div class="bg-gray-800/60 rounded-2xl border border-gray-700 p-4 flex flex-col gap-3">
+                                <!-- Lane header: rank, who, earned status, balance -->
+                                <div class="flex items-center gap-3 pb-2 border-b border-gray-700">
+                                    <div class="text-lg font-black w-7 text-center shrink-0"
+                                        :class="idx === 0 ? 'text-yellow-400' : (idx === 1 ? 'text-gray-300' : (idx === 2 ? 'text-amber-600' : 'text-gray-600'))"
+                                        x-text="'#' + (idx + 1)"></div>
+                                    <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0 overflow-hidden"
+                                        :style="'background-color:' + (b.color_code || '#3b82f6')">
+                                        <template x-if="b.image"><img :src="b.image" class="w-full h-full object-cover"></template>
+                                        <template x-if="!b.image"><span x-text="b.avatar || (b.name || '?').charAt(0)"></span></template>
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <div class="font-bold text-white text-lg truncate" x-text="b.name"></div>
+                                        <template x-if="b.status">
+                                            <span class="inline-block text-[11px] font-bold text-amber-200"
+                                                x-text="b.status.emoji + ' ' + b.status.name"></span>
+                                        </template>
+                                    </div>
+                                    <div class="font-black text-blue-400 text-xl shrink-0" x-text="b.balance + ' ⭐'"></div>
+                                </div>
+
+                                <!-- Rewards & goals FIRST (family request 2026-08-06): the
+                                     incentive must stay visible — a long chore list was
+                                     pushing rewards off the bottom of the wall panel. -->
+                                <!-- Family goals this child can chip in on -->
+                                <template x-if="pooledGoals().length">
+                                    <div class="space-y-2">
+                                        <div class="text-[10px] font-black uppercase tracking-widest text-emerald-400">Family Goals</div>
+                                        <template x-for="rw in pooledGoals()" :key="'goal-' + b.member_id + '-' + rw.id">
+                                            <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 space-y-1.5">
+                                                <div class="flex items-center justify-between gap-1">
+                                                    <div class="text-white font-bold text-[13px] leading-tight truncate" x-text="'🎯 ' + rw.title"></div>
+                                                    <span class="text-[11px] font-black text-emerald-300 shrink-0"
+                                                        x-text="rw.pool.pledged + '/' + rw.pool.cost + ' ⭐'"></span>
+                                                </div>
+                                                <div x-show="pledgeFor(b.member_id, rw)" class="flex items-center gap-2">
+                                                    <span class="text-[11px] font-bold text-emerald-300"
+                                                        x-text="'My pledge: ' + pledgeFor(b.member_id, rw) + ' ⭐'"></span>
+                                                    <template x-if="{{ interactive }}">
+                                                        <button @click="kioskWithdraw(rw.id, b.member_id)"
+                                                            class="text-[11px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700">↩</button>
+                                                    </template>
+                                                </div>
+                                                <template x-if="{{ interactive }}">
+                                                    <div x-show="!rw.pool.funded" class="flex items-center gap-1.5">
+                                                        <input type="number" min="1" x-model.number="poolAmt[b.member_id + ':' + rw.id]"
+                                                            placeholder="pts"
+                                                            class="w-16 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white">
+                                                        <button @click="kioskChipIn(rw.id, b.member_id)"
+                                                            class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white active:bg-emerald-700">Chip in</button>
+                                                    </div>
+                                                </template>
+                                                <div x-show="rw.pool.funded"
+                                                    class="text-[10px] font-black uppercase text-emerald-300">Funded — waiting for a parent 🎉</div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+
+                                <!-- Rewards this child can ask for -->
+                                <template x-if="plainRewards().length">
+                                    <div class="space-y-2">
+                                        <div class="text-[10px] font-black uppercase tracking-widest text-indigo-400">Rewards</div>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <template x-for="rw in plainRewards()" :key="'rw-' + b.member_id + '-' + rw.id">
+                                                <div class="bg-gray-900 border border-gray-800 rounded-xl p-2.5 flex flex-col gap-1.5">
+                                                    <div class="text-white font-bold text-[13px] leading-tight" x-text="rw.title"></div>
+                                                    <div class="flex items-center justify-between mt-auto gap-1">
+                                                        <span class="text-[11px] font-black text-indigo-300" x-text="rw.cost + ' ⭐'"></span>
+                                                        <template x-if="pendingRewardFor(b.member_id, rw.id)">
+                                                            <span class="text-[10px] font-black uppercase text-amber-300">Asked ⏳</span>
+                                                        </template>
+                                                        <template x-if="{{ interactive }} && !pendingRewardFor(b.member_id, rw.id)">
+                                                            <button @click="kioskRedeem(rw.id, b.member_id)"
+                                                                :disabled="spendableFor(b.member_id) < rw.cost"
+                                                                class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg"
+                                                                :class="spendableFor(b.member_id) >= rw.cost ? 'bg-indigo-600 text-white active:bg-indigo-700' : 'bg-gray-800 text-gray-600'">Redeem</button>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <!-- This child's claimed / in-progress chores -->
+                                <template x-if="myChoresFor(b.member_id).length">
+                                    <div class="space-y-2">
+                                        <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">My chores</div>
+                                        <template x-for="c in myChoresFor(b.member_id)" :key="'mine-' + b.member_id + '-' + c.id">
+                                            <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between gap-2">
+                                                <div class="min-w-0">
+                                                    <div class="text-white font-bold text-sm truncate"><span class="mr-1" x-text="kidGlyph(c)"></span><span x-text="c.title"></span></div>
+                                                    <div class="text-[11px] text-gray-500" x-text="'+' + c.points + ' pts'"></div>
+                                                </div>
+                                                <div class="flex gap-2 shrink-0">
+                                                    <template x-if="{{ interactive }} && c.state === 'claimed'">
+                                                        <div class="flex gap-2">
+                                                            <button @click="kioskDone(c.id, b.member_id)"
+                                                                class="text-[12px] font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700">Done!</button>
+                                                            <button @click="kioskUnclaim(c.id, b.member_id)"
+                                                                class="text-[12px] font-bold px-3 py-2 rounded-lg bg-gray-800 text-gray-400 border border-gray-700">↩</button>
+                                                        </div>
+                                                    </template>
+                                                    <template x-if="c.state === 'done'">
+                                                        <span class="text-[10px] font-black uppercase text-amber-300 bg-amber-500/10 border border-amber-500/40 px-2 py-1 rounded-full">Waiting for OK</span>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+
+                                <!-- Available to claim -->
+                                <div class="space-y-2">
+                                    <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">Available</div>
+                                    <template x-for="c in availableChoresFor(b.member_id)" :key="'avail-' + b.member_id + '-' + c.id">
+                                        <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between gap-2">
+                                            <div class="min-w-0">
+                                                <div class="text-white font-bold text-sm truncate"><span class="mr-1" x-text="kidGlyph(c)"></span><span x-text="c.title"></span></div>
+                                                <div class="text-[11px] text-gray-500" x-text="'+' + c.points + ' pts'"></div>
+                                            </div>
+                                            <template x-if="{{ interactive }}">
+                                                <button @click="kioskClaim(c.id, b.member_id)"
+                                                    class="text-[12px] font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700 shrink-0">Claim</button>
+                                            </template>
+                                        </div>
+                                    </template>
+                                    <div x-show="availableChoresFor(b.member_id).length === 0"
+                                        class="text-gray-600 text-xs bg-gray-900 border border-gray-800 rounded-xl p-3">Nothing to claim 🎉</div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+{% endmacro %}
+
+<script>
+    // The lane logic: the four arrays, the slicing helpers, and the actions —
+    // ONE copy, spread into whichever Alpine component mounts the macros.
+    // The chores page spreads it into choresPage(); a board card wraps it in
+    // choresLanesCard(). `lanesOnBalances` is the hook a mount overrides to
+    // do its own thing with a fresh leaderboard (the page seeds point tools
+    // and fires the kiosk status celebration; a card filters to its members).
+    function choresLanesLogic(apiBase) {
+        return {
+            balances: [],
+            chores: [],
+            rewards: [],
+            redemptions: [],
+            poolAmt: {},
+            busyChoreId: null,
+            busyRedemptionId: null,
+
+            lanesOnBalances(data) { /* mount hook */ },
+
+            async loadBalances() {
+                try {
+                    const res = await fetch(`${apiBase}api/points`);
+                    const data = await res.json();
+                    this.lanesOnBalances(data);
+                    this.balances = data;
+                } catch (e) { console.error('Failed to load points', e); }
+            },
+            async loadChores() {
+                try {
+                    const res = await fetch(`${apiBase}api/chores`);
+                    const data = await res.json();
+                    this.chores = Array.isArray(data) ? data : [];
+                } catch (e) { this.chores = []; }
+            },
+            async loadRewards() {
+                try {
+                    const res = await fetch(`${apiBase}api/rewards`);
+                    this.rewards = await res.json();
+                } catch (e) { this.rewards = []; }
+            },
+            async loadRedemptions() {
+                try {
+                    const res = await fetch(`${apiBase}api/redemptions?state=pending`);
+                    this.redemptions = await res.json();
+                } catch (e) { this.redemptions = []; }
+            },
+            reloadLanes() {
+                return Promise.all([this.loadBalances(), this.loadChores(),
+                                    this.loadRewards(), this.loadRedemptions()]);
+            },
+
+            // --- Slicing: identity is per-lane (the tapped child), passed
+            // explicitly to the same per-action endpoints the PWA uses. No
+            // stored/global identity, so lanes never stomp each other. ---
+            choreEligibleFor(c, memberId) {
+                const el = c.eligible_member_ids || [];
+                return !el.length || el.includes(memberId);
+            },
+            availableChoresFor(memberId) {
+                return this.chores.filter(c => c.state === 'open' && this.choreEligibleFor(c, memberId));
+            },
+            myChoresFor(memberId) {
+                return this.chores.filter(c => c.claimed_by === memberId
+                    && (c.state === 'claimed' || c.state === 'done'));
+            },
+            spendableFor(memberId) {
+                const b = this.balances.find(x => x.member_id === memberId);
+                return (b ? b.balance : 0) - this.pendingCost(memberId) - this.pledgedCost(memberId);
+            },
+            pendingRewardFor(memberId, rewardId) {
+                return this.redemptions.some(r => r.member_id === memberId && r.reward_id === rewardId);
+            },
+            pendingCost(memberId) {
+                return this.redemptions.filter(r => r.member_id === memberId)
+                    .reduce((s, r) => s + (r.cost || 0), 0);
+            },
+            // --- Family goals (pooled rewards) ---
+            pooledGoals() { return this.rewards.filter(rw => rw.pooled && rw.pool); },
+            plainRewards() { return this.rewards.filter(rw => !rw.pooled); },
+            pledgeFor(memberId, rw) {
+                const c = ((rw.pool || {}).contributions || []).find(c => c.member_id === memberId);
+                return c ? c.amount : 0;
+            },
+            pledgedCost(memberId) {
+                return this.pooledGoals().reduce((s, rw) => s + this.pledgeFor(memberId, rw), 0);
+            },
+
+            // --- Actions, one per tap, member_id per call ---
+            async kioskChipIn(rewardId, memberId) {
+                const key = memberId + ':' + rewardId;
+                const amount = Number(this.poolAmt[key]) || 0;
+                if (amount <= 0) { showGlobalAlert('Enter a point amount first'); return; }
+                const res = await fetch(`${apiBase}api/rewards/${rewardId}/contribute`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: memberId, amount: amount })
+                });
+                if (!res.ok) {
+                    const e = await res.json().catch(() => ({}));
+                    showGlobalAlert(e.detail || 'Could not chip in');
+                } else {
+                    this.poolAmt[key] = null;
+                    const data = await res.json().catch(() => ({}));
+                    if (data.pool && data.pool.funded) showGlobalAlert('Goal fully funded! 🎉');
+                }
+                await this.reloadLanes();
+            },
+            async kioskWithdraw(rewardId, memberId) {
+                const res = await fetch(`${apiBase}api/rewards/${rewardId}/withdraw`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: memberId })
+                });
+                if (!res.ok) {
+                    const e = await res.json().catch(() => ({}));
+                    showGlobalAlert(e.detail || 'Could not withdraw');
+                }
+                await this.reloadLanes();
+            },
+            async _kioskChore(path, memberId) {
+                const res = await fetch(`${apiBase}api/chores/${path}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: memberId })
+                });
+                if (!res.ok) {
+                    const e = await res.json().catch(() => ({}));
+                    showGlobalAlert(e.detail || 'Something went wrong');
+                }
+                await this.reloadLanes();
+            },
+            kioskClaim(choreId, memberId) { return this._kioskChore(`${choreId}/claim`, memberId); },
+            kioskUnclaim(choreId, memberId) { return this._kioskChore(`${choreId}/unclaim`, memberId); },
+            kioskDone(choreId, memberId) { return this._kioskChore(`${choreId}/done`, memberId); },
+            async kioskRedeem(rewardId, memberId) {
+                const res = await fetch(`${apiBase}api/rewards/${rewardId}/redeem`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: memberId })
+                });
+                if (!res.ok) {
+                    const e = await res.json().catch(() => ({}));
+                    showGlobalAlert(e.detail || 'Could not request reward');
+                } else {
+                    showGlobalAlert('Asked! A parent will approve it 🤞');
+                }
+                await this.reloadLanes();
+            },
+        };
+    }
+
+    // The board's lanes card: the same logic, self-fetching (an interactive
+    // card is real depth — it cannot ride a payload that rebuilds under the
+    // finger typing a chip-in amount). `t` is the card, `apiBase` the board's
+    // own climb; both are read once at mount.
+    function choresLanesCard(t, apiBase) {
+        const cfg = (t && t.data) || {};
+        const wanted = new Set(cfg.members || []);
+        return {
+            ...choresLanesLogic(apiBase),
+            lanesInteractive: !!cfg.interactive,
+            lanesOnBalances(data) {
+                // The card's member filter: "build your own views, filter by
+                // person" is half the reason boards exist. Applied to the
+                // leaderboard only — the chores/rewards arrays are sliced per
+                // lane anyway, so absent lanes simply never slice.
+                if (wanted.size) {
+                    const keep = data.filter(b => wanted.has(b.member_id));
+                    data.length = 0;
+                    data.push(...keep);
+                }
+            },
+            laneColumns() {
+                // A card does not know the window the way the page does; it
+                // knows its tile. Lanes wrap at four — a tile wider than four
+                // children is a tile that wanted to be the kiosk.
+                return Math.max(1, Math.min(this.balances.length || 1, 4));
+            },
+            startLanes() {
+                this.reloadLanes();
+                // The same cadence as the kiosk, so lanes reflect other
+                // screens' taps and parent OKs within half a minute.
+                setInterval(() => this.reloadLanes(), 30000);
+            },
+        };
+    }
+</script>

@@ -1,3 +1,4 @@
+{% import 'components/chores_lanes.html' as chores_lanes %}
 <!-- ── What a tile of a given type DRAWS, and nothing else.
 
      Pulled out of the board's tile loop so that a card inside a group tile can
@@ -299,6 +300,29 @@
                                         x-text="b.balance"></span>
                                 </div>
                             </template>
+                        </div>
+                    </template>
+
+                    <!-- ── The kiosk's per-child lanes, as a card. The SAME
+                         macro the chores page's kiosk mode renders — the
+                         card brings its own state (choresLanesCard: the
+                         shared logic, self-fetching on the kiosk's cadence,
+                         filtered to its configured members) because an
+                         interactive card cannot ride a payload that rebuilds
+                         under the finger typing a chip-in amount. -->
+                    <template x-if="t.type === 'chores_lanes'">
+                        <div x-data="choresLanesCard(t, apiBase)" x-init="startLanes()">
+                            {{ chores_lanes.lane_grid(interactive='lanesInteractive') }}
+                        </div>
+                    </template>
+
+                    <!-- ── The family-goals strip, as a card. Display only,
+                         riding the payload — the builder ships the same
+                         reward shape the kiosk fetches, so the macro cannot
+                         tell the two mounts apart. -->
+                    <template x-if="t.type === 'chores_rewards' && !t.data.empty">
+                        <div>
+                            {{ chores_lanes.goals_strip(source='(t.data.goals || [])') }}
                         </div>
                     </template>
 

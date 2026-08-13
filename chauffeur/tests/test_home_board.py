@@ -1425,6 +1425,46 @@ def scenario_the_panel_reasks_at_the_flip_instead_of_flipping_itself():
           "navigating between pages would stack a timer per page load")
 
 
+def scenario_the_chores_kiosk_split_into_cards():
+    """Board-cards arc: the kiosk's three drawings are three cards. The
+    leaderboard is the chores tile; the lanes are a self-fetching mount whose
+    payload is only config (an interactive card cannot ride a payload that
+    rebuilds under the finger typing a chip-in amount); the family goals ride
+    the payload in the same reward shape the kiosk fetches live."""
+    orig = (storage.get_all_chores, storage.get_rewards, storage.get_pool_status)
+    try:
+        storage.get_all_chores = lambda: [{'id': 'c1'}]
+        storage.get_rewards = lambda: [
+            {'id': 'r1', 'title': 'Movie night', 'cost': 100, 'pooled': True},
+            {'id': 'r2', 'title': 'Ice cream', 'cost': 30},
+        ]
+        storage.get_pool_status = lambda r: {
+            'pledged': 40, 'cost': 100, 'remaining': 60, 'funded': False,
+            'contributions': [], 'min_share': 0, 'short': []}
+        lanes = home_board._tile_chores_lanes(None, config={})
+        # The first card to carry `interactive` (rule 3), and it defaults
+        # OFF: a wall is a display first, a kiosk is a decision.
+        check(lanes == {'interactive': False, 'members': []},
+              f"the lanes mount config is wrong: {lanes}")
+        lanes = home_board._tile_chores_lanes(
+            None, config={'interactive': True, 'members': ['m1']})
+        check(lanes['interactive'] is True and lanes['members'] == ['m1'],
+              f"the lanes card lost its config: {lanes}")
+        goals = home_board._tile_chores_goals(None, config={})
+        check([g['id'] for g in goals['goals']] == ['r1'],
+              f"the goals card is not exactly the pooled rewards: {goals}")
+        check(goals['goals'][0]['pool']['pledged'] == 40,
+              f"the pool status did not ride along: {goals}")
+        # A household that has not set the economy up gets neither card.
+        storage.get_all_chores = lambda: []
+        storage.get_rewards = lambda: []
+        check(home_board._tile_chores_lanes(None) is None
+              and home_board._tile_chores_goals(None) is None,
+              "an unconfigured household grew chores cards")
+    finally:
+        storage.get_all_chores, storage.get_rewards, storage.get_pool_status = orig
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

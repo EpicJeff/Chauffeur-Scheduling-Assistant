@@ -1533,6 +1533,11 @@
     <!-- The map tile's markers, drawn by the same component /map draws with.
          Script only: the board mounts it into a tile, not into a page. -->
     {% include 'components/family_map_core.html' %}
+    <!-- The chores cards' shared logic (choresLanesLogic/choresLanesCard) and
+         the kid glyphs the lane rows draw with. Script-only emissions — the
+         markup they serve is rendered by board_tile_body's macros. -->
+    {% include 'components/chores_lanes.html' %}
+    {% include 'components/kid_glyphs.html' %}
     <!-- And the drives tile's timeline, which is the Drives page's own
          renderer. Both tiles are the page's view at tile size rather than a
          second drawing of it. -->
@@ -3634,9 +3639,12 @@
                 // several, so there is no one page for it to open.
                 // The chrome tiles are not doors either: the clock opens
                 // nothing, the hero already links out per child, a heading
-                // is ink.
+                // is ink. Nor are the chores-kiosk cards — the lanes hold
+                // buttons of their own (an <a> may only contain them while
+                // it has no href), and the goals strip matches its sibling.
                 PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web',
-                           'custom', 'clock', 'hero', 'heading'],
+                           'custom', 'clock', 'hero', 'heading',
+                           'chores_lanes', 'chores_rewards'],
                 opens(type) {
                     return !this.PAGELESS.includes(type);
                 },
