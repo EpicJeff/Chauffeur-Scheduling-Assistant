@@ -399,8 +399,10 @@ def scenario_ink_on_a_photograph_is_not_page_ink():
               f"{name} paints a caption over a photograph without the shared "
               f"scrim class")
 
-    shopping = open(os.path.join(TPL, 'shopping.html'), encoding='utf-8').read()
-    chip = shopping[shopping.index('@click="outOf(s.name)"'):]
+    # Include-inlined: the chip moved into components/shopping_lists.html so
+    # the `shopping_staples` card draws the same one the page does.
+    shopping = tpl_source.read('components/shopping_lists.html')
+    chip = shopping[shopping.index('outOf(s.name)'):]
     chip = chip[:chip.index('</button>')]
     check('bg-gray-800' in chip,
           "the cart chips have no surface, so on a panel they are an outline "

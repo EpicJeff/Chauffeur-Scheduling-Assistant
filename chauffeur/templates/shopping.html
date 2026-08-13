@@ -1,3 +1,4 @@
+{% import 'components/shopping_lists.html' as shopping_lists %}
 <!DOCTYPE html>
 <html lang="en" class="dark">
 
@@ -53,45 +54,7 @@
                  it is day one for everyone and forever for anyone without an
                  Unsplash key, so it has to look deliberate rather than broken. -->
             <section x-show="isKiosk" class="mb-10">
-                <!-- Columns track the VIEWPORT, not the number of days. Sizing
-                     the grid by week.length meant a 4-day window rendered two
-                     enormous half-screen blocks on a wall panel. A whole week
-                     fits across a large display and wraps down as it narrows. -->
-                <div class="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3
-                            lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7">
-                    <template x-for="day in boardWeek" :key="'kb-' + day.date">
-                        <div class="relative rounded-2xl overflow-hidden border aspect-[4/5] flex flex-col justify-end"
-                            :class="isToday(day) ? 'border-pink-400/70 ring-2 ring-pink-400/40' : 'border-black/20'">
-                            <img x-show="dayImage(day)" :src="dayImage(day)" alt=""
-                                class="absolute inset-0 w-full h-full object-cover">
-                            <!-- No picture is the normal state, not a failure:
-                                 a flat tint reads as a deliberate colour card,
-                                 whereas the giant ghost emoji it replaced read
-                                 as a rendering artifact. -->
-                            <div x-show="!dayImage(day)" class="absolute inset-0"
-                                :class="dayTint(day)"></div>
-                            <div class="photo-scrim absolute inset-0 bg-gradient-to-t from-black/95 via-black/55 to-black/10"></div>
-                            <div class="relative p-3">
-                                <div class="flex items-baseline gap-1.5 flex-wrap">
-                                    <span class="text-[11px] font-black uppercase tracking-widest board-shadow"
-                                        :class="isToday(day) ? 'board-accent' : 'board-ink-dim'"
-                                        x-text="isToday(day) ? 'Tonight' : day.weekday"></span>
-                                    <span class="text-[10px] board-ink-faint board-shadow"
-                                        x-show="dayEffort(day)" x-text="dayEffort(day)"></span>
-                                </div>
-                                <div class="board-ink board-shadow font-bold text-lg leading-tight mt-0.5 break-words"
-                                    x-text="dayHeadline(day)"></div>
-                                <div class="text-[11px] board-ink-dim board-shadow leading-snug mt-0.5"
-                                    x-show="daySides(day)" x-text="daySides(day)"></div>
-                                <div class="text-[10px] font-bold board-warn board-shadow mt-1"
-                                    x-show="daySqueeze(day)" x-text="daySqueeze(day)"></div>
-                            </div>
-                        </div>
-                    </template>
-                </div>
-                <div x-show="!boardWeek.length" class="text-sm opacity-60">
-                    Nothing planned yet.
-                </div>
+                {{ shopping_lists.week_board() }}
             </section>
 
             <!-- ===== MEALS =====
@@ -1273,35 +1236,7 @@
                 <h3 class="text-xs font-black uppercase tracking-widest opacity-60 mb-1">
                     🛒 Drop in the cart
                 </h3>
-                <p class="text-xs opacity-50 mb-3">
-                    Tap what you've run out of and it goes on the list. Tap again to undo.
-                </p>
-                <div class="flex flex-wrap gap-2">
-                    <template x-for="s in staples" :key="'st-' + s.name">
-                        <!-- Reads as a BUTTON, not a label. The first cut was a
-                             row of quiet pills under the heading "We're out
-                             of…", which described them as a list of things the
-                             family was already out of rather than as the way to
-                             say so. The heading is now the ACTION and the chips
-                             carry a + until they are on the list.
-                             The un-picked state carries `bg-gray-800` so it has
-                             a SURFACE. Without one it was an outline and a word
-                             floating on the panel's photograph, and in light
-                             mode it disappeared into a bright sky. The grey is
-                             the app's own vocabulary, so the panel skin maps it
-                             to glass and the browser keeps its dark chip. -->
-                        <button @click="outOf(s.name)" :disabled="stapleBusy === s.name"
-                            class="px-4 py-3 rounded-xl text-sm font-bold border-2 shadow-sm transition-all
-                                   disabled:opacity-50 active:scale-95 flex items-center gap-2"
-                            :class="isOnList(s.name)
-                                ? 'bg-pink-500/20 border-pink-400 text-pink-300'
-                                : 'bg-gray-800 border-gray-600 hover:border-pink-400'">
-                            <span class="text-base leading-none"
-                                x-text="isOnList(s.name) ? '✓' : '+'"></span>
-                            <span x-text="s.name"></span>
-                        </button>
-                    </template>
-                </div>
+{{ shopping_lists.staple_chips() }}
             </div>
 
             <!-- The kiosk hides the page's own heading, so the list below had
@@ -1365,74 +1300,14 @@
                 </button>
             </div>
 
-            <!-- ===== The list ===== -->
-            <div x-show="!open.length && !checked.length"
-                class="text-gray-500 bg-gray-800 rounded-2xl p-8 text-center">
-                Nothing on this list. Say "we're out of milk" to Argyle and it lands here.
-            </div>
-
-            <!-- Split by which shop RUN each item is for, so a mid-week dash
-                 for the one thing tonight's re-planned dinner needs does not
-                 arrive carrying all of Saturday. The rest is NOT hidden — you
-                 are standing in a store, which is the best possible moment to
-                 be asked whether you want any of it, and buying some just
-                 checks those rows and leaves the remainder for the big run.
-                 With one group (the ordinary week) there is no header at all;
-                 a heading over the whole list is not a split, it is noise. -->
-            <div class="space-y-2 mb-8">
-              <template x-for="g in (runs.groups || [])" :key="'rg-' + g.key + (g.date || '')">
-               <div class="space-y-2">
-                <div x-show="(runs.groups || []).length > 1"
-                    class="flex items-baseline gap-2 pt-2 first:pt-0">
-                    <span class="text-xs font-black uppercase tracking-widest"
-                        :class="g.key === 'now' ? 'text-amber-300' : 'text-gray-500'"
-                        x-text="g.label"></span>
-                    <span class="text-[11px] text-gray-600" x-text="(g.items || []).length"></span>
-                </div>
-                <template x-for="it in (g.items || [])" :key="it.id">
-                    <div class="bg-gray-800 rounded-xl border border-gray-700 flex items-center gap-3 px-4 py-3 group">
-                        <button @click="setChecked(it, true)"
-                            class="w-6 h-6 rounded-md border-2 border-gray-600 hover:border-pink-400 shrink-0"
-                            :aria-label="'Got ' + it.name"></button>
-                        <div class="min-w-0 flex-1">
-                            <div class="font-semibold text-white truncate">
-                                <span x-text="it.name"></span>
-                                <span class="text-gray-400 font-normal" x-show="it.qty" x-text="' · ' + it.qty"></span>
-                            </div>
-                            <div class="text-[11px] text-gray-500" x-show="it.note || byline(it)">
-                                <span x-show="it.note" x-text="it.note"></span>
-                                <span x-show="it.note && byline(it)"> · </span>
-                                <span x-show="byline(it)" x-text="byline(it)"></span>
-                            </div>
-                        </div>
-                        <button x-show="!isKiosk" @click="removeItem(it)"
-                            class="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                            title="Remove (not bought — just not wanted)">✕</button>
-                    </div>
-                </template>
-               </div>
-              </template>
-            </div>
-
-            <div x-show="checked.length" class="mb-10">
-                <div class="flex items-baseline justify-between mb-3">
-                    <h3 class="text-xs font-black uppercase tracking-widest text-gray-500">
-                        In the cart · <span x-text="checked.length"></span>
-                    </h3>
-                    <button x-show="!isKiosk" @click="clearChecked()"
-                        class="text-xs font-bold text-gray-500 hover:text-white">Clear</button>
-                </div>
-                <div class="space-y-2">
-                    <template x-for="it in checked" :key="it.id">
-                        <div class="bg-gray-800/50 rounded-xl border border-gray-700/50 flex items-center gap-3 px-4 py-2.5">
-                            <button @click="setChecked(it, false)"
-                                class="w-6 h-6 rounded-md bg-pink-500/30 border-2 border-pink-400/60 text-pink-200 text-sm font-bold shrink-0"
-                                :aria-label="'Put ' + it.name + ' back'">✓</button>
-                            <div class="min-w-0 flex-1 text-gray-500 line-through truncate" x-text="it.name"></div>
-                        </div>
-                    </template>
-                </div>
-            </div>
+            <!-- ===== The list =====
+                 Rendered from the shared macro, so this page and every
+                 `shopping_list` card on every board are one drawing. The page
+                 passes the destructive controls (remove a line, clear the
+                 cart) and a wall does not. -->
+{{ shopping_lists.shopping_items(interactive='true',
+                                 remove='(isKiosk ? null : removeItem)',
+                                 clear='(isKiosk ? null : clearChecked)') }}
                 </div>
             </div>
 
@@ -1664,31 +1539,44 @@
 
     {% include 'components/moments_hearth.html' %}
     {% include 'components/control_center.html' %}
+    <!-- The shared drawings' logic: mealWeekLogic and shoppingListsLogic, plus
+         the three card wrappers the board mounts. Script-only emission — the
+         markup they serve is rendered by the macros above and, on a board, by
+         board_tile_body. -->
+    {% include 'components/shopping_lists.html' %}
 
     <script>
         function shoppingPage() {
             const params = new URLSearchParams(window.location.search);
+            // trailing-slash URLs need to climb one level (HA ingress)
+            const base = window.location.pathname.endsWith('/') ? '../' : '';
             return {
+                // The two shared drawings' logic, spread in FIRST so anything
+                // below deliberately overrides it (`loadWeek` adds the
+                // repropose branch; the getters below keep this page's markup
+                // saying `open` and `allDays`). The list, the staples chips and
+                // the week board are the same code the board's cards run —
+                // components/shopping_lists.html — so a wall can never drift
+                // from this page.
+                ...mealWeekLogic(base),
+                ...shoppingListsLogic(base),
                 isKiosk: ['true', '1', 'yes'].includes((params.get('kiosk') || '').toLowerCase()),
                 hideTitle: ['none', 'off', '0', 'false', 'hide'].includes(
                     (params.get('title') || '').toLowerCase()),
-                lists: [], activeId: null, items: [], members: {},
                 draft: '', candidates: [], photoBusy: false, photoKind: 'other',
                 plate: { dishes: [], lines: [], edited: false, leftover_dish_ids: [] },
                 drain: null,
-                week: [], weekSpans: [], weekWindow: null, weekBusy: false,
-                // The open list, already split by shop run (see loadItems).
-                runs: { groups: [] },
+                weekBusy: false,
                 trip: null, tripBusy: false,
                 cart: null, cartBusy: false, walmart: null,
-                staples: [], stapleBusy: null, picsBusy: false, dishPicBusy: null,
+                picsBusy: false, dishPicBusy: null,
                 pickerQuery: '', occasionDate: '',
                 // What the picker is currently answering FOR. One object
                 // rather than a nullable per caller: {kind:'night',date} |
                 // {kind:'rule',field} | {kind:'pairing',dishId,mode}.
                 // "Again" (repeat a past dinner) and drag-to-reorder both end
                 // as one arrangement write — see arrange_week.
-                categories: [], newCategoryName: '',
+                newCategoryName: '',
                 againOpen: false, againDay: null, againMode: 'push',
                 history: [], historyLoaded: false,
                 dragDate: null, dragOverDate: null,
@@ -1719,36 +1607,20 @@
                     walmart_impact_publisher_id: '', walmart_impact_ad_id: '',
                     walmart_impact_campaign_id: ''
                 },
-                // trailing-slash URLs need to climb one level (HA ingress)
-                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                apiBase: base,
 
-                get open() { return this.items.filter(i => !i.is_checked); },
-                // Every night on the page, both spans, in order. Moving a
-                // dinner has to be able to cross the shop boundary: that is
-                // what actually happens when a meeting lands — the night gets
-                // punted, everything shifts, and a meal that was before the
-                // trip ends up after it, already paid for. `week` stays the
-                // span being BOUGHT for, which is what the approve button acts
-                // on; the kiosk board takes `boardWeek` below.
-                get allDays() {
-                    return (this.weekSpans || []).flatMap(s => s.week || []);
-                },
-                // What the WALL PANEL shows: the next seven nights from today,
-                // straight through the shop boundary.
+                // Thin getters over the shared logic's methods, so this page's
+                // markup keeps saying `open`, `checked` and `allDays`.
                 //
-                // The board used to render `week`, which is the span being
-                // BOUGHT for — and that span starts on the shop day. Two days
-                // out from a run, the board therefore opened on Saturday and
-                // skipped tonight and tomorrow: the only two nights anybody
-                // standing in front of it is asking about. The span split is
-                // real and it stays downstairs, where it decides which run an
-                // ingredient goes on. It means nothing to someone walking past
-                // the kitchen wanting to know what is for dinner.
-                get boardWeek() {
-                    const iso = this.todayIso();
-                    return this.allDays.filter(d => d.date >= iso).slice(0, 7);
-                },
-                get checked() { return this.items.filter(i => i.is_checked); },
+                // They are GETTERS here and METHODS there, and that is not a
+                // taste call: `{...factory()}` EVALUATES a getter on the way
+                // past, so a getter defined in the factory would be frozen to
+                // whatever it computed at mount. Everything shared is a method;
+                // the getters live only in this literal, where nothing spreads
+                // them.
+                get open() { return this.openItems(); },
+                get checked() { return this.checkedItems(); },
+                get allDays() { return this.weekDays(); },
 
                 async init() {
                     // The drawer's contents load lazily, and for a while exactly
@@ -1828,136 +1700,6 @@
                 // sort by NAME, so a rename could silently promote a block.
                 // The server returns the main first, so [0] is only the
                 // fallback for the beat before a heal has run.
-                leadCategoryId() {
-                    const m = (this.categories || []).find(c => c.is_main)
-                        || (this.categories || [])[0];
-                    return m ? m.id : null;
-                },
-                mainDish(day) {
-                    const ds = day.dishes || [];
-                    const leadId = this.leadCategoryId();
-                    return ds.find(d => d.type === 'meal')
-                        || (leadId && ds.find(d =>
-                                (d.category_ids || []).includes(leadId)))
-                        || ds.find(d => d.type === 'entree')
-                        || ds[0] || null;
-                },
-                dayHeadline(day) {
-                    const m = this.mainDish(day);
-                    return m ? (m.chip || m.short_name || m.name) : 'Not planned';
-                },
-                daySides(day) {
-                    // Capped: a block seven-across is narrow, and a plate with
-                    // five sides ("roasted potatoes · broccoli · rice · carrots
-                    // · red beans") pushed the dish name out of the card.
-                    const m = this.mainDish(day);
-                    const names = (day.dishes || []).filter(d => d !== m)
-                        .map(d => d.chip || d.short_name || d.name);
-                    if (names.length <= 3) return names.join(' · ');
-                    return names.slice(0, 3).join(' · ') + ' +' + (names.length - 3);
-                },
-                dayImage(day) {
-                    const m = this.mainDish(day);
-                    return (m && m.image_url) || null;
-                },
-                // No picture is the DEFAULT state, not a failure state — so it
-                // gets a deliberate look rather than a broken-image icon.
-                dayTint(day) {
-                    const m = this.mainDish(day);
-                    const t = (m && (m.side_type || m.type)) || 'other';
-                    return {
-                        meal: 'bg-gradient-to-br from-purple-900 to-gray-900',
-                        entree: 'bg-gradient-to-br from-rose-900 to-gray-900',
-                        vegetable: 'bg-gradient-to-br from-emerald-900 to-gray-900',
-                        starch: 'bg-gradient-to-br from-amber-900 to-gray-900',
-                        salad: 'bg-gradient-to-br from-lime-900 to-gray-900',
-                        dessert: 'bg-gradient-to-br from-fuchsia-900 to-gray-900',
-                    }[t] || 'bg-gradient-to-br from-slate-800 to-gray-900';
-                },
-                dayGlyph(day) {
-                    const m = this.mainDish(day);
-                    const t = (m && (m.side_type || m.type)) || 'other';
-                    return { meal: '🍲', entree: '🍗', vegetable: '🥦', starch: '🍚',
-                             salad: '🥗', dessert: '🍰' }[t] || '🍽️';
-                },
-                // How much WORK the night is — the number a "what's for dinner"
-                // board is actually being asked for. The block used to show
-                // cook_window_mins, which is the free time available, clamped
-                // to a 180-minute prep horizon — so every unconstrained evening
-                // read an identical "180 min" and the board looked broken.
-                dayEffort(day) {
-                    const hands = (day.prep_ahead_mins || 0) + (day.finish_mins || 0);
-                    const bits = [];
-                    if (hands) bits.push(hands + ' min');
-                    if (day.unattended_mins) bits.push(day.unattended_mins + ' min oven');
-                    return bits.join(' · ');
-                },
-                // The window is only news when it PINCHES. An evening with
-                // three hours free is not information, and printing it nightly
-                // is how a real warning gets ignored.
-                daySqueeze(day) {
-                    const w = day.cook_window_mins;
-                    // A window of 0 is ambiguous by itself — it is what an
-                    // unsolved day reports AND what a genuinely impossible
-                    // evening reports. has_cook separates them: with nobody
-                    // who could cook even considered, we simply don't know.
-                    if (!day.has_cook) return '';
-                    if (!w) return 'nobody free to cook';
-                    // 180 is the prep horizon, i.e. unconstrained. Printing it
-                    // put an identical number on every block, which is how a
-                    // real warning gets ignored.
-                    if (w >= 180) return '';
-                    const hands = (day.prep_ahead_mins || 0) + (day.finish_mins || 0);
-                    if (w < hands) return 'only ' + w + ' min';
-                    if (w <= 60 || (hands && w < hands * 1.5)) return 'tight · ' + w + ' min';
-                    return '';
-                },
-                todayIso() {
-                    const d = new Date();
-                    return d.getFullYear() + '-'
-                        + String(d.getMonth() + 1).padStart(2, '0') + '-'
-                        + String(d.getDate()).padStart(2, '0');
-                },
-                isToday(day) {
-                    return day.date === this.todayIso();
-                },
-
-                async outOf(name) {
-                    // "We're out of rice" — onto the list for THIS shop only.
-                    // Never reclassifies the ingredient: whether rice is a
-                    // staple is a standing fact about the household, and
-                    // running out this week says nothing about it.
-                    if (this.stapleBusy) return;
-                    this.stapleBusy = name;
-                    try {
-                        const open = this.open.find(i =>
-                            i.name.trim().toLowerCase() === name.trim().toLowerCase());
-                        if (open) {                       // tapped twice — undo
-                            await fetch(this.apiBase + 'api/shopping/items/' + open.id,
-                                        { method: 'DELETE' });
-                        } else {
-                            await fetch(this.apiBase + 'api/shopping/items', {
-                                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ name: name, list_id: this.activeId,
-                                                       added_via: 'kiosk' })
-                            });
-                        }
-                        await this.loadItems(true);
-                        // Checking off is what teaches the shortcut what this
-                        // household buys, so its ranking is refreshed here.
-                        this.loadStaples();
-                    } catch (e) {
-                        showGlobalAlert('Could not reach the server.');
-                    } finally {
-                        this.stapleBusy = null;
-                    }
-                },
-
-                isOnList(name) {
-                    return this.open.some(i =>
-                        i.name.trim().toLowerCase() === name.trim().toLowerCase());
-                },
-
                 async loadRules() {
                     // "We couldn't read your rules" and "you have no rules" are
                     // opposite claims, and this reported both as the second one —
@@ -2299,12 +2041,6 @@
                 },
 
                 // --- The family's plate vocabulary ---
-                async loadCategories() {
-                    try {
-                        const r = await fetch(this.apiBase + 'api/meals/categories');
-                        this.categories = r.ok ? (await r.json()).categories || [] : [];
-                    } catch (e) { this.categories = []; }
-                },
                 async saveCategory(c) {
                     if (!(c.name || '').trim()) return;
                     if (Number(c.max_per_plate) < Number(c.min_per_plate)) {
@@ -2486,13 +2222,6 @@
                     if (days.length) await this.arrangeWeek(days);
                 },
 
-                async loadStaples() {
-                    try {
-                        const r = await fetch(this.apiBase + 'api/shopping/staples');
-                        this.staples = r.ok ? (await r.json()).staples || [] : [];
-                    } catch (e) { this.staples = []; }
-                },
-
                 async buildCart() {
                     this.cartBusy = true;
                     try {
@@ -2596,21 +2325,19 @@
                     // deterministic, so an untouched night recomposes to what
                     // was already on it. The server remembers the refusal now;
                     // locked nights are left alone there, as they were here.
-                    try {
-                        const url = repropose
-                            ? this.apiBase + 'api/meals/week/repropose'
-                            : this.apiBase + 'api/meals/week';
-                        const r = await fetch(url, repropose ? { method: 'POST' } : {});
-                        if (!r.ok) return;
-                        const data = await r.json();
-                        // Repropose answers with the span it reproposed, not the
-                        // whole page: ask again rather than dropping the settled
-                        // span on the floor every time somebody presses it.
-                        if (repropose) return this.loadWeek(false);
-                        this.week = data.week || [];
-                        this.weekSpans = (data.spans || []).filter(s => (s.week || []).length);
-                        this.weekWindow = data.window || null;
-                    } catch (e) { }
+                    //
+                    // The READ is the shared `loadMealWeek` — a card on a wall
+                    // asks for exactly the same week, and it must never be able
+                    // to reach the POST above it. Repropose answers with the
+                    // span it reproposed rather than the whole page, so it is
+                    // followed by a plain read instead of being trusted.
+                    if (repropose) {
+                        try {
+                            await fetch(this.apiBase + 'api/meals/week/repropose',
+                                        { method: 'POST' });
+                        } catch (e) { return; }
+                    }
+                    return this.loadMealWeek();
                 },
 
                 weekHeading() {
@@ -3152,11 +2879,6 @@
                     }[sk.reason] || sk.reason;
                 },
 
-                activeListName() {
-                    const l = (this.lists || []).find(x => x.id === this.activeId);
-                    return l ? l.name : 'the list';
-                },
-
                 async plateToList() {
                     // ONE request for the whole plate. The result is SHOWN
                     // rather than reduced to a yes/no: a skip nobody can see
@@ -3377,56 +3099,11 @@
 
 
 
-                async loadMembers() {
-                    try {
-                        const r = await fetch(this.apiBase + 'api/members');
-                        if (!r.ok) return;
-                        (await r.json()).forEach(m => { this.members[m.id] = m.name; });
-                    } catch (e) { }
-                },
-
-                async loadLists() {
-                    const r = await fetch(this.apiBase + 'api/shopping/lists');
-                    this.lists = r.ok ? await r.json() : [];
-                    if (!this.activeId && this.lists.length) {
-                        const def = this.lists.find(l => l.is_default) || this.lists[0];
-                        this.activeId = def.id;
-                    }
-                },
-
-                async loadItems(quiet) {
-                    if (!this.activeId) return;
-                    const r = await fetch(this.apiBase + 'api/shopping/items?list_id=' + encodeURIComponent(this.activeId));
-                    if (r.ok) this.items = await r.json();
-                    // The run split comes from the SERVER, not from a second
-                    // copy of the rule out here — which run an item belongs to
-                    // is the same question the agent and the errand ask, and
-                    // the page is the worst place for it to be answered
-                    // differently. Falls back to one undivided group, which is
-                    // exactly what the list looked like before runs existed.
-                    try {
-                        const rr = await fetch(this.apiBase + 'api/shopping/runs?list_id='
-                            + encodeURIComponent(this.activeId));
-                        this.runs = rr.ok ? await rr.json()
-                            : { groups: [{ key: 'next', label: '', items: this.open }] };
-                    } catch (e) {
-                        this.runs = { groups: [{ key: 'next', label: '', items: this.open }] };
-                    }
-                    if (!quiet) return;
-                    // keep the store chips' counts honest on remote updates
-                    const r2 = await fetch(this.apiBase + 'api/shopping/lists');
-                    if (r2.ok) this.lists = await r2.json();
-                },
-
+                // Page-only: a card is pinned to one list by its config, and
+                // there is no list switcher on a wall.
                 selectList(id) {
                     this.activeId = id; this.candidates = [];
                     this.loadItems(); this.loadTrip();
-                },
-
-                byline(it) {
-                    const who = this.members[it.added_by];
-                    if (!who) return '';
-                    return it.added_via === 'photo' ? who + ' · photo' : who;
                 },
 
                 async addItem() {
@@ -3440,15 +3117,6 @@
                             body: JSON.stringify({ name, list_id: this.activeId })
                         });
                     }
-                    this.loadItems(true);
-                },
-
-                async setChecked(it, checked) {
-                    it.is_checked = checked;   // optimistic; PATCH is idempotent
-                    await fetch(this.apiBase + 'api/shopping/items/' + it.id, {
-                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ is_checked: checked })
-                    });
                     this.loadItems(true);
                 },
 

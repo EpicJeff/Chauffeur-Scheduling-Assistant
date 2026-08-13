@@ -2574,9 +2574,12 @@ def scenario_the_plate_reads_in_block_order():
           "and with no chicken the beans ARE the protein and lead")
 
     import os
-    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                       'templates')
-    shopping = open(os.path.join(tpl, 'shopping.html'), encoding='utf-8').read()
+    import sys
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import tpl_source          # leadCategoryId lives in a component now
+    shopping = tpl_source.read('shopping.html')
     check('leadCategoryId()' in shopping and 'main dish' in shopping,
           "the lead block must wear its main-dish badge in "
           "'What a plate looks like'")
@@ -2591,9 +2594,15 @@ def scenario_the_board_block_leads_with_the_meal():
     the whole meal, else the dish in the family's lead category (the FIRST
     block in "What a plate looks like", unconditionally), and then order."""
     import os
-    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                       'templates')
-    shopping = open(os.path.join(tpl, 'shopping.html'), encoding='utf-8').read()
+    import sys
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    # Include-inlined: the day helpers moved into
+    # components/shopping_lists.html so a board card draws the same block the
+    # page does, which is exactly the drift this scenario is about.
+    import tpl_source
+    shopping = tpl_source.read('shopping.html')
     seg = shopping.split('mainDish(day) {')[1].split('},')[0]
     check("d.type === 'meal'" in seg, "the whole meal leads the block")
     check('leadCategoryId' in seg and 'category_ids' in seg,

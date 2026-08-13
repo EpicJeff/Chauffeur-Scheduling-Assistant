@@ -1647,6 +1647,9 @@
     <!-- Same arrangement for the errands cards: errandListsLogic and its two
          card wrappers, with board_tile_body rendering the macros. -->
     {% include 'components/errand_lists.html' %}
+    <!-- And the shopping page's three: mealWeekLogic / shoppingListsLogic and
+         their card wrappers. -->
+    {% include 'components/shopping_lists.html' %}
     <!-- And the drives tile's timeline, which is the Drives page's own
          renderer. Both tiles are the page's view at tile size rather than a
          second drawing of it. -->
@@ -3833,7 +3836,8 @@
                 PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web',
                            'custom', 'clock', 'hero', 'heading',
                            'chores_lanes', 'chores_rewards',
-                           'task_list', 'errand_list'],
+                           'task_list', 'errand_list',
+                           'shopping_staples', 'shopping_list'],
                 opens(type) {
                     return !this.PAGELESS.includes(type);
                 },

@@ -232,6 +232,55 @@ WIDGETS = [
          _opt('items', 'Items shown', 'int', 12, min=0, max=20,
               help='0 shows the counts only.'),
      ]},
+    # ── The shopping page, as cards (kiosk-boards arc). `shopping` above is
+    # the GLANCE — how much is open on each list. These three are the page's
+    # own drawings (components/shopping_lists.html): the week's dinners, the
+    # "we've run out of this" chips, and the list itself with its tick.
+    {'key': 'meals_week', 'icon': '📆', 'label': 'The nights ahead',
+     'heading': '',
+     'blurb': "A block per night with what is planned, how much work it is, "
+              "and whether the evening is tight.",
+     'options': [
+         # Nights from TODAY, straight through the shop boundary. The span
+         # split is real and it stays on the page, where it decides which run
+         # an ingredient goes on; it means nothing to somebody walking past
+         # the kitchen wanting to know what is for dinner.
+         _opt('nights', 'Nights', 'int', 7, min=1, max=7),
+         _opt('show_image', 'Pictures', 'bool', True),
+         _opt('show_sides', 'The rest of the plate', 'bool', True),
+         _opt('show_effort', 'How long it takes', 'bool', True),
+         _opt('show_squeeze', 'Warn when the evening is tight', 'bool', True),
+     ]},
+    {'key': 'shopping_staples', 'icon': '🧺', 'label': 'Drop in the cart',
+     'heading': '',
+     'blurb': "A chip per thing the household keeps on hand. Tap one to say "
+              "you have run out and it goes on the list.",
+     'options': [
+         # ON by default, and safe there: tapping a chip puts a LINE on the
+         # list for this shop and changes nothing about whether the household
+         # treats the thing as a staple. Tap again to undo.
+         _opt('interactive', 'Interactive', 'bool', True,
+              help='Tap to add, tap again to undo. Off, the chips only show '
+                   'what is already on the list.'),
+         _opt('list', 'List', 'select', '', source='lists',
+              help='Which list a tap adds to. Empty uses the default.'),
+         _opt('show_hint', 'The line explaining the tap', 'bool', True),
+     ]},
+    {'key': 'shopping_list', 'icon': '📝', 'label': 'The shopping list',
+     'heading': '',
+     'blurb': "Every line still to buy, split by shop run, with a tick for "
+              "what is in the cart.",
+     'options': [
+         _opt('interactive', 'Interactive', 'bool', True,
+              help='Ticking a line moves it to the cart. Off, the list is a '
+                   'display.'),
+         _opt('list', 'List', 'select', '', source='lists',
+              help='One list, or leave empty for the default.'),
+         _opt('show_runs', 'Split by shop run', 'bool', True),
+         _opt('show_cart', 'What is already in the cart', 'bool', True),
+         _opt('show_note', 'Notes on a line', 'bool', True),
+         _opt('show_byline', 'Who added it', 'bool', True),
+     ]},
     {'key': 'chores', 'icon': '⭐', 'label': 'Chores',
      'heading': 'Chore points',
      'blurb': "The points leaderboard, exactly as the chores kiosk shows it.",
@@ -1185,6 +1234,58 @@ def _tile_meals(now, config=None, **_):
             else {'empty': "Nothing pinned for tonight yet."}
     except Exception as e:
         print(f"[home_board] plate failed: {e}")
+        return None
+
+
+def _tile_meals_week(now, config=None, **_):
+    """The nights ahead as a card. Self-fetching (`GET api/meals/week`, which
+    composes in memory and persists nothing), so this is only the mount config.
+
+    Composed rather than pinned, unlike the plate tile above, and that is not a
+    contradiction of board rule 3: composing is what the endpoint does for
+    every reader, and it writes nothing. What the rule forbids is the wall
+    CAUSING a plan to exist — `get_or_compose_plate` persists, `compose_week`
+    does not.
+    """
+    try:
+        if not storage.get_dishes():
+            return None                       # meals never used at all
+        return {'nights': _cfg_int(config, 'nights', 7, 1, 7),
+                'parts': {p: _cfg_bool(config, f'show_{p}', True)
+                          for p in ('image', 'sides', 'effort', 'squeeze')}}
+    except Exception as e:
+        print(f"[home_board] meal week failed: {e}")
+        return None
+
+
+def _tile_shopping_staples(now, config=None, **_):
+    """The drop-in-the-cart chips. Self-fetching, because a chip is ticked when
+    the thing is already on the list and that is the whole difference between
+    "tap to add" and "tap to undo"."""
+    try:
+        if not storage.get_shopping_lists():
+            return None                       # never made a list
+        return {'interactive': _cfg_bool(config, 'interactive', True),
+                'list': _cfg_str(config, 'list'),
+                'parts': {'hint': _cfg_bool(config, 'show_hint', True)}}
+    except Exception as e:
+        print(f"[home_board] staples failed: {e}")
+        return None
+
+
+def _tile_shopping_list(now, config=None, **_):
+    """The list itself. Self-fetching for the same reason every interactive
+    card is: a twenty-second payload cache is twenty seconds of a line coming
+    back out of the cart."""
+    try:
+        if not storage.get_shopping_lists():
+            return None
+        return {'interactive': _cfg_bool(config, 'interactive', True),
+                'list': _cfg_str(config, 'list'),
+                'parts': {p: _cfg_bool(config, f'show_{p}', True)
+                          for p in ('runs', 'cart', 'note', 'byline')}}
+    except Exception as e:
+        print(f"[home_board] shopping list failed: {e}")
         return None
 
 
@@ -2471,6 +2572,8 @@ _BUILDERS: dict = {
     'clock': _tile_clock, 'hero': _tile_hero, 'heading': _tile_heading,
     'drives': _tile_drives, 'kids': _tile_kids, 'meals': _tile_meals,
     'shopping': _tile_shopping, 'chores': _tile_chores,
+    'meals_week': _tile_meals_week, 'shopping_staples': _tile_shopping_staples,
+    'shopping_list': _tile_shopping_list,
     'chores_lanes': _tile_chores_lanes, 'chores_rewards': _tile_chores_goals,
     'routines': _tile_routines,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,
@@ -2995,16 +3098,21 @@ BUILTIN_PAGES = {
         'spans': {'task_list': {'cols': 6, 'rows': 4},
                   'errand_list': {'cols': 6, 'rows': 4}},
     },
+    # The shopping kiosk, in its own order: the week across the top, then the
+    # shortcut for saying we have run out of something, then the list.
     'shopping': {
         'name': 'Meals', 'icon': '🛒', 'v': 5, 'columns': 12,
         'widgets': [
-            {'id': 'meals', 'type': 'meals',
-             'config': {'nights': 1, 'title': "Tonight's plate"}},
-            {'id': 'shopping', 'type': 'shopping',
-             'config': {'items': 20, 'title': 'Lists'}},
+            {'id': 'meals_week', 'type': 'meals_week',
+             'config': {'title': 'The nights ahead'}},
+            {'id': 'shopping_staples', 'type': 'shopping_staples',
+             'config': {'title': '🛒 Drop in the cart'}},
+            {'id': 'shopping_list', 'type': 'shopping_list',
+             'config': {'title': '📝 The list'}},
         ],
-        'spans': {'meals': {'cols': 5, 'rows': 4},
-                  'shopping': {'cols': 7, 'rows': 4}},
+        'spans': {'meals_week': {'cols': 12, 'rows': 3},
+                  'shopping_staples': {'cols': 5, 'rows': 3},
+                  'shopping_list': {'cols': 7, 'rows': 3}},
     },
     'occasions': {
         'name': 'Occasions', 'icon': '🎁', 'v': 5, 'columns': 12,

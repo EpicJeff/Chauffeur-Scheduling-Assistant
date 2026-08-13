@@ -1,5 +1,6 @@
 {% import 'components/chores_lanes.html' as chores_lanes %}
 {% import 'components/errand_lists.html' as errand_lists %}
+{% import 'components/shopping_lists.html' as shopping_lists %}
 <!-- ── What a tile of a given type DRAWS, and nothing else.
 
      Pulled out of the board's tile loop so that a card inside a group tile can
@@ -285,6 +286,33 @@
                                     </div>
                                 </div>
                             </template>
+                        </div>
+                    </template>
+
+                    <!-- ── The shopping page's own three drawings, as cards:
+                         the week's dinners, the run-out-of chips and the list.
+                         The SAME macros the page renders, self-fetching for
+                         the same reason the errand lists are — a tick that
+                         comes back untucked because the payload is still
+                         twenty seconds old is worse than no tick. -->
+                    <template x-if="t.type === 'meals_week'">
+                        <div x-data="mealWeekCard(t, apiBase)" x-init="startMealWeek()"
+                            class="flex-1 min-h-0 overflow-y-auto tile-scroll">
+                            {{ shopping_lists.week_board() }}
+                        </div>
+                    </template>
+
+                    <template x-if="t.type === 'shopping_staples'">
+                        <div x-data="stapleChipsCard(t, apiBase)" x-init="startStaples()"
+                            class="flex-1 min-h-0 overflow-y-auto tile-scroll">
+                            {{ shopping_lists.staple_chips(interactive='listsInteractive') }}
+                        </div>
+                    </template>
+
+                    <template x-if="t.type === 'shopping_list'">
+                        <div x-data="shoppingListCard(t, apiBase)" x-init="startShopping()"
+                            class="flex-1 min-h-0 overflow-y-auto tile-scroll">
+                            {{ shopping_lists.shopping_items(interactive='listsInteractive') }}
                         </div>
                     </template>
 

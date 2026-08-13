@@ -586,7 +586,12 @@ function closeChatHelpModal() {
 
     async function fetchNotifications() {
         try {
-            const res = await fetch('api/telemetry');
+            // Through apiBase like every other call in this file. Bare, it
+            // resolved correctly from a one-segment page and nowhere else —
+            // the control centre is included on `/board/{slug}` too, where a
+            // relative `api/…` lands a directory short.
+            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+            const res = await fetch(`${apiBase}api/telemetry`);
             const events = await res.json();
             const list = document.getElementById('notif-list');
             const badge = document.getElementById('notif-badge');

@@ -465,11 +465,23 @@ def scenario_m7_tools_in_both_stacks():
 # are cheap static checks against exactly that class of failure.
 
 def _shopping_html():
-    import os
-    here = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(os.path.dirname(here), 'templates', 'shopping.html')
-    with open(path, encoding='utf-8') as f:
-        return f.read()
+    """The page as it is ACTUALLY assembled.
+
+    Reading the file alone stopped answering the question the moment the list,
+    the staples chips and the week board moved into
+    components/shopping_lists.html so a board card could be the same drawing.
+    Every method those macros call still has to exist; it just no longer lives
+    in this one file.
+
+    RENDERED, not read and not merely include-inlined: a macro's DEFINITION
+    sits outside every x-data root in the file it is written in, and only the
+    rendered page puts its markup where it actually goes.
+    """
+    import types
+    import main
+    req = types.SimpleNamespace(url=types.SimpleNamespace(path='/shopping'),
+                                query_params={})
+    return main.templates.env.get_template('shopping.html').render(request=req)
 
 
 def scenario_every_referenced_method_exists():
@@ -477,9 +489,16 @@ def scenario_every_referenced_method_exists():
     src = _shopping_html()
     body = src[src.index('function shoppingPage()'):]
 
-    defined = set(re.findall(r'\n\s+(?:async\s+)?(\w+)\s*\(', body))
-    defined |= set(re.findall(r'\n\s+(\w+)\s*:', body))          # data props
-    defined |= set(re.findall(r'\bget\s+(\w+)\s*\(', body))      # getters
+    # Scanned over the WHOLE page, not just `shoppingPage`: the list, the
+    # staples chips and the week board are spread in from
+    # components/shopping_lists.html, and `this.loadItems()` is now defined
+    # one script block up rather than twenty lines down. Still catches the
+    # failure this guards — a call left pointing at a function a refactor
+    # deleted, which reached the family as "Could not add that" while the save
+    # had actually worked.
+    defined = set(re.findall(r'\n\s+(?:async\s+)?(\w+)\s*\(', src))
+    defined |= set(re.findall(r'\n\s+(\w+)\s*:', src))           # data props
+    defined |= set(re.findall(r'\bget\s+(\w+)\s*\(', src))       # getters
 
     called = set(re.findall(r'this\.(\w+)\s*\(', body))
     missing = called - defined
@@ -491,7 +510,13 @@ def scenario_every_referenced_method_exists():
     from_markup = set(re.findall(r'[@:]?\w*click="(\w+)\(', markup))
     from_markup |= set(re.findall(r'x-text="(\w+)\(', markup))
     from_markup |= set(re.findall(r'x-show="(\w+)\(', markup))
+    # Plus every plain function declared anywhere on the assembled page: the
+    # control centre and the moments hearth are included components with their
+    # own top-level handlers, and they are wired from markup exactly like a
+    # component method.
     globals_ok = {'showGlobalAlert', 'promptConfirm', 'promptInput'}
+    globals_ok |= set(re.findall(r'\bfunction\s+(\w+)\s*\(', src))
+    globals_ok |= set(re.findall(r'\bwindow\.(\w+)\s*=\s*(?:async\s+)?function', src))
     missing_ui = from_markup - defined - globals_ok
     check(not missing_ui,
           f"markup wires handlers that do not exist: {sorted(missing_ui)}")

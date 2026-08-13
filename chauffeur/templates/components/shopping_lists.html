@@ -1,0 +1,531 @@
+<!-- ── The week's dinners, the "we're out of" chips and the shopping list:
+     three shared drawings.
+
+     One drawing per content type (the board-cards rule): the shopping PAGE
+     renders these macros and so do the `meals_week`, `shopping_staples` and
+     `shopping_list` board cards, so a wall panel can never drift from the
+     page. What stays on the page is everything these do not draw — the
+     planner, the dish repertoire, the rules drawer, the photo picker, the
+     Walmart cart, every settings field. A wall wants tonight's dinner, a way
+     to say we have run out of something, and the list.
+
+     The macros are markup only — pure Alpine, no element ids — and bind to a
+     scope CONTRACT, everything the two factories below return:
+
+       week_board(source):   `source` yields composed days; `isToday`,
+           `dayHeadline`, `daySides`, `dayImage`, `dayTint`, `dayEffort`,
+           `daySqueeze` read one. Display only, always: composing a week is
+           the planner's job and a display does not change what it displays.
+
+       staple_chips(interactive): `staples`, `isOnList(name)`, `outOf(name)`,
+           `stapleBusy`. Tapping one says "we're out this week" — it puts a
+           line on the list and changes NOTHING about whether the household
+           treats the thing as a staple, which is why it is safe on a panel
+           the children can reach.
+
+       shopping_items(interactive, remove, clear): `runs`, `openItems()`,
+           `checkedItems()`, `setChecked(it, on)`, `byline(it)`. `remove` and
+           `clear` are hook expressions — the page passes its own, a card
+           passes nothing, and the destructive controls are simply not drawn.
+
+     Every section is a toggle (`listShow(part)`, absent means shown): the
+     conversion paradigm, so zero-config equals the page and a card can be
+     exactly the slice a board wants. Parts are 'runs' / 'byline' / 'note' /
+     'cart' for the list and 'effort' / 'sides' / 'squeeze' / 'image' for the
+     week.
+
+     A hook is tested as `!!(expr)`, never as `expr`: Alpine INVOKES an
+     expression whose result is a function, so a bare name would call the hook
+     once per row while the page was still drawing itself.
+
+     Jinja `import` renders none of this file, so the scripts at the bottom are
+     emitted by `include` exactly once per page. -->
+
+{% macro week_board(source='boardDays()') %}
+                <!-- Columns track the VIEWPORT, not the number of days. Sizing
+                     the grid by the week's length meant a 4-day window rendered
+                     two enormous half-screen blocks on a wall panel. A whole
+                     week fits across a large display and wraps down as it
+                     narrows — and a card three columns wide gets the same
+                     treatment for free. -->
+                <div class="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3
+                            lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7">
+                    <template x-for="day in ({{ source }})" :key="'kb-' + day.date">
+                        <div class="relative rounded-2xl overflow-hidden border aspect-[4/5] flex flex-col justify-end"
+                            :class="isToday(day) ? 'border-pink-400/70 ring-2 ring-pink-400/40' : 'border-black/20'">
+                            <img x-show="listShow('image') && dayImage(day)" :src="dayImage(day)" alt=""
+                                class="absolute inset-0 w-full h-full object-cover">
+                            <!-- No picture is the normal state, not a failure:
+                                 a flat tint reads as a deliberate colour card,
+                                 whereas the giant ghost emoji it replaced read
+                                 as a rendering artifact. -->
+                            <div x-show="!(listShow('image') && dayImage(day))" class="absolute inset-0"
+                                :class="dayTint(day)"></div>
+                            <div class="photo-scrim absolute inset-0 bg-gradient-to-t from-black/95 via-black/55 to-black/10"></div>
+                            <div class="relative p-3">
+                                <div class="flex items-baseline gap-1.5 flex-wrap">
+                                    <span class="text-[11px] font-black uppercase tracking-widest board-shadow"
+                                        :class="isToday(day) ? 'board-accent' : 'board-ink-dim'"
+                                        x-text="isToday(day) ? 'Tonight' : day.weekday"></span>
+                                    <span class="text-[10px] board-ink-faint board-shadow"
+                                        x-show="listShow('effort') && dayEffort(day)" x-text="dayEffort(day)"></span>
+                                </div>
+                                <div class="board-ink board-shadow font-bold text-lg leading-tight mt-0.5 break-words"
+                                    x-text="dayHeadline(day)"></div>
+                                <div class="text-[11px] board-ink-dim board-shadow leading-snug mt-0.5"
+                                    x-show="listShow('sides') && daySides(day)" x-text="daySides(day)"></div>
+                                <div class="text-[10px] font-bold board-warn board-shadow mt-1"
+                                    x-show="listShow('squeeze') && daySqueeze(day)" x-text="daySqueeze(day)"></div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+                <div x-show="!({{ source }}).length" class="text-sm opacity-60">
+                    Nothing planned yet.
+                </div>
+{% endmacro %}
+
+{% macro staple_chips(interactive='true') %}
+                <!-- Reads as a BUTTON, not a label. The first cut was a row of
+                     quiet pills under "We're out of…", which described them as
+                     things the family was already out of rather than as the way
+                     to SAY so. The heading is the action; the chips carry a +
+                     until they are on the list.
+                     The un-picked state carries `bg-gray-800` so it has a
+                     SURFACE — without one it was an outline and a word floating
+                     on the panel's photograph, and in light mode it disappeared
+                     into a bright sky. -->
+                <div x-show="staples.length">
+                    <p class="text-xs opacity-50 mb-3" x-show="listShow('hint')">
+                        Tap what you've run out of and it goes on the list. Tap again to undo.
+                    </p>
+                    <div class="flex flex-wrap gap-2">
+                        <template x-for="s in staples" :key="'st-' + s.name">
+                            <button @click="{{ interactive }} && outOf(s.name)"
+                                :disabled="!({{ interactive }}) || stapleBusy === s.name"
+                                class="px-4 py-3 rounded-xl text-sm font-bold border-2 shadow-sm transition-all
+                                       disabled:opacity-50 active:scale-95 flex items-center gap-2"
+                                :class="isOnList(s.name)
+                                    ? 'bg-pink-500/20 border-pink-400 text-pink-300'
+                                    : 'bg-gray-800 border-gray-600 hover:border-pink-400'">
+                                <span class="text-base leading-none"
+                                    x-text="isOnList(s.name) ? '✓' : '+'"></span>
+                                <span x-text="s.name"></span>
+                            </button>
+                        </template>
+                    </div>
+                </div>
+                <div x-show="!staples.length" class="text-sm opacity-60">
+                    Nothing the household keeps on hand yet.
+                </div>
+{% endmacro %}
+
+{% macro shopping_items(interactive='true', remove='null', clear='null') %}
+                <div x-show="!openItems().length && !checkedItems().length"
+                    class="text-gray-500 bg-gray-800 rounded-2xl p-8 text-center">
+                    Nothing on this list. Say "we're out of milk" to Argyle and it lands here.
+                </div>
+
+                <!-- Split by which shop RUN each item is for, so a mid-week
+                     dash for the one thing tonight's re-planned dinner needs
+                     does not arrive carrying all of Saturday. The rest is NOT
+                     hidden — you are standing in a store, which is the best
+                     possible moment to be asked whether you want any of it.
+                     With one group (the ordinary week) there is no header at
+                     all; a heading over the whole list is not a split, it is
+                     noise. -->
+                <div class="space-y-2 mb-8">
+                  <template x-for="g in (runs.groups || [])" :key="'rg-' + g.key + (g.date || '')">
+                   <div class="space-y-2">
+                    <div x-show="listShow('runs') && (runs.groups || []).length > 1"
+                        class="flex items-baseline gap-2 pt-2 first:pt-0">
+                        <span class="text-xs font-black uppercase tracking-widest"
+                            :class="g.key === 'now' ? 'text-amber-300' : 'text-gray-500'"
+                            x-text="g.label"></span>
+                        <span class="text-[11px] text-gray-600" x-text="(g.items || []).length"></span>
+                    </div>
+                    <template x-for="it in (g.items || [])" :key="it.id">
+                        <div class="bg-gray-800 rounded-xl border border-gray-700 flex items-center gap-3 px-4 py-3 group">
+                            <button @click="{{ interactive }} && setChecked(it, true)"
+                                :disabled="!({{ interactive }})"
+                                class="w-6 h-6 rounded-md border-2 border-gray-600 hover:border-pink-400 shrink-0"
+                                :aria-label="'Got ' + it.name"></button>
+                            <div class="min-w-0 flex-1">
+                                <div class="font-semibold text-white truncate">
+                                    <span x-text="it.name"></span>
+                                    <span class="text-gray-400 font-normal" x-show="it.qty" x-text="' · ' + it.qty"></span>
+                                </div>
+                                <div class="text-[11px] text-gray-500" x-show="itemSubline(it)">
+                                    <span x-text="itemSubline(it)"></span>
+                                </div>
+                            </div>
+                            <button x-show="!!({{ remove }})" @click="({{ remove }})(it)"
+                                class="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                title="Remove (not bought — just not wanted)">✕</button>
+                        </div>
+                    </template>
+                   </div>
+                  </template>
+                </div>
+
+                <div x-show="listShow('cart') && checkedItems().length" class="mb-10">
+                    <div class="flex items-baseline justify-between mb-3">
+                        <h3 class="text-xs font-black uppercase tracking-widest text-gray-500">
+                            In the cart · <span x-text="checkedItems().length"></span>
+                        </h3>
+                        <button x-show="!!({{ clear }})" @click="({{ clear }})()"
+                            class="text-xs font-bold text-gray-500 hover:text-white">Clear</button>
+                    </div>
+                    <div class="space-y-2">
+                        <template x-for="it in checkedItems()" :key="it.id">
+                            <div class="bg-gray-800/50 rounded-xl border border-gray-700/50 flex items-center gap-3 px-4 py-2.5">
+                                <button @click="{{ interactive }} && setChecked(it, false)"
+                                    :disabled="!({{ interactive }})"
+                                    class="w-6 h-6 rounded-md bg-pink-500/30 border-2 border-pink-400/60 text-pink-200 text-sm font-bold shrink-0"
+                                    :aria-label="'Put ' + it.name + ' back'">✓</button>
+                                <div class="min-w-0 flex-1 text-gray-500 line-through truncate" x-text="it.name"></div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+{% endmacro %}
+
+<script>
+    // ── The nights ahead: the composed week and everything that reads one
+    // day of it. Spread into the shopping page and into the meals_week card.
+    //
+    // NO GETTERS in here, deliberately. Spreading an object EVALUATES its
+    // getters — `{...factory()}` would freeze `boardDays` to whatever it
+    // happened to be at mount — so everything is a method and the page keeps
+    // its own thin getters over these where its markup already says `allDays`.
+    function mealWeekLogic(apiBase) {
+        return {
+            week: [], weekSpans: [], weekWindow: null, categories: [],
+
+            listShow(part) { return true; },
+            // How many nights the board shows. Seven on the page; a card
+            // narrows it.
+            boardNights() { return 7; },
+
+            async loadMealWeek() {
+                // GET only. `compose_week` reads the cache and the plates and
+                // persists nothing, which is what makes it safe for a wall
+                // panel to ask every quarter of an hour — board rule 3, a
+                // display does not change what it is displaying.
+                try {
+                    const r = await fetch(apiBase + 'api/meals/week');
+                    if (!r.ok) return;
+                    const data = await r.json();
+                    this.week = data.week || [];
+                    this.weekSpans = (data.spans || []).filter(s => (s.week || []).length);
+                    this.weekWindow = data.window || null;
+                } catch (e) { }
+            },
+            async loadCategories() {
+                try {
+                    const r = await fetch(apiBase + 'api/meals/categories');
+                    this.categories = r.ok ? (await r.json()).categories || [] : [];
+                } catch (e) { this.categories = []; }
+            },
+
+            // Every night on the page, both spans, in order. Moving a dinner
+            // has to be able to cross the shop boundary: that is what actually
+            // happens when a meeting lands.
+            weekDays() {
+                return (this.weekSpans || []).flatMap(s => s.week || []);
+            },
+            // What a WALL shows: the next nights from today, straight through
+            // the shop boundary. The board used to render the span being
+            // BOUGHT for, which starts on the shop day — so two days out from
+            // a run it opened on Saturday and skipped tonight and tomorrow,
+            // the only two nights anybody standing in front of it is asking
+            // about. The span split is real and it stays downstairs, where it
+            // decides which run an ingredient goes on.
+            boardDays() {
+                const iso = this.todayIso();
+                return this.weekDays().filter(d => d.date >= iso)
+                    .slice(0, this.boardNights());
+            },
+            todayIso() {
+                const d = new Date();
+                return d.getFullYear() + '-'
+                    + String(d.getMonth() + 1).padStart(2, '0') + '-'
+                    + String(d.getDate()).padStart(2, '0');
+            },
+            isToday(day) { return day.date === this.todayIso(); },
+
+            // One definition of "the main dish block", shared by the badge in
+            // "What a plate looks like" and the board headline: the stored
+            // is_main flag. Position was an accident — order ties sort by
+            // NAME, so a rename could silently promote a block.
+            leadCategoryId() {
+                const m = (this.categories || []).find(c => c.is_main)
+                    || (this.categories || [])[0];
+                return m ? m.id : null;
+            },
+            mainDish(day) {
+                const ds = day.dishes || [];
+                const leadId = this.leadCategoryId();
+                return ds.find(d => d.type === 'meal')
+                    || (leadId && ds.find(d =>
+                            (d.category_ids || []).includes(leadId)))
+                    || ds.find(d => d.type === 'entree')
+                    || ds[0] || null;
+            },
+            dayHeadline(day) {
+                const m = this.mainDish(day);
+                return m ? (m.chip || m.short_name || m.name) : 'Not planned';
+            },
+            daySides(day) {
+                // Capped: a block seven-across is narrow, and a plate with five
+                // sides pushed the dish name out of the card.
+                const m = this.mainDish(day);
+                const names = (day.dishes || []).filter(d => d !== m)
+                    .map(d => d.chip || d.short_name || d.name);
+                if (names.length <= 3) return names.join(' · ');
+                return names.slice(0, 3).join(' · ') + ' +' + (names.length - 3);
+            },
+            dayImage(day) {
+                const m = this.mainDish(day);
+                return (m && m.image_url) || null;
+            },
+            dayTint(day) {
+                const m = this.mainDish(day);
+                const t = (m && (m.side_type || m.type)) || 'other';
+                return {
+                    meal: 'bg-gradient-to-br from-purple-900 to-gray-900',
+                    entree: 'bg-gradient-to-br from-rose-900 to-gray-900',
+                    vegetable: 'bg-gradient-to-br from-emerald-900 to-gray-900',
+                    starch: 'bg-gradient-to-br from-amber-900 to-gray-900',
+                    salad: 'bg-gradient-to-br from-lime-900 to-gray-900',
+                    dessert: 'bg-gradient-to-br from-fuchsia-900 to-gray-900',
+                }[t] || 'bg-gradient-to-br from-slate-800 to-gray-900';
+            },
+            dayGlyph(day) {
+                const m = this.mainDish(day);
+                const t = (m && (m.side_type || m.type)) || 'other';
+                return { meal: '🍲', entree: '🍗', vegetable: '🥦', starch: '🍚',
+                         salad: '🥗', dessert: '🍰' }[t] || '🍽️';
+            },
+            // How much WORK the night is — the number a "what's for dinner"
+            // board is actually being asked for. It used to show
+            // cook_window_mins, which is the free time available clamped to a
+            // 180-minute horizon, so every unconstrained evening read an
+            // identical "180 min" and the board looked broken.
+            dayEffort(day) {
+                const hands = (day.prep_ahead_mins || 0) + (day.finish_mins || 0);
+                const bits = [];
+                if (hands) bits.push(hands + ' min');
+                if (day.unattended_mins) bits.push(day.unattended_mins + ' min oven');
+                return bits.join(' · ');
+            },
+            // The window is only news when it PINCHES. An evening with three
+            // hours free is not information, and printing it nightly is how a
+            // real warning gets ignored.
+            daySqueeze(day) {
+                const w = day.cook_window_mins;
+                // A window of 0 is ambiguous alone — it is what an unsolved day
+                // reports AND what a genuinely impossible evening reports.
+                // has_cook separates them.
+                if (!day.has_cook) return '';
+                if (!w) return 'nobody free to cook';
+                if (w >= 180) return '';
+                const hands = (day.prep_ahead_mins || 0) + (day.finish_mins || 0);
+                if (w < hands) return 'only ' + w + ' min';
+                if (w <= 60 || (hands && w < hands * 1.5)) return 'tight · ' + w + ' min';
+                return '';
+            },
+        };
+    }
+
+    // ── The list itself, its staples shortcut, and the two taps that change
+    // it. Spread into the shopping page and into the two list cards.
+    function shoppingListsLogic(apiBase) {
+        return {
+            items: [], lists: [], activeId: null, members: {},
+            runs: { groups: [] }, staples: [], stapleBusy: null,
+
+            listShow(part) { return true; },
+
+            openItems() { return this.items.filter(i => !i.is_checked); },
+            checkedItems() { return this.items.filter(i => i.is_checked); },
+            activeListName() {
+                const l = (this.lists || []).find(x => x.id === this.activeId);
+                return l ? l.name : 'the list';
+            },
+            byline(it) {
+                const who = this.members[it.added_by];
+                if (!who) return '';
+                return it.added_via === 'photo' ? who + ' · photo' : who;
+            },
+            // The note and the byline are one line with a separator, and both
+            // are toggles — so the macro asks for the finished string rather
+            // than assembling it out of three x-shows that can disagree.
+            itemSubline(it) {
+                const bits = [];
+                if (this.listShow('note') && it.note) bits.push(it.note);
+                if (this.listShow('byline') && this.byline(it)) bits.push(this.byline(it));
+                return bits.join(' · ');
+            },
+
+            async loadMembers() {
+                try {
+                    const r = await fetch(apiBase + 'api/members');
+                    if (!r.ok) return;
+                    (await r.json()).forEach(m => { this.members[m.id] = m.name; });
+                } catch (e) { }
+            },
+            async loadLists() {
+                const r = await fetch(apiBase + 'api/shopping/lists');
+                this.lists = r.ok ? await r.json() : [];
+                if (!this.activeId && this.lists.length) {
+                    const def = this.lists.find(l => l.is_default) || this.lists[0];
+                    this.activeId = def.id;
+                }
+            },
+            async loadItems(quiet) {
+                if (!this.activeId) return;
+                const r = await fetch(apiBase + 'api/shopping/items?list_id='
+                    + encodeURIComponent(this.activeId));
+                if (r.ok) this.items = await r.json();
+                // The run split comes from the SERVER, not from a second copy
+                // of the rule out here — which run an item belongs to is the
+                // same question the agent and the errand ask, and the page is
+                // the worst place for it to be answered differently. Falls
+                // back to one undivided group, which is exactly what the list
+                // looked like before runs existed.
+                try {
+                    const rr = await fetch(apiBase + 'api/shopping/runs?list_id='
+                        + encodeURIComponent(this.activeId));
+                    this.runs = rr.ok ? await rr.json()
+                        : { groups: [{ key: 'next', label: '', items: this.openItems() }] };
+                } catch (e) {
+                    this.runs = { groups: [{ key: 'next', label: '', items: this.openItems() }] };
+                }
+                if (!quiet) return;
+                // keep the store chips' counts honest on remote updates
+                const r2 = await fetch(apiBase + 'api/shopping/lists');
+                if (r2.ok) this.lists = await r2.json();
+            },
+            async loadStaples() {
+                try {
+                    const r = await fetch(apiBase + 'api/shopping/staples');
+                    this.staples = r.ok ? (await r.json()).staples || [] : [];
+                } catch (e) { this.staples = []; }
+            },
+
+            async setChecked(it, checked) {
+                it.is_checked = checked;   // optimistic; PATCH is idempotent
+                await fetch(apiBase + 'api/shopping/items/' + it.id, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_checked: checked })
+                });
+                this.loadItems(true);
+            },
+
+            // "We're out of rice" — onto the list for THIS shop only. Never
+            // reclassifies the ingredient: whether rice is a staple is a
+            // standing fact about the household, and running out this week says
+            // nothing about it. Tap again to undo, which is why this is safe on
+            // a panel the children can reach.
+            async outOf(name) {
+                if (this.stapleBusy) return;
+                this.stapleBusy = name;
+                try {
+                    const open = this.openItems().find(i =>
+                        i.name.trim().toLowerCase() === name.trim().toLowerCase());
+                    if (open) {                       // tapped twice — undo
+                        await fetch(apiBase + 'api/shopping/items/' + open.id,
+                                    { method: 'DELETE' });
+                    } else {
+                        await fetch(apiBase + 'api/shopping/items', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: name, list_id: this.activeId,
+                                                   added_via: 'kiosk' })
+                        });
+                    }
+                    await this.loadItems(true);
+                    // Checking off is what teaches the shortcut what this
+                    // household buys, so its ranking is refreshed here.
+                    this.loadStaples();
+                } catch (e) {
+                    showGlobalAlert('Could not reach the server.');
+                } finally {
+                    this.stapleBusy = null;
+                }
+            },
+
+            isOnList(name) {
+                return this.openItems().some(i =>
+                    i.name.trim().toLowerCase() === name.trim().toLowerCase());
+            },
+        };
+    }
+
+    // A minute, the cadence the shopping kiosk already polled on: two people
+    // at the store and one adding from the sofa is the normal case.
+    const SHOPPING_POLL_MS = 60000;
+    // The week rolls over on its own — a wall nobody touches must not still be
+    // showing Tuesday's dinner on Wednesday.
+    const MEAL_WEEK_POLL_MS = 900000;
+
+    function shoppingListCard(t, apiBase) {
+        const cfg = (t && t.data) || {};
+        const parts = cfg.parts || {};
+        return {
+            ...shoppingListsLogic(apiBase),
+            listsInteractive: cfg.interactive !== false,
+            listShow(part) { return parts[part] !== false; },
+            async startShopping() {
+                await this.loadLists();
+                // A card pinned to one list wins over the household default;
+                // an unknown id falls back rather than showing nothing, the
+                // same rule every other pinned-selection card follows.
+                if (cfg.list && (this.lists || []).some(l => l.id === cfg.list)) {
+                    this.activeId = cfg.list;
+                }
+                this.loadMembers();
+                await this.loadItems();
+                setInterval(() => this.loadItems(true), SHOPPING_POLL_MS);
+            },
+        };
+    }
+
+    function stapleChipsCard(t, apiBase) {
+        const cfg = (t && t.data) || {};
+        const parts = cfg.parts || {};
+        return {
+            ...shoppingListsLogic(apiBase),
+            listsInteractive: cfg.interactive !== false,
+            listShow(part) { return parts[part] !== false; },
+            async startStaples() {
+                await this.loadLists();
+                if (cfg.list && (this.lists || []).some(l => l.id === cfg.list)) {
+                    this.activeId = cfg.list;
+                }
+                // The chips need the ITEMS too: a chip is ticked when the thing
+                // is already on the list, and that is the whole difference
+                // between "tap to add" and "tap to undo".
+                await this.loadItems();
+                await this.loadStaples();
+                setInterval(() => { this.loadItems(true); this.loadStaples(); },
+                            SHOPPING_POLL_MS);
+            },
+        };
+    }
+
+    function mealWeekCard(t, apiBase) {
+        const cfg = (t && t.data) || {};
+        const parts = cfg.parts || {};
+        return {
+            ...mealWeekLogic(apiBase),
+            listShow(part) { return parts[part] !== false; },
+            boardNights() { return cfg.nights || 7; },
+            async startMealWeek() {
+                await this.loadCategories();
+                await this.loadMealWeek();
+                setInterval(() => this.loadMealWeek(), MEAL_WEEK_POLL_MS);
+            },
+        };
+    }
+</script>
