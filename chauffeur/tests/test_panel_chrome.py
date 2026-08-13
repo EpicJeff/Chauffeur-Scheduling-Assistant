@@ -601,6 +601,39 @@ def scenario_the_server_can_tap_the_panel_on_the_shoulder():
           and NAV.count('chf-server-update') >= 2,
           "the screensaver hero must also listen for the push")
 
+def scenario_a_vendored_grid_is_themed_for_the_panel_too():
+    """Reported off a light wall: "can you tell what month the calendar is
+    showing? Me neither." FullCalendar's chrome is styled by the component in
+    hardcoded near-white — right for the dark page it was written on — and the
+    component carried a `body.ha-theme` block that remapped it for Home
+    Assistant and NOTHING for the panel skin. Panel mode deliberately runs no
+    HA theming, so on a board in light mode the month title, the weekday
+    headers and the day numbers were white on paper.
+
+    The lesson generalises past this grid: a VENDORED widget's chrome has to be
+    restated for every theme this app has, because it cannot be written in the
+    tokens it has never heard of.
+    """
+    comp = tpl_source.read('components/family_calendar.html')
+    for sel in ('.fc .fc-toolbar-title', '.fc-daygrid-day-number',
+                '.fc-col-header-cell-cushion'):
+        check(f'html[data-panel] {sel}' in comp,
+              f"{sel} has no panel-skin colour, so it keeps the near-white it "
+              f"was written in and vanishes on a light wall")
+    # Written in the SKIN's tokens, so one block serves both panel themes —
+    # a hardcoded dark-mode colour here would just move the bug to light.
+    block = comp[comp.index('html[data-panel] .fc .fc-toolbar-title'):]
+    block = block[:block.index('.cal-host')]
+    check('var(--panel-fg)' in block and 'var(--panel-line)' in block,
+          "the panel calendar rules are hardcoded rather than written in the "
+          "skin's variables, so they cannot follow a theme flip")
+    for hard in ('#f8fafc', '#cbd5e1', 'rgba(255, 255, 255'):
+        check(hard not in block,
+              f"a panel calendar rule hardcodes {hard} instead of a token")
+    # And the buttons, which are how you change month at all.
+    check('html[data-panel] .fc .fc-button-primary' in comp,
+          "the calendar's own toolbar buttons are unthemed on a panel")
+
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 

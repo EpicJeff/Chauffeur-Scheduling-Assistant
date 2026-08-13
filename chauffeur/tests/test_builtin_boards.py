@@ -317,7 +317,7 @@ def scenario_fit_to_content_is_measured_not_guessed():
     # shaped like a real one in tests/test_fit_to_content.py. jsdom does no
     # layout, so only that harness can tell a measurement that reads the right
     # elements from one that reads the wrong ones.
-    check('function autoFlowBoxes' in tpl,
+    check('function autoFlowEls' in tpl,
           "the measurement no longer walks for the content, so a `display: "
           "contents` wrapper or a hidden control is being measured instead")
     # Both observers, because content arrives two different ways: these cards

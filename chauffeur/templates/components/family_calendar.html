@@ -175,6 +175,80 @@
             border-color: var(--ha-primary-color) !important;
         }
 
+        /* ── THE PANEL SKIN. The block above adapts the grid to Home
+           Assistant's variables and there was nothing at all for the wall
+           panel's — so on a board the FullCalendar chrome kept the hardcoded
+           near-white it was written in, and in LIGHT panel mode the month
+           title, the weekday headers and the day numbers were white on a pale
+           card. Unreadable, and reported as exactly that: "can you tell what
+           month the calendar is showing?"
+
+           Scoped to `html[data-panel]` and written in the skin's own
+           variables, so one block serves both panel themes — the skin swaps
+           the variables and this follows, which is the whole reason those
+           variables exist. Same shape as the `body.ha-theme` block above. */
+        html[data-panel] .fc .fc-toolbar-title,
+        html[data-panel] .fc-daygrid-day-number,
+        html[data-panel] .fc-col-header-cell-cushion,
+        html[data-panel] .fc-list-day-text,
+        html[data-panel] .fc-timegrid-axis-cushion,
+        html[data-panel] .fc-timegrid-slot-label-cushion {
+            color: var(--panel-fg) !important;
+        }
+        /* The days either side of the month keep being quieter than the
+           month's own, rather than reading as the same day twice. */
+        html[data-panel] .fc-day-other .fc-daygrid-day-number {
+            color: var(--panel-dim) !important;
+        }
+        html[data-panel] .fc-theme-standard td,
+        html[data-panel] .fc-theme-standard th,
+        html[data-panel] .fc-theme-standard .fc-scrollgrid {
+            border-color: var(--panel-line) !important;
+        }
+        html[data-panel] .fc-day { background-color: transparent !important; }
+        html[data-panel] .fc-day-today {
+            background-color: color-mix(in srgb, var(--panel-accent) 18%, transparent) !important;
+        }
+        html[data-panel] .fc-timegrid-slot {
+            border-bottom-color: var(--panel-line) !important;
+        }
+        html[data-panel] .fc .fc-button-primary {
+            background-color: var(--panel-surface-2) !important;
+            border-color: var(--panel-line) !important;
+            color: var(--panel-fg) !important;
+        }
+        html[data-panel] .fc .fc-button-primary:hover {
+            background-color: var(--panel-surface-3) !important;
+            color: var(--panel-fg) !important;
+        }
+        html[data-panel] .fc .fc-button-primary:disabled {
+            background-color: var(--panel-surface-1) !important;
+            color: var(--panel-dim) !important;
+        }
+        /* The pressed/active view button stays the one loud thing, so which
+           view you are in is still readable across a kitchen. */
+        html[data-panel] .fc .fc-button-primary:not(:disabled):active,
+        html[data-panel] .fc .fc-button-primary:not(:disabled).fc-button-active {
+            background-color: var(--panel-accent) !important;
+            border-color: var(--panel-accent) !important;
+            color: var(--panel-bg) !important;
+        }
+        html[data-panel] .fc-popover {
+            background: var(--panel-surface-3) !important;
+            border-color: var(--panel-line) !important;
+        }
+        html[data-panel] .fc-popover .fc-popover-title { color: var(--panel-fg) !important; }
+        /* "+4 more" is blue ink on a 15% blue wash — legible on dark glass,
+           and blue-on-white paper otherwise. Same treatment as the modal's
+           amber: keep the hue, let the value follow the theme. */
+        html[data-panel] .fc-daygrid-more-link {
+            color: color-mix(in srgb, var(--panel-fg) 45%, #3b82f6) !important;
+            border-color: color-mix(in srgb, var(--panel-fg) 20%, transparent) !important;
+        }
+        /* (The details dialog's own panel rules are further down — the modal
+           already had a full panel block, written when its section labels
+           disappeared into light glass. Only the GRID's chrome was missing.) */
+
 /* ── The component's own skeleton: legend strip, grid, agenda panel, stacked
    in a column. The host contributes one empty element and nothing else. */
 .cal-host { display: flex; flex-direction: column; min-height: 0; }

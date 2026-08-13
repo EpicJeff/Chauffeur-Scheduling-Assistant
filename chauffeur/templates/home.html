@@ -834,7 +834,12 @@
                                 :class="tileFree(t) ? 'nc-free' : ''"
                                 x-show="cardsOf(t).length">
                                 <template x-for="c in cardsOf(t)" :key="c.id">
+                                    <!-- `data-plain` is the same no-surface
+                                         state a nested stack's cell wears; a
+                                         card asked to be bare keeps its place
+                                         on the grid and drops its box. -->
                                     <div class="nc-cell" :data-path="c.id"
+                                        :data-plain="c.bare ? 'true' : null"
                                         :style="`grid-column:span ${c.cols};`
                                             + (c.rows ? `height:calc(${c.rows} * var(--nc-row))` : '')">
                                         <!-- Arrange handles, drawn INTO the cell:
@@ -1280,7 +1285,12 @@
                                                             class="w-11 ed-input rounded text-xs ed-title px-1 py-0.5">
                                                         cols
                                                     </label>
-                                                    <button x-show="optionsFor(c.type).length"
+                                                    <!-- Always offered on a CARD (unlike a
+                                                         tile's gear): every card carries the
+                                                         universal no-panel toggle now, so
+                                                         there is no such thing as a card with
+                                                         nothing to ask. -->
+                                                    <button
                                                         @click="cardOpen = (cardOpen === c.id ? null : c.id)"
                                                         :class="cardOpen === c.id ? 'text-sky-300' : 'ed-btn'"
                                                         class="px-1" title="Options">⚙</button>
@@ -1294,6 +1304,20 @@
                                                 </div>
                                                 <div x-show="cardOpen === c.id" x-cloak
                                                     class="border-t border-gray-700/70 px-3 py-3 space-y-3">
+                                                    <!-- Every card can drop its surface — the
+                                                         card-level twin of the tile's own
+                                                         "No panel behind the cards". Offered
+                                                         HERE rather than declared per type in
+                                                         the catalog: it is a property of being
+                                                         a card in a tile, not of any one
+                                                         drawing, and nineteen copies of the
+                                                         same option is how a vocabulary
+                                                         drifts. -->
+                                                    <label class="flex items-center gap-2 text-[0.7rem] font-bold uppercase tracking-wider ed-note">
+                                                        <input type="checkbox" :checked="!!(c.config || {}).bare"
+                                                            @change="setCfg(c, { key: 'bare', type: 'bool', default: false }, $event.target.checked)">
+                                                        No panel behind this card
+                                                    </label>
                                                     {% with OW = 'c' %}
                                                         {% include 'components/board_options.html' %}
                                                     {% endwith %}
@@ -1717,21 +1741,21 @@
         // last child either.
         const boardAuto = { observers: {}, onMeasure: null };
 
-        function autoFlowBoxes(el, out) {
+        function autoFlowEls(el, out) {
             for (const kid of el.children) {
                 if (kid.tagName === 'TEMPLATE') continue;
                 const cs = getComputedStyle(kid);
                 if (cs.display === 'none') continue;
                 if (cs.position === 'absolute' || cs.position === 'fixed') continue;
-                if (cs.display === 'contents') { autoFlowBoxes(kid, out); continue; }
-                const r = kid.getBoundingClientRect();
-                if (r.height || r.width) out.push(r);
+                if (cs.display === 'contents') { autoFlowEls(kid, out); continue; }
+                out.push(kid);
             }
             return out;
         }
 
         function autoTileHeight(el) {
-            const boxes = autoFlowBoxes(el, []);
+            const boxes = autoFlowEls(el, []).map(k => k.getBoundingClientRect())
+                .filter(r => r.height || r.width);
             if (!boxes.length) return 0;
             const cs = getComputedStyle(el);
             const padY = (parseFloat(cs.paddingTop) || 0)
@@ -1746,12 +1770,24 @@
         // and the real height lands a moment later (mutation); and a board is
         // responsive, so a narrower wall rewraps the same content into more
         // rows (resize). Neither one alone is enough.
+        //
+        // The ResizeObserver watches the FLOW BOXES, not (only) the tile —
+        // and that distinction is a custom tile on a wall. The tile's height
+        // is imposed by us, so content growing INSIDE it never resizes it: a
+        // hosted Home Assistant card settling in, an image arriving in a
+        // cell, a font swap rewrapping a line — none of them are DOM
+        // mutations either, so a tile-only watch measured once at mount and
+        // went stale forever. The flow boxes are content-sized, so growth
+        // anywhere inside reaches them; and because our own span write only
+        // resizes the TILE, watching the boxes cannot feed the measurement
+        // its own output. Re-collected on every mutation, since Alpine
+        // replaces them wholesale.
         function watchAutoTile(el, id) {
             const held = boardAuto.observers[id];
             // An observer bound to an element Alpine has since replaced is
             // measuring a node nobody can see — the same trap the map tiles
             // hit, and the reason renderMapInto checks the same thing.
-            if (held && held.el === el) return;
+            if (held && held.el === el) { held.rewatch(); return; }
             if (held) {
                 held.ro.disconnect();
                 held.mo.disconnect();
@@ -1759,10 +1795,15 @@
             }
             const fire = () => boardAuto.onMeasure && boardAuto.onMeasure(id, el);
             const ro = new ResizeObserver(fire);
-            ro.observe(el);
-            const mo = new MutationObserver(fire);
+            const rewatch = () => {
+                ro.disconnect();
+                ro.observe(el);                 // width changes still rewrap
+                for (const kid of autoFlowEls(el, [])) ro.observe(kid);
+            };
+            const mo = new MutationObserver(() => { rewatch(); fire(); });
             mo.observe(el, { childList: true, subtree: true, characterData: true });
-            boardAuto.observers[id] = { ro, mo, el };
+            boardAuto.observers[id] = { ro, mo, el, rewatch };
+            rewatch();
             fire();
         }
 

@@ -546,13 +546,12 @@
                         .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                 },
                 // The other half of the shared macro's contract; the board's
-                // card wrapper (kidDigestCard) answers the same questions from
+                // card wrapper (kidDigestCard) answers the same question from
                 // its tile payload.
                 digestLabel() {
                     return (this.kidDigests.label === 'Today' ? '☀️ ' : '🌙 ')
                         + (this.kidDigests.label || 'Tomorrow');
                 },
-                digestWeather() { return this.kidDigests.weather || ''; },
                 digestColumns() {
                     const n = this.digestCards().length;
                     if (n <= 1) return 1;

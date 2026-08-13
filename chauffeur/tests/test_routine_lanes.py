@@ -367,8 +367,12 @@ def scenario_the_kid_digest_is_one_drawing_on_both_surfaces():
           f"the tile's lanes are not in the page's order: {t['kids']}")
     check(all(k.get('id') for k in t['kids']),
           "a digest entry has no id, so the lane rows have no key")
-    check(t.get('weather') == 'Sunny.' and t.get('label') == 'Tomorrow',
-          f"the label or the weather was dropped: {t}")
+    check(t.get('label') == 'Tomorrow', f"the day label was dropped: {t}")
+    # NO weather: there is a weather card, and a payload that quietly carries
+    # another card's content is a board saying the same thing twice with no
+    # way to turn one of them off (user decision 2026-08-13).
+    check('weather' not in t, f"the digest card carries the weather card's "
+                              f"content: {sorted(t)}")
     # Emma has no rides but has tasks and routines — the page shows her
     # ("free day" + the task), so the tile must not drop her.
     check(any(k['name'] == 'Emma' for k in t['kids']),

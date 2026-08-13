@@ -1225,8 +1225,9 @@ def _tile_kids(now, kid_digest_fn=None, config=None, **_):
         if not any(m.get('role') == 'child' for m in storage.get_all_members()):
             return None
         return {'empty': "Nothing on for the kids today."}
-    return {'label': digest.get('label'), 'weather': digest.get('weather'),
-            'kids': kids, 'lines': lines}
+    # No weather: there is a weather CARD, and a payload that quietly carries
+    # another card's content is how a board says the same thing twice.
+    return {'label': digest.get('label'), 'kids': kids, 'lines': lines}
 
 
 def _tile_meals(now, config=None, **_):
@@ -2581,6 +2582,13 @@ def _build_card(card, now, **kw):
     meta = next(w for w in WIDGETS if w['key'] == card['type'])
     return {
         'id': card['id'], 'type': card['type'], 'icon': meta['icon'],
+        # The card-level twin of the custom tile's own `bare`: the cell keeps
+        # its place on the tile's grid and stops drawing a surface, so a
+        # household can compose a custom tile out of existing cards without
+        # every one of them arriving in its own box. Read for cards in CUSTOM
+        # tiles only — a built-in tile's card has no surface of its own to
+        # drop (the tile is its surface, and the tile's `bare` is the switch).
+        'bare': _cfg_bool(config, 'bare', False),
         # Two different questions. `label` is what the EDITOR calls this card
         # in a list of them, so it always has an answer. `title` is what gets
         # DRAWN over it, and blank means draw nothing and take no room — a

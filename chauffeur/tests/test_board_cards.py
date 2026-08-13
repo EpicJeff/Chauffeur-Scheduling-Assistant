@@ -232,6 +232,29 @@ def scenario_a_broken_card_does_not_take_the_tile_down():
     check([c['type'] for c in got['cards']] == ['weather'],
           f"a throwing card took its neighbours with it: {got}")
 
+def scenario_a_card_can_drop_its_own_panel():
+    """The card-level twin of the custom tile's `bare` (user ask 2026-08-13):
+    a household composing a custom tile out of existing cards should not get
+    every one of them in its own box. The payload carries the flag and the
+    cell wears the SAME `data-plain` no-surface state a nested stack's cell
+    already wears — one plain state, not two."""
+    got = _with_builders({'chores': _Spy({'points': 12}),
+                          'weather': _Spy({'high': 71})}, lambda: _custom(
+        [{'type': 'weather', 'config': {'bare': True}}, {'type': 'chores'}]))
+    check(got['cards'][0]['bare'] is True and got['cards'][1]['bare'] is False,
+          f"a card's bare flag did not survive the build: {got['cards']}")
+
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    home = open(os.path.join(tpl, 'home.html'), encoding='utf-8').read()
+    check(':data-plain="c.bare' in home,
+          "the custom tile's cell ignores a card's bare flag")
+    # And the option is reachable: the card gear is unconditional now, since
+    # every card carries this toggle — a gear gated on the type's own option
+    # list left a card with no options no road to it.
+    check("setCfg(c, { key: 'bare'" in home,
+          "the editor offers no way to make a card bare")
+
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 

@@ -67,21 +67,28 @@ const el = (spec) => ({
 });
 globalThis.getComputedStyle = (n) => n._style;
 
-const tile = el({ padTop: '20px', padBottom: '20px', children: [
-  // Alpine's marker for the heading row, then the heading it inserted.
-  el({ tag: 'TEMPLATE' }),
-  el({ rect: box(100, 140) }),
-  // The built-in tile's body: `display: contents`, so NO BOX of its own —
-  // a browser hands back zeros for it. The content is one level down.
-  el({ display: 'contents', rect: box(0, 0), children: [
+const makeTile = () => {
+  const content = el({ rect: box(150, 900) });      // the card
+  const t = el({ padTop: '20px', padBottom: '20px', children: [
+    // Alpine's marker for the heading row, then the heading it inserted.
     el({ tag: 'TEMPLATE' }),
-    el({ rect: box(150, 900) }),      // the card
-    el({ tag: 'TEMPLATE' }),
-  ]}),
-  // The arrange nameplate and the resize grip: in the DOM always.
-  el({ display: 'none', rect: box(0, 0) }),
-  el({ display: 'none', rect: box(0, 0) }),
-]});
+    el({ rect: box(100, 140) }),
+    // The built-in tile's body: `display: contents`, so NO BOX of its own —
+    // a browser hands back zeros for it. The content is one level down.
+    el({ display: 'contents', rect: box(0, 0), children: [
+      el({ tag: 'TEMPLATE' }),
+      content,
+      el({ tag: 'TEMPLATE' }),
+    ]}),
+    // The arrange nameplate and the resize grip: in the DOM always.
+    el({ display: 'none', rect: box(0, 0) }),
+    el({ display: 'none', rect: box(0, 0) }),
+  ]});
+  t._content = content;
+  return t;
+};
+const tile = makeTile();
+const tile2 = makeTile();
 
 // The same tile while ARRANGING: the chrome is shown, and it is absolutely
 // positioned — a floating badge that must never inject layout height.
@@ -98,11 +105,38 @@ const shrunk = el({ padTop: '20px', padBottom: '20px', children: [
   el({ display: 'contents', children: [el({ rect: box(150, 300) })] }),
 ]});
 
+// Drive watchAutoTile with stub observers and record what the
+// ResizeObserver actually watches. The tile's height is imposed by us, so a
+// tile-only watch measures once and goes stale — the RO has to reach the
+// flow boxes.
+const observed = [];
+let mutate = null;
+globalThis.ResizeObserver = class {
+  observe(n) { observed.push(n); }
+  disconnect() { observed.length = 0; }
+};
+globalThis.MutationObserver = class {
+  constructor(cb) { mutate = cb; }
+  observe() {} disconnect() {}
+};
+boardAuto.onMeasure = () => {};
+watchAutoTile(tile, 't1');
+const watched = observed.slice();
+// A mutation swaps the children wholesale; the observer set must follow.
+const swapped = el({ rect: box(100, 500) });
+tile.children.length = 0;
+tile.children.push(swapped);
+mutate();
+const rewatched = observed.slice();
+
 console.log(JSON.stringify({
-  settled: autoTileHeight(tile),
+  settled: autoTileHeight(tile2),
   arranging: autoTileHeight(arranging),
   shrunk: autoTileHeight(shrunk),
   nothing: autoTileHeight(el({ children: [el({ tag: 'TEMPLATE' })] })),
+  watchedContent: watched.includes(tile._content),
+  watchedTile: watched.includes(tile),
+  rewatchedSwap: rewatched.includes(swapped) && !rewatched.includes(tile._content),
 }));
 """
 
@@ -240,6 +274,25 @@ def scenario_the_shipped_boards_ask_for_fit():
           "a map or a timeline can be set to fit, which collapses it")
     check('.auto' in fn,
           "isAuto reads something other than the span's own switch")
+
+def scenario_the_resize_observer_reaches_the_content():
+    """The custom-tile report: fit measured once at mount and never again. The
+    tile's height is imposed by us, so content growing INSIDE it — a hosted
+    Home Assistant card settling, an image arriving in a cell — resizes
+    nothing we were watching and mutates nothing. The ResizeObserver has to
+    watch the flow boxes themselves, and re-collect them when a mutation
+    swaps the children wholesale."""
+    got = _run()
+    if got is None:
+        return
+    check(got['watchedTile'] is True,
+          "the tile itself is unwatched, so width rewraps go unseen")
+    check(got['watchedContent'] is True,
+          "the ResizeObserver never reaches the content, so a card that "
+          "grows without a mutation is measured once at mount and never again")
+    check(got['rewatchedSwap'] is True,
+          "a mutation that replaced the children left the observer watching "
+          "detached nodes")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

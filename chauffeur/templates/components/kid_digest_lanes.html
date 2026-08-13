@@ -9,12 +9,18 @@
 
      The macro is markup only — pure Alpine, no element ids — and binds to a
      scope CONTRACT: `digestCards()` (sorted [{id, name, color_code, avatar,
-     image?, lines, tasks, routine_count, streak}]), `digestColumns()`,
-     `digestLabel()` ("☀️ Today" / "🌙 Tomorrow") and `digestWeather()`. The
-     routines page answers from its self-fetched `kidDigests`; the board's
-     card wrapper (`kidDigestCard` below) answers from the tile payload it
-     rides — this is a DISPLAY, so riding the payload is the rule (board rule
-     2), unlike the interactive lanes beside it.
+     image?, lines, tasks, routine_count, streak}]), `digestColumns()` and
+     `digestLabel()` ("☀️ Today" / "🌙 Tomorrow"). The routines page answers
+     from its self-fetched `kidDigests`; the board's card wrapper
+     (`kidDigestCard` below) answers from the tile payload it rides — this is
+     a DISPLAY, so riding the payload is the rule (board rule 2), unlike the
+     interactive lanes beside it.
+
+     NO WEATHER, as of one release after it briefly grew some: there is a
+     weather card, and a drawing that quietly includes another card's content
+     is how a board ends up saying the same thing twice with no way to turn
+     one of them off. A wall that wants weather beside the digest composes
+     the two cards.
 
      The hero band's kid columns (board_tile_body's hero branch) are NOT this
      drawing and stay separate on purpose: inside the hero the kids are a
@@ -26,10 +32,8 @@
 
 {% macro digest_grid() %}
                     <div>
-                        <h3 class="text-lg font-black text-indigo-300 mb-1"
+                        <h3 class="text-lg font-black text-indigo-300 mb-3"
                             x-text="digestLabel()"></h3>
-                        <div x-show="digestWeather()" class="text-sm text-gray-400 mb-3"
-                            x-text="digestWeather()"></div>
                         <div class="grid gap-5" :style="'grid-template-columns: repeat(' + digestColumns() + ', minmax(0, 1fr))'">
                             <template x-for="k in digestCards()" :key="'kd-' + k.id">
                                 <div class="bg-gray-800/60 rounded-2xl border border-indigo-900/60 p-4">
@@ -77,7 +81,6 @@
                 return (data.label === 'Today' ? '☀️ ' : '🌙 ')
                     + (data.label || 'Tomorrow');
             },
-            digestWeather() { return data.weather || ''; },
         };
     }
 </script>
