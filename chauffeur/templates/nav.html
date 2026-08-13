@@ -242,10 +242,12 @@
       and then vanished. `resolve_tabs` carries `board:<slug>` entries now, and
       this loop renders whichever kind each slug turns out to be.
 
-      Boards carry an emoji the household picked rather than a stroked icon
-      path, which is why they render at a different size: a 28px stroked SVG and
-      an emoji do not agree about their own optical weight, and matching the box
-      rather than the glyph is what keeps the row from looking ragged.
+      A board's icon is either a stroked path set (icon_paths, picked from the
+      editor's shelf-matched choices) or an emoji the household typed. The
+      stroked kind renders exactly like the app's own buttons; the emoji kind
+      matches the box rather than the glyph, because a 28px stroked SVG and an
+      emoji do not agree about their own optical weight, and matching the box
+      is what keeps the row from looking ragged.
     #}
     {% set _order = shelf_order(request) %}
     {% set _boards = {} %}
@@ -258,7 +260,15 @@
         {% if board %}
         <a href="{{ _up }}board/{{ board.slug }}" data-slug="{{ slug }}"
             class="flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 rounded-xl transition-colors {% if '/board/' ~ board.slug in _path %}bg-blue-600/25 text-blue-200{% else %}text-gray-400{% endif %}">
+            {% if board.icon_paths %}
+            <svg class="w-7 h-7 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                {% for d in board.icon_paths %}
+                <path stroke-linecap="round" stroke-linejoin="round" d="{{ d }}"></path>
+                {% endfor %}
+            </svg>
+            {% else %}
             <span class="h-7 flex items-center justify-center text-2xl leading-none shrink-0">{{ board.icon }}</span>
+            {% endif %}
             <span class="text-[0.6rem] font-bold uppercase tracking-wide truncate max-w-full">{{ board.name }}</span>
         </a>
         {% else %}
@@ -904,7 +914,10 @@
                             // down for a page nobody is looking at. Note it,
                             // and let wake-up do the navigating.
                             if (window._chfSsActive) { window._chfSsPendingHome = true; return; }
-                            window.location.href = 'home' + window.location.search;
+                            // Through _up: from /board/<slug> a bare 'home'
+                            // resolves to /board/home, which only renders by
+                            // the grace of find_page()'s fallback.
+                            window.location.href = '{{ _up }}home' + window.location.search;
                         };
                         const reset = () => {
                             clearTimeout(timer);

@@ -2523,6 +2523,52 @@ COLUMN_MAX = 1000
 # to `kitchen` would have a panel whose idle return goes nowhere.
 HOME_SLUG = 'home'
 
+# The shelf draws the app's own destinations as stroked 24×24 icons
+# (nav.html's NAV_ITEMS) and drew boards as whatever emoji the household
+# typed — two optical languages on one row, and the emoji always read as the
+# odd one out. These are shelf-matched stroked paths a board can wear
+# instead: the page's icon field stores `icon:<key>`, and every surface that
+# draws an icon resolves the key to paths — any other value still renders as
+# emoji text, so nobody's 🗂️ changes out from under them.
+BOARD_ICONS = {
+    'grid': ['M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z'],
+    'tv': ['M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z'],
+    'calendar': ['M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z'],
+    'clock': ['M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z'],
+    'sun': ['M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z'],
+    'moon': ['M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z'],
+    'star': ['M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z'],
+    'heart': ['M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z'],
+    'sparkles': ['M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z'],
+    'fire': ['M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z',
+             'M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z'],
+    'photo': ['M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z'],
+    'map': ['M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7'],
+    'pin': ['M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z',
+            'M15 11a3 3 0 11-6 0 3 3 0 016 0z'],
+    'bell': ['M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9'],
+    'bookmark': ['M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z'],
+    'bulb': ['M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z'],
+    'music': ['M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3'],
+    'puzzle': ['M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z'],
+}
+
+
+def icon_paths(icon) -> Optional[List[str]]:
+    """The stroked paths behind an `icon:<key>` value, or None for emoji."""
+    if isinstance(icon, str) and icon.startswith('icon:'):
+        return BOARD_ICONS.get(icon[5:])
+    return None
+
+
+def _norm_icon(raw) -> str:
+    """A page's icon field: a known `icon:<key>` survives whole, anything
+    else is emoji text and keeps the old four-character clamp."""
+    icon = str(raw or '🗂️').strip()
+    if icon.startswith('icon:') and icon[5:] in BOARD_ICONS:
+        return icon
+    return icon[:4] or '🗂️'
+
 
 def _slugify(name: str, taken: set) -> str:
     """A page's address, from its name. `Kitchen Wall` -> `kitchen-wall`."""
@@ -2550,7 +2596,7 @@ def _page_from(item: dict, settings: dict, taken: set) -> dict:
     return {
         'slug': slug,
         'name': name,
-        'icon': str(item.get('icon') or '🗂️')[:4],
+        'icon': _norm_icon(item.get('icon')),
         # The tiles, through the same normaliser every board has always used —
         # so a page accepts the old list-of-type-names shape too, and pasting
         # one board's widgets into another page just works.
@@ -2873,6 +2919,10 @@ def page_summaries(settings: dict = None) -> List[dict]:
     editor's own list all need. The tiles are the expensive part and none of
     those three surfaces wants them."""
     return [{'slug': p['slug'], 'name': p['name'], 'icon': p['icon'],
+             # Resolved here so the shelf template never learns the key
+             # scheme: paths mean "draw a stroked icon", None means "the
+             # icon field is emoji text".
+             'icon_paths': icon_paths(p['icon']),
              'tiles': len(p['widgets'])}
             for p in normalize_pages(settings)]
 
@@ -3187,4 +3237,8 @@ def catalog() -> dict:
         'sources': option_sources(),
         'tabs': tabs,
         'tab_defaults': resolve_tabs(None, settings),
+        # The icon choices a board can wear on the shelf, in the shelf's own
+        # visual language. The editor renders these itself, so the paths ride
+        # along rather than a name it would have to resolve.
+        'board_icons': [{'key': k, 'paths': v} for k, v in BOARD_ICONS.items()],
     }

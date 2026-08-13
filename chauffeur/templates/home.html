@@ -513,6 +513,16 @@
         .tile-scroll { scrollbar-width: none; -ms-overflow-style: none; }
         .tile-scroll::-webkit-scrollbar { display: none; }
 
+        /* The calendar card scrolls inside its own panel (the agenda grid, and
+           FullCalendar's scrollers in the month/week/day views), which put it
+           outside .tile-scroll's reach when the agenda moved into the shared
+           component — and a platform scrollbar appeared on the wall. Same rule,
+           applied to the component's scrollers wherever a board mounts one. */
+        .board-calendar .cal-agenda-grid,
+        .board-calendar .fc-scroller { scrollbar-width: none; -ms-overflow-style: none; }
+        .board-calendar .cal-agenda-grid::-webkit-scrollbar,
+        .board-calendar .fc-scroller::-webkit-scrollbar { display: none; }
+
         /* A day card is THREE BOARD COLUMNS wide — a quarter of the board,
            the same unit a tile is measured in. `auto-fill` with a minimum was
            squeezing seven days into whatever the tile had, which is how five
@@ -1012,7 +1022,7 @@
                                     ? 'bg-sky-600 text-white border-sky-500'
                                     : 'ed-input hover:brightness-125'"
                                 class="text-xs rounded-full border px-3 py-1.5">
-                                <span x-text="p.icon"></span>
+                                <span x-html="boardIconHtml(p.icon, 'w-3.5 h-3.5 inline-block -mb-0.5')"></span>
                                 <span x-text="p.name"></span>
                                 <span class="opacity-60" x-text="'· ' + (p.widgets || []).length"></span>
                             </button>
@@ -1029,10 +1039,15 @@
                          somewhere they can copy it from. -->
                     <div class="ed-panel rounded-lg p-3 mb-4" x-show="page()">
                         <div class="flex items-center gap-2">
-                            <input type="text" :value="page().icon"
-                                @input="setPageField('icon', $event.target.value)"
-                                maxlength="4" title="Icon"
-                                class="w-12 text-center ed-input rounded px-1 py-1 text-sm">
+                            <!-- A PICKER, not a bare text field: the shelf
+                                 draws the app's own buttons as stroked icons,
+                                 and a board wearing one of those sits on the
+                                 row as an equal instead of as the one emoji.
+                                 Typing an emoji still works, below. -->
+                            <button type="button" @click="iconPicking = !iconPicking"
+                                title="Icon" :class="iconPicking ? 'ring-1 ring-sky-500' : ''"
+                                class="w-12 h-8 shrink-0 flex items-center justify-center ed-input rounded text-sm"
+                                x-html="boardIconHtml(page().icon, 'w-5 h-5')"></button>
                             <input type="text" :value="page().name"
                                 @input="setPageField('name', $event.target.value)"
                                 placeholder="Board name"
@@ -1057,15 +1072,41 @@
                                 @click="removePage()"
                                 class="text-xs ed-note hover:text-red-400 px-2 py-1">Delete</button>
                         </div>
+                        <div x-show="iconPicking" class="mt-2 flex flex-wrap items-center gap-1">
+                            <template x-for="ic in (catalog.board_icons || [])" :key="ic.key">
+                                <button type="button" :title="ic.key"
+                                    @click="setPageField('icon', 'icon:' + ic.key); iconPicking = false"
+                                    :class="page().icon === 'icon:' + ic.key
+                                        ? 'bg-sky-600 text-white' : 'ed-input hover:brightness-125'"
+                                    class="w-8 h-8 flex items-center justify-center rounded"
+                                    x-html="iconSvg(ic.paths, 'w-5 h-5')"></button>
+                            </template>
+                            <input type="text" maxlength="4" placeholder="emoji"
+                                :value="String(page().icon || '').startsWith('icon:') ? '' : page().icon"
+                                @input="$event.target.value.trim()
+                                    && setPageField('icon', $event.target.value.trim())"
+                                title="Or type an emoji"
+                                class="w-16 text-center ed-input rounded px-1 py-1 text-sm">
+                        </div>
                         <div class="mt-2 text-[0.7rem] ed-note">
                             <template x-if="page().slug === 'home'">
                                 <span>The wall panel's home screen — at
                                     <code class="text-sky-300">/home</code>. An idle panel comes
                                     back here.</span>
                             </template>
+                            <!-- The address is EDITABLE, not just visible. It is
+                                 what somebody types into a tablet, so "new-board-2"
+                                 forever was a bookmark nobody chose. The shelf
+                                 entry follows the rename (setPageSlug), and the
+                                 server still validates and de-duplicates. -->
                             <template x-if="page().slug !== 'home'">
-                                <span>At <code class="text-sky-300"
-                                    x-text="'/board/' + page().slug"></code></span>
+                                <span class="inline-flex items-center gap-0.5">At
+                                    <code class="text-sky-300">/board/</code><input type="text"
+                                        :value="page().slug"
+                                        @input="setPageSlug($event.target.value)"
+                                        maxlength="31" spellcheck="false" title="This board's address"
+                                        class="ed-input rounded px-1.5 py-0.5 text-[0.7rem] text-sky-300 font-mono w-36">
+                                </span>
                             </template>
                         </div>
                         <input type="text" :value="page().background"
@@ -1368,7 +1409,8 @@
                                     <span class="text-[0.7rem] font-mono ed-note w-4 shrink-0"
                                         x-text="i + 1"></span>
                                     <span x-show="tabMeta(slug).kind === 'board'"
-                                        class="shrink-0" x-text="tabMeta(slug).icon"></span>
+                                        class="shrink-0"
+                                        x-html="boardIconHtml(tabMeta(slug).icon, 'w-4 h-4')"></span>
                                     <span class="flex-1 min-w-0 text-sm font-semibold ed-title truncate"
                                         x-text="tabMeta(slug).label"></span>
                                     <!-- Which KIND of destination this is. A
@@ -1407,7 +1449,8 @@
                         <template x-for="t in unpickedTabs()" :key="t.slug">
                             <button @click="draft.panel_tabs.push(t.slug)"
                                 class="text-xs ed-input hover:brightness-125 rounded-full px-3 py-1.5">
-                                + <span x-show="t.kind === 'board'" x-text="t.icon"></span>
+                                + <span x-show="t.kind === 'board'"
+                                    x-html="boardIconHtml(t.icon, 'w-3.5 h-3.5 inline-block -mb-0.5')"></span>
                                 <span x-text="t.label"></span>
                             </button>
                         </template>
@@ -1577,6 +1620,15 @@
                 <a :href="boardHref(page().slug) + '?panel=true'" target="_blank"
                     class="text-sm text-sky-300 hover:text-sky-200 underline">
                     Open <span x-text="page().name"></span> as a panel ↗</a>
+                <!-- The same board with the editor SHOWING. Every other road to
+                     a custom board — the shelf, the link above — carries panel
+                     mode, and panel mode latches the tab (ha_theme.html), so
+                     without this there was no discoverable way to stand in
+                     front of a board and arrange it. ?panel=false is the one
+                     thing that clears the latch. -->
+                <a :href="boardHref(page().slug) + '?panel=false'" target="_blank"
+                    class="text-sm text-sky-300 hover:text-sky-200 underline">
+                    Open to edit ↗</a>
             </div>
         </div>
     </div>
@@ -1661,6 +1713,8 @@
                 // The Add-tile picker: open, and what is typed into its search.
                 picking: false,
                 pickFilter: '',
+                // The board-icon picker, same one-at-a-time discipline.
+                iconPicking: false,
                 // The CARD editor, which is a different picker for a different
                 // thing: that one adds a tile, this one chooses what a Home
                 // Assistant card tile shows.
@@ -2279,6 +2333,16 @@
                             panel_screensaver_media_path: s.panel_screensaver_media_path || '',
                             panel_screensaver_dwell_seconds: s.panel_screensaver_dwell_seconds || 20
                         };
+                        // The editor opens pointed at the board being LOOKED
+                        // AT. Before this it always woke up on index 0 — the
+                        // home board — so /board/kitchen showed the kitchen
+                        // while "Add tile" below it silently put tiles on the
+                        // home board. Only startArrange() knew to sync.
+                        if (this.pageSlug) {
+                            const i = this.draft.panel_pages
+                                .findIndex(p => p.slug === this.pageSlug);
+                            if (i >= 0) this.pageIndex = i;
+                        }
                     } catch (e) { /* setup stays on defaults */ }
                 },
 
@@ -3263,6 +3327,25 @@
                     if (p) p[key] = value;
                 },
 
+                // The slug is the ADDRESS, so editing it is editing every
+                // reference to it: the shelf's curated order stores boards as
+                // `board:<slug>`, and resolve_tabs drops keys it does not
+                // recognise — so a rename that left the old key behind would
+                // silently take the board OFF a curated shelf. Home is
+                // reserved (the idle return goes there by name).
+                setPageSlug(value) {
+                    const p = this.page();
+                    if (!p || p.slug === 'home') return;
+                    const old = p.slug;
+                    const next = String(value || '').toLowerCase()
+                        .replace(/[^a-z0-9-]+/g, '-').replace(/^-+/, '').slice(0, 31);
+                    if (next === old) return;
+                    p.slug = next;
+                    const tabs = this.draft.panel_tabs || [];
+                    const at = tabs.indexOf('board:' + old);
+                    if (at >= 0 && next) tabs[at] = 'board:' + next;
+                },
+
                 addPage() {
                     const pages = this.draft.panel_pages || (this.draft.panel_pages = []);
                     const fresh = this.blankPage('New board', '');
@@ -3329,6 +3412,31 @@
                 widgetMeta(type) {
                     return (this.catalog.widgets || []).find(w => w.key === type)
                         || { key: type, icon: '▫️', label: type, blurb: '' };
+                },
+
+                // A board's icon, drawn wherever the editor mentions the
+                // board: `icon:<key>` becomes the same stroked SVG the shelf
+                // draws, anything else is emoji text — ESCAPED, because this
+                // rides in through x-html and the field is household input.
+                iconSvg(paths, cls) {
+                    return `<svg class="${cls}" fill="none" stroke="currentColor"`
+                        + ` stroke-width="1.8" viewBox="0 0 24 24">`
+                        + (paths || []).map(d =>
+                            `<path stroke-linecap="round" stroke-linejoin="round" d="${d}"></path>`
+                        ).join('') + '</svg>';
+                },
+
+                boardIconHtml(icon, cls) {
+                    icon = String(icon || '🗂️');
+                    if (icon.startsWith('icon:')) {
+                        const ic = (this.catalog.board_icons || [])
+                            .find(i => i.key === icon.slice(5));
+                        if (ic) return this.iconSvg(ic.paths, cls || 'w-4 h-4');
+                    }
+                    return icon.replace(/[&<>"']/g, c => ({
+                        '&': '&amp;', '<': '&lt;', '>': '&gt;',
+                        '"': '&quot;', "'": '&#39;'
+                    }[c]));
                 },
 
                 // What this ROW is called. A board with three calendar tiles
