@@ -237,8 +237,9 @@ def scenario_a_grid_cell_is_measured_not_assumed():
     got = _run()
     if got is None:
         return
-    # (1000 - 16*11)/12 + 16
-    want_col = (1000 - 16 * 11) / 12 + 16
+    # No structural column-gap since the gutters became painted margins —
+    # a column's pitch is exactly a track, 1000/12.
+    want_col = 1000 / 12
     check(abs(got['cell']['col'] - want_col) < 0.01,
           f"a column measures {got['cell']['col']}, expected {want_col}")
     # The row comes from the PAGE's own height, not a constant — and since

@@ -570,9 +570,20 @@
            wider than the grid is CLAMPED by the auto-placement algorithm
            rather than overflowing, so a quarter-width tile (3 of 12) becomes a
            half at 6 columns and full width at 3 — proportional, for free. */
-        /* The vertical gutter, painted rather than structural: an inset on
-           every tile instead of a row-gap, so spans never swallow it. */
-        #tile-grid > a { margin-bottom: var(--tile-gap, 16px); }
+        /* The gutter, painted rather than structural — BOTH axes. A span
+           crosses the structural gaps between its tracks, so with a real
+           column-gap a fine column grid inverted: the fr tracks shrank
+           toward zero and a C-span tile's width was dominated by its C-1
+           crossed gutters — tiles got WIDER as the gutter grew. Now a
+           column's pitch is exactly a track, and each tile wears half a
+           gutter on each side (so adjacent tiles sit one gutter apart)
+           plus a full gutter below. A tile gives up exactly ONE gutter of
+           width and of height, never one per span — and the board edges
+           carry a half-gutter inset, symmetric, with nothing bleeding
+           outside the page. */
+        #tile-grid > a {
+            margin: 0 calc(var(--tile-gap, 16px) / 2) var(--tile-gap, 16px);
+        }
 
         /* The arrange-mode nameplate. Floats over the tile so it costs no
            layout height — anything injected into the flow while arranging
@@ -686,14 +697,19 @@
                * 1px lattice: a tile's area is R*rh + gap tracks, minus the
                  constant painted inset -> box = R*rh EXACTLY, whatever the
                  gutter is. Change the gutter and tiles move apart; nothing
-                 changes size. Columns keep a real column-gap — widths are
-                 fractions, not steps, so nothing was entangled there. -->
+                 changes size.
+             Columns turned out to be entangled the same way — a fine column
+             grid made spans mostly crossed gutters, so tiles WIDENED as the
+             gutter grew — so their gap is painted too (half per side, CSS
+             above). Width cannot be gutter-independent the way height is
+             (the board cannot grow sideways), but a tile now gives up
+             exactly one gutter of width, never one per span. -->
         <div id="tile-grid" class="grid items-stretch"
             :class="arranging ? 'is-arranging' : ''"
             :style="`--c-lg:${cols()}; --c-md:${Math.ceil(cols() / 2)};
                      --c-sm:${Math.ceil(cols() / 4)};
                      --tile-gap: ${gapPx()}px;
-                     column-gap: ${gapPx()}px; row-gap: 0;
+                     column-gap: 0; row-gap: 0;
                      grid-auto-rows: 1px`">
             <template x-for="t in tiles()" :key="t.id">
                 <!-- ── A TILE IS A CONTAINER OF CARDS. Both kinds are.
@@ -2832,15 +2848,14 @@
                 // show up as a resize that runs slightly ahead of the pointer.
                 _cell() {
                     const grid = document.getElementById('tile-grid');
-                    const cs = grid ? getComputedStyle(grid) : null;
-                    const gap = cs ? (parseFloat(cs.columnGap) || 0) : 16;
                     const cols = this.cols();
                     const width = grid ? grid.clientWidth : 0;
                     return {
-                        col: Math.max(1, (width - gap * (cols - 1)) / cols) + gap,
-                        // Rows step by exactly the row height now — the
-                        // vertical gutter is painted inside the tile, not
-                        // laid between the tracks.
+                        // Both gutters are painted inside the tiles now, not
+                        // laid between the tracks — so a column's pitch is
+                        // exactly a track and a row's is exactly the row
+                        // height. A drag steps by what the editor says.
+                        col: Math.max(1, width / cols),
                         row: this.rowHeight(),
                     };
                 },
