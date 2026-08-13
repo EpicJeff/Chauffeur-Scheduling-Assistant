@@ -2,6 +2,7 @@
 {% import 'components/errand_lists.html' as errand_lists %}
 {% import 'components/shopping_lists.html' as shopping_lists %}
 {% import 'components/routine_lanes.html' as routine_lanes %}
+{% import 'components/kid_digest_lanes.html' as kid_digest_lanes %}
 <!-- ── What a tile of a given type DRAWS, and nothing else.
 
      Pulled out of the board's tile loop so that a card inside a group tile can
@@ -214,21 +215,20 @@
                     </template>
 
                     <!-- each kid -->
+                    <!-- ── The kid digest, a LANE per child — the SAME macro
+                         the routines page's kiosk strip renders. The flat
+                         name-and-lines list that lived here predates the
+                         strip, and the first board to actually show this tile
+                         (Routines — every board WITH a hero folds the kids
+                         into it instead) shipped the stale drawing to a wall.
+                         Display only, so it rides the payload; the wrapper
+                         (kidDigestCard) answers the macro's contract from
+                         `t.data`. The hero band's own kid columns are a
+                         different, deliberately compact drawing — see the
+                         hero branch above. -->
                     <template x-if="t.type === 'kids' && !t.data.empty">
-                        <div class="space-y-3">
-                            <template x-for="k in t.data.kids" :key="k.name">
-                                <div>
-                                    <div class="text-sm font-bold mb-1"
-                                        :style="'color:' + tone(k.color_code, '#6366f1')" x-text="k.name"></div>
-                                    <!-- Already cut to this instance's line
-                                         count on the server; the slice here is
-                                         a floor for a payload built before the
-                                         option existed. -->
-                                    <template x-for="(line, i) in k.lines.slice(0, t.data.lines || 4)" :key="i">
-                                        <div class="text-base panel-text truncate" x-text="line"></div>
-                                    </template>
-                                </div>
-                            </template>
+                        <div x-data="kidDigestCard(t)">
+{{ kid_digest_lanes.digest_grid() }}
                         </div>
                     </template>
 

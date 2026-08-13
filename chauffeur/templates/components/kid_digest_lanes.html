@@ -1,0 +1,83 @@
+<!-- ── The kid digest strip: a lane per child. One shared drawing.
+
+     The routines page's kiosk mode renders this macro and the board's `kids`
+     tile renders the same one, so the wall can never drift from the page. It
+     had already drifted once, which is why this file exists: the `kids` tile
+     predates the digest strip and drew a flat name-and-lines list, and the
+     first board to actually SHOW the tile (Routines — every other board folds
+     the kids into its hero band) shipped that stale drawing to a wall.
+
+     The macro is markup only — pure Alpine, no element ids — and binds to a
+     scope CONTRACT: `digestCards()` (sorted [{id, name, color_code, avatar,
+     image?, lines, tasks, routine_count, streak}]), `digestColumns()`,
+     `digestLabel()` ("☀️ Today" / "🌙 Tomorrow") and `digestWeather()`. The
+     routines page answers from its self-fetched `kidDigests`; the board's
+     card wrapper (`kidDigestCard` below) answers from the tile payload it
+     rides — this is a DISPLAY, so riding the payload is the rule (board rule
+     2), unlike the interactive lanes beside it.
+
+     The hero band's kid columns (board_tile_body's hero branch) are NOT this
+     drawing and stay separate on purpose: inside the hero the kids are a
+     compact strip under the next drive — no avatars, no streaks, panel-card
+     cells — sized for a band rather than for a board.
+
+     Jinja `import` renders none of this file, so the script at the bottom is
+     emitted by `include` exactly once per page. -->
+
+{% macro digest_grid() %}
+                    <div>
+                        <h3 class="text-lg font-black text-indigo-300 mb-1"
+                            x-text="digestLabel()"></h3>
+                        <div x-show="digestWeather()" class="text-sm text-gray-400 mb-3"
+                            x-text="digestWeather()"></div>
+                        <div class="grid gap-5" :style="'grid-template-columns: repeat(' + digestColumns() + ', minmax(0, 1fr))'">
+                            <template x-for="k in digestCards()" :key="'kd-' + k.id">
+                                <div class="bg-gray-800/60 rounded-2xl border border-indigo-900/60 p-4">
+                                    <div class="flex items-center gap-3 pb-2 border-b border-gray-700 mb-3">
+                                        <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-sm shrink-0 overflow-hidden"
+                                            :style="'background-color:' + (k.color_code || '#3b82f6')">
+                                            <template x-if="k.image"><img :src="k.image" class="w-full h-full object-cover"></template>
+                                            <template x-if="!k.image"><span x-text="k.avatar || (k.name || '?').charAt(0)"></span></template>
+                                        </div>
+                                        <div class="font-bold text-white flex-1 truncate" x-text="k.name"></div>
+                                        <div x-show="k.streak" class="text-orange-400 font-black text-sm shrink-0">
+                                            <span x-text="k.streak"></span>🔥
+                                        </div>
+                                    </div>
+                                    <template x-for="(line, i) in k.lines" :key="'kdl-' + k.id + '-' + i">
+                                        <div class="text-sm text-gray-200 mb-1.5" x-text="line"></div>
+                                    </template>
+                                    <div x-show="!k.lines.length" class="text-sm text-gray-400">No rides — free day! 🎉</div>
+                                    <template x-for="(tline, ti) in (k.tasks || [])" :key="'kdt-' + k.id + '-' + ti">
+                                        <div class="text-sm text-indigo-200 mb-1.5" x-text="tline"></div>
+                                    </template>
+                                    <div x-show="k.routine_count" class="text-xs text-gray-500 mt-2"
+                                        x-text="'📋 ' + k.routine_count + ' routine thing' + (k.routine_count !== 1 ? 's' : '')"></div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+{% endmacro %}
+
+<script>
+    // The board's mount: the same contract the routines page answers from its
+    // own state, answered from the tile payload. Display only, so it rides
+    // the payload rather than fetching — and the sixty-second board poll is
+    // exactly the cadence this content moves at.
+    function kidDigestCard(t) {
+        const data = (t && t.data) || {};
+        return {
+            digestCards() { return data.kids || []; },
+            digestColumns() {
+                // A card knows its tile, not the window. Lanes wrap at four,
+                // the same cap every lane card on the board uses.
+                return Math.max(1, Math.min((data.kids || []).length || 1, 4));
+            },
+            digestLabel() {
+                return (data.label === 'Today' ? '☀️ ' : '🌙 ')
+                    + (data.label || 'Tomorrow');
+            },
+            digestWeather() { return data.weather || ''; },
+        };
+    }
+</script>

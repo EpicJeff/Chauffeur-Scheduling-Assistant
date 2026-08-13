@@ -1194,12 +1194,19 @@ def _tile_kids(now, kid_digest_fn=None, config=None, **_):
         return None
     wanted = set(_cfg_ids(config, 'members'))
     lines = _cfg_int(config, 'lines', 4, 1, 8)
-    kids = [k for k in (digest.get('kids') or {}).values() if k.get('lines')]
+    # The digest is keyed by member id and its ENTRIES do not repeat it, so
+    # the id is folded in here — the filter below compared against a field
+    # that did not exist and silently emptied every filtered tile, and the
+    # shared lane drawing keys its rows by it.
+    kids = [dict(k, id=mid, member_id=mid)
+            for mid, k in (digest.get('kids') or {}).items()
+            if k.get('lines') or k.get('tasks') or k.get('routine_count')]
     if wanted:
-        # The digest keys by member id where it has one; a kid the household
-        # filtered to but who has no digest entry simply is not here, which is
-        # the same as any other quiet day.
-        kids = [k for k in kids if k.get('member_id') in wanted]
+        # A kid the household filtered to but who has no digest entry simply
+        # is not here, which is the same as any other quiet day.
+        kids = [k for k in kids if k['member_id'] in wanted]
+    # The page's own order, so the tile and the strip agree lane for lane.
+    kids.sort(key=lambda k: (k.get('name') or ''))
     for k in kids:
         k['lines'] = (k.get('lines') or [])[:lines]
     if not kids:
@@ -1208,7 +1215,8 @@ def _tile_kids(now, kid_digest_fn=None, config=None, **_):
         if not any(m.get('role') == 'child' for m in storage.get_all_members()):
             return None
         return {'empty': "Nothing on for the kids today."}
-    return {'label': digest.get('label'), 'kids': kids, 'lines': lines}
+    return {'label': digest.get('label'), 'weather': digest.get('weather'),
+            'kids': kids, 'lines': lines}
 
 
 def _tile_meals(now, config=None, **_):
@@ -3230,7 +3238,12 @@ BUILTIN_PAGES = {
     'routines': {
         'name': 'Routines', 'icon': '🔁', 'v': 5, 'columns': 12,
         'widgets': [
-            {'id': 'kids', 'type': 'kids', 'config': {'title': 'Each kid'}, 'require': True},
+            # No typed title: the digest drawing carries its own heading
+            # ("☀️ Today" / "🌙 Tomorrow"), which is better information than
+            # "Each kid" ever was, and two headings is one too many. Lines at
+            # the cap — the page does not truncate a kid's day, so the board
+            # should not either.
+            {'id': 'kids', 'type': 'kids', 'config': {'lines': 8}, 'require': True},
             {'id': 'routines_lanes', 'type': 'routines_lanes',
              'config': {'title': 'Today'}, 'require': True},
         ],

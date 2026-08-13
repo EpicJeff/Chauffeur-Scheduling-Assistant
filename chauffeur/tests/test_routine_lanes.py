@@ -327,6 +327,58 @@ def scenario_the_shared_logic_is_emitted_once_per_page():
         check('{{' not in block and '{%' not in block,
               "Jinja leaked into the shared lane script")
 
+def scenario_the_kid_digest_is_one_drawing_on_both_surfaces():
+    """The tile predates the page's digest strip and drew a flat name-and-lines
+    list. Nobody noticed for months because every board WITH a hero folds the
+    kids into it — the Routines board was the first to actually show the tile,
+    and it shipped the stale drawing to a wall. One macro now; this pins it.
+    """
+    # RENDERED, not include-inlined: `tpl_source` expands `include` and a
+    # macro only expands where it is CALLED, so the raw text of a page that
+    # imports the component never contains the lane markup.
+    check('border-indigo-900/60' in _render_routines(),
+          "the routines page no longer draws the digest lanes")
+    check('border-indigo-900/60' in tpl_source.read('home.html'),
+          "the board no longer draws the digest lanes")
+    page = open(os.path.join(TPL, 'routines.html'), encoding='utf-8').read()
+    check("import 'components/kid_digest_lanes.html'" in page,
+          "the routines page stopped rendering the shared digest macro")
+    check('border-indigo-900/60' not in page,
+          "the routines page kept its own copy of the digest lanes — two "
+          "drawings again, which is exactly how this drifted the first time")
+    body = open(os.path.join(TPL, 'components', 'board_tile_body.html'),
+                encoding='utf-8').read()
+    check("import 'components/kid_digest_lanes.html'" in body
+          and 'kidDigestCard(t)' in body,
+          "the kids tile stopped rendering the shared digest macro")
+
+    # And the builder speaks the macro's contract: entries carry the id the
+    # rows are keyed by (the old member filter compared against a field that
+    # did not exist and silently emptied every filtered tile), the day label
+    # and the weather ride along, and the order is the page's.
+    digest = {'label': 'Tomorrow', 'weather': 'Sunny.', 'kids': {
+        'k2': {'name': 'Theo', 'lines': ['x'], 'tasks': [],
+               'routine_count': 0, 'streak': 0},
+        'k1': {'name': 'Emma', 'lines': [], 'tasks': ['Math due'],
+               'routine_count': 2, 'streak': 4},
+    }}
+    t = home_board._tile_kids(None, kid_digest_fn=lambda: digest, config={})
+    check([k['name'] for k in t['kids']] == ['Emma', 'Theo'],
+          f"the tile's lanes are not in the page's order: {t['kids']}")
+    check(all(k.get('id') for k in t['kids']),
+          "a digest entry has no id, so the lane rows have no key")
+    check(t.get('weather') == 'Sunny.' and t.get('label') == 'Tomorrow',
+          f"the label or the weather was dropped: {t}")
+    # Emma has no rides but has tasks and routines — the page shows her
+    # ("free day" + the task), so the tile must not drop her.
+    check(any(k['name'] == 'Emma' for k in t['kids']),
+          "a kid with a quiet day but real tasks was dropped from the tile")
+    filtered = home_board._tile_kids(None, kid_digest_fn=lambda: digest,
+                                     config={'members': ['k1']})
+    check([k['name'] for k in filtered['kids']] == ['Emma'],
+          f"the member filter is comparing against a missing field again: "
+          f"{filtered['kids']}")
+
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 

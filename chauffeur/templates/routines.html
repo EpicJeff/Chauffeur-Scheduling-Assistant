@@ -1,4 +1,5 @@
 {% import 'components/routine_lanes.html' as routine_lanes %}
+{% import 'components/kid_digest_lanes.html' as kid_digest_lanes %}
 <!DOCTYPE html>
 <html lang="en" class="dark">
 
@@ -66,38 +67,12 @@
 
                     <!-- 🌙 Kid digest strip FIRST (family request 2026-08-06): the day
                          preview is what kids should see before the checklist. Today
-                         until the cutover time, then tomorrow (server decides). -->
+                         until the cutover time, then tomorrow (server decides).
+                         The SAME macro the board's `kids` tile renders — the tile
+                         shipped a stale flat-list drawing of this exact strip
+                         once, which is precisely the drift one drawing ends. -->
                     <div x-show="digestCards().length" class="mb-8">
-                        <h3 class="text-lg font-black text-indigo-300 mb-1"
-                            x-text="(kidDigests.label === 'Today' ? '☀️ ' : '🌙 ') + (kidDigests.label || 'Tomorrow')"></h3>
-                        <div x-show="kidDigests.weather" class="text-sm text-gray-400 mb-3"
-                            x-text="kidDigests.weather"></div>
-                        <div class="grid gap-5" :style="'grid-template-columns: repeat(' + digestColumns() + ', minmax(0, 1fr))'">
-                            <template x-for="k in digestCards()" :key="'kd-' + k.id">
-                                <div class="bg-gray-800/60 rounded-2xl border border-indigo-900/60 p-4">
-                                    <div class="flex items-center gap-3 pb-2 border-b border-gray-700 mb-3">
-                                        <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-sm shrink-0 overflow-hidden"
-                                            :style="'background-color:' + (k.color_code || '#3b82f6')">
-                                            <template x-if="k.image"><img :src="k.image" class="w-full h-full object-cover"></template>
-                                            <template x-if="!k.image"><span x-text="k.avatar || (k.name || '?').charAt(0)"></span></template>
-                                        </div>
-                                        <div class="font-bold text-white flex-1 truncate" x-text="k.name"></div>
-                                        <div x-show="k.streak" class="text-orange-400 font-black text-sm shrink-0">
-                                            <span x-text="k.streak"></span>🔥
-                                        </div>
-                                    </div>
-                                    <template x-for="(line, i) in k.lines" :key="'kdl-' + k.id + '-' + i">
-                                        <div class="text-sm text-gray-200 mb-1.5" x-text="line"></div>
-                                    </template>
-                                    <div x-show="!k.lines.length" class="text-sm text-gray-400">No rides — free day! 🎉</div>
-                                    <template x-for="(tline, ti) in (k.tasks || [])" :key="'kdt-' + k.id + '-' + ti">
-                                        <div class="text-sm text-indigo-200 mb-1.5" x-text="tline"></div>
-                                    </template>
-                                    <div x-show="k.routine_count" class="text-xs text-gray-500 mt-2"
-                                        x-text="'📋 ' + k.routine_count + ' routine thing' + (k.routine_count !== 1 ? 's' : '')"></div>
-                                </div>
-                            </template>
-                        </div>
+{{ kid_digest_lanes.digest_grid() }}
                     </div>
 
                     <!-- Interactive lanes: tap an item to check it off as
@@ -570,6 +545,14 @@
                         .map(([id, k]) => ({ id, ...k }))
                         .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                 },
+                // The other half of the shared macro's contract; the board's
+                // card wrapper (kidDigestCard) answers the same questions from
+                // its tile payload.
+                digestLabel() {
+                    return (this.kidDigests.label === 'Today' ? '☀️ ' : '🌙 ')
+                        + (this.kidDigests.label || 'Tomorrow');
+                },
+                digestWeather() { return this.kidDigests.weather || ''; },
                 digestColumns() {
                     const n = this.digestCards().length;
                     if (n <= 1) return 1;
