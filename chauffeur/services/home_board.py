@@ -2293,11 +2293,14 @@ def _build_tile(inst, now, **kw):
         return None
     return {
         'id': inst['id'], 'type': inst['type'], 'icon': meta['icon'],
-        # What the WALL says, which is not what the picker says. A configured
-        # instance still beats both — "Emma's week" is better than either
-        # "Calendar" or "What's coming", and it is the only one of the three a
-        # household actually chose.
-        'label': built['label'], 'locked': True, 'config': config,
+        # What the WALL says is the typed title and NOTHING else — blank
+        # means blank, the same rule cards adopted in v2.204.1. The type's
+        # wall sentence ("The rest of the day") stopped being a fallback in
+        # v2.210: it is backfilled into v<3 boards' title fields by
+        # _page_from instead, so old walls keep their words while the field
+        # finally tells the truth about what is drawn — and clearing it
+        # finally works.
+        'label': built['title'], 'locked': True, 'config': config,
         # Chrome draws no panel: the payload says so rather than the client
         # keeping a second list of which types are chrome.
         'bare': inst['type'] in BARE_TILES,
@@ -2686,11 +2689,25 @@ def _page_from(item: dict, settings: dict, taken: set) -> dict:
             widgets.insert(at, {'id': wtype, 'type': wtype, 'config': {},
                                 'span': spans[wtype]})
             at += 1
+    if version < 3:
+        # v3: blank means blank. Until v2.210 an untitled built-in tile fell
+        # back to its type's wall sentence, so a heading could never be
+        # REMOVED. The fallback is gone; what a v<3 board was showing gets
+        # written into each tile's title field instead — the wall keeps its
+        # words, the field finally matches the wall, and clearing it works.
+        # Chrome and containers never had the fallback, so they stay blank.
+        for w in widgets:
+            meta = next((m for m in WIDGETS if m['key'] == w['type']), None)
+            if not meta or meta.get('container') or w['type'] in BARE_TILES:
+                continue
+            cfg = w.setdefault('config', {})
+            if not str(cfg.get('title') or '').strip():
+                cfg['title'] = meta.get('heading') or meta['label']
     return {
         'slug': slug,
         'name': name,
         'icon': _norm_icon(item.get('icon')),
-        'v': 2,
+        'v': 3,
         'widgets': widgets,
         'spans': spans,
         'columns': columns,

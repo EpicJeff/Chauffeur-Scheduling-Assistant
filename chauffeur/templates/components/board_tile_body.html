@@ -152,7 +152,7 @@
                     <template x-if="t.type === 'heading'">
                         <div class="font-black panel-text"
                             :class="t.data.size === 'lg' ? 'text-2xl md:text-3xl' : 'text-4xl md:text-5xl'"
-                            x-text="t.label"></div>
+                            x-text="t.label || 'Heading'"></div>
                     </template>
 
                     <!-- the rest of the day — THE Drives timeline, drawn by

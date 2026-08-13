@@ -180,22 +180,24 @@ def scenario_a_tile_is_named_for_the_page_it_summarises():
               f"{by_key[key].get('heading')!r}")
 
 
-def scenario_the_wall_says_the_heading_and_the_picker_says_the_name():
-    """Two different jobs, and the tile has to do both. An instance's own title
-    still beats both — it is the only one of the three a household chose."""
+def scenario_the_wall_says_the_title_and_blank_means_blank():
+    """Since v2.210 the wall prints the TYPED title and nothing else — the
+    type's wall sentence stopped being a fallback (it could never be removed)
+    and became a v<3 migration backfill instead. A tile from a URL override
+    goes through no migration, so untitled there means blank."""
     # The calendar rather than the map: the map needs Home Assistant to have
     # anything to say, and a tile that returns nothing has no label to check.
     board = home_board.build('[{"type": "calendar"}]')
-    check(board['tiles'] and board['tiles'][0]['label'] == "What's coming",
-          f"the wall is printing the picker's name: {board['tiles']}")
+    check(board['tiles'] and board['tiles'][0]['label'] == '',
+          f"an untitled tile still prints a fallback: {board['tiles'][0]['label']!r}")
     board = home_board.build('[{"type": "calendar", "config": {"title": "Emma"}}]')
     check(board['tiles'][0]['label'] == 'Emma',
-          f"a configured title lost to the catalog: {board['tiles'][0]['label']!r}")
-    # A tile whose page name already IS the best thing to print falls back
-    # rather than carrying the same string twice.
+          f"a configured title was not printed: {board['tiles'][0]['label']!r}")
+    # The wall sentences still exist — they are what the migration writes
+    # into a v<3 board's title fields, so they must stay sensible.
     shopping = next(w for w in home_board.WIDGETS if w['key'] == 'shopping')
     check(shopping.get('heading', shopping['label']) == 'Lists',
-          "the lists tile prints something other than its own name")
+          "the lists tile's backfill is something other than its own name")
 
 
 def scenario_the_picker_separates_home_assistant_from_the_household():

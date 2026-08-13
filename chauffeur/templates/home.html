@@ -3216,11 +3216,12 @@
                 blankPage(name, slug) {
                     return {
                         slug: slug || '', name: name || 'Board', icon: '🗂️',
-                        // v2: the page-schema version. A page without it gets
-                        // the pre-tile chrome (clock + hero) injected by the
-                        // server's migration; a v2 page means what it says —
-                        // and a NEW board says blank.
-                        v: 2,
+                        // The page-schema version. A page without it gets the
+                        // pre-tile chrome (clock + hero) injected by the
+                        // server's migration, and v<3 pages get their old
+                        // heading fallbacks written into tile titles. A fresh
+                        // page means exactly what it says — blank.
+                        v: 3,
                         widgets: [], spans: {},
                         // Inherited from the board being looked at rather than
                         // hard-coded: a household that has settled on a 16
@@ -3312,10 +3313,11 @@
                         slug: p.slug,
                         name: (p.name || '').trim() || 'Board',
                         icon: (p.icon || '🗂️').trim(),
-                        // Pages load from the server already migrated to v2
-                        // (chrome as real tiles), so saving them AS v2 is what
-                        // stops the migration running twice.
-                        v: p.v || 2,
+                        // Pages load from the server already migrated (chrome
+                        // as real tiles, headings as real titles), so saving
+                        // the version back is what stops the migrations
+                        // running twice.
+                        v: p.v || 3,
                         widgets: p.widgets || [],
                         spans: p.spans || {},
                         columns: Math.min(1000, Math.max(1, parseInt(p.columns, 10) || 12)),

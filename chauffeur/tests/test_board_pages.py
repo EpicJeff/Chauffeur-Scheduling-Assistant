@@ -64,7 +64,10 @@ def scenario_the_board_they_already_have_becomes_the_home_page():
           f"a v1 board did not keep its chrome as tiles: {ids}")
     check(ids[2:] == ['calendar', 'calendar-2', 'drives', 'map'],
           f"the tiles or their ORDER changed on upgrade: {home['widgets']}")
-    check(home['widgets'][2]['config'] == {'days': 7},
+    # v3 wrote the wall sentence into the title field (blank stopped falling
+    # back), so the config carries BOTH the household's own option and the
+    # backfilled heading.
+    check(home['widgets'][2]['config'] == {'days': 7, 'title': "What's coming"},
           "a tile's configuration was dropped on upgrade")
     own = {k: v for k, v in home['spans'].items() if k not in ('clock', 'hero')}
     check(own == LEGACY['panel_tile_spans'],
@@ -136,7 +139,14 @@ def scenario_a_v1_board_keeps_its_chrome_and_a_v2_board_means_what_it_says():
     check(v1['spans'].get('clock') == {'cols': 12, 'rows': 1}
           and v1['spans'].get('hero') == {'cols': 12, 'rows': 1},
           f"the migrated chrome is not full width: {v1['spans']}")
-    check(v1['v'] == 2, "a normalised page does not say which shape it is")
+    check(v1['v'] == 3, "a normalised page does not say which shape it is")
+    # And the v3 half: the drives tile's old heading fallback became its
+    # title, while the chrome (which never had one) stays blank.
+    by_type = {w['type']: w for w in v1['widgets']}
+    check(by_type['drives']['config'].get('title') == 'The rest of the day',
+          f"the v1 wall's words were not kept: {by_type['drives']}")
+    check(not by_type['clock']['config'].get('title'),
+          f"chrome grew a title nobody typed: {by_type['clock']}")
     v2 = home_board.find_page('blank', settings)
     check(v2['widgets'] == [],
           f"a v2 board grew chrome nobody asked for: {v2['widgets']}")
