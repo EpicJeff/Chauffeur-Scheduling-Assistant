@@ -525,7 +525,9 @@ def scenario_a_tile_with_no_page_is_not_a_link():
                   'custom', 'clock', 'hero', 'heading'):
         check(type_ in listed,
               f"the {type_} tile is linking somewhere again: {listed}")
-    check('opens(t.type) ? link(t.type) : null' in tpl,
+    # `opens` takes the TILE now, not its type — an interactive calendar is
+    # doorless per instance, not per type.
+    check('opens(t) ? link(t.type) : null' in tpl,
           "the tile's href is unconditional, so a pageless tile is still a link")
 
 

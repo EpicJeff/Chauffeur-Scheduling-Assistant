@@ -909,9 +909,14 @@ def scenario_the_calendar_card_mounts_views_and_still_builds_the_list():
         storage.get_all_members = lambda *a, **kw: [{'id': 'm1', 'name': 'Emma'}]
 
         # The DEFAULT view is the component's agenda: mount config, no events.
+        # Interactive since the card became the calendar page's content —
+        # details and legend ride the mount, and the top-level flag is what
+        # un-doors the tile.
         tile = home_board._tile_calendar(_at(12))
-        check(tile == {'grid': {'view': 'agenda', 'toolbar': False,
-                                'days': home_board.AGENDA_DAYS, 'only': []}},
+        check(tile == {'interactive': True,
+                       'grid': {'view': 'agenda', 'toolbar': False,
+                                'days': home_board.AGENDA_DAYS, 'only': [],
+                                'details': True, 'legend': True}},
               f"the default calendar card is not a component agenda mount: {tile}")
         check(home_board._tile_calendar(
                   _at(12), settings={'panel_agenda_days': 9})['grid']['days'] == 9,

@@ -747,14 +747,14 @@
                      without an href is not interactive content — so it stops
                      being a link, stops being focusable, and legally contains
                      the toggle buttons the Home Assistant card puts inside it. -->
-                <a :href="!arranging && opens(t.type) ? link(t.type) : null"
+                <a :href="!arranging && opens(t) ? link(t.type) : null"
                     :style="spanStyle(t.id, t.type)" :data-tile-id="t.id"
                     @pointerdown="arranging && startTileDrag($event, t.id)"
                     class="min-w-0 overflow-x-hidden relative"
                     :class="[t.bare ? '' : 'panel-card rounded-2xl p-4 md:p-5',
                              fillsTile(t.type) ? 'flex flex-col overflow-hidden'
                                                : 'block tile-scroll overflow-y-auto',
-                             !arranging && opens(t.type) ? 'transition-transform active:scale-[0.985]' : '',
+                             !arranging && opens(t) ? 'transition-transform active:scale-[0.985]' : '',
                              arranging ? 'tile-arranging' : '']">
                     <!-- A heading only if there is one. A custom tile nobody
                          named is a plain panel, which is exactly what somebody
@@ -2418,7 +2418,9 @@
                 // The library is fetched on the first mount and never if no
                 // card wants one, which is what keeps an agenda-only wall
                 // panel as light as it was before grids existed.
-                _liveCalendars: new Set(),
+                // id -> the mount config it was mounted WITH, so a config
+                // change remounts rather than being ignored until a reload.
+                _liveCalendars: new Map(),
                 async syncCalendars() {
                     if (!window.FamilyCalendar) return;
                     const live = new Set();
@@ -2426,16 +2428,24 @@
                         .filter(t => t.type === 'calendar' && t.data && t.data.grid)) {
                         const id = 'board-calendar-' + card.id;
                         live.add(id);
-                        if (this._liveCalendars.has(id)) {
-                            // Already mounted: the component fetches its own
-                            // events, so a board poll has to TELL it to look
-                            // again — the payload no longer carries anything
-                            // for it to redraw from.
+                        const g = card.data.grid;
+                        // Keyed by the mount CONFIG, not just by id: a card
+                        // whose options changed under it (the editor saved a
+                        // new view, interactive was toggled) needs a
+                        // remount, and the id alone said "already mounted"
+                        // forever — changing a card's view used to take a
+                        // page reload to show up.
+                        const key = JSON.stringify(g);
+                        if (this._liveCalendars.get(id) === key
+                            && document.getElementById(id)) {
+                            // Same config, already mounted: the component
+                            // fetches its own events, so a board poll has to
+                            // TELL it to look again — the payload no longer
+                            // carries anything for it to redraw from.
                             FamilyCalendar.refresh(id);
                             continue;
                         }
                         if (!document.getElementById(id)) continue;
-                        const g = card.data.grid;
                         // `only` is a list of NAMES: the pipeline matches people
                         // by the name their calendar carries and the card stores
                         // member ids, so the SERVER resolves one into the other
@@ -2447,16 +2457,19 @@
                             base: this.apiBase,
                             only: (g.only && g.only.length) ? g.only : null,
                             agendaDays: g.days || 7,
-                            // legend and details stay OFF: a wall panel has
-                            // nowhere to put a modal, and taps on a display
-                            // surface should do nothing rather than half of
-                            // something. They become card options the day a
-                            // card wants them.
+                            // The page's own affordances, carried by the card
+                            // since it became the calendar page's content:
+                            // taps open the shared details dialog (the include
+                            // emits it once per page), the legend draws its
+                            // per-person chips. Both off is the old display-
+                            // only wall, still one toggle away.
+                            details: !!g.details,
+                            legend: !!g.legend,
                         });
-                        this._liveCalendars.add(id);
+                        this._liveCalendars.set(id, key);
                     }
                     // A card the household removed takes its calendar with it.
-                    for (const id of [...this._liveCalendars]) {
+                    for (const id of [...this._liveCalendars.keys()]) {
                         if (!live.has(id)) this._liveCalendars.delete(id);
                     }
                 },
@@ -4062,8 +4075,17 @@
                            'task_list', 'errand_list',
                            'shopping_staples', 'shopping_list',
                            'routines_lanes'],
-                opens(type) {
-                    return !this.PAGELESS.includes(type);
+                // Takes the TILE, not its type: an interactive calendar is
+                // decided per instance. Its events open the details dialog,
+                // and an <a> around them would navigate mid-overlay — so an
+                // interactive calendar card is not a door, while a
+                // display-only one (interactive off, or the payload-built
+                // list view) keeps being one.
+                opens(t) {
+                    if (this.PAGELESS.includes(t.type)) return false;
+                    if (t.type === 'calendar' && t.data
+                        && t.data.grid && t.data.interactive) return false;
+                    return true;
                 },
 
                 // Cache-busted on a timer the household chose. A camera URL is

@@ -386,6 +386,16 @@ WIDGETS = [
          _opt('view_selector', 'Show the view buttons', 'bool', False,
               help='Lets somebody change the view on the wall. Off pins the '
                    'card to the view above.'),
+         # ON by default (the conversion paradigm) and freshly earned: this
+         # card IS the calendar page's content now, and the page's one
+         # irreplaceable tap is opening an event. Overlay in place, never a
+         # navigation — doors are wrong for taps inside a drawing.
+         _opt('interactive', 'Interactive', 'bool', True,
+              help='Tapping an event opens its details. Off, the calendar '
+                   'is a display.'),
+         _opt('show_legend', 'The people legend', 'bool', True,
+              help='The per-person chips under the calendar; tapping one '
+                   'hides that person on this card.'),
          # No literal default: absent means `panel_agenda_days`, so a board
          # nobody has configured per-tile behaves exactly as it always did.
          _opt('days', 'Days', 'int', None, min=1, max=14,
@@ -1669,11 +1679,23 @@ def _tile_calendar(now, sched=None, settings=None, config=None, **_):
                              if str(m.get('id')) in wanted and m.get('name')]
                 except Exception as e:
                     print(f"[home_board] calendar card members failed: {e}")
-            return {'grid': {'view': _CAL_GRID_VIEWS[view],
+            # `interactive` rides at the TOP of the payload as well as inside
+            # the mount config: the board's door logic reads the tile, not the
+            # mount — a tile whose events open a dialog cannot also be an <a>
+            # to the calendar page, or every tap would navigate mid-overlay.
+            interactive = _cfg_bool(config, 'interactive', True)
+            return {'interactive': interactive,
+                    'grid': {'view': _CAL_GRID_VIEWS[view],
                              'toolbar': _cfg_bool(config, 'view_selector', False),
                              'days': _cfg_int(config, 'days',
                                               agenda_days(settings), 1, 14),
-                             'only': names}}
+                             'only': names,
+                             # The page's own two affordances, previously
+                             # hardcoded off in syncCalendars: the details
+                             # dialog behind every event tap, and the
+                             # per-person legend chips.
+                             'details': interactive,
+                             'legend': _cfg_bool(config, 'show_legend', True)}}
         show_all_day = _cfg_bool(config, 'all_day', True)
         member_ids = _cfg_ids(config, 'members')
         # Resolved ONCE, not per event: this reads every member record, and a

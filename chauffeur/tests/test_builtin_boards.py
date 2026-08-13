@@ -377,6 +377,56 @@ def scenario_the_kids_strip_survives_a_board_with_no_hero():
           f"{[t['type'] for t in board['tiles']]}")
     home_board._CACHE.clear()
 
+def scenario_the_calendar_card_is_the_page_so_it_taps_like_the_page():
+    """`?panel=true` on /calendar serves the BOARD, which makes the calendar
+    card the calendar page's content — and the page's one irreplaceable tap is
+    opening an event. The card mounts the same component the page does, so
+    interactivity is the two mount options the board used to hardcode off:
+    `details` (the shared dialog behind every event tap) and `legend` (the
+    per-person chips). Overlay in place, never a navigation.
+    """
+    # The builder resolves the options; the paradigm default is ON.
+    import datetime
+    now = datetime.datetime(2026, 8, 13, 12, 0)
+    t = home_board._tile_calendar(now, sched={}, config={'view': 'agenda'})
+    check(t.get('interactive') is True and t['grid'].get('details') is True,
+          f"a calendar card nobody configured came up inert: {t}")
+    check(t['grid'].get('legend') is True,
+          f"the legend did not follow the paradigm default: {t['grid']}")
+    off = home_board._tile_calendar(now, sched={},
+                                    config={'view': 'month',
+                                            'interactive': False,
+                                            'show_legend': False})
+    check(off.get('interactive') is False
+          and off['grid'].get('details') is False
+          and off['grid'].get('legend') is False,
+          f"display-only did not stick: {off}")
+
+    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    # The mount passes both through instead of hardcoding them off…
+    sync = tpl[tpl.index('async syncCalendars()'):]
+    sync = sync[:sync.index('async syncMap()')]
+    check('details: !!g.details' in sync and 'legend: !!g.legend' in sync,
+          "syncCalendars still hardcodes the page's affordances off")
+    # …and remounts when a card's CONFIG changes, not only when its id is new —
+    # without this, toggling interactive (or changing the view) in the editor
+    # did nothing until a full page reload.
+    check('JSON.stringify(g)' in sync,
+          "a calendar card's config change is ignored until a reload")
+
+    # An interactive calendar is NOT a door: its events open a dialog, and an
+    # <a> around them would navigate mid-overlay. Display-only stays a door.
+    opens = tpl[tpl.index('opens(t) {'):]
+    opens = opens[:opens.index(chr(10) + '                },')]
+    check("t.type === 'calendar'" in opens and 'interactive' in opens,
+          "an interactive calendar tile is still an <a> around its events")
+
+    # And the shipped calendar board needs no config to get all of it.
+    page = home_board.builtin_page('calendar', {})
+    cfg = page['widgets'][0]['config']
+    check(cfg.get('interactive') is None,
+          f"the shipped board hardcodes what the default already says: {cfg}")
+
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
