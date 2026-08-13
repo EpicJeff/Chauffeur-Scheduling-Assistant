@@ -2779,20 +2779,21 @@ def _page_from(item: dict, settings: dict, taken: set) -> dict:
     gap = _cfg_int(item, 'gap', 16, 0, 100)
     row_height = _cfg_int(item, 'row_height', grid_row_height(settings),
                           ROW_MIN, ROW_MAX)
-    if version < 4:
-        # v4: the gutter left the vertical skeleton. Under a real CSS
-        # row-gap a span-R tile drew R*row_height + (R-1)*gap; now the rows
-        # step by exactly row_height and each tile paints the gap as a
-        # bottom inset, drawing R*row_height - gap. Adding one gap to every
-        # stored row height makes the two formulas equal for EVERY span
-        # count — the wall keeps its exact pixels, and height stepping and
-        # spacing are finally independent numbers.
-        row_height = min(ROW_MAX, row_height + gap)
+    if version == 4:
+        # v4 (one release, v2.214.0) padded every stored row height by one
+        # gap for the painted-inset model, whose box was R*row_height - gap.
+        # v5's box is R*row_height EXACTLY — a tile is the same size at any
+        # gutter — so the padding comes back off. Boards that skipped v4
+        # (v<4 stored) were never padded and keep their numbers: their
+        # single-row tiles keep their exact height, and a multi-row tile
+        # gives up the (R-1) gutters its spans used to swallow, which is
+        # the point of the whole change.
+        row_height = max(ROW_MIN, row_height - gap)
     return {
         'slug': slug,
         'name': name,
         'icon': _norm_icon(item.get('icon')),
-        'v': 4,
+        'v': 5,
         'widgets': widgets,
         'spans': spans,
         'columns': columns,

@@ -256,7 +256,11 @@ def scenario_the_draft_is_the_truth_while_arranging():
     got = _run()
     if got is None:
         return
-    check('span 6' in got['draftSpan'] and 'span 2' in got['draftSpan'],
+    # The row span renders as PIXELS on the 1px lattice: the draft's 2 rows
+    # at the home board's 200px rows, plus the one painted 16px gutter,
+    # is span 416 — which is what makes a tile's box rows*row_height at any
+    # gutter instead of shrinking when the gutter grows.
+    check('span 6' in got['draftSpan'] and 'span 416' in got['draftSpan'],
           f"arranging did not read the draft: {got['draftSpan']}")
     check('span 3' in got['serverSpan'],
           f"a board that is not being arranged stopped reading the server: "

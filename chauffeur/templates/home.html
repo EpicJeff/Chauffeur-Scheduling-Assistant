@@ -675,23 +675,26 @@
             </button>
         </div>
 
-        <!-- The gutter is OUT of the vertical skeleton. A CSS grid span
-             occupies its tracks plus the gutters between them, so with a real
-             row-gap a tile's height was R*row_height + (R-1)*gap and the
-             step per row was their SUM — fine height control and nice
-             spacing could not coexist. Now row-gap is zero, the tracks step
-             by exactly row_height, and the spacing is painted as a bottom
-             inset on each tile (margin, below). A tile draws
-             R*row_height - gap; stored row heights were migrated up by one
-             gap (v4) so no wall changed. Columns keep a real column-gap —
-             widths are fractions, not steps, so nothing is entangled there. -->
+        <!-- The vertical lattice is ONE-PIXEL tracks, and a tile converts
+             its own rows to pixels (spanStyle). This is the third and final
+             shape of the row/gutter relationship:
+               * structural row-gap: box = R*rh + (R-1)*gap — stepping and
+                 spacing entangled, fine control impossible;
+               * painted inset on rh-sized tracks: box = R*rh - gap —
+                 stepping clean, but changing the gutter RESIZED every tile
+                 (bottom pinned to the lattice, top walked down);
+               * 1px lattice: a tile's area is R*rh + gap tracks, minus the
+                 constant painted inset -> box = R*rh EXACTLY, whatever the
+                 gutter is. Change the gutter and tiles move apart; nothing
+                 changes size. Columns keep a real column-gap — widths are
+                 fractions, not steps, so nothing was entangled there. -->
         <div id="tile-grid" class="grid items-stretch"
             :class="arranging ? 'is-arranging' : ''"
             :style="`--c-lg:${cols()}; --c-md:${Math.ceil(cols() / 2)};
                      --c-sm:${Math.ceil(cols() / 4)};
                      --tile-gap: ${gapPx()}px;
                      column-gap: ${gapPx()}px; row-gap: 0;
-                     grid-auto-rows: ${rowHeight()}px`">
+                     grid-auto-rows: 1px`">
             <template x-for="t in tiles()" :key="t.id">
                 <!-- ── A TILE IS A CONTAINER OF CARDS. Both kinds are.
                      A BUILT-IN tile is locked and holds exactly one card of
@@ -1908,7 +1911,12 @@
                     const c = Math.min(max, Math.max(1, parseInt(s.cols, 10)
                                                        || this.defaultCols(type)));
                     const r = Math.max(1, parseInt(s.rows, 10) || 1);
-                    return `grid-column: span ${c}; grid-row: span ${r};`;
+                    // Rows to pixels HERE, on the 1px lattice: the area is
+                    // R*row_height plus one gutter, the painted inset takes
+                    // the gutter back, and the tile's box is R*row_height
+                    // exactly — the same size at any gutter.
+                    return `grid-column: span ${c}; `
+                        + `grid-row: span ${r * this.rowHeight() + this.gapPx()};`;
                 },
 
                 // The tiles whose content IS a picture. Named rather than
@@ -3284,11 +3292,11 @@
                         // The page-schema version. A page without it gets the
                         // pre-tile chrome (clock + hero) injected by the
                         // server's migration, v<3 pages get their old heading
-                        // fallbacks written into tile titles, and v<4 row
-                        // heights get one gap added (the gutter left the
-                        // vertical skeleton). A fresh page means exactly what
-                        // it says — blank.
-                        v: 4,
+                        // fallbacks written into tile titles, and v==4 row
+                        // heights get their one-release gutter padding taken
+                        // back off. A fresh page means exactly what it says —
+                        // blank.
+                        v: 5,
                         widgets: [], spans: {},
                         // Inherited from the board being looked at rather than
                         // hard-coded: a household that has settled on a 16
@@ -3386,7 +3394,7 @@
                         // as real tiles, headings as real titles, row heights
                         // gutter-adjusted), so saving the version back is
                         // what stops the migrations running twice.
-                        v: p.v || 4,
+                        v: p.v || 5,
                         widgets: p.widgets || [],
                         spans: p.spans || {},
                         columns: Math.min(1000, Math.max(1, parseInt(p.columns, 10) || 12)),
