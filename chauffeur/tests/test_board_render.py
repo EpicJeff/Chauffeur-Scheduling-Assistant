@@ -98,6 +98,11 @@ def _board(hero=None):
                           'done': False, 'live': False, 'underway': True,
                           'over': False, 'minutes_until': -53, 'minutes_left': 7}},
         'tiles': [_builtin(t) for t in [
+            # The hero band, a TILE since v2.209 — bare (it draws its own
+            # rounded card) and reading the payload's top-level `hero`, so
+            # its fixture data is just the always-truthy marker.
+            {'id': 'hero', 'type': 'hero', 'icon': '🚦', 'label': '',
+             'bare': True, 'data': {'ok': True}},
             {'id': 'drives', 'type': 'drives', 'icon': '🚗', 'label': 'The rest of the day', 'data': {
                 'count': 2, 'next_event_id': 'e1',
                 # The RANGE the tile was configured for. renderSchedule seeds
@@ -542,7 +547,10 @@ def scenario_the_board_draws_without_throwing():
         return
     check(not got['errors'],
           f"something threw while the board drew itself: {got['errors']}")
-    check(got['tiles'] == ['The rest of the day', "What's coming",
+    # The hero tile's own heading row is suppressed (bare && locked), so the
+    # label its <a> answers with is the one INSIDE the band — hero_card.html's
+    # "Happening now" — which is itself the proof the band drew.
+    check(got['tiles'] == ['Happening now', 'The rest of the day', "What's coming",
                            "Tonight's plate", 'Where everyone is', 'Mornings'],
           f"the tiles that came back: {got['tiles']}")
 

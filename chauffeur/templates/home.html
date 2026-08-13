@@ -592,127 +592,13 @@
          television around it. The padding is the only inset. -->
     <div x-data="homeBoard()" x-init="start()" x-cloak class="px-4 py-4 md:px-6 md:py-6">
 
-        <!-- ── The clock strip. Time, day, weather: the three things a wall
-             display owes you before you have asked it anything. -->
-        <div class="flex flex-wrap items-start justify-between gap-x-10 gap-y-4 mb-6">
-            <div class="flex items-start gap-3">
-                <div class="hero-clock font-black panel-text tabular-nums" x-text="clock"></div>
-                <div class="pt-1">
-                    <!-- Superscript seconds, straight off the reference board.
-                         It also quietly answers "is this thing alive?" without
-                         a spinner. -->
-                    <div class="text-lg md:text-2xl font-black tabular-nums"
-                        style="color: var(--panel-accent)" x-text="seconds"></div>
-                    <div class="text-xs font-bold uppercase tracking-[0.2em] panel-dim"
-                        x-text="meridiem"></div>
-                </div>
-            </div>
-
-            <div class="flex items-start gap-8 flex-wrap">
-                <!-- The temperature RIGHT NOW, at display scale. -->
-                <div class="flex items-start gap-2" x-show="board.temp_now !== null">
-                    <span class="hero-temp font-black panel-text tabular-nums"
-                        x-text="board.temp_now + '°'"></span>
-                    <span class="text-3xl md:text-4xl pt-1" x-text="board.condition_emoji"></span>
-                </div>
-                <div class="pt-1">
-                    <div class="text-base md:text-lg font-bold panel-text"
-                        x-text="board.date_label || ''"></div>
-                    <div class="text-sm panel-dim" x-text="board.weather || ''"></div>
-                    <template x-for="s in (board.statuses || [])" :key="s.label">
-                        <div class="text-sm mt-0.5" style="color: var(--panel-accent)">
-                            <span x-text="s.emoji"></span> <span x-text="s.label"></span>
-                        </div>
-                    </template>
-                </div>
-                <div class="flex gap-4 pt-1" x-show="forecast().length">
-                    <template x-for="d in forecast()" :key="d.day">
-                        <div class="text-center">
-                            <div class="text-[0.6rem] font-black panel-dim uppercase tracking-widest"
-                                x-text="d.day"></div>
-                            <div class="text-2xl leading-none my-1" x-text="d.emoji"></div>
-                            <div class="text-sm font-bold panel-text tabular-nums"
-                                x-text="d.hi !== null ? d.hi + '°' : ''"></div>
-                        </div>
-                    </template>
-                </div>
-            </div>
-        </div>
-
-        <!-- ── The hero. A wall board that only tiles six lists is a worse
-             phone; the app already knows what is NEXT, so the panel leads
-             with it and the glances go underneath. -->
-        <div class="panel-card rounded-3xl mb-5 overflow-hidden">
-
-            <!-- One renderer, not a smaller copy: the card body comes from
-                 components/hero_card.html, the SAME function the screensaver's
-                 Next-up corner draws with. The Alpine pair countdown/
-                 countdownClass stays reactive state here so the x-html
-                 re-renders exactly when the pill changes. -->
-            <div x-show="hero.next" x-html="heroCardHtml()"></div>
-
-            <!-- The two honest empty states. A blank hero reads as a broken
-                 panel, so both of these say something true instead. -->
-            <template x-if="!hero.next && hero.all_done">
-                <div class="p-6 text-center">
-                    <div class="text-2xl md:text-3xl font-black text-emerald-300">Everyone's home 🏠</div>
-                    <div class="panel-dim mt-1">Nothing left to drive today.</div>
-                </div>
-            </template>
-            <template x-if="!hero.next && !hero.all_done && !hero.unbuilt">
-                <div class="p-6 text-center">
-                    <div class="text-2xl md:text-3xl font-black panel-text">No drives today</div>
-                    <div class="panel-dim mt-1">Nothing on the schedule that needs a driver.</div>
-                </div>
-            </template>
-
-            <!-- The third empty state, and the one that was wearing the second
-                 one's clothes: there is no schedule in the cache AT ALL. A
-                 fresh install, a cleared cache, the minute before the first
-                 refresh lands. "No drives today" is a confident claim about a
-                 day; this is the absence of any claim, and a wall panel that
-                 says the first when it means the second is how a board stops
-                 being believed. -->
-            <template x-if="!hero.next && hero.unbuilt">
-                <div class="p-6 text-center">
-                    <div class="text-2xl md:text-3xl font-black panel-text">Building the schedule…</div>
-                    <div class="panel-dim mt-1">Nothing has been worked out yet — this page will fill in.</div>
-                </div>
-            </template>
-
-            <!-- What follows the next one. Three, because a wall panel is
-                 glanced at, not studied — the rest is on the tile below. -->
-            <div class="px-5 md:px-6 py-3 flex flex-wrap gap-x-6 gap-y-1"
-                style="border-top: 1px solid var(--panel-line)"
-                x-show="(hero.later || []).length">
-                <template x-for="r in (hero.later || [])" :key="r.id">
-                    <div class="text-sm panel-dim">
-                        <span class="font-bold tabular-nums panel-text" x-text="r.at"></span>
-                        <span x-text="r.title"></span>
-                        <span class="panel-dim" x-text="'· ' + r.driver"></span>
-                    </div>
-                </template>
-            </div>
-
-            <!-- A column per child, inside the hero band rather than in a tile
-                 of its own. The band is full width and was spending it
-                 restating the drives tile; this is what a family actually
-                 walks up to the panel to read. -->
-            <div class="grid gap-px"
-                style="border-top: 1px solid var(--panel-line); background: var(--panel-line)"
-                x-show="(hero.kids || []).length"
-                :style="'grid-template-columns: repeat(' + Math.min((hero.kids||[]).length, 4) + ', minmax(0, 1fr))'">
-                <template x-for="k in (hero.kids || [])" :key="k.name">
-                    <a :href="link('routines')" class="block px-4 py-3 min-w-0 panel-card">
-                        <div class="text-sm font-black mb-1 truncate"
-                            :style="'color:' + tone(k.color_code, '#6366f1')" x-text="k.name"></div>
-                        <template x-for="(line, i) in k.lines.slice(0, 4)" :key="i">
-                            <div class="text-sm panel-dim truncate" x-text="line"></div>
-                        </template>
-                    </a>
-                </template>
-            </div>
-        </div>
+        <!-- ── The chrome became tiles (v2.209). The clock strip, the hero
+             band and a page heading are catalog types now, placed on the grid
+             like everything else — their bodies live in board_tile_body.html
+             with every other drawing. Boards stored before that are migrated
+             server-side with clock and hero prepended full-width, so no wall
+             changed; a NEW board is genuinely blank, and the grid is the
+             whole page. -->
 
         <!-- ── The glances. Tiles for features this household has actually set
              up; a quiet one says what it is quiet about rather than vanishing,
@@ -806,7 +692,7 @@
                      being a link, stops being focusable, and legally contains
                      the toggle buttons the Home Assistant card puts inside it. -->
                 <a :href="!arranging && opens(t.type) ? link(t.type) : null"
-                    :style="spanStyle(t.id)" :data-tile-id="t.id"
+                    :style="spanStyle(t.id, t.type)" :data-tile-id="t.id"
                     @pointerdown="arranging && startTileDrag($event, t.id)"
                     class="min-w-0 overflow-x-hidden relative"
                     :class="[t.bare ? '' : 'panel-card rounded-2xl p-4 md:p-5',
@@ -820,8 +706,14 @@
                          While arranging it appears anyway, because a tile with
                          no heading and no content yet would otherwise be an
                          unlabelled empty box in a grid of them. -->
-                    <div class="flex items-center gap-2 mb-3 shrink-0"
-                        x-show="t.label || arranging">
+                    <!-- Chrome tiles (bare && locked: the clock strip, the
+                         hero band, a heading) draw no heading row AT ALL —
+                         their content is the heading-scale thing. x-if, not
+                         x-show: a hidden row still answers querySelector, and
+                         everything probing a tile for its label would find
+                         the ghost. -->
+                    <template x-if="(t.label && !(t.bare && t.locked)) || arranging">
+                    <div class="flex items-center gap-2 mb-3 shrink-0">
                         <span class="text-lg" x-text="t.icon"></span>
                         <span class="panel-label" x-text="t.label || widgetMeta(t.type).label"></span>
                         <!-- The size, while arranging. A drag with no readout
@@ -829,8 +721,9 @@
                              fields below take, so the two surfaces are visibly
                              the same setting rather than two ways to set it. -->
                         <span x-show="arranging" class="ml-auto text-xs panel-dim tabular-nums"
-                            x-text="spanLabel(t.id)"></span>
+                            x-text="spanLabel(t.id, t.type)"></span>
                     </div>
+                    </template>
 
                     <!-- The corner. Sized for a mouse rather than a thumb on
                          purpose: arranging is a browser job, and a handle big
@@ -905,7 +798,9 @@
                                              and the row it sits in is space the
                                              card wanted. Type a title to get
                                              one. -->
-                                        <template x-if="c.title">
+                                        <!-- A heading card's title IS its body,
+                                             so the small row would say it twice. -->
+                                        <template x-if="c.title && c.type !== 'heading'">
                                             <div class="flex items-center gap-2 mb-2 shrink-0">
                                                 <span class="text-base" x-text="c.icon"></span>
                                                 <span class="panel-label truncate" x-text="c.title"></span>
@@ -1755,10 +1650,15 @@
                     }
                 },
 
-                // Weather rides in the clock strip, so it does not also take a
-                // box in the grid.
+                // A board WITH a clock tile hides its weather tile — the
+                // strip already carries the forecast, and saying the weather
+                // twice is what the old unconditional filter was for. A board
+                // withOUT a clock keeps its weather tile: the household took
+                // the strip off on purpose, not the forecast.
                 tiles() {
-                    const list = (this.board.tiles || []).filter(t => t.type !== 'weather');
+                    const all = this.board.tiles || [];
+                    const hasClock = all.some(t => t.type === 'clock');
+                    const list = all.filter(t => t.type !== 'weather' || !hasClock);
                     if (!this.arranging) return list;
                     // Ordered by the DRAFT while arranging, so dragging a tile
                     // moves it now rather than after a save and a refetch.
@@ -1918,11 +1818,24 @@
                 // A tile nobody has sized takes a QUARTER of the board, which
                 // is what one column used to be. Without this every unsized
                 // tile would become one-twelfth on upgrade.
-                defaultCols() {
-                    return Math.max(1, Math.round(this.cols() / 4));
+                // Chrome is the exception and spans the board: a clock strip
+                // or a page heading at quarter width is furniture in the
+                // wrong room.
+                defaultCols(type) {
+                    return ['clock', 'hero', 'heading'].includes(type)
+                        ? this.cols()
+                        : Math.max(1, Math.round(this.cols() / 4));
                 },
 
-                spanStyle(key) {
+                // The type an instance draws, for the sizing defaults above —
+                // span helpers are addressed by id and the id alone does not
+                // say whether it is chrome.
+                typeOf(id) {
+                    const w = (this.page().widgets || []).find(w => w.id === id);
+                    return w ? w.type : '';
+                },
+
+                spanStyle(key, type) {
                     // While arranging, the DRAFT is the truth — that is what
                     // makes a drag show you the result instead of describing
                     // it. Everywhere else the server's payload is, because a
@@ -1931,16 +1844,9 @@
                                                : this.board.spans) || {})[key] || {};
                     const max = this.cols();
                     const c = Math.min(max, Math.max(1, parseInt(s.cols, 10)
-                                                       || this.defaultCols()));
+                                                       || this.defaultCols(type)));
                     const r = Math.max(1, parseInt(s.rows, 10) || 1);
                     return `grid-column: span ${c}; grid-row: span ${r};`;
-                },
-
-                // The forecast rides in the clock strip now, so the tile's data
-                // is reused rather than fetched twice.
-                forecast() {
-                    const t = (this.board.tiles || []).find(x => x.type === 'weather');
-                    return (t && !t.data.empty && t.data.days) ? t.data.days.slice(0, 4) : [];
                 },
 
                 // The tiles whose content IS a picture. Named rather than
@@ -2842,10 +2748,10 @@
                     this.arranging = false;
                 },
 
-                spanLabel(id) {
+                spanLabel(id, type) {
                     const s = (this.page().spans || {})[id] || {};
                     const c = Math.min(this.cols(), Math.max(1, parseInt(s.cols, 10)
-                                                               || this.defaultCols()));
+                                                               || this.defaultCols(type)));
                     return `${c} × ${Math.max(1, parseInt(s.rows, 10) || 1)}`;
                 },
 
@@ -2914,7 +2820,8 @@
                     const cell = this._cell();
                     const startX = e.clientX, startY = e.clientY;
                     const s = (this.page().spans || {})[id] || {};
-                    const fromCols = Math.max(1, parseInt(s.cols, 10) || this.defaultCols());
+                    const fromCols = Math.max(1, parseInt(s.cols, 10)
+                                                 || this.defaultCols(this.typeOf(id)));
                     const fromRows = Math.max(1, parseInt(s.rows, 10) || 1);
 
                     const move = (ev) => {
@@ -3309,6 +3216,11 @@
                 blankPage(name, slug) {
                     return {
                         slug: slug || '', name: name || 'Board', icon: '🗂️',
+                        // v2: the page-schema version. A page without it gets
+                        // the pre-tile chrome (clock + hero) injected by the
+                        // server's migration; a v2 page means what it says —
+                        // and a NEW board says blank.
+                        v: 2,
                         widgets: [], spans: {},
                         // Inherited from the board being looked at rather than
                         // hard-coded: a household that has settled on a 16
@@ -3400,6 +3312,10 @@
                         slug: p.slug,
                         name: (p.name || '').trim() || 'Board',
                         icon: (p.icon || '🗂️').trim(),
+                        // Pages load from the server already migrated to v2
+                        // (chrome as real tiles), so saving them AS v2 is what
+                        // stops the migration running twice.
+                        v: p.v || 2,
                         widgets: p.widgets || [],
                         spans: p.spans || {},
                         columns: Math.min(1000, Math.max(1, parseInt(p.columns, 10) || 12)),
@@ -3714,8 +3630,11 @@
                 // Tiles that are not doors. The Home Assistant and web tiles
                 // summarise no page of this app; a custom tile summarises
                 // several, so there is no one page for it to open.
+                // The chrome tiles are not doors either: the clock opens
+                // nothing, the hero already links out per child, a heading
+                // is ink.
                 PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web',
-                           'custom'],
+                           'custom', 'clock', 'hero', 'heading'],
                 opens(type) {
                     return !this.PAGELESS.includes(type);
                 },
@@ -4089,7 +4008,8 @@
                     // An unsized tile shows the width it is actually DRAWN at,
                     // not 1 — a field reading "1" beside a quarter-width tile
                     // is the editor disagreeing with the board.
-                    return String(axis === 'cols' ? this.defaultCols() : 1);
+                    return String(axis === 'cols'
+                        ? this.defaultCols(this.typeOf(instanceId)) : 1);
                 },
 
                 setSpan(instanceId, axis, value) {
@@ -4106,7 +4026,8 @@
                     // A tile back at exactly the default stops being stored,
                     // rather than persisting numbers nobody chose. The default
                     // WIDTH is a quarter of the grid now, not 1.
-                    if ((cur.cols || 0) === this.defaultCols() && (cur.rows || 1) === 1) {
+                    if ((cur.cols || 0) === this.defaultCols(this.typeOf(instanceId))
+                        && (cur.rows || 1) === 1) {
                         delete this.page().spans[instanceId];
                     } else {
                         this.page().spans[instanceId] = cur;

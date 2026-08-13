@@ -689,7 +689,11 @@ def scenario_an_unconfigured_feature_has_no_tile():
         # uses, not about a box waiting to be told what to show. An empty one
         # that vanished could not be told from one that had broken, which is
         # the whole reason quiet tiles say so.
-        skip = home_board.container_types() | {'web'}
+        # The CHROME tiles are excluded with them: a clock, the hero band and
+        # a heading summarise no household feature either — they are the
+        # board's own furniture, deliberately always-truthy so a board that
+        # asked for them can never lose its clock to a quiet day.
+        skip = home_board.container_types() | {'web'} | set(home_board.BARE_TILES)
         asked = [k for k in home_board.WIDGET_KEYS if k not in skip]
         board = home_board.build(requested=','.join(asked))
         keys = [t['type'] for t in board['tiles']]

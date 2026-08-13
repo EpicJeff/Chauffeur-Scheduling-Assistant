@@ -155,6 +155,32 @@ WIDGETS = [
               help='The cards keep their own surfaces; the tile stops drawing '
                    'one behind them.'),
      ]},
+    # ── The board's own chrome, as tiles. Until v2.209 the clock strip and
+    # the hero band were hardcoded template markup above the grid, drawn on
+    # every board unconditionally — which made every "new" board a copy of
+    # the home page and put the strip beyond the reach of every layout tool.
+    # As tiles they are addable, movable, resizable and deletable like
+    # everything else, and a new board is genuinely blank. Boards stored
+    # before the change are migrated in _page_from, so no wall changes.
+    {'key': 'clock', 'icon': '🕰️', 'label': 'Clock & weather',
+     'heading': '',
+     'blurb': "Time, date and weather — the strip the home board leads with.",
+     'options': [
+         _opt('days', 'Forecast days', 'int', 4, min=0, max=7,
+              help='0 hides the forecast.'),
+     ]},
+    {'key': 'hero', 'icon': '🚦', 'label': "What's next",
+     'heading': '',
+     'blurb': "The next drive — or the honest empty state — leading the board.",
+     'options': []},
+    {'key': 'heading', 'icon': '🔤', 'label': 'Heading',
+     'heading': '',
+     'blurb': "Big text that names a board, the way a page names itself.",
+     'options': [
+         _opt('size', 'Size', 'choice', 'xl', choices=[
+             {'value': 'xl', 'label': 'Page title'},
+             {'value': 'lg', 'label': 'Section'}]),
+     ]},
     {'key': 'drives', 'icon': '🚗', 'label': 'Driving schedule',
      'heading': 'The rest of the day',
      'blurb': "Every drive still ahead today, and who has it.",
@@ -444,6 +470,11 @@ WIDGETS = [
               "mail itself stays off shared screens."},
 ]
 WIDGET_KEYS = [w['key'] for w in WIDGETS]
+
+# Tiles that draw no panel of their own: the board's chrome. The clock strip
+# floats on the wall, the hero band draws its own rounded card, a heading is
+# ink. Everything else keeps the tile as its surface.
+BARE_TILES = ('clock', 'hero', 'heading')
 
 # Everything the household has actually set up, in a sensible reading order.
 # The earlier six-tile default was chosen when any quiet tile vanished, which
@@ -1244,6 +1275,29 @@ def _tile_weather(now, config=None, **_):
     except Exception as e:
         print(f"[home_board] weather failed: {e}")
         return None
+
+
+def _tile_clock(now, config=None, **_):
+    """The clock strip. Time and date are drawn client-side (they tick), so
+    the payload only carries the forecast. ALWAYS truthy — a clock has
+    something to say by existing, and must never vanish the way a quiet data
+    tile does."""
+    days = _cfg_int(config, 'days', 4, 0, 7)
+    data = (_tile_weather(now, config={'days': days}) or {}) if days else {}
+    return {'days': data.get('days') or []}
+
+
+def _tile_hero(now, config=None, **_):
+    """The hero band rides the board payload's own top-level `hero` — built
+    once per board for whoever asks — so this tile is a PLACEMENT, not a
+    second computation. Truthy for the same reason the clock is."""
+    return {'ok': True}
+
+
+def _tile_heading(now, config=None, **_):
+    """Big text. The text itself is the instance's `title`, which _build_card
+    already resolves into `label`; the payload carries only the scale."""
+    return {'size': _cfg_str(config, 'size') or 'xl'}
 
 
 def _tile_moments(now, config=None, **_):
@@ -2244,6 +2298,9 @@ def _build_tile(inst, now, **kw):
         # "Calendar" or "What's coming", and it is the only one of the three a
         # household actually chose.
         'label': built['label'], 'locked': True, 'config': config,
+        # Chrome draws no panel: the payload says so rather than the client
+        # keeping a second list of which types are chrome.
+        'bare': inst['type'] in BARE_TILES,
         # Its one card fills the tile: full width, no height of its own, and
         # no surface of its own either — the tile IS its surface.
         'cards': [dict(built, cols=12, rows=0)],
@@ -2255,6 +2312,7 @@ def _build_tile(inst, now, **kw):
 
 
 _BUILDERS: dict = {
+    'clock': _tile_clock, 'hero': _tile_hero, 'heading': _tile_heading,
     'drives': _tile_drives, 'kids': _tile_kids, 'meals': _tile_meals,
     'shopping': _tile_shopping, 'chores': _tile_chores, 'routines': _tile_routines,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,
@@ -2592,18 +2650,50 @@ def _page_from(item: dict, settings: dict, taken: set) -> dict:
     if not PAGE_SLUG_RE.match(slug) or slug in taken:
         slug = _slugify(item.get('slug') or name, taken)
     spans = item.get('spans')
-    spans = spans if isinstance(spans, dict) else {}
+    # A COPY, not the stored dict: the chrome migration below adds spans for
+    # the tiles it injects, and adding them to the household's own dict would
+    # be the read-time rewrite this whole layer promises never to do.
+    spans = dict(spans) if isinstance(spans, dict) else {}
+    # The tiles, through the same normaliser every board has always used —
+    # so a page accepts the old list-of-type-names shape too, and pasting
+    # one board's widgets into another page just works.
+    widgets = normalize_instances(item.get('widgets'),
+                                  {'panel_tile_spans': spans})
+    columns = _cfg_int(item, 'columns', grid_columns(settings), 1, COLUMN_MAX)
+    # Page schema version. A v1 board was drawn under hardcoded chrome — the
+    # clock strip and the hero band lived in the template, above the grid, on
+    # every board unconditionally. v2 made them tiles, so a v1 board gets
+    # them PREPENDED here, full width: the wall keeps looking like itself,
+    # and the household can now move, resize or delete what it previously
+    # could only have. Lazy like everything else in this layer — the stored
+    # setting is rewritten only when somebody saves, and the editor saves v2.
+    try:
+        version = int(item.get('v') or 1)
+    except (TypeError, ValueError):
+        version = 1
+    if version < 2:
+        have = {w['type'] for w in widgets} | {w['id'] for w in widgets}
+        # Injected in chrome order — clock above hero, both above the rest —
+        # and AFTER any chrome the board somehow already holds, so a partial
+        # list never ends up interleaved backwards.
+        at = 0
+        while at < len(widgets) and widgets[at]['type'] in ('clock', 'hero'):
+            at += 1
+        for wtype in ('clock', 'hero'):
+            if wtype in have:
+                continue
+            spans.setdefault(wtype, {'cols': columns, 'rows': 1})
+            widgets.insert(at, {'id': wtype, 'type': wtype, 'config': {},
+                                'span': spans[wtype]})
+            at += 1
     return {
         'slug': slug,
         'name': name,
         'icon': _norm_icon(item.get('icon')),
-        # The tiles, through the same normaliser every board has always used —
-        # so a page accepts the old list-of-type-names shape too, and pasting
-        # one board's widgets into another page just works.
-        'widgets': normalize_instances(item.get('widgets'),
-                                       {'panel_tile_spans': spans}),
+        'v': 2,
+        'widgets': widgets,
         'spans': spans,
-        'columns': _cfg_int(item, 'columns', grid_columns(settings), 1, COLUMN_MAX),
+        'columns': columns,
         'row_height': _cfg_int(item, 'row_height', grid_row_height(settings),
                                ROW_MIN, ROW_MAX),
         # Blank means the board's own background, which is itself blank-able.

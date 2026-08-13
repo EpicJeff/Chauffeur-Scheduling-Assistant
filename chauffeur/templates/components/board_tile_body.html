@@ -21,6 +21,140 @@
                         <div class="text-base panel-dim" x-text="t.data.empty"></div>
                     </template>
 
+                    <!-- ── The clock strip. Time, day, weather: the three
+                         things a wall display owes you before you have asked
+                         it anything. Template chrome above the grid until
+                         v2.209; a tile a board can place, resize or decline
+                         since. The clock itself ticks client-side and the
+                         board payload carries the temperature; only the
+                         forecast is this tile's own data. -->
+                    <template x-if="t.type === 'clock'">
+                        <div class="flex flex-wrap items-start justify-between gap-x-10 gap-y-4">
+                            <div class="flex items-start gap-3">
+                                <div class="hero-clock font-black panel-text tabular-nums" x-text="clock"></div>
+                                <div class="pt-1">
+                                    <!-- Superscript seconds, straight off the
+                                         reference board. It also quietly answers
+                                         "is this thing alive?" without a spinner. -->
+                                    <div class="text-lg md:text-2xl font-black tabular-nums"
+                                        style="color: var(--panel-accent)" x-text="seconds"></div>
+                                    <div class="text-xs font-bold uppercase tracking-[0.2em] panel-dim"
+                                        x-text="meridiem"></div>
+                                </div>
+                            </div>
+
+                            <div class="flex items-start gap-8 flex-wrap">
+                                <!-- The temperature RIGHT NOW, at display scale. -->
+                                <div class="flex items-start gap-2" x-show="board.temp_now !== null">
+                                    <span class="hero-temp font-black panel-text tabular-nums"
+                                        x-text="board.temp_now + '°'"></span>
+                                    <span class="text-3xl md:text-4xl pt-1" x-text="board.condition_emoji"></span>
+                                </div>
+                                <div class="pt-1">
+                                    <div class="text-base md:text-lg font-bold panel-text"
+                                        x-text="board.date_label || ''"></div>
+                                    <div class="text-sm panel-dim" x-text="board.weather || ''"></div>
+                                    <template x-for="s in (board.statuses || [])" :key="s.label">
+                                        <div class="text-sm mt-0.5" style="color: var(--panel-accent)">
+                                            <span x-text="s.emoji"></span> <span x-text="s.label"></span>
+                                        </div>
+                                    </template>
+                                </div>
+                                <div class="flex gap-4 pt-1" x-show="(t.data.days || []).length">
+                                    <template x-for="d in (t.data.days || [])" :key="d.day">
+                                        <div class="text-center">
+                                            <div class="text-[0.6rem] font-black panel-dim uppercase tracking-widest"
+                                                x-text="d.day"></div>
+                                            <div class="text-2xl leading-none my-1" x-text="d.emoji"></div>
+                                            <div class="text-sm font-bold panel-text tabular-nums"
+                                                x-text="d.hi !== null ? d.hi + '°' : ''"></div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- ── The hero. A wall board that only tiles six lists is
+                         a worse phone; the app already knows what is NEXT.
+                         The band reads the payload's own top-level `hero`
+                         (built once per board), so the tile is a placement —
+                         the card body comes from components/hero_card.html,
+                         the SAME function the screensaver's Next-up corner
+                         draws with. -->
+                    <template x-if="t.type === 'hero'">
+                        <div class="panel-card rounded-3xl overflow-hidden">
+                            <div x-show="hero.next" x-html="heroCardHtml()"></div>
+
+                            <!-- The honest empty states. A blank hero reads as
+                                 a broken panel, so each says something true. -->
+                            <template x-if="!hero.next && hero.all_done">
+                                <div class="p-6 text-center">
+                                    <div class="text-2xl md:text-3xl font-black text-emerald-300">Everyone's home 🏠</div>
+                                    <div class="panel-dim mt-1">Nothing left to drive today.</div>
+                                </div>
+                            </template>
+                            <template x-if="!hero.next && !hero.all_done && !hero.unbuilt">
+                                <div class="p-6 text-center">
+                                    <div class="text-2xl md:text-3xl font-black panel-text">No drives today</div>
+                                    <div class="panel-dim mt-1">Nothing on the schedule that needs a driver.</div>
+                                </div>
+                            </template>
+                            <!-- The third empty state: there is no schedule in
+                                 the cache AT ALL. "No drives today" is a
+                                 confident claim about a day; this is the
+                                 absence of any claim. -->
+                            <template x-if="!hero.next && hero.unbuilt">
+                                <div class="p-6 text-center">
+                                    <div class="text-2xl md:text-3xl font-black panel-text">Building the schedule…</div>
+                                    <div class="panel-dim mt-1">Nothing has been worked out yet — this page will fill in.</div>
+                                </div>
+                            </template>
+
+                            <!-- What follows the next one. Three, because a
+                                 wall panel is glanced at, not studied. -->
+                            <div class="px-5 md:px-6 py-3 flex flex-wrap gap-x-6 gap-y-1"
+                                style="border-top: 1px solid var(--panel-line)"
+                                x-show="(hero.later || []).length">
+                                <template x-for="r in (hero.later || [])" :key="r.id">
+                                    <div class="text-sm panel-dim">
+                                        <span class="font-bold tabular-nums panel-text" x-text="r.at"></span>
+                                        <span x-text="r.title"></span>
+                                        <span class="panel-dim" x-text="'· ' + r.driver"></span>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- A column per child, inside the band: this is
+                                 what a family walks up to the panel to read. -->
+                            <div class="grid gap-px"
+                                style="border-top: 1px solid var(--panel-line); background: var(--panel-line)"
+                                x-show="(hero.kids || []).length"
+                                :style="'grid-template-columns: repeat(' + Math.min((hero.kids||[]).length, 4) + ', minmax(0, 1fr))'">
+                                <template x-for="k in (hero.kids || [])" :key="k.name">
+                                    <a :href="link('routines')" class="block px-4 py-3 min-w-0 panel-card">
+                                        <div class="text-sm font-black mb-1 truncate"
+                                            :style="'color:' + tone(k.color_code, '#6366f1')" x-text="k.name"></div>
+                                        <template x-for="(line, i) in k.lines.slice(0, 4)" :key="i">
+                                            <div class="text-sm panel-dim truncate" x-text="line"></div>
+                                        </template>
+                                    </a>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- ── A heading. Big text that names a board the way a
+                         page names itself — the text is the tile's own title,
+                         which the payload has already resolved into `label`
+                         (an untitled one reads "Heading", visibly asking to
+                         be typed into). -->
+                    <template x-if="t.type === 'heading'">
+                        <div class="font-black panel-text"
+                            :class="t.data.size === 'lg' ? 'text-2xl md:text-3xl' : 'text-4xl md:text-5xl'"
+                            x-text="t.label"></div>
+                    </template>
+
                     <!-- the rest of the day — THE Drives timeline, drawn by
                          the page's own renderer out of
                          components/schedule_timeline.html. The tile drew a

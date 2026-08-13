@@ -56,13 +56,21 @@ def scenario_the_board_they_already_have_becomes_the_home_page():
     check(len(pages) == 1, f"an un-migrated household has exactly one board: {len(pages)}")
     home = pages[0]
     check(home['slug'] == 'home', f"the existing board is the home board: {home['slug']}")
-    check([w['id'] for w in home['widgets']] ==
-          ['calendar', 'calendar-2', 'drives', 'map'],
+    ids = [w['id'] for w in home['widgets']]
+    # A v1 board was DRAWN under the clock strip and the hero band — template
+    # chrome, above the grid. v2 made them tiles, so the upgrade keeps the
+    # wall looking like itself by making them the first two tiles.
+    check(ids[:2] == ['clock', 'hero'],
+          f"a v1 board did not keep its chrome as tiles: {ids}")
+    check(ids[2:] == ['calendar', 'calendar-2', 'drives', 'map'],
           f"the tiles or their ORDER changed on upgrade: {home['widgets']}")
-    check(home['widgets'][0]['config'] == {'days': 7},
+    check(home['widgets'][2]['config'] == {'days': 7},
           "a tile's configuration was dropped on upgrade")
-    check(home['spans'] == LEGACY['panel_tile_spans'],
+    own = {k: v for k, v in home['spans'].items() if k not in ('clock', 'hero')}
+    check(own == LEGACY['panel_tile_spans'],
           f"tile sizes did not survive: {home['spans']}")
+    check(home['spans']['clock'] == {'cols': 16, 'rows': 1},
+          f"the migrated chrome is not full width: {home['spans']}")
     check(home['columns'] == 16 and home['row_height'] == 205,
           f"the household's grid was reset to somebody else's default: {home}")
     check(home['background'] == 'mountains at dusk',
@@ -87,7 +95,7 @@ def scenario_pages_win_entirely_once_they_exist():
     row height from a legacy key is a split brain nobody can debug."""
     settings = dict(LEGACY, panel_pages=[
         {'slug': 'home', 'name': 'Home', 'widgets': ['drives'],
-         'columns': 8, 'row_height': 300},
+         'columns': 8, 'row_height': 300, 'v': 2},
     ])
     home = home_board.find_page('home', settings)
     check(home['columns'] == 8 and home['row_height'] == 300,
@@ -102,14 +110,43 @@ def scenario_a_new_board_is_empty_and_stays_empty():
     different thing entirely — filling it with thirteen tiles nobody asked for
     would be the app arguing with a deliberate act."""
     settings = {'panel_pages': [
-        {'slug': 'home', 'name': 'Home', 'widgets': ['drives']},
-        {'slug': 'hallway', 'name': 'Hallway', 'widgets': []},
+        {'slug': 'home', 'name': 'Home', 'widgets': ['drives'], 'v': 2},
+        {'slug': 'hallway', 'name': 'Hallway', 'widgets': [], 'v': 2},
     ]}
     hallway = home_board.find_page('hallway', settings)
     check(hallway['widgets'] == [],
           f"a new board filled itself with defaults: {hallway['widgets']}")
     board = home_board.resolve_instances(None, settings, page=hallway)
     check(board == [], f"an empty board resolved to something: {board}")
+
+
+def scenario_a_v1_board_keeps_its_chrome_and_a_v2_board_means_what_it_says():
+    """The clock strip and the hero band were template chrome until v2.209 —
+    drawn above the grid on EVERY board, unconditionally. As tiles they are
+    optional, so the upgrade has to preserve what each stored board was
+    actually showing: a v1 board (no `v`) gets both prepended full width; a
+    v2 board is exactly its own list, chrome or no chrome."""
+    settings = {'panel_pages': [
+        {'slug': 'home', 'name': 'Home', 'widgets': ['drives']},
+        {'slug': 'blank', 'name': 'Blank', 'widgets': [], 'v': 2},
+    ]}
+    v1 = home_board.find_page('home', settings)
+    check([w['type'] for w in v1['widgets']] == ['clock', 'hero', 'drives'],
+          f"a v1 board lost the chrome it was drawn under: {v1['widgets']}")
+    check(v1['spans'].get('clock') == {'cols': 12, 'rows': 1}
+          and v1['spans'].get('hero') == {'cols': 12, 'rows': 1},
+          f"the migrated chrome is not full width: {v1['spans']}")
+    check(v1['v'] == 2, "a normalised page does not say which shape it is")
+    v2 = home_board.find_page('blank', settings)
+    check(v2['widgets'] == [],
+          f"a v2 board grew chrome nobody asked for: {v2['widgets']}")
+    # Migrating a board that already HAS a clock must not add a second one.
+    twice = home_board.normalize_pages({'panel_pages': [
+        {'slug': 'home', 'name': 'Home',
+         'widgets': [{'id': 'clock', 'type': 'clock'}, 'drives']},
+    ]})[0]
+    check([w['type'] for w in twice['widgets']] == ['clock', 'hero', 'drives'],
+          f"migration doubled the chrome: {twice['widgets']}")
 
 
 def scenario_a_deleted_board_lands_on_a_real_one():
@@ -207,11 +244,11 @@ def scenario_the_payload_carries_the_board_it_was_built_for():
     try:
         storage.get_settings = lambda: {'panel_pages': [
             {'slug': 'home', 'name': 'Home', 'widgets': ['drives'],
-             'columns': 12, 'row_height': 240},
+             'columns': 12, 'row_height': 240, 'v': 2},
             {'slug': 'hallway', 'name': 'Hallway', 'icon': '🚪',
              'widgets': ['map', 'moments'], 'columns': 6, 'row_height': 320,
              'spans': {'map': {'cols': 6, 'rows': 2}},
-             'background': 'https://example.test/hall.jpg'},
+             'background': 'https://example.test/hall.jpg', 'v': 2},
         ]}
         home_board._CACHE.clear()
         board = home_board.build(page='hallway')
@@ -246,8 +283,9 @@ def scenario_a_board_is_reachable_from_a_wall_panel():
     somebody made on purpose for this wall, and nothing the app ships has a
     stronger claim on the first buttons than that."""
     settings = {'panel_pages': [
-        {'slug': 'home', 'name': 'Home', 'widgets': ['drives']},
-        {'slug': 'hallway', 'name': 'Hallway', 'icon': '🚪', 'widgets': ['map']},
+        {'slug': 'home', 'name': 'Home', 'widgets': ['drives'], 'v': 2},
+        {'slug': 'hallway', 'name': 'Hallway', 'icon': '🚪', 'widgets': ['map'],
+         'v': 2},
     ]}
     rows = home_board.page_summaries(settings)
     check([r['slug'] for r in rows] == ['home', 'hallway'],
