@@ -141,6 +141,11 @@ def _board(hero=None):
                     {'date': TOMORROW, 'dom': 9, 'day': 'Tomorrow', 'today': False,
                      'more': 0, 'earlier': 0, 'events': []},
                 ]}},
+            # A built-in tile with nothing to say. Its message must be drawn
+            # ONCE — a tile's data is its card's data, so anything rendering
+            # both draws it twice.
+            {'id': 'meals', 'type': 'meals', 'icon': '🍽️', 'label': "Tonight's plate",
+             'data': {'empty': 'Nothing pinned for tonight yet.'}},
             {'id': 'map', 'type': 'map', 'icon': '🗺️', 'label': 'Where everyone is', 'data': {
                 'mapped': 1,
                 'people': [{'member_id': 'm1', 'name': 'Sam', 'color_code': '#ef4444',
@@ -263,6 +268,24 @@ setTimeout(() => {
     },
     map: { mounted: !!doc.getElementById('board-map-map'),
            listRows: doc.querySelectorAll('.panel-chip').length },
+    builtin: (() => {
+      const el = doc.querySelector('[data-tile-id="drives"]');
+      if (!el) return null;
+      return { cells: el.querySelectorAll('.nc-cell').length,
+               grids: el.querySelectorAll('.nc-stack-grid').length,
+               // The timeline's mount must still be a descendant of the tile
+               // with nothing flex-breaking in between.
+               depth: (() => {
+                 let n = doc.getElementById('board-timeline-drives'), d = 0;
+                 while (n && n !== el) { n = n.parentElement; d++; }
+                 return n ? d : -1;
+               })() };
+    })(),
+    quiet: (() => {
+      const el = doc.querySelector('[data-tile-id="meals"]');
+      const txt = el ? el.textContent : '';
+      return (txt.match(/Nothing pinned for tonight yet\./g) || []).length;
+    })(),
     group: (() => {
       const g = doc.querySelector('[data-tile-id="mine"] .nc-stack-grid');
       if (!g) return null;
@@ -465,8 +488,43 @@ def scenario_the_board_draws_without_throwing():
     check(not got['errors'],
           f"something threw while the board drew itself: {got['errors']}")
     check(got['tiles'] == ['The rest of the day', "What's coming",
-                           'Where everyone is', 'Mornings'],
+                           "Tonight's plate", 'Where everyone is', 'Mornings'],
           f"the tiles that came back: {got['tiles']}")
+
+
+def scenario_a_built_in_tile_puts_no_box_between_its_content_and_itself():
+    """The regression this exists to stop, photographed off a real wall: every
+    mosaic, map and camera tile collapsed to nothing.
+
+    A mosaic, a map and a camera are laid out INTO their tile with `flex-1`.
+    Wrapping a built-in tile's card in a grid and a flex cell — which is what
+    "a tile is a container of cards" looks like if applied literally — put two
+    boxes between the content and the height it was claiming, and every one of
+    them became zero pixels tall. Nothing threw. The tiles just went blank.
+
+    So a built-in tile renders its card with no grid, no cell, and a wrapper
+    that is `display: contents`: present for Alpine, absent from layout.
+    """
+    got = _run()
+    if got is None:
+        return
+    b = got['builtin']
+    check(b, "the drives tile is not on the board at all")
+    check(b['cells'] == 0 and b['grids'] == 0,
+          f"a built-in tile wrapped its content in {b['grids']} grid(s) and "
+          f"{b['cells']} cell(s); every drawn tile will collapse")
+    check(b['depth'] > 0, "the timeline no longer mounts inside its tile")
+
+
+def scenario_a_quiet_tile_says_so_once():
+    """A tile's data IS its card's data — that is what a built-in tile is — so
+    anything that renders the empty message at both levels prints it twice.
+    Which is exactly what shipped, and what the wall showed."""
+    got = _run()
+    if got is None:
+        return
+    check(got['quiet'] == 1,
+          f"a quiet tile said so {got['quiet']} times")
 
 
 def scenario_a_custom_tile_draws_its_cards_as_the_content_they_are():

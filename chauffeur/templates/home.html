@@ -825,70 +825,84 @@
                     <div x-show="arranging" @pointerdown.stop="startTileResize($event, t.id)"
                         class="tile-resize" title="Drag to resize"></div>
 
-                    <!-- A container somebody added and has not filled says so.
-                         A tile that vanished could not be told from one that
-                         had broken, which is the same reason a quiet feature
-                         says it is quiet rather than disappearing. -->
-                    <template x-if="t.data && t.data.empty">
-                        <div class="text-base panel-dim" x-text="t.data.empty"></div>
+                    <!-- ── A BUILT-IN tile: the card IS the tile.
+                         Rendered with NO grid and NO cell around it, and with
+                         the tile's own `t` — which already carries the card's
+                         type, id and data, because a built-in tile holds
+                         exactly one card and that card is the tile.
+
+                         The wrapper is `display: contents`, so it exists for
+                         Alpine and not for layout. That is load-bearing: a
+                         mosaic, a map and a camera are laid out INTO the tile
+                         with `flex-1`, and the first cut of this put a grid
+                         and a flex cell between them and the tile — every one
+                         of them collapsed to nothing, which is the exact
+                         failure this board keeps having to design against. A
+                         box between the content and its height is a box that
+                         will eventually be zero pixels tall.
+
+                         The empty message comes from the body too, for the
+                         same reason: rendering it here as well drew it twice
+                         on every quiet tile. -->
+                    <template x-if="t.locked">
+                        <div class="contents">
+                            {% include 'components/board_tile_body.html' %}
+                        </div>
                     </template>
 
-                    <!-- The cards. One grid, twelve columns, whether the tile
-                         holds one card or five — a built-in tile's single card
-                         simply spans all twelve and wears no surface of its
-                         own, because the tile IS its surface. -->
-                    <!-- `flex-1 min-h-0` when the tile's content is DRAWN into
-                         it rather than read down a list: a map or a timeline
-                         is given the tile's full height, and a grid that only
-                         claimed its content's height would hand the map zero
-                         pixels — the same bug the camera tile had. -->
-                    <div class="nc-stack-grid" :data-cards="t.id"
-                        @pointerdown="arranging && !t.locked
-                            && startTileCardDrag($event, t.id)"
-                        :class="[tileFree(t) ? 'nc-free' : '',
-                                 t.locked && fillsTile(t.type) ? 'flex-1 min-h-0' : '']"
-                        x-show="cardsOf(t).length">
-                        <template x-for="c in cardsOf(t)" :key="c.id">
-                            <div class="nc-cell" :data-plain="t.locked ? '' : null"
-                                :data-path="t.locked ? null : c.id"
-                                :style="`grid-column:span ${c.cols};`
-                                    + (c.rows ? `height:calc(${c.rows} * var(--nc-row))` : '')">
-                                <!-- Arrange handles, drawn INTO the cell — the
-                                     drag grip, the resize corner, and the way
-                                     into the card's own settings. A built-in
-                                     tile's card has none: there is nothing to
-                                     reorder it against and nothing to resize
-                                     it within, and its options are already the
-                                     tile's options in the editor below. -->
-                                <template x-if="arranging && !t.locked">
-                                    <div>
-                                        <span class="nc-card-move" title="Drag to reorder">⠿</span>
-                                        <span class="nc-card-size" title="Drag to resize"></span>
-                                        <button type="button" class="nc-card-edit" title="Settings"
-                                            @click.prevent.stop="openCardEditor(t.id, c.id)">✎</button>
+                    <!-- ── A CUSTOM tile: a grid of cards, each on its own
+                         surface, on the same twelve columns a card inside a
+                         Home Assistant stack uses. -->
+                    <template x-if="!t.locked">
+                        <div class="contents">
+                            <!-- A container somebody added and has not filled
+                                 says so. A tile that vanished could not be told
+                                 from one that had broken. -->
+                            <template x-if="t.data && t.data.empty">
+                                <div class="text-base panel-dim" x-text="t.data.empty"></div>
+                            </template>
+
+                            <div class="nc-stack-grid" :data-cards="t.id"
+                                @pointerdown="arranging && startTileCardDrag($event, t.id)"
+                                :class="tileFree(t) ? 'nc-free' : ''"
+                                x-show="cardsOf(t).length">
+                                <template x-for="c in cardsOf(t)" :key="c.id">
+                                    <div class="nc-cell" :data-path="c.id"
+                                        :style="`grid-column:span ${c.cols};`
+                                            + (c.rows ? `height:calc(${c.rows} * var(--nc-row))` : '')">
+                                        <!-- Arrange handles, drawn INTO the cell:
+                                             the drag grip, the resize corner, and
+                                             the way into the card's settings. -->
+                                        <template x-if="arranging">
+                                            <div>
+                                                <span class="nc-card-move" title="Drag to reorder">⠿</span>
+                                                <span class="nc-card-size" title="Drag to resize"></span>
+                                                <button type="button" class="nc-card-edit" title="Settings"
+                                                    @click.prevent.stop="openCardEditor(t.id, c.id)">✎</button>
+                                            </div>
+                                        </template>
+                                        <!-- A card here names itself; a built-in
+                                             card does not, because its tile said
+                                             it once already. -->
+                                        <div class="flex items-center gap-2 mb-2 shrink-0"
+                                            x-show="c.config.show_title !== false">
+                                            <span class="text-base" x-text="c.icon"></span>
+                                            <span class="panel-label truncate" x-text="c.label"></span>
+                                        </div>
+                                        <!-- The card's content, and nothing else.
+                                             `t` is rebound deliberately: the body
+                                             below is the one drawing of each type
+                                             this app has, and it knows the
+                                             variable by that name. -->
+                                        <div class="min-w-0 flex-1 overflow-y-auto tile-scroll"
+                                            x-data="{ t: c }">
+                                            {% include 'components/board_tile_body.html' %}
+                                        </div>
                                     </div>
                                 </template>
-                                <!-- A card in a custom tile names itself; a
-                                     built-in card does not, because the tile
-                                     above already said it once. -->
-                                <div class="flex items-center gap-2 mb-2 shrink-0"
-                                    x-show="!t.locked && c.config.show_title !== false">
-                                    <span class="text-base" x-text="c.icon"></span>
-                                    <span class="panel-label truncate" x-text="c.label"></span>
-                                </div>
-                                <!-- The card's content, and nothing else. `t`
-                                     is rebound deliberately: the body below is
-                                     the one drawing of each type this app has,
-                                     and it knows the variable by that name. -->
-                                <div class="min-w-0" :class="t.locked
-                                        ? (fillsTile(c.type) ? 'flex flex-col flex-1 min-h-0' : '')
-                                        : 'flex-1 overflow-y-auto tile-scroll'"
-                                    x-data="{ t: c }">
-                                    {% include 'components/board_tile_body.html' %}
-                                </div>
                             </div>
-                        </template>
-                    </div>
+                        </div>
+                    </template>
                 </a>
             </template>
         </div>
