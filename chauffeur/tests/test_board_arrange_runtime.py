@@ -241,9 +241,13 @@ def scenario_a_grid_cell_is_measured_not_assumed():
     want_col = (1000 - 16 * 11) / 12 + 16
     check(abs(got['cell']['col'] - want_col) < 0.01,
           f"a column measures {got['cell']['col']}, expected {want_col}")
-    # The row comes from the PAGE's own height, not a constant.
-    check(got['cell']['row'] == 200 + 16,
-          f"a row measures {got['cell']['row']}, expected 216 for a 200px board")
+    # The row comes from the PAGE's own height, not a constant — and since
+    # v4 it is EXACTLY the row height: the gutter left the vertical skeleton
+    # (row-gap 0, spacing painted inside each tile), so height stepping and
+    # spacing are independent numbers and a drag steps by what the editor
+    # says a row is.
+    check(got['cell']['row'] == 200,
+          f"a row measures {got['cell']['row']}, expected 200 for a 200px board")
 
 
 def scenario_the_draft_is_the_truth_while_arranging():

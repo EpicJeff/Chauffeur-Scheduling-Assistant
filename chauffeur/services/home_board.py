@@ -2774,22 +2774,30 @@ def _page_from(item: dict, settings: dict, taken: set) -> dict:
             cfg = w.setdefault('config', {})
             if not str(cfg.get('title') or '').strip():
                 cfg['title'] = meta.get('heading') or meta['label']
+    # The gutter between tiles, the third number a grid is (was a hardcoded
+    # Tailwind gap-4). 0 is legal and means seamless.
+    gap = _cfg_int(item, 'gap', 16, 0, 100)
+    row_height = _cfg_int(item, 'row_height', grid_row_height(settings),
+                          ROW_MIN, ROW_MAX)
+    if version < 4:
+        # v4: the gutter left the vertical skeleton. Under a real CSS
+        # row-gap a span-R tile drew R*row_height + (R-1)*gap; now the rows
+        # step by exactly row_height and each tile paints the gap as a
+        # bottom inset, drawing R*row_height - gap. Adding one gap to every
+        # stored row height makes the two formulas equal for EVERY span
+        # count — the wall keeps its exact pixels, and height stepping and
+        # spacing are finally independent numbers.
+        row_height = min(ROW_MAX, row_height + gap)
     return {
         'slug': slug,
         'name': name,
         'icon': _norm_icon(item.get('icon')),
-        'v': 3,
+        'v': 4,
         'widgets': widgets,
         'spans': spans,
         'columns': columns,
-        'row_height': _cfg_int(item, 'row_height', grid_row_height(settings),
-                               ROW_MIN, ROW_MAX),
-        # The gutter between tiles, the third number a grid is. It was a
-        # hardcoded Tailwind gap-4 (16px), which made tiny row heights read
-        # as a secret minimum: a tile spanning R rows crosses R-1 gutters,
-        # so 1px rows still stepped ~17px per row and nothing said why.
-        # 0 is legal and means seamless.
-        'gap': _cfg_int(item, 'gap', 16, 0, 100),
+        'row_height': row_height,
+        'gap': gap,
         # Blank means the board's own background, which is itself blank-able.
         # Two levels of "not set" rather than three: a page either has a
         # picture of its own or takes the household's.

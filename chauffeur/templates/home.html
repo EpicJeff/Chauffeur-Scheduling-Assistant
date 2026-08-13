@@ -570,6 +570,24 @@
            wider than the grid is CLAMPED by the auto-placement algorithm
            rather than overflowing, so a quarter-width tile (3 of 12) becomes a
            half at 6 columns and full width at 3 — proportional, for free. */
+        /* The vertical gutter, painted rather than structural: an inset on
+           every tile instead of a row-gap, so spans never swallow it. */
+        #tile-grid > a { margin-bottom: var(--tile-gap, 16px); }
+
+        /* The arrange-mode nameplate. Floats over the tile so it costs no
+           layout height — anything injected into the flow while arranging
+           makes the size being adjusted a lie. */
+        .tile-arrange-badge {
+            position: absolute; top: 0.4rem; left: 0.4rem; z-index: 25;
+            pointer-events: none;
+            background: rgba(2, 6, 23, 0.72); color: #e2e8f0;
+            font-size: 0.7rem; font-weight: 700;
+            padding: 0.15rem 0.5rem; border-radius: 0.5rem;
+            white-space: nowrap; max-width: calc(100% - 0.8rem);
+            overflow: hidden; text-overflow: ellipsis;
+            font-variant-numeric: tabular-nums;
+        }
+
         #tile-grid { grid-template-columns: repeat(var(--c-sm, 1), minmax(0, 1fr)); }
         @media (min-width: 768px) {
             #tile-grid { grid-template-columns: repeat(var(--c-md, 2), minmax(0, 1fr)); }
@@ -657,16 +675,22 @@
             </button>
         </div>
 
-        <!-- The gutter is the board's own number now, not a Tailwind class:
-             a hardcoded gap-4 made tiny row heights read as a secret minimum
-             (a tile spanning R rows crosses R-1 gutters, so 1px rows still
-             stepped ~17px per row). _cell() keeps measuring the live grid,
-             so arranging follows whatever the household set. -->
+        <!-- The gutter is OUT of the vertical skeleton. A CSS grid span
+             occupies its tracks plus the gutters between them, so with a real
+             row-gap a tile's height was R*row_height + (R-1)*gap and the
+             step per row was their SUM — fine height control and nice
+             spacing could not coexist. Now row-gap is zero, the tracks step
+             by exactly row_height, and the spacing is painted as a bottom
+             inset on each tile (margin, below). A tile draws
+             R*row_height - gap; stored row heights were migrated up by one
+             gap (v4) so no wall changed. Columns keep a real column-gap —
+             widths are fractions, not steps, so nothing is entangled there. -->
         <div id="tile-grid" class="grid items-stretch"
             :class="arranging ? 'is-arranging' : ''"
             :style="`--c-lg:${cols()}; --c-md:${Math.ceil(cols() / 2)};
                      --c-sm:${Math.ceil(cols() / 4)};
-                     gap: ${gapPx()}px;
+                     --tile-gap: ${gapPx()}px;
+                     column-gap: ${gapPx()}px; row-gap: 0;
                      grid-auto-rows: ${rowHeight()}px`">
             <template x-for="t in tiles()" :key="t.id">
                 <!-- ── A TILE IS A CONTAINER OF CARDS. Both kinds are.
@@ -717,19 +741,23 @@
                          their content is the heading-scale thing. x-if, not
                          x-show: a hidden row still answers querySelector, and
                          everything probing a tile for its label would find
-                         the ghost. -->
-                    <template x-if="(t.label && !(t.bare && t.locked)) || arranging">
+                         the ghost. NOT forced while arranging either: a
+                         heading row the tile will not have afterwards is
+                         borrowed height, and it made resizing accurately
+                         impossible — the badge below floats instead. -->
+                    <template x-if="t.label && !(t.bare && t.locked)">
                     <div class="flex items-center gap-2 mb-3 shrink-0">
                         <span class="text-lg" x-text="t.icon"></span>
                         <span class="panel-label" x-text="t.label || widgetMeta(t.type).label"></span>
-                        <!-- The size, while arranging. A drag with no readout
-                             is a guess: "4 × 2" is the same number the editor's
-                             fields below take, so the two surfaces are visibly
-                             the same setting rather than two ways to set it. -->
-                        <span x-show="arranging" class="ml-auto text-xs panel-dim tabular-nums"
-                            x-text="spanLabel(t.id, t.type)"></span>
                     </div>
                     </template>
+
+                    <!-- While arranging: name and size, floating OVER the
+                         tile (no layout space, no pointer). "4 × 2" is the
+                         same number the editor's fields take, so the two
+                         surfaces are visibly the same setting. -->
+                    <div x-show="arranging" class="tile-arrange-badge"
+                        x-text="(t.label || widgetMeta(t.type).label) + ' · ' + spanLabel(t.id, t.type)"></div>
 
                     <!-- The corner. Sized for a mouse rather than a thumb on
                          purpose: arranging is a browser job, and a handle big
@@ -1065,14 +1093,14 @@
                             :value="page().row_height"
                             @input="setPageField('row_height', parseInt($event.target.value, 10))"
                             class="w-20 ed-input rounded text-xs ed-title px-2 py-1">
-                        <span class="font-normal ed-note">pixels tall — a 2-row tile is twice this,
-                            plus the gaps it spans</span>
+                        <span class="font-normal ed-note">pixels tall — a 2-row tile is exactly
+                            twice this</span>
                     </label>
-                    <!-- The gutter, out in the open. It was a hardcoded 16px
-                         Tailwind class, and with tiny rows it read as a secret
-                         minimum — a tile R rows tall crosses R−1 gutters, so
-                         "1 pixel rows" still stepped by seventeen. A number
-                         the household can see is a number that stops lying;
+                    <!-- The gutter, out in the open AND out of the math: it
+                         spaces tiles and never changes their height stepping.
+                         (It used to be structural — a hardcoded row-gap that
+                         every multi-row span swallowed, which made fine
+                         height control and nice spacing mutually exclusive.)
                          0 is legal and means seamless. -->
                     <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-3">
                         Tiles sit
@@ -1080,8 +1108,8 @@
                             :value="page().gap"
                             @input="setPageField('gap', parseInt($event.target.value, 10))"
                             class="w-20 ed-input rounded text-xs ed-title px-2 py-1">
-                        <span class="font-normal ed-note">pixels apart — the gutter between tiles,
-                            counted inside a multi-row tile's height</span>
+                        <span class="font-normal ed-note">pixels apart — spacing only, never part
+                            of a tile's height</span>
                     </label>
                     <div class="space-y-1.5 mb-3">
                         <!-- Keyed by INSTANCE id, not by type. Alpine uses this
@@ -2802,7 +2830,10 @@
                     const width = grid ? grid.clientWidth : 0;
                     return {
                         col: Math.max(1, (width - gap * (cols - 1)) / cols) + gap,
-                        row: this.rowHeight() + gap,
+                        // Rows step by exactly the row height now — the
+                        // vertical gutter is painted inside the tile, not
+                        // laid between the tracks.
+                        row: this.rowHeight(),
                     };
                 },
 
@@ -3252,10 +3283,12 @@
                         slug: slug || '', name: name || 'Board', icon: '🗂️',
                         // The page-schema version. A page without it gets the
                         // pre-tile chrome (clock + hero) injected by the
-                        // server's migration, and v<3 pages get their old
-                        // heading fallbacks written into tile titles. A fresh
-                        // page means exactly what it says — blank.
-                        v: 3,
+                        // server's migration, v<3 pages get their old heading
+                        // fallbacks written into tile titles, and v<4 row
+                        // heights get one gap added (the gutter left the
+                        // vertical skeleton). A fresh page means exactly what
+                        // it says — blank.
+                        v: 4,
                         widgets: [], spans: {},
                         // Inherited from the board being looked at rather than
                         // hard-coded: a household that has settled on a 16
@@ -3350,10 +3383,10 @@
                         name: (p.name || '').trim() || 'Board',
                         icon: (p.icon || '🗂️').trim(),
                         // Pages load from the server already migrated (chrome
-                        // as real tiles, headings as real titles), so saving
-                        // the version back is what stops the migrations
-                        // running twice.
-                        v: p.v || 3,
+                        // as real tiles, headings as real titles, row heights
+                        // gutter-adjusted), so saving the version back is
+                        // what stops the migrations running twice.
+                        v: p.v || 4,
                         widgets: p.widgets || [],
                         spans: p.spans || {},
                         columns: Math.min(1000, Math.max(1, parseInt(p.columns, 10) || 12)),

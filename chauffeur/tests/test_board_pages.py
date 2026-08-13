@@ -74,7 +74,11 @@ def scenario_the_board_they_already_have_becomes_the_home_page():
           f"tile sizes did not survive: {home['spans']}")
     check(home['spans']['clock'] == {'cols': 16, 'rows': 1},
           f"the migrated chrome is not full width: {home['spans']}")
-    check(home['columns'] == 16 and home['row_height'] == 205,
+    # 205 + the 16px gutter: v4 moved the gutter out of the vertical
+    # skeleton (rows step by exactly row_height now, the gap is painted
+    # inside each tile), and adding one gap to every stored row height is
+    # what keeps every span's drawn pixels identical across the change.
+    check(home['columns'] == 16 and home['row_height'] == 221,
           f"the household's grid was reset to somebody else's default: {home}")
     check(home['background'] == 'mountains at dusk',
           f"the board's picture was lost: {home['background']!r}")
@@ -98,7 +102,7 @@ def scenario_pages_win_entirely_once_they_exist():
     row height from a legacy key is a split brain nobody can debug."""
     settings = dict(LEGACY, panel_pages=[
         {'slug': 'home', 'name': 'Home', 'widgets': ['drives'],
-         'columns': 8, 'row_height': 300, 'v': 2},
+         'columns': 8, 'row_height': 300, 'v': 4},
     ])
     home = home_board.find_page('home', settings)
     check(home['columns'] == 8 and home['row_height'] == 300,
@@ -139,7 +143,11 @@ def scenario_a_v1_board_keeps_its_chrome_and_a_v2_board_means_what_it_says():
     check(v1['spans'].get('clock') == {'cols': 12, 'rows': 1}
           and v1['spans'].get('hero') == {'cols': 12, 'rows': 1},
           f"the migrated chrome is not full width: {v1['spans']}")
-    check(v1['v'] == 3, "a normalised page does not say which shape it is")
+    check(v1['v'] == 4, "a normalised page does not say which shape it is")
+    # And the v4 half: the default 240 row gained the default 16 gutter, so
+    # every span keeps its drawn pixels under the painted-inset math.
+    check(v1['row_height'] == 256,
+          f"a v1 row height was not gutter-adjusted: {v1['row_height']}")
     # And the v3 half: the drives tile's old heading fallback became its
     # title, while the chrome (which never had one) stays blank.
     by_type = {w['type']: w for w in v1['widgets']}
@@ -254,11 +262,11 @@ def scenario_the_payload_carries_the_board_it_was_built_for():
     try:
         storage.get_settings = lambda: {'panel_pages': [
             {'slug': 'home', 'name': 'Home', 'widgets': ['drives'],
-             'columns': 12, 'row_height': 240, 'v': 2},
+             'columns': 12, 'row_height': 240, 'v': 4},
             {'slug': 'hallway', 'name': 'Hallway', 'icon': '🚪',
              'widgets': ['map', 'moments'], 'columns': 6, 'row_height': 320,
              'spans': {'map': {'cols': 6, 'rows': 2}},
-             'background': 'https://example.test/hall.jpg', 'v': 2},
+             'background': 'https://example.test/hall.jpg', 'v': 4},
         ]}
         home_board._CACHE.clear()
         board = home_board.build(page='hallway')
