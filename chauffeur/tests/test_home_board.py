@@ -1104,17 +1104,30 @@ def scenario_a_search_phrase_is_not_used_as_an_image():
 def scenario_the_kids_ride_in_the_hero_not_a_tile():
     """The hero band is full width and was spending it restating the drives
     tile. The kids move into it as columns, and must not also remain a tile —
-    the same content twice is how the board got called wasted space."""
+    the same content twice is how the board got called wasted space.
+
+    CONDITIONAL on the board having a hero, since v2.209 made the hero a tile
+    like everything else. A board with no hero band has nowhere to put them,
+    and lifting the tile out anyway dropped the digest into an object nothing
+    on that page draws — which is how the Routines board reached a wall with
+    its kid strip silently missing. See the second half below.
+    """
     _clear_cache()
     orig = storage.get_cached_schedule
     try:
         storage.get_cached_schedule = lambda: {}
-        board = home_board.build(
-            requested='kids,calendar',
-            kid_digest_fn=lambda: {'label': 'Today', 'kids': {
-                'k1': {'name': 'Addison', 'lines': ['5:00 PM — practice']}}})
+        digest = lambda: {'label': 'Today', 'kids': {
+            'k1': {'name': 'Addison', 'lines': ['5:00 PM — practice']}}}
+        board = home_board.build(requested='hero,kids,calendar',
+                                 kid_digest_fn=digest)
         check(board['hero']['kids'] and board['hero']['kids'][0]['name'] == 'Addison',
               f"kids ride in the hero, got {board['hero'].get('kids')}")
+        # And a board WITHOUT one keeps the tile it asked for.
+        _clear_cache()
+        no_hero = home_board.build(requested='kids,calendar', kid_digest_fn=digest)
+        check(any(t['type'] == 'kids' for t in no_hero['tiles']),
+              f"a board with no hero lost its kids tile entirely: "
+              f"{[t['type'] for t in no_hero['tiles']]}")
         check('kids' not in [t['type'] for t in board['tiles']],
               "and are not repeated as a tile")
     finally:

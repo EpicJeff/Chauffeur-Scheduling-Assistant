@@ -2474,6 +2474,28 @@ def _tile_intake(now, **_):
 CUSTOM_TILE = 'custom'
 TILE_MAX_CARDS = 12
 
+# What a REQUIRED tile says when its builder had nothing. Each one is the same
+# sentence its own page shows on an empty day, because that is the honest
+# answer and because a household reading both should not have to work out
+# whether they are looking at the same state twice.
+REQUIRED_EMPTY = {
+    'task_list': "Nothing owed right now.",
+    'errand_list': "No errands yet — add one on the Errands page.",
+    'shopping_list': "Nothing on this list.",
+    'shopping_staples': "Nothing the household keeps on hand yet.",
+    'meals_week': "No dinners planned yet.",
+    'chores_lanes': "No chores set up yet.",
+    'chores_rewards': "No family goals yet.",
+    'routines_lanes': "No routines set up yet.",
+    'kids': "Nothing on for the kids today.",
+    'occasions': "Nothing coming up.",
+    'trips': "No trips planned.",
+    'calendar': "Nothing on the calendar.",
+    'drives': "No drives today.",
+    'map': "Nobody is sharing a location yet.",
+    'moments': "No moments yet.",
+}
+
 
 def container_types() -> set:
     """Tile types that hold cards the household chooses, rather than one the
@@ -2579,6 +2601,18 @@ def _build_tile(inst, now, **kw):
     # A built-in tile: one card, and the chrome is the tile's.
     built = _build_card({'id': inst['id'], 'type': inst['type'],
                          'config': config}, now, **kw)
+    if not built and inst.get('require'):
+        # The board is ABOUT this. Rule 1's "hide what is not set up" is right
+        # on a mixed board and wrong here — an Errands board with no errands
+        # card reads as broken rather than as empty, which is exactly how it
+        # reached a wall. Say the true thing instead of leaving a hole.
+        built = {'id': inst['id'], 'type': inst['type'], 'icon': meta['icon'],
+                 'label': (_cfg_str(config, 'title')
+                           or meta.get('heading') or meta['label']),
+                 'title': _cfg_str(config, 'title'),
+                 'cols': 12, 'rows': 0, 'config': config,
+                 'data': {'empty': REQUIRED_EMPTY.get(inst['type'],
+                                                      "Nothing here yet.")}}
     if not built:
         return None
     return {
@@ -2815,6 +2849,11 @@ def normalize_instances(raw, settings: dict = None) -> List[dict]:
         config = item.get('config')
         inst = {'id': iid, 'type': type_,
                 'config': dict(config) if isinstance(config, dict) else {}}
+        # A tile the board is ABOUT. Only the shipped boards set it (a
+        # household's own board is a mix, where rule 1's hiding is right), and
+        # it survives normalisation so `_build_tile` can honour it.
+        if item.get('require'):
+            inst['require'] = True
         # Size lives in `panel_tile_spans` keyed by instance id, which for a
         # migrated board is the same string it was always keyed by.
         span = item.get('span') if isinstance(item.get('span'), dict) else spans.get(iid)
@@ -3100,12 +3139,27 @@ def normalize_pages(settings: dict = None) -> List[dict]:
 # `columns` is stated rather than inherited: a span here is a count of columns,
 # so a household that put their home board on a 24-column grid would otherwise
 # get every one of these at half width.
+#
+# Heights are `auto` almost everywhere, and that is not laziness. A list's
+# height is not a number anybody can type: four children with eleven routine
+# items each is a different height every morning, so one guess is either short
+# (the wall cuts the last child off — which is exactly how these shipped) or
+# tall (a band of empty panel under the last row). `auto` means the tile is as
+# tall as whatever it is showing, measured client-side (home.html's `autoPx`).
+# Only tiles whose content is laid out INTO them — a map, a timeline, a
+# mosaic — keep a stated `rows`, because there the height decides the content
+# rather than the other way round.
+#
+# `require` marks a tile the board is ABOUT. Rule 1 hides a feature nobody has
+# set up, which is right on a mixed board and wrong here: an Errands board with
+# no errands card reads as broken rather than as empty, and that is exactly how
+# it reached a wall. A required tile says so instead of vanishing.
 BUILTIN_PAGES = {
     'schedule': {
         'name': 'Drives', 'icon': '🚗', 'v': 5, 'columns': 12,
         'widgets': [{'id': 'drives', 'type': 'drives',
                      'config': {'view': 'timeline', 'days': 1,
-                                'title': 'The rest of the day'}}],
+                                'title': 'The rest of the day'}, 'require': True}],
         'spans': {'drives': {'cols': 12, 'rows': 4}},
     },
     'calendar': {
@@ -3113,7 +3167,7 @@ BUILTIN_PAGES = {
         # The view buttons ON: this board IS the calendar page, and the page's
         # one irreplaceable move is changing what you are looking at.
         'widgets': [{'id': 'calendar', 'type': 'calendar',
-                     'config': {'view': 'agenda', 'view_selector': True}}],
+                     'config': {'view': 'agenda', 'view_selector': True}, 'require': True}],
         'spans': {'calendar': {'cols': 12, 'rows': 4}},
     },
     'errands': {
@@ -3123,16 +3177,16 @@ BUILTIN_PAGES = {
         # learnable if both are in front of you.
         'widgets': [
             {'id': 'task_list', 'type': 'task_list',
-             'config': {'title': 'The household owes'}},
+             'config': {'title': 'The household owes'}, 'require': True},
             # `show_completed` off, and this is the one place the paradigm's
             # "every part defaults on" is overridden — deliberately, and here
             # rather than in the option's default, so the toggle keeps meaning
             # "the page shows this". A wall is about what is left.
             {'id': 'errand_list', 'type': 'errand_list',
-             'config': {'title': 'Errands waiting', 'show_completed': False}},
+             'config': {'title': 'Errands waiting', 'show_completed': False}, 'require': True},
         ],
-        'spans': {'task_list': {'cols': 6, 'rows': 4},
-                  'errand_list': {'cols': 6, 'rows': 4}},
+        'spans': {'task_list': {'cols': 6, 'auto': True},
+                  'errand_list': {'cols': 6, 'auto': True}},
     },
     # The shopping kiosk, in its own order: the week across the top, then the
     # shortcut for saying we have run out of something, then the list.
@@ -3140,21 +3194,21 @@ BUILTIN_PAGES = {
         'name': 'Meals', 'icon': '🛒', 'v': 5, 'columns': 12,
         'widgets': [
             {'id': 'meals_week', 'type': 'meals_week',
-             'config': {'title': 'The nights ahead'}},
+             'config': {'title': 'The nights ahead'}, 'require': True},
             {'id': 'shopping_staples', 'type': 'shopping_staples',
-             'config': {'title': '🛒 Drop in the cart'}},
+             'config': {'title': '🛒 Drop in the cart'}, 'require': True},
             {'id': 'shopping_list', 'type': 'shopping_list',
-             'config': {'title': '📝 The list'}},
+             'config': {'title': '📝 The list'}, 'require': True},
         ],
-        'spans': {'meals_week': {'cols': 12, 'rows': 3},
-                  'shopping_staples': {'cols': 5, 'rows': 3},
-                  'shopping_list': {'cols': 7, 'rows': 3}},
+        'spans': {'meals_week': {'cols': 12, 'auto': True},
+                  'shopping_staples': {'cols': 5, 'auto': True},
+                  'shopping_list': {'cols': 7, 'auto': True}},
     },
     'occasions': {
         'name': 'Occasions', 'icon': '🎁', 'v': 5, 'columns': 12,
         'widgets': [{'id': 'occasions', 'type': 'occasions',
-                     'config': {'count': 10, 'title': 'Coming up'}}],
-        'spans': {'occasions': {'cols': 12, 'rows': 4}},
+                     'config': {'count': 10, 'title': 'Coming up'}, 'require': True}],
+        'spans': {'occasions': {'cols': 12, 'auto': True}},
     },
     'chores': {
         'name': 'Chores', 'icon': '⭐', 'v': 5, 'columns': 12,
@@ -3163,12 +3217,12 @@ BUILTIN_PAGES = {
         # rank in their own headers — showing it twice is what the kiosk
         # already decided against.
         'widgets': [
-            {'id': 'chores_rewards', 'type': 'chores_rewards', 'config': {}},
+            {'id': 'chores_rewards', 'type': 'chores_rewards', 'config': {}, 'require': True},
             {'id': 'chores_lanes', 'type': 'chores_lanes',
-             'config': {'interactive': True}},
+             'config': {'interactive': True}, 'require': True},
         ],
-        'spans': {'chores_rewards': {'cols': 12, 'rows': 1},
-                  'chores_lanes': {'cols': 12, 'rows': 4}},
+        'spans': {'chores_rewards': {'cols': 12, 'auto': True},
+                  'chores_lanes': {'cols': 12, 'auto': True}},
     },
     # The routines kiosk's own order: the day preview each child gets, then
     # the lanes they tick things off in. The streak leaderboard is not here
@@ -3176,28 +3230,28 @@ BUILTIN_PAGES = {
     'routines': {
         'name': 'Routines', 'icon': '🔁', 'v': 5, 'columns': 12,
         'widgets': [
-            {'id': 'kids', 'type': 'kids', 'config': {'title': 'Each kid'}},
+            {'id': 'kids', 'type': 'kids', 'config': {'title': 'Each kid'}, 'require': True},
             {'id': 'routines_lanes', 'type': 'routines_lanes',
-             'config': {'title': 'Today'}},
+             'config': {'title': 'Today'}, 'require': True},
         ],
-        'spans': {'kids': {'cols': 12, 'rows': 2},
-                  'routines_lanes': {'cols': 12, 'rows': 4}},
+        'spans': {'kids': {'cols': 12, 'auto': True},
+                  'routines_lanes': {'cols': 12, 'auto': True}},
     },
     'trips': {
         'name': 'Trips', 'icon': '🧭', 'v': 5, 'columns': 12,
         'widgets': [{'id': 'trips', 'type': 'trips',
-                     'config': {'count': 6, 'title': 'Trips'}}],
+                     'config': {'count': 6, 'title': 'Trips'}, 'require': True}],
         'spans': {'trips': {'cols': 12, 'rows': 4}},
     },
     'map': {
         'name': 'Map', 'icon': '🗺️', 'v': 5, 'columns': 12,
-        'widgets': [{'id': 'map', 'type': 'map', 'config': {}}],
+        'widgets': [{'id': 'map', 'type': 'map', 'config': {}, 'require': True}],
         'spans': {'map': {'cols': 12, 'rows': 5}},
     },
     'moments': {
         'name': 'Moments', 'icon': '📸', 'v': 5, 'columns': 12,
         'widgets': [{'id': 'moments', 'type': 'moments',
-                     'config': {'count': 9}}],
+                     'config': {'count': 9}, 'require': True}],
         'spans': {'moments': {'cols': 12, 'rows': 5}},
     },
 }
@@ -3615,10 +3669,17 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     # full width and was spending it restating the drives tile; a column per
     # child is the thing a family actually walks up to the panel to read, and
     # "Each Kid" was never a phrase anybody says out loud.
+    #
+    # ONLY WHERE THERE IS A HERO. That condition was missing and it cost the
+    # Routines board its digest strip: the board has no hero band — it is
+    # lanes, not drives — so the kids tile was lifted out and dropped into an
+    # object nothing on that page draws. It vanished with no error anywhere,
+    # which is this board's characteristic failure and the one rule 1 exists
+    # to prevent. A board without a hero keeps the tile it asked for.
     hero = _hero(now, runs)
     hero['unbuilt'] = _hero_unbuilt(sched)
     kid_tile = next((t for t in tiles if t['type'] == 'kids'), None)
-    if kid_tile:
+    if kid_tile and any(t['type'] == 'hero' for t in tiles):
         hero['kids'] = kid_tile['data'].get('kids') or []
         hero['kids_empty'] = kid_tile['data'].get('empty')
         tiles = [t for t in tiles if t['type'] != 'kids']

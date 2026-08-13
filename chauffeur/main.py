@@ -988,21 +988,19 @@ def home_board_pages():
     about what today's board becomes.
     """
     from services import home_board
-    return {'pages': home_board.normalize_pages()}
-
-@app.get("/api/home_board/page/{slug}")
-def home_board_one_page(slug: str):
-    """One board, resolved — including a destination's own board before anybody
-    has ever edited it.
-
-    `/api/home_board/pages` is the STORED list and stays that way: shipping the
-    built-in boards in it would mean the editor saving all ten into settings the
-    first time somebody moved one tile, freezing every board this app will ever
-    improve. The editor asks for the one it is actually looking at instead, and
-    saving THAT is what writes it down.
-    """
-    from services import home_board
-    return home_board.find_page(slug)
+    settings = storage.get_settings() or {}
+    pages = home_board.normalize_pages(settings)
+    have = {p['slug'] for p in pages}
+    # The shipped boards the household has not touched, kept SEPARATE from the
+    # stored ones. The editor needs them — a board you cannot find in the list
+    # is a board you cannot fix, and the first thing anybody wanted to do with
+    # these was fix their heights — but folding them into `pages` would have
+    # the editor save all ten into settings the first time somebody nudged one
+    # tile, freezing every board this app will ever improve.
+    shipped = [p for p in (home_board.builtin_page(slug, settings)
+                           for slug in home_board.BUILTIN_PAGES)
+               if p and p['slug'] not in have]
+    return {'pages': pages, 'shipped': shipped}
 
 @app.get("/api/home_board/catalog")
 def home_board_catalog():
@@ -4198,14 +4196,23 @@ def household_load(days: int = 30):
 
     # The sentence, in the occasions `_load_balance` voice: it counts and
     # names and deliberately never ranks or scores.
+    #
+    # It says DRIVES AND JOBS, not "things done", and that wording is a bug
+    # report. The total is `tasks + drives`, and printed over the household
+    # task list it read as a claim about tasks alone — a household with a
+    # hundred school runs and no finished tasks was told that sixteen of
+    # thirty-two things were somebody's, looked at a list where nothing had
+    # ever been ticked, and correctly concluded the number was wrong. It was
+    # not; it was counting something the sentence did not name.
     line = None
     carried = [r for r in household if r['total']]
     if len(carried) >= 2 and sum(r['total'] for r in carried) >= 6:
         top, total = carried[0], sum(r['total'] for r in carried)
-        line = (f"{top['total']} of the {total} things done in the last "
+        line = (f"{top['total']} of the {total} drives and jobs in the last "
                 f"{days} days were {top['name']}'s.")
     elif len(carried) == 1 and carried[0]['total'] >= 4:
-        line = f"Everything logged in the last {days} days was {carried[0]['name']}'s."
+        line = (f"Every drive and job logged in the last {days} days was "
+                f"{carried[0]['name']}'s.")
     return {"days": days, "household": household, "assisting": assisting,
             "line": line}
 

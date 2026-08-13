@@ -1203,12 +1203,29 @@
                                         class="w-12 ed-input rounded text-xs ed-title px-1 py-0.5">
                                     cols
                                 </label>
-                                <label class="flex items-center gap-1 text-[0.7rem] ed-note">
+                                <!-- Rows, or FIT. A list's height is not a
+                                     number anybody can type: four children with
+                                     eleven routine items each is a different
+                                     height every morning, and one guess is
+                                     either short (the wall cuts the last child
+                                     off) or tall (a band of empty panel). Not
+                                     offered on a map, a timeline or a mosaic —
+                                     their content is laid out INTO the tile, so
+                                     there is no natural height to fit. -->
+                                <label class="flex items-center gap-1 text-[0.7rem] ed-note"
+                                    x-show="!(spanOf(w.id, 'auto') && !fillsTile(w.type))">
                                     <input type="number" min="1" step="1"
                                         :value="spanOf(w.id, 'rows')"
                                         @change="setSpan(w.id, 'rows', $event.target.value)"
                                         class="w-12 ed-input rounded text-xs ed-title px-1 py-0.5">
                                     rows
+                                </label>
+                                <label class="flex items-center gap-1 text-[0.7rem] ed-note"
+                                    x-show="!fillsTile(w.type)"
+                                    title="As tall as whatever it is showing">
+                                    <input type="checkbox" :checked="!!spanOf(w.id, 'auto')"
+                                        @change="setSpan(w.id, 'auto', $event.target.checked)">
+                                    fit
                                 </label>
                                 <!-- Only offered when the type has something to
                                      ask. A gear on a tile with no options is a
@@ -1666,6 +1683,68 @@
         // and a single module variable would have had them fighting over it.
         const boardMaps = {};
 
+        // ── Measuring a fit-to-content tile.
+        //
+        // Outside Alpine, like the maps and for the same reason: observers hold
+        // DOM references, and a reactive proxy would wrap every one of them.
+        //
+        // The height measured is the CONTENT's, never the tile's own box. A
+        // tile stretches to the row area it was given, so `scrollHeight` on it
+        // reports whatever we last set — which converges but can never shrink
+        // again, so a lane that loses two items would keep its old height for
+        // the life of the page. Summing the children's boxes has no such
+        // feedback: block flow, and their heights do not depend on the tile's.
+        //
+        // <template> children are skipped: Alpine leaves them in the DOM as
+        // zero-height markers, and one of them at the top would put the
+        // measurement's origin at y=0.
+        const boardAuto = { observers: {}, onMeasure: null };
+
+        function autoTileHeight(el) {
+            const kids = [...el.children].filter(k => k.tagName !== 'TEMPLATE');
+            if (!kids.length) return 0;
+            const cs = getComputedStyle(el);
+            const padY = (parseFloat(cs.paddingTop) || 0)
+                + (parseFloat(cs.paddingBottom) || 0);
+            const top = kids[0].getBoundingClientRect().top;
+            const bottom = kids[kids.length - 1].getBoundingClientRect().bottom;
+            return Math.max(1, Math.ceil(bottom - top + padY));
+        }
+
+        // Two observers per tile, because content arrives two different ways.
+        // These cards SELF-FETCH, so the first paint is always an empty list
+        // and the real height lands a moment later (mutation); and a board is
+        // responsive, so a narrower wall rewraps the same content into more
+        // rows (resize). Neither one alone is enough.
+        function watchAutoTile(el, id) {
+            const held = boardAuto.observers[id];
+            // An observer bound to an element Alpine has since replaced is
+            // measuring a node nobody can see — the same trap the map tiles
+            // hit, and the reason renderMapInto checks the same thing.
+            if (held && held.el === el) return;
+            if (held) {
+                held.ro.disconnect();
+                held.mo.disconnect();
+                delete boardAuto.observers[id];
+            }
+            const fire = () => boardAuto.onMeasure && boardAuto.onMeasure(id, el);
+            const ro = new ResizeObserver(fire);
+            ro.observe(el);
+            const mo = new MutationObserver(fire);
+            mo.observe(el, { childList: true, subtree: true, characterData: true });
+            boardAuto.observers[id] = { ro, mo, el };
+            fire();
+        }
+
+        function unwatchAutoTiles(keep) {
+            for (const [id, o] of Object.entries(boardAuto.observers)) {
+                if (keep.has(id) && o.el.isConnected) continue;
+                o.ro.disconnect();
+                o.mo.disconnect();
+                delete boardAuto.observers[id];
+            }
+        }
+
         function homeBoard() {
             const params = new URLSearchParams(window.location.search);
             return {
@@ -1733,6 +1812,10 @@
                 // slug because a board being renamed changes its slug under the
                 // hand that is typing, and the selection must not jump.
                 pageIndex: 0,
+                // Each shipped board as the server sent it, keyed by slug and
+                // already in save shape. `cleanPages` drops any that still
+                // match, so listing all ten in the editor costs nothing.
+                _shippedPristine: {},
                 // The Add-tile picker: open, and what is typed into its search.
                 picking: false,
                 pickFilter: '',
@@ -1803,6 +1886,11 @@
 
                 start() {
                     this.applyTheme();
+                    // Where a fit-to-content tile's measurement comes back to.
+                    // Wired once, here, rather than captured per observer: the
+                    // observers live outside Alpine and this is the only line
+                    // that knows the component exists.
+                    boardAuto.onMeasure = (id, el) => this.onAutoMeasured(id, el);
                     this.tick();
                     // The clock ticks LOCALLY. Refetching the board to move a
                     // minute hand would be 1,440 requests a day to render a
@@ -1861,7 +1949,7 @@
                         // rendered.
                         this.$nextTick(() => {
                             this.syncMap(); this.syncTimeline(); this.syncCards();
-                            this.syncCalendars();
+                            this.syncCalendars(); this.syncAutoTiles();
                         });
                     } catch (e) { /* a wall panel keeps showing the last good board */ }
                 },
@@ -1970,13 +2058,78 @@
                     return w ? w.type : '';
                 },
 
+                // What a tile has been told about its own size. One reader for
+                // both truths: while ARRANGING the draft is the truth (that is
+                // what makes a drag show you the result instead of describing
+                // it), everywhere else the server's payload is, because a panel
+                // has no draft and never will.
+                spanOfLive(key) {
+                    return ((this.arranging ? this.page().spans
+                                            : this.board.spans) || {})[key] || {};
+                },
+
+                // ── FIT TO CONTENT.
+                //
+                // `rows` is a promise about HEIGHT, and for a list it is a
+                // promise nobody can keep: four children with eleven routine
+                // items each is a different height every morning, and a number
+                // typed once is either too short (the wall cuts the last child
+                // off) or too tall (a band of empty panel under the last row).
+                // A tile can say `auto` instead, and then its height is
+                // whatever its content came to.
+                //
+                // Measured, because CSS cannot do this on its own: the lattice
+                // is 1px tracks and a grid item with no row span occupies one
+                // of them, so "as tall as the content" has to become a NUMBER
+                // of tracks. `autoPx` holds that number per tile; the observers
+                // in `watchAutoTiles` keep it honest as content arrives (these
+                // cards self-fetch, so it always arrives after the first paint).
+                autoPx: {},
+                isAuto(key, type) {
+                    // A tile whose content is laid out INTO it — a map, a
+                    // timeline, a mosaic — has no natural height to fit: it is
+                    // the height that decides the content, not the other way
+                    // round. Offering `auto` there would collapse it.
+                    return !!this.spanOfLive(key).auto && !this.fillsTile(type);
+                },
+
+                // Attach an observer to every fit-to-content tile now on the
+                // board and drop the ones that have left it — the same
+                // bookkeeping the maps and the hosted cards do, and for the
+                // same reason: a tile removed from a board must not leave an
+                // observer holding a detached node.
+                syncAutoTiles() {
+                    const live = new Set();
+                    for (const t of this.drawnTiles()) {
+                        if (!this.isAuto(t.id, t.type)) continue;
+                        const el = document.querySelector(
+                            `[data-tile-id="${CSS.escape(t.id)}"]`);
+                        if (!el) continue;
+                        live.add(t.id);
+                        watchAutoTile(el, t.id);
+                    }
+                    unwatchAutoTiles(live);
+                    // Anything no longer auto must give its pixels back, or a
+                    // tile switched to a fixed height in the editor would keep
+                    // the measurement it had a moment ago.
+                    for (const id of Object.keys(this.autoPx)) {
+                        if (!live.has(id)) delete this.autoPx[id];
+                    }
+                },
+
+                // What an observer reports. Rounded to whole pixels and only
+                // written when it actually MOVED: every write re-runs
+                // `spanStyle`, which resizes the tile, which is exactly the
+                // kind of loop a measurement feeding its own input creates.
+                onAutoMeasured(id, el) {
+                    const px = autoTileHeight(el);
+                    if (px && Math.abs((this.autoPx[id] || 0) - px) > 1) {
+                        this.autoPx[id] = px;
+                    }
+                },
+
                 spanStyle(key, type) {
-                    // While arranging, the DRAFT is the truth — that is what
-                    // makes a drag show you the result instead of describing
-                    // it. Everywhere else the server's payload is, because a
-                    // panel has no draft and never will.
-                    const s = ((this.arranging ? this.page().spans
-                                               : this.board.spans) || {})[key] || {};
+                    const s = this.spanOfLive(key);
                     const max = this.cols();
                     const c = Math.min(max, Math.max(1, parseInt(s.cols, 10)
                                                        || this.defaultCols(type)));
@@ -1985,8 +2138,18 @@
                     // R*row_height plus one gutter, the painted inset takes
                     // the gutter back, and the tile's box is R*row_height
                     // exactly — the same size at any gutter.
+                    //
+                    // An auto tile spends measured pixels instead of rows, on
+                    // the same lattice and with the same gutter arithmetic, so
+                    // it sits in a row of fixed tiles without disturbing them.
+                    // Until the first measurement lands it uses its stored
+                    // rows, which is what stops a board flashing a stack of
+                    // one-pixel tiles on every load.
+                    const px = this.isAuto(key, type)
+                        ? (this.autoPx[key] || r * this.rowHeight())
+                        : r * this.rowHeight();
                     return `grid-column: span ${c}; `
-                        + `grid-row: span ${r * this.rowHeight() + this.gapPx()};`;
+                        + `grid-row: span ${px + this.gapPx()};`;
                 },
 
                 // The tiles whose content IS a picture. Named rather than
@@ -2342,7 +2505,14 @@
                             // would be a second place to get it wrong, and the
                             // way it would go wrong is a household opening the
                             // editor and finding a board they do not recognise.
-                            panel_pages: (pg.pages || []).map(p => ({
+                            // The household's own boards, then the shipped ones
+                            // they have not touched. Both are editable and both
+                            // are listed — but only a CHANGED shipped board is
+                            // written back (see cleanPages), so a household
+                            // that opens the editor and closes it again keeps
+                            // tracking whatever ships.
+                            panel_pages: [...(pg.pages || []),
+                                          ...(pg.shipped || [])].map(p => ({
                                 ...p,
                                 widgets: this.toInstances(p.widgets),
                                 spans: { ...(p.spans || {}) },
@@ -2379,34 +2549,29 @@
                             panel_screensaver_media_path: s.panel_screensaver_media_path || '',
                             panel_screensaver_dwell_seconds: s.panel_screensaver_dwell_seconds || 20
                         };
+                        // What each SHIPPED board looked like before anybody
+                        // touched it, in the exact shape `cleanPages` produces
+                        // — so "did this change?" is one string comparison and
+                        // not a dirty flag a dozen edit paths would have to
+                        // remember to set. Taken after the draft is built,
+                        // because the pristine copy has to be normalised the
+                        // same way the edited one will be.
+                        const untouched = new Set(
+                            (pg.shipped || []).map(p => p.slug));
+                        this._shippedPristine = {};
+                        for (const p of this._cleanPages()) {
+                            if (untouched.has(p.slug)) {
+                                this._shippedPristine[p.slug] = JSON.stringify(p);
+                            }
+                        }
                         // The editor opens pointed at the board being LOOKED
                         // AT. Before this it always woke up on index 0 — the
                         // home board — so /board/kitchen showed the kitchen
                         // while "Add tile" below it silently put tiles on the
                         // home board. Only startArrange() knew to sync.
                         if (this.pageSlug) {
-                            let i = this.draft.panel_pages
+                            const i = this.draft.panel_pages
                                 .findIndex(p => p.slug === this.pageSlug);
-                            // A destination's OWN board (Errands, Chores…) is
-                            // not in settings until somebody edits it — that is
-                            // what lets it keep tracking whatever ships. So the
-                            // editor fetches the resolved one and appends it to
-                            // the draft: nothing is written until Save, and Save
-                            // is exactly the moment it becomes theirs.
-                            if (i < 0) {
-                                const p = await fetch(this.apiBase
-                                    + 'api/home_board/page/' + this.pageSlug)
-                                    .then(r => r.ok ? r.json() : null)
-                                    .catch(() => null);
-                                if (p && p.slug === this.pageSlug) {
-                                    this.draft.panel_pages.push({
-                                        ...p,
-                                        widgets: this.toInstances(p.widgets),
-                                        spans: { ...(p.spans || {}) },
-                                    });
-                                    i = this.draft.panel_pages.length - 1;
-                                }
-                            }
                             if (i >= 0) this.pageIndex = i;
                         }
                     } catch (e) { /* setup stays on defaults */ }
@@ -2912,7 +3077,9 @@
                     const s = (this.page().spans || {})[id] || {};
                     const c = Math.min(this.cols(), Math.max(1, parseInt(s.cols, 10)
                                                                || this.defaultCols(type)));
-                    return `${c} × ${Math.max(1, parseInt(s.rows, 10) || 1)}`;
+                    const r = this.isAuto(id, type)
+                        ? 'fit' : Math.max(1, parseInt(s.rows, 10) || 1);
+                    return `${c} × ${r}`;
                 },
 
                 // One grid cell, measured rather than assumed. The board's
@@ -2990,6 +3157,13 @@
                         const cols = Math.round((ev.clientX - startX) / cell.col) + fromCols;
                         const rows = Math.round((ev.clientY - startY) / cell.row) + fromRows;
                         this.setSpan(id, 'cols', Math.min(this.cols(), Math.max(1, cols)));
+                        // Dragging the bottom edge of a fit-to-content tile is
+                        // an unambiguous request for a height of your own, so
+                        // it takes the tile off `fit` rather than fighting the
+                        // measurement for the rest of the drag.
+                        if (Math.abs(ev.clientY - startY) > 4 && s.auto) {
+                            this.setSpan(id, 'auto', false);
+                        }
                         this.setSpan(id, 'rows', Math.max(1, rows));
                     };
                     const up = () => {
@@ -3500,7 +3674,24 @@
                 // What actually gets saved. The slug is re-derived for any page
                 // that has not got one, and names are trimmed — a board called
                 // " " is a chip nobody can hit.
+                //
+                // A shipped board is dropped unless it CHANGED. The editor
+                // lists all of them so they can be found and fixed; writing
+                // them all back on the first save would freeze ten boards
+                // against every future improvement, which is the whole bargain
+                // these boards are offered under. Compared against the pristine
+                // copy the server sent rather than tracked with a dirty flag —
+                // there are a dozen ways to edit a page and only one of them
+                // would have been remembered.
                 cleanPages() {
+                    const shipped = this._shippedPristine || {};
+                    return this._cleanPages().filter(p => {
+                        const was = shipped[p.slug];
+                        return !was || was !== JSON.stringify(p);
+                    });
+                },
+
+                _cleanPages() {
                     return (this.draft.panel_pages || []).map(p => ({
                         slug: p.slug,
                         name: (p.name || '').trim() || 'Board',
@@ -4210,6 +4401,10 @@
                 // sizes, and keying this by type gave them one.
                 spanOf(instanceId, axis) {
                     const span = this.page().spans[instanceId] || {};
+                    // `auto` is a switch, not a measurement: it must come back
+                    // as a boolean, or the checkbox bound to it reads the
+                    // string "false" and ticks itself.
+                    if (axis === 'auto') return !!span.auto;
                     if (span[axis]) return String(span[axis]);
                     // An unsized tile shows the width it is actually DRAWN at,
                     // not 1 — a field reading "1" beside a quarter-width tile
@@ -4225,19 +4420,33 @@
                     // tile could want to be. It reads as arbitrary at 240px
                     // a row and as broken at 20, where twelve rows is less
                     // than a line of text.
-                    const max = axis === 'cols' ? this.cols() : 100000;
-                    const n = Math.min(max, Math.max(1, parseInt(value, 10) || 1));
                     const cur = { ...(this.page().spans[instanceId] || {}) };
-                    cur[axis] = n;
+                    if (axis === 'auto') {
+                        // A switch, not a measurement. Turning it OFF leaves
+                        // whatever rows were last typed, so a tile going back
+                        // to a fixed height lands on a number somebody chose
+                        // rather than on 1.
+                        if (value) cur.auto = true; else delete cur.auto;
+                    } else {
+                        const max = axis === 'cols' ? this.cols() : 100000;
+                        cur[axis] = Math.min(max, Math.max(1, parseInt(value, 10) || 1));
+                    }
                     // A tile back at exactly the default stops being stored,
                     // rather than persisting numbers nobody chose. The default
                     // WIDTH is a quarter of the grid now, not 1.
-                    if ((cur.cols || 0) === this.defaultCols(this.typeOf(instanceId))
+                    if (!cur.auto
+                        && (cur.cols || 0) === this.defaultCols(this.typeOf(instanceId))
                         && (cur.rows || 1) === 1) {
                         delete this.page().spans[instanceId];
                     } else {
                         this.page().spans[instanceId] = cur;
                     }
+                    // The measurement is stale the moment the answer changes,
+                    // and turning `fit` ON needs an observer that only
+                    // syncAutoTiles attaches. Guarded because the arrange
+                    // harness runs this component as plain JavaScript, with no
+                    // Alpine around it to provide $nextTick.
+                    if (this.$nextTick) this.$nextTick(() => this.syncAutoTiles());
                 },
 
                 // Shared by both pickers: a tile list and a shelf list are the

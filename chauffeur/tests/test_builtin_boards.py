@@ -169,20 +169,37 @@ def scenario_a_destination_s_board_is_not_a_second_shelf_button():
 
 
 def scenario_the_editor_can_reach_a_board_nobody_has_saved():
-    """It cannot come from `/api/home_board/pages` — that is the STORED list,
-    and putting ten shipped boards in it would freeze all ten into settings the
-    first time somebody nudged one tile."""
+    """A board you cannot find in the editor's list is a board you cannot fix,
+    and the first thing anybody wanted to do with these was fix their heights.
+
+    So `/api/home_board/pages` answers with TWO lists: `pages` is what is
+    stored and `shipped` is the rest. Folding them into one would have the
+    editor write all ten into settings the first time somebody nudged a tile,
+    freezing every board this app will ever improve — which is the whole
+    bargain these are offered under.
+    """
     from services import storage
     real = storage.get_settings
     try:
         storage.get_settings = lambda: {'panel_pages': [
-            {'slug': 'home', 'name': 'Home', 'widgets': ['drives'], 'v': 5}]}
+            {'slug': 'home', 'name': 'Home', 'widgets': ['drives'], 'v': 5},
+            {'slug': 'errands', 'name': 'Errands', 'widgets': ['errands'],
+             'v': 5},
+        ]}
         stored = [p['slug'] for p in home_board.normalize_pages()]
-        check(stored == ['home'],
+        check(stored == ['home', 'errands'],
               f"the shipped boards leaked into the stored list: {stored}")
-        one = home_board.find_page('chores')
-        check(one['slug'] == 'chores' and one['widgets'],
-              f"the editor cannot fetch an unsaved board: {one}")
+        import main
+        got = main.home_board_pages()
+        shipped = [p['slug'] for p in got['shipped']]
+        check([p['slug'] for p in got['pages']] == ['home', 'errands'],
+              f"the stored list changed shape: {got['pages']}")
+        check('chores' in shipped and all(p['widgets'] for p in got['shipped']),
+              f"the editor cannot see an unsaved board: {shipped}")
+        # A board they HAVE customised must not appear twice — once as theirs
+        # and once as ours, with the editor asking which they meant.
+        check('errands' not in shipped,
+              f"a customised board is listed as shipped as well: {shipped}")
         cat = home_board.catalog()
         check('errands' in (cat.get('builtin_pages') or []),
               f"the editor cannot tell a shipped board from a made one: "
@@ -249,11 +266,117 @@ def scenario_the_board_knows_which_board_it_is():
                 if 'function homeBoard()' in b)
     check('{{' not in body and '{%' not in body,
           "server-side templating leaked into the board script")
-    # And the editor has to be able to load a board that is not in settings.
-    check('api/home_board/page/' in tpl,
-          "the editor cannot open a board nobody has saved yet")
+    # And the editor has to list a board that is not in settings, while
+    # writing back only the ones that changed.
+    check('pg.shipped' in tpl,
+          "the editor no longer lists the boards nobody has saved yet")
+    check('_shippedPristine' in tpl,
+          "the editor saves every shipped board on the first save, which "
+          "freezes all of them against anything this app ships later")
     check('isBuiltinPage' in tpl,
           "the editor calls resetting a shipped board 'Delete'")
+
+def scenario_a_list_is_as_tall_as_its_list():
+    """`rows` is a promise about height, and for a list it is a promise nobody
+    can keep: four children with eleven routine items each is a different
+    height every morning. Every one of these boards shipped with a typed number
+    and every one of them cut its content off on a real wall.
+
+    So the list-shaped tiles say `auto` and the client measures them. The ones
+    whose content is laid out INTO the tile — a map, a timeline, a mosaic —
+    keep a stated `rows`, because there the height decides the content.
+    """
+    laid_in = {'map', 'drives', 'calendar', 'trips', 'moments'}
+    for slug, spec in home_board.BUILTIN_PAGES.items():
+        page = home_board.builtin_page(slug, {})
+        for w in page['widgets']:
+            span = page['spans'].get(w['id']) or {}
+            if w['type'] in laid_in:
+                check(span.get('rows'),
+                      f"{slug}'s {w['type']} has no height, and its content "
+                      f"cannot supply one")
+                check(not span.get('auto'),
+                      f"{slug}'s {w['type']} is set to fit, which collapses a "
+                      f"tile whose content is drawn into it")
+            else:
+                check(span.get('auto'),
+                      f"{slug}'s {w['type']} is a list on a typed height — it "
+                      f"will cut its content off or leave a band of empty panel")
+
+
+def scenario_fit_to_content_is_measured_not_guessed():
+    """CSS cannot do this alone: the lattice is 1px tracks, so a grid item with
+    no row span occupies one of them and "as tall as the content" has to become
+    a number. The measurement reads the CHILDREN, never the tile's own box —
+    the tile stretches to the area it was given, so measuring it would report
+    whatever was last set and could never shrink again."""
+    tpl = tpl_source.read('home.html')
+    check('function autoTileHeight' in tpl,
+          "nothing measures a fit-to-content tile")
+    fn = tpl[tpl.index('function autoTileHeight'):]
+    fn = fn[:fn.index(chr(10) + '        }') + 1]
+    check('scrollHeight' not in fn and 'clientHeight' not in fn,
+          "the measurement reads the tile's own box, which it also sets — it "
+          "can converge upward and never shrink again")
+    check("tagName !== 'TEMPLATE'" in fn,
+          "Alpine's zero-height <template> markers are being measured, so a "
+          "tile whose first child is one measures from y=0")
+    # Both observers, because content arrives two different ways: these cards
+    # self-fetch (mutation) and the board is responsive (resize).
+    check('new ResizeObserver' in tpl and 'new MutationObserver' in tpl,
+          "a fit-to-content tile only notices one of the two ways its content "
+          "can change, so it is right on the first paint and wrong after")
+    # And the arithmetic is the lattice's: pixels plus one gutter, same as a
+    # tile sized in rows, so an auto tile sits in a row of fixed ones.
+    span = tpl[tpl.index('spanStyle(key, type) {'):]
+    span = span[:span.index(chr(10) + '                },')]
+    check('this.gapPx()' in span and 'autoPx' in span,
+          "an auto tile does not spend its pixels on the same lattice as the "
+          "tiles beside it")
+
+
+def scenario_a_board_never_loses_the_card_it_is_about():
+    """Rule 1 hides a feature nobody has set up. That is right on a mixed board
+    and wrong on a board ABOUT that feature: an Errands board with no errands
+    card is a half-empty screen that reads as broken, which is exactly how it
+    reached a wall."""
+    from services import storage
+    real_e, real_t = storage.get_all_errands, storage.get_household_tasks
+    try:
+        storage.get_all_errands = lambda: []
+        storage.get_household_tasks = lambda **kw: []
+        home_board._CACHE.clear()
+        board = home_board.build(page='errands')
+        types_ = [t['type'] for t in board['tiles']]
+        check(types_ == ['task_list', 'errand_list'],
+              f"the errands board lost a card it is about: {types_}")
+        for t in board['tiles']:
+            said = (t['cards'][0]['data'] or {}).get('empty')
+            check(said, f"{t['type']} is present but says nothing: {t}")
+    finally:
+        storage.get_all_errands, storage.get_household_tasks = real_e, real_t
+        home_board._CACHE.clear()
+    # `require` is the shipped boards' alone — a household's own board is a mix,
+    # where hiding an unused feature is still the right answer.
+    for spec in home_board.BUILTIN_PAGES.values():
+        for w in spec['widgets']:
+            check(w.get('require'),
+                  f"{w['type']} on a shipped board can still vanish")
+
+
+def scenario_the_kids_strip_survives_a_board_with_no_hero():
+    """The digest is folded into the hero band on the home board. The Routines
+    board has no hero — it is lanes, not drives — so the fold dropped the tile
+    into an object nothing on that page draws, and it vanished with no error
+    anywhere."""
+    home_board._CACHE.clear()
+    digest = lambda: {'label': 'Today', 'kids': {
+        'k1': {'name': 'Addison', 'lines': ['5:00 PM — practice']}}}
+    board = home_board.build(page='routines', kid_digest_fn=digest)
+    check(any(t['type'] == 'kids' for t in board['tiles']),
+          f"the routines board lost its kid strip: "
+          f"{[t['type'] for t in board['tiles']]}")
+    home_board._CACHE.clear()
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
