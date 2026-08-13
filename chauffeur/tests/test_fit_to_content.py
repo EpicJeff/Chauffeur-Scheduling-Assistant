@@ -438,6 +438,46 @@ def scenario_a_custom_tile_fits_too():
           "syncAutoTiles walks the flattened CARD list again, so a custom "
           "tile's own id is not in it")
 
+def scenario_a_missed_signal_cannot_outlive_a_second():
+    """Three cuts of this have failed the same way: a fit tile is measured by
+    EVENTS, one of the events turns out not to fire, the measurement lands
+    once and the tile is wrong for the life of the page. A wall panel is up
+    for weeks, so "wrong until something happens to it" is broken.
+
+    The observers stay — they are what makes it feel instant — and the clock
+    that is already ticking sweeps over them, so whatever they miss is
+    corrected within a second and cannot persist.
+    """
+    src = tpl_source.read('home.html')
+    check('remeasureAutoTiles()' in src,
+          "nothing re-measures a fit tile that its observers missed")
+    tick = src[src.index('tick() {'):]
+    tick = tick[:tick.index(chr(10) + '                },')]
+    check('remeasureAutoTiles' in tick,
+          "the backstop exists but nothing runs it, so a missed signal is "
+          "still permanent")
+    # And the mutation watch covers STYLE, which is how half the height
+    # changes on this board actually arrive (the digest sets its column count
+    # with :style, so a 1-column strip settling into 4 adds no nodes at all).
+    watch = src[src.index('function watchAutoTile'):]
+    watch = watch[:watch.index(chr(10) + '        }')]
+    check('attributes: true' in watch,
+          "a height change that is only a style change goes unnoticed")
+
+
+def scenario_a_fit_tile_says_what_it_measured():
+    """Twice a fit tile came out the wrong height with nothing on screen to
+    say whether the measurement was wrong or had never happened — two very
+    different bugs. The arrange nameplate carries the number now."""
+    src = tpl_source.read('home.html')
+    fn = src[src.index('spanLabel(id, type) {'):]
+    fn = fn[:fn.index(chr(10) + '                },')]
+    check('autoPx' in fn and 'px' in fn,
+          "the arrange label says `fit` without saying what it measured")
+    check('measuring' in fn,
+          "a tile that has not been measured yet is indistinguishable from "
+          "one measured at zero")
+
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 

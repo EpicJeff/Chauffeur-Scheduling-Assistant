@@ -1801,7 +1801,15 @@
                 for (const kid of autoFlowEls(el, [])) ro.observe(kid);
             };
             const mo = new MutationObserver(() => { rewatch(); fire(); });
-            mo.observe(el, { childList: true, subtree: true, characterData: true });
+            // `attributes` too: half of what changes a tile's height on this
+            // board is a STYLE, not a node. The kid digest sets its column
+            // count with `:style="grid-template-columns: repeat(N…)"`, so a
+            // strip that arrives as one column and settles into four rewraps
+            // from very tall to short without adding or removing a single
+            // element — no childList record, no characterData record, and the
+            // tile keeps the taller measurement.
+            mo.observe(el, { childList: true, subtree: true,
+                             characterData: true, attributes: true });
             boardAuto.observers[id] = { ro, mo, el, rewatch };
             rewatch();
             fire();
@@ -2000,6 +2008,12 @@
                     this.seconds = String(d.getSeconds()).padStart(2, '0');
                     this.nowTs = d.getTime();
                     this.recount();
+                    // Fit tiles ride the clock that is already running, for
+                    // the same reason the camera tiles do — and because a
+                    // measurement that only ever runs on an event is a
+                    // measurement that stays wrong when the event does not
+                    // come. See remeasureAutoTiles.
+                    this.remeasureAutoTiles();
                 },
 
                 async load() {
@@ -2204,6 +2218,28 @@
                     const px = autoTileHeight(el);
                     if (px && Math.abs((this.autoPx[id] || 0) - px) > 1) {
                         this.autoPx[id] = px;
+                    }
+                },
+
+                // The BACKSTOP, and the reason it exists rather than a
+                // fourth attempt at enumerating every signal.
+                //
+                // A fit tile is measured by events — a mutation, a resize —
+                // and every version of this has failed the same way: one
+                // signal turns out not to fire, the measurement lands once,
+                // and the tile is wrong for the life of the page. A wall
+                // panel is up for weeks, so "wrong until something happens to
+                // it" is indistinguishable from broken.
+                //
+                // So the observers stay (they are what makes it feel instant)
+                // and the second ticks over them: whatever they miss is
+                // corrected within a second and cannot persist. The cost is a
+                // layout read per fit tile per second — on a board with a
+                // handful of them, nothing next to drawing it.
+                remeasureAutoTiles() {
+                    for (const id of Object.keys(boardAuto.observers)) {
+                        const o = boardAuto.observers[id];
+                        if (o.el && o.el.isConnected) this.onAutoMeasured(id, o.el);
                     }
                 },
 
@@ -3169,9 +3205,16 @@
                     const s = (this.page().spans || {})[id] || {};
                     const c = Math.min(this.cols(), Math.max(1, parseInt(s.cols, 10)
                                                                || this.defaultCols(type)));
-                    const r = this.isAuto(id, type)
-                        ? 'fit' : Math.max(1, parseInt(s.rows, 10) || 1);
-                    return `${c} × ${r}`;
+                    // A fit tile shows what it MEASURED, not just that it is
+                    // measuring. Twice now a fit tile has come out the wrong
+                    // height with nothing on screen to say whether the
+                    // measurement was wrong or never happened, and those are
+                    // very different bugs to go looking for.
+                    if (this.isAuto(id, type)) {
+                        const px = this.autoPx[id];
+                        return `${c} × fit${px ? ' · ' + px + 'px' : ' · measuring…'}`;
+                    }
+                    return `${c} × ${Math.max(1, parseInt(s.rows, 10) || 1)}`;
                 },
 
                 // One grid cell, measured rather than assumed. The board's
