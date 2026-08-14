@@ -164,6 +164,23 @@ const ws = page().widgets;
 ws.splice(2, 0, ws.splice(0, 1)[0]);
 const reordered = b.tiles().map(t => t.id);
 
+// The HEIGHT SWITCHES, driven exactly as the two checkboxes drive them: read
+// the value to render the box, click, read it back. `fill` shipped broken
+// because only the writer was tested — the getter answered "1" for any axis it
+// did not recognise, so the box was ticked on every tile and unticking it
+// deleted a key that was not there.
+const fillBefore = b.spanOf('weather', 'fill');
+b.setSpan('weather', 'fill', true);
+const fillOn = b.spanOf('weather', 'fill');
+// Turning fit on has to clear it, and vice versa: a tile cannot be both as
+// tall as its content and as tall as what is left.
+b.setSpan('weather', 'auto', true);
+const afterFit = JSON.stringify(page().spans.weather);
+b.setSpan('weather', 'fill', true);
+const afterFill = JSON.stringify(page().spans.weather);
+b.setSpan('weather', 'fill', false);
+const fillOff = b.spanOf('weather', 'fill');
+
 // A resize, then a cancel.
 b.setSpan('drives', 'cols', 8);
 b.setSpan('drives', 'rows', 4);
@@ -179,6 +196,11 @@ console.log(JSON.stringify({
   serverSpan: serverSpan,
   reordered: reordered,
   afterResize: afterResize,
+  fillBefore: fillBefore,
+  fillOn: fillOn,
+  fillOff: fillOff,
+  afterFit: afterFit,
+  afterFill: afterFill,
   afterCancel: afterCancel,
   orderAfterCancel: orderAfterCancel,
   arrangingAfterCancel: b.arranging,
@@ -399,6 +421,41 @@ def scenario_the_overlay_opens_on_the_card_that_was_tapped():
     check(got['editingId'] == 'weather',
           f"the overlay opened on {got['editingId']!r}, not the tapped card")
     check(got['editingCleared'], "closing the overlay left a card being edited")
+
+
+def scenario_a_height_switch_survives_being_read_back():
+    """How `fill` shipped broken, and the shape of the bug worth remembering.
+
+    `spanOf` ends in `return String(span[axis] || 1)` — an unsized tile shows
+    the width it is actually drawn at rather than a misleading 1. That default
+    is right for a number in a text field and poison for a SWITCH: `"1"` is
+    truthy, so a checkbox bound to an axis this getter does not recognise
+    renders CHECKED on every tile on the board, and unticking it deletes a key
+    that was never there — the getter answers "1" again and the box ticks
+    itself straight back. The switch is on everywhere, refuses to turn off, and
+    does nothing, because the value it reads was never the value it writes.
+
+    `auto` had a line for this from the day it was written. `fill` was added to
+    the writer and not to the reader, and the structural test only checked the
+    writer. So this drives the pair the way the checkbox does: read to render,
+    click, read back.
+    """
+    got = _run()
+    if got is None:
+        return
+    check(got['fillBefore'] is False,
+          f"a tile nobody has filled reports fill={got['fillBefore']!r} — the "
+          "box renders ticked on every tile and cannot be cleared")
+    check(got['fillOn'] is True,
+          f"turning fill on did not come back on: {got['fillOn']!r}")
+    check(got['fillOff'] is False,
+          f"turning fill off did not come back off: {got['fillOff']!r}")
+    # And they are exclusive in both directions: a tile cannot be both as tall
+    # as its content and as tall as what is left.
+    check('fill' not in got['afterFit'],
+          f"turning fit on left fill set: {got['afterFit']}")
+    check('auto' not in got['afterFill'],
+          f"turning fill on left fit set: {got['afterFill']}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

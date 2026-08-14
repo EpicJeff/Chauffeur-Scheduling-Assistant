@@ -608,7 +608,8 @@ def scenario_fill_asks_the_screen_instead_of_the_household():
     # answer in whichever code path happens to read first.
     setter = src[src.index('setSpan(instanceId, axis, value) {'):]
     setter = setter[:setter.index(chr(10) + '                },')]
-    check("axis === 'fill'" in setter and 'delete cur[other]' in setter,
+    check('SPAN_SWITCHES.includes(axis)' in setter
+          and 'for (const k of this.SPAN_SWITCHES) delete cur[k]' in setter,
           "fit and fill can be on at once, so a tile claims two heights")
     check('!cur.auto && !cur.fill' in setter,
           "a fill tile at default width and one row is dropped from the "

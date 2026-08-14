@@ -2281,6 +2281,14 @@
                                             : this.board.spans) || {})[key] || {};
                 },
 
+                // The keys in a span that are SWITCHES rather than numbers.
+                // One list, read by both `spanOf` (which must hand a checkbox a
+                // boolean) and `setSpan` (which must store one, and must clear
+                // the other one — a tile cannot be both as tall as its content
+                // and as tall as what is left). Adding a third height means
+                // adding it here and nowhere else.
+                SPAN_SWITCHES: ['auto', 'fill'],
+
                 // ── FIT TO CONTENT.
                 //
                 // `rows` is a promise about HEIGHT, and for a list it is a
@@ -5122,10 +5130,19 @@
                 // sizes, and keying this by type gave them one.
                 spanOf(instanceId, axis) {
                     const span = this.page().spans[instanceId] || {};
-                    // `auto` is a switch, not a measurement: it must come back
-                    // as a boolean, or the checkbox bound to it reads the
-                    // string "false" and ticks itself.
-                    if (axis === 'auto') return !!span.auto;
+                    // The SWITCHES come back as booleans; everything else is a
+                    // number in a text field. A list rather than a test for
+                    // `auto` alone, because the fall-through below is a trap
+                    // with teeth: an axis this function does not recognise gets
+                    // `String(1)`, and `"1"` is truthy, so a checkbox bound to
+                    // an unlisted switch renders CHECKED on every tile and can
+                    // never be cleared — unticking it deletes a key that was
+                    // not there, the getter answers "1" again, and the box
+                    // ticks itself straight back. That is exactly what shipping
+                    // `fill` without adding it here did (v2.225.0), and the
+                    // symptom is worth recognising: a switch that is on
+                    // everywhere, refuses to turn off, and does nothing.
+                    if (this.SPAN_SWITCHES.includes(axis)) return !!span[axis];
                     if (span[axis]) return String(span[axis]);
                     // An unsized tile shows the width it is actually DRAWN at,
                     // not 1 — a field reading "1" beside a quarter-width tile
@@ -5142,20 +5159,21 @@
                     // a row and as broken at 20, where twelve rows is less
                     // than a line of text.
                     const cur = { ...(this.page().spans[instanceId] || {}) };
-                    if (axis === 'auto' || axis === 'fill') {
+                    if (this.SPAN_SWITCHES.includes(axis)) {
                         // A switch, not a measurement. Turning it OFF leaves
                         // whatever rows were last typed, so a tile going back
                         // to a fixed height lands on a number somebody chose
                         // rather than on 1.
                         //
-                        // The two are EXCLUSIVE, enforced here rather than in
-                        // the markup: a tile cannot be both as tall as its
-                        // content and as tall as what is left, and two
-                        // checkboxes that contradict each other put the answer
-                        // in whichever code path happens to read first.
-                        const other = axis === 'auto' ? 'fill' : 'auto';
-                        if (value) { cur[axis] = true; delete cur[other]; }
-                        else delete cur[axis];
+                        // They are EXCLUSIVE, enforced here rather than in the
+                        // markup: a tile cannot be both as tall as its content
+                        // and as tall as what is left, and two checkboxes that
+                        // contradict each other put the answer in whichever
+                        // code path happens to read first.
+                        if (value) {
+                            for (const k of this.SPAN_SWITCHES) delete cur[k];
+                            cur[axis] = true;
+                        } else delete cur[axis];
                     } else {
                         const max = axis === 'cols' ? this.cols() : 100000;
                         cur[axis] = Math.min(max, Math.max(1, parseInt(value, 10) || 1));
