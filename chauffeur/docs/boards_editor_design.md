@@ -224,9 +224,14 @@ month grid, where the day count does not apply.
 vocabulary. `WIDGETS` is built at import, so a constant used as an option
 default and defined 1,300 lines below it is a `NameError` on startup.
 
+**Shipped so far: v2.230.0 → v2.230.2.** `hidden` and `require`; Duplicate,
+export and import; the tile ✎ overlay and the Add-tile overlay. **Still open:
+card management inside the overlay, and then deleting the tile list.**
+
 - **Editor bar** on `/board/<slug>` outside panel mode: **Edit** (today's
-  arrange), **Settings** (B2), **+ Add Tile**. Viewing first, editing on
-  demand — the board is not permanently in arrange mode.
+  arrange), **Settings** (B2), **+ Add Tile**. ✅ Add-tile landed on the arrange
+  bar; Settings is B2. Viewing first, editing on demand — the board is not
+  permanently in arrange mode.
 - **Every tile gets a ✎** in edit mode, opening its options in an overlay. The
   overlay and the options renderer already exist (the per-card editor and
   `components/board_options.html` with its compile-time `OW` substitution); this
@@ -235,9 +240,32 @@ default and defined 1,300 lines below it is a `NameError` on startup.
   grid — the grid is flow-ordered and has no empty-cell model, so "drop it
   where I clicked" is out of scope. The picker **stays open** for multi-add,
   with Done to close.
-- **`hidden` on tiles and cards**, ghosted in edit mode.
-- **`require` surfaces** as *"Always show, even when empty."*
-- **Deletes:** the tile list and the inline picker from `#panel-setup`.
+- **`hidden` on tiles**, ghosted in edit mode. ✅ Ships as a **stub** — no
+  builder runs, so a parked tile costs the wall no query and cannot break the
+  payload the other cards wait on — and the client refuses to draw it outside
+  arrange mode. Cards inside a container are still to do.
+- **`require` surfaces** as *"Always show, even when empty."* ✅ Offered only on
+  types with an empty state to say, and never on chrome or a container, decided
+  by `catalog().requirable` rather than a second list in the template.
+- **Deletes: the tile list and the inline picker from `#panel-setup`.** NOT YET,
+  and deliberately. The overlay covers the tile row (size, both heights, hidden,
+  always-show, options, remove) and `scenario_the_tile_is_edited_on_the_tile`
+  pins that, but the list also carries **the card management for a container
+  tile** — add, remove and reorder the cards inside a Custom tile. Until that is
+  in the overlay, deleting the list drops functionality.
+
+**Two things this arc uncovered that are worth carrying forward:**
+
+- **`toInstances` now carries instance flags as a list.** It dropped `require`
+  by rebuilding each instance as `{id,type,config}`, and `hidden` would have
+  been the identical bug a second time — the tell that the shape was wrong
+  rather than the field.
+- **B0 left a latent slug bug.** A board named "Chores" minted the slug
+  `chores`, which the server now drops as a legacy fork, so the board vanished
+  on save with no explanation. `freshSlug` and `setPageSlug` both check the
+  shipped slugs and the reserved home slug now. The server cannot make this
+  call — a new board and a stale fork are identical to it — so the editor is
+  the right place for the guard. Fixed v2.230.1.
 
 Target: **v2.230.0**
 
