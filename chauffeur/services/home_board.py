@@ -3571,10 +3571,21 @@ def builtin_page(slug: Optional[str] = None, settings: dict = None):
 
     A fresh copy every call — the spec above is module state, and `_page_from`
     hands its spans dict out to callers who are entitled to edit what they were
-    given. The board's picture is the board's own field, like every other
-    board's — setting it HERE from a separate per-page map was the bug behind
-    "the field in the board settings does absolutely nothing": it overwrote
-    whatever the household had typed on the board, every single time.
+    given.
+
+    THE PICTURE. A household picture for this board wins over the authored one.
+    That is a per-slug map feeding a background in `builtin_page`, which is the
+    shape of the v2.227.0 bug, and it is worth being precise about why it is
+    not that bug. Then: two HOUSEHOLD settings for one thing — a board's own
+    editable `background` field and a separate map — and the map won, so the
+    field that looked authoritative did nothing. Now: a shipped board has no
+    household-editable field at all, because the board is authored data. This
+    map IS the household's field for these boards, and it is the only one, so
+    there is nothing for it to silently overrule. A board the household OWNS
+    still keeps its own field and never appears in this map.
+
+    Precedence, and it is the only one: household picture, then the authored
+    one, then (via `_as_background` returning nothing) the panel background.
     """
     wanted = str(slug or '').strip().lower()
     spec = BUILTIN_PAGES.get(wanted)
@@ -3583,6 +3594,14 @@ def builtin_page(slug: Optional[str] = None, settings: dict = None):
     settings = settings if settings is not None else (storage.get_settings() or {})
     item = json.loads(json.dumps(spec))
     item['slug'] = wanted
+    mine = (settings.get('panel_shipped_backgrounds') or {})
+    if isinstance(mine, dict):
+        # Blank means "no answer", not "no picture" — same two-levels-of-unset
+        # discipline every other background field has, so clearing the box
+        # falls back to the authored picture rather than to the gradient.
+        picked = str(mine.get(wanted) or '').strip()
+        if picked:
+            item['background'] = picked
     return _page_from(item, settings, set())
 
 

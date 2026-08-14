@@ -133,6 +133,12 @@ ENTRIES: List[dict] = [
        'The photograph the wall panel floats on. A web address, or just a '
        'phrase like "mountains at dusk" to have one found for you.',
        page='home', anchor='panel-setup'),
+    _e('panel_shipped_backgrounds', 'panel', 'Pictures for the app\'s boards',
+       'A photograph for one of the boards this app ships — Chores, Meals, '
+       'Trips and the rest. Those boards are not editable, but their picture '
+       'is yours to choose: a web address, or a phrase like "quiet kitchen". '
+       'Leave one blank and it uses the panel background.',
+       page='home', anchor='panel-setup'),
     _e('panel_theme', 'panel', 'Panel theme',
        'Light, dark, follow the device, or follow the sun. Auto matches Home '
        'Assistant while the panel is embedded in a dashboard, but falls back '

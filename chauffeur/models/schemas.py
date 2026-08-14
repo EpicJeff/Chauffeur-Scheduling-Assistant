@@ -1038,6 +1038,18 @@ class Settings(BaseModel):
     # a plain phrase ("mountains at dusk") which is handed to the Unsplash
     # endpoint that already backs trip artwork. Empty = the built-in gradient.
     panel_background: str = ''
+    # `{slug: picture}` for the SHIPPED boards, and only those. A household
+    # cannot edit those boards — they are authored data — but a picture is
+    # presentation, not content, and refusing to personalise it was a silly
+    # loss (v2.229.1).
+    #
+    # This is deliberately NOT the `panel_page_backgrounds` map deleted in
+    # v2.227.0. That one was a second HOUSEHOLD setting competing with the
+    # board's own field, and it won, so the field that looked authoritative did
+    # nothing. Here there is exactly one place per board kind: a board the
+    # household owns keeps its own `background` field and never appears in this
+    # map; a shipped board has no household-editable field, so this IS it.
+    panel_shipped_backgrounds: Dict[str, str] = Field(default_factory=dict)
     # --- Screensaver (idle photo slideshow) ---
     # The master switch. Separate from the seconds so turning the screensaver
     # off and on again does not forget how long the household tuned the idle

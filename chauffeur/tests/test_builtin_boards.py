@@ -241,6 +241,70 @@ def scenario_the_editor_can_reach_a_board_nobody_has_saved():
         storage.get_settings = real
 
 
+def scenario_a_household_picks_the_picture_even_on_a_board_it_cannot_edit():
+    """A shipped board's TILES are ours. Its photograph is not.
+
+    Read-only shipped boards took the per-board picture away with them, which
+    is a silly loss: a picture is presentation, not content. It comes back as
+    `panel_shipped_backgrounds` (v2.229.1).
+
+    The thing this must not become is the `panel_page_backgrounds` map deleted
+    in v2.227.0. That one was a SECOND household setting racing the board's own
+    editable field, and it won, so the visible field did nothing. The rule that
+    keeps them different: one field per board, decided by who owns the board.
+    """
+    settings = {
+        'panel_background': 'mountains at dusk',
+        'panel_shipped_backgrounds': {'chores': 'quiet kitchen',
+                                      'map': '   '},
+        'panel_pages': [
+            {'slug': 'home', 'name': 'Home', 'v': 5, 'widgets': [],
+             'background': 'the hallway'},
+            # An own board is NEVER read out of the map, even if a slug
+            # collides — its own field is the one place its picture lives.
+            {'slug': 'chores-mine', 'name': 'Mine', 'v': 5, 'widgets': [],
+             'background': 'my own picture'},
+        ],
+    }
+    check(home_board.builtin_page('chores', settings)['background']
+          == 'quiet kitchen',
+          "a household cannot choose the picture on a board it cannot edit")
+    # Blank is "no answer", not "no picture" — clearing the box falls back to
+    # what is authored, and then to the panel background.
+    check(home_board.builtin_page('map', settings)['background'] == '',
+          "a cleared picture is stored as a choice instead of falling back")
+    check(home_board.builtin_page('trips', settings)['background'] == '',
+          "a board nobody chose a picture for invented one")
+
+    bg = home_board.backgrounds(settings)
+    check('quiet%20kitchen' in bg.get('chores', ''),
+          f"the household's pick never reaches the wall: {bg}")
+    check('map' not in bg, f"a blank pick is treated as a picture: {bg}")
+    check(bg['default'].startswith('api/unsplash/background?query=mountains'),
+          f"the panel background moved: {bg}")
+    check('hallway' in bg.get('home', ''),
+          f"the home board stopped using its own field: {bg}")
+    check('my%20own%20picture' in bg.get('chores-mine', ''),
+          f"an own board stopped using its own field: {bg}")
+
+    # And the structural half stays shut: this map carries pictures and
+    # nothing else, so it cannot become a back door to forking a board.
+    forked = dict(settings)
+    forked['panel_shipped_backgrounds'] = {'chores': 'quiet kitchen'}
+    page = home_board.builtin_page('chores', forked)
+    check([w['type'] for w in page['widgets']]
+          == [w['type'] for w in home_board.builtin_page('chores', {})['widgets']],
+          "choosing a picture changed which tiles the board draws")
+
+    # One field per board, in the EDITOR too: the ten shipped boards are the
+    # only rows in this list, and an own board is not offered here.
+    tpl = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    check('shippedBoards()' in tpl and 'setShippedBackground(' in tpl,
+          "the household has no way to type a picture for a shipped board")
+    check('draft.panel_shipped_backgrounds' in tpl,
+          "the picture list is not bound to the setting it saves")
+
+
 def scenario_the_shipped_boards_actually_ship():
     """The boards are a FILE now, and a file has ways of not being there that a
     Python literal never had.

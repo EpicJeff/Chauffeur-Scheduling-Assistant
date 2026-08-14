@@ -1656,9 +1656,38 @@
                         placeholder="mountains at dusk"
                         class="w-full ed-input rounded-lg px-3 py-2 placeholder-gray-600 mb-4">
 
-                    <!-- The per-page pictures used to live here, in a
-                         second list of the same destinations. They are on each
-                         page's own row above now. -->
+                    <!-- Pictures for the boards this app ships.
+                         Those boards are authored data and the household
+                         cannot edit them — but a picture is presentation, not
+                         content, and refusing to personalise it was a silly
+                         loss. This is the ONLY field for these ten, which is
+                         what makes it different from the second-map bug of
+                         v2.227.0: a board the household owns keeps its own
+                         picture field on its own row above and never appears
+                         here. -->
+                    <div class="text-xs font-black uppercase tracking-widest ed-head mb-2">
+                        Pictures for the app's boards
+                    </div>
+                    <p class="text-xs ed-note mb-3">
+                        These boards come with the app, so their tiles are not
+                        yours to move — but the photograph is. Leave one blank
+                        and it uses the panel background above.
+                    </p>
+                    <div class="space-y-1.5 mb-6">
+                        <template x-for="b in shippedBoards()" :key="b.slug">
+                            <div class="flex items-center gap-2">
+                                <span class="w-28 shrink-0 text-sm ed-title flex items-center gap-1.5">
+                                    <span x-text="b.icon"></span>
+                                    <span x-text="b.name"></span>
+                                </span>
+                                <input type="text"
+                                    :value="draft.panel_shipped_backgrounds[b.slug] || ''"
+                                    @input="setShippedBackground(b.slug, $event.target.value)"
+                                    placeholder="the panel background"
+                                    class="flex-1 min-w-0 ed-input rounded px-2 py-1 text-sm ed-title">
+                            </div>
+                        </template>
+                    </div>
 
                     <div class="text-xs font-black uppercase tracking-widest ed-head mb-2">
                         Theme
@@ -2011,9 +2040,11 @@
                 // slug because a board being renamed changes its slug under the
                 // hand that is typing, and the selection must not jump.
                 pageIndex: 0,
-                // Each shipped board as the server sent it, keyed by slug and
-                // already in save shape. `cleanPages` drops any that still
-                // match, so listing all ten in the editor costs nothing.
+                // The boards this app ships, as the server sent them. Not in
+                // the draft — they are authored data and nothing here edits
+                // them — but the editor still needs their names and icons to
+                // offer a picture for each.
+                shipped: [],
                 // The Add-tile picker: open, and what is typed into its search.
                 picking: false,
                 pickFilter: '',
@@ -3297,6 +3328,7 @@
                             fetch(this.apiBase + 'api/home_board/pages').then(r => r.json())
                         ]);
                         this.catalog = c;
+                        this.shipped = pg.shipped || [];
                         this.draft = {
                             // THE SERVER'S pages, not a second migration written
                             // here. The old board becomes the first page in
@@ -3339,6 +3371,8 @@
                             panel_theme_sunrise_offset_minutes:
                                 s.panel_theme_sunrise_offset_minutes ?? 0,
                             panel_background: s.panel_background || '',
+                            panel_shipped_backgrounds: {
+                                ...(s.panel_shipped_backgrounds || {}) },
                             ha_browser_url: s.ha_browser_url || '',
                             // Same absent-vs-zero discipline as idle return:
                             // stored settings predate the screensaver, so
@@ -4507,6 +4541,36 @@
                 // future improvement. A JSON-string comparison guarding a fork
                 // nobody wanted was the wrong shape of answer: shipped boards
                 // are authored data now and never enter this list at all.
+                // The shipped boards, for the picture list. Falls back to the
+                // catalog's slug list so the rows still appear if the pages
+                // request is the one that failed — a household typing a
+                // picture for "chores" should not need the whole board.
+                shippedBoards() {
+                    if (this.shipped.length) {
+                        return this.shipped.map(p => ({
+                            slug: p.slug,
+                            name: (p.name || p.slug),
+                            icon: (p.icon || '').startsWith('icon:') ? '▫️'
+                                : (p.icon || '🗂️'),
+                        }));
+                    }
+                    return (this.catalog.builtin_pages || [])
+                        .map(s => ({ slug: s, name: s, icon: '🗂️' }));
+                },
+
+                // Blank REMOVES the key rather than storing an empty string:
+                // the map is "the pictures a household chose", and a row they
+                // cleared is not a choice. Same discipline as a span back at
+                // its default.
+                setShippedBackground(slug, value) {
+                    const v = (value || '').trim();
+                    if (v) {
+                        this.draft.panel_shipped_backgrounds[slug] = v;
+                    } else {
+                        delete this.draft.panel_shipped_backgrounds[slug];
+                    }
+                },
+
                 _cleanPages() {
                     return (this.draft.panel_pages || []).map(p => ({
                         slug: p.slug,
@@ -5425,6 +5489,8 @@
                                     Math.min(240, Math.max(-240,
                                         parseInt(this.draft.panel_theme_sunrise_offset_minutes, 10) || 0)),
                                 panel_background: this.draft.panel_background,
+                                panel_shipped_backgrounds:
+                                    this.draft.panel_shipped_backgrounds,
                                 ha_browser_url: (this.draft.ha_browser_url || '').trim(),
                                 panel_screensaver_enabled: !!this.draft.panel_screensaver_enabled,
                                 panel_screensaver_idle_seconds:

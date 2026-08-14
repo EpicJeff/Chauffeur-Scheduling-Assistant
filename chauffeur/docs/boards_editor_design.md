@@ -182,12 +182,25 @@ deleted.
 5. ~~Enforce read-only.~~ The editor no longer merges shipped boards into its
    draft, so they cannot be edited or saved.
 
-**One capability was removed by this and it is worth knowing:** a household
-could set a *background* on a shipped board's slug. That is gone — a shipped
-board's picture is authored with the board. The alternative was a per-slug
-override map, which is precisely the `panel_page_backgrounds` design deleted in
-v2.227.0 for having two settings for one thing. To personalise a shipped
-board's picture, Duplicate it.
+**A capability was removed by this and then put back (v2.229.1).** B0 dropped
+the per-board background on shipped slugs, reasoning that the alternative was
+the `panel_page_backgrounds` map deleted in v2.227.0. That reasoning was wrong
+about the thing that mattered: **a picture is presentation, not content.** The
+tiles on a shipped board are ours; the photograph never was.
+
+It is back as `panel_shipped_backgrounds` — `{slug: picture}`, shipped boards
+only. The rule that keeps it from being the v2.227.0 bug is **one field per
+board, decided by who owns the board**: a board the household owns keeps its
+own `background` field and never appears in this map; a shipped board has no
+household-editable field, so the map IS its field and has nothing to silently
+overrule. Precedence: household pick → authored picture → panel background,
+with blank meaning "no answer" rather than "no picture".
+
+> **Process note, worth more than the feature.** This was flagged in the B0
+> commit and the summary *after* it shipped, which is not the same as asking.
+> A change that takes away something a person could previously do stops and
+> asks first, however good the reasoning is — asking costs one question,
+> reversing costs a release and rework.
 
 Target: **v2.229.0**
 
