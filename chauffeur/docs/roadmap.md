@@ -525,6 +525,25 @@ look like — the only one that should be about driving).
   OPENINGS, not assignments — the hard part of picking up slack is visibility,
   not willingness.
 
+## The boards editor arc (designed 2026-08-14 — B0 next)
+
+Board editing is a form at the bottom of the board; it becomes an in-context
+dashboard workflow — a reorderable boards list with **+ Add Board**, an editor
+bar on the board itself, a ✎ on every tile, and settings as overlays over the
+thing they configure. Four arcs, **B0 → B3 (v2.229.0 → v2.232.0)**, each one
+deleting its counterpart out of `#panel-setup` so there are never two editors
+for one thing; after B3 `#panel-setup` does not exist.
+
+The load-bearing decision: **shipped boards become read-only, authored data**
+(`chauffeur/data/builtin_boards.json`), households may only hide them from the
+shelf, and Duplicate is both the escape hatch and how we author them. That
+deletes the silent-fork model — today every one of the ten is already forked
+and no longer tracks anything we ship.
+
+Full brief, including the migration order (which is not optional) and the
+landmines: **`chauffeur/docs/boards_editor_design.md`**. Blocked on one
+decision — whether 64 is the house column standard.
+
 ## Nice-to-haves / polish
 
 - Chore fairness nudges via the solver (rotation suggestions for chronically
