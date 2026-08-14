@@ -234,6 +234,22 @@ tile; both lists deleted.
 > will land. **No lists with up/down arrows** — an ordering control that cannot
 > show you the order is the long way round. This still applies to the boards
 > list (◀ ▶) and the shelf editor (▲▼✕), both of which B3 replaces.
+>
+> **And nothing is left behind.** `#panel-setup` is being dismantled, not
+> reorganised, so each piece that moves out leaves nothing in its place. A
+> control that survives in the form "for now" is a second place to do a job the
+> board already does, and it is the one that will still be there at the end.
+> The add-tile button lingered there for one release and should not have.
+
+**What is still in `#panel-setup` (588 lines), and who takes it:**
+
+| section | goes to |
+|---|---|
+| Boards (chip row, ◀ ▶, name, icon, slug, background, Reset/Delete) | **B2** identity → **B3** list |
+| Tiles on <board> (grid: columns, row height, gutter) | **B2** board settings overlay |
+| Shelf buttons (▲▼✕ + chips) | **B3** boards list |
+| What a tap may do · Background · Pictures for the app's boards | **B3** household panel settings |
+| Theme · Return home when idle · Screensaver | **B3** household panel settings |
 
 - **Editor bar** on `/board/<slug>` outside panel mode: **Edit** (today's
   arrange), **Settings** (B2), **+ Add Tile**. ✅ Add-tile landed on the arrange

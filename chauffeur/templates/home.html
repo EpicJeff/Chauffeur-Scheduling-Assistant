@@ -746,6 +746,16 @@
                 class="text-xs font-semibold ed-input rounded-lg px-3 py-1.5">
                 ⠿ Arrange tiles
             </button>
+            <!-- Beside Arrange, because both are things you do to the BOARD
+                 rather than to a tile on it. It arranges as it opens: a tile
+                 lands at the end of the grid, and the next thing anybody wants
+                 is to put it somewhere, which is arrange mode. The dashed cell
+                 at the end of the grid is the same action once you are already
+                 in there. -->
+            <button x-show="!arranging" @click="startArrange(); picking = true"
+                class="text-xs font-semibold ed-input rounded-lg px-3 py-1.5">
+                + Add tile
+            </button>
         </div>
 
         <!-- The vertical lattice is ONE-PIXEL tracks, and a tile converts
@@ -1503,28 +1513,13 @@
                         <span x-text="page().row_height * 2"></span>…
                         (small rows that divide the gutter give fine sizing AND alignment).
                     </p>
-                    <!-- The tile list lived here: a row per tile with number
-                         fields, a gear, and up/down/remove buttons, plus a
-                         nested list of the cards inside a container tile with
-                         the same vocabulary again.
-
-                         All of it is on the BOARD now. Drag a tile to move it,
+                    <!-- The tile list AND the add-tile button lived here.
+                         Both are on the board now: drag a tile to move it,
                          drag its corner to size it, tap its pencil for its
-                         settings; the same three for the cards inside a tile,
-                         plus a + on the tile itself. Arranging a layout by
-                         typing into a list that looks nothing like the thing
-                         it describes was the long way round, and up/down
-                         arrows are the tell: an ordering control that cannot
-                         show you the order. -->
-                    <button type="button" @click="picking = !picking"
-                        class="w-full border border-dashed border-gray-600 hover:border-sky-500
-                               ed-btn rounded-lg py-2 text-sm font-semibold">
-                        <span x-text="picking ? '× Close' : '+ Add tile'"></span>
-                    </button>
-
-                    <div x-show="picking" x-cloak class="mt-2 ed-panel rounded-lg p-2">
-                        {% with GROUPS = 'pickGroups()', ADD = 'addInstance', NOUN = 'tiles' %}{% include 'components/board_picker.html' %}{% endwith %}
-                    </div>
+                         settings, and add one from the button beside Arrange.
+                         Nothing is left behind as each piece moves — this
+                         block is going away entirely, and a half-migrated
+                         control here is a second place to do the same job. -->
                 </div>
 
                 <div>

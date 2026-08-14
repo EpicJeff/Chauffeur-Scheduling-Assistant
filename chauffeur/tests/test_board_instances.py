@@ -281,10 +281,15 @@ def scenario_the_tile_is_edited_on_the_tile():
     check(os.path.exists(os.path.join(TPL, 'components', 'board_picker.html')),
           "the tile palette is not a shared partial")
     used = tpl.count("{% include 'components/board_picker.html' %}")
-    check(used == 3,
-          f"the palette is included {used} times, not three — it is offered "
-          f"for a TILE over the board, for a CARD over a container tile, and "
-          f"in the form below")
+    check(used == 2,
+          f"the palette is included {used} times, not twice — for a TILE over "
+          f"the board and for a CARD over a container tile. The copy in the "
+          f"setup form is gone: that block is being dismantled, and a control "
+          f"left behind in it is a second place to do a job the board does")
+    # Nothing adds a tile from the setup form any more.
+    form = tpl[tpl.index('<!-- ── Panel setup'):]
+    check('board_picker.html' not in form,
+          "the tile palette is back in the setup form")
     # Parameterised by Jinja at compile time, the same way board_options.html
     # serves three contexts — a runtime flag would make one partial that
     # branches instead of one partial used three ways.
