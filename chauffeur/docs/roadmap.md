@@ -597,11 +597,34 @@ What is actually blocked on it today, each already written down elsewhere:
 - **Sendspin phone players**: a member's phone is a real MA player, which on
   the web dies with the tab and owns no lock-screen controls.
 
-**Be honest about what it does NOT buy**, because this is where a wrapper
-usually gets oversold: every family phone already runs the HA companion app,
-which already does background location and native push. Location and push are
-therefore *not* the case for this — the case is capture (share sheet, barcode,
-background audio, background recording).
+**Location and push are the STRONGEST part of the case, not the weak part**
+(corrected 2026-08-14 — an earlier draft of this section claimed the HA
+companion app already covers them, which is wrong and would have mis-sized the
+whole track). Two reasons, and the second is architectural:
+
+1. **Nobody will install two apps.** Getting one app onto a helper's or a
+   grandparent's phone is already the hard part. "Also install Home Assistant
+   so we can see where you are" is a non-starter, and every person the load
+   arc just brought into the model — helpers, carpool parents, a teen — is
+   exactly the person who won't.
+2. **You would never hand a helper HA credentials anyway.** That is the real
+   boundary: **Chauffeur is the app outside people are allowed to hold; HA is
+   family-internal infrastructure.** The role/PIN model already says this
+   (`helper` is "external but HOLDS the app"). Routing an outside person's
+   location through the HA companion app inverts it, because it makes
+   participating in the family's logistics require access to the house.
+
+The shipped consequence, verified 2026-08-14 and worth recording on its own:
+**there is no web location path at all** — `geolocation`/`watchPosition`
+appear nowhere in the repo, so the family map is HA person entities or
+nothing. Any member without the companion app is permanently invisible on it.
+Push degrades the same way but less sharply: `_notify_member_lanes` is web
+push + HA notify, so a helper has one lane, and on iOS that lane requires an
+add-to-home-screen install and is the least reliable one we have.
+
+So the case is capture **and** presence: share sheet, barcode, background
+audio, background recording — plus background location and real push for the
+people who will only ever install one app.
 
 **The load-bearing constraint, decide it before any code**: the shell must stay
 a thin Capacitor wrapper over the *served* pages, with native plugins as the
