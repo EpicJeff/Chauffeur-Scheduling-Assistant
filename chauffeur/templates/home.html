@@ -1145,17 +1145,11 @@
                             Changing this does not resize the tiles, so doubling it
                             halves how wide they look.</span>
                     </label>
-                    <!-- Lives with the tiles, not in a settings page: the
-                         number only means something next to the width of the
-                         tile it fills, and both are on this screen. -->
-                    <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-2">
-                        The calendar tile shows
-                        <input type="number" min="1" max="14" step="1"
-                            x-model.number="draft.panel_agenda_days"
-                            class="w-14 ed-input rounded text-xs ed-title px-2 py-1">
-                        <span class="font-normal ed-note">days — each is a card three columns wide, so a
-                            <span x-text="cols()"></span>-column tile fits four of them</span>
-                    </label>
+                    <!-- The board-wide "calendar shows N days" field was here.
+                         It is a per-card option now: one number for the whole
+                         board could not describe two calendars, which is the
+                         thing instances exist to allow. Set it in the
+                         calendar tile's own settings. -->
                     <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-3">
                         One row is
                         <!-- A NUMBER, like the two fields above it. The seven
@@ -2063,7 +2057,6 @@
                 draft: {
                     panel_pages: [], panel_tabs: [], panel_idle_return_seconds: 180,
                     panel_allow_unsafe_controls: false,
-                    panel_agenda_days: 5,
                     panel_theme: 'dark', panel_background: '',
                     panel_theme_sunset_offset_minutes: 0,
                     panel_theme_sunrise_offset_minutes: 0,
@@ -3358,7 +3351,6 @@
                             panel_idle_return_seconds:
                                 s.panel_idle_return_seconds === undefined
                                     ? 180 : s.panel_idle_return_seconds,
-                            panel_agenda_days: s.panel_agenda_days || 5,
                             panel_allow_unsafe_controls:
                                 !!s.panel_allow_unsafe_controls,
                             panel_theme: s.panel_theme || 'dark',
@@ -5473,9 +5465,6 @@
                                 panel_tabs: this.draft.panel_tabs,
                                 panel_idle_return_seconds:
                                     Number(this.draft.panel_idle_return_seconds) || 0,
-                                panel_agenda_days:
-                                    Math.min(14, Math.max(1,
-                                        parseInt(this.draft.panel_agenda_days, 10) || 5)),
                                 panel_allow_unsafe_controls:
                                     !!this.draft.panel_allow_unsafe_controls,
                                 panel_theme: this.draft.panel_theme,

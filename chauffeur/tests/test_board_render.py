@@ -259,7 +259,7 @@ const routes = {
                     members: [], calendar_metadata: {}, scheduled_errands: [],
                     car_assignments: {}, cars: [], true_unassigned: [],
                     matched_rules: {}, diagnostics: {}, prep_by_event: {} },
-  'api/settings': { panel_widgets: [], panel_tabs: [], panel_agenda_days: 5 },
+  'api/settings': { panel_widgets: [], panel_tabs: [] },
 };
 
 const errors = [];

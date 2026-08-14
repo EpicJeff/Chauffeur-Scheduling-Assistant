@@ -239,15 +239,30 @@ def scenario_the_calendar_tile_reads_its_own_day_count():
               f"a {n}-day tile did not say so: {data}")
 
 
-def scenario_a_blank_day_count_still_follows_the_board():
-    """`days` defaults to null, not to a number, so a tile nobody has
-    configured tracks `panel_agenda_days` — including when the household
-    changes it later."""
+def scenario_the_day_count_belongs_to_the_card_not_the_board():
+    """This used to assert the opposite, and the opposite was a leftover.
+
+    `days` defaulted to null so an unconfigured tile tracked a board-wide
+    `panel_agenda_days` setting. That was right when a board had one calendar.
+    It stopped being right when tiles became instances — two calendars on one
+    board, one showing three days and one a fortnight, is the whole point — and
+    a board-wide number is then a second place to set what each card owns.
+    Removed in v2.229.2; the option carries a literal default now.
+    """
     opt = next(o for w in home_board.WIDGETS if w['key'] == 'calendar'
                for o in w['options'] if o['key'] == 'days')
-    check(opt['default'] is None,
-          "the calendar's day count has a literal default, so a tile pinned to "
-          "it silently stops following the board setting")
+    check(opt['default'] == home_board.AGENDA_DAYS,
+          f"the calendar's day count has no literal default ({opt['default']!r}), "
+          f"so it is still reaching for a board-wide setting")
+    check(not hasattr(home_board, 'agenda_days'),
+          "the board-wide day count resolver is back")
+    # And the point of the removal: two calendars on one board, disagreeing.
+    board = home_board.build(
+        '[{"type": "calendar", "config": {"days": 3}},'
+        ' {"type": "calendar", "config": {"days": 14}}]')
+    got = [(t['data'].get('grid') or {}).get('days') for t in board['tiles']]
+    check(got == [3, 14],
+          f"two calendars on one board cannot disagree about how far to look: {got}")
 
 
 def scenario_the_views_are_different_shapes_not_the_same_one():

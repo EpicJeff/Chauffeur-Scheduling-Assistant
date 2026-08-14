@@ -918,12 +918,22 @@ def scenario_the_calendar_card_mounts_views_and_still_builds_the_list():
                                 'days': home_board.AGENDA_DAYS, 'only': [],
                                 'details': True, 'legend': True}},
               f"the default calendar card is not a component agenda mount: {tile}")
+        # How many days is the CARD's call, not the board's — the board-wide
+        # `panel_agenda_days` is gone (v2.229.2), because one number could not
+        # describe two calendars on one board.
         check(home_board._tile_calendar(
-                  _at(12), settings={'panel_agenda_days': 9})['grid']['days'] == 9,
-              "how many days is the household's call")
+                  _at(12), config={'days': 9})['grid']['days'] == 9,
+              "the card's own day count is not honoured")
+        check(home_board._tile_calendar(
+                  _at(12), settings={'panel_agenda_days': 9})['grid']['days']
+              == home_board.AGENDA_DAYS,
+              "a leftover board-wide setting still steers the card")
+        # Clamped to the same 1–14 the calendar page's agenda offers, and
+        # nonsense falls back rather than throwing.
         for bad, want in ((0, 1), (99, 14), ('a week', home_board.AGENDA_DAYS)):
-            got = home_board.agenda_days({'panel_agenda_days': bad})
-            check(got == want, f"agenda_days({bad!r}) -> {got}, wanted {want}")
+            got = home_board._tile_calendar(
+                _at(12), config={'days': bad})['grid']['days']
+            check(got == want, f"days={bad!r} -> {got}, wanted {want}")
         # The view selector is the card's own switch, and the people filter is
         # resolved to names — the pipeline matches people by name, and member
         # ids shipped raw would be a filter that silently never hit.

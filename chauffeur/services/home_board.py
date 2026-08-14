@@ -64,9 +64,21 @@ from services import leave_by, storage
 #           trips are household data and cannot be enumerated here
 #
 # An option's DEFAULT is what the tile does when nobody has said otherwise, and
-# for several of them that default is "the household setting" rather than a
-# literal — `days` on the calendar starts from `panel_agenda_days`, so a board
-# that has never been configured per-tile behaves exactly as it did before.
+# it is a LITERAL. `days` on the calendar used to start from a board-wide
+# `panel_agenda_days` setting instead, which made sense while a board had one
+# calendar and stopped making sense the moment tiles became instances: two
+# calendars on one board, one showing three days and one showing a fortnight,
+# is the whole point of instances, and a board-wide number is a second place to
+# set a thing each card already owns. Removed in v2.229.2.
+# How far a calendar tile looks ahead when nobody has said. Five days is a
+# working week seen from a Monday; the calendar page's agenda offers 1–14 and
+# this is the middle of that. Declared HERE rather than beside the other
+# drawing constants because it is an option's default, and the option
+# vocabulary is built at import — a constant defined below it is a NameError,
+# which is exactly how this landed the first time.
+AGENDA_DAYS = 5
+
+
 def _opt(key, label, type_, default=None, **extra):
     o = {'key': key, 'label': label, 'type': type_, 'default': default}
     o.update(extra)
@@ -478,10 +490,8 @@ WIDGETS = [
          _opt('show_legend', 'The people legend', 'bool', True,
               help='The per-person chips under the calendar; tapping one '
                    'hides that person on this card.'),
-         # No literal default: absent means `panel_agenda_days`, so a board
-         # nobody has configured per-tile behaves exactly as it always did.
-         _opt('days', 'Days', 'int', None, min=1, max=14,
-              help='Blank follows the board default.'),
+         _opt('days', 'Days', 'int', AGENDA_DAYS, min=1, max=14,
+              help='How far ahead this calendar looks.'),
          _opt('members', 'People', 'select', [], source='members', multi=True,
               help="Matches each person's own calendars. Empty shows everyone."),
          _opt('all_day', 'Include all-day events', 'bool', True),
@@ -1765,28 +1775,8 @@ def _tile_moments_gallery(now, config=None, **_):
     }
 
 
-# How far the calendar tile looks ahead when the household has not said. Five
-# days is a working week seen from a Monday; the calendar page's agenda offers
-# 3–14 and this is the middle of that.
-AGENDA_DAYS = 5
 # Per day, before the card says "+3 more". A day card taller than the tile is
 # the tile scrolling for one busy Saturday.
-
-
-def agenda_days(settings: dict = None) -> int:
-    """How many days the calendar tile shows.
-
-    A number the household picks, because the right one depends on how wide
-    they made the tile and on what they use the board for: a fortnight is a
-    planning surface, three days is "what is happening now". Clamped to the
-    same 1–14 the calendar page's own agenda offers, so the two cannot disagree
-    about what an agenda is.
-    """
-    settings = settings if settings is not None else (storage.get_settings() or {})
-    try:
-        return max(1, min(14, int(settings.get('panel_agenda_days', AGENDA_DAYS))))
-    except (TypeError, ValueError):
-        return AGENDA_DAYS
 
 
 def _member_calendar_ids(member_ids: List[str]) -> set:
@@ -1843,7 +1833,7 @@ def _tile_calendar(now, sched=None, settings=None, config=None, **_):
         unassigned = set(sched.get('unassigned') or [])
         drivers = _driver_index()
         today = now.date()
-        span = _cfg_int(config, 'days', agenda_days(settings), 1, 14)
+        span = _cfg_int(config, 'days', AGENDA_DAYS, 1, 14)
         view = _cfg_str(config, 'view', 'agenda') or 'agenda'
         # The three GRID views are the calendar page's own, mounted from the
         # shared component. There is nothing for this builder to compute: the
@@ -1869,7 +1859,7 @@ def _tile_calendar(now, sched=None, settings=None, config=None, **_):
                     'grid': {'view': _CAL_GRID_VIEWS[view],
                              'toolbar': _cfg_bool(config, 'view_selector', False),
                              'days': _cfg_int(config, 'days',
-                                              agenda_days(settings), 1, 14),
+                                              AGENDA_DAYS, 1, 14),
                              'only': names,
                              # The page's own two affordances, previously
                              # hardcoded off in syncCalendars: the details
@@ -3968,12 +3958,12 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     # disagrees with itself by a few minutes per day is not better than one
     # that disagrees by five.
     sched = storage.get_cached_schedule() or {}
-    # As deep as the DEEPEST tile asks for, not as deep as the household
-    # setting. Each day is merged in from its own cache row, and a tile
+    # As deep as the DEEPEST tile asks for. Each day is merged in from its
+    # own cache row, and a tile
     # configured for a fortnight against a five-day prefetch would have
     # rendered nine empty days and looked like a quiet calendar rather than
     # like a board that had not read that far.
-    depth = max([agenda_days(settings)]
+    depth = max([AGENDA_DAYS]
                 + [_cfg_int(i.get('config'), 'days', 1, 1, 14)
                    for i in instances
                    if (i.get('config') or {}).get('days') is not None])

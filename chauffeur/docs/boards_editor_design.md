@@ -206,6 +206,24 @@ Target: **v2.229.0**
 
 ## B1 — The board is the editor
 
+**Landed ahead of the arc (v2.229.2): the board-wide calendar day count is
+gone.** `panel_agenda_days` was one number for how far the calendar tile looks
+ahead. That was right while a board had one calendar and wrong the moment tiles
+became instances — two calendars on one board, one showing three days and one a
+fortnight, is the point of instances, and a board-wide number is a second place
+to set what each card already owns. `calendar.days` carries a literal default
+(`AGENDA_DAYS`, 5) now and is set per card.
+
+This is B1/B2 work that happened to land first: the field lived in
+`#panel-setup`, which this arc deletes anyway, and the server-side half is
+independent of the editor rewrite. Nothing on the wall changed — the household's
+only two calendar tiles are a home-board tile with an explicit `days: 5` and a
+month grid, where the day count does not apply.
+
+**A trap worth remembering:** `AGENDA_DAYS` had to move above the option
+vocabulary. `WIDGETS` is built at import, so a constant used as an option
+default and defined 1,300 lines below it is a `NameError` on startup.
+
 - **Editor bar** on `/board/<slug>` outside panel mode: **Edit** (today's
   arrange), **Settings** (B2), **+ Add Tile**. Viewing first, editing on
   demand — the board is not permanently in arrange mode.
