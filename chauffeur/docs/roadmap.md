@@ -570,6 +570,10 @@ and tracked nothing we shipped.
   player, so the card is a separate drawing over shared logic
   (`static/music_logic.js`); and `/music` became a real destination whose
   page IS its board, the first of those. Detail in system_capabilities.md.
+  **v2.234.0 fixed the one thing v1 got wrong**: the card shipped as a remote
+  control that could reach every room except the one the panel is bolted to.
+  The screen is now a Sendspin player like the phone app, over a shared
+  lifecycle in `music_logic.js` — a phone is a person, a panel is a place.
 
 ## The native app track (never written down until 2026-08-14 — it should have been)
 

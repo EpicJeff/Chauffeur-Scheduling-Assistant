@@ -173,7 +173,10 @@ def scenario_configured_but_quiet_says_so():
 def scenario_a_house_with_no_speakers_is_a_real_state():
     """HA is there and answering, and there is simply nothing to play on. The
     card still draws — the browser is the one that says it, because the player
-    list is the browser's to fetch — but the payload must not pretend."""
+    list is the browser's to fetch — but the payload must not pretend.
+
+    It is only a DEAD END when this screen cannot play either: a panel with
+    speakers is itself an answer to "there is nowhere to play this"."""
     out = _tile(states=[{'entity_id': 'light.kitchen', 'state': 'on',
                          'attributes': {'friendly_name': 'Kitchen'}}])
     check(out and out.get('player') == '',
@@ -181,6 +184,131 @@ def scenario_a_house_with_no_speakers_is_a_real_state():
     body = tpl_source.read('components/board_tile_body.html')
     check('No speakers in Home Assistant.' in body,
           "nothing on the card says why it has no controls")
+    said = body.index("No speakers in Home Assistant.")
+    check('local_player' in body[said - 300:said],
+          "a panel that can play music itself still says there is nowhere to "
+          "play it")
+
+
+# --- this screen is a player -----------------------------------------------
+
+def scenario_this_screen_can_play_music_itself():
+    """A kitchen tablet HAS speakers. A music board that can only send music to
+    other rooms is a remote control, which is what the first cut shipped as."""
+    out = _tile({})
+    check(out['local_player'] is True,
+          f"the screen does not offer itself as a player by default: {out}")
+    check(out['screen_name'], "the screen has no name to register under")
+    body = tpl_source.read('components/board_tile_body.html')
+    frag = body[body.index("t.type === 'music'"):]
+    frag = frag[:frag.index('ha_image')]
+    check('MUSIC_LOCAL' in frag and 'musicLocalLabel' in frag,
+          "the speaker picker does not offer this screen")
+    off = _tile({'local_player': False})
+    check(off['local_player'] is False,
+          "a household cannot stop a panel becoming a player")
+
+
+def scenario_the_screen_is_named_for_its_place():
+    """A phone is a person ("Lily's phone"); a panel is a place. The name is
+    also how the Home Assistant entity is found again once Music Assistant
+    exposes it, so it is resolved SERVER-side — a name computed in the browser
+    would drift with whatever that browser happened to know."""
+    check(_tile({'room': 'Kitchen'})['screen_name'] == 'Kitchen screen',
+          "a card bound to a room does not name its screen after it")
+    check(_tile({})['screen_name'] == 'Chauffeur screen',
+          "an unbound screen has no fallback name")
+    named = _tile({'room': 'Kitchen', 'screen_name': 'Big Telly'})
+    check(named['screen_name'] == 'Big Telly',
+          f"an explicit name lost to the room: {named}")
+
+
+def scenario_the_board_survives_a_missing_music_layer():
+    """The board is the wall's ENTIRE screen. It must not fail to construct
+    because the music module was slow, blocked or 404'd — which is exactly
+    what reaching into `MusicLogic` from the component literal did, and what
+    the node probes caught. The sentinel is duplicated as a literal instead,
+    so this pins the two strings together."""
+    logic = open(os.path.join(ROOT, 'static', 'music_logic.js'),
+                 encoding='utf-8').read()
+    tpl = tpl_source.read('home.html')
+    check("LOCAL: '__local__'" in logic,
+          "music_logic.js changed its local-player sentinel")
+    check("MUSIC_LOCAL: '__local__'" in tpl,
+          "the board's copy of the sentinel no longer matches music_logic.js — "
+          "picking this screen would select a speaker that does not exist")
+    fn = tpl[tpl.index('syncMusic(refresh) {'):]
+    fn = fn[:fn.index('async refreshMusic')]
+    check("typeof MusicLogic === 'undefined'" in fn,
+          "the board's tick throws once a second when the music module is "
+          "absent, taking every other card down with it")
+    widget = tpl_source.read('components/music_widget.html')
+    check("'__phone__'" in widget,
+          "the PWA no longer migrates selections stored under the old "
+          "sentinel, so a phone that had chosen itself comes back on "
+          "somebody else's speaker")
+
+
+def scenario_the_local_player_lives_outside_alpine_and_outlives_a_poll():
+    """It owns a WebSocket, an audio pipeline and a decoder. Handing that to a
+    reactive proxy wraps every node of it, and rebuilding it on the board's
+    60-second poll would stop the music once a minute."""
+    tpl = tpl_source.read('home.html')
+    check('const boardLocalPlayers = {}' in tpl,
+          "the local players are inside Alpine's reactive state")
+    fn = tpl[tpl.index('localPlayerFor(t) {'):]
+    fn = fn[:fn.index('musicIsLocal(t)')]
+    check('if (!boardLocalPlayers[t.id])' in fn,
+          "the player is rebuilt every time something asks for it")
+    sync = tpl[tpl.index('syncMusic(refresh) {'):]
+    sync = sync[:sync.index('async refreshMusic')]
+    check('boardLocalPlayers[id].stop()' in sync,
+          "a card removed from the board leaves its socket open")
+
+
+def scenario_connecting_takes_the_tap_that_chose_it():
+    """A browser will not start audio without a user gesture, so the connect
+    has to happen inside the handler for the choice. A connection opened on a
+    poll is silently muted, which is the worst possible failure here: it looks
+    connected and plays nothing."""
+    tpl = tpl_source.read('home.html')
+    pick = tpl[tpl.index('musicPick(t, entityId) {'):]
+    pick = pick[:pick.index('musicPlaying(t) {')]
+    check('lp.start()' in pick, "choosing this screen never connects it")
+    check('lp.wanted' in pick,
+          "nothing records whether this screen is meant to be playing, so the "
+          "reconnect-on-visible cannot tell")
+    sync = tpl[tpl.index('syncMusic(refresh) {'):]
+    sync = sync[:sync.index('async refreshMusic')]
+    check('.start()' not in sync,
+          "the board connects the local player on a poll, with no gesture — "
+          "the audio context will be refused and the card will lie")
+
+
+def scenario_the_screens_own_entity_is_not_offered_twice():
+    """Once Music Assistant is told to expose it, this screen ALSO turns up in
+    the Home Assistant player list. Left in, the picker offers the same speaker
+    twice and only one of the two entries knows it is this browser."""
+    tpl = tpl_source.read('home.html')
+    fn = tpl[tpl.index('async refreshMusic(t) {'):]
+    fn = fn[:fn.index('async loadMusicFavorites')]
+    check('entityIn(players)' in fn,
+          "the screen's own HA entity is not identified")
+    check('p.entity_id !== mine.entity_id' in fn,
+          "the screen's own HA entity is left in the remote speaker list")
+
+
+def scenario_playing_to_this_screen_names_the_one_time_setup():
+    """The local player can be a speaker as soon as it connects, but cannot be
+    SENT an album until MA exposes it to HA — a per-player one-time toggle. An
+    album that silently does nothing is how somebody concludes it is broken."""
+    tpl = tpl_source.read('home.html')
+    fn = tpl[tpl.index('async musicPlayItem(t, item) {'):]
+    fn = fn[:fn.index('// Cache-busted')]
+    check('Expose this player to Home Assistant' in fn,
+          "nothing tells anybody about the one-time Music Assistant toggle")
+    check('entityIn(' in fn,
+          "playing to this screen does not resolve its HA entity")
 
 
 # --- the room binding ------------------------------------------------------
@@ -294,11 +422,20 @@ def scenario_the_two_music_surfaces_share_their_logic():
     a fix lands in one of them and not the other."""
     logic = open(os.path.join(ROOT, 'static', 'music_logic.js'),
                  encoding='utf-8').read()
-    for name in ('artwork', 'players', 'command', 'search', 'favorites', 'play'):
+    for name in ('artwork', 'players', 'command', 'search', 'favorites', 'play',
+                 'localPlayer', 'loadSendspin'):
         check(f'{name}(' in logic, f"music_logic.js has no {name}()")
     widget = tpl_source.read('components/music_widget.html')
     check('MusicLogic.' in widget,
           "the PWA widget still keeps its own copy of the logic")
+    # The local-player LIFECYCLE especially. It is the most delicate code in
+    # either surface — socket, reconnect backoff, unlock, the exposure step —
+    # and two copies of it is how a wall panel and a phone start behaving
+    # differently on the same house's network.
+    for own in ('new WebSocket(', 'new window.SendspinPlayer(', 'cdn.jsdelivr.net'):
+        check(own not in widget,
+              f"the widget still builds its own player ({own}), so the shared "
+              f"lifecycle is only half true")
     for endpoint in ('api/music/search', 'api/music/favorites', 'api/music/play',
                      'api/ha/image64'):
         check(endpoint not in widget,

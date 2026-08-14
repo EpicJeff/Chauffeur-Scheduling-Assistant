@@ -728,12 +728,16 @@
                         <div class="flex flex-col gap-3 min-h-0 flex-1">
                             <!-- No speakers at all is a real state and says so,
                                  rather than drawing transport buttons that
-                                 could never do anything. -->
-                            <template x-if="musicOf(t) && !musicOf(t).players.length">
+                                 could never do anything. It is only a dead end
+                                 when this screen cannot play either — a panel
+                                 with speakers is itself an answer. -->
+                            <template x-if="musicOf(t) && !musicOf(t).players.length
+                                            && !t.data.local_player">
                                 <div class="text-base panel-dim">No speakers in Home Assistant.</div>
                             </template>
 
-                            <template x-if="musicOf(t) && musicOf(t).players.length">
+                            <template x-if="musicOf(t) && (musicOf(t).players.length
+                                                           || t.data.local_player)">
                                 <div class="flex flex-col gap-3 min-h-0 flex-1">
                                     <!-- Where it plays. A wall's most common
                                          music question after "what is this" is
@@ -742,6 +746,18 @@
                                         class="flex items-center gap-2">
                                         <select @change="musicPick(t, $event.target.value)"
                                             class="flex-1 min-w-0 rounded-lg px-2 py-1.5 text-base font-bold panel-text bg-black/20 border border-white/10 focus:outline-none">
+                                            <!-- FIRST, and it is a real entry
+                                                 rather than a mode: this
+                                                 screen is a speaker in the
+                                                 same list as the kitchen one.
+                                                 Choosing it is also the user
+                                                 gesture that lets a browser
+                                                 start audio at all. -->
+                                            <template x-if="t.data.local_player">
+                                                <option :value="MUSIC_LOCAL"
+                                                    :selected="musicIsLocal(t)"
+                                                    x-text="musicLocalLabel(t)"></option>
+                                            </template>
                                             <template x-for="p in musicOf(t).players" :key="p.entity_id">
                                                 <option :value="p.entity_id"
                                                     :selected="p.entity_id === musicOf(t).selected"
@@ -762,9 +778,9 @@
                                             alt="">
                                         <div class="min-w-0 flex-1">
                                             <div class="text-xl font-black panel-text truncate"
-                                                x-text="(musicOf(t).now && musicOf(t).now.media_title) || 'Nothing playing'"></div>
+                                                x-text="(musicNow(t) && musicNow(t).media_title) || 'Nothing playing'"></div>
                                             <div class="text-base panel-dim truncate"
-                                                x-text="(musicOf(t).now && musicOf(t).now.media_artist) || ''"></div>
+                                                x-text="(musicNow(t) && musicNow(t).media_artist) || ''"></div>
                                         </div>
                                     </div>
 
@@ -788,7 +804,7 @@
                                             <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
                                         </button>
                                         <input x-show="t.data.show.volume" type="range" min="0" max="1" step="0.01"
-                                            :value="(musicOf(t).now && musicOf(t).now.volume_level) ?? 0.3"
+                                            :value="(musicNow(t) && musicNow(t).volume_level) ?? 0.3"
                                             @input="musicVolume(t, $event.target.value)"
                                             class="flex-1 min-w-0 h-2" style="accent-color: var(--panel-accent)">
                                     </div>

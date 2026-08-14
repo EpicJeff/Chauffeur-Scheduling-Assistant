@@ -657,6 +657,17 @@ WIDGETS = [
                    'Empty means whatever is already playing.'),
          _opt('player', 'Speaker', 'entity', '', source='ha_players',
               help='Pins this card to one speaker, ignoring the room.'),
+         # A kitchen tablet HAS speakers. A music screen that can only send
+         # music to other rooms is a remote control, so this screen offers
+         # itself as a player like the phone app does — same Sendspin client,
+         # different identity (a phone is a person, a panel is a place).
+         _opt('local_player', 'This screen can play', 'bool', True,
+              help='Adds this screen to the speaker list as a real Music '
+                   'Assistant player, so music comes out of the panel itself.'),
+         _opt('screen_name', 'What to call this screen', 'text', '',
+              help='How it appears in Music Assistant. Empty uses the room, '
+                   'then "Chauffeur screen" — name it if the house has more '
+                   'than one panel, or they arrive as duplicates.'),
          # THE CONVERSION PARADIGM: every part of the drawing is a toggle, all
          # on by default, so a card nobody configured equals the full surface.
          _opt('show_art', 'Album art', 'bool', True),
@@ -2496,11 +2507,19 @@ def _tile_music(now, config=None, **_):
     except Exception as e:
         print(f"[home_board] music tile failed: {e}")
         return {'empty': "Could not reach Home Assistant."}
+    # What Music Assistant will call this screen. Resolved server-side so the
+    # name is the same on every reload and every browser pointed at this board
+    # — a name computed in the client would drift with whatever that client
+    # happened to know, and the name is also how the HA entity is found again.
+    screen = (_cfg_str(config, 'screen_name')
+              or (f"{room_label} screen" if room_label else 'Chauffeur screen'))
     return {
         # May be '' — a house with HA and no speakers is a real state, and the
         # card says so rather than drawing dead transport buttons.
         'player': player,
         'room': room_label,
+        'local_player': _cfg_bool(config, 'local_player', True),
+        'screen_name': screen,
         'interactive': _cfg_bool(config, 'interactive', True),
         'show': {
             'art': _cfg_bool(config, 'show_art', True),

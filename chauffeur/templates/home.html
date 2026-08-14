@@ -1433,6 +1433,13 @@
         // nothing in the markup reads.
         const boardGalleries = {};
 
+        // The music cards' LOCAL players, outside Alpine for the same reason
+        // the maps are: each one holds a live WebSocket, an audio pipeline and
+        // a decoder, and handing that to a reactive proxy wraps every node of
+        // it. Keyed by CARD id, so two music cards on one screen are two
+        // players rather than one fought over.
+        const boardLocalPlayers = {};
+
         // ── Measuring a fit-to-content tile.
         //
         // Outside Alpine, like the maps and for the same reason: observers hold
@@ -4851,12 +4858,85 @@
                 // custom tile — never share a speaker or a search box.
                 musicState: {},
                 _musicVolTimers: {},
+                // The picker's sentinel for "play it here". A LITERAL, not
+                // `MusicLogic.LOCAL`: this object is built the moment Alpine
+                // starts, and reaching into another file's global there makes
+                // the whole board fail to construct if that file is slow, is
+                // blocked, or 404s — the board is the wall's entire screen and
+                // must not be hostage to the music layer. A test pins the two
+                // strings together so they cannot drift.
+                MUSIC_LOCAL: '__local__',
 
                 musicOf(t) {
                     return this.musicState[t.id] || null;
                 },
 
+                // ── This screen as a real Music Assistant player.
+                //
+                // A kitchen tablet has speakers. A music board that can only
+                // send music to OTHER rooms is a remote control, which is what
+                // the first cut of this card shipped as. Same Sendspin client
+                // the PWA uses, different identity: a phone is a person
+                // ("Lily's phone"), a panel is a place ("Kitchen screen").
+                //
+                // The instance is created ONCE per card and never rebuilt on a
+                // poll — it owns a socket and an audio pipeline, and dropping
+                // it every minute would stop the music.
+                localPlayerFor(t) {
+                    if (!t.data || !t.data.local_player) return null;
+                    if (!boardLocalPlayers[t.id]) {
+                        const name = t.data.screen_name || 'Chauffeur screen';
+                        boardLocalPlayers[t.id] = MusicLogic.localPlayer({
+                            name: name,
+                            // Keyed by NAME, not by card id: the same screen
+                            // must come back as the same Music Assistant
+                            // player after a reload, and a board edited or
+                            // duplicated gives its cards new ids. Two panels
+                            // sharing a name is what `screen_name` is for.
+                            key: 'chauffeur_sendspin_id::screen::'
+                                + name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+                        }, {
+                            apiBase: this.apiBase,
+                            onNotice: (msg) => {
+                                const s = this.musicState[t.id];
+                                if (s) s.error = msg;
+                            },
+                            onState: () => { /* Alpine repaints on the tick */ },
+                        });
+                    }
+                    return boardLocalPlayers[t.id];
+                },
+
+                musicIsLocal(t) {
+                    const s = this.musicState[t.id];
+                    return !!(s && s.selected === this.MUSIC_LOCAL);
+                },
+
+                // What the card is looking at: the local player's own state
+                // when this screen is the speaker, the HA entity otherwise.
+                // One shape either way, so nothing above here branches.
+                musicNow(t) {
+                    const s = this.musicState[t.id];
+                    if (!s) return null;
+                    if (s.selected === this.MUSIC_LOCAL) {
+                        const lp = boardLocalPlayers[t.id];
+                        return lp ? lp.nowPlaying() : null;
+                    }
+                    return s.now;
+                },
+
+                musicLocalLabel(t) {
+                    const lp = boardLocalPlayers[t.id];
+                    const name = (t.data && t.data.screen_name) || 'This screen';
+                    if (lp && lp.connecting) return `📻 ${name} (connecting…)`;
+                    return `📻 ${name}${lp && lp.active ? ' ●' : ''}`;
+                },
+
                 syncMusic(refresh) {
+                    // No logic module, no music cards — and the rest of the
+                    // board draws exactly as it always did. Same reason the
+                    // sentinel above is a literal.
+                    if (typeof MusicLogic === 'undefined') return;
                     const live = new Set();
                     for (const t of this.drawnTiles().filter(c => c.type === 'music')) {
                         if (!t.data || t.data.empty) continue;
@@ -4872,6 +4952,11 @@
                                 players: [], now: null, q: '', results: null,
                                 searching: false, error: '', favorites: [],
                             };
+                            // Created up front, connected only when somebody
+                            // picks it — a wall panel must not seize an audio
+                            // context nobody asked for, and browsers would
+                            // refuse it anyway without a gesture.
+                            this.localPlayerFor(t);
                             this.refreshMusic(t);
                             if (t.data.show && t.data.show.favorites) this.loadMusicFavorites(t);
                         } else if (refresh) {
@@ -4881,6 +4966,13 @@
                     for (const id of Object.keys(this.musicState)) {
                         if (!live.has(id)) delete this.musicState[id];
                     }
+                    // A card removed from the board takes its player with it,
+                    // or a panel left editing all afternoon accumulates sockets.
+                    for (const id of Object.keys(boardLocalPlayers)) {
+                        if (live.has(id)) continue;
+                        try { boardLocalPlayers[id].stop(); } catch (e) { }
+                        delete boardLocalPlayers[id];
+                    }
                 },
 
                 async refreshMusic(t) {
@@ -4888,15 +4980,28 @@
                     if (!s) return;
                     const players = await MusicLogic.players({ apiBase: this.apiBase });
                     if (!players) return;   // a blip goes quiet, never blank
-                    s.players = players;
+                    const lp = boardLocalPlayers[t.id];
+                    // Once Music Assistant has been told to expose it, this
+                    // screen also arrives in the HA list — hide that twin, or
+                    // the picker offers the same speaker twice and only one of
+                    // the two entries knows it is this browser.
+                    const mine = lp ? lp.entityIn(players) : null;
+                    s.players = players.filter(p => !mine || p.entity_id !== mine.entity_id);
+                    if (s.selected === this.MUSIC_LOCAL) {
+                        s.now = null;       // the local player answers for itself
+                        return;
+                    }
                     // The pinned speaker was renamed, removed, or is simply
                     // not in Music Assistant's list today. Fall back rather
                     // than leave a card whose buttons all fail silently.
-                    if (s.selected && !players.some(p => p.entity_id === s.selected)) {
+                    if (s.selected && !s.players.some(p => p.entity_id === s.selected)) {
                         s.selected = '';
                     }
-                    if (!s.selected && players.length) s.selected = players[0].entity_id;
-                    s.now = players.find(p => p.entity_id === s.selected) || null;
+                    if (!s.selected && s.players.length) s.selected = s.players[0].entity_id;
+                    // Nothing else to play on, but this screen can: better the
+                    // panel offers itself than says there is no music here.
+                    if (!s.selected && !s.players.length && lp) s.selected = this.MUSIC_LOCAL;
+                    s.now = s.players.find(p => p.entity_id === s.selected) || null;
                 },
 
                 async loadMusicFavorites(t) {
@@ -4914,17 +5019,35 @@
                     const s = this.musicState[t.id];
                     if (!s) return;
                     s.selected = entityId;
+                    s.error = '';
+                    const lp = boardLocalPlayers[t.id];
+                    if (lp) {
+                        // `wanted` gates the reconnect-on-visible, so it has to
+                        // fall as well as rise: a panel moved to the kitchen
+                        // speaker must not keep re-registering itself every
+                        // time the screen wakes.
+                        lp.wanted = (entityId === this.MUSIC_LOCAL);
+                        // THE TAP IS THE GESTURE. A browser will not start
+                        // audio without one, so connecting here — inside the
+                        // handler for the choice — is the only moment this can
+                        // work; a connection made on a poll is silently muted.
+                        if (lp.wanted) lp.start();
+                    }
                     s.now = s.players.find(p => p.entity_id === entityId) || null;
                 },
 
                 musicPlaying(t) {
+                    if (this.musicIsLocal(t)) {
+                        const lp = boardLocalPlayers[t.id];
+                        return !!(lp && lp.isPlaying());
+                    }
                     const s = this.musicState[t.id];
                     return !!(s && s.now && s.now.state === 'playing');
                 },
 
                 musicArt(t) {
-                    const s = this.musicState[t.id];
-                    const pic = s && s.now && s.now.entity_picture;
+                    const now = this.musicNow(t);
+                    const pic = now && now.entity_picture;
                     return pic ? MusicLogic.artwork(pic, { apiBase: this.apiBase }) : null;
                 },
 
@@ -4943,6 +5066,13 @@
                 async musicCommand(t, command, extra) {
                     const s = this.musicState[t.id];
                     if (!s || !t.data.interactive || !s.selected) return;
+                    if (s.selected === this.MUSIC_LOCAL) {
+                        // Straight to the client — this browser IS the player,
+                        // so there is no service call and nothing to wait for.
+                        const lp = boardLocalPlayers[t.id];
+                        if (lp) lp.command(command, extra);
+                        return;
+                    }
                     await MusicLogic.command(s.selected, command, extra,
                                              { apiBase: this.apiBase });
                     // MA answers the service call before the state settles.
@@ -4980,7 +5110,30 @@
                 async musicPlayItem(t, item) {
                     const s = this.musicState[t.id];
                     if (!s || !t.data.interactive || !s.selected) return;
-                    await MusicLogic.play(s.selected, item.uri, item.media_type,
+                    let target = s.selected;
+                    if (target === this.MUSIC_LOCAL) {
+                        // Playing is the one thing the local player cannot do
+                        // for itself: the request goes through Music Assistant
+                        // targeting this screen's HA entity, which exists only
+                        // after MA has registered the client AND been told to
+                        // expose it. That toggle is per player and one-time,
+                        // and until somebody does it the screen can be a
+                        // speaker for a group but cannot be sent an album.
+                        const lp = boardLocalPlayers[t.id];
+                        const ent = lp && lp.entityIn(
+                            await MusicLogic.players({ apiBase: this.apiBase }) || []);
+                        if (!ent) {
+                            s.error = (lp && lp.active)
+                                ? `One-time setup: Music Assistant → Settings → `
+                                  + `Players → “${t.data.screen_name}”, enable `
+                                  + `“Expose this player to Home Assistant”.`
+                                : 'This screen is not connected — pick it in the '
+                                  + 'speaker list first.';
+                            return;
+                        }
+                        target = ent.entity_id;
+                    }
+                    await MusicLogic.play(target, item.uri, item.media_type,
                                           { apiBase: this.apiBase });
                     s.q = '';
                     s.results = null;

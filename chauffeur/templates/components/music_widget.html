@@ -59,34 +59,41 @@
     const _mwArtErrorsShown = new Set();
 
     // --- "This phone" Sendspin player (the PWA as a real MA endpoint) ---
-    const MW_PHONE = '__phone__';
-    const _mwPhone = { player: null, active: false, state: null, connecting: false,
-                       retries: 0, reconnectTimer: null, everConnected: false };
-
-    function _mwScheduleReconnect() {
-        if (_mwPhone.reconnectTimer || _mwSelected !== MW_PHONE) return;
-        if (_mwPhone.retries >= 6) {
-            _mwToast('Phone player lost its connection — re-select "This phone" to retry.');
-            return;
-        }
-        const delay = Math.min(15000, 1500 * Math.pow(2, _mwPhone.retries));
-        _mwPhone.retries += 1;
-        _mwPhone.reconnectTimer = setTimeout(() => {
-            _mwPhone.reconnectTimer = null;
-            if (_mwSelected === MW_PHONE && !_mwPhone.player && !_mwPhone.connecting
-                && document.visibilityState === 'visible') {
-                mwStartPhonePlayer();
-            }
-        }, delay);
+    //
+    // The lifecycle — socket, reconnect, unlock, the MA-exposure step — moved
+    // to static/music_logic.js when the board's music card needed to be a
+    // player too. What stays here is the IDENTITY, which is the only part
+    // that differs: a phone is a person, a wall panel is a place.
+    const MW_PHONE = MusicLogic.LOCAL;
+    // Selections stored before the sentinel was shared. Without this, a phone
+    // that had "This phone" chosen would come back on somebody else's speaker.
+    if (_mwSelected === '__phone__') {
+        _mwSelected = MW_PHONE;
+        localStorage.setItem('chauffeur_music_player', MW_PHONE);
     }
 
-    document.addEventListener('visibilitychange', () => {
-        // iOS suspends the socket when the page backgrounds; resume promptly.
-        if (document.visibilityState === 'visible' && _mwSelected === MW_PHONE
-            && !_mwPhone.player && !_mwPhone.connecting) {
-            _mwPhone.retries = 0;
-            mwStartPhonePlayer();
-        }
+    // GETTERS, not values: `mwOnMemberChanged` re-registers under the new
+    // name and slot, so the identity has to be read at connect time rather
+    // than captured when the page loaded.
+    const _mwIdentity = {
+        get name() { return _mwPhoneName(); },
+        get key() {
+            const memberKey = (typeof selectedMemberId !== 'undefined' && selectedMemberId)
+                || 'device';
+            return 'chauffeur_sendspin_id::' + memberKey;
+        },
+    };
+
+    const _mwPhone = MusicLogic.localPlayer(_mwIdentity, {
+        // A getter because `_mwApiBase` is a `const` declared further down —
+        // read eagerly here it would be in the temporal dead zone, which is a
+        // ReferenceError that takes the whole widget out on load.
+        get apiBase() { return _mwApiBase; },
+        onNotice: (msg) => _mwToast(msg),
+        onState: () => {
+            if (_mwSelected === MW_PHONE) mwRenderPhoneState();
+            mwRefresh();
+        },
     });
 
     function _mwPhoneName() {
@@ -102,100 +109,26 @@
         if (typeof showGlobalAlert === 'function') showGlobalAlert(msg);
     }
 
-    async function mwStartPhonePlayer() {
-        if (_mwPhone.player || _mwPhone.connecting) return;
-        if (!window.SendspinPlayer) {
-            _mwToast('Phone player library not loaded yet — try again in a moment.');
-            return;
-        }
-        _mwPhone.connecting = true;
-        try {
-            // Player identity is per member-per-device: "Lily's phone" and
-            // "Dad's phone" are distinct MA players on the same handset.
-            const memberKey = (typeof selectedMemberId !== 'undefined' && selectedMemberId) || 'device';
-            const idKey = 'chauffeur_sendspin_id::' + memberKey;
-            let pid = localStorage.getItem(idKey);
-            if (!pid) {
-                pid = 'chauffeur-' + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
-                localStorage.setItem(idKey, pid);
-            }
-            const wsUrl = new URL(`${_mwApiBase}api/sendspin/ws`, location.href)
-                .href.replace(/^http/, 'ws');
-            const socket = new WebSocket(wsUrl);
-            socket.binaryType = 'arraybuffer';
-            socket.addEventListener('close', (e) => {
-                if (_mwPhone.active) {
-                    _mwPhone.active = false;
-                    _mwPhone.player = null;
-                    // Quietly self-heal; only bother the user when it's hopeless
-                    // (relay refused: reason set) or retries run out.
-                    if (e.reason) _mwToast(`Phone player disconnected: ${e.reason}`);
-                    mwRefresh();
-                    _mwScheduleReconnect();
-                }
-            });
-            const player = new window.SendspinPlayer({
-                playerId: pid,
-                clientName: _mwPhoneName(),
-                baseUrl: location.origin,
-                webSocket: socket,
-                correctionMode: 'quality-local',
-                onStateChange: (state) => {
-                    _mwPhone.state = state;
-                    if (_mwSelected === MW_PHONE) mwRenderPhoneState();
-                },
-            });
-            // unlock() needs the user gesture that selected the option.
-            if (typeof player.unlock === 'function') {
-                try { await player.unlock(); } catch (e) { /* reconnects run outside a gesture */ }
-            }
-            if (typeof player.connect === 'function') await player.connect();
-            _mwPhone.player = player;
-            _mwPhone.active = true;
-            if (!_mwPhone.everConnected) {
-                _mwPhone.everConnected = true;
-                _mwToast('This phone is now a Music Assistant player 🎉');
-            } else if (_mwPhone.retries > 0) {
-                console.info('[phone-player] reconnected');
-            }
-            _mwPhone.retries = 0;
-        } catch (e) {
-            _mwPhone.player = null;
-            _mwPhone.active = false;
-            if (_mwPhone.retries === 0) {
-                _mwToast('Phone player failed: ' + (e && e.message ? e.message : e));
-            }
-            _mwScheduleReconnect();
-        } finally {
-            _mwPhone.connecting = false;
-            mwRefresh();
-        }
+    function mwStartPhonePlayer() {
+        _mwPhone.wanted = true;
+        return _mwPhone.start();
     }
 
-    function _mwPhonePlaying() {
-        // sendspin-js onStateChange: { isPlaying, volume, muted, playerState,
-        // serverState, groupState } (dist/types.d.ts, v3.2.1)
-        const s = _mwPhone.state || {};
-        if (typeof s.isPlaying === 'boolean') return s.isPlaying;
-        return (s.groupState && s.groupState.playback_state) === 'playing';
-    }
+    function _mwPhonePlaying() { return _mwPhone.isPlaying(); }
 
     function mwRenderPhoneState() {
-        const s = _mwPhone.state || {};
-        // Metadata lives at serverState.metadata: {title, artist, album, artwork_url}
-        const md = (s.serverState && s.serverState.metadata) || {};
         const np = document.getElementById('mw-nowplaying');
-        const title = md.title || '';
-        const artist = md.artist || '';
+        const now = _mwPhone.nowPlaying();
+        const title = now.media_title;
+        const artist = now.media_artist;
         if (np) {
             if (title || artist) {
                 np.style.display = 'flex';
                 document.getElementById('mw-title').textContent = title;
-                document.getElementById('mw-artist').textContent =
-                    artist + (md.album ? (artist ? ' · ' : '') + md.album : '');
+                document.getElementById('mw-artist').textContent = artist;
                 const art = document.getElementById('mw-art');
-                if (md.artwork_url && typeof md.artwork_url === 'string') {
-                    art.src = _mwProxied(md.artwork_url);
+                if (now.entity_picture) {
+                    art.src = _mwProxied(now.entity_picture);
                     art.style.display = 'block';
                 } else {
                     art.style.display = 'none';
@@ -208,27 +141,13 @@
         document.getElementById('mw-icon-play').style.display = playing ? 'none' : 'block';
         document.getElementById('mw-icon-pause').style.display = playing ? 'block' : 'none';
         const vol = document.getElementById('mw-volume');
-        const v = (typeof s.volume === 'number') ? s.volume : null;
+        const v = now.volume_level;
         if (vol && v !== null && document.activeElement !== vol) {
-            vol.value = v > 1 ? v / 100 : v;
+            vol.value = v;
         }
     }
 
-    function _mwNorm(s) {
-        // MA->HA naming normalizes apostrophes/case/punctuation differently
-        // per version; compare on letters+digits only.
-        return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    }
-
-    function _mwPhoneEntity() {
-        // Once registered, MA exposes the phone to HA as a media_player named
-        // after our clientName (possibly normalized).
-        const want = _mwNorm(_mwPhoneName());
-        return _mwPlayers.find(p => {
-            const got = _mwNorm(p.name) || _mwNorm(p.entity_id.replace('media_player.', ''));
-            return got === want || got.includes(want) || want.includes(got);
-        }) || null;
-    }
+    function _mwPhoneEntity() { return _mwPhone.entityIn(_mwPlayers); }
 
     // Broken artwork: hide the ugly broken-image icon and surface WHY once
     // per URL (phones have no devtools; this is the field diagnostic).
@@ -298,9 +217,12 @@
             const remote = _mwPlayers.filter(p => !phoneEnt || p.entity_id !== phoneEnt.entity_id);
             const phoneLabel = _mwPhone.connecting ? '📱 This phone (connecting…)'
                 : `📱 This phone (${_mwPhoneName().replace(/'s phone$/, '')})${_mwPhone.active ? ' ●' : ''}`;
-            const phoneOption = window.SendspinPlayer
-                ? `<option value="${MW_PHONE}" ${_mwSelected === MW_PHONE ? 'selected' : ''}>${phoneLabel}</option>`
-                : '';
+            // Offered unconditionally now. It used to wait for the CDN module
+            // to arrive, which meant the option a member had already chosen
+            // silently vanished for the first second of every page load; the
+            // library is fetched when somebody picks it instead.
+            const phoneOption =
+                `<option value="${MW_PHONE}" ${_mwSelected === MW_PHONE ? 'selected' : ''}>${phoneLabel}</option>`;
             const remoteOptions = remote.map(p =>
                 `<option value="${_mwEsc(p.entity_id)}" ${p.entity_id === _mwSelected ? 'selected' : ''}>${_mwPlayerIcon(p)} ${_mwEsc(p.name)}</option>`).join('');
             sel.innerHTML = (phoneOption + remoteOptions)
@@ -347,6 +269,11 @@
     function mwSelectPlayer(entityId) {
         _mwSelected = entityId;
         localStorage.setItem('chauffeur_music_player', entityId);
+        // `wanted` is what the shared player's reconnect-on-visible checks, so
+        // it has to fall as well as rise: picking another speaker must not
+        // leave a phone quietly re-registering itself every time the app comes
+        // back to the foreground.
+        _mwPhone.wanted = (entityId === MW_PHONE);
         if (entityId === MW_PHONE) mwStartPhonePlayer();
         mwRefresh();
     }
@@ -354,20 +281,7 @@
     async function mwCommand(command, extra = {}) {
         if (!_mwSelected) return;
         if (_mwSelected === MW_PHONE) {
-            const p = _mwPhone.player;
-            if (!p) {
-                _mwToast('Phone player is reconnecting — try again in a second.');
-                if (!_mwPhone.connecting) mwStartPhonePlayer();
-                return;
-            }
-            try {
-                if (command === 'volume_set' && typeof p.setVolume === 'function') {
-                    p.setVolume(Math.round((extra.volume || 0) * 100));
-                } else if (typeof p.sendCommand === 'function') {
-                    p.sendCommand(command === 'previous' ? 'previous'
-                        : command === 'next' ? 'next' : command);
-                }
-            } catch (e) { _mwToast('Command failed: ' + e.message); }
+            _mwPhone.command(command, extra);
             return;
         }
         await MusicLogic.command(_mwSelected, command, extra, _mwOpts);
@@ -513,22 +427,14 @@
     }
 
     function _mwStopPhonePlayer() {
-        if (_mwPhone.reconnectTimer) {
-            clearTimeout(_mwPhone.reconnectTimer);
-            _mwPhone.reconnectTimer = null;
-        }
-        _mwPhone.retries = 0;
-        const p = _mwPhone.player;
-        _mwPhone.player = null;
-        _mwPhone.active = false;
-        _mwPhone.state = null;
-        if (p) {
-            try { if (typeof p.disconnect === 'function') p.disconnect(); } catch (e) { }
-        }
+        _mwPhone.wanted = false;
+        _mwPhone.stop();
     }
 
     // Called by app.html when the logged-in member changes: the phone's MA
     // identity follows the member, so re-register under the new name/id.
+    // `_mwIdentity` reads both through getters, so stop-then-start is all
+    // this takes — the new name is picked up at connect time.
     function mwOnMemberChanged() {
         if (!_mwPhone.player && !_mwPhone.connecting && _mwSelected !== MW_PHONE) return;
         _mwStopPhonePlayer();
@@ -537,18 +443,5 @@
         } else {
             mwRefresh();
         }
-    }
-
-    window.addEventListener('pagehide', () => _mwStopPhonePlayer());
-</script>
-<script type="module">
-    // sendspin-js (Apache-2.0) — the official browser client MA's own web
-    // player uses. Loaded as ESM from CDN, consistent with the no-build stack.
-    try {
-        const mod = await import('https://cdn.jsdelivr.net/npm/@sendspin/sendspin-js@3.2.1/+esm');
-        window.SendspinPlayer = mod.SendspinPlayer || mod.default;
-        if (window.SendspinPlayer && typeof mwRefresh === 'function') mwRefresh();
-    } catch (e) {
-        console.warn('sendspin-js failed to load; "This phone" player unavailable', e);
     }
 </script>
