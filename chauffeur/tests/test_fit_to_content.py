@@ -639,10 +639,29 @@ def scenario_fill_asks_the_screen_instead_of_the_household():
 
     # Read from the shelf ELEMENT, not from a number kept in step with
     # nav.html — and zero in a browser, where there is no shelf.
+    #
+    # `offsetParent` is BANNED here, and this assertion used to require it —
+    # which is the whole lesson. A structural test can only encode the
+    # assumption its author had: the guard `shelf.offsetParent !== null` reads
+    # like a visibility check and is defined to be null for anything
+    # `position: fixed`, which the shelf is. So the guard was never true, the
+    # height was never subtracted, every filled tile ran a shelf too far, and
+    # the test agreed with it.
+    #
+    # A `display:none` shelf already measures zero, so the rect IS the
+    # visibility test and no guard is needed at all. What the inset actually
+    # comes out at is checked against stated boxes in
+    # test_board_arrange_runtime — the only harness in the suite that can, and
+    # the one this claim now leans on.
     inset = src[src.index('_bottomInset() {'):]
     inset = inset[:inset.index(chr(10) + '                },')]
-    check("getElementById('panel-shelf')" in inset and 'offsetParent' in inset,
-          "the shelf's height is hardcoded or assumed present")
+    check("getElementById('panel-shelf')" in inset,
+          "the shelf's height is hardcoded rather than read off the element")
+    check('offsetParent' not in inset,
+          "the shelf is position:fixed, so offsetParent is always null on it "
+          "and any guard using it silently skips the shelf entirely")
+    check('getBoundingClientRect' in inset,
+          "the shelf's height is not measured, so a taller shelf is ignored")
 
     # The screen changing is the one signal fill must never miss.
     check('resize' in src[src.index('measureFills();'):src.index('measureFills();') + 4000]

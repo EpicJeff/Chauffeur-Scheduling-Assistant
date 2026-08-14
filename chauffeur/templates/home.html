@@ -2451,10 +2451,23 @@
                 // is not there at all in a browser, so it is read from the
                 // element rather than from a number kept in step with
                 // nav.html's CSS variable.
+                //
+                // The RECT, and nothing else. The first cut guarded this with
+                // `shelf.offsetParent !== null` — the usual "is it on screen"
+                // test, and wrong for precisely this element: `offsetParent`
+                // is defined to be null for anything `position: fixed`, so the
+                // guard was never true, the shelf's height was never
+                // subtracted, and a filled map ran underneath it. Reported
+                // exactly that way.
+                //
+                // No visibility test at all now, because the rect already is
+                // one: a shelf hidden with `display:none` (nav.html's `hidden`
+                // class, before panel mode reveals it) measures zero, and a
+                // browser with no shelf has no element. Three cases, one
+                // expression, nothing to keep in step.
                 _bottomInset() {
                     const shelf = document.getElementById('panel-shelf');
-                    const visible = shelf && shelf.offsetParent !== null;
-                    return (visible ? shelf.getBoundingClientRect().height : 0)
+                    return (shelf ? shelf.getBoundingClientRect().height : 0)
                         // The board's own bottom padding (px-4 py-4 / md:py-6).
                         // Without it a filled tile ends flush against the shelf
                         // while every other tile keeps its margin, which reads

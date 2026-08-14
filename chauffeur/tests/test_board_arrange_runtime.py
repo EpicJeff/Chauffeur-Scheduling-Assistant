@@ -37,21 +37,54 @@ def check(cond, msg):
 
 # A grid 1000px wide, 12 columns, 16px gaps — so one column plus its gap is
 # ((1000 - 16*11) / 12) + 16 = 84.66…, and a 2-column drag is ~169px.
+#
+# It is also a screen 1000px tall with a 90px shelf pinned to the bottom, a
+# grid starting 100px down and a filled tile sitting 200px into it — the
+# numbers `_bottomInset`/`measureFills` work in. jsdom does no layout, so this
+# stub is the ONLY place in the suite where that arithmetic actually runs on
+# stated boxes; the fill bug that reached a wall (a map drawn underneath the
+# shelf) is invisible to every other harness.
 HARNESS = r"""
+const RECTS = {
+  'tile-grid':   { top: 100, bottom: 900, height: 800 },
+  'panel-shelf': { top: 910, bottom: 1000, height: 90 },
+  'tile:map':    { top: 300, bottom: 700, height: 400 },
+};
 globalThis.window = {
   location: { search: '', pathname: '/home' },
   matchMedia: function () { return { matches: false }; },
+  innerHeight: 1000, scrollY: 0,
   addEventListener: function () {}, removeEventListener: function () {}
 };
+function stubEl(key, extra) {
+  return Object.assign({
+    getBoundingClientRect: function () { return RECTS[key]; },
+    // The board's padded container, which is what `_boardPadBottom` reads.
+    parentElement: { __pad: true },
+  }, extra || {});
+}
 globalThis.document = {
   documentElement: { getAttribute: function () { return 'dark'; } },
   getElementById: function (id) {
-    if (id !== 'tile-grid') return null;
-    return { clientWidth: 1000 };
+    if (id === 'tile-grid') return stubEl('tile-grid', { clientWidth: 1000 });
+    // The shelf is `position: fixed`, so `offsetParent` is null on it whether
+    // or not it is on screen — which is exactly the trap that let a filled
+    // tile grow underneath it. Stated here so the stub cannot be kinder than
+    // a browser.
+    if (id === 'panel-shelf') return stubEl('panel-shelf', { offsetParent: null });
+    return null;
+  },
+  querySelector: function (sel) {
+    return /tile-id="map"/.test(sel) ? stubEl('tile:map') : null;
   },
   addEventListener: function () {}
 };
-globalThis.getComputedStyle = function () { return { columnGap: '16px' }; };
+globalThis.CSS = { escape: function (s) { return s; } };
+globalThis.getComputedStyle = function (el) {
+  return { columnGap: '16px',
+           paddingBottom: (el && el.__pad) ? '24px' : '0px',
+           borderBottomWidth: '0px' };
+};
 globalThis.setInterval = function () { return 0; };
 """
 
@@ -181,6 +214,17 @@ const afterFill = JSON.stringify(page().spans.weather);
 b.setSpan('weather', 'fill', false);
 const fillOff = b.spanOf('weather', 'fill');
 
+// ── And what fill actually RESOLVES to, against the stated boxes above.
+// A 1000px screen, a 90px shelf, 24px of board padding, a grid starting at
+// 100 and the tile 200px into it: 1000 - 90 - 24 - 100 - 200 - gap.
+b.arranging = false;
+b.board = { page: { slug: 'home' }, columns: 12, row_height: 200, gap: 16,
+            spans: { map: { cols: 12, fill: true } },
+            tiles: [{ id: 'map', type: 'map', config: {} }] };
+b.measureFills();
+const fillResolved = b.fillPx['map'];
+const inset = b._bottomInset();
+
 // A resize, then a cancel.
 b.setSpan('drives', 'cols', 8);
 b.setSpan('drives', 'rows', 4);
@@ -199,6 +243,8 @@ console.log(JSON.stringify({
   fillBefore: fillBefore,
   fillOn: fillOn,
   fillOff: fillOff,
+  fillResolved: fillResolved,
+  inset: inset,
   afterFit: afterFit,
   afterFill: afterFill,
   afterCancel: afterCancel,
@@ -456,6 +502,36 @@ def scenario_a_height_switch_survives_being_read_back():
           f"turning fit on left fill set: {got['afterFit']}")
     check('auto' not in got['afterFill'],
           f"turning fill on left fit set: {got['afterFill']}")
+
+
+def scenario_a_filled_tile_stops_above_the_shelf():
+    """The second wall report on fill: a filled map ran UNDERNEATH the shelf.
+
+    `_bottomInset` guarded the shelf's height with `shelf.offsetParent !== null`
+    — the usual "is this on screen" test, and wrong for precisely this element.
+    `offsetParent` is defined to be null for anything `position: fixed`, and
+    the shelf is fixed to the bottom of the panel. So the guard was never true,
+    the shelf's height was never subtracted, and every filled tile was one
+    shelf too tall.
+
+    Nothing else in the suite can see this: jsdom does no layout, so every rect
+    it reports is zero and the arithmetic reduces to 0 - 0 whether the inset is
+    right or not. The stub at the top of this file states the boxes instead,
+    which is the only way to check a measurement.
+
+    A 1000px screen, a 90px shelf, 24px of board padding, a grid starting 100px
+    down and the tile 200px into it, 16px gutter:
+        1000 - (90 + 24) - 100 - 200 - 16 = 570
+    """
+    got = _run()
+    if got is None:
+        return
+    check(got['inset'] == 114,
+          f"the bottom inset is {got['inset']}, not the 90px shelf plus 24px "
+          "of board padding — a filled tile grows under the shelf")
+    check(got['fillResolved'] == 570,
+          f"fill resolved to {got['fillResolved']}px, not 570 — the tile ends "
+          f"{570 - (got['fillResolved'] or 0)}px past where it should")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
