@@ -5051,6 +5051,14 @@ def ha_media_players(ma_only: bool = True):
             'supported_features': attrs.get('supported_features'),
             'device_class': attrs.get('device_class'),
             'is_ma_player': 'mass_player_type' in attrs,
+            # Every `mass_*` attribute, verbatim. A browser that registered
+            # itself as a Sendspin player has to find its OWN entity again
+            # afterwards, and matching on the friendly name is guesswork the
+            # moment somebody renames the player in Music Assistant — which
+            # is a completely reasonable thing to do, and left the card
+            # insisting the one-time setup had not been done. Whatever MA
+            # stamps its own player id into, it is in here.
+            'mass': {k: v for k, v in attrs.items() if k.startswith('mass_')},
         })
     if ma_only:
         ma_players = [p for p in out if p['is_ma_player']]

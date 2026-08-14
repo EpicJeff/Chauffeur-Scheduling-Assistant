@@ -100,13 +100,35 @@
 
         /** Music Assistant's players (the endpoint falls back to every media
          *  player when this house has no MA). Never throws: a surface polling
-         *  every ten seconds should go quiet on a blip, not paint an error. */
-        async players(opts) {
+         *  every ten seconds should go quiet on a blip, not paint an error.
+         *
+         * `all` drops the MA-only filter. The picker wants the filtered list —
+         * an HA instance accumulates dozens of TVs MA cannot play to. Finding
+         * our OWN entity wants the unfiltered one, and that distinction is the
+         * bug this parameter exists for: the filter keeps only entities
+         * carrying `mass_player_type`, so a Sendspin player that Music
+         * Assistant exposes WITHOUT that attribute is invisible to the search
+         * for it — and the card then reports the one-time exposure step as
+         * undone, on a player that is exposed, registered and playable from
+         * Music Assistant itself.
+         */
+        async players(opts, all) {
             try {
-                return await json(base(opts) + 'api/ha/media_players');
+                return await json(base(opts) + 'api/ha/media_players'
+                                  + (all ? '?ma_only=false' : ''));
             } catch (e) {
                 return null;
             }
+        },
+
+        /** Our own entity, searched for in the FULL player list. Every caller
+         *  that wants "which of these is me" should use this rather than
+         *  `players()`, or it is searching a list its answer can be filtered
+         *  out of. */
+        async findLocalEntity(local, opts) {
+            if (!local) return null;
+            const all = await MusicLogic.players(opts, true);
+            return { entity: local.entityIn(all || []), players: all || [] };
         },
 
         /** play | pause | next | previous | volume_set. */
@@ -247,6 +269,12 @@
                             : Math.random().toString(36).slice(2));
                         localStorage.setItem(identity.key, pid);
                     }
+                    // Kept on the instance: this id, not the display name, is
+                    // what identifies this browser to Music Assistant, and it
+                    // is how `entityIn` finds our own entity again after a
+                    // rename. Set before connecting so a failure still leaves
+                    // something to diagnose with.
+                    self.playerId = pid;
                     const wsUrl = new URL(base(opts) + 'api/sendspin/ws', location.href)
                         .href.replace(/^http/, 'ws');
                     const socket = new WebSocket(wsUrl);
@@ -354,14 +382,35 @@
                 }
             };
 
-            /** Once registered, MA exposes this to HA as a media_player named
-             *  after `clientName` — possibly normalised, since MA→HA naming
-             *  differs by version on apostrophes, case and punctuation. So the
-             *  comparison is on letters and digits only. */
+            /** Our own Home Assistant entity, once Music Assistant has been
+             *  told to expose this player — or null.
+             *
+             * Two tiers, and the first one exists because the second was
+             * quietly wrong. The NAME match was the only rule at first: MA
+             * exposes the player as a media_player named after `clientName`,
+             * normalised to letters and digits because MA→HA naming differs by
+             * version on apostrophes, case and punctuation. But a player is a
+             * thing you can RENAME in Music Assistant, and the moment somebody
+             * does, the name match fails forever and the card insists the
+             * one-time exposure step has not been done — while pointing at a
+             * name that no longer exists.
+             *
+             * So the id comes first: whatever `mass_*` attribute MA stamps its
+             * own player id into, our registered `playerId` is in there
+             * verbatim, and that survives any rename. The name match stays as
+             * the fallback for versions that expose no such attribute.
+             */
             self.entityIn = function (players) {
+                const list = players || [];
+                if (self.playerId) {
+                    const byId = list.find(p => Object.values(p.mass || {})
+                        .some(v => typeof v === 'string' && v === self.playerId));
+                    if (byId) return byId;
+                }
                 const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
                 const want = norm(identity.name);
-                return (players || []).find(p => {
+                if (!want) return null;
+                return list.find(p => {
                     const got = norm(p.name) || norm((p.entity_id || '').replace('media_player.', ''));
                     return got === want || got.includes(want) || want.includes(got);
                 }) || null;

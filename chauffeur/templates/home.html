@@ -4897,9 +4897,13 @@
                                 + name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
                         }, {
                             apiBase: this.apiBase,
+                            // A NOTICE, not an error. "This screen is now a
+                            // Music Assistant player 🎉" is the happy path,
+                            // and it was being painted in the same red as a
+                            // failure because both went to the same field.
                             onNotice: (msg) => {
                                 const s = this.musicState[t.id];
-                                if (s) s.error = msg;
+                                if (s) s.notice = msg;
                             },
                             onState: () => { /* Alpine repaints on the tick */ },
                         });
@@ -4950,7 +4954,8 @@
                                 // again would take it back off them mid-song.
                                 selected: t.data.player || '',
                                 players: [], now: null, q: '', results: null,
-                                searching: false, error: '', favorites: [],
+                                searching: false, error: '', notice: '',
+                                favorites: [],
                             };
                             // Created up front, connected only when somebody
                             // picks it — a wall panel must not seize an audio
@@ -5019,7 +5024,9 @@
                     const s = this.musicState[t.id];
                     if (!s) return;
                     s.selected = entityId;
+                    // Both, because both belong to the speaker being left.
                     s.error = '';
+                    s.notice = '';
                     const lp = boardLocalPlayers[t.id];
                     if (lp) {
                         // `wanted` gates the reconnect-on-visible, so it has to
@@ -5110,6 +5117,12 @@
                 async musicPlayItem(t, item) {
                     const s = this.musicState[t.id];
                     if (!s || !t.data.interactive || !s.selected) return;
+                    // FIRST. Without this the message from a failed attempt
+                    // outlives whatever fixed it: somebody reads "enable
+                    // Expose this player", goes and does exactly that, comes
+                    // back, plays something — and the card still says to go
+                    // and do it, because nothing ever cleared the sentence.
+                    s.error = '';
                     let target = s.selected;
                     if (target === this.MUSIC_LOCAL) {
                         // Playing is the one thing the local player cannot do
@@ -5120,15 +5133,40 @@
                         // and until somebody does it the screen can be a
                         // speaker for a group but cannot be sent an album.
                         const lp = boardLocalPlayers[t.id];
-                        const ent = lp && lp.entityIn(
-                            await MusicLogic.players({ apiBase: this.apiBase }) || []);
+                        if (!lp || !lp.active) {
+                            s.error = 'This screen is not connected — pick it in '
+                                    + 'the speaker list first.';
+                            return;
+                        }
+                        // The FULL list, not the MA-filtered one the picker
+                        // uses — see MusicLogic.players(). Searching the
+                        // filtered list for our own entity is how a player
+                        // that is exposed and playable from Music Assistant
+                        // still gets reported as needing to be exposed.
+                        const found = await MusicLogic.findLocalEntity(
+                            lp, { apiBase: this.apiBase });
+                        const all = found.players;
+                        const ent = found.entity;
                         if (!ent) {
-                            s.error = (lp && lp.active)
-                                ? `One-time setup: Music Assistant → Settings → `
-                                  + `Players → “${t.data.screen_name}”, enable `
-                                  + `“Expose this player to Home Assistant”.`
-                                : 'This screen is not connected — pick it in the '
-                                  + 'speaker list first.';
+                            // Say what was actually looked for, not just what
+                            // to go and do. The old sentence asserted the
+                            // exposure toggle was off, which is only ONE of
+                            // the reasons this lookup comes back empty — a
+                            // player renamed in Music Assistant lands here
+                            // too, and being told to enable something already
+                            // enabled is a dead end with nothing to try next.
+                            // A wall panel has no devtools, so the diagnosis
+                            // has to be on the card.
+                            s.error = `Cannot find this screen in Home Assistant. `
+                                + `Looked for “${t.data.screen_name}” (id `
+                                + `${lp.playerId || '?'}) among ${all.length} players. `
+                                + `If Music Assistant already exposes it, pick it `
+                                + `from the speaker list under the name you gave it `
+                                + `there; otherwise turn on `
+                                + `“Expose this player to Home Assistant” for it.`;
+                            console.warn('[local-player] no entity for',
+                                         t.data.screen_name, lp.playerId,
+                                         all.map(p => `${p.name} (${p.entity_id})`));
                             return;
                         }
                         target = ent.entity_id;

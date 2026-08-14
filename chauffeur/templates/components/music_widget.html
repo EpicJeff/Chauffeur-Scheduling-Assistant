@@ -395,22 +395,26 @@
         if (target === MW_PHONE) {
             // Play requests go through MA targeting the phone's HA entity,
             // which appears shortly after the Sendspin client registers.
-            const ent = _mwPhoneEntity();
-            if (!ent) {
+            //
+            // Searched in the FULL player list. It used to search the cached
+            // MA-only one and then fetch the full list purely to LOG it —
+            // which is the whole bug: `?ma_only=true` keeps only entities
+            // carrying `mass_player_type`, so a Sendspin player exposed
+            // without it could never be found, and this told people to go and
+            // enable an exposure toggle that was already on.
+            const found = await MusicLogic.findLocalEntity(_mwPhone, _mwOpts);
+            if (!found.entity) {
                 if (!_mwPhone.active) {
                     _mwToast('Phone player is not connected — re-select "This phone" from the player list.');
                 } else {
-                    // Registered over Sendspin, but MA hides new players from
-                    // HA by default — needs a one-time toggle per device.
-                    const all = await fetch(`${_mwApiBase}api/ha/media_players?ma_only=false`)
-                        .then(r => r.json()).catch(() => []);
                     console.warn('[phone-player] looking for', _mwPhoneName(),
-                        'among players:', all.map(p => `${p.name} (${p.entity_id})`));
-                    _mwToast(`One-time setup: in Music Assistant → Settings → Players → "${_mwPhoneName()}", enable "Expose this player to Home Assistant". Then try again.`);
+                        _mwPhone.playerId, 'among players:',
+                        found.players.map(p => `${p.name} (${p.entity_id})`));
+                    _mwToast(`Cannot find "${_mwPhoneName()}" in Home Assistant, among ${found.players.length} players. If Music Assistant already exposes it, pick it from the player list under the name you gave it there; otherwise turn on "Expose this player to Home Assistant" for it.`);
                 }
                 return;
             }
-            target = ent.entity_id;
+            target = found.entity.entity_id;
         }
         await MusicLogic.play(target, uri, mediaType, _mwOpts);
         setTimeout(mwRefresh, 1200);

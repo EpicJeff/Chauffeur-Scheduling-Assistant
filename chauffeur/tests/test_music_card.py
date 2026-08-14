@@ -307,8 +307,92 @@ def scenario_playing_to_this_screen_names_the_one_time_setup():
     fn = fn[:fn.index('// Cache-busted')]
     check('Expose this player to Home Assistant' in fn,
           "nothing tells anybody about the one-time Music Assistant toggle")
-    check('entityIn(' in fn,
+    check('findLocalEntity(' in fn,
           "playing to this screen does not resolve its HA entity")
+
+
+def scenario_the_screen_is_found_by_id_not_by_its_name():
+    """A player is a thing you can RENAME in Music Assistant, and it is a
+    reasonable thing to do. Matching on the name only, the lookup fails
+    forever afterwards and the card insists the one-time exposure step has
+    not been done — while naming a player that no longer exists. The id we
+    registered under survives any rename."""
+    logic = open(os.path.join(ROOT, 'static', 'music_logic.js'),
+                 encoding='utf-8').read()
+    fn = logic[logic.index('self.entityIn = function (players) {'):]
+    fn = fn[:fn.index('// iOS suspends')]
+    check('self.playerId' in fn,
+          "the entity lookup still has only the display name to go on")
+    check(fn.index('self.playerId') < fn.index('const norm'),
+          "the name match runs before the id match, so a renamed player is "
+          "matched by name or not at all")
+    check('self.playerId = pid' in logic,
+          "the registered player id is never kept, so nothing can match on it")
+    src = open(os.path.join(ROOT, 'main.py'), encoding='utf-8').read()
+    check("k.startswith('mass_')" in src,
+          "/api/ha/media_players drops Music Assistant's own attributes, so "
+          "the id match has nothing to compare against")
+
+
+def scenario_finding_our_own_entity_searches_the_unfiltered_list():
+    """The bug that made this look broken on a working setup, and it was in
+    the shipped phone player too.
+
+    `/api/ha/media_players` defaults to MA-only: it keeps entities carrying
+    `mass_player_type` and drops the rest, which is right for the PICKER — an
+    HA instance accumulates dozens of TVs Music Assistant cannot play to. It
+    is wrong for "which of these is ME": a Sendspin player exposed WITHOUT
+    that attribute cannot appear in the list being searched, so the lookup
+    fails on a player that is registered, exposed and playable from Music
+    Assistant — and both surfaces then reported the one-time exposure step as
+    undone. The widget even fetched the full list already, purely to log it.
+    """
+    logic = open(os.path.join(ROOT, 'static', 'music_logic.js'),
+                 encoding='utf-8').read()
+    check('ma_only=false' in logic,
+          "nothing can ask for the unfiltered player list")
+    fn = logic[logic.index('async findLocalEntity(local, opts) {'):]
+    fn = fn[:fn.index('localPlayer(identity, opts)')]
+    check('players(opts, true)' in fn,
+          "the local-entity search still reads the MA-filtered list")
+    # Both surfaces go through it, or the fix is half a fix.
+    tpl = tpl_source.read('home.html')
+    play = tpl[tpl.index('async musicPlayItem(t, item) {'):]
+    play = play[:play.index('// Cache-busted')]
+    check('findLocalEntity(' in play,
+          "the board card searches for itself in the filtered list")
+    widget = tpl_source.read('components/music_widget.html')
+    check('findLocalEntity(' in widget,
+          "the PWA still searches for the phone in the filtered list")
+    check('ma_only=false' not in widget,
+          "the widget still fetches the full list by hand — that fetch existed "
+          "only to LOG what the lookup could not see")
+
+
+def scenario_the_failure_says_what_it_looked_for():
+    """A wall panel has no devtools. 'Enable the toggle' is one guess at why
+    the lookup came back empty, and telling somebody to enable something they
+    already enabled is a dead end with nothing to try next."""
+    tpl = tpl_source.read('home.html')
+    fn = tpl[tpl.index('async musicPlayItem(t, item) {'):]
+    fn = fn[:fn.index('// Cache-busted')]
+    check('Cannot find this screen' in fn,
+          "the message still asserts one cause for every failure")
+    check('lp.playerId' in fn and 'all.length' in fn,
+          "the message does not say what was searched for, or among how many")
+
+
+def scenario_a_fixed_problem_stops_being_reported():
+    """The message from a failed attempt must not outlive whatever fixed it —
+    read 'enable Expose this player', go and do it, come back, press play, and
+    the card still says to go and do it. Reported from a real wall."""
+    tpl = tpl_source.read('home.html')
+    fn = tpl[tpl.index('async musicPlayItem(t, item) {'):]
+    fn = fn[:fn.index('// Cache-busted')]
+    body = fn[:fn.index('let target')]
+    check("s.error = ''" in body,
+          "playing something does not clear the last failure, so the card "
+          "keeps reporting a problem that has been fixed")
 
 
 # --- the room binding ------------------------------------------------------

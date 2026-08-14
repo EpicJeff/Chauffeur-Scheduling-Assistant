@@ -817,7 +817,17 @@
                                             class="w-full rounded-lg px-3 py-2 text-base panel-text bg-black/20 border border-white/10 focus:outline-none">
                                     </div>
 
-                                    <div x-show="musicOf(t).error" class="text-sm text-red-400"
+                                    <!-- Two fields, two voices: connecting and
+                                         connected are ordinary news, and only
+                                         a failure is red. Both wrap — the
+                                         "cannot find this screen" sentence
+                                         names what it looked for, and a wall
+                                         panel has no devtools to read. -->
+                                    <div x-show="musicOf(t).notice && !musicOf(t).error"
+                                        class="text-sm panel-dim leading-snug"
+                                        x-text="musicOf(t).notice"></div>
+                                    <div x-show="musicOf(t).error"
+                                        class="text-sm text-red-400 leading-snug"
                                         x-text="musicOf(t).error"></div>
 
                                     <!-- Results REPLACE the favourites shelf
