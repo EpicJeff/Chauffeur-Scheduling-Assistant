@@ -239,6 +239,46 @@ def scenario_the_calendar_tile_reads_its_own_day_count():
               f"a {n}-day tile did not say so: {data}")
 
 
+def scenario_the_boards_tab_is_where_the_other_tabs_are():
+    """A tab pane nested inside something hidden is a tab that opens on
+    nothing, and it fails SILENTLY — the button highlights, the page stays
+    blank, and there is no error to go looking for.
+
+    The Boards pane first shipped inside the Mapbox sync modal, because it was
+    inserted at the last matching run of closing tags before the page's script
+    rather than at the end of the pane it belongs beside. Depth is the check
+    that catches it: every `activeTab` pane is a sibling of the others.
+    """
+    import re
+    # Include-expanded: the pane itself lives in components/boards_admin.html,
+    # and where it ENDS UP is the whole question.
+    cfg = tpl_source.read('config.html')
+    depths, seen = {}, 0
+    for m in re.finditer(r'<div\b[^>]*?>|</div>', cfg, re.S):
+        tag = m.group(0)
+        if tag.startswith('</'):
+            seen -= 1
+            continue
+        pane = re.search(r'x-show="activeTab === \'(\w+)\'"', tag)
+        if pane and pane.group(1) not in depths:
+            depths[pane.group(1)] = seen
+        seen += 1
+    check('boards' in depths, "there is no Boards tab pane at all")
+    others = {k: v for k, v in depths.items() if k != 'boards'}
+    check(others, "no other tab panes to compare against")
+    # Shares a nesting level with a real pane. Not "all panes are equal" —
+    # a couple sit inside an extra wrapper — but a pane buried in a modal is
+    # deeper than every one of them.
+    check(depths['boards'] in set(others.values()),
+          f"the Boards pane is nested somewhere the other tabs are not "
+          f"({depths}) — a tab that opens on a blank page and says nothing "
+          f"about why, which is exactly how it first shipped")
+
+    # And it must be able to SEE `activeTab`, which lives on the body scope.
+    check('x-data="boardsAdmin()"' in cfg or 'boardsAdmin()' in cfg,
+          "the Boards pane has no component behind it")
+
+
 def scenario_the_board_is_configured_over_the_board():
     """Name, icon, address, picture and the grid, in an overlay over the board
     they describe — a column count only means something next to the tiles it is

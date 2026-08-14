@@ -1064,8 +1064,15 @@
                         <span class="px-3 py-1 rounded-full font-bold text-xs uppercase tracking-wide"
                             :class="haStatus && haStatus.available ? 'bg-green-900/50 text-green-300 border border-green-800' : 'bg-red-900/50 text-red-300 border border-red-800'"
                             x-text="haStatus && haStatus.available ? ('Home Assistant connected (' + haStatus.mode + ')') : 'Home Assistant unavailable'"></span>
+                        <!-- Guarded, because `x-show` does not stop `x-text`
+                             from evaluating — it only toggles display. This
+                             threw "Cannot read properties of null" on every
+                             single load of this page, from the first paint
+                             until the /api/ha/status fetch came back, and a
+                             console with a permanent error in it is a console
+                             nobody reads the real errors out of. -->
                         <span class="text-gray-500" x-show="haStatus && haStatus.available"
-                            x-text="haStatus.persons + ' persons · ' + haStatus.notify_services + ' notify services · ' + haStatus.media_players + ' media players'"></span>
+                            x-text="haStatus ? (haStatus.persons + ' persons · ' + haStatus.notify_services + ' notify services · ' + haStatus.media_players + ' media players') : ''"></span>
                         <button @click="loadHaOptions()"
                             class="text-blue-400 hover:text-blue-300 font-bold text-xs">Refresh</button>
                     </div>
@@ -3761,6 +3768,8 @@
                         </template>
                     </div>
                 </div>
+
+                {% include 'components/boards_admin.html' %}
             </div>
         </div>
 
@@ -3802,7 +3811,6 @@
                 </div>
             </div>
 
-                {% include 'components/boards_admin.html' %}
         </div>
     </div>
     <script>
