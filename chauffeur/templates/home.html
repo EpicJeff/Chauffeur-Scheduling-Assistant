@@ -733,7 +733,7 @@
              display a four-year-old can rearrange is not a display. -->
         <div x-show="!isPanel" class="flex items-center justify-end gap-3 mb-3">
             <span x-show="arranging" class="text-xs ed-note">
-                Drag a tile to move it, or its corner to resize.
+                Drag to move, drag a corner to resize, ✎ for settings.
             </span>
             <button x-show="arranging" @click="finishArrange()"
                 :disabled="saving"
@@ -742,19 +742,17 @@
             </button>
             <button x-show="arranging" @click="cancelArrange()"
                 class="text-xs ed-btn px-2 py-1.5">Cancel</button>
+            <!-- EDIT, not "Arrange tiles". The mode stopped being about
+                 arranging some time ago: it adds tiles, opens their settings,
+                 parks them and removes them. Naming it for the one thing it
+                 did first hid the rest — nobody goes looking for "add a tile"
+                 inside "arrange", which is exactly how the + at the end of the
+                 grid stayed invisible and got asked for a second time.
+                 And with the name right, that + is the only add-tile button
+                 there needs to be: you are already in Edit when you want it. -->
             <button x-show="!arranging" @click="startArrange()"
                 class="text-xs font-semibold ed-input rounded-lg px-3 py-1.5">
-                ⠿ Arrange tiles
-            </button>
-            <!-- Beside Arrange, because both are things you do to the BOARD
-                 rather than to a tile on it. It arranges as it opens: a tile
-                 lands at the end of the grid, and the next thing anybody wants
-                 is to put it somewhere, which is arrange mode. The dashed cell
-                 at the end of the grid is the same action once you are already
-                 in there. -->
-            <button x-show="!arranging" @click="startArrange(); picking = true"
-                class="text-xs font-semibold ed-input rounded-lg px-3 py-1.5">
-                + Add tile
+                ✎ Edit
             </button>
         </div>
 
@@ -2196,11 +2194,29 @@
 
                 async load() {
                     try {
-                        const q = new URLSearchParams();
-                        if (params.get('widgets')) q.set('widgets', params.get('widgets'));
-                        if (this.pageSlug) q.set('page', this.pageSlug);
-                        const r = await fetch(this.apiBase + 'api/home_board'
-                            + (q.toString() ? '?' + q : ''));
+                        // While EDITING, the board is built from the draft
+                        // rather than from what is saved. Without this, a tile
+                        // just added had no server-built drawing and did not
+                        // appear, and a tile just removed carried on being
+                        // drawn — both until Save, which turned Save into the
+                        // button that shows you what you already did.
+                        let r;
+                        if (this.arranging) {
+                            r = await fetch(this.apiBase + 'api/home_board/preview', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    widgets: this.page().widgets || [],
+                                    page: this.pageSlug || null,
+                                }),
+                            });
+                        } else {
+                            const q = new URLSearchParams();
+                            if (params.get('widgets')) q.set('widgets', params.get('widgets'));
+                            if (this.pageSlug) q.set('page', this.pageSlug);
+                            r = await fetch(this.apiBase + 'api/home_board'
+                                + (q.toString() ? '?' + q : ''));
+                        }
                         if (!r.ok) return;
                         this.board = await r.json();
                         this.hero = this.board.hero || {};
@@ -4402,8 +4418,10 @@
                         .find(w => w.id === tileId) || null;
                 },
 
-                addPickedCard(type) {
-                    if (this.cardPicking) this.addCard(this.cardPicking, type);
+                async addPickedCard(type) {
+                    if (!this.cardPicking) return;
+                    this.addCard(this.cardPicking, type);
+                    await this.load();      // and it appears behind the picker
                 },
 
                 async closeCardPicker() {
@@ -5480,7 +5498,7 @@
                     return `${type}-${n}`;
                 },
 
-                addInstance(type) {
+                async addInstance(type) {
                     this.page().widgets.push(
                         { id: this.newInstanceId(type), type, config: {} });
                     // The picker STAYS OPEN. Building a board is adding four or
@@ -5489,6 +5507,11 @@
                     // button. The count on each row updates, so it is still
                     // obvious what has just happened.
                     this.pickFilter = '';
+                    // And the tile APPEARS, now, behind the picker — the board
+                    // rebuilds from the draft. Adding something and having to
+                    // find a Save button before it shows up is the editor
+                    // admitting it is a form.
+                    await this.load();
                 },
 
                 // Parked by hand, and the opposite of rule 1's automatic
@@ -5520,12 +5543,16 @@
                     if (on) { w.require = true; } else { delete w.require; }
                 },
 
-                removeInstance(i) {
+                async removeInstance(i) {
                     const [gone] = this.page().widgets.splice(i, 1);
                     // Its size goes with it. Leaving the entry behind would
                     // silently re-apply an old width to the next instance that
                     // happened to be given the same id.
                     if (gone) delete this.page().spans[gone.id];
+                    // Gone from the board too, not just from the draft. The
+                    // grid draws server-built tiles, so without this the tile
+                    // stayed on screen until a save went round.
+                    await this.load();
                 },
 
                 // Everything that can be a shelf button: the app's own

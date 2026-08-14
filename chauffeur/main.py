@@ -1016,6 +1016,35 @@ def home_board_api(widgets: Optional[str] = None, page: Optional[str] = None):
         requested=widgets, page=page,
         kid_digest_fn=lambda: _build_kid_digests(_kid_digest_default_date()))
 
+class BoardPreviewRequest(BaseModel):
+    widgets: List[Any] = []
+    page: Optional[str] = None
+
+
+@app.post("/api/home_board/preview")
+def home_board_preview(req: BoardPreviewRequest):
+    """The board as the EDITOR currently has it — built, but not saved.
+
+    Arrange mode draws SERVER-built tiles ordered by the draft, so a tile the
+    draft had just gained had nothing to draw and one it had just lost carried
+    on drawing. Both only resolved on Save, which made Save the thing that
+    showed you what you had already done — and made the editor feel like a form
+    rather than a board.
+
+    A POST rather than the `?widgets=` GET that dashboard cards use: a board of
+    Home Assistant cards carries YAML in its config, and one of the boards on
+    this very install already urlencodes past 5 KB. An address is the wrong
+    place to put a document.
+
+    Builds and returns; it writes nothing. Cancel still has to put the draft
+    back, and it does, because the draft is the only thing that changed.
+    """
+    from services import home_board
+    return home_board.build(
+        requested=json.dumps(req.widgets), page=req.page,
+        kid_digest_fn=lambda: _build_kid_digests(_kid_digest_default_date()))
+
+
 @app.get("/api/home_board/pages")
 def home_board_pages():
     """Every board this household has, WHOLE — tiles, spans, grid and all.

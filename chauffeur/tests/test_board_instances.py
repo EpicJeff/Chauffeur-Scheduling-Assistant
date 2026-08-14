@@ -239,6 +239,49 @@ def scenario_the_calendar_tile_reads_its_own_day_count():
               f"a {n}-day tile did not say so: {data}")
 
 
+def scenario_adding_a_tile_shows_the_tile():
+    """Add and remove are not gated on Save.
+
+    The grid draws SERVER-built tiles ordered by the draft, so a tile the draft
+    had just gained had nothing to draw and one it had just lost carried on
+    drawing — and both only resolved when you scrolled down and saved. That
+    made Save the button that showed you what you had already done, which is an
+    editor admitting it is really a form.
+    """
+    import main
+    from services import storage
+    # Chrome, deliberately: rule 1 drops an unconfigured feature's tile, and
+    # this scenario is about the preview honouring the DRAFT, not about which
+    # features happen to be set up in a test environment.
+    got = main.home_board_preview(main.BoardPreviewRequest(
+        widgets=[{'id': 'heading', 'type': 'heading',
+                  'config': {'title': 'Ours'}},
+                 {'id': 'clock', 'type': 'clock', 'config': {}}],
+        page='home'))
+    check([t['type'] for t in got['tiles']] == ['heading', 'clock'],
+          f"the preview is not the draft it was given: {got['tiles']}")
+    # It BUILDS, so the new tile arrives drawn rather than as a placeholder.
+    check(all('data' in t or t.get('cards') for t in got['tiles']),
+          "the preview returns tiles with nothing in them")
+    # And it writes nothing — Cancel has to be able to put the draft back.
+    before = json.dumps(storage.get_settings().get('panel_pages'))
+    main.home_board_preview(main.BoardPreviewRequest(widgets=[], page='home'))
+    check(json.dumps(storage.get_settings().get('panel_pages')) == before,
+          "previewing a draft wrote it to settings")
+
+    # The editor has to actually USE it, and has to redraw after add/remove.
+    with open(os.path.join(TPL, 'home.html'), encoding='utf-8') as fh:
+        tpl = fh.read()
+    check('api/home_board/preview' in tpl,
+          "the editor still builds its board from what is SAVED while editing")
+    for fn in ('async addInstance(', 'async removeInstance(',
+               'async addPickedCard('):
+        body = tpl[tpl.index(fn):]
+        body = body[:body.index('\n                },')]
+        check('this.load()' in body,
+              f"{fn.strip()} does not redraw, so its change waits for Save")
+
+
 def scenario_the_tile_is_edited_on_the_tile():
     """A tile's settings belong on the tile, not in a row of a list below the
     wall — the same argument dragging already won for size.

@@ -287,6 +287,24 @@ tile; both lists deleted.
   | "+ Add tile" under the form | **+ Add tile** as the last cell of the grid |
   | "+ Add a card…" dropdown | **+ Add card** on the container tile itself |
 
+  **"Arrange tiles" is "✎ Edit" (v2.230.6).** The mode stopped being about
+  arranging a while ago — it adds tiles, opens their settings, parks them,
+  removes them — and naming it for the first thing it did hid the rest. Nobody
+  goes looking for "add a tile" inside "arrange", which is exactly how the + at
+  the end of the grid stayed invisible and got asked for twice. With the name
+  right, that + is the only add-tile button needed: you are already in Edit
+  when you want it.
+
+  **Add and remove are not gated on Save (v2.230.6).** The grid draws
+  server-built tiles ordered by the draft, so a tile the draft had just gained
+  had nothing to draw and one it had just lost carried on drawing — until you
+  scrolled down and saved. `POST /api/home_board/preview` builds the board from
+  the draft instead, and `addInstance`/`removeInstance`/`addPickedCard` redraw
+  through it. A POST rather than the existing `?widgets=` GET because a board of
+  HA cards carries YAML and one board on this install already urlencodes past
+  5 KB — an address is the wrong place for a document. It writes nothing, so
+  Cancel still works.
+
   The palette is one partial used three ways (tile / card / form),
   parameterised by Jinja `{% with %}` exactly as `board_options.html` is —
   `GROUPS`, `ADD`, `NOUN`. A runtime flag would make one partial that branches
