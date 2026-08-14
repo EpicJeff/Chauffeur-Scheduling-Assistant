@@ -3,8 +3,10 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-07 (v2.96.0 — the occasions arc SHIPPED O0–O3;
-next up: config is past its limit).
+up cold. Last updated: 2026-08-14 (v2.232.3 — the boards editor arc SHIPPED
+B0–B3; added the native app track and the music panel, both surfaced by the
+same shift: Chauffeur stopped being an admin panel reached from HA and became
+the surface the family actually holds).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -525,24 +527,92 @@ look like — the only one that should be about driving).
   OPENINGS, not assignments — the hard part of picking up slack is visibility,
   not willingness.
 
-## The boards editor arc (designed 2026-08-14 — B0 next)
+## The boards editor arc (SHIPPED 2026-08-14, v2.229.0 → v2.232.1)
 
-Board editing is a form at the bottom of the board; it becomes an in-context
+Board editing was a form at the bottom of the board; it became an in-context
 dashboard workflow — a reorderable boards list with **+ Add Board**, an editor
 bar on the board itself, a ✎ on every tile, and settings as overlays over the
-thing they configure. Four arcs, **B0 → B3 (v2.229.0 → v2.232.0)**, each one
-deleting its counterpart out of `#panel-setup` so there are never two editors
-for one thing; after B3 `#panel-setup` does not exist.
+thing they configure. Four arcs, **B0 → B3**, each deleting its counterpart out
+of `#panel-setup`; after B3 `#panel-setup` does not exist. Full brief:
+`chauffeur/docs/boards_editor_design.md`. On-device verification pending.
 
-The load-bearing decision: **shipped boards become read-only, authored data**
-(`chauffeur/data/builtin_boards.json`), households may only hide them from the
-shelf, and Duplicate is both the escape hatch and how we author them. That
-deletes the silent-fork model — today every one of the ten is already forked
-and no longer tracks anything we ship.
+The load-bearing decision, shipped: **built-in boards are read-only, authored
+data** (`chauffeur/services/builtin_boards.json`), households may only hide
+them from the shelf, and Duplicate is both the escape hatch and how we author
+them — which deleted the silent-fork model where all ten were already forked
+and tracked nothing we shipped.
 
-Full brief, including the migration order (which is not optional) and the
-landmines: **`chauffeur/docs/boards_editor_design.md`**. Blocked on one
-decision — whether 64 is the house column standard.
+**Remaining board work:**
+
+- **The Occasions board should be a GALLERY, not the home card** (raised
+  2026-08-14). The built-in board mounts the `occasions` tile — the home
+  page's "Coming up" summary, `count: 10` — so the board that is *named*
+  Occasions can only list them. It wants the two-level shape: pick an
+  occasion, get its real view (menu, guests, gap report, derived deadlines).
+  The mechanism already exists twice — `trips_gallery` and the moments
+  gallery are mount points that draw with the PAGE's own renderer
+  (`components/trip_gallery.html`, `components/moments_gallery.html`), so a
+  card looks identical on a wall and in a browser. So the work is: extract
+  `components/occasion_gallery.html` out of `templates/occasions.html` (684
+  lines today), add an `occasions_gallery` tile type, point the built-in
+  board at it, bump that board's `v`. **Follow the MOMENTS pattern, not the
+  trips one** — trips ride the board payload, but occasion detail is two
+  levels deep and would make every other card on the board wait on it, so
+  the element is an instance-scoped mount (`board-occasions-<id>`) that
+  fetches for itself.
+- **A Music board — panels should reach Music Assistant** (raised
+  2026-08-14). This is a *consequence of the pivot*: when Chauffeur was
+  mainly an admin panel, it was reached through Home Assistant, so MA was
+  always one tab away and a music surface would have been duplication. Now
+  that the family reaches HA *through* Chauffeur — wall panels, the PWA,
+  kiosk boards — there is no MA within reach of a panel. The asset already
+  exists: `components/music_widget.html` (605 lines, MA-only players, rich
+  search, favorites, artwork proxy, Sendspin phone players) is included by
+  `app.html` alone. So this is the same mount-point conversion as the
+  gallery above, plus three panel-specific decisions: (1) panel-distance
+  drawing — big artwork and touch targets sized for a wall, not a phone;
+  (2) **the panel should default to the player in ITS room** rather than
+  making someone pick every time (the announce arc already established one
+  target per room — reuse that binding, do not invent a second one); (3) it
+  must degrade to nothing sensible with no HA/MA present, per the standing
+  rule, since the card would otherwise be a dead tile on every dev install.
+
+## The native app track (never written down until 2026-08-14 — it should have been)
+
+Phase 2 of the family-network pivot always named a native app, and it fell out
+of this file. Meanwhile four separate arcs deferred work *to* it by name, which
+is the real argument: the wrapper is not a feature, it is the **capability
+floor** that several shipped features are sitting just below.
+
+What is actually blocked on it today, each already written down elsewhere:
+- **Barcode capture** (M1 / `system_capabilities.md`): `BarcodeDetector` exists
+  in no iOS browser, so on the web it means shipping a WASM decoder for the
+  narrowest capture path; Capacitor gets native ML Kit free.
+- **iOS share-target intake** (Phase 3): Android has `/share`; iOS has never
+  supported PWA share targets, and in-app buttons were accepted as the
+  permanent web ceiling. A native share extension is the only thing that
+  removes it.
+- **Voice memos** (still unbuilt): iOS PWA records fine *in the foreground*
+  only — the walkie-talkie moment wants background capture.
+- **Sendspin phone players**: a member's phone is a real MA player, which on
+  the web dies with the tab and owns no lock-screen controls.
+
+**Be honest about what it does NOT buy**, because this is where a wrapper
+usually gets oversold: every family phone already runs the HA companion app,
+which already does background location and native push. Location and push are
+therefore *not* the case for this — the case is capture (share sheet, barcode,
+background audio, background recording).
+
+**The load-bearing constraint, decide it before any code**: the shell must stay
+a thin Capacitor wrapper over the *served* pages, with native plugins as the
+only additive layer. Today a release is one add-on rebuild. If app logic
+migrates into the shell, every release grows a store review cycle, and the
+whole "bump version, commit, rebuild" loop this project runs on stops working.
+Keep the web layer the source of truth and only a plugin change needs a store
+trip. Real costs to price in regardless: an Apple developer account, signing,
+and the fact that the family's install is a LAN/HA add-on — a store build
+pointed at a home server is its own configuration problem (first-run URL entry,
+not a hardcoded host).
 
 ## Nice-to-haves / polish
 
