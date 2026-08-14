@@ -1262,7 +1262,7 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
           "a mosaic is back to fixed-height rows, so it no longer fills its tile")
     check('flex-1 min-h-0' in body,
           "the mosaic does not claim the space its tile has left over")
-    check('fillsTile(t.type)' in tpl and 'isMosaic(key)' in tpl,
+    check('fillsTile(t.type, t.config)' in tpl and 'isMosaic(key)' in tpl,
           "tiles drawn INTO their slot (the mosaics, the map, the timeline) are "
           "no longer distinguished from tiles read down a list, so either they "
           "scroll a photograph or every text tile is stretched to fill")

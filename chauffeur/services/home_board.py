@@ -79,6 +79,20 @@ TITLE_OPTION = _opt('title', 'Title', 'text', '',
                     help="What this tile is called on the board. "
                          "Blank uses the standard name.")
 
+# The other half of the heading, and offered for the same reason. Every entry
+# in the catalog ships an emoji that says what KIND of thing it is — 🚗 for the
+# driving schedule, ⭐ for chores — and for most of them that is the right
+# answer forever. It stops being one the moment a tile is generic: Custom,
+# Card, Entities, Camera and Web page are 🧩 🃏 🏠 📷 🌐 whatever they were
+# pointed at, so a board with the back-door camera, the front-door camera and
+# the radar on it is three tiles wearing the same 📷. The type cannot know; the
+# household does. Appended here rather than declared five times, because it
+# means exactly one thing everywhere and a tile that already has a good default
+# loses nothing by being able to override it.
+ICON_OPTION = _opt('icon', 'Icon', 'text', '',
+                   help="The emoji beside the title. Blank uses the standard "
+                        "one for this kind of tile.")
+
 
 def _cfg_int(config, key, default, lo, hi):
     try:
@@ -194,6 +208,16 @@ WIDGETS = [
          _opt('view', 'View', 'choice', 'timeline', choices=[
              {'value': 'timeline', 'label': 'Timeline'},
              {'value': 'list', 'label': 'Compact list'}]),
+         # ON by default, the same call the calendar card made and for the
+         # same reason: this card IS the Drives page's drawing, and the page's
+         # one irreplaceable tap is opening a drive to see where it goes, who
+         # has it and when to leave. Overlay in place — the SHARED details
+         # dialog the calendar opens, so a wall has one answer to "what is
+         # this event" rather than two. Off, the tile goes back to being a
+         # door onto the Drives page.
+         _opt('interactive', 'Interactive', 'bool', True,
+              help='Tapping a drive opens its details. Off, the timeline is '
+                   'a display and the tile opens the Drives page.'),
          _opt('days', 'Days', 'int', 1, min=1, max=14,
               help='One timeline per day, as the Schedule page shows them.'),
          _opt('drivers', 'Drivers', 'select', [], source='drivers', multi=True,
@@ -375,6 +399,14 @@ WIDGETS = [
      'heading': 'Latest moments',
      'blurb': "Recent photos from the family's events.",
      'options': [
+         # ON by default: a mosaic of thumbnails whose only affordance is
+         # "leave for the gallery" is a worse version of tapping the picture
+         # you were already looking at. It opens the SAME full-screen overlay
+         # a brand-new moment pops on the wall by itself — one drawing, so a
+         # tapped photo and an announced one cannot look like different apps.
+         _opt('interactive', 'Interactive', 'bool', True,
+              help='Tapping a photo opens it full screen. Off, the tile is a '
+                   'display and opens the Moments page.'),
          _opt('count', 'Photos', 'int', 6, min=1, max=12),
          _opt('within_days', 'Going back', 'int', 30, min=1, max=365,
               help='Days. A wall of last summer is a screensaver, not a board.'),
@@ -488,6 +520,20 @@ WIDGETS = [
      'heading': 'Where everyone is',
      'blurb': "Who is home, out, or driving. Needs Home Assistant.",
      'options': [
+         # OFF by default, and the ONE interactive option in this catalog that
+         # breaks the paradigm's "on where there are taps" — deliberately.
+         # Panning is the only interaction a map has, and it is the only one
+         # that PERSISTS: a chore ticked off stays ticked because that is the
+         # point, but a map dragged half a county sideways by somebody
+         # squeezing past the panel stays there until a human fixes it. The
+         # tile is also the board's door onto the Map page, and a Leaflet map
+         # swallows that tap. So it is a picture of the map unless a household
+         # says otherwise — and when they do, the tile grows a ⌖ that puts the
+         # view back, so nobody can strand it.
+         _opt('interactive', 'Interactive', 'bool', False,
+              help='Pan, zoom and tap a pin for who it is, with a ⌖ to frame '
+                   'everyone again. Off, the map is a picture and tapping '
+                   'the tile opens the Map page.'),
          _opt('members', 'People', 'select', [], source='members', multi=True,
               help='Leave empty for everyone.'),
          _opt('cars', 'Show cars', 'bool', True),
@@ -1118,6 +1164,10 @@ def _tile_drives(now, runs, sched=None, config=None, **_):
     """
     view = _cfg_str(config, 'view', 'timeline') or 'timeline'
     show_errands = _cfg_bool(config, 'errands', True)
+    # Rides at the TOP of both payload shapes, like the calendar's: the board's
+    # door logic reads the tile, and a card whose drives open a dialog cannot
+    # also be an <a> to the Drives page or every tap would navigate mid-overlay.
+    interactive = _cfg_bool(config, 'interactive', True)
     only = set(_cfg_ids(config, 'drivers'))
     span = _cfg_int(config, 'days', 1, 1, 14)
 
@@ -1155,6 +1205,7 @@ def _tile_drives(now, runs, sched=None, config=None, **_):
         if not rows:
             return {'empty': "No drives on the schedule."}
         return {'view': 'list', 'rows': rows[:14], 'count': len(rows),
+                'interactive': interactive,
                 'more': max(0, len(rows) - 14)}
 
     # `runs` is TODAY's. A tile showing a week has plenty to draw on a day when
@@ -1179,6 +1230,7 @@ def _tile_drives(now, runs, sched=None, config=None, **_):
     return {
         'view': 'timeline',
         'count': len(rest),
+        'interactive': interactive,
         # Read by the client, which hands it to `renderSchedule` — the page's
         # own errand switch, driven per tile.
         'show_errands': show_errands,
@@ -1592,7 +1644,10 @@ def _tile_moments(now, config=None, **_):
         rows = presence.recent_moments(hours=24 * within, limit=count) or []
         rows = [m for m in rows if m.get('media_url') or m.get('poster_url')
                 or (m.get('attachment') or {}).get('url')]
-        return {'moments': rows[:count]} if rows else None
+        if not rows:
+            return None
+        return {'moments': rows[:count],
+                'interactive': _cfg_bool(config, 'interactive', True)}
     except Exception as e:
         print(f"[home_board] moments failed: {e}")
         return None
@@ -2132,6 +2187,11 @@ def _tile_map(now, runs=None, config=None, **_):
         except Exception as e:
             print(f"[home_board] map cars failed: {e}")
         return {'people': rows,
+                # Read by the markup (whether the canvas takes pointer events),
+                # by the renderer (Leaflet's own handlers and the marker
+                # popups) and by the door logic — a map you can drag cannot
+                # also be a link, or the first pan navigates away.
+                'interactive': _cfg_bool(config, 'interactive', False),
                 'mapped': sum(1 for r in rows if r.get('latitude') is not None
                               and r.get('longitude') is not None)}
     except Exception as e:
@@ -2578,6 +2638,16 @@ def normalize_cards(raw) -> List[dict]:
     return out
 
 
+def _icon_of(config, meta) -> str:
+    """The emoji drawn beside the heading: the household's if they typed one,
+    otherwise the type's. Capped, because this is a glyph slot rather than a
+    second title and a tile whose "icon" is a sentence pushes the name it
+    belongs to off the row. The cap is 8 rather than 1: a single emoji is
+    routinely several code points (a flag is two, 👨‍👩‍👧 is five with the
+    joiners), and slicing one of those in half renders as rubble."""
+    return (_cfg_str(config, 'icon') or '')[:8] or meta['icon']
+
+
 def _build_card(card, now, **kw):
     """One card, drawn. Returns None when it has nothing to say — rule 1, which
     holds for a card in a tile exactly as it held for a tile on a board."""
@@ -2594,7 +2664,7 @@ def _build_card(card, now, **kw):
         return None
     meta = next(w for w in WIDGETS if w['key'] == card['type'])
     return {
-        'id': card['id'], 'type': card['type'], 'icon': meta['icon'],
+        'id': card['id'], 'type': card['type'], 'icon': _icon_of(config, meta),
         # The card-level twin of the custom tile's own `bare`: the cell keeps
         # its place on the tile's grid and stops drawing a surface, so a
         # household can compose a custom tile out of existing cards without
@@ -2635,7 +2705,8 @@ def _build_tile(inst, now, **kw):
                                 now, **kw)
             if built:
                 cards.append(built)
-        tile = {'id': inst['id'], 'type': inst['type'], 'icon': meta['icon'],
+        tile = {'id': inst['id'], 'type': inst['type'],
+                'icon': _icon_of(config, meta),
                 # A heading only if one was typed. An untitled custom tile is
                 # a plain panel, which is what somebody wanting one surface
                 # under three cards is asking for.
@@ -2657,7 +2728,8 @@ def _build_tile(inst, now, **kw):
         # on a mixed board and wrong here — an Errands board with no errands
         # card reads as broken rather than as empty, which is exactly how it
         # reached a wall. Say the true thing instead of leaving a hole.
-        built = {'id': inst['id'], 'type': inst['type'], 'icon': meta['icon'],
+        built = {'id': inst['id'], 'type': inst['type'],
+                 'icon': _icon_of(config, meta),
                  'label': (_cfg_str(config, 'title')
                            or meta.get('heading') or meta['label']),
                  'title': _cfg_str(config, 'title'),
@@ -2667,7 +2739,7 @@ def _build_tile(inst, now, **kw):
     if not built:
         return None
     return {
-        'id': inst['id'], 'type': inst['type'], 'icon': meta['icon'],
+        'id': inst['id'], 'type': inst['type'], 'icon': _icon_of(config, meta),
         # What the WALL says is the typed title and NOTHING else — blank
         # means blank, the same rule cards adopted in v2.204.1. The type's
         # wall sentence ("The rest of the day") stopped being a fallback in
@@ -3301,7 +3373,14 @@ BUILTIN_PAGES = {
     },
     'map': {
         'name': 'Map', 'icon': '🗺️', 'v': 5, 'columns': 12,
-        'widgets': [{'id': 'map', 'type': 'map', 'config': {}, 'require': True}],
+        # Interactive ON, and this is the one place it is worth saying out
+        # loud rather than leaving to the default: the option defaults OFF
+        # because a map tile on a mixed board is a door and a dragged view
+        # stays dragged. This board IS the Map page — there is no door to
+        # protect, the map is the whole surface, and a map you cannot pan is
+        # a screenshot.
+        'widgets': [{'id': 'map', 'type': 'map',
+                     'config': {'interactive': True}, 'require': True}],
         'spans': {'map': {'cols': 12, 'rows': 5}},
     },
     'moments': {
@@ -3903,15 +3982,16 @@ def catalog() -> dict:
     whose empty state is indistinguishable from a deliberate empty selection
     is how a blank wall panel gets shipped.
 
-    `title` is appended to every type's options here rather than declared
-    fifteen times: it is the one option that means the same thing everywhere,
-    and it is the one a board with two calendar tiles needs most.
+    `title` and `icon` are appended to every type's options here rather than
+    declared fifteen times: they are the two options that mean the same thing
+    everywhere, and they are the ones a board with two calendar tiles — or
+    three cameras — needs most.
     """
     ha_ok = ha_configured()
     widgets = []
     for w in WIDGETS:
         w = dict(w)
-        w['options'] = list(w.get('options') or []) + [TITLE_OPTION]
+        w['options'] = list(w.get('options') or []) + [TITLE_OPTION, ICON_OPTION]
         # The hand path for property 1. These two tiles do not exist without a
         # Home Assistant, so the palette says so instead of letting somebody
         # add one and wonder why the wall never shows it.

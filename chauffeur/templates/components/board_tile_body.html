@@ -196,8 +196,18 @@
                                 <div>
                                     <div x-show="r.first_of_day" class="panel-label mt-2 mb-1"
                                         x-text="r.day"></div>
+                                    <!-- Tappable on the same terms as the
+                                         timeline's blocks, and into the same
+                                         dialog: switching a card between
+                                         Timeline and Compact list changes what
+                                         it LOOKS like, never what a tap does. -->
                                     <div class="flex items-baseline gap-2 min-w-0"
-                                        :class="r.done ? 'opacity-45' : ''">
+                                        :class="[r.done ? 'opacity-45' : '',
+                                                 t.data.interactive
+                                                    ? 'cursor-pointer rounded-lg -mx-1 px-1 transition-transform active:scale-[0.99]' : '']"
+                                        :role="t.data.interactive ? 'button' : null"
+                                        :tabindex="t.data.interactive ? 0 : null"
+                                        @click="t.data.interactive && showDriveRow($event, r)">
                                         <span class="text-sm tabular-nums panel-dim shrink-0"
                                             x-text="r.leave_at || r.at"></span>
                                         <span class="w-2 h-2 rounded-full shrink-0"
@@ -414,12 +424,30 @@
                         </div>
                     </template>
 
-                    <!-- latest moments -->
+                    <!-- latest moments.
+                         Interactive, the cell is a BUTTON and opens the photo
+                         full screen — the same overlay a brand-new moment pops
+                         on the wall by itself (moments_hearth's
+                         showMomentOverlayKiosk), so a tapped photo and an
+                         announced one cannot drift into looking like two
+                         different apps. Not interactive, the cells are inert
+                         and the tile stays a door onto the gallery.
+                         ONE drawing either way, with the affordance bound on
+                         rather than a second markup branch: a <button> would
+                         be the honest element for the interactive case and
+                         illegal inside the <a href> the other case still is,
+                         so role/tabindex carry it and the cells stay one
+                         template. -->
                     <template x-if="t.type === 'moments' && !t.data.empty">
                         <div class="grid grid-cols-3 gap-2 flex-1 min-h-0"
                             style="grid-auto-rows: minmax(0, 1fr)">
                             <template x-for="(m, i) in t.data.moments" :key="i">
                                 <div class="relative rounded-xl overflow-hidden bg-gray-800 border border-gray-700"
+                                    :class="t.data.interactive
+                                        ? 'cursor-pointer transition-transform active:scale-[0.97]' : ''"
+                                    :role="t.data.interactive ? 'button' : null"
+                                    :tabindex="t.data.interactive ? 0 : null"
+                                    @click="t.data.interactive && openBoardMoment($event, m)"
                                     :style="collageSpan(i, t.data.moments.length, 3)">
                                     <img :src="momentSrc(m)" alt=""
                                         class="absolute inset-0 w-full h-full object-cover">
@@ -577,14 +605,27 @@
                          table of contents for a map: "not_home" is true and
                          tells you nothing, a pin two streets away tells you
                          they are walking back.
-                         The map takes no pointer events: on this board every
-                         tile is a door, and a Leaflet map would swallow the
-                         tap that opens the real one. -->
+                         The map takes no pointer events UNLESS the card says
+                         it is interactive: on this board every tile is a door,
+                         and a Leaflet map would swallow the tap that opens the
+                         real one. A card that IS the map (the Map board, or
+                         one a household switched on) stops being a door — see
+                         `opens()` — and takes the taps instead.
+                         The ⌖ is the way back. Panning is the one interaction
+                         here that persists, so a map dragged half a county
+                         sideways by somebody squeezing past the panel would
+                         otherwise stay there until a human fixed it. -->
                     <template x-if="t.type === 'map' && !t.data.empty">
                         <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden"
                             style="border: 1px solid var(--panel-line)">
                             <div :id="'board-map-' + t.id" class="board-map absolute inset-0 bg-gray-800"
-                                style="pointer-events: none"></div>
+                                :style="t.data.interactive ? '' : 'pointer-events: none'"></div>
+                            <button type="button" x-show="t.data.interactive && t.data.mapped"
+                                @click.prevent.stop="recenterMap(t.id)"
+                                title="Frame everyone again"
+                                class="absolute bottom-2 right-2 z-[500] w-9 h-9 rounded-full
+                                       flex items-center justify-center text-base font-bold
+                                       panel-card panel-text shadow-lg">⌖</button>
                             <!-- The one thing worth saying over the map: that
                                  there is nothing on it. A grey rectangle is
                                  indistinguishable from a map that failed to

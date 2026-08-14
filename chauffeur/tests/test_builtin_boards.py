@@ -327,7 +327,7 @@ def scenario_fit_to_content_is_measured_not_guessed():
           "can change, so it is right on the first paint and wrong after")
     # And the arithmetic is the lattice's: pixels plus one gutter, same as a
     # tile sized in rows, so an auto tile sits in a row of fixed ones.
-    span = tpl[tpl.index('spanStyle(key, type) {'):]
+    span = tpl[tpl.index('spanStyle(key, type, config) {'):]
     span = span[:span.index(chr(10) + '                },')]
     check('this.gapPx()' in span and 'autoPx' in span,
           "an auto tile does not spend its pixels on the same lattice as the "
@@ -426,6 +426,115 @@ def scenario_the_calendar_card_is_the_page_so_it_taps_like_the_page():
     cfg = page['widgets'][0]['config']
     check(cfg.get('interactive') is None,
           f"the shipped board hardcodes what the default already says: {cfg}")
+
+
+def scenario_the_other_cards_with_taps_have_them_too():
+    """The calendar card earned `interactive` first; three more cards had taps
+    worth having and no way to switch them on.
+
+      * Drives — the timeline's event blocks have carried an onclick since
+        before this board existed, and the board had nowhere to send it, so
+        every drive on the wall was inert.
+      * Moments — a mosaic of thumbnails whose only affordance was "leave for
+        the gallery" is a worse version of tapping the photo you are looking
+        at.
+      * Map — the one map in this app you could not pan.
+
+    Defaults follow the paradigm (on where there are taps) with the map as the
+    deliberate exception: panning is the only interaction here that PERSISTS,
+    and on a wall panel nobody owns the pan.
+    """
+    import datetime
+    now = datetime.datetime(2026, 8, 13, 12, 0)
+
+    keys = {w['key']: w for w in home_board.WIDGETS}
+    for key, default in (('drives', True), ('moments', True), ('map', False)):
+        opt = next((o for o in keys[key]['options'] if o['key'] == 'interactive'),
+                   None)
+        check(opt is not None, f"the {key} card cannot be made interactive")
+        check(opt['default'] is default,
+              f"the {key} card's interactive default is {opt['default']}, "
+              f"not {default}")
+
+    # It reaches the payload, which is what the door logic and the renderers
+    # read — an option the builder drops is an option that does nothing.
+    tile = home_board._tile_drives(now, runs=[], sched={'events': [1]},
+                                   config={'view': 'list'})
+    check(tile.get('interactive') is True or tile.get('empty'),
+          f"a Drives card nobody configured came up inert: {tile}")
+    off = home_board._tile_drives(now, runs=[], sched={'events': [1]},
+                                  config={'view': 'list', 'interactive': False})
+    check(off.get('interactive') is False or off.get('empty'),
+          f"display-only did not stick on the Drives card: {off}")
+
+    tpl = tpl_source.read('home.html')
+    # Interactive content is never ALSO a door: an <a> around a tap that opens
+    # an overlay navigates out from under it.
+    opens = tpl[tpl.index('opens(t) {'):]
+    opens = opens[:opens.index(chr(10) + '                },')]
+    check('INTERACTIVE_TILES' in opens,
+          "an interactive drives/map/moments tile is still an <a> around its "
+          "own taps, so every tap navigates mid-overlay")
+    decl = tpl[tpl.index('INTERACTIVE_TILES:'):]
+    decl = decl[:decl.index(']')]
+    for key in ("'drives'", "'map'", "'moments'"):
+        check(key in decl, f"{key} is interactive and still a door")
+
+    # The Map BOARD is the exception to the exception: it is the map page, so
+    # there is no door to protect and a map you cannot pan is a screenshot.
+    page = home_board.builtin_page('map', {})
+    check(page['widgets'][0]['config'].get('interactive') is True,
+          f"the shipped Map board serves a map nobody can pan: {page['widgets']}")
+
+
+def scenario_a_generic_tile_can_wear_its_own_icon():
+    """Every entry in the catalog ships an emoji saying what KIND of thing it
+    is, and for the generic ones that is all it can ever say: Custom, Card,
+    Entities, Camera and Web page are 🧩 🃏 🏠 📷 🌐 whatever they were pointed
+    at. A board with the back-door camera, the front-door camera and the radar
+    on it was three tiles wearing the same 📷.
+
+    Offered on EVERY type rather than those five, for the same reason `title`
+    is: it means one thing everywhere, and a tile with a good default loses
+    nothing by being able to override it.
+    """
+    cat = home_board.catalog()
+    for w in cat['widgets']:
+        check(any(o['key'] == 'icon' for o in w['options']),
+              f"the {w['key']} tile cannot be given its own icon")
+
+    import datetime
+    now = datetime.datetime(2026, 8, 13, 12, 0)
+    built = home_board._build_tile(
+        {'id': 'w', 'type': 'heading', 'config': {'title': 'Ours', 'icon': '🚌'}},
+        now)
+    check(built['icon'] == '🚌',
+          f"a typed icon never reached the wall: {built['icon']!r}")
+    plain = home_board._build_tile(
+        {'id': 'w', 'type': 'heading', 'config': {'title': 'Ours'}}, now)
+    check(plain['icon'] == '🔤',
+          f"a tile nobody re-iconed lost its own: {plain['icon']!r}")
+    # A glyph slot, not a second title — but the cap has to clear a multi-code
+    # -point emoji or a family renders as rubble.
+    long_ = home_board._build_tile(
+        {'id': 'w', 'type': 'heading',
+         'config': {'title': 'Ours', 'icon': 'the back door camera'}}, now)
+    check(len(long_['icon']) <= 8,
+          f"an 'icon' that is a sentence pushes the title off the row: "
+          f"{long_['icon']!r}")
+    family = home_board._build_tile(
+        {'id': 'w', 'type': 'heading',
+         'config': {'title': 'Ours', 'icon': '\U0001f468‍\U0001f469‍\U0001f467'}},
+        now)
+    check(family['icon'] == '\U0001f468‍\U0001f469‍\U0001f467',
+          f"a joined emoji was sliced in half: {family['icon']!r}")
+
+    # And the EDITOR shows the override, or it can only be checked by walking
+    # to the wall — which is the surface the icon exists to disambiguate.
+    tpl = tpl_source.read('home.html')
+    check('instanceIcon(w)' in tpl and 'instanceIcon(c)' in tpl,
+          "the editor's rows still wear the type's emoji, so three cameras "
+          "are three identical rows")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

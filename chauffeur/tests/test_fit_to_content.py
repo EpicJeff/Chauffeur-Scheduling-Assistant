@@ -221,7 +221,7 @@ def scenario_an_empty_tile_measures_nothing_rather_than_guessing():
     check(got['nothing'] == 0,
           f"a tile with no rendered content measured {got['nothing']}")
     src = tpl_source.read('home.html')
-    span = src[src.index('spanStyle(key, type) {'):]
+    span = src[src.index('spanStyle(key, type, config) {'):]
     span = span[:span.index(chr(10) + '                },')]
     check('this.autoPx[key] ||' in span,
           "a tile with no measurement yet does not fall back to its rows, so "
@@ -268,12 +268,51 @@ def scenario_the_shipped_boards_ask_for_fit():
     a timeline and a mosaic are laid out into the tile, so `auto` would
     collapse them."""
     src = tpl_source.read('home.html')
-    fn = src[src.index('isAuto(key, type) {'):]
+    fn = src[src.index('isAuto(key, type, config) {'):]
     fn = fn[:fn.index(chr(10) + '                },')]
-    check('fillsTile(type)' in fn,
+    check('fillsTile(type, config)' in fn,
           "a map or a timeline can be set to fit, which collapses it")
     check('.auto' in fn,
           "isAuto reads something other than the span's own switch")
+
+
+def scenario_fit_is_offered_per_instance_not_per_type():
+    """Reported as "a few cards still have no Fit toggle, and Drives is the
+    obvious one". It was: a Drives card is a timeline OR a compact list and a
+    calendar card is a mounted grid OR a one-line-per-event list, so "drawn
+    into the tile" is a property of the SHAPE, not of the type. `fillsTile`
+    knew only the type, so both list halves were refused a fit they could have
+    honoured exactly — a list whose length nobody can type is the case fit
+    exists for.
+
+    The mounted halves must still be refused: a component handed no height
+    draws an hour rail an inch tall. Agenda counts as mounted (it has been one
+    since v2.207), which is the trap in this — only `list` flows.
+    """
+    src = tpl_source.read('home.html')
+    fn = src[src.index('FLOWS_WHEN: {'):]
+    fn = fn[:fn.index('},')]
+    check(fn.count("=== 'list'") == 2,
+          f"the two list-shaped views are not what decides this: {fn}")
+    check("drives:" in fn and "calendar:" in fn,
+          "one of the two types that draw two shapes is missing")
+    # Named by INCLUSION — the one view that flows — rather than by excluding
+    # the mounted ones. Exclusion is how `agenda` would have been got wrong:
+    # it reads like a list and has been a component mount since v2.207, so a
+    # "not month/week/day" test would hand it a fit and collapse it. It is
+    # also how the NEXT view added to the component would get one.
+    check('month' not in fn and 'week' not in fn,
+          "the mounted views are decided by exclusion, so a view added to the "
+          "component later defaults to fitting and collapses")
+
+    # And every caller carries the instance's config, or the predicate above
+    # is answering about a shape it cannot see.
+    for call in ('fillsTile(t.type, t.config)', 'fillsTile(w.type, w.config)',
+                 'fillsTile(c.type, c.config)',
+                 'spanStyle(t.id, t.type, t.config)',
+                 'isAuto(t.id, t.type, t.config)'):
+        check(call in src, f"`{call}` is not how fit is decided, so the "
+                           f"toggle and the drawing can disagree")
 
 def scenario_the_resize_observer_reaches_the_content():
     """The custom-tile report: fit measured once at mount and never again. The
@@ -470,7 +509,7 @@ def scenario_a_fit_tile_says_what_it_measured():
     say whether the measurement was wrong or had never happened — two very
     different bugs. The arrange nameplate carries the number now."""
     src = tpl_source.read('home.html')
-    fn = src[src.index('spanLabel(id, type) {'):]
+    fn = src[src.index('spanLabel(id, type, config) {'):]
     fn = fn[:fn.index(chr(10) + '                },')]
     check('autoPx' in fn and 'px' in fn,
           "the arrange label says `fit` without saying what it measured")
@@ -507,7 +546,7 @@ def scenario_a_card_inside_a_tile_can_fit_too():
 
     # And the tile's arrange label names the cause, since the fix is one
     # level down and nothing else points at it.
-    label = src[src.index('spanLabel(id, type) {'):]
+    label = src[src.index('spanLabel(id, type, config) {'):]
     label = label[:label.index(chr(10) + '                },')]
     check('sized' in label,
           "a tile fitting a dragged card looks broken with nothing on screen "

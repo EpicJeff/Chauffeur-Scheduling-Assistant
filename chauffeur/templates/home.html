@@ -748,11 +748,11 @@
                      being a link, stops being focusable, and legally contains
                      the toggle buttons the Home Assistant card puts inside it. -->
                 <a :href="!arranging && opens(t) ? link(t.type) : null"
-                    :style="spanStyle(t.id, t.type)" :data-tile-id="t.id"
+                    :style="spanStyle(t.id, t.type, t.config)" :data-tile-id="t.id"
                     @pointerdown="arranging && startTileDrag($event, t.id)"
                     class="min-w-0 overflow-x-hidden relative"
                     :class="[t.bare ? '' : 'panel-card rounded-2xl p-4 md:p-5',
-                             fillsTile(t.type) ? 'flex flex-col overflow-hidden'
+                             fillsTile(t.type, t.config) ? 'flex flex-col overflow-hidden'
                                                : 'block tile-scroll overflow-y-auto',
                              !arranging && opens(t) ? 'transition-transform active:scale-[0.985]' : '',
                              arranging ? 'tile-arranging' : '']">
@@ -783,7 +783,7 @@
                          same number the editor's fields take, so the two
                          surfaces are visibly the same setting. -->
                     <div x-show="arranging" class="tile-arrange-badge"
-                        x-text="(t.label || widgetMeta(t.type).label) + ' · ' + spanLabel(t.id, t.type)"></div>
+                        x-text="(t.label || widgetMeta(t.type).label) + ' · ' + spanLabel(t.id, t.type, t.config)"></div>
 
                     <!-- The corner. Sized for a mouse rather than a thumb on
                          purpose: arranging is a browser job, and a handle big
@@ -838,10 +838,23 @@
                                          state a nested stack's cell wears; a
                                          card asked to be bare keeps its place
                                          on the grid and drops its box. -->
+                                    <!-- A DRAWN card with no height of its own
+                                         (a map, a mounted calendar, a camera)
+                                         is the one case where "as tall as the
+                                         content" has no answer — the content
+                                         is laid out INTO the box, so with no
+                                         box there is nothing to lay it into
+                                         and the card collapsed to its padding.
+                                         Fit means fill for those: they take a
+                                         standing height instead of none, which
+                                         is the same promise the tile-level
+                                         `rows` makes for the same types. -->
                                     <div class="nc-cell" :data-path="c.id"
                                         :data-plain="c.bare ? 'true' : null"
                                         :style="`grid-column:span ${c.cols};`
-                                            + (c.rows ? `height:calc(${c.rows} * var(--nc-row))` : '')">
+                                            + (c.rows ? `height:calc(${c.rows} * var(--nc-row))`
+                                               : (fillsTile(c.type, c.config)
+                                                   ? 'min-height:calc(4 * var(--nc-row))' : ''))"
                                         <!-- Arrange handles, drawn INTO the cell:
                                              the drag grip, the resize corner, and
                                              the way into the card's settings. -->
@@ -876,7 +889,21 @@
                                              below is the one drawing of each type
                                              this app has, and it knows the
                                              variable by that name. -->
-                                        <div class="min-w-0 flex-1 overflow-y-auto tile-scroll"
+                                        <!-- The same flex-or-scroll split the
+                                             TILE makes, made again here. It was
+                                             missing, and silently: a camera or
+                                             a map card's picture is a `flex-1
+                                             min-h-0` box, `flex-1` in a
+                                             non-flex parent does nothing, and
+                                             the box came out zero pixels tall.
+                                             No error, no console line — a card
+                                             that drew nothing. Exactly the bug
+                                             `fillsTile` was written for one
+                                             level up. -->
+                                        <div class="min-w-0 flex-1"
+                                            :class="fillsTile(c.type, c.config)
+                                                ? 'flex flex-col overflow-hidden'
+                                                : 'overflow-y-auto tile-scroll'"
                                             x-data="{ t: c }">
                                             {% include 'components/board_tile_body.html' %}
                                         </div>
@@ -906,7 +933,7 @@
             <template x-if="editing">
                 <div class="ed-card rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5">
                     <div class="flex items-center gap-2 mb-1">
-                        <span class="text-lg" x-text="widgetMeta(editing.type).icon"></span>
+                        <span class="text-lg" x-text="instanceIcon(editing)"></span>
                         <span class="text-base font-black ed-title"
                             x-text="instanceLabel(editing)"></span>
                         <button type="button" class="ml-auto ed-btn px-2"
@@ -1181,7 +1208,7 @@
                         <template x-for="(w, i) in page().widgets" :key="w.id">
                             <div class="ed-panel rounded-lg">
                             <div class="flex flex-wrap items-center gap-2 px-3 py-2">
-                                <span x-text="widgetMeta(w.type).icon"></span>
+                                <span x-text="instanceIcon(w)"></span>
                                 <span class="flex-1 min-w-0">
                                     <span class="text-sm font-semibold ed-title"
                                         x-text="instanceLabel(w)"></span>
@@ -1216,9 +1243,14 @@
                                      off) or tall (a band of empty panel). Not
                                      offered on a map, a timeline or a mosaic —
                                      their content is laid out INTO the tile, so
-                                     there is no natural height to fit. -->
+                                     there is no natural height to fit.
+                                     Decided per INSTANCE, not per type: a
+                                     Drives card set to Compact list, or a
+                                     calendar showing its agenda, is a LIST and
+                                     fits like one — which is why `w.config`
+                                     goes along. -->
                                 <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                                    x-show="!(spanOf(w.id, 'auto') && !fillsTile(w.type))">
+                                    x-show="!(spanOf(w.id, 'auto') && !fillsTile(w.type, w.config))">
                                     <input type="number" min="1" step="1"
                                         :value="spanOf(w.id, 'rows')"
                                         @change="setSpan(w.id, 'rows', $event.target.value)"
@@ -1226,7 +1258,7 @@
                                     rows
                                 </label>
                                 <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                                    x-show="!fillsTile(w.type)"
+                                    x-show="!fillsTile(w.type, w.config)"
                                     title="As tall as whatever it is showing">
                                     <input type="checkbox" :checked="!!spanOf(w.id, 'auto')"
                                         @change="setSpan(w.id, 'auto', $event.target.checked)">
@@ -1275,7 +1307,7 @@
                                         <template x-for="(c, j) in tileCards(w)" :key="c.id">
                                             <div class="ed-panel rounded-lg">
                                                 <div class="flex items-center gap-2 px-2.5 py-2">
-                                                    <span x-text="widgetMeta(c.type).icon"></span>
+                                                    <span x-text="instanceIcon(c)"></span>
                                                     <span class="flex-1 min-w-0 text-sm ed-title truncate"
                                                         x-text="instanceLabel(c)"></span>
                                                     <label class="flex items-center gap-1 text-[0.7rem] ed-note">
@@ -1996,6 +2028,19 @@
                     // observers live outside Alpine and this is the only line
                     // that knows the component exists.
                     boardAuto.onMeasure = (id, el) => this.onAutoMeasured(id, el);
+                    // Where a tapped drive goes. The timeline's event blocks
+                    // call this name by string from markup the renderer built,
+                    // so it has to be a global; schedule_timeline.html stubs it
+                    // to a no-op for hosts that have nowhere to send the tap.
+                    // Assigned unconditionally (not `||=`) so ours wins
+                    // whichever script ran first, and it still does nothing
+                    // when the card that drew the event is display-only —
+                    // `driveEvents` only holds what an interactive card put
+                    // there.
+                    window.openEventModal = (id) => {
+                        const ev = this.driveEvents[id];
+                        if (ev) this.showDrive(ev);
+                    };
                     this.tick();
                     // The clock ticks LOCALLY. Refetching the board to move a
                     // minute hand would be 1,440 requests a day to render a
@@ -2196,12 +2241,15 @@
                 // in `watchAutoTiles` keep it honest as content arrives (these
                 // cards self-fetch, so it always arrives after the first paint).
                 autoPx: {},
-                isAuto(key, type) {
+                isAuto(key, type, config) {
                     // A tile whose content is laid out INTO it — a map, a
                     // timeline, a mosaic — has no natural height to fit: it is
                     // the height that decides the content, not the other way
                     // round. Offering `auto` there would collapse it.
-                    return !!this.spanOfLive(key).auto && !this.fillsTile(type);
+                    // `config` because that is decided per INSTANCE for the
+                    // two types that draw two shapes — see FLOWS_WHEN.
+                    return !!this.spanOfLive(key).auto
+                        && !this.fillsTile(type, config);
                 },
 
                 // Attach an observer to every fit-to-content tile now on the
@@ -2220,7 +2268,7 @@
                     // custom one — which is what a wall reported. A span is a
                     // property of a TILE, so this walks tiles.
                     for (const t of this.tiles()) {
-                        if (!this.isAuto(t.id, t.type)) continue;
+                        if (!this.isAuto(t.id, t.type, t.config)) continue;
                         const el = document.querySelector(
                             `[data-tile-id="${CSS.escape(t.id)}"]`);
                         if (!el) continue;
@@ -2269,7 +2317,7 @@
                     }
                 },
 
-                spanStyle(key, type) {
+                spanStyle(key, type, config) {
                     const s = this.spanOfLive(key);
                     const max = this.cols();
                     const c = Math.min(max, Math.max(1, parseInt(s.cols, 10)
@@ -2286,7 +2334,7 @@
                     // Until the first measurement lands it uses its stored
                     // rows, which is what stops a board flashing a stack of
                     // one-pixel tiles on every load.
-                    const px = this.isAuto(key, type)
+                    const px = this.isAuto(key, type, config)
                         ? (this.autoPx[key] || r * this.rowHeight())
                         : r * this.rowHeight();
                     return `grid-column: span ${c}; `
@@ -2320,7 +2368,39 @@
                 // a month grid drawn into a block-flow tile has no height to
                 // claim, and the agenda scrolls inside its own panel.
                 DRAWN_TILES: ['map', 'drives', 'calendar', 'ha_image', 'ha_dashboard', 'ha_card', 'web'],
-                fillsTile(key) {
+
+                // ── Except that two of them are only drawn SOMETIMES.
+                //
+                // "Drawn into the tile" is a property of the drawing, not of
+                // the type, and two types in the list above draw two different
+                // things depending on one setting. The Drives card is a
+                // timeline OR a compact list; the calendar card is a mounted
+                // grid (month, week, day — and agenda, which has been a mount
+                // since v2.207) OR the payload-built one-line-per-event list.
+                // The mounted halves genuinely cannot fit — a component handed
+                // no height is an hour rail an inch tall — but the list halves
+                // are exactly the case `fit` was built for: a list whose
+                // length nobody can type, because it is however many drives
+                // today happens to have.
+                //
+                // Reported as "a few cards still have no Fit toggle, and
+                // Drives is the obvious one". It was: `fillsTile` knew the
+                // type and not the shape, so a Drives card set to Compact list
+                // was refused a fit it could have honoured perfectly.
+                //
+                // The predicate reads the INSTANCE's config, which is why
+                // everything downstream of here — the toggle, `isAuto`,
+                // `spanStyle`, the arrange label, the flex/scroll class — now
+                // carries it. The defaults match the server's (`view` defaults
+                // to timeline and agenda respectively), so a tile nobody has
+                // configured answers exactly as it did before.
+                FLOWS_WHEN: {
+                    drives: c => (c.view || 'timeline') === 'list',
+                    calendar: c => (c.view || 'agenda') === 'list',
+                },
+                fillsTile(key, config) {
+                    const flows = this.FLOWS_WHEN[key];
+                    if (flows && flows(config || {})) return false;
                     return this.isMosaic(key) || this.DRAWN_TILES.includes(key);
                 },
 
@@ -2379,14 +2459,99 @@
                 },
 
                 syncTimeline() {
+                    this.driveEvents = {};
                     this.drawnTiles()
                         .filter(t => t.type === 'drives')
                         .forEach(tile => this.renderTimelineInto(tile));
                 },
 
+                // ── Tapping a drive.
+                //
+                // The timeline's event blocks have carried
+                // `onclick="openEventModal(...)"` since long before this board
+                // existed; components/schedule_timeline.html defines that name
+                // as an empty function so a host with nowhere to send the tap
+                // does nothing rather than throwing. This board was such a
+                // host: every drive on the wall was inert, and the whole tile
+                // was a door to the Drives page instead.
+                //
+                // It is a registry rather than a lookup into the renderer's
+                // own `currentEventsMap` because that variable holds whichever
+                // tile was drawn LAST — two Drives cards on one board would
+                // have the second one answering for the first. Rebuilt on
+                // every sync, so a card switched to display-only empties out
+                // and its taps go quiet again.
+                driveEvents: {},
+
+                registerDrives(tile) {
+                    const s = tile.data.schedule || {};
+                    const meta = s.calendar_metadata || {};
+                    const assign = s.assignments || {};
+                    const names = {};
+                    (s.drivers || []).concat(s.ghost_drivers || [])
+                        .forEach(d => { names[d.id] = d.name; });
+                    const unassigned = new Set(s.unassigned || []);
+                    for (const ev of (s.events || [])) {
+                        const cals = ev.calendar_ids || [];
+                        const first = cals.length ? meta[cals[0]] : null;
+                        const color = (first && first.backgroundColor) || '#3B82F6';
+                        const driver = assign[ev.id];
+                        this.driveEvents[ev.id] = {
+                            id: ev.id,
+                            title: ev.title || 'Event',
+                            allDay: false,
+                            start: ev.start, end: ev.end,
+                            backgroundColor: color,
+                            extendedProps: {
+                                rawColor: color,
+                                location: ev.location || '',
+                                description: ev.description || '',
+                                // The calendars an event is on ARE the people
+                                // going, which is the same equivalence the
+                                // calendar card's own chips are drawn from.
+                                passengers: cals
+                                    .filter(c => meta[c])
+                                    .map(c => ({ name: meta[c].summary || c,
+                                                 color: meta[c].backgroundColor })),
+                                driverName: (driver && !String(driver).startsWith('ghost_'))
+                                    ? names[driver] : '',
+                                isUnassigned: unassigned.has(ev.id),
+                                tripSuppressed: !!ev.trip_suppressed,
+                            },
+                        };
+                    }
+                },
+
+                // The compact list has no schedule payload behind it — it is
+                // the day's RUNS, which is a different (smaller) shape. Same
+                // dialog, built from the row, so switching a card between
+                // Timeline and Compact list does not change what a tap does.
+                showDriveRow(ev, row) {
+                    if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+                    this.showDrive({
+                        id: row.id, title: row.title, allDay: false,
+                        start: row.start, end: row.end,
+                        backgroundColor: row.color,
+                        extendedProps: {
+                            rawColor: row.color,
+                            location: row.location || '',
+                            passengers: [],
+                            driverName: row.driver || '',
+                            isErrand: row.kind === 'errand',
+                        },
+                    });
+                },
+
+                showDrive(evObj) {
+                    if (window.FamilyCalendar && FamilyCalendar.showEvent) {
+                        FamilyCalendar.showEvent(evObj);
+                    }
+                },
+
                 renderTimelineInto(tile) {
                     const el = document.getElementById('board-timeline-' + tile.id);
                     if (!el || !(tile.data || {}).schedule) return;
+                    if (tile.data.interactive) this.registerDrives(tile);
                     const data = tile.data.schedule;
                     try {
                         currentData = data;
@@ -2607,14 +2772,26 @@
                     // A map bound to an element Alpine has since replaced is
                     // drawing into a node nobody can see.
                     const held = boardMaps[tile.id];
-                    if (held && held.el !== el) {
+                    // `interactive` is baked into the Leaflet instance at
+                    // construction (dragging, touchZoom and the rest are map
+                    // options, not properties), so a card switched over in the
+                    // editor has to be rebuilt rather than reconfigured —
+                    // otherwise the setting appears to do nothing until the
+                    // panel is reloaded, which is exactly the class of bug the
+                    // calendar card's `JSON.stringify(g)` remount fixed.
+                    const live = !!tile.data.interactive;
+                    if (held && (held.el !== el || held.opts.interactive !== live)) {
                         try { held.destroy(); } catch (e) { }
                         delete boardMaps[tile.id];
                     }
                     if (!boardMaps[tile.id]) {
                         boardMaps[tile.id] = FamilyMap.create(el, {
-                            interactive: false,   // the tile is a door; see the markup
-                            popups: false,        // nothing to tap means nothing to open
+                            // Off, the tile is a door; see the markup. On, the
+                            // pins are worth tapping — a popup says who the
+                            // marker is and what they are doing, which is the
+                            // whole reason /map is a map.
+                            interactive: live,
+                            popups: live,
                             markerSize: 30,
                             maxZoom: 14
                         });
@@ -2623,6 +2800,17 @@
                         await boardMaps[tile.id].ensure();
                         await boardMaps[tile.id].refresh(tile.data.people);
                     } catch (e) { /* no Leaflet, no map: the chips still say who is where */ }
+                },
+
+                // The ⌖ on an interactive map card. Named here rather than
+                // reaching into Leaflet from the markup: the fit arithmetic
+                // (which markers, how much padding, what maximum zoom) belongs
+                // to the component that framed them in the first place, or the
+                // button and the first render would disagree about what
+                // "everyone" means.
+                recenterMap(id) {
+                    const m = boardMaps[id];
+                    if (m) try { m.recenter(); } catch (e) { }
                 },
 
                 // The picture the board floats on. Set once per load and left
@@ -2635,6 +2823,26 @@
                         ? `url("${bg.startsWith('api/') ? this.apiBase + bg : bg}")`
                         : 'radial-gradient(1200px 800px at 20% 0%, #1e293b 0%, #0b1020 60%)';
                     if (el.style.backgroundImage !== next) el.style.backgroundImage = next;
+                },
+
+                // A photo on the board, opened.
+                //
+                // The overlay is moments_hearth's, not one written here: it is
+                // the same full-screen card the wall pops by itself when a
+                // moment arrives, it already handles clips (the compositing
+                // CSS, the play badge, the longer dwell) and it closes on a
+                // tap. A second lightbox on this page would be a third drawing
+                // of one photograph.
+                //
+                // `stop` because the cell sits inside the tile's <a>: an
+                // interactive moments card is not a door (see `opens`), but a
+                // card in a CUSTOM tile sits inside whatever that tile is, and
+                // a tap that opens a photo must never also navigate.
+                openBoardMoment(ev, m) {
+                    if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+                    if (typeof window.showMomentOverlayKiosk === 'function') {
+                        window.showMomentOverlayKiosk(m);
+                    }
                 },
 
                 momentSrc(m) {
@@ -3227,7 +3435,7 @@
                     this.arranging = false;
                 },
 
-                spanLabel(id, type) {
+                spanLabel(id, type, config) {
                     const s = (this.page().spans || {})[id] || {};
                     const c = Math.min(this.cols(), Math.max(1, parseInt(s.cols, 10)
                                                                || this.defaultCols(type)));
@@ -3236,7 +3444,7 @@
                     // height with nothing on screen to say whether the
                     // measurement was wrong or never happened, and those are
                     // very different bugs to go looking for.
-                    if (this.isAuto(id, type)) {
+                    if (this.isAuto(id, type, config)) {
                         const px = this.autoPx[id];
                         // A tile fitting a card that was DRAGGED to a height
                         // is the one case where fit looks broken and is not:
@@ -3928,6 +4136,16 @@
                     return `${label} (${same.indexOf(w) + 1} of ${same.length})`;
                 },
 
+                // And what it WEARS. The editor showed the type's emoji, so
+                // three cameras were three identical 📷 rows even after
+                // somebody had named them — the icon override has to be
+                // visible in the list it is meant to disambiguate, or it can
+                // only be checked by walking to the wall.
+                instanceIcon(w) {
+                    return ((w.config || {}).icon || '').trim().slice(0, 8)
+                        || this.widgetMeta(w.type).icon;
+                },
+
                 countOfType(type) {
                     return this.page().widgets.filter(w => w.type === type).length;
                 },
@@ -4204,16 +4422,26 @@
                            'task_list', 'errand_list',
                            'shopping_staples', 'shopping_list',
                            'routines_lanes'],
-                // Takes the TILE, not its type: an interactive calendar is
-                // decided per instance. Its events open the details dialog,
-                // and an <a> around them would navigate mid-overlay — so an
-                // interactive calendar card is not a door, while a
-                // display-only one (interactive off, or the payload-built
-                // list view) keeps being one.
+                // Takes the TILE, not its type: interactivity is decided per
+                // instance. A card whose own content answers the tap — an
+                // event opening its details, a photo opening full screen, a
+                // map being dragged — cannot ALSO be an <a> to a page, or
+                // every tap navigates out from under the thing it just
+                // opened. So the rule is one line long and the same for all
+                // of them: interactive content, no door.
+                //
+                // The calendar's extra `grid` test is not an exception to
+                // that; it is the same test. Its agenda and list views are
+                // drawn from the payload and have no taps at all, so only the
+                // MOUNTED views (month, week, day) can be interactive, and
+                // `grid` is how the payload says which one this is.
+                INTERACTIVE_TILES: ['drives', 'map', 'moments'],
                 opens(t) {
                     if (this.PAGELESS.includes(t.type)) return false;
                     if (t.type === 'calendar' && t.data
                         && t.data.grid && t.data.interactive) return false;
+                    if (this.INTERACTIVE_TILES.includes(t.type)
+                        && t.data && t.data.interactive) return false;
                     return true;
                 },
 

@@ -234,6 +234,23 @@
                     }
                 },
 
+                // Frame everyone again, on demand.
+                //
+                // `fit` is deliberately a once-per-instance thing — a map that
+                // re-framed itself every poll would yank the view out from
+                // under anybody reading it. The cost of that is that a pan
+                // PERSISTS, and on a wall panel nobody owns the pan: a map
+                // dragged sideways by somebody squeezing past stays dragged
+                // for days. This is the way back, and it is why the board's
+                // map card can be interactive at all.
+                recenter() {
+                    const marks = Object.values(inst.markers);
+                    if (!inst.map || !marks.length) return;
+                    inst.didFit = true;
+                    inst.map.fitBounds(L.featureGroup(marks).getBounds().pad(0.3),
+                                       { maxZoom: opts.maxZoom });
+                },
+
                 startPolling(ms) {
                     inst.stopPolling();
                     inst.timer = setInterval(() => {

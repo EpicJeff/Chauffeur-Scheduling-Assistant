@@ -1708,6 +1708,20 @@ window.FamilyCalendar = {
     // The details dialog's own close button reaches this by name — the markup
     // is emitted by this include, so the pairing cannot drift.
     closeEvent: _closeEventModal,
+    // The dialog WITHOUT a calendar behind it.
+    //
+    // "What is this event" now has exactly one answer on a wall panel, and it
+    // is this one. The board's Drives card draws the Schedule page's timeline,
+    // and tapping a drive there has to say the same things a tapped calendar
+    // event says — where it is, who is driving, who is going — or a household
+    // learns two dialogs for one question. There is no FullCalendar instance
+    // in that case, so the host passes a plain event-shaped object and gets
+    // the same panel.
+    //
+    // No `onConfigure` is possible through this door, which is correct: the
+    // way into the event EDITOR is the calendar page's, and a board is a
+    // board.
+    showEvent(evObj) { _openEventDetails({ opts: {} }, evObj); },
     setView(id, name) {
         const inst = _fcInstances.get(id);
         if (inst) setCalView(inst, name);

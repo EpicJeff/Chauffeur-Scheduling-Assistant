@@ -105,6 +105,10 @@ def _board(hero=None):
              'bare': True, 'data': {'ok': True}},
             {'id': 'drives', 'type': 'drives', 'icon': '🚗', 'label': 'The rest of the day', 'data': {
                 'count': 2, 'next_event_id': 'e1',
+                # As the builder now ships it. A payload without the flag is
+                # display-only and its blocks stay inert, which is what the
+                # `interactive: False` half of the option means.
+                'interactive': True,
                 # The RANGE the tile was configured for. renderSchedule seeds
                 # its day map from these and draws one timeline section per
                 # day; `days` is what tells the client to withhold dateFilter,
@@ -295,7 +299,32 @@ setTimeout(() => {
       })()
     },
     map: { mounted: !!doc.getElementById('board-map-map'),
+           // A display-only map must not take the tap the tile's door needs.
+           quiet: /pointer-events:\s*none/.test(
+             (doc.getElementById('board-map-map') || {}).getAttribute
+               ? doc.getElementById('board-map-map').getAttribute('style') || '' : ''),
            listRows: doc.querySelectorAll('.panel-chip').length },
+    // Tapping a drive. The timeline's blocks carry an onclick by string, and
+    // for the life of this board it landed on schedule_timeline's no-op stub.
+    driveTap: (() => {
+      const tl = doc.getElementById('board-timeline-drives');
+      const block = tl && tl.querySelector('[id^="event-"]');
+      if (!block) return null;
+      block.click();
+      const modal = doc.getElementById('simple-event-modal');
+      return {
+        open: !!(modal && !modal.classList.contains('hidden')),
+        title: (doc.getElementById('modal-title') || {}).textContent || '',
+        driver: (doc.getElementById('modal-driver') || {}).textContent
+          ? doc.getElementById('modal-driver').textContent.replace(/\s+/g, ' ').trim() : '',
+        // The way into the event EDITOR is the calendar page's; a board is a
+        // board and must never offer it.
+        configure: (() => {
+          const c = doc.getElementById('modal-config-container');
+          return !!(c && c.style.display !== 'none');
+        })(),
+      };
+    })(),
     builtin: (() => {
       const el = doc.querySelector('[data-tile-id="drives"]');
       if (!el) return null;
@@ -676,8 +705,15 @@ def scenario_a_custom_tile_draws_its_cards_as_the_content_they_are():
           f"the intake card drew no intake: {g['cells'][2]['text'][:200]}")
     check('span 6' in g['cells'][0]['style'] and 'span 6' in g['cells'][2]['style'],
           f"a card's width did not reach the grid: {[c['style'] for c in g['cells']]}")
-    check('height' not in g['cells'][0]['style'],
+    check(';height:' not in g['cells'][0]['style'],
           f"an unsized card was given a height: {g['cells'][0]['style']}")
+    # …but a DRAWN card with no height of its own gets a floor, which is not
+    # the same thing. Its content is laid out INTO the box: with no box there
+    # is nothing to lay it into, and a mounted calendar or a map in a custom
+    # tile collapsed to its own padding. "Fit" for those types means fill.
+    check('min-height:calc' in g['cells'][0]['style'],
+          f"a mounted calendar card has no height to draw into, so it "
+          f"collapses: {g['cells'][0]['style']}")
     check('calc(3 * var(--nc-row))' in g['cells'][2]['style'],
           f"a sized card did not get its height: {g['cells'][2]['style']}")
     check(g['free'],
@@ -797,6 +833,41 @@ def scenario_the_map_tile_is_only_a_map():
     check(got['map']['mounted'], "the map has nowhere to mount")
     check(got['map']['listRows'] == 0,
           f"the map tile is listing people again ({got['map']['listRows']} chips)")
+    # And a map card nobody switched on is a PICTURE of the map. Leaflet would
+    # otherwise swallow the tap the tile's door depends on, and a wall panel
+    # would be one accidental drag away from a map of the wrong county with no
+    # way back — which is why `interactive` defaults off on this one card.
+    check(got['map']['quiet'],
+          "a display-only map takes pointer events, so it eats the tap that "
+          "opens the Map page")
+
+
+def scenario_tapping_a_drive_says_what_it_is():
+    """The Drives card draws the Schedule page's real timeline, and that
+    renderer's event blocks have carried `onclick="openEventModal(...)"` since
+    long before this board existed. `schedule_timeline.html` defines that name
+    as an empty function so a host with nowhere to send the tap does nothing
+    rather than throwing — and this board was exactly such a host. Every drive
+    on the wall was inert, and the only thing a tap could do was navigate the
+    whole panel to /drives.
+
+    It opens the SAME dialog a tapped calendar event opens, deliberately:
+    "what is this event" gets one answer on a wall, not two. What it must NOT
+    grow is the way into the event editor — that door is the calendar page's.
+    """
+    got = _run()
+    if got is None:
+        return
+    tap = got['driveTap']
+    check(tap is not None, "there was no drive on the board to tap")
+    check(tap['open'],
+          "tapping a drive on the board still does nothing — the timeline's "
+          "onclick is landing on the no-op stub")
+    check(tap['title'], f"the dialog opened with no event in it: {tap}")
+    check('Sam' in tap['driver'] or 'Vovo' in tap['driver'],
+          f"the dialog does not say who is driving: {tap['driver']!r}")
+    check(not tap['configure'],
+          "a wall panel is offering the event editor")
 
 
 def scenario_a_multi_day_driving_tile_draws_a_timeline_per_day():
