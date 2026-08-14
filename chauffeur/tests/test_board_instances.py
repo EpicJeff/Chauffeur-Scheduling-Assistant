@@ -239,6 +239,42 @@ def scenario_the_calendar_tile_reads_its_own_day_count():
               f"a {n}-day tile did not say so: {data}")
 
 
+def scenario_a_board_can_be_copied_handed_over_and_pasted_back():
+    """The three ways a board moves, and all three exist because the shipped
+    boards are read-only: Duplicate is how a household changes one, and export
+    is how WE author one — the add-on's filesystem is rebuilt on every update
+    and is not the repo, so the instance can only ever hand the board over."""
+    got = _run_editor()
+    if got is None:
+        return
+    p = got['porting']
+    check(p['copyName'] == 'Chores copy', f"the copy is unnamed: {p['copyName']}")
+    check(p['copySlug'] not in ('chores', 'home'),
+          f"the copy took a slug the server drops: {p['copySlug']}")
+    check(p['copyKeptRequire'],
+          "the copy lost the flags the board it copied was carrying")
+    check(p['sourceUntouched'],
+          "editing the copy edited the shipped board it came from — that "
+          "object is module state serving every other page on this install")
+    # The slug guard. A household naming a board `Chores` used to get slug
+    # `chores`, which since v2.229.0 the server drops: the board would simply
+    # disappear on save, which is the worst way to report a name collision.
+    check(p['collide'] not in ('chores',),
+          f"a board named Chores minted the shipped slug: {p['collide']}")
+    check(p['homeCollide'] != 'home',
+          f"a board named Home took the reserved slug: {p['homeCollide']}")
+    check(p['typed'] != 'map',
+          f"a shipped slug typed by hand was accepted: {p['typed']}")
+    # Out and back in, losslessly.
+    check(p['roundTrip'] == ['drives'],
+          f"the export is not the board: {p['roundTrip']}")
+    check(p['backTypes'] == ['drives'],
+          f"the import lost the tiles: {p['backTypes']}")
+    check(p['backSlug'] != 'home',
+          f"an imported board claimed the reserved home slug: {p['backSlug']}")
+    check(p['rejected'], "a JSON array was accepted as a board")
+
+
 def scenario_a_parked_tile_costs_the_wall_nothing_but_comes_back():
     """Hiding is a person's decision, so it must be reversible — which means
     the tile has to still BE somewhere. It ships as a stub: no builder runs, so
@@ -423,6 +459,11 @@ globalThis.document = {
   addEventListener: function () {}
 };
 globalThis.setInterval = function () { return 0; };
+// Lives in components/control_center.html, which home.html includes and this
+// harness deliberately does not: the point of running the board script alone
+// is that it has no page around it. Stubbed rather than guarded in the app,
+// because in a browser it is always there.
+globalThis.showGlobalAlert = function () {};
 """
 
 PROBE = r"""
@@ -503,6 +544,82 @@ console.log(JSON.stringify({
   // Only types with an empty state to say, and never chrome.
   requirable: ['map', 'heading', 'custom', 'chores_lanes']
       .map(t => b.canRequire(t)),
+
+  // ── Duplicate / export / import.
+  porting: (function () {
+    // This block rearranges the whole draft, and the keys after it in this
+    // object are still reading the one the scenarios above set up. Snapshot
+    // and put it back — an earlier version of this quietly broke the
+    // span-cleanup scenario from three keys away.
+    const kept = { pages: b.draft.panel_pages, at: b.pageIndex,
+                   cat: b.catalog, ship: b.shipped };
+    b.catalog = Object.assign({}, b.catalog, {
+      builtin_pages: ['chores', 'map', 'errands'] });
+    b.draft.panel_pages = [
+      { slug: 'home', name: 'Home', icon: 'H', v: 5, columns: 12,
+        row_height: 240, gap: 16, background: '', spans: {},
+        widgets: [{ id: 'drives', type: 'drives', config: {} }] },
+    ];
+    b.pageIndex = 0;
+    b.shipped = [{ slug: 'chores', name: 'Chores', icon: 'C', v: 5,
+      columns: 12, row_height: 240, gap: 16, background: 'ours',
+      spans: { chores_lanes: { cols: 12 } },
+      widgets: [{ id: 'chores_lanes', type: 'chores_lanes', config: {},
+                  require: true }] }];
+
+    // Copying a SHIPPED board must not hand out the shipped object.
+    b.duplicateShipped('chores');
+    const copy = b.draft.panel_pages[b.pageIndex];
+    copy.widgets[0].config.title = 'mine';
+    copy.spans.chores_lanes.cols = 3;
+    const sourceUntouched = b.shipped[0].widgets[0].config.title === undefined
+      && b.shipped[0].spans.chores_lanes.cols === 12;
+
+    // A name a household might reasonably pick, whose slug IS a shipped
+    // board's. The server drops those, so the editor must not mint one.
+    b.draft.panel_pages.push({ slug: '', name: 'Chores', v: 5, widgets: [],
+                               spans: {}, columns: 12, row_height: 240,
+                               gap: 16, background: '' });
+    const collide = b.freshSlug('Chores');
+    const homeCollide = b.freshSlug('Home');
+
+    // Typed by hand into the address field.
+    b.pageIndex = b.draft.panel_pages.length - 1;
+    b.setPageSlug('map');
+    const typed = b.page().slug;
+
+    // Out and back in.
+    b.pageIndex = 0;
+    b.exportPage();
+    const text = b.exporting;
+    b.importing = text;
+    b.importPage();
+    const back = b.draft.panel_pages[b.pageIndex];
+    b.importing = '[1,2,3]';
+    let rejected = true;
+    const before = b.draft.panel_pages.length;
+    b.importPage();
+    rejected = b.draft.panel_pages.length === before;
+
+    b.draft.panel_pages = kept.pages;
+    b.pageIndex = kept.at;
+    b.catalog = kept.cat;
+    b.shipped = kept.ship;
+
+    return {
+      copyName: copy.name,
+      copySlug: copy.slug,
+      copyKeptRequire: copy.widgets[0].require === true,
+      sourceUntouched: sourceUntouched,
+      collide: collide,
+      homeCollide: homeCollide,
+      typed: typed,
+      roundTrip: JSON.parse(text).widgets.map(w => w.type),
+      backTypes: back.widgets.map(w => w.type),
+      backSlug: back.slug,
+      rejected: rejected,
+    };
+  })(),
   ids: b.page().widgets.map(w => w.id),
   untouched: one.config,
   configured: two.config,

@@ -1028,6 +1028,61 @@
                         </button>
                     </div>
 
+                    <!-- Starting from one of the app's boards. Those are
+                         read-only, so this is the only way to have a Chores
+                         board that is not exactly ours — and it is also how we
+                         author theirs: copy, arrange it against real data,
+                         export, ship. -->
+                    <div class="flex flex-wrap items-center gap-2 mb-3">
+                        <select @change="duplicateShipped($event.target.value);
+                                         $event.target.value = ''"
+                            class="text-xs ed-input rounded px-2 py-1 ed-title">
+                            <option value="">Start from one of the app's boards…</option>
+                            <template x-for="b in shippedBoards()" :key="b.slug">
+                                <option :value="b.slug" x-text="b.icon + ' ' + b.name"></option>
+                            </template>
+                        </select>
+                        <button type="button" @click="duplicatePage(page())"
+                            class="text-xs ed-btn rounded-full border border-gray-700 px-3 py-1"
+                            title="A copy of this board, to change without losing this one">
+                            ⧉ Duplicate this board
+                        </button>
+                        <button type="button"
+                            @click="porting = !porting; if (porting) exportPage()"
+                            class="text-xs ed-btn rounded-full border border-gray-700 px-3 py-1"
+                            title="This board as JSON, and boards pasted back in">
+                            <span x-text="porting ? '× Close' : '{ } JSON'"></span>
+                        </button>
+                    </div>
+
+                    <div x-show="porting" x-cloak class="ed-panel rounded-lg p-3 mb-4 space-y-3">
+                        <div>
+                            <div class="text-[0.7rem] ed-note mb-1">
+                                This board, exactly as it is saved. Hand it over to
+                                have it become one of the app's own boards.
+                            </div>
+                            <textarea readonly x-text="exporting" rows="6"
+                                class="w-full ed-input rounded px-2 py-1 text-[0.7rem] font-mono ed-title"></textarea>
+                            <button type="button" @click="copyExport()"
+                                class="mt-1 text-xs ed-btn rounded border border-gray-700 px-2 py-1">
+                                Copy
+                            </button>
+                        </div>
+                        <div>
+                            <div class="text-[0.7rem] ed-note mb-1">
+                                Paste a board here to add it as a new one of yours.
+                            </div>
+                            <textarea x-model="importing" rows="4"
+                                placeholder="{ &quot;name&quot;: &quot;Hallway&quot;, &quot;widgets&quot;: [ … ] }"
+                                class="w-full ed-input rounded px-2 py-1 text-[0.7rem] font-mono ed-title"></textarea>
+                            <button type="button" @click="importPage()"
+                                :disabled="!(importing || '').trim()"
+                                class="mt-1 text-xs ed-btn rounded border border-gray-700 px-2 py-1 disabled:opacity-30">
+                                Add board
+                            </button>
+                        </div>
+                    </div>
+
                     <!-- This board's own identity. The address is shown because
                          it IS the board: a wall panel is a bookmark, so the
                          thing somebody types into a tablet has to be visible
@@ -2074,6 +2129,11 @@
                 // them — but the editor still needs their names and icons to
                 // offer a picture for each.
                 shipped: [],
+                // The import/export drawer: open, the JSON on the way out, and
+                // the JSON being pasted in.
+                porting: false,
+                exporting: '',
+                importing: '',
                 // The Add-tile picker: open, and what is typed into its search.
                 picking: false,
                 pickFilter: '',
@@ -4499,10 +4559,134 @@
                     const next = String(value || '').toLowerCase()
                         .replace(/[^a-z0-9-]+/g, '-').replace(/^-+/, '').slice(0, 31);
                     if (next === old) return;
-                    p.slug = next;
+                    // A shipped board's slug is not available. Since v2.229.0
+                    // the server drops any stored page under one — that is how
+                    // the old forks were made inert — so accepting `chores`
+                    // here would make this board disappear on save with no
+                    // explanation. De-duplicated rather than refused: the
+                    // address field shows what it became, which is the same
+                    // answer `freshSlug` gives a new board.
+                    p.slug = next && this.slugTaken(next, p)
+                        ? this.freshSlug(next, p) : next;
                     const tabs = this.draft.panel_tabs || [];
                     const at = tabs.indexOf('board:' + old);
-                    if (at >= 0 && next) tabs[at] = 'board:' + next;
+                    if (at >= 0 && p.slug) tabs[at] = 'board:' + p.slug;
+                },
+
+                // Every slug this household cannot have: the shipped boards
+                // (the server drops pages under those), the reserved home
+                // slug, and their own other boards.
+                slugTaken(slug, except) {
+                    if (!slug) return false;
+                    if (slug === 'home') return !(except && except.slug === 'home');
+                    if (this.isBuiltinPage(slug)) return true;
+                    return (this.draft.panel_pages || [])
+                        .some(p => p !== except && p.slug === slug);
+                },
+
+                // ── A board as JSON, out and back in.
+                //
+                // Out is how a shipped board gets authored: there is no dev
+                // mode and no writing to the container's filesystem (it is
+                // rebuilt on every update and is not the repo), so the instance
+                // only ever needs to HAND you the board. In is the sibling that
+                // makes the pair worth having on its own — board backup, and
+                // moving a board between installs.
+                //
+                // Exactly the shape `_cleanPages` saves, so what you paste back
+                // is what you took out.
+                exportPage() {
+                    const p = this._cleanPages()[this.pageIndex];
+                    this.exporting = p ? JSON.stringify(p, null, 2) : '';
+                },
+
+                async copyExport() {
+                    try {
+                        await navigator.clipboard.writeText(this.exporting || '');
+                        showGlobalAlert('Board copied.');
+                    } catch (e) {
+                        // Clipboard access is refused outside a secure context,
+                        // which a wall panel on plain http is. The textarea is
+                        // still there to select by hand, so say that rather
+                        // than failing silently.
+                        showGlobalAlert('Could not reach the clipboard — '
+                                        + 'select the text and copy it.');
+                    }
+                },
+
+                importPage() {
+                    let page;
+                    try {
+                        page = JSON.parse(this.importing || '');
+                    } catch (e) {
+                        showGlobalAlert('That is not JSON.');
+                        return;
+                    }
+                    if (!page || typeof page !== 'object' || Array.isArray(page)
+                        || !Array.isArray(page.widgets)) {
+                        showGlobalAlert('That is JSON, but it is not a board.');
+                        return;
+                    }
+                    // Through the SAME normaliser a loaded board goes through,
+                    // so pasted text cannot put a shape in the draft that the
+                    // rest of the editor does not expect. The slug is re-derived
+                    // for the same reason `duplicatePage` re-derives it: a
+                    // pasted `chores` would be dropped by the server on save.
+                    const fresh = {
+                        ...this.blankPage(page.name || 'Board', ''),
+                        ...page,
+                        widgets: this.toInstances(page.widgets),
+                        spans: { ...(page.spans || {}) },
+                    };
+                    // No `except`: that argument means "this page is allowed to
+                    // keep the slug it already has", which is right when
+                    // RENAMING one and wrong here — the pasted text carries a
+                    // slug, and honouring it would let an import claim `home`.
+                    fresh.slug = this.freshSlug(fresh.name);
+                    (this.draft.panel_pages || (this.draft.panel_pages = []))
+                        .push(fresh);
+                    this.pageIndex = this.draft.panel_pages.length - 1;
+                    this.importing = '';
+                    this.porting = false;
+                    showGlobalAlert(`Added "${fresh.name}".`);
+                },
+
+                // Copy a board into one of the household's own.
+                //
+                // This is the escape hatch for the shipped boards being
+                // read-only — you cannot edit Chores, you take a copy and edit
+                // that — and it is also how WE author them: set the copy up on
+                // a real instance against real chores and real photos, export
+                // it, and it becomes the shipped board.
+                //
+                // A DEEP copy, and not a nicety: sharing a widget object with
+                // the source means editing the copy edits the source, and for
+                // a shipped board that source is module state serving every
+                // other page on this install.
+                duplicatePage(source) {
+                    if (!source) return null;
+                    const pages = this.draft.panel_pages || (this.draft.panel_pages = []);
+                    const copy = JSON.parse(JSON.stringify(source));
+                    copy.name = `${(source.name || 'Board').trim()} copy`;
+                    // No `except` — see importPage. The copy carries the
+                    // source's slug, and a copy of the home board must not be
+                    // allowed to keep it.
+                    copy.slug = this.freshSlug(copy.name);
+                    // Never the copy of a picture the household did not choose:
+                    // a shipped board's authored background belongs to that
+                    // board, and inheriting it silently pins the copy to a
+                    // photograph that changes under it when we re-author.
+                    copy.background = source.background || '';
+                    pages.push(copy);
+                    this.pageIndex = pages.length - 1;
+                    return copy;
+                },
+
+                // The shipped board currently chosen in the "start from" menu,
+                // resolved to the whole page so Duplicate has something to copy.
+                duplicateShipped(slug) {
+                    const from = (this.shipped || []).find(p => p.slug === slug);
+                    if (from) this.duplicatePage(from);
                 },
 
                 addPage() {
@@ -4519,14 +4703,19 @@
                     this.pageIndex = pages.length - 1;
                 },
 
-                freshSlug(name) {
+                // A slug nothing else has claimed — checked against the SHIPPED
+                // boards and the reserved home slug as well as this
+                // household's own. A board that took `chores` would be dropped
+                // by the server on save (that is how the old forks were made
+                // inert) and would simply disappear, which is the worst way
+                // for a name collision to be reported.
+                freshSlug(name, except) {
                     const base = String(name || 'board').toLowerCase()
                         .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 31)
                         || 'board';
-                    const taken = new Set((this.draft.panel_pages || []).map(p => p.slug));
-                    if (!taken.has(base)) return base;
+                    if (!this.slugTaken(base, except)) return base;
                     let n = 2;
-                    while (taken.has(`${base}-${n}`)) n += 1;
+                    while (this.slugTaken(`${base}-${n}`, except)) n += 1;
                     return `${base}-${n}`;
                 },
 
