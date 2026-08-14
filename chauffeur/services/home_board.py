@@ -581,7 +581,7 @@ WIDGETS = [
          # too — zero-config equals the page. A wall that only wants what is
          # ahead turns it off.
          _opt('show_past', 'Trips already over', 'bool', True,
-              help='The last month of them, badged as past.'),
+              help='Badged as past, sorted below what is still coming.'),
          _opt('tile_width', 'Block width', 'int', 320, min=180, max=700,
               help='Pixels, minimum. The grid fits as many as the tile is wide.'),
          # THE CONVERSION PARADIGM: every part of the page's drawing is a
@@ -2229,9 +2229,21 @@ def _tile_trips(now, config=None, **_):
         return None
 
 
-# How far back the gallery looks. The same month `/api/trips` uses, so the
-# card and the page agree about what counts as recent enough to still show.
-TRIP_GALLERY_BACK_DAYS = 30
+# How far back "trips" reaches, for EVERYBODY: `/api/trips` uses it as its
+# Google `timeMin`, and the gallery card uses it as its look-back. One number,
+# because the two must agree — a card looking back further than the fetch
+# looks back is a card that can never find what it is asking for.
+#
+# It was 30 days, and that was the whole of "past trips are not showing even
+# when the setting is on". A month is the wrong unit for this: the trips page
+# calls itself "your upcoming and past adventures", and a family's adventures
+# are months and seasons back, not weeks. Nothing older than a month could be
+# known by ANY surface — the page included — because a real trip's dates live
+# on its Google event and nothing outside that window was ever fetched.
+#
+# A year costs the same number of requests (one search per calendar per
+# hashtag); only the window widens.
+TRIPS_BACK_DAYS = 365
 
 
 def _tile_trips_gallery(now, config=None, **_):
@@ -2250,7 +2262,7 @@ def _tile_trips_gallery(now, config=None, **_):
             return None                       # no trips ever: feature unused
         show_past = _cfg_bool(config, 'show_past', True)
         count = _cfg_int(config, 'count', 0, 0, 40)
-        rows = _trip_rows(now, back_days=TRIP_GALLERY_BACK_DAYS if show_past else 0)
+        rows = _trip_rows(now, back_days=TRIPS_BACK_DAYS if show_past else 0)
         if not show_past:
             rows = [r for r in rows if not r['past']]
         if not rows:

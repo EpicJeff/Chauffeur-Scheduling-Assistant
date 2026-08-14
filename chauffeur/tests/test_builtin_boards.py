@@ -818,10 +818,12 @@ def scenario_the_gallery_rows_carry_what_the_page_shows():
             {'id': 't1', 'title': 'Disney World: spring', 'location': 'Orlando',
              'start': '2026-08-20', 'end': '2026-08-27',
              'background_url': 'disney world castle'},
-            # Thirteen days ago: inside the gallery's month-long look-back
-            # and outside the glance tile's, which looks back not at all.
+            # FIVE MONTHS ago — the case the report was actually about. A
+            # family's past trips are seasons back, and until the look-back
+            # became a year this one could not be known by any surface in the
+            # app, the trips page included.
             {'id': 't2', 'title': 'Ski week', 'location': 'Boone',
-             'start': '2026-07-28', 'end': '2026-08-01',
+             'start': '2026-03-02', 'end': '2026-03-09',
              'background_url': 'https://e/ski.jpg'},
         ]}
         storage.get_all_trip_metadata = lambda: []
@@ -844,7 +846,7 @@ def scenario_the_gallery_rows_carry_what_the_page_shows():
         # The GALLERY asks for a window back, so trips that are over still
         # appear — badged as past, at the bottom, which is what the page does.
         back = {r['id']: r for r in
-                home_board._trip_rows(now, back_days=60)}
+                home_board._trip_rows(now, back_days=home_board.TRIPS_BACK_DAYS)}
         check('t2' in back and back['t2']['past'] is True,
               f"the gallery cannot show a trip that is over: {list(back)}")
         check(list(back)[-1] == 't2',
@@ -865,6 +867,71 @@ def scenario_the_gallery_rows_carry_what_the_page_shows():
         storage.get_all_trip_metadata = real_meta
         storage.get_trip_metadata = real_one
         storage.get_cached_schedule = real_sched
+
+
+def scenario_a_past_trip_can_actually_be_known():
+    """"Past trips are not showing even when the setting to show them is
+    enabled" — and the toggle was working perfectly. Two things underneath it
+    were not, and neither was visible from the card:
+
+    1. `/api/trips` fetched Google from `now - 30 days`. A month is the wrong
+       unit for "your upcoming and past adventures": nothing older than that
+       was ever fetched by ANY surface, the trips page included, because a
+       real trip's dates live on its Google event and nowhere else. The card
+       could look back as far as it liked at data that stopped a month ago.
+    2. The snapshot those dates land in is written as a side effect of loading
+       the trips PAGE — and since v2.216 `?panel=true` on /trips serves the
+       board, so a wall-only household refreshed it never.
+
+    The window is one number now, shared by the fetch and the card, because a
+    card looking back further than the fetch does is asking for something
+    nothing went and got.
+    """
+    import re as _re
+    from services import home_board as hb
+    check(hb.TRIPS_BACK_DAYS >= 180,
+          f"the look-back is {hb.TRIPS_BACK_DAYS} days — a family's past "
+          f"trips are seasons back, not weeks")
+
+    src = open(os.path.join(ROOT, 'main.py'), encoding='utf-8').read()
+    check('TRIPS_BACK_DAYS' in src,
+          "the trips fetch has its own look-back again, so the card can ask "
+          "for a year and be handed a month")
+    check('timedelta(days=30)' not in
+          src[src.index('def assemble_trips'):src.index('def assemble_trips') + 900],
+          "the 30-day window is back")
+
+    # The card asks for the same window it can be answered from.
+    gal = src  # noqa: F841  (read for the assertions above)
+    hbsrc = open(os.path.join(ROOT, 'services', 'home_board.py'),
+                 encoding='utf-8').read()
+    fn = hbsrc[hbsrc.index('def _tile_trips_gallery'):]
+    fn = fn[:fn.index('\n\n\n')]
+    check('TRIPS_BACK_DAYS' in fn,
+          "the gallery's look-back is a second number, free to disagree")
+
+    # And something refreshes the snapshot without a browser in the loop.
+    check('def refresh_trips_snapshot' in src,
+          "nothing rebuilds the trips snapshot, so a wall-only household's "
+          "trips freeze at the last browser visit")
+    loop = src[src.index('async def poll_schedule'):]
+    loop = loop[:loop.index('async def push_notification_loop')]
+    check('refresh_trips_snapshot' in loop,
+          "the refresh exists and nothing calls it")
+    fn2 = src[src.index('def refresh_trips_snapshot'):]
+    fn2 = fn2[:fn2.index('\n\n\n')] if '\n\n\n' in fn2 else fn2
+    check('TRIPS_SNAPSHOT_MAX_AGE' in fn2,
+          "the refresh is not throttled, so a 5-minute loop calls Google "
+          "every 5 minutes")
+    check('trip_hashtags' in fn2,
+          "a household that does not use trips is polled anyway")
+
+    # A failed calendar call must NOT write an empty snapshot — that would
+    # blank every trip on the wall for a network blip.
+    asm = src[src.index('def assemble_trips'):]
+    asm = asm[:asm.index('trips_map = {}')]
+    check('return []' in asm and 'set_cached_trips' not in asm,
+          "a calendar outage erases the snapshot")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

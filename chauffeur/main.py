@@ -83,7 +83,46 @@ async def poll_schedule():
             await asyncio.to_thread(trigger_background_refresh)
         except Exception as e:
             print(f"Polling error: {e}")
+        try:
+            await asyncio.to_thread(refresh_trips_snapshot)
+        except Exception as e:
+            print(f"Trips snapshot error: {e}")
         await asyncio.sleep(300)
+
+
+# How stale the trips snapshot may get before this loop goes and rebuilds it.
+# An hour, because a trip's dates change about never and every rebuild is a
+# handful of Google searches — the point is that the snapshot cannot go
+# indefinitely stale, not that it is fresh to the minute.
+TRIPS_SNAPSHOT_MAX_AGE = 3600
+
+
+def refresh_trips_snapshot():
+    """Keep the trips snapshot alive on a household that never opens a browser.
+
+    The snapshot is the only place a real trip's dates exist outside Google,
+    and it used to be refreshed as a side effect of somebody loading the trips
+    page. Since v2.216 `?panel=true` on /trips serves the BOARD instead, so a
+    wall-only household refreshed it never — and v2.228's trips gallery reads
+    it, so "past trips are not showing" had a second cause underneath the
+    window being too narrow: on some installs there was nothing to look back
+    at, because nothing had gone and looked.
+
+    Self-throttled by the snapshot's own timestamp, in the same spirit as the
+    day-of traffic sweep, so the caller can run it blindly on its own loop.
+    """
+    snap = storage.get_cached_trips() or {}
+    age = time.time() - float(snap.get('at') or 0)
+    if snap.get('trips') and age < TRIPS_SNAPSHOT_MAX_AGE:
+        return
+    # A household with no trip hashtags and no trip metadata is not using the
+    # feature; going to Google on a timer for it would be work nobody asked
+    # for. The same "is this set up" question the tile itself asks before it
+    # draws anything.
+    settings = storage.get_settings() or {}
+    if not settings.get('trip_hashtags') and not storage.get_all_trip_metadata():
+        return
+    assemble_trips()
 
 import time
 from datetime import datetime, timezone
@@ -1170,20 +1209,50 @@ def trips_list_view(request: Request):
 
 @app.get("/api/trips")
 def get_all_trips_api():
+    """The trips list, assembled and snapshotted.
+
+    A thin caller since v2.228.1: the assembly is `assemble_trips()` so the
+    background sweep can run it too. It had to be, and the reason is the whole
+    of "past trips are not showing":
+
+    A real trip's dates live on its Google calendar event and are assembled
+    NOWHERE ELSE. The home board cannot call Google on a 60-second poll, so it
+    reads the snapshot this leaves behind — and until v2.216 that was fine,
+    because every wall panel loaded this page and refreshed it on the way. Then
+    `?panel=true` on /trips started serving the BOARD, and a household that
+    only ever uses the wall stopped refreshing the snapshot at all. The trips
+    gallery then reads a snapshot that is however old the last browser visit
+    was, or empty on an install that has never had one.
+    """
+    return {"trips": assemble_trips()}
+
+
+def assemble_trips():
     settings = storage.get_settings()
     calendar_ids = settings.get('calendar_ids', [])
     trip_hashtags = settings.get('trip_hashtags', [])
     
     from datetime import datetime as dt, timedelta, timezone
+    from services.home_board import TRIPS_BACK_DAYS
     now = dt.now()
-    time_min = (now - timedelta(days=30)).isoformat() + 'Z'
+    # The look-back is shared with the trips GALLERY card, which reads the
+    # snapshot this call leaves behind — a card looking back further than this
+    # fetch does is a card asking for something nothing ever went and got. It
+    # was 30 days, which is why no surface in this app could show a trip from
+    # last season however many toggles said it should.
+    time_min = (now - timedelta(days=TRIPS_BACK_DAYS)).isoformat() + 'Z'
     time_max = (now + timedelta(days=365)).isoformat() + 'Z'
     
     from services.calendar import get_calendar_service
     try:
         service = get_calendar_service()
     except Exception as e:
-        return {"error": str(e), "trips": []}
+        # No calendar, no assembly — and crucially NO SNAPSHOT WRITE. An empty
+        # list written here would erase every trip the board knows about
+        # because Google was briefly unreachable, which is a wall going blank
+        # for a network blip.
+        print(f"trips: no calendar service ({e})")
+        return []
         
     trips_map = {}
     
@@ -1223,7 +1292,11 @@ def get_all_trips_api():
             try:
                 res = service.events().list(
                     calendarId=cal_id, q=tag, singleEvents=True,
-                    timeMin=time_min, timeMax=time_max, maxResults=50
+                    # 50 was comfortable for a 13-month window and is not for
+                    # a two-year one: a clipped search silently drops the
+                    # OLDEST trips, which are exactly the ones this widening
+                    # exists to reach.
+                    timeMin=time_min, timeMax=time_max, maxResults=250
                 ).execute()
                 for g in res.get('items', []):
                     add_trip(cal_id, g)
@@ -1283,7 +1356,7 @@ def get_all_trips_api():
         storage.set_cached_trips(trips_list)
     except Exception as e:
         print(f"trips snapshot failed: {e}")
-    return {"trips": trips_list}
+    return trips_list
 
 from models.schemas import CreateTripRequest
 
