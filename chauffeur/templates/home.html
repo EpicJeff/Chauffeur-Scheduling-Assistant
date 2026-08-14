@@ -4905,7 +4905,11 @@
                                 const s = this.musicState[t.id];
                                 if (s) s.notice = msg;
                             },
-                            onState: () => { /* Alpine repaints on the tick */ },
+                            // The ONLY thing that makes a local player visible.
+                            // See musicNow(): the player itself is outside
+                            // Alpine, so its state has to be copied in or the
+                            // card never repaints for it.
+                            onState: () => this.syncLocalState(t),
                         });
                     }
                     return boardLocalPlayers[t.id];
@@ -4919,21 +4923,43 @@
                 // What the card is looking at: the local player's own state
                 // when this screen is the speaker, the HA entity otherwise.
                 // One shape either way, so nothing above here branches.
+                // What the card is looking at, from ONE reactive field either
+                // way. It used to read the local player's live object here,
+                // and that is the reason a screen playing music showed
+                // "Nothing playing" forever: the player is deliberately
+                // outside Alpine (it holds a socket and an audio pipeline), so
+                // nothing this expression read from it could ever invalidate
+                // the render. The remote half worked only because `s.now` is
+                // reassigned on the poll and IS tracked.
+                //
+                // So the player's state is MIRRORED into the reactive store on
+                // every change (`syncLocalState`), and nothing above here
+                // branches on which kind of speaker it is.
                 musicNow(t) {
                     const s = this.musicState[t.id];
-                    if (!s) return null;
-                    if (s.selected === this.MUSIC_LOCAL) {
-                        const lp = boardLocalPlayers[t.id];
-                        return lp ? lp.nowPlaying() : null;
-                    }
-                    return s.now;
+                    return s ? s.now : null;
+                },
+
+                // The live object's serialisable state, copied into Alpine.
+                // Called on every state change the player reports AND on the
+                // ten-second beat, because a client that only announces
+                // playback changes would leave a track change unpainted.
+                syncLocalState(t) {
+                    const s = this.musicState[t.id];
+                    const lp = boardLocalPlayers[t.id];
+                    if (!s || !lp) return;
+                    s.localActive = lp.active;
+                    s.localConnecting = lp.connecting;
+                    if (s.selected !== this.MUSIC_LOCAL) return;
+                    s.now = lp.nowPlaying();
+                    s.localPlaying = lp.isPlaying();
                 },
 
                 musicLocalLabel(t) {
-                    const lp = boardLocalPlayers[t.id];
+                    const s = this.musicState[t.id];
                     const name = (t.data && t.data.screen_name) || 'This screen';
-                    if (lp && lp.connecting) return `📻 ${name} (connecting…)`;
-                    return `📻 ${name}${lp && lp.active ? ' ●' : ''}`;
+                    if (s && s.localConnecting) return `📻 ${name} (connecting…)`;
+                    return `📻 ${name}${s && s.localActive ? ' ●' : ''}`;
                 },
 
                 syncMusic(refresh) {
@@ -4956,6 +4982,10 @@
                                 players: [], now: null, q: '', results: null,
                                 searching: false, error: '', notice: '',
                                 favorites: [],
+                                // The local player's state, mirrored in from
+                                // outside Alpine — see musicNow().
+                                localActive: false, localConnecting: false,
+                                localPlaying: false,
                             };
                             // Created up front, connected only when somebody
                             // picks it — a wall panel must not seize an audio
@@ -4993,7 +5023,12 @@
                     const mine = lp ? lp.entityIn(players) : null;
                     s.players = players.filter(p => !mine || p.entity_id !== mine.entity_id);
                     if (s.selected === this.MUSIC_LOCAL) {
-                        s.now = null;       // the local player answers for itself
+                        // Mirrored rather than skipped. The push from the
+                        // client is the fast path; this is the safety net for
+                        // a client that reports playback changes but not
+                        // metadata ones, which would otherwise leave a track
+                        // change unpainted until somebody pressed something.
+                        this.syncLocalState(t);
                         return;
                     }
                     // The pinned speaker was renamed, removed, or is simply
@@ -5041,15 +5076,22 @@
                         if (lp.wanted) lp.start();
                     }
                     s.now = s.players.find(p => p.entity_id === entityId) || null;
+                    // Straight away, not on the next beat. Coming BACK to a
+                    // screen that is already connected, `start()` returns
+                    // early and reports no state change, so without this the
+                    // card would show nothing playing on a screen that is
+                    // audibly playing.
+                    this.syncLocalState(t);
                 },
 
                 musicPlaying(t) {
-                    if (this.musicIsLocal(t)) {
-                        const lp = boardLocalPlayers[t.id];
-                        return !!(lp && lp.isPlaying());
-                    }
                     const s = this.musicState[t.id];
-                    return !!(s && s.now && s.now.state === 'playing');
+                    if (!s) return false;
+                    // Mirrored, like everything else about the local player —
+                    // reading `lp.isPlaying()` here left the play/pause glyph
+                    // frozen on whatever it was when the card first drew.
+                    if (s.selected === this.MUSIC_LOCAL) return !!s.localPlaying;
+                    return !!(s.now && s.now.state === 'playing');
                 },
 
                 musicArt(t) {

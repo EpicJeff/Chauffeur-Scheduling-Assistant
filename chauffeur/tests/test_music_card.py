@@ -266,6 +266,58 @@ def scenario_the_local_player_lives_outside_alpine_and_outlives_a_poll():
           "a card removed from the board leaves its socket open")
 
 
+def scenario_the_local_players_state_is_mirrored_into_alpine():
+    """Reported from a real wall: the screen played music and the card said
+    "Nothing playing" forever.
+
+    The player is deliberately OUTSIDE Alpine — it holds a socket and an audio
+    pipeline — which means nothing a template expression reads from it can
+    invalidate the render. The remote half worked only because `s.now` is
+    reassigned on the poll and IS tracked. So the live object's serialisable
+    state has to be copied INTO the reactive store, and nothing above that may
+    branch on which kind of speaker it is.
+    """
+    tpl = tpl_source.read('home.html')
+    fn = tpl[tpl.index('musicNow(t) {'):]
+    fn = fn[:fn.index('syncLocalState(t) {')]
+    check('boardLocalPlayers' not in fn,
+          "musicNow() reads the live player again, so a local screen's track "
+          "never repaints")
+    playing = tpl[tpl.index('musicPlaying(t) {'):]
+    playing = playing[:playing.index('musicArt(t) {')]
+    check('boardLocalPlayers' not in playing,
+          "the play/pause glyph reads the live player, so it freezes on "
+          "whatever it was when the card first drew")
+    mirror = tpl[tpl.index('syncLocalState(t) {'):]
+    mirror = mirror[:mirror.index('musicLocalLabel(t) {')]
+    for field in ('s.now', 's.localPlaying', 's.localActive', 's.localConnecting'):
+        check(field in mirror, f"{field} is never mirrored in")
+    # Pushed on change, AND on the beat — a client that reports playback
+    # changes but not metadata ones would leave a track change unpainted.
+    check('onState: () => this.syncLocalState(t)' in tpl,
+          "the player's own state changes do not reach the card")
+    refresh = tpl[tpl.index('async refreshMusic(t) {'):]
+    refresh = refresh[:refresh.index('async loadMusicFavorites')]
+    check('this.syncLocalState(t)' in refresh,
+          "nothing re-reads the local player on the ten-second beat")
+    pick = tpl[tpl.index('musicPick(t, entityId) {'):]
+    pick = pick[:pick.index('musicPlaying(t) {')]
+    check('this.syncLocalState(t)' in pick,
+          "coming back to an already-connected screen shows nothing playing "
+          "until the next beat — start() returns early and reports no change")
+
+
+def scenario_a_track_with_no_artist_does_not_print_undefined():
+    """Radio streams routinely arrive with a title and nothing else."""
+    logic = open(os.path.join(ROOT, 'static', 'music_logic.js'),
+                 encoding='utf-8').read()
+    fn = logic[logic.index('self.nowPlaying = function () {'):]
+    fn = fn[:fn.index('self.command = function')]
+    check("md.artist || ''" in fn,
+          "an absent artist is concatenated raw, so the card prints "
+          "'undefined' under the title")
+
+
 def scenario_connecting_takes_the_tap_that_chose_it():
     """A browser will not start audio without a user gesture, so the connect
     has to happen inside the handler for the choice. A connection opened on a

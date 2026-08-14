@@ -352,9 +352,13 @@
              *  surface can draw a local player exactly like a remote one. */
             self.nowPlaying = function () {
                 const md = ((self.state || {}).serverState || {}).metadata || {};
+                const artist = md.artist || '';
                 return {
                     media_title: md.title || '',
-                    media_artist: md.artist + (md.album ? (md.artist ? ' · ' : '') + md.album : ''),
+                    // `md.artist` alone would print the string "undefined"
+                    // under the title of anything Music Assistant sends
+                    // without one — a radio stream, most of the time.
+                    media_artist: artist + (md.album ? (artist ? ' · ' : '') + md.album : ''),
                     entity_picture: md.artwork_url || null,
                     volume_level: (typeof (self.state || {}).volume === 'number')
                         ? ((self.state.volume > 1) ? self.state.volume / 100 : self.state.volume)
