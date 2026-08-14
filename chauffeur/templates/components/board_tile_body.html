@@ -170,7 +170,18 @@
                          It scrolls, unlike the other drawn tiles, because the
                          alternative is scaling the page's typography down to
                          a few pixels. It opens on the next drive rather than
-                         on breakfast. -->
+                         on breakfast.
+
+                         …UNLESS it is fitting, and that is the difference
+                         between this card and every other drawn one. The
+                         renderer sizes each day section with an explicit
+                         `height: ${totalHeight}px`, so the timeline HAS a
+                         natural height and `fit` can measure it. When it is
+                         fitting, the box must flow — `flex-1` in a block
+                         parent is zero pixels tall, and a scroll box would cap
+                         the very height being measured at whatever the tile
+                         already was, so the tile would fit its own current
+                         size forever. -->
                     <template x-if="t.type === 'drives' && !t.data.empty
                                      && t.data.view !== 'list'">
                         <!-- The ids carry the INSTANCE, not the type. Two
@@ -179,7 +190,8 @@
                              draw both days into whichever one the document
                              happened to hand back first. -->
                         <div :id="'board-timeline-scroll-' + t.id"
-                            class="board-timeline-scroll flex-1 min-h-0 overflow-auto tile-scroll">
+                            class="board-timeline-scroll"
+                            :class="fillsHere(t) ? 'flex-1 min-h-0 overflow-auto tile-scroll' : ''">
                             <div :id="'board-timeline-' + t.id" class="board-timeline"></div>
                         </div>
                     </template>

@@ -87,7 +87,11 @@ def _board(hero=None):
         'temp_now': 71, 'condition': 'sunny', 'condition_emoji': '☀️',
         'background': None, 'statuses': [], 'widgets': ['drives', 'calendar', 'map'],
         'row_height': 240, 'columns': 12,
-        'spans': {'calendar': {'cols': 12}, 'drives': {'cols': 6, 'rows': 2}},
+        # `map` FILLS: from wherever it lands down to the bottom of the
+        # screen, on any display. The probe checks it resolved to a real
+        # number rather than falling back to its rows.
+        'spans': {'calendar': {'cols': 12}, 'drives': {'cols': 6, 'rows': 2},
+                  'map': {'cols': 12, 'fill': True}},
         # A hero that is ON: it started before `now` and has not ended. This is
         # the state photographed off the wall as "NEXT UP · 53 min ago".
         'hero': hero or {'remaining': 1, 'later': [], 'all_done': False, 'kids': [],
@@ -298,6 +302,23 @@ setTimeout(() => {
         return t ? t.textContent.replace(/\s+/g, ' ').trim() : '';
       })()
     },
+    // FILL, resolved. jsdom does no layout, so every rect is zero and the
+    // arithmetic cannot be checked here — but "did it measure at all, and did
+    // it clamp instead of collapsing" is structural, and both of the fit bugs
+    // this board has shipped were exactly that shape.
+    fill: (() => {
+      const el = doc.querySelector('[data-tile-id="map"]');
+      const root = doc.querySelector('[x-data="homeBoard()"]');
+      const b = root && root._x_dataStack && root._x_dataStack[0];
+      if (!el || !b) return null;
+      return { px: b.fillPx['map'] || 0,
+               isFill: b.isFill('map'),
+               // Fill gives a height, so the tile must still impose it on the
+               // map — a filled tile that went to block flow is a map with
+               // nowhere to draw.
+               boxed: b.tileFills(b.tiles().find(t => t.id === 'map')),
+               style: el.getAttribute('style') || '' };
+    })(),
     map: { mounted: !!doc.getElementById('board-map-map'),
            // A display-only map must not take the tap the tile's door needs.
            quiet: /pointer-events:\s*none/.test(
@@ -840,6 +861,35 @@ def scenario_the_map_tile_is_only_a_map():
     check(got['map']['quiet'],
           "a display-only map takes pointer events, so it eats the tap that "
           "opens the Map page")
+
+
+def scenario_a_fill_tile_takes_the_room_that_is_left():
+    """`rows` is a number somebody guesses and then re-guesses on the next
+    screen — reported as "what works on one display doesn't work on another if
+    their resolutions are different". Fill asks the screen instead: the tile
+    runs from wherever it lands down to the shelf.
+
+    jsdom does no layout, so every rect here is zero and the arithmetic is not
+    what this can check. What it CAN check is the shape both of this board's
+    shipped fit bugs actually had: did the measurement run at all, did it
+    clamp rather than collapse, and does the tile still impose the height it
+    was given on content that has none of its own.
+    """
+    got = _run()
+    if got is None:
+        return
+    f = got['fill']
+    check(f is not None, "the board component was not reachable to measure")
+    check(f['isFill'], "a span carrying `fill` did not come through as one")
+    check(f['px'] >= 1,
+          f"fill measured nothing and left the tile at zero: {f}")
+    check('grid-row: span' in f['style'],
+          f"a filled tile got no row span: {f['style']}")
+    # A map given a height must still be given it as a BOX. Fill is not fit:
+    # it hands the content a height, and content laid out into a box is
+    # exactly the content that wants one.
+    check(f['boxed'],
+          "a filled map tile went to block flow, so the map has nowhere to draw")
 
 
 def scenario_tapping_a_drive_says_what_it_is():

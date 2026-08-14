@@ -22,6 +22,34 @@
                                                 class="w-full ed-input rounded px-2 py-1 text-sm ed-title">
                                         </template>
 
+                                        <!-- An emoji field is a text field
+                                             everywhere else in this app, and
+                                             on the two surfaces that matter —
+                                             a wall panel with no keyboard, a
+                                             phone in one hand — that means a
+                                             field you cannot fill. The button
+                                             IS the control; the text box stays
+                                             because pasting one still works
+                                             and because it shows what is set.
+                                             Blank means the type's own icon,
+                                             which is what the picker's Clear
+                                             writes. -->
+                                        <template x-if="o.type === 'emoji'">
+                                            <div class="flex items-center gap-2">
+                                                <button type="button"
+                                                    @click="EmojiPicker.open($event.currentTarget,
+                                                        v => setCfg({{ OW }}, o, v))"
+                                                    class="ed-input rounded px-2 py-1 text-xl leading-none"
+                                                    title="Pick an emoji"
+                                                    x-text="cfg({{ OW }}, o) || '😀'"></button>
+                                                <input type="text" :value="cfg({{ OW }}, o) || ''"
+                                                    @input="setCfg({{ OW }}, o, $event.target.value)"
+                                                    :placeholder="widgetMeta({{ OW }}.type).icon"
+                                                    maxlength="8"
+                                                    class="w-full ed-input rounded px-2 py-1 text-sm ed-title">
+                                            </div>
+                                        </template>
+
                                         <!-- A card config is the one setting
                                              on this board that is somebody
                                              else's text, pasted. Monospace and

@@ -107,6 +107,7 @@
 
 <body class="bg-gray-950 text-gray-100 font-sans h-dvh flex flex-col overflow-hidden">
     {% include 'components/kid_glyphs.html' %}
+    {% include 'components/emoji_picker.html' %}
 
     <!-- Header -->
     <header
@@ -2455,9 +2456,16 @@
                         <span class="text-xs text-gray-500">${t}${m.edited_ts ? ' · edited' : ''}</span>
                     </div>
                     <div id="qr-${m.id}" class="mt-1.5 flex gap-1.5 flex-wrap ${mine ? 'justify-end' : ''}" style="display:none">
-                        ${['👍', '❤️', '😂', '👏', '🎉', '💪'].map(e =>
+                        ${quickReactRow().map(e =>
                             `<button onclick="reactTo('${m.id}','${e}')" type="button"
                                 class="text-2xl leading-none px-2 py-2 rounded-full bg-gray-800 border border-gray-700 active:bg-gray-700">${e}</button>`).join('')}
+                        <!-- Six was every reaction this app had. The picker
+                             was built for the emoji FIELDS and costs nothing
+                             here, so the row stops being a ceiling: multi
+                             mode keeps it open, because adding three
+                             reactions is one gesture and not three. -->
+                        <button onclick="openReactPicker(event, '${m.id}')" type="button"
+                            class="text-xl leading-none px-2 py-2 rounded-full bg-gray-800 border border-gray-700 text-gray-400 active:bg-gray-700">＋</button>
                     </div>
                     <div id="ma-${m.id}" class="mt-1 flex gap-1.5 ${mine ? 'justify-end' : ''}" style="display:none">
                         ${canEditMsg(m) ? `<button onclick="editMessage('${m.id}')" type="button"
@@ -2564,6 +2572,25 @@
                 showGlobalAlert('Could not delete that message');
                 return false;
             }
+        }
+
+        // The six standing reactions, plus whatever this phone has actually
+        // been picking. A fixed row is right for the first tap and wrong by
+        // the tenth: a household that reacts with 🐶 every day should not have
+        // to open a picker for it, and nobody should have to configure that.
+        // Six standing + two learned keeps the row one line on a phone.
+        const BASE_REACTS = ['👍', '❤️', '😂', '👏', '🎉', '💪'];
+        function quickReactRow() {
+            const mine = (window.EmojiPicker ? EmojiPicker.recent() : [])
+                .filter(e => !BASE_REACTS.includes(e))
+                .slice(0, 2);
+            return BASE_REACTS.concat(mine);
+        }
+
+        function openReactPicker(ev, msgId) {
+            if (!window.EmojiPicker) return;
+            EmojiPicker.open(ev && ev.currentTarget,
+                e => { if (e) reactTo(msgId, e); }, { multi: true });
         }
 
         async function reactTo(msgId, emoji) {

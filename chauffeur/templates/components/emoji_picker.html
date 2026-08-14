@@ -1,0 +1,287 @@
+<!-- ── ONE emoji picker, for every field in this app that takes an emoji.
+
+     There were nine of them and every one was a bare `<input maxlength="4">`:
+     the chore glyph, the routine glyph, a member's avatar, a car's icon, a
+     status tier, a status protocol, a board's shelf icon, a tile's icon, and
+     the chat's six-button quick-react row. On a desktop that is a mildly
+     annoying trip to the system emoji panel. On the two surfaces this app is
+     actually FOR — a wall panel with no keyboard, and a phone in one hand —
+     it ranges from awkward to impossible: a kiosk browser has no emoji key,
+     so those fields could only ever hold whatever was already in them.
+
+     So it is a component rather than a ninth copy of a text box, and it is
+     plain globals rather than an Alpine component: it has to open from Alpine
+     markup (the board editor), from string-built onclick handlers (the chat),
+     and from x-model fields on pages that use Alpine differently. A function
+     on `window` is the only shape all three can call.
+
+         EmojiPicker.open(anchorEl, onPick)   onPick(emoji) per tap
+         EmojiPicker.open(anchorEl, onPick, { multi: true })
+
+     `multi` keeps it open after a pick, which is right for the one caller
+     that is adding reactions and wrong for the eight that are setting a
+     field.
+
+     The catalogue is inline and finite ON PURPOSE. A full Unicode emoji set
+     is ~1,900 glyphs and a picker that lists them is a scrolling wall nobody
+     reads; every one of the fields above wants a glyph that says what a thing
+     IS at a glance across a kitchen. So this is the useful few hundred, in
+     the groups a household thinks in, with search words attached — "car",
+     "bus", "dog", "cake" — because typing a word is faster than scanning a
+     grid and is the only route that works when you know exactly what you
+     want. -->
+<script>
+    (function () {
+        // Groups, in the order a household reads them: faces and hands first
+        // (the chat), then people and animals, then the ones this app's own
+        // fields keep reaching for — food (meals), activity (chores and
+        // routines), travel (drives and trips), objects and symbols.
+        //
+        // Each entry is `glyph name-words`. The words are what search matches
+        // on, and they are deliberately generous: "auto" finds the car, "kid"
+        // finds the child, "trash" finds the bin, because the word somebody
+        // types is the word for the THING and not the word Unicode chose.
+        const GROUPS = [
+            ['Smileys', '😀 grin smile happy|😃 smile happy joy|😄 smile happy laugh|😁 beam grin|😆 laugh squint|😅 sweat laugh|🤣 rofl laugh|😂 tears joy laugh cry|🙂 slight smile|🙃 upside down silly|😉 wink|😊 blush smile shy|😇 halo angel innocent|🥰 love hearts adore|😍 heart eyes love|🤩 star struck wow|😘 kiss blow|😗 kiss|😚 kiss|🥲 tear smile|😋 yum tasty tongue|😛 tongue|😜 wink tongue silly|🤪 zany crazy silly|😝 tongue squint|🤑 money mouth rich|🤗 hug|🤭 giggle oops|🤫 shush quiet secret|🤔 think hmm|🤐 zipper quiet|🤨 raised eyebrow suspicious|😐 neutral meh|😑 expressionless|😶 no mouth silent|😏 smirk|😒 unamused meh|🙄 eye roll|😬 grimace awkward|🤥 lying pinocchio|😌 relieved calm|😔 pensive sad|😪 sleepy tired|🤤 drool|😴 sleep zzz tired|😷 mask sick|🤒 sick fever thermometer|🤕 hurt injured bandage|🤢 nauseated sick gross|🤮 vomit sick|🤧 sneeze sick tissue|🥵 hot heat sweat|🥶 cold freezing|🥴 woozy dizzy|😵 dizzy knocked out|🤯 mind blown explode|🤠 cowboy hat|🥳 party celebrate birthday|😎 sunglasses cool|🤓 nerd glasses|🧐 monocle inspect|😕 confused|😟 worried|🙁 frown sad|😮 open mouth surprise|😯 hushed surprise|😲 astonished shock|😳 flushed embarrassed|🥺 pleading puppy eyes beg|😦 frown open|😧 anguished|😨 fearful scared|😰 anxious sweat|😥 sad relieved|😢 cry sad tear|😭 sob cry bawl|😱 scream fear|😖 confounded|😣 persevere struggle|😞 disappointed sad|😓 downcast sweat|😩 weary tired|😫 tired exhausted|🥱 yawn tired bored|😤 triumph steam angry|😡 pout angry mad rage|😠 angry mad|🤬 cursing swear angry|😈 devil imp mischief|💀 skull dead|💩 poop|🤡 clown|👻 ghost boo|👽 alien|🤖 robot bot|🎃 pumpkin halloween'],
+            ['Hands & People', '👋 wave hi bye hello|🤚 raised back hand|🖐️ hand fingers splayed|✋ raised hand stop high five|🖖 vulcan spock|👌 ok perfect|🤌 pinched fingers|🤏 pinch small|✌️ victory peace|🤞 crossed fingers luck hope|🤟 love you|🤘 rock horns|🤙 call me shaka|👈 point left|👉 point right|👆 point up|👇 point down|☝️ point up index|👍 thumbs up yes good like|👎 thumbs down no bad|✊ fist raised|👊 fist bump punch|🤛 fist left|🤜 fist right|👏 clap applause bravo|🙌 raise hands praise celebrate|👐 open hands hug|🤲 palms up|🤝 handshake deal agree|🙏 pray thanks please|✍️ write hand pen|💅 nail polish|💪 muscle strong flex|🧠 brain mind|👀 eyes look see|👁️ eye|👶 baby|🧒 child kid|👦 boy kid|👧 girl kid|🧑 person adult|👨 man dad father|👩 woman mom mother|🧓 older person|👴 grandpa old man|👵 grandma old woman|👨‍👩‍👧 family|👨‍👩‍👧‍👦 family kids|🧑‍🍳 cook chef|🧑‍🏫 teacher|🧑‍⚕️ doctor nurse health|🧑‍🔧 mechanic|🧑‍🌾 farmer|🧑‍🚒 firefighter|👮 police officer cop|🕵️ detective spy|💂 guard|👷 construction worker|🤴 prince|👸 princess|🎅 santa christmas|🦸 superhero|🧙 wizard mage|🧚 fairy|🧑‍🎄 elf'],
+            ['Animals & Nature', '🐶 dog puppy pet|🐱 cat kitten pet|🐭 mouse|🐹 hamster|🐰 rabbit bunny|🦊 fox|🐻 bear|🐼 panda|🐨 koala|🐯 tiger|🦁 lion|🐮 cow|🐷 pig|🐸 frog|🐵 monkey|🐔 chicken|🐧 penguin|🐦 bird|🦆 duck|🦅 eagle|🦉 owl|🦇 bat|🐺 wolf|🐗 boar|🐴 horse|🦄 unicorn|🐝 bee|🐛 bug caterpillar|🦋 butterfly|🐌 snail slow|🐞 ladybug|🐜 ant|🕷️ spider|🐢 turtle|🐍 snake|🦎 lizard|🐙 octopus|🦑 squid|🦐 shrimp|🦀 crab|🐡 blowfish|🐠 tropical fish|🐟 fish|🐬 dolphin|🐳 whale|🦈 shark|🐊 crocodile|🐅 tiger|🦓 zebra|🦍 gorilla|🐘 elephant|🦒 giraffe|🐪 camel|🐑 sheep|🐐 goat|🦌 deer|🐕 dog|🐈 cat|🐓 rooster|🦃 turkey|🕊️ dove peace|🐇 rabbit|🐿️ squirrel|🦔 hedgehog|🌵 cactus|🌲 evergreen tree|🌳 tree|🌴 palm tree|🌱 seedling sprout grow|🌿 herb leaf|☘️ shamrock|🍀 four leaf clover luck|🍁 maple leaf fall|🍂 fallen leaves autumn|🍃 leaf wind|🍄 mushroom|🌾 wheat grain|💐 bouquet flowers|🌷 tulip|🌹 rose|🌺 hibiscus|🌻 sunflower|🌼 blossom|🌸 cherry blossom|🌞 sun face|🌝 full moon face|🌛 moon face|⭐ star|🌟 glowing star|✨ sparkles|⚡ lightning bolt zap power|🔥 fire hot lit|💧 droplet water|🌊 wave ocean water|🌈 rainbow|☀️ sun sunny clear|🌤️ sun cloud partly|⛅ partly cloudy|☁️ cloud cloudy|🌧️ rain|⛈️ thunderstorm|🌨️ snow|❄️ snowflake cold|☃️ snowman|🌪️ tornado|🌫️ fog|🌙 crescent moon night'],
+            ['Food & Drink', '🍎 apple fruit|🍏 green apple|🍐 pear|🍊 orange tangerine|🍋 lemon|🍌 banana|🍉 watermelon|🍇 grapes|🍓 strawberry|🫐 blueberries|🍈 melon|🍒 cherries|🍑 peach|🥭 mango|🍍 pineapple|🥥 coconut|🥝 kiwi|🍅 tomato|🍆 eggplant|🥑 avocado|🥦 broccoli|🥬 lettuce greens|🥒 cucumber|🌶️ chili pepper spicy|🌽 corn|🥕 carrot|🧄 garlic|🧅 onion|🥔 potato|🍠 sweet potato|🥐 croissant|🥯 bagel|🍞 bread|🥖 baguette|🥨 pretzel|🧀 cheese|🥚 egg|🍳 fried egg breakfast cooking|🧈 butter|🥞 pancakes|🧇 waffle|🥓 bacon|🥩 steak meat|🍗 poultry leg chicken|🍖 meat bone|🌭 hot dog|🍔 hamburger burger|🍟 fries|🍕 pizza|🥪 sandwich|🥙 pita wrap|🌮 taco|🌯 burrito|🥗 salad|🥘 pan food paella|🍲 stew soup|🍜 ramen noodles|🍝 spaghetti pasta|🍛 curry rice|🍣 sushi|🍱 bento|🥟 dumpling|🍤 fried shrimp|🍚 rice|🍥 fish cake|🥠 fortune cookie|🍦 soft ice cream|🍧 shaved ice|🍨 ice cream|🍩 doughnut donut|🍪 cookie|🎂 birthday cake|🍰 cake slice|🧁 cupcake|🥧 pie|🍫 chocolate|🍬 candy sweet|🍭 lollipop|🍮 custard flan|🍯 honey|🍼 baby bottle|🥛 milk glass|☕ coffee hot drink tea|🫖 teapot|🍵 tea green|🧃 juice box|🥤 cup straw soda|🧋 bubble tea boba|🍺 beer|🍻 cheers beers|🥂 clink glasses toast|🍷 wine|🥃 whisky tumbler|🍾 champagne bottle|🧊 ice cube|🥄 spoon|🍴 fork knife|🍽️ plate cutlery dinner meal|🥣 bowl spoon cereal|🥡 takeout box|🧂 salt'],
+            ['Activity & Sport', '⚽ soccer football|🏀 basketball|🏈 american football|⚾ baseball|🥎 softball|🎾 tennis|🏐 volleyball|🏉 rugby|🥏 frisbee disc|🎱 pool billiards|🏓 ping pong table tennis|🏸 badminton|🥅 goal net|🏒 hockey|🏑 field hockey|🥍 lacrosse|🏏 cricket|⛳ golf|🏹 archery bow|🎣 fishing|🤿 diving mask snorkel|🥊 boxing glove|🥋 martial arts karate|🎽 running shirt|🛹 skateboard|🛼 roller skate|🛷 sled|⛸️ ice skate|🥌 curling|🎿 ski|⛷️ skier|🏂 snowboard|🏋️ weight lifting gym workout|🤼 wrestling|🤸 cartwheel gymnastics|⛹️ bouncing ball|🤺 fencing|🤾 handball|🏌️ golfing|🏇 horse racing|🧘 yoga meditate calm|🏄 surfing|🏊 swimming|🤽 water polo|🚣 rowing|🧗 climbing|🚴 cycling bike|🚵 mountain biking|🏆 trophy win first|🥇 gold medal first|🥈 silver medal second|🥉 bronze medal third|🏅 medal award|🎖️ military medal|🎗️ ribbon|🎫 ticket|🎟️ admission tickets|🎪 circus tent|🤹 juggling|🎭 performing arts theatre drama|🎨 art palette paint|🎬 clapper film movie|🎤 microphone sing karaoke|🎧 headphones music listen|🎼 musical score|🎹 piano keyboard|🥁 drum|🎷 saxophone|🎺 trumpet|🎸 guitar|🎻 violin|🪕 banjo|🎲 dice game|♟️ chess pawn|🎯 dart target bullseye goal|🎮 video game controller|🕹️ joystick|🧩 puzzle piece|🧸 teddy bear toy|🪁 kite|🎈 balloon party|🎉 party popper celebrate|🎊 confetti ball|🎁 gift present|🎀 ribbon bow|🎏 carp streamer|🎐 wind chime|🧵 thread sew|🧶 yarn knit'],
+            ['Travel & Places', '🚗 car auto drive|🚕 taxi cab|🚙 suv car|🚌 bus school|🚎 trolleybus|🏎️ race car fast|🚓 police car|🚑 ambulance|🚒 fire engine|🚐 minivan van|🛻 pickup truck|🚚 delivery truck|🚛 lorry articulated|🚜 tractor|🦯 white cane|🦽 wheelchair|🛴 scooter kick|🚲 bicycle bike|🛵 motor scooter|🏍️ motorcycle|🛺 auto rickshaw|🚨 siren light emergency|🚔 police car|🚍 oncoming bus|🚘 oncoming car|🚖 oncoming taxi|🚡 aerial tramway|🚠 mountain cableway|🚟 suspension railway|🚃 railway car|🚋 tram|🚞 mountain railway|🚝 monorail|🚄 bullet train|🚅 shinkansen|🚈 light rail|🚂 locomotive steam train|🚆 train|🚇 metro subway|🚊 tram|🚉 station|✈️ airplane flight fly|🛫 departure takeoff|🛬 arrival landing|🛩️ small plane|💺 seat|🚁 helicopter|🛸 ufo flying saucer|🚀 rocket launch|🛰️ satellite|🚢 ship|⛵ sailboat|🛥️ motor boat|🚤 speedboat|⛴️ ferry|🛶 canoe|⚓ anchor|🪝 hook|⛽ fuel gas petrol station|🚏 bus stop|🚦 traffic light signal|🚥 traffic light horizontal|🗺️ map world|🗿 moai statue|🗽 statue liberty|🗼 tower tokyo|🏰 castle|🏯 japanese castle|🏟️ stadium arena|🎡 ferris wheel|🎢 roller coaster|🎠 carousel|⛲ fountain|⛱️ beach umbrella|🏖️ beach|🏝️ desert island|🏔️ snow mountain|⛰️ mountain|🌋 volcano|🏕️ camping tent|⛺ tent|🏠 house home|🏡 house garden home|🏘️ houses|🏢 office building work|🏣 post office|🏥 hospital|🏦 bank|🏨 hotel|🏪 convenience store shop|🏫 school|🏬 department store|🏭 factory|💒 wedding church|⛪ church|🕌 mosque|🛕 hindu temple|🕍 synagogue|⛩️ shinto shrine|🌆 city dusk|🌃 night city|🌉 bridge night|🛣️ motorway highway|🛤️ railway track'],
+            ['Objects', '⌚ watch|📱 mobile phone|💻 laptop computer|⌨️ keyboard|🖥️ desktop computer|🖨️ printer|🖱️ mouse computer|💾 floppy save|💿 cd disc|📀 dvd|📷 camera photo|📸 camera flash|📹 video camera|🎥 movie camera|📺 television tv|📻 radio|🔋 battery|🔌 plug electric|💡 light bulb idea|🔦 flashlight torch|🕯️ candle|🪔 oil lamp|🧯 fire extinguisher|🛢️ oil drum|💸 money wings spend|💵 dollar cash money|💴 yen|💶 euro|💷 pound|💰 money bag|💳 credit card pay|🧾 receipt bill|💎 gem diamond|⚖️ scales balance justice|🪜 ladder|🧰 toolbox tools|🔧 wrench fix|🔨 hammer|⚒️ hammer pick|🛠️ hammer wrench tools|⛏️ pick|🔩 nut bolt|⚙️ gear settings cog|🧲 magnet|🔫 water pistol|🧨 firecracker dynamite|🪓 axe|🔪 knife cook chop|🗡️ dagger|🛡️ shield protect|🚬 cigarette|⚰️ coffin|🏺 amphora|🔮 crystal ball|📿 prayer beads|🧿 nazar amulet|💈 barber pole|⚗️ alembic science|🔭 telescope|🔬 microscope|🕳️ hole|💊 pill medicine|💉 syringe shot vaccine|🩸 blood drop|🩹 bandage plaster|🩺 stethoscope doctor|🚪 door|🪑 chair seat|🛋️ couch sofa|🛏️ bed sleep|🚿 shower|🛁 bathtub bath|🚽 toilet|🧻 toilet paper roll|🧼 soap wash|🪥 toothbrush teeth|🧴 lotion bottle|🧽 sponge clean|🧹 broom sweep clean|🪣 bucket|🧺 basket laundry hamper|🧦 socks|👕 shirt tshirt clothes|👖 jeans pants|🧥 coat jacket|👗 dress|👚 blouse|👔 necktie|👛 purse|👜 handbag|🎒 backpack school bag|👟 sneaker shoe running|👞 shoe dress|👠 heels|🧢 cap hat|🎓 graduation cap school|👓 glasses|🕶️ sunglasses|☂️ umbrella|🧳 luggage suitcase travel|📚 books study|📖 open book read|📕 closed book|📓 notebook|📒 ledger|📔 notebook decorated|📝 memo note write|📋 clipboard list|📌 pushpin|📍 round pin location|📎 paperclip|✂️ scissors cut|📐 triangular ruler|📏 straight ruler|🗓️ calendar spiral date|📅 calendar date|📆 tear off calendar|🗒️ spiral notepad|📊 bar chart graph|📈 chart increasing up|📉 chart decreasing down|🗃️ card file box|🗄️ file cabinet|🗑️ wastebasket trash bin rubbish|🔑 key|🗝️ old key|🔒 locked lock|🔓 unlocked|🔔 bell notify|🔕 bell off mute|📢 loudspeaker announce|📣 megaphone cheer|📯 postal horn|📮 postbox mail|📬 mailbox mail|✉️ envelope mail|📧 email|📦 package parcel box|🏷️ label tag|🔗 link chain|📡 satellite antenna|🧭 compass|⏰ alarm clock|⏱️ stopwatch timer|⏲️ timer|🕰️ mantelpiece clock|⌛ hourglass done|⏳ hourglass|🔍 search magnifying|🔎 magnifying right'],
+            ['Symbols', '❤️ red heart love|🧡 orange heart|💛 yellow heart|💚 green heart|💙 blue heart|💜 purple heart|🖤 black heart|🤍 white heart|🤎 brown heart|💔 broken heart|❣️ heart exclamation|💕 two hearts|💞 revolving hearts|💓 beating heart|💗 growing heart|💖 sparkling heart|💘 heart arrow cupid|💝 heart ribbon gift|☮️ peace|✝️ cross latin|☪️ star crescent|🕉️ om|☸️ dharma wheel|✡️ star of david|🔯 six pointed star|☯️ yin yang|♈ aries|♉ taurus|♊ gemini|♋ cancer|♌ leo|♍ virgo|♎ libra|♏ scorpio|♐ sagittarius|♑ capricorn|♒ aquarius|♓ pisces|🆔 id|⚛️ atom science|🉑 accept|☢️ radioactive|☣️ biohazard|📴 mobile off|📳 vibration mode|🈶 not free|🅰️ a button|🆎 ab button|🅱️ b button|🆑 cl button|🆒 cool button|🆓 free button|ℹ️ information info|🆕 new button|🆖 ng button|🅾️ o button|🆗 ok button|🅿️ parking|🆘 sos help|🆙 up button|🆚 vs versus|🈁 here|🈚 free|🈺 open for business|🈷️ monthly|✴️ eight pointed star|🆚 vs|💮 white flower|🉐 bargain|㊙️ secret|㊗️ congratulations|🈴 passing grade|🈵 no vacancy|🔞 no one under 18|📵 no mobile phones|🚭 no smoking|❗ exclamation important|❓ question|❕ white exclamation|❔ white question|‼️ double exclamation|⁉️ exclamation question|🔅 dim|🔆 bright|〽️ part alternation|⚠️ warning caution alert|🚸 children crossing|🔱 trident|⚜️ fleur de lis|🔰 beginner|♻️ recycle|✅ check mark done complete yes|🈯 reserved|💹 chart yen|❇️ sparkle|✳️ eight spoked asterisk|❎ cross mark button no|🌐 globe web internet|💠 diamond dot|Ⓜ️ circled m|🌀 cyclone|💤 zzz sleep|🏧 atm|🚾 water closet wc|♿ wheelchair accessible|🅿️ parking|🈳 vacancy|🛗 elevator lift|🚹 mens|🚺 womens|🚼 baby symbol|🚻 restroom|🚮 litter bin|🎦 cinema|📶 signal bars|🈁 here|🔣 symbols input|ℹ️ info|🔤 abc letters text|🔡 lowercase abcd|🔠 uppercase abcd|🆖 ng|🎵 music note|🎶 music notes|➕ plus add|➖ minus subtract|➗ divide|✖️ multiply|🟰 equals|♾️ infinity|💲 dollar sign|💱 currency exchange|™️ trademark|©️ copyright|®️ registered|👁️‍🗨️ eye speech|🔚 end|🔙 back|🔛 on|🔝 top|🔜 soon|〰️ wavy dash|➰ curly loop|➿ double loop|🔃 clockwise arrows|🔄 counterclockwise arrows refresh|🔙 back arrow|🔀 shuffle|🔁 repeat loop|🔂 repeat one|▶️ play|⏸️ pause|⏹️ stop|⏺️ record|⏭️ next track|⏮️ previous track|⏩ fast forward|⏪ rewind|🔼 up small|🔽 down small|⬆️ up arrow|⬇️ down arrow|➡️ right arrow|⬅️ left arrow|↗️ up right|↘️ down right|↙️ down left|↖️ up left|↕️ up down|↔️ left right|↩️ right arrow curving left|↪️ left arrow curving right|⤴️ arrow up curve|⤵️ arrow down curve|🔘 radio button|🔴 red circle|🟠 orange circle|🟡 yellow circle|🟢 green circle|🔵 blue circle|🟣 purple circle|⚫ black circle|⚪ white circle|🟥 red square|🟧 orange square|🟨 yellow square|🟩 green square|🟦 blue square|🟪 purple square|⬛ black square|⬜ white square|🔶 orange diamond|🔷 blue diamond|🔺 red triangle up|🔻 red triangle down|💭 thought balloon|🗯️ anger bubble|💬 speech balloon chat message|🗨️ left speech bubble|♠️ spades|♥️ hearts|♦️ diamonds|♣️ clubs|🃏 joker card|🀄 mahjong|🎴 flower cards|🏁 chequered flag finish|🚩 triangular flag|🎌 crossed flags|🏴 black flag|🏳️ white flag|🏳️‍🌈 rainbow flag pride'],
+        ].map(([name, blob]) => ({
+            name,
+            items: blob.split('|').map(s => {
+                const i = s.indexOf(' ');
+                return { e: s.slice(0, i), q: s.slice(i + 1) };
+            })
+        }));
+
+        // What this household actually reaches for, newest first. A picker
+        // whose first row is the last eight things you picked answers most
+        // taps without a search or a scroll — and unlike the groups, it is
+        // right for THIS family rather than right in general.
+        const RECENT_KEY = 'chauffeur_emoji_recent';
+        const RECENT_MAX = 24;
+
+        function recent() {
+            try {
+                const v = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+                return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
+            } catch (e) { return []; }
+        }
+
+        function remember(e) {
+            try {
+                const list = [e].concat(recent().filter(x => x !== e));
+                localStorage.setItem(RECENT_KEY,
+                    JSON.stringify(list.slice(0, RECENT_MAX)));
+            } catch (err) { /* private mode: the picker still works */ }
+        }
+
+        let state = null;   // { onPick, multi, anchor }
+
+        function esc(s) {
+            return String(s).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;',
+                '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        function shell() {
+            let root = document.getElementById('emoji-picker-root');
+            if (root) return root;
+            root = document.createElement('div');
+            root.id = 'emoji-picker-root';
+            root.innerHTML = `
+                <style>
+                    #emoji-picker-back { position: fixed; inset: 0; z-index: 2000; }
+                    #emoji-picker {
+                        position: fixed; z-index: 2001; width: min(21rem, calc(100vw - 1.5rem));
+                        max-height: min(24rem, 70vh); display: flex; flex-direction: column;
+                        background: #111827; color: #e5e7eb;
+                        border: 1px solid #374151; border-radius: 0.9rem;
+                        box-shadow: 0 20px 45px rgba(0,0,0,.55); overflow: hidden;
+                    }
+                    /* The board's own skin when the picker opens on a panel —
+                       a slab of Tailwind grey over a light wall is the same
+                       mismatch the vendored calendar had. */
+                    html[data-panel] #emoji-picker {
+                        background: var(--panel-card, #111827);
+                        color: var(--panel-text, #e5e7eb);
+                        border-color: var(--panel-line, #374151);
+                    }
+                    #emoji-picker-search {
+                        width: 100%; background: rgba(255,255,255,.06); color: inherit;
+                        border: 0; border-bottom: 1px solid #374151;
+                        padding: .6rem .75rem; font-size: .85rem; outline: none;
+                    }
+                    #emoji-picker-body { overflow-y: auto; padding: .35rem; }
+                    #emoji-picker-body::-webkit-scrollbar { width: 0; }
+                    .ep-head {
+                        font-size: .6rem; font-weight: 800; text-transform: uppercase;
+                        letter-spacing: .12em; opacity: .55; padding: .5rem .5rem .25rem;
+                    }
+                    .ep-grid {
+                        display: grid; grid-template-columns: repeat(auto-fill, minmax(2.4rem, 1fr));
+                        gap: .1rem;
+                    }
+                    /* 2.4rem, not the 1.5rem a mouse would need: the fields
+                       this opens from live on a wall panel and a phone, and a
+                       thumb is 44px wide wherever it is. */
+                    .ep-btn {
+                        font-size: 1.35rem; line-height: 1; padding: .5rem 0;
+                        border-radius: .5rem; background: none; border: 0;
+                        cursor: pointer; text-align: center;
+                    }
+                    .ep-btn:hover, .ep-btn:focus { background: rgba(255,255,255,.12); outline: none; }
+                    .ep-none { padding: 1.25rem .75rem; font-size: .8rem; opacity: .6; text-align: center; }
+                    .ep-foot {
+                        border-top: 1px solid #374151; padding: .4rem .5rem;
+                        display: flex; gap: .4rem; align-items: center;
+                    }
+                    .ep-clear {
+                        font-size: .7rem; font-weight: 700; border-radius: .4rem;
+                        padding: .3rem .55rem; background: rgba(255,255,255,.07);
+                        border: 0; color: inherit; cursor: pointer;
+                    }
+                </style>
+                <div id="emoji-picker-back"></div>
+                <div id="emoji-picker" role="dialog" aria-label="Pick an emoji">
+                    <input id="emoji-picker-search" type="text" autocomplete="off"
+                        placeholder="Search — car, cake, dog…">
+                    <div id="emoji-picker-body"></div>
+                    <div class="ep-foot">
+                        <button type="button" class="ep-clear" id="emoji-picker-clear">Clear</button>
+                        <span style="flex:1"></span>
+                        <button type="button" class="ep-clear" id="emoji-picker-close">Close</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(root);
+            root.querySelector('#emoji-picker-back').addEventListener('click', close);
+            root.querySelector('#emoji-picker-close').addEventListener('click', close);
+            // Clearing is a real answer for every field this opens from — an
+            // icon override reverts to the type's own, an avatar goes back to
+            // initials — and there is no way to type "nothing" into a picker.
+            root.querySelector('#emoji-picker-clear').addEventListener('click', () => {
+                if (state && state.onPick) state.onPick('');
+                close();
+            });
+            const search = root.querySelector('#emoji-picker-search');
+            search.addEventListener('input', () => draw(search.value));
+            search.addEventListener('keydown', ev => {
+                if (ev.key === 'Escape') close();
+            });
+            root.querySelector('#emoji-picker-body').addEventListener('click', ev => {
+                const btn = ev.target.closest('.ep-btn');
+                if (!btn || !state) return;
+                const e = btn.getAttribute('data-e');
+                remember(e);
+                if (state.onPick) state.onPick(e);
+                if (!state.multi) close();
+                else draw(search.value);   // the recents row moves under the thumb
+            });
+            return root;
+        }
+
+        function gridHtml(items) {
+            return '<div class="ep-grid">' + items.map(x =>
+                `<button type="button" class="ep-btn" data-e="${esc(x)}"
+                     title="${esc(x)}">${x}</button>`).join('') + '</div>';
+        }
+
+        function draw(query) {
+            const body = document.getElementById('emoji-picker-body');
+            if (!body) return;
+            const q = String(query || '').trim().toLowerCase();
+            if (q) {
+                // Name match only — searching the GLYPHS would mean typing an
+                // emoji to find an emoji, which is the problem this exists to
+                // solve. Ranked so a whole word beats a fragment: "car" should
+                // lead with 🚗 and not with a scorecard.
+                const hits = [];
+                for (const g of GROUPS) {
+                    for (const it of g.items) {
+                        const i = it.q.indexOf(q);
+                        if (i < 0) continue;
+                        const whole = new RegExp(`\\b${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`)
+                            .test(it.q);
+                        hits.push({ e: it.e, rank: (whole ? 0 : 1) * 100 + i });
+                    }
+                }
+                hits.sort((a, b) => a.rank - b.rank);
+                const seen = new Set();
+                const list = hits.map(h => h.e).filter(e => {
+                    if (seen.has(e)) return false;
+                    seen.add(e);
+                    return true;
+                });
+                body.innerHTML = list.length
+                    ? `<div class="ep-head">${list.length} match${list.length > 1 ? 'es' : ''}</div>`
+                      + gridHtml(list)
+                    : `<div class="ep-none">Nothing matches “${esc(q)}”.</div>`;
+                return;
+            }
+            const mine = recent();
+            body.innerHTML =
+                (mine.length ? '<div class="ep-head">Recent</div>' + gridHtml(mine) : '')
+                + GROUPS.map(g => `<div class="ep-head">${g.name}</div>`
+                    + gridHtml(g.items.map(i => i.e))).join('');
+        }
+
+        // Beside the field, and pushed back on screen rather than off the
+        // edge: these fields sit in narrow editor columns and in the right
+        // half of a chat bubble, so "below and left-aligned" alone puts the
+        // panel half off a phone every time.
+        function place(anchor) {
+            const el = document.getElementById('emoji-picker');
+            const r = anchor && anchor.getBoundingClientRect
+                ? anchor.getBoundingClientRect() : null;
+            const w = el.offsetWidth, h = el.offsetHeight;
+            const pad = 8;
+            let left = r ? r.left : (window.innerWidth - w) / 2;
+            let top = r ? r.bottom + 6 : (window.innerHeight - h) / 2;
+            if (left + w > window.innerWidth - pad) left = window.innerWidth - w - pad;
+            if (left < pad) left = pad;
+            // Above the field when there is no room under it — the usual case
+            // for a row near the bottom of a long editor.
+            if (r && top + h > window.innerHeight - pad) {
+                top = Math.max(pad, r.top - h - 6);
+            }
+            el.style.left = Math.round(left) + 'px';
+            el.style.top = Math.round(top) + 'px';
+        }
+
+        function close() {
+            state = null;
+            const root = document.getElementById('emoji-picker-root');
+            if (root) root.style.display = 'none';
+        }
+
+        function open(anchor, onPick, opts) {
+            const root = shell();
+            root.style.display = '';
+            state = { onPick: onPick, multi: !!(opts && opts.multi), anchor: anchor };
+            const search = document.getElementById('emoji-picker-search');
+            search.value = '';
+            draw('');
+            place(anchor);
+            // Focus only where a keyboard exists. Focusing a text field on a
+            // wall panel pops the on-screen keyboard over the grid somebody
+            // opened the picker to avoid using.
+            if (!document.documentElement.hasAttribute('data-panel')) {
+                setTimeout(() => search.focus(), 10);
+            }
+        }
+
+        window.EmojiPicker = { open: open, close: close, recent: recent };
+
+        document.addEventListener('keydown', ev => {
+            if (ev.key === 'Escape' && state) close();
+        });
+        window.addEventListener('resize', () => {
+            if (state) place(state.anchor);
+        });
+    })();
+</script>

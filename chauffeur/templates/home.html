@@ -752,8 +752,8 @@
                     @pointerdown="arranging && startTileDrag($event, t.id)"
                     class="min-w-0 overflow-x-hidden relative"
                     :class="[t.bare ? '' : 'panel-card rounded-2xl p-4 md:p-5',
-                             fillsTile(t.type, t.config) ? 'flex flex-col overflow-hidden'
-                                               : 'block tile-scroll overflow-y-auto',
+                             tileFills(t) ? 'flex flex-col overflow-hidden'
+                                          : 'block tile-scroll overflow-y-auto',
                              !arranging && opens(t) ? 'transition-transform active:scale-[0.985]' : '',
                              arranging ? 'tile-arranging' : '']">
                     <!-- A heading only if there is one. A custom tile nobody
@@ -851,10 +851,7 @@
                                          `rows` makes for the same types. -->
                                     <div class="nc-cell" :data-path="c.id"
                                         :data-plain="c.bare ? 'true' : null"
-                                        :style="`grid-column:span ${c.cols};`
-                                            + (c.rows ? `height:calc(${c.rows} * var(--nc-row))`
-                                               : (fillsTile(c.type, c.config)
-                                                   ? 'min-height:calc(4 * var(--nc-row))' : ''))"
+                                        :style="cellStyle(c)"
                                         <!-- Arrange handles, drawn INTO the cell:
                                              the drag grip, the resize corner, and
                                              the way into the card's settings. -->
@@ -901,7 +898,7 @@
                                              `fillsTile` was written for one
                                              level up. -->
                                         <div class="min-w-0 flex-1"
-                                            :class="fillsTile(c.type, c.config)
+                                            :class="cardFills(c)
                                                 ? 'flex flex-col overflow-hidden'
                                                 : 'overflow-y-auto tile-scroll'"
                                             x-data="{ t: c }">
@@ -1069,7 +1066,17 @@
                                     class="w-8 h-8 flex items-center justify-center rounded"
                                     x-html="iconSvg(ic.paths, 'w-5 h-5')"></button>
                             </template>
-                            <input type="text" maxlength="4" placeholder="emoji"
+                            <!-- Or any emoji at all. The field stays (pasting
+                                 works, and it shows what is set) but the
+                                 BUTTON is the control: this row is edited on
+                                 the panel it configures as often as on a
+                                 laptop, and a wall browser has no emoji key. -->
+                            <button type="button" title="Pick an emoji"
+                                @click="EmojiPicker.open($event.currentTarget,
+                                    v => setPageField('icon', v || '🗂️'))"
+                                class="w-8 h-8 flex items-center justify-center rounded ed-input text-lg leading-none"
+                                x-text="String(page().icon || '').startsWith('icon:') ? '😀' : (page().icon || '😀')"></button>
+                            <input type="text" maxlength="8" placeholder="emoji"
                                 :value="String(page().icon || '').startsWith('icon:') ? '' : page().icon"
                                 @input="$event.target.value.trim()
                                     && setPageField('icon', $event.target.value.trim())"
@@ -1240,17 +1247,36 @@
                                      eleven routine items each is a different
                                      height every morning, and one guess is
                                      either short (the wall cuts the last child
-                                     off) or tall (a band of empty panel). Not
-                                     offered on a map, a timeline or a mosaic —
-                                     their content is laid out INTO the tile, so
-                                     there is no natural height to fit.
+                                     off) or tall (a band of empty panel).
                                      Decided per INSTANCE, not per type: a
                                      Drives card set to Compact list, or a
-                                     calendar showing its agenda, is a LIST and
-                                     fits like one — which is why `w.config`
-                                     goes along. -->
+                                     calendar showing its list view, is a LIST
+                                     and fits like one — which is why
+                                     `w.config` goes along.
+                                     Not offered on a map, a mosaic or a
+                                     mounted calendar: their content is laid
+                                     out INTO the tile, so there is no natural
+                                     height to fit. The drives TIMELINE is not
+                                     in that company and never was — it sizes
+                                     itself in real pixels, so it fits.
+
+                                     ── And FILL, the third height.
+                                     `rows` is a number somebody guesses and
+                                     then re-guesses on the next screen: a
+                                     layout that works on a 1080p wall is wrong
+                                     on a 4K one. Fill asks the SCREEN instead
+                                     of the household — the tile runs from
+                                     wherever it lands down to the shelf,
+                                     whatever the display. It is the answer for
+                                     a single-subject board (a map, a calendar,
+                                     the driving schedule) where the point is
+                                     that the one tile takes the room. Offered
+                                     on every type, unlike fit: fill GIVES a
+                                     height, and content that cannot fit is
+                                     precisely content that wants to be given
+                                     one. -->
                                 <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                                    x-show="!(spanOf(w.id, 'auto') && !fillsTile(w.type, w.config))">
+                                    x-show="!spanOf(w.id, 'auto') && !spanOf(w.id, 'fill')">
                                     <input type="number" min="1" step="1"
                                         :value="spanOf(w.id, 'rows')"
                                         @change="setSpan(w.id, 'rows', $event.target.value)"
@@ -1258,11 +1284,17 @@
                                     rows
                                 </label>
                                 <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                                    x-show="!fillsTile(w.type, w.config)"
+                                    x-show="canFit(w.type, w.config)"
                                     title="As tall as whatever it is showing">
                                     <input type="checkbox" :checked="!!spanOf(w.id, 'auto')"
                                         @change="setSpan(w.id, 'auto', $event.target.checked)">
                                     fit
+                                </label>
+                                <label class="flex items-center gap-1 text-[0.7rem] ed-note"
+                                    title="Down to the bottom of the screen, on any display">
+                                    <input type="checkbox" :checked="!!spanOf(w.id, 'fill')"
+                                        @change="setSpan(w.id, 'fill', $event.target.checked)">
+                                    fill
                                 </label>
                                 <!-- Only offered when the type has something to
                                      ask. A gear on a tile with no options is a
@@ -1328,7 +1360,7 @@
                                                          that way: "says 512px but it's way too tall
                                                          for the content"). -->
                                                     <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                                                        x-show="cardNum(c, 'rows', 0)">
+                                                        x-show="cardNum(c, 'rows', 0) && !(c.config || {}).fill">
                                                         <input type="number" min="1" max="40" step="1"
                                                             :value="cardNum(c, 'rows', 0)"
                                                             @change="setCardNum(c, 'rows', $event.target.value, 0)"
@@ -1336,12 +1368,26 @@
                                                         rows
                                                     </label>
                                                     <label class="flex items-center gap-1 text-[0.7rem] ed-note"
+                                                        x-show="!(c.config || {}).fill"
                                                         title="As tall as whatever it is showing">
                                                         <input type="checkbox"
                                                             :checked="!cardNum(c, 'rows', 0)"
                                                             @change="setCardNum(c, 'rows',
                                                                 $event.target.checked ? 0 : 4, 0)">
                                                         fit
+                                                    </label>
+                                                    <!-- The tile's third height, one level down: as
+                                                         tall as what is LEFT of the tile. The pairing
+                                                         a household actually builds is a heading card
+                                                         over a map card — and the map should take the
+                                                         rest, whatever the heading turned out to be
+                                                         and whatever screen it lands on. -->
+                                                    <label class="flex items-center gap-1 text-[0.7rem] ed-note"
+                                                        title="Down to the bottom of the tile">
+                                                        <input type="checkbox"
+                                                            :checked="!!(c.config || {}).fill"
+                                                            @change="setCardFill(c, $event.target.checked)">
+                                                        fill
                                                     </label>
                                                     <!-- Always offered on a CARD (unlike a
                                                          tile's gear): every card carries the
@@ -1734,6 +1780,7 @@
     </div>
 
     {% include 'components/control_center.html' %}
+    {% include 'components/emoji_picker.html' %}
     {% include 'components/moments_hearth.html' %}
     <!-- The map tile's markers, drawn by the same component /map draws with.
          Script only: the board mounts it into a tile, not into a page. -->
@@ -2047,6 +2094,15 @@
                     // number the browser already knows.
                     setInterval(() => this.tick(), 1000);
 
+                    // A fill tile is a promise about the SCREEN, so the screen
+                    // changing is the one signal it must never miss: a wall
+                    // rotated into portrait, a browser window dragged wider, a
+                    // phone's address bar collapsing. The one-second sweep
+                    // would catch it too, and a tile that resizes a beat after
+                    // the window does looks broken in a way the same tile
+                    // resizing with it does not.
+                    window.addEventListener('resize', () => this.measureFills());
+
                     this.load();
                     setInterval(() => { if (!document.hidden) this.load(); }, 60000);
                     // A panel that was asleep or in a background tab should be
@@ -2106,6 +2162,7 @@
                         this.$nextTick(() => {
                             this.syncMap(); this.syncTimeline(); this.syncCards();
                             this.syncCalendars(); this.syncAutoTiles();
+                            this.measureFills();
                         });
                     } catch (e) { /* a wall panel keeps showing the last good board */ }
                 },
@@ -2243,13 +2300,15 @@
                 autoPx: {},
                 isAuto(key, type, config) {
                     // A tile whose content is laid out INTO it — a map, a
-                    // timeline, a mosaic — has no natural height to fit: it is
-                    // the height that decides the content, not the other way
-                    // round. Offering `auto` there would collapse it.
-                    // `config` because that is decided per INSTANCE for the
-                    // two types that draw two shapes — see FLOWS_WHEN.
-                    return !!this.spanOfLive(key).auto
-                        && !this.fillsTile(type, config);
+                    // mosaic, a mounted calendar — has no natural height to
+                    // fit: it is the height that decides the content, not the
+                    // other way round. Offering `auto` there would collapse
+                    // it. `config` because that is decided per INSTANCE for
+                    // the types that draw more than one shape (FLOWS_WHEN).
+                    // `fill` wins: it is a stated height, and a tile cannot be
+                    // both as tall as its content and as tall as what is left.
+                    const s = this.spanOfLive(key);
+                    return !!s.auto && !s.fill && this.canFit(type, config);
                 },
 
                 // Attach an observer to every fit-to-content tile now on the
@@ -2315,6 +2374,13 @@
                         const o = boardAuto.observers[id];
                         if (o.el && o.el.isConnected) this.onAutoMeasured(id, o.el);
                     }
+                    // Fill rides the same second, and needs no observers of
+                    // its own: what it depends on is the viewport and the
+                    // tiles ABOVE it, and a tile above growing is already a
+                    // layout change this sweep would see. It is also measured
+                    // on resize and after every load, so the second is a
+                    // backstop here rather than the mechanism.
+                    this.measureFills();
                 },
 
                 spanStyle(key, type, config) {
@@ -2334,11 +2400,180 @@
                     // Until the first measurement lands it uses its stored
                     // rows, which is what stops a board flashing a stack of
                     // one-pixel tiles on every load.
-                    const px = this.isAuto(key, type, config)
-                        ? (this.autoPx[key] || r * this.rowHeight())
-                        : r * this.rowHeight();
+                    // A FILL tile spends the pixels that are LEFT, on the same
+                    // lattice again. Same fallback as fit for the same reason:
+                    // until the first measurement lands it is its stored rows,
+                    // not one pixel.
+                    const px = this.isFill(key)
+                        ? (this.fillPx[key] || r * this.rowHeight())
+                        : this.isAuto(key, type, config)
+                            ? (this.autoPx[key] || r * this.rowHeight())
+                            : r * this.rowHeight();
                     return `grid-column: span ${c}; `
                         + `grid-row: span ${px + this.gapPx()};`;
+                },
+
+                // ── FILL: as tall as whatever is left.
+                //
+                // The third height, and the one a household reaches for on a
+                // single-subject board. `rows` is a number somebody guesses
+                // and then re-guesses on the next screen — the report was
+                // exactly that: "what works on one display doesn't work on
+                // another if the resolutions are different." Fit answers it
+                // for lists and cannot answer it at all for a map, a frame or
+                // a calendar grid, whose content has no height of its own.
+                //
+                // Fill is the other direction: instead of asking the content
+                // how tall it is, it asks the SCREEN how much is left, and
+                // hands that to the tile. On the Map board that is "from under
+                // the heading down to the shelf", on any display, with nothing
+                // to type.
+                //
+                // Measured rather than expressed in CSS, and it has to be: the
+                // grid is a 1px lattice with every tile spending a span, so
+                // "the rest of the column" is not a length CSS can resolve —
+                // there is no row track to give `1fr` to.
+                fillPx: {},
+                isFill(key) {
+                    return !!this.spanOfLive(key).fill;
+                },
+
+                // Everything below the grid that a tile must not grow under.
+                // The shelf is `position: fixed` at the bottom on a panel and
+                // is not there at all in a browser, so it is read from the
+                // element rather than from a number kept in step with
+                // nav.html's CSS variable.
+                _bottomInset() {
+                    const shelf = document.getElementById('panel-shelf');
+                    const visible = shelf && shelf.offsetParent !== null;
+                    return (visible ? shelf.getBoundingClientRect().height : 0)
+                        // The board's own bottom padding (px-4 py-4 / md:py-6).
+                        // Without it a filled tile ends flush against the shelf
+                        // while every other tile keeps its margin, which reads
+                        // as the fill being slightly wrong rather than as a
+                        // missing pad.
+                        + this._boardPadBottom();
+                },
+
+                _boardPadBottom() {
+                    const grid = document.getElementById('tile-grid');
+                    const box = grid && grid.parentElement;
+                    if (!box) return 0;
+                    return parseFloat(getComputedStyle(box).paddingBottom) || 0;
+                },
+
+                // DOCUMENT coordinates, deliberately, not viewport ones.
+                //
+                // The obvious version measures `getBoundingClientRect().top`
+                // against `innerHeight` — and then the tile's height changes
+                // as you SCROLL, because both sides of that subtraction move.
+                // On a board tall enough to scroll (which is most home boards)
+                // that is a tile that grows under your thumb. A tile's offset
+                // within the grid and the grid's offset in the document are
+                // both scroll-invariant, so this is stable.
+                //
+                // No feedback loop either: a tile's own height never moves its
+                // own top. Grid auto-placement puts an item after the items
+                // BEFORE it, so writing our span can push later tiles down and
+                // cannot push us.
+                measureFills() {
+                    const grid = document.getElementById('tile-grid');
+                    if (!grid) return;
+                    const gr = grid.getBoundingClientRect();
+                    const gridTop = gr.top + window.scrollY;
+                    const room = window.innerHeight - this._bottomInset() - gridTop;
+                    const live = new Set();
+                    for (const t of this.tiles()) {
+                        if (!this.isFill(t.id)) continue;
+                        live.add(t.id);
+                        const el = document.querySelector(
+                            `[data-tile-id="${CSS.escape(t.id)}"]`);
+                        if (!el) continue;
+                        const top = el.getBoundingClientRect().top - gr.top;
+                        // A floor rather than a collapse. A tile placed below
+                        // the fold has nothing left to fill, and a 3px tile is
+                        // indistinguishable from a broken one — the whole
+                        // failure mode this board keeps designing against.
+                        const px = Math.max(this.rowHeight(),
+                                            Math.round(room - top - this.gapPx()));
+                        if (Math.abs((this.fillPx[t.id] || 0) - px) > 1) {
+                            this.fillPx[t.id] = px;
+                        }
+                    }
+                    for (const id of Object.keys(this.fillPx)) {
+                        if (!live.has(id)) delete this.fillPx[id];
+                    }
+                    this.measureCardFills();
+                },
+
+                // ── The same three heights, one level down.
+                //
+                // A card in a custom tile has `rows` (a number) or `rows: 0`
+                // (as tall as its content). Fill is the third: as tall as what
+                // is left of the TILE — which is what somebody means when they
+                // put a heading card and a map card in one tile and want the
+                // map to take the rest.
+                //
+                // A fill card inside a FITTING tile is circular — the tile
+                // would be as tall as its content while the content is as tall
+                // as the tile — so it is refused there and the card falls back
+                // to fitting. Refused rather than resolved: a rule that
+                // silently picks one side of a circle is a layout that behaves
+                // differently depending on which measurement landed first.
+                cardFillPx: {},
+                cardIsFill(c) {
+                    return !!(c.config || {}).fill;
+                },
+                cardFitting(c) {
+                    return !c.rows && !this.cardIsFill(c);
+                },
+
+                cellStyle(c) {
+                    let s = `grid-column:span ${c.cols};`;
+                    if (this.cardIsFill(c) && this.cardFillPx[c.id]) {
+                        return s + `height:${this.cardFillPx[c.id]}px`;
+                    }
+                    if (c.rows) return s + `height:calc(${c.rows} * var(--nc-row))`;
+                    // A DRAWN card with no height of its own (a map, a mounted
+                    // calendar, a camera) is the one case where "as tall as
+                    // the content" has no answer: the content is laid out INTO
+                    // the box, so with no box there is nothing to lay it into
+                    // and the card collapsed to its padding. Fit means fill
+                    // for those — the same promise the tile-level `rows` makes
+                    // for the same types.
+                    if (this.cardFills(c)) return s + 'min-height:calc(4 * var(--nc-row))';
+                    return s;
+                },
+
+                measureCardFills() {
+                    const live = new Set();
+                    for (const t of this.tiles()) {
+                        if (t.locked || !(t.cards || []).length) continue;
+                        // The circular case. See above.
+                        if (this.isAuto(t.id, t.type, t.config)) continue;
+                        const tile = document.querySelector(
+                            `[data-tile-id="${CSS.escape(t.id)}"]`);
+                        if (!tile) continue;
+                        const cs = getComputedStyle(tile);
+                        const bottom = tile.getBoundingClientRect().bottom
+                            - (parseFloat(cs.paddingBottom) || 0)
+                            - (parseFloat(cs.borderBottomWidth) || 0);
+                        for (const c of t.cards) {
+                            if (!this.cardIsFill(c)) continue;
+                            live.add(c.id);
+                            const cell = tile.querySelector(
+                                `[data-path="${CSS.escape(c.id)}"]`);
+                            if (!cell) continue;
+                            const px = Math.max(
+                                48, Math.round(bottom - cell.getBoundingClientRect().top));
+                            if (Math.abs((this.cardFillPx[c.id] || 0) - px) > 1) {
+                                this.cardFillPx[c.id] = px;
+                            }
+                        }
+                    }
+                    for (const id of Object.keys(this.cardFillPx)) {
+                        if (!live.has(id)) delete this.cardFillPx[id];
+                    }
                 },
 
                 // The tiles whose content IS a picture. Named rather than
@@ -2367,41 +2602,86 @@
                 // `calendar` joined when its views became component mounts:
                 // a month grid drawn into a block-flow tile has no height to
                 // claim, and the agenda scrolls inside its own panel.
-                DRAWN_TILES: ['map', 'drives', 'calendar', 'ha_image', 'ha_dashboard', 'ha_card', 'web'],
+                // `drives` LEFT: the timeline sizes each day section with a
+                // real `height: Npx`, so it has a height of its own to fit and
+                // never belonged here. It is the one type that is drawn into
+                // its tile OR flows, decided per instance — see `fillsTile`.
+                DRAWN_TILES: ['map', 'calendar', 'ha_image', 'ha_dashboard', 'ha_card', 'web'],
 
-                // ── Except that two of them are only drawn SOMETIMES.
+                // ── Two different questions, kept apart.
                 //
-                // "Drawn into the tile" is a property of the drawing, not of
-                // the type, and two types in the list above draw two different
-                // things depending on one setting. The Drives card is a
-                // timeline OR a compact list; the calendar card is a mounted
-                // grid (month, week, day — and agenda, which has been a mount
-                // since v2.207) OR the payload-built one-line-per-event list.
-                // The mounted halves genuinely cannot fit — a component handed
-                // no height is an hour rail an inch tall — but the list halves
-                // are exactly the case `fit` was built for: a list whose
-                // length nobody can type, because it is however many drives
-                // today happens to have.
+                // For a long time one list answered both, and that is what
+                // made "which cards can fit" wrong twice.
                 //
-                // Reported as "a few cards still have no Fit toggle, and
-                // Drives is the obvious one". It was: `fillsTile` knew the
-                // type and not the shape, so a Drives card set to Compact list
-                // was refused a fit it could have honoured perfectly.
+                //   canFit(type, config) — does this content have a height of
+                //     its OWN? A list does: it is however many rows it has. A
+                //     map does not; neither does a frame, a photograph
+                //     stretched to a slot, or a mounted calendar. Only this
+                //     decides whether `fit` is offered.
                 //
-                // The predicate reads the INSTANCE's config, which is why
-                // everything downstream of here — the toggle, `isAuto`,
-                // `spanStyle`, the arrange label, the flex/scroll class — now
-                // carries it. The defaults match the server's (`view` defaults
-                // to timeline and agenda respectively), so a tile nobody has
-                // configured answers exactly as it did before.
+                //   fillsTile(...) — does the tile IMPOSE its height on the
+                //     content? That is the flex-vs-block question, and it has
+                //     a different answer: content laid out into a box needs
+                //     `flex flex-col` so a `flex-1` child gets a height, while
+                //     content that flows needs `block` + scroll so it can be
+                //     taller than the tile and be read by scrolling.
+                //
+                // THE DRIVES TIMELINE CAN FIT, and the claim that it could not
+                // was simply wrong — challenged as "complex, but still
+                // essentially a list that grows vertically", and it is:
+                // `renderSchedule` sizes each day section with an explicit
+                // `height: ${totalHeight}px` (schedule_timeline.html), where
+                // totalHeight is the last block's end plus a margin, with the
+                // empty stretches already condensed. So there is a real number
+                // to fit to, and refusing it cost a household the one tile
+                // whose height changes most from one day to the next.
+                //
+                // It is therefore BOTH: it fits when asked to, and it fills
+                // its tile when it is not — which is why `fillsTile` takes
+                // whether this instance is fitting rather than deciding from
+                // the type alone. The wrapper inside the tile follows the same
+                // answer (board_tile_body.html), because a scroll box with
+                // `flex-1` inside a block parent is zero pixels tall.
+                //
+                // The calendar's mounted views stay out: a component handed no
+                // height draws an hour rail an inch tall. `agenda` is a mount
+                // too (since v2.207) and reads like a list, which is exactly
+                // why the test below names the flowing view by INCLUSION.
                 FLOWS_WHEN: {
-                    drives: c => (c.view || 'timeline') === 'list',
                     calendar: c => (c.view || 'agenda') === 'list',
                 },
-                fillsTile(key, config) {
-                    const flows = this.FLOWS_WHEN[key];
-                    if (flows && flows(config || {})) return false;
-                    return this.isMosaic(key) || this.DRAWN_TILES.includes(key);
+                canFit(type, config) {
+                    const flows = this.FLOWS_WHEN[type];
+                    if (flows) return !!flows(config || {});
+                    return !(this.isMosaic(type) || this.DRAWN_TILES.includes(type));
+                },
+                fillsTile(key, config, fitting) {
+                    // `drives` is the ONE type that is both, and this is the
+                    // only line that knows it — it left DRAWN_TILES rather
+                    // than staying there with two overrides pointing the other
+                    // way, because a list whose entries are contradicted
+                    // elsewhere is a list that will be read wrong.
+                    if (key === 'drives') return !fitting;
+                    return !this.canFit(key, config);
+                },
+                // Taking the whole instance, because every caller has one and
+                // the three-argument form is a footgun: forget the third and a
+                // fitting drives tile silently gets a flex box again.
+                tileFills(t) {
+                    return this.fillsTile(t.type, t.config,
+                                          this.isAuto(t.id, t.type, t.config));
+                },
+                cardFills(c) {
+                    return this.fillsTile(c.type, c.config, this.cardFitting(c));
+                },
+                // For board_tile_body.html, which is included with `t` bound
+                // to a TILE in one place and to a CARD in the other and has no
+                // way to know which. A tile carries `cards`; a card does not.
+                // The body needs the answer because a scroll box with `flex-1`
+                // inside a block parent is zero pixels tall — the same bug the
+                // camera tile had, one level in.
+                fillsHere(t) {
+                    return t.cards ? this.tileFills(t) : this.cardFills(t);
                 },
 
                 // Mosaic sizing, as inline grid spans rather than Tailwind
@@ -3444,6 +3724,14 @@
                     // height with nothing on screen to say whether the
                     // measurement was wrong or never happened, and those are
                     // very different bugs to go looking for.
+                    // Fill says what it RESOLVED to, for the same reason fit
+                    // does: a tile that came out the wrong height with nothing
+                    // on screen to say whether the measurement was wrong or
+                    // never happened is two different bugs wearing one face.
+                    if (this.isFill(id)) {
+                        const px = this.fillPx[id];
+                        return `${c} × fill${px ? ' · ' + px + 'px' : ' · measuring…'}`;
+                    }
                     if (this.isAuto(id, type, config)) {
                         const px = this.autoPx[id];
                         // A tile fitting a card that was DRAGGED to a height
@@ -4212,6 +4500,27 @@
                     if (!c.config) c.config = {};
                     if (v === dflt) delete c.config[key];
                     else c.config[key] = v;
+                    // A typed height is a decision, and it beats fill for the
+                    // same reason turning fit on beats fill: they are three
+                    // answers to one question. Cleared here rather than in the
+                    // markup so the drag handle cannot leave a card claiming
+                    // both.
+                    if (key === 'rows' && v) delete c.config.fill;
+                },
+
+                setCardFill(c, on) {
+                    if (!c.config) c.config = {};
+                    if (on) {
+                        c.config.fill = true;
+                        // A fill card has no rows of its own; leaving a stale
+                        // number behind would make the cell jump back to it
+                        // the moment fill was switched off, at a height nobody
+                        // had chosen since.
+                        delete c.config.rows;
+                    } else {
+                        delete c.config.fill;
+                    }
+                    if (this.$nextTick) this.$nextTick(() => this.measureFills());
                 },
 
                 // Does this tile hold a card with a height of its own? Same
@@ -4245,7 +4554,10 @@
                 },
 
                 tileFree(t) {
-                    return this.cardsOf(t).some(c => c.rows);
+                    // A FILL card counts: it is given a pixel height too, and
+                    // a stretched neighbour in the same grid row would grow to
+                    // match it — which is the resize the sizes exist to escape.
+                    return this.cardsOf(t).some(c => c.rows || this.cardIsFill(c));
                 },
 
                 // --- arranging the cards inside a custom tile -------------
@@ -4830,12 +5142,20 @@
                     // a row and as broken at 20, where twelve rows is less
                     // than a line of text.
                     const cur = { ...(this.page().spans[instanceId] || {}) };
-                    if (axis === 'auto') {
+                    if (axis === 'auto' || axis === 'fill') {
                         // A switch, not a measurement. Turning it OFF leaves
                         // whatever rows were last typed, so a tile going back
                         // to a fixed height lands on a number somebody chose
                         // rather than on 1.
-                        if (value) cur.auto = true; else delete cur.auto;
+                        //
+                        // The two are EXCLUSIVE, enforced here rather than in
+                        // the markup: a tile cannot be both as tall as its
+                        // content and as tall as what is left, and two
+                        // checkboxes that contradict each other put the answer
+                        // in whichever code path happens to read first.
+                        const other = axis === 'auto' ? 'fill' : 'auto';
+                        if (value) { cur[axis] = true; delete cur[other]; }
+                        else delete cur[axis];
                     } else {
                         const max = axis === 'cols' ? this.cols() : 100000;
                         cur[axis] = Math.min(max, Math.max(1, parseInt(value, 10) || 1));
@@ -4843,7 +5163,7 @@
                     // A tile back at exactly the default stops being stored,
                     // rather than persisting numbers nobody chose. The default
                     // WIDTH is a quarter of the grid now, not 1.
-                    if (!cur.auto
+                    if (!cur.auto && !cur.fill
                         && (cur.cols || 0) === this.defaultCols(this.typeOf(instanceId))
                         && (cur.rows || 1) === 1) {
                         delete this.page().spans[instanceId];
@@ -4855,7 +5175,10 @@
                     // syncAutoTiles attaches. Guarded because the arrange
                     // harness runs this component as plain JavaScript, with no
                     // Alpine around it to provide $nextTick.
-                    if (this.$nextTick) this.$nextTick(() => this.syncAutoTiles());
+                    if (this.$nextTick) this.$nextTick(() => {
+                        this.syncAutoTiles();
+                        this.measureFills();
+                    });
                 },
 
                 // Shared by both pickers: a tile list and a shelf list are the

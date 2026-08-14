@@ -162,9 +162,15 @@
                                                 </div>
                                                 <div class="w-20">
                                                     <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Emoji</label>
-                                                    <input type="text" x-model="editItem.emoji" maxlength="8"
-                                                        :placeholder="kidGlyph({title: editItem.title})"
-                                                        class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-center">
+                                                    <div class="flex items-center gap-2">
+                                                        <button type="button" title="Pick an emoji"
+                                                            @click="EmojiPicker.open($event.currentTarget, v => editItem.emoji = v)"
+                                                            class="shrink-0 bg-gray-900 border border-gray-600 rounded p-2.5 text-xl leading-none"
+                                                            x-text="editItem.emoji || '😀'"></button>
+                                                        <input type="text" x-model="editItem.emoji" maxlength="8"
+                                                            :placeholder="kidGlyph({title: editItem.title})"
+                                                            class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-center">
+                                                    </div>
                                                 </div>
                                                 <div>
                                                     <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Time</label>
@@ -890,6 +896,7 @@
     {% include 'components/status_celebration.html' %}
     {% include 'components/moments_hearth.html' %}
     {% include 'components/control_center.html' %}
+    {% include 'components/emoji_picker.html' %}
 </body>
 
 </html>

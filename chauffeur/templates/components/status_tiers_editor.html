@@ -27,8 +27,14 @@
         <div class="space-y-2">
             <template x-for="(t, i) in tiers" :key="i">
                 <div class="flex gap-2 items-center flex-wrap sm:flex-nowrap">
-                    <input type="text" x-model="t.emoji" maxlength="4" placeholder="⭐"
-                        class="w-16 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-center">
+                    <div class="flex items-center gap-2">
+                        <button type="button" title="Pick an emoji"
+                            @click="EmojiPicker.open($event.currentTarget, v => t.emoji = v)"
+                            class="shrink-0 bg-gray-900 border border-gray-600 rounded p-2.5 text-xl leading-none"
+                            x-text="t.emoji || '😀'"></button>
+                        <input type="text" x-model="t.emoji" maxlength="8" placeholder="⭐"
+                            class="w-16 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-center">
+                    </div>
                     <input type="text" x-model="t.name" placeholder="Super Helper"
                         class="flex-1 min-w-[10rem] bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white">
                     <input type="number" min="0" x-model.number="t.threshold"

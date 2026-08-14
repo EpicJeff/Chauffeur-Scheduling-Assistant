@@ -1262,7 +1262,7 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
           "a mosaic is back to fixed-height rows, so it no longer fills its tile")
     check('flex-1 min-h-0' in body,
           "the mosaic does not claim the space its tile has left over")
-    check('fillsTile(t.type, t.config)' in tpl and 'isMosaic(key)' in tpl,
+    check('tileFills(t)' in tpl and 'isMosaic(key)' in tpl,
           "tiles drawn INTO their slot (the mosaics, the map, the timeline) are "
           "no longer distinguished from tiles read down a list, so either they "
           "scroll a photograph or every text tile is stretched to fill")
@@ -1271,10 +1271,24 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
     # that referred to the list — in a stylesheet four hundred lines above it —
     # moved the window and failed the check with a message about maps.
     _decl = tpl.index('DRAWN_TILES:')
-    for key in ("'map'", "'drives'"):
+    for key in ("'map'", "'calendar'"):
         check(key in tpl[_decl:_decl + 200],
               f"{key} is drawn to fit its tile and must be listed as such — "
               "a map given its content height is a map an inch tall")
+    # `drives` is NOT in that list and must not go back into it. The timeline
+    # sizes each day section with a real `height: Npx`, so it has a height of
+    # its own to fit — the claim that it could not was simply wrong, and the
+    # cost was that the one tile whose height changes most from one day to the
+    # next was the one tile that could not follow its content. It is the sole
+    # type that is drawn-into-its-tile OR flowing depending on the instance,
+    # and exactly one line knows that.
+    check("'drives'" not in tpl[_decl:_decl + 200],
+          "drives is back in DRAWN_TILES, so its timeline cannot fit again")
+    fills = tpl[tpl.index('fillsTile(key, config, fitting) {'):]
+    fills = fills[:fills.index(chr(10) + '                },')]
+    check("=== 'drives'" in fills and 'fitting' in fills,
+          "nothing decides per instance whether a Drives card is given its "
+          "tile's height or takes its own")
 
 
 def scenario_a_page_is_configured_in_one_place():

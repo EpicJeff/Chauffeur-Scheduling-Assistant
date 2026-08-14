@@ -272,9 +272,15 @@
                                 </div>
                                 <div class="w-24">
                                     <label class="block text-gray-400 mb-1 text-sm">Emoji</label>
-                                    <input type="text" x-model="choreEdit.emoji" maxlength="8"
-                                        :placeholder="kidGlyph({title: choreEdit.title})"
-                                        class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white text-center">
+                                    <div class="flex items-center gap-2">
+                                        <button type="button" title="Pick an emoji"
+                                            @click="EmojiPicker.open($event.currentTarget, v => choreEdit.emoji = v)"
+                                            class="shrink-0 bg-gray-900 border border-gray-600 rounded p-3 text-xl leading-none"
+                                            x-text="choreEdit.emoji || '😀'"></button>
+                                        <input type="text" x-model="choreEdit.emoji" maxlength="8"
+                                            :placeholder="kidGlyph({title: choreEdit.title})"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white text-center">
+                                    </div>
                                 </div>
                                 <div>
                                     <label class="block text-gray-400 mb-1 text-sm">Points</label>
@@ -875,6 +881,7 @@
     {% include 'components/status_celebration.html' %}
     {% include 'components/moments_hearth.html' %}
     {% include 'components/control_center.html' %}
+    {% include 'components/emoji_picker.html' %}
 </body>
 
 </html>

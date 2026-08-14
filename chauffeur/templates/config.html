@@ -1139,8 +1139,14 @@
                                         <div>
                                             <label class="block text-gray-400 mb-1 text-sm">Avatar (emoji,
                                                 optional)</label>
-                                            <input type="text" x-model="memberEdit.avatar" maxlength="4"
-                                                class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-24">
+                                            <div class="flex items-center gap-2">
+                                                <button type="button" title="Pick an emoji"
+                                                    @click="EmojiPicker.open($event.currentTarget, v => memberEdit.avatar = v)"
+                                                    class="shrink-0 bg-gray-900 border border-gray-600 rounded p-3 text-xl leading-none"
+                                                    x-text="memberEdit.avatar || '😀'"></button>
+                                                <input type="text" x-model="memberEdit.avatar" maxlength="8"
+                                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-24">
+                                            </div>
                                         </div>
                                         <div>
                                             <label class="block text-gray-400 mb-1 text-sm">Photo (wins over
@@ -1464,8 +1470,14 @@
                                 </div>
                                 <div>
                                     <label class="block text-gray-400 mb-1 text-sm">Avatar (emoji, optional)</label>
-                                    <input type="text" x-model="newPerson.avatar" maxlength="4"
-                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-24">
+                                    <div class="flex items-center gap-2">
+                                        <button type="button" title="Pick an emoji"
+                                            @click="EmojiPicker.open($event.currentTarget, v => newPerson.avatar = v)"
+                                            class="shrink-0 bg-gray-900 border border-gray-600 rounded p-3 text-xl leading-none"
+                                            x-text="newPerson.avatar || '😀'"></button>
+                                        <input type="text" x-model="newPerson.avatar" maxlength="8"
+                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-24">
+                                    </div>
                                 </div>
                                 <button @click="addPerson()" :disabled="saving"
                                     class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Add
@@ -1549,8 +1561,14 @@
                                 </div>
                                 <div>
                                     <label class="block text-gray-400 mb-1 text-sm">Icon (emoji)</label>
-                                    <input type="text" x-model="newCar.icon" maxlength="4" placeholder="🚐"
-                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-20">
+                                    <div class="flex items-center gap-2">
+                                        <button type="button" title="Pick an emoji"
+                                            @click="EmojiPicker.open($event.currentTarget, v => newCar.icon = v)"
+                                            class="shrink-0 bg-gray-900 border border-gray-600 rounded p-3 text-xl leading-none"
+                                            x-text="newCar.icon || '😀'"></button>
+                                        <input type="text" x-model="newCar.icon" maxlength="8" placeholder="🚐"
+                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-20">
+                                    </div>
                                 </div>
                                 <div>
                                     <label class="block text-gray-400 mb-1 text-sm">Photo (wins over emoji)</label>
@@ -2137,8 +2155,14 @@
                             <div class="flex gap-4 items-end flex-wrap">
                                 <div>
                                     <label class="block text-gray-400 mb-1 text-sm">Emoji</label>
-                                    <input type="text" x-model="newStatusProtocol.emoji" maxlength="4" placeholder="💙"
-                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-20">
+                                    <div class="flex items-center gap-2">
+                                        <button type="button" title="Pick an emoji"
+                                            @click="EmojiPicker.open($event.currentTarget, v => newStatusProtocol.emoji = v)"
+                                            class="shrink-0 bg-gray-900 border border-gray-600 rounded p-3 text-xl leading-none"
+                                            x-text="newStatusProtocol.emoji || '😀'"></button>
+                                        <input type="text" x-model="newStatusProtocol.emoji" maxlength="8" placeholder="💙"
+                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-20">
+                                    </div>
                                 </div>
                                 <div class="flex-1 min-w-[160px]">
                                     <label class="block text-gray-400 mb-1 text-sm">Name</label>
@@ -6216,6 +6240,7 @@
         }
     </script>
     {% include 'components/control_center.html' %}
+    {% include 'components/emoji_picker.html' %}
     {% include 'components/moments_hearth.html' %}
 </body>
 

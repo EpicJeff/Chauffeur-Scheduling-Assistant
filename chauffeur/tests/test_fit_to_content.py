@@ -270,49 +270,79 @@ def scenario_the_shipped_boards_ask_for_fit():
     src = tpl_source.read('home.html')
     fn = src[src.index('isAuto(key, type, config) {'):]
     fn = fn[:fn.index(chr(10) + '                },')]
-    check('fillsTile(type, config)' in fn,
-          "a map or a timeline can be set to fit, which collapses it")
+    check('canFit(type, config)' in fn,
+          "a map or a mosaic can be set to fit, which collapses it")
     check('.auto' in fn,
           "isAuto reads something other than the span's own switch")
 
 
 def scenario_fit_is_offered_per_instance_not_per_type():
-    """Reported as "a few cards still have no Fit toggle, and Drives is the
-    obvious one". It was: a Drives card is a timeline OR a compact list and a
-    calendar card is a mounted grid OR a one-line-per-event list, so "drawn
-    into the tile" is a property of the SHAPE, not of the type. `fillsTile`
-    knew only the type, so both list halves were refused a fit they could have
-    honoured exactly — a list whose length nobody can type is the case fit
-    exists for.
+    """Two questions were being answered by one list, and that is what made
+    "which cards can fit" wrong twice.
 
-    The mounted halves must still be refused: a component handed no height
-    draws an hour rail an inch tall. Agenda counts as mounted (it has been one
-    since v2.207), which is the trap in this — only `list` flows.
+      * `canFit` — does the content have a height of its OWN? Only this
+        decides whether the toggle is offered.
+      * `fillsTile` — does the tile IMPOSE its height on the content? That is
+        the flex-vs-block question and it has a different answer.
+
+    A calendar card is a mounted grid OR the payload-built list, so even
+    `canFit` is per instance. The mounted halves must stay refused — a
+    component handed no height draws an hour rail an inch tall — and `agenda`
+    is a mount too (since v2.207) despite reading like a list, which is why
+    the flowing view is named by INCLUSION rather than by excluding
+    month/week/day. Exclusion is also how the NEXT view added to the component
+    would silently get a fit it cannot honour.
     """
     src = tpl_source.read('home.html')
     fn = src[src.index('FLOWS_WHEN: {'):]
     fn = fn[:fn.index('},')]
-    check(fn.count("=== 'list'") == 2,
-          f"the two list-shaped views are not what decides this: {fn}")
-    check("drives:" in fn and "calendar:" in fn,
-          "one of the two types that draw two shapes is missing")
-    # Named by INCLUSION — the one view that flows — rather than by excluding
-    # the mounted ones. Exclusion is how `agenda` would have been got wrong:
-    # it reads like a list and has been a component mount since v2.207, so a
-    # "not month/week/day" test would hand it a fit and collapse it. It is
-    # also how the NEXT view added to the component would get one.
+    check("calendar:" in fn and "=== 'list'" in fn,
+          f"the calendar's list view is not what decides this: {fn}")
     check('month' not in fn and 'week' not in fn,
           "the mounted views are decided by exclusion, so a view added to the "
           "component later defaults to fitting and collapses")
 
-    # And every caller carries the instance's config, or the predicate above
-    # is answering about a shape it cannot see.
-    for call in ('fillsTile(t.type, t.config)', 'fillsTile(w.type, w.config)',
-                 'fillsTile(c.type, c.config)',
+    # And every caller carries the instance, or the predicates above are
+    # answering about a shape they cannot see.
+    for call in ('tileFills(t)', 'cardFills(c)', 'fillsHere(t)',
+                 'canFit(w.type, w.config)',
                  'spanStyle(t.id, t.type, t.config)',
                  'isAuto(t.id, t.type, t.config)'):
         check(call in src, f"`{call}` is not how fit is decided, so the "
                            f"toggle and the drawing can disagree")
+
+
+def scenario_a_timeline_is_a_list_that_grows_downwards():
+    """The claim that a drives card could only fit in Compact list was wrong,
+    and challenged as such: "complex, but it is still essentially a list that
+    grows vertically."
+
+    It is. `renderSchedule` sizes each day section with an explicit
+    `height: ${totalHeight}px` — the last block's end plus a margin, empty
+    stretches already condensed — so there IS a number to fit to. Refusing it
+    cost a household the one tile whose height changes most from one day to
+    the next.
+
+    The catch, and the reason this is not a one-line change: the timeline's
+    wrapper carries `flex-1 min-h-0 overflow-auto`, and in a block parent
+    `flex-1` is zero pixels tall. Worse, a scroll box would CAP the height
+    being measured at whatever the tile already was, so the tile would fit its
+    own current size forever. The wrapper has to flow when the tile fits.
+    """
+    tl = tpl_source.read('components/schedule_timeline.html')
+    check('height: ${totalHeight}px' in tl,
+          "the timeline no longer sizes its day sections in pixels, so there "
+          "is nothing for `fit` to measure")
+
+    body = tpl_source.read('components/board_tile_body.html')
+    wrap = body[body.index("'board-timeline-scroll-' + t.id"):]
+    wrap = wrap[:wrap.index('board-timeline"')]
+    check('fillsHere(t)' in wrap,
+          "the timeline's scroll box is unconditional, so a fitting drives "
+          "tile measures a zero-height flex child or its own current size")
+    check('flex-1' in wrap and 'overflow-auto' in wrap,
+          "a drives tile that is NOT fitting lost its scroll box, so a busy "
+          "day is clipped instead of scrolled")
 
 def scenario_the_resize_observer_reaches_the_content():
     """The custom-tile report: fit measured once at mount and never again. The
@@ -538,11 +568,16 @@ def scenario_a_card_inside_a_tile_can_fit_too():
     check('fit' in card_row,
           "there is no way to put a dragged card back to fitting its content")
     # The cell only takes a height when the card HAS one — 0 stays auto.
-    cell = src[src.index('class="nc-cell" :data-path="c.id"'):]
-    cell = cell[:cell.index('</div>')]
-    check('c.rows ?' in cell,
+    # The arithmetic moved into `cellStyle` when fill arrived (three heights
+    # in one ternary chain is not markup), so the claim is checked there.
+    cell = src[src.index('cellStyle(c) {'):]
+    cell = cell[:cell.index(chr(10) + '                },')]
+    check('if (c.rows)' in cell,
           "a card's cell is given a height unconditionally, so nothing can be "
           "content-sized")
+    check('return s;' in cell,
+          "a card with no height of its own is still given one, so `fit` on a "
+          "card means nothing")
 
     # And the tile's arrange label names the cause, since the fix is one
     # level down and nothing else points at it.
@@ -551,6 +586,159 @@ def scenario_a_card_inside_a_tile_can_fit_too():
     check('sized' in label,
           "a tile fitting a dragged card looks broken with nothing on screen "
           "to say the height came from the card")
+
+
+def scenario_fill_asks_the_screen_instead_of_the_household():
+    """The third height, and the report behind it: "what works on one display
+    doesn't work on another if their resolutions are different." `rows` is a
+    number somebody guesses and re-guesses per screen. `fit` answers it for
+    lists and cannot answer it at all for a map, a frame or a calendar grid,
+    whose content has no height of its own — those are exactly the tiles that
+    single-subject boards are made of.
+
+    Fill runs a tile from wherever it lands down to the bottom of the screen,
+    on any display, with nothing to type. Offered on EVERY type, unlike fit:
+    fill GIVES a height, and content that cannot fit is precisely content that
+    wants to be given one.
+    """
+    src = tpl_source.read('home.html')
+
+    # Exclusive with fit, enforced where the value is written rather than in
+    # the markup — two checkboxes that can contradict each other put the
+    # answer in whichever code path happens to read first.
+    setter = src[src.index('setSpan(instanceId, axis, value) {'):]
+    setter = setter[:setter.index(chr(10) + '                },')]
+    check("axis === 'fill'" in setter and 'delete cur[other]' in setter,
+          "fit and fill can be on at once, so a tile claims two heights")
+    check('!cur.auto && !cur.fill' in setter,
+          "a fill tile at default width and one row is dropped from the "
+          "spans, so fill does not survive a save")
+
+    # Fit wins nothing when fill is set: a tile cannot be both as tall as its
+    # content and as tall as what is left.
+    auto = src[src.index('isAuto(key, type, config) {'):]
+    auto = auto[:auto.index(chr(10) + '                },')]
+    check('!s.fill' in auto,
+          "a tile with both flags set still measures its content")
+
+    fn = src[src.index('measureFills() {'):]
+    fn = fn[:fn.index(chr(10) + '                    this.measureCardFills();')]
+    # DOCUMENT coordinates. The obvious version measures the viewport rect
+    # against innerHeight, and then the tile's height changes as you SCROLL —
+    # both sides of that subtraction move. On any board tall enough to scroll
+    # that is a tile growing under your thumb.
+    check('window.scrollY' in fn,
+          "fill is measured in viewport coordinates, so the tile resizes "
+          "while the board is scrolled")
+    check('_bottomInset()' in fn,
+          "a filled tile grows under the shelf")
+    check('Math.max(this.rowHeight()' in fn,
+          "a fill tile placed below the fold collapses to nothing, which is "
+          "indistinguishable from a broken one")
+
+    # Read from the shelf ELEMENT, not from a number kept in step with
+    # nav.html — and zero in a browser, where there is no shelf.
+    inset = src[src.index('_bottomInset() {'):]
+    inset = inset[:inset.index(chr(10) + '                },')]
+    check("getElementById('panel-shelf')" in inset and 'offsetParent' in inset,
+          "the shelf's height is hardcoded or assumed present")
+
+    # The screen changing is the one signal fill must never miss.
+    check('resize' in src[src.index('measureFills();'):src.index('measureFills();') + 4000]
+          or "addEventListener('resize', () => this.measureFills())" in src,
+          "a rotated wall or a resized window leaves every fill tile wrong")
+
+    # And the arrange nameplate says what it resolved to, for the same reason
+    # fit's does: wrong-height and never-measured are different bugs.
+    label = src[src.index('spanLabel(id, type, config) {'):]
+    label = label[:label.index(chr(10) + '                },')]
+    check('fill' in label and 'measuring' in label,
+          "a fill tile's nameplate does not say what it came out at")
+
+
+def scenario_a_card_can_fill_its_tile_but_not_a_fitting_one():
+    """Fill one level down: as tall as what is LEFT of the tile, which is what
+    somebody means by a heading card over a map card.
+
+    A fill card inside a FITTING tile is circular — the tile is as tall as its
+    content while the content is as tall as the tile. Refused rather than
+    resolved: a rule that silently picks one side of a circle behaves
+    differently depending on which measurement landed first.
+    """
+    src = tpl_source.read('home.html')
+    fn = src[src.index('measureCardFills() {'):]
+    fn = fn[:fn.index(chr(10) + '                },')]
+    check('isAuto(t.id, t.type, t.config)) continue' in fn,
+          "a fill card inside a fitting tile is measured, which is circular")
+    check('paddingBottom' in fn,
+          "a filled card runs into its tile's padding")
+
+    # A sized card stops the stack stretching, and a filled one is sized.
+    free = src[src.index('tileFree(t) {'):]
+    free = free[:free.index(chr(10) + '                },')]
+    check('cardIsFill(c)' in free,
+          "a stack holding a filled card still stretches its cells, so that "
+          "card's height drags its neighbours to match")
+
+    # rows and fill are exclusive on a card too — including via the drag grip,
+    # which is the control that writes rows without going near the checkbox.
+    num = src[src.index('setCardNum(c, key, raw, dflt) {'):]
+    num = num[:num.index(chr(10) + '                },')]
+    check('delete c.config.fill' in num,
+          "dragging a filled card taller leaves it claiming both heights")
+
+
+def scenario_an_emoji_field_can_be_filled_without_a_keyboard():
+    """Nine fields in this app take an emoji and every one was a bare text
+    box. On the two surfaces this app is FOR — a wall panel with no keyboard,
+    a phone in one hand — that is a field you cannot fill: a kiosk browser has
+    no emoji key, so those fields could only ever hold what was already in
+    them.
+
+    One picker, not a tenth text box, and plain globals rather than an Alpine
+    component: it has to open from Alpine markup (the board editor), from
+    string-built onclick handlers (the chat) and from x-model fields on pages
+    that use Alpine differently.
+    """
+    src = tpl_source.read('components/emoji_picker.html')
+    check('window.EmojiPicker' in src and 'open:' in src,
+          "the picker is not reachable by the three callers that need it")
+    check('RECENT_KEY' in src,
+          "the picker has no memory, so the eighth 🐶 costs the same as the "
+          "first")
+    check('multi' in src,
+          "adding three reactions is three trips through the picker")
+    # Search matches NAMES. Searching the glyphs would mean typing an emoji to
+    # find an emoji, which is the problem this exists to solve.
+    check('it.q.indexOf(q)' in src,
+          "the picker cannot be searched by word")
+    # Focusing a text field on a wall panel pops the on-screen keyboard over
+    # the grid somebody opened the picker to avoid using.
+    check("hasAttribute('data-panel')" in src,
+          "the picker takes focus on a wall panel and summons the keyboard "
+          "it exists to replace")
+
+    # Every page holding an emoji field includes it, or the button throws.
+    # `tpl_source` INLINES includes, so this looks for the component's own
+    # code in the rendered page rather than for the include statement.
+    for page in ('home.html', 'chores.html', 'routines.html', 'config.html',
+                 'app.html'):
+        rendered = tpl_source.read(page)
+        check('window.EmojiPicker' in rendered,
+              f"{page} has an emoji field and no picker behind it")
+        check('EmojiPicker.open' in rendered,
+              f"{page} includes the picker and never opens it")
+
+    # The board's own icon option is declared as an emoji field, so the
+    # editor renders the picker rather than a text box.
+    from services import home_board
+    opt = next(o for o in home_board.catalog()['widgets'][0]['options']
+               if o['key'] == 'icon')
+    check(opt['type'] == 'emoji',
+          f"a tile's icon is still a plain text field: {opt}")
+    opts = tpl_source.read('components/board_options.html')
+    check("o.type === 'emoji'" in opts and 'EmojiPicker.open' in opts,
+          "the board editor has no branch for an emoji option")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

@@ -89,7 +89,7 @@ TITLE_OPTION = _opt('title', 'Title', 'text', '',
 # household does. Appended here rather than declared five times, because it
 # means exactly one thing everywhere and a tile that already has a good default
 # loses nothing by being able to override it.
-ICON_OPTION = _opt('icon', 'Icon', 'text', '',
+ICON_OPTION = _opt('icon', 'Icon', 'emoji', '',
                    help="The emoji beside the title. Blank uses the standard "
                         "one for this kind of tile.")
 
