@@ -1321,27 +1321,28 @@ def scenario_a_page_is_configured_in_one_place():
     """
     import os
     tpl = tpl_source.read('home.html')
-    setup = tpl[tpl.index('id="panel-setup"'):]
-    check('A different picture per page' not in setup,
-          "the per-page pictures are a separate list again, so the same "
-          "destinations are configured in two places")
-    row = setup[setup.index('x-for="(slug, i) in draft.panel_tabs"'):]
-    row = row[:row.index('</template>')]
-    check('panel_page_backgrounds[slug]' not in row,
-          "the shelf row edits a board's picture again — that is the second "
-          "field for one setting, and the board's own is the real one")
-    # The board's settings own it, next to the board's name and address —
-    # which since v2.231.0 is the ⚙ Settings OVERLAY rather than a card in
-    # this form. Same claim, one surface along.
+    # The board's OWN settings own the picture — the ⚙ Settings overlay since
+    # v2.231.0, which is the only surface left: `#panel-setup` is gone
+    # entirely (v2.232.0), so "one place" is now structural rather than a
+    # rule two lists have to keep agreeing to follow.
+    check('id="panel-setup"' not in tpl,
+          "the setup form is back, and with it a second place for all of this")
     board_box = tpl[tpl.index("<!-- ── The BOARD's settings, over the board."):]
     board_box = board_box[:board_box.index('<!-- The card picker')]
     check("setPageField('background'" in board_box,
           "a board's own settings cannot set its picture")
-    check("setPageField('background'" not in setup,
-          "the setup form still edits a board's picture, so there are two "
-          "places again — the thing this scenario exists to prevent")
-    for control in ('move(draft.panel_tabs', 'panel_tabs.splice'):
-        check(control in row, f"the row lost its {control} control in the merge")
+    check(tpl.count("setPageField('background'") == 1,
+          "a board's picture is settable from two places again")
+    check('panel_page_backgrounds' not in tpl,
+          "the deleted per-page picture map is back — that was two settings "
+          "for one thing, and the one that looked authoritative was dead")
+    # The shelf is dragged on the Boards tab now, and the picture for a board
+    # the household cannot edit is a field there rather than a second one here.
+    admin = tpl_source.read('components/boards_admin.html')
+    check('panel_board_order' in admin and 'startBoardDrag' in admin,
+          "the shelf order is not the draggable board list")
+    check('setShippedBackground' in admin,
+          "a shipped board's picture has no field on the Boards tab")
 
 
 # ── "Follow the sun" (panel_theme: sun)

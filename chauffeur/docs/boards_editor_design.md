@@ -355,7 +355,7 @@ Target: **v2.230.0**
 Boards (chip row) · Shelf buttons · What a tap may do · Background · Pictures
 for the app's boards · Theme · Return home when idle · Screensaver.
 
-## B3 — The Boards tab
+## B3 — The Boards tab ✅ SHIPPED v2.232.0 — `#panel-setup` IS GONE
 
 - **`components/boards_admin.html`**, included by config.html as a Boards tab.
   POSTs only its own keys.
@@ -373,9 +373,38 @@ for the app's boards · Theme · Return home when idle · Screensaver.
   lives. If a kiosk-shaped intake is ever designed, it joins the shipped boards.
 - **Household panel settings** move here: theme and sun offsets, idle return,
   screensaver, default background, `ha_browser_url`, allow-unsafe-controls.
-- **Deletes: the rest of `#panel-setup`.** After B3 it does not exist.
+- **Deleted: the rest of `#panel-setup`** — 408 lines, and the block does not
+  exist. `home.html` is 299 KB, down from 324 KB at the start of the arc,
+  having gained three overlays and a live preview along the way.
 
-Target: **v2.232.0**
+**The shelf model, and why it changed.** `panel_tabs` was one list that, once
+non-empty, *was* the shelf. Defensible while curating was a rare expert act;
+fatal the moment a drag writes the whole order, because then every household is
+curated on day one and no board shipped afterwards ever appears for any of them
+— there is no way to tell "left out on purpose" from "did not exist yet".
+
+Now `panel_board_order` says where things go and `panel_board_hidden` says what
+is off. Anything known and unlisted is *new*, so it joins the end. `panel_tabs`
+is still read when the pair is empty, as order-plus-everything-else-hidden, so a
+shelf curated before this keeps working exactly as it did — read at load, never
+rewritten, like every other migration in this layer.
+
+**`panel_home_board` is the ⌂.** `/home` is the landing route, the idle-return
+target and what the shelf's Home button means, so hiding the Home board without
+moving those stranded the wall. With the designation, `find_page(None)` follows
+it and the other two need no changes at all, because both already point at
+`/home`. It falls back when it names a board that is gone.
+
+**Intake left `NAV_SLUGS`.** It was the one nav slug that is not a board, it was
+already off `DEFAULT_TABS` for that reason, and a vocabulary with one member
+that means something else is an exception to explain forever. It keeps its
+desktop-nav link.
+
+**Where the settings went.** Every `panel_*` registry entry that pointed at
+`/home#panel-setup` now points at `/config#boards`, except the four the board
+itself still owns — `panel_widgets`, `panel_grid_columns`, `panel_grid_row_height`
+and `panel_tile_spans` — which point at `/home#board-settings`, the ⚙ overlay.
+`audit_ui` follows includes, so it checks the claim rather than taking it.
 
 ---
 

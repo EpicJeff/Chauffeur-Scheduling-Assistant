@@ -1,0 +1,170 @@
+{#
+  The wall panel's own settings — true of every board rather than of any one of
+  them. These were the right-hand column of the old `#panel-setup` block on the
+  home board; they live beside the board list now, because that is where
+  somebody thinking about the wall is.
+
+  Reads and writes `panel` on the surrounding Alpine scope (boardsAdmin), and
+  calls `savePanel()`. No state of its own.
+#}
+<div class="space-y-6 max-w-2xl">
+
+    <div>
+        <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+            Background
+        </div>
+        <input type="text" x-model="panel.panel_background" @change="savePanel()"
+            placeholder="a web address, or a phrase like “mountains at dusk”"
+            class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-white">
+        <p class="text-xs text-gray-500 mt-1">
+            The photograph every board floats on unless it has one of its own.
+        </p>
+    </div>
+
+    <div>
+        <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+            Pictures for the app's boards
+        </div>
+        <p class="text-xs text-gray-500 mb-2">
+            Those boards come with the app, so their tiles are not yours to move —
+            but the photograph is. Blank uses the background above.
+        </p>
+        <div class="space-y-1.5">
+            <template x-for="b in shippedBoards" :key="b.slug">
+                <div class="flex items-center gap-2">
+                    <span class="w-28 shrink-0 text-sm text-gray-300 flex items-center gap-1.5">
+                        <span x-html="b.iconHtml"></span><span x-text="b.name"></span>
+                    </span>
+                    <input type="text"
+                        :value="panel.panel_shipped_backgrounds[b.slug] || ''"
+                        @change="setShippedBackground(b.slug, $event.target.value)"
+                        placeholder="the panel background"
+                        class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white">
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <div>
+        <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+            Theme
+        </div>
+        <select x-model="panel.panel_theme" @change="savePanel()"
+            class="bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-white">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+            <option value="auto">Follow the device</option>
+            <option value="sun">Follow the sun</option>
+        </select>
+        <p class="text-xs text-gray-500 mt-1">
+            Auto follows the device, which inside a Home Assistant dashboard means
+            following HA — but a standalone tablet answers “light” to that question
+            whatever time it is, which is what Sun exists for.
+        </p>
+        <div x-show="panel.panel_theme === 'sun'" x-cloak
+            class="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-400">
+            <label class="flex items-center gap-1.5">
+                Dark from sunset
+                <input type="number" step="5" x-model.number="panel.panel_theme_sunset_offset_minutes"
+                    @change="savePanel()"
+                    class="w-20 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white">
+                min
+            </label>
+            <label class="flex items-center gap-1.5">
+                Light from sunrise
+                <input type="number" step="5" x-model.number="panel.panel_theme_sunrise_offset_minutes"
+                    @change="savePanel()"
+                    class="w-20 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white">
+                min
+            </label>
+        </div>
+    </div>
+
+    <div>
+        <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+            Return home when idle
+        </div>
+        <label class="flex items-center gap-2 text-sm text-gray-300">
+            After
+            <input type="number" min="0" step="30"
+                x-model.number="panel.panel_idle_return_seconds" @change="savePanel()"
+                class="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white">
+            seconds
+        </label>
+        <p class="text-xs text-gray-500 mt-1">
+            A panel somebody walked away from goes back to the home board. 0 turns it
+            off. Home is whichever board wears the ⌂ above.
+        </p>
+    </div>
+
+    <div>
+        <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+            Screensaver
+        </div>
+        <label class="flex items-center gap-2 text-sm text-gray-300 mb-2">
+            <input type="checkbox" x-model="panel.panel_screensaver_enabled"
+                @change="savePanel()">
+            Fade to photographs when the wall has been quiet
+        </label>
+        <div x-show="panel.panel_screensaver_enabled" x-cloak
+            class="space-y-2 text-sm text-gray-300">
+            <label class="flex items-center gap-2">
+                After
+                <input type="number" min="60" step="60"
+                    x-model.number="panel.panel_screensaver_idle_seconds" @change="savePanel()"
+                    class="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white">
+                seconds, changing every
+                <input type="number" min="3" step="1"
+                    x-model.number="panel.panel_screensaver_dwell_seconds" @change="savePanel()"
+                    class="w-20 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white">
+                seconds
+            </label>
+            <label class="flex items-center gap-2">
+                From
+                <select x-model="panel.panel_screensaver_source" @change="savePanel()"
+                    class="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white">
+                    <option value="photos">the family's moments</option>
+                    <option value="folder">a folder</option>
+                </select>
+            </label>
+            <label x-show="panel.panel_screensaver_source === 'folder'" x-cloak
+                class="flex items-center gap-2">
+                Path
+                <input type="text" x-model="panel.panel_screensaver_media_path"
+                    @change="savePanel()" placeholder="/media/photos"
+                    class="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white">
+            </label>
+        </div>
+    </div>
+
+    <div>
+        <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+            What a tap may do
+        </div>
+        <label class="flex items-center gap-2 text-sm text-gray-300">
+            <input type="checkbox" x-model="panel.panel_allow_unsafe_controls"
+                @change="savePanel()">
+            Let Home Assistant tiles switch things on and off
+        </label>
+        <p class="text-xs text-gray-500 mt-1">
+            Off, those tiles are a display. On, a tap on the wall does the thing —
+            which is right for a light and wrong for a garage door, so it is one
+            decision made deliberately rather than a default.
+        </p>
+    </div>
+
+    <div>
+        <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+            Home Assistant dashboard address
+        </div>
+        <input type="text" x-model="panel.ha_browser_url" @change="savePanel()"
+            placeholder="empty when the panel is opened through Home Assistant"
+            class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-white">
+        <p class="text-xs text-gray-500 mt-1">
+            Leave empty if you open the panel through Home Assistant — the frame is
+            then on HA's own origin, which is the only arrangement where it reliably
+            loads. On a standalone panel HA usually refuses to be framed by another
+            origin whatever you put here.
+        </p>
+    </div>
+</div>

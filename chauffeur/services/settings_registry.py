@@ -87,12 +87,30 @@ ENTRIES: List[dict] = [
     _e('panel_widgets', 'panel', 'Home board tiles',
        'Which tiles the wall panel home screen shows, and in what order. '
        'A tile with nothing to say hides itself either way.',
-       page='home', anchor='panel-setup'),
-    _e('panel_tabs', 'panel', 'Shelf buttons',
-       'Which buttons appear on the wall panel bottom shelf, and in what order '
-       'left to right. Six or seven fit at a size a thumb can hit; the rest '
-       'move into a More button, so the order decides what stays one tap away.',
-       page='home', anchor='panel-setup'),
+       page='home', anchor='board-settings'),
+    _e('panel_tabs', 'panel', 'Shelf buttons (old form)',
+       'The wall panel shelf, as one curated list. Superseded by the board '
+       'order and the hidden list below, which is what the Boards tab writes; '
+       'this is still read when those are empty, so a shelf curated before '
+       'v2.232.0 keeps working exactly as it did.',
+       page='config', anchor='boards', ui_marker='panel_board_order'),
+    _e('panel_board_order', 'panel', 'Board order',
+       'The order your boards and the app pages sit in, left to right along '
+       'the wall panel shelf. Drag them into place on the Boards tab. Six or '
+       'seven fit at a size a thumb can hit; the rest move into a More button, '
+       'so the order decides what stays one tap away.',
+       page='config', anchor='boards'),
+    _e('panel_board_hidden', 'panel', 'Boards hidden from the shelf',
+       'Boards you have switched off on the Boards tab. They still exist and '
+       'still have an address — they just do not get a button on the wall '
+       'panel shelf.',
+       page='config', anchor='boards'),
+    _e('panel_home_board', 'panel', 'Home board',
+       'Which board the wall panel treats as home: what /home shows, where an '
+       'idle panel returns to, and what the shelf Home button opens. Set it '
+       'with the house marker on the Boards tab, so you can build your own '
+       'home screen and hide the one that ships.',
+       page='config', anchor='boards'),
     # Superseded by `panel_pages`: every board carries its own grid now, and
     # these three are what the FIRST page is built from when a household has
     # never made one. They are still real settings — an un-migrated install
@@ -103,73 +121,73 @@ ENTRIES: List[dict] = [
        'How many columns a board is divided into. Tile widths are spans of '
        'these, so 12 gives you halves, thirds, quarters and sixths. Set per '
        'board, under Boards.',
-       page='home', anchor='panel-setup', ui_marker="page().columns"),
+       page='home', anchor='board-settings', ui_marker="page().columns"),
     _e('panel_allow_unsafe_controls', 'panel', 'Let the board operate locks',
        'Whether a tap on a board tile may lock or unlock a door, open a cover '
        'or a garage, or turn a valve. Off by default because a wall panel is '
        'reachable by everybody in the house; alarms are never included.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
     _e('panel_pages', 'panel', 'Boards',
        'Every board this household has — the wall panel\'s home screen plus '
        'any others you have made. Each one carries its own tiles, layout, '
        'grid and background, so a hallway board and a kitchen board can be '
        'genuinely different screens rather than the same screen twice.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
     _e('panel_grid_row_height', 'panel', 'Board row height',
        'What one row of a board grid is worth, in pixels. Tile sizes are '
        'measured in these, so a 2-row tile is twice this tall. Set per board, '
        'under Boards.',
-       page='home', anchor='panel-setup', ui_marker="page().row_height"),
+       page='home', anchor='board-settings', ui_marker="page().row_height"),
     _e('panel_tile_spans', 'panel', 'Tile sizes',
        'How much room each tile gets on its board, in columns and rows. Set on '
        'the tile itself, or by dragging its corner in Arrange.',
-       page='home', anchor='panel-setup', ui_marker='setSpan'),
+       page='home', anchor='board-settings', ui_marker='setSpan'),
     _e('panel_background', 'panel', 'Panel background',
        'The photograph the wall panel floats on. A web address, or just a '
        'phrase like "mountains at dusk" to have one found for you.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
     _e('panel_shipped_backgrounds', 'panel', 'Pictures for the app\'s boards',
        'A photograph for one of the boards this app ships — Chores, Meals, '
        'Trips and the rest. Those boards are not editable, but their picture '
        'is yours to choose: a web address, or a phrase like "quiet kitchen". '
        'Leave one blank and it uses the panel background.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
     _e('panel_theme', 'panel', 'Panel theme',
        'Light, dark, follow the device, or follow the sun. Auto matches Home '
        'Assistant while the panel is embedded in a dashboard, but falls back '
        'to the tablet outside it; Sun asks Home Assistant where the sun is, so '
        'it works the same on the wall and over the tunnel.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
     _e('panel_theme_sunset_offset_minutes', 'panel', 'Sunset switch offset',
        'Minutes after sunset the panel goes dark. Negative for before.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
     _e('panel_theme_sunrise_offset_minutes', 'panel', 'Sunrise switch offset',
        'Minutes after sunrise the panel goes light. Usually the negative of '
        'the sunset offset — the same darkness of sky comes BEFORE sunrise.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
     _e('panel_idle_return_seconds', 'panel', 'Return home when idle',
        'How long the wall panel sits untouched on some other page before it '
        'goes back to the home board. Zero leaves it wherever it was left.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
     _e('panel_screensaver_enabled', 'panel', 'Screensaver',
        'Whether the panel ever shows the idle photo slideshow at all.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
     _e('panel_screensaver_idle_seconds', 'panel', 'Screensaver after idle',
        'How long the panel sits untouched before it dims into the photo '
        'slideshow. Zero turns the screensaver off.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
     _e('panel_screensaver_source', 'panel', 'Screensaver pictures',
        'Where the slideshow pictures come from: the family\'s own Moments '
        'photos, image files in the Home Assistant media folder, or the panel '
        'wallpaper slow-panned.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
     _e('panel_screensaver_media_path', 'panel', 'Media folder',
        'Subfolder of the HA media share to scan for pictures (when the '
        'source is the media folder). Empty scans the whole share.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
     _e('panel_screensaver_dwell_seconds', 'panel', 'Seconds per photo',
        'How long each picture holds before crossfading to the next.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
 
     # --- meals & shopping
     _e('car_dining', 'meals', 'Eating in the car',
@@ -296,7 +314,7 @@ ENTRIES: List[dict] = [
        'e.g. http://homeassistant.local:8123. Leave empty when the panel '
        'is opened through Home Assistant itself, which is the only '
        'arrangement where framing a dashboard reliably works.',
-       page='home', anchor='panel-setup'),
+       page='config', anchor='boards'),
     _e('ha_token', 'integrations', 'Home Assistant token', 'A long-lived access token.'),
     _e('ma_server_url', 'integrations', 'Music Assistant URL', 'Where Music Assistant lives.'),
     _e('stage_cutoffs', 'kids', 'When the kid stages change',

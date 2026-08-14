@@ -258,18 +258,13 @@ def scenario_the_board_is_configured_over_the_board():
                        ('removePage()', 'delete/reset')):
         check(needs in ov, f"the board settings overlay cannot set {why}")
 
-    # And the form keeps NONE of it. Bounded at the control-center include,
-    # which is where this page's MARKUP ends — running to EOF would sweep in
-    # the whole component script and match every function definition.
-    form = tpl[tpl.index('<!-- ── Panel setup'):]
-    form = form[:form.index('control_center.html')]
-    for gone in ("setPageField('columns'", "setPageField('row_height'",
-                 "setPageField('gap'", "setPageField('name'",
-                 "setPageField('background'", 'setPageSlug('):
-        check(gone not in form,
-              f"`{gone}` is still in the setup form — that block is being "
-              f"dismantled, and a control left in it is a second place to do "
-              f"a job the board already does")
+    # And there is no form left to keep any of it. `#panel-setup` is gone
+    # entirely (v2.232.0) rather than emptied, which is the strongest form of
+    # "nothing was left behind": there is nowhere for it to be left.
+    check('id="panel-setup"' not in tpl,
+          "the panel setup block is back — every board setting lives on the "
+          "board or on the Boards tab now, and a form under the board is a "
+          "second place to do all of it")
 
     # A new board is NAMED first and slugged from that name. This household
     # has a board called "House Monitor" living at /board/new-board, because
@@ -340,7 +335,7 @@ def scenario_the_tile_is_edited_on_the_tile():
     check('openTileEditor(' in tpl and 'tile-edit' in tpl,
           "no way to open a tile's settings from the tile")
     ov = tpl[tpl.index("<!-- ── A TILE's settings"):]
-    ov = ov[:ov.index('<!-- ── Panel setup')]
+    ov = ov[:ov.index('<!-- ── `#panel-setup` was here')]
     for needs, why in (
             ("spanOf(tileEditing.id, 'cols')", 'width'),
             ("spanOf(tileEditing.id, 'rows')", 'height'),
@@ -370,10 +365,10 @@ def scenario_the_tile_is_edited_on_the_tile():
           f"the board and for a CARD over a container tile. The copy in the "
           f"setup form is gone: that block is being dismantled, and a control "
           f"left behind in it is a second place to do a job the board does")
-    # Nothing adds a tile from the setup form any more.
-    form = tpl[tpl.index('<!-- ── Panel setup'):]
-    check('board_picker.html' not in form,
-          "the tile palette is back in the setup form")
+    # And nowhere else: the setup form that used to carry a third copy is
+    # gone entirely (v2.232.0).
+    check('id="panel-setup"' not in tpl,
+          "the panel setup block is back, and with it a third tile palette")
     # Parameterised by Jinja at compile time, the same way board_options.html
     # serves three contexts — a runtime flag would make one partial that
     # branches instead of one partial used three ways.

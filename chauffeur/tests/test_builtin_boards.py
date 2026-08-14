@@ -305,6 +305,74 @@ def scenario_a_household_picks_the_picture_even_on_a_board_it_cannot_edit():
           "the picture list is not bound to the setting it saves")
 
 
+def scenario_a_curated_shelf_is_not_a_closed_shelf():
+    """Order and hiding are two different questions, and conflating them was a
+    trap waiting for the day the editor wrote a full order on every drag.
+
+    `panel_tabs` was one list that, once non-empty, WAS the shelf. Fine while
+    curating was a rare expert act. The moment a drag writes the whole order,
+    every household is curated on day one — and then no board shipped
+    afterwards would ever appear for any of them, because there is no way to
+    tell "left out on purpose" from "did not exist yet".
+    """
+    pages = [{'slug': 'home', 'name': 'Home', 'v': 5, 'widgets': []},
+             {'slug': 'hallway', 'name': 'Hall', 'v': 5, 'widgets': []}]
+    base = {'panel_pages': pages}
+
+    # Order places what it names; everything else joins the END rather than
+    # vanishing. This is the whole fix.
+    got = home_board.resolve_tabs(None, dict(base, panel_board_order=[
+        'board:hallway', 'home']))
+    check(got[:2] == ['board:hallway', 'home'],
+          f"the stored order was not honoured: {got}")
+    check('chores' in got and 'moments' in got,
+          f"a board nobody has placed vanished instead of joining the end: {got}")
+
+    # Hiding is its own list, and it is the only thing that removes a button.
+    got = home_board.resolve_tabs(None, dict(base, panel_board_hidden=[
+        'map', 'board:hallway']))
+    check('map' not in got and 'board:hallway' not in got,
+          f"a hidden board still has a button: {got}")
+    check('chores' in got, f"hiding one board hid the rest: {got}")
+
+    # Home can be hidden like anything else, because the ⌂ designation is what
+    # keeps the wall from being stranded — see the next scenario.
+    got = home_board.resolve_tabs(None, dict(base, panel_board_hidden=['home']))
+    check('home' not in got, f"the home board cannot be taken off the shelf: {got}")
+
+    # And a shelf curated under the old key keeps working EXACTLY as it did:
+    # order plus everything-else-hidden, read at load, never rewritten.
+    got = home_board.resolve_tabs(None, dict(base, panel_tabs=['home', 'chores']))
+    check(got == ['home', 'chores'],
+          f"a shelf curated before v2.232.0 changed under the household: {got}")
+
+    # Intake is not shelf vocabulary at all any more.
+    got = home_board.resolve_tabs(None, dict(base, panel_board_order=['intake', 'home']))
+    check('intake' not in got, f"intake is back on the shelf: {got}")
+
+
+def scenario_home_is_wherever_the_household_put_it():
+    """`/home` is the landing route, the idle-return target and what the shelf's
+    Home button means. Hiding the Home board without moving those left the wall
+    snapping back every three minutes to a board somebody had deliberately taken
+    off the shelf — so the designation is what makes hiding it safe."""
+    pages = [{'slug': 'home', 'name': 'Home', 'v': 5, 'widgets': []},
+             {'slug': 'hallway', 'name': 'Hall', 'v': 5, 'widgets': []}]
+    base = {'panel_pages': pages}
+    check(home_board.home_slug(base) == 'home',
+          "home is not the home board by default")
+    mine = dict(base, panel_home_board='hallway')
+    check(home_board.home_slug(mine) == 'hallway',
+          "the household cannot choose which board is home")
+    # `/home` — no slug — follows the designation, which is all the idle timer
+    # and the Home button need, because both already point there.
+    check(home_board.find_page(None, mine)['slug'] == 'hallway',
+          "the landing route ignores the designation")
+    # A designation pointing at a board that is gone must not strand the wall.
+    check(home_board.home_slug(dict(base, panel_home_board='deleted')) == 'home',
+          "a dangling home designation leaves the panel nowhere to return to")
+
+
 def scenario_the_shipped_boards_actually_ship():
     """The boards are a FILE now, and a file has ways of not being there that a
     Python literal never had.

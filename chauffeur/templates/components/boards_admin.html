@@ -1,0 +1,331 @@
+{#
+  The Boards tab.
+
+  A list of every board this household can put on the wall — theirs, the ones
+  the app ships, and Home — in the order they sit along the panel shelf, with a
+  switch for whether each one gets a button and a house marker for which one is
+  home. Clicking a board opens it, in edit mode, which is where every board
+  setting now lives (B1/B2).
+
+  DRAGGED, not nudged with arrows. An ordering control that cannot show you the
+  order is the long way round, and this list is the order. Pointer events
+  rather than HTML5 drag-and-drop, for the same reason the board's own tiles
+  use them: dragstart does not fire for touch, and this is a thing people will
+  do on a tablet.
+
+  Its own component with its own Alpine scope, POSTing only its own keys to
+  /api/settings, so config.html grows by an include rather than by a thousand
+  lines of somebody else's feature.
+#}
+<div x-show="activeTab === 'boards'" x-cloak x-transition.opacity
+    id="boards" x-data="boardsAdmin()" x-init="loadBoards()" class="space-y-10">
+
+    <div>
+        <div class="flex flex-wrap items-center gap-3 mb-2">
+            <h2 class="text-2xl font-black text-white">Boards</h2>
+            <button type="button" @click="newBoard()"
+                class="text-sm font-semibold rounded-lg px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white">
+                + Add board
+            </button>
+            <span x-show="savingBoards" class="text-xs text-gray-400">Saving…</span>
+        </div>
+        <p class="text-sm text-gray-400 mb-5 max-w-2xl">
+            The order here is the order along the bottom of the wall panel, left to
+            right. Six or seven fit at a size a thumb can hit and the rest move into a
+            <em>More</em> button, so this is also the choice of what stays one tap
+            away. Drag a board to move it. Switch one off to keep it without giving it
+            a button.
+        </p>
+
+        <div class="space-y-1.5 max-w-3xl">
+            <template x-for="(b, i) in boards" :key="b.key">
+                <div :data-board-key="b.key"
+                    @pointerdown="startBoardDrag($event, b.key)"
+                    class="flex items-center gap-3 rounded-lg border px-3 py-2.5 select-none"
+                    :class="[dragKey === b.key
+                                ? 'border-blue-500 bg-gray-700/60 opacity-70'
+                                : 'border-gray-700 bg-gray-800/60',
+                             b.hidden ? 'opacity-55' : '']"
+                    style="touch-action: none; cursor: grab">
+                    <span class="text-gray-500 shrink-0" title="Drag to reorder">⠿</span>
+
+                    <span class="shrink-0 w-6 text-center" x-html="b.iconHtml"></span>
+
+                    <button type="button" @click.stop="openBoard(b)"
+                        class="min-w-0 flex-1 text-left">
+                        <span class="text-sm font-bold text-white" x-text="b.name"></span>
+                        <span class="block text-[0.7rem] text-gray-400 truncate">
+                            <span x-text="b.address"></span>
+                            <span x-show="b.shipped" class="text-amber-400/80"> · comes with the app</span>
+                            <span x-show="b.isHome" class="text-sky-300"> · home</span>
+                        </span>
+                    </button>
+
+                    <!-- WHICH board is home. /home is the landing route, the
+                         idle-return target and what the shelf's Home button
+                         means, so this is what makes "hide the Home board"
+                         safe: the designation moves with it. -->
+                    <button type="button" @click.stop="makeHome(b)"
+                        :title="b.isHome ? 'This is the home board'
+                                         : 'Make this the home board'"
+                        class="shrink-0 px-1.5 text-lg"
+                        :class="b.isHome ? 'text-sky-300' : 'text-gray-600 hover:text-gray-300'">⌂</button>
+
+                    <label class="shrink-0 flex items-center gap-1.5 text-[0.7rem] text-gray-400"
+                        @pointerdown.stop @click.stop
+                        title="Show a button for this board on the wall panel shelf">
+                        <input type="checkbox" :checked="!b.hidden"
+                            @change="setShelf(b, $event.target.checked)">
+                        shelf
+                    </label>
+
+                    <button type="button" x-show="!b.shipped && !b.isHome"
+                        @click.stop="deleteBoard(b)"
+                        @pointerdown.stop
+                        class="shrink-0 px-1.5 text-gray-600 hover:text-red-400"
+                        title="Delete this board">✕</button>
+                </div>
+            </template>
+        </div>
+
+        <p x-show="!boards.length" class="text-sm text-gray-500 italic">
+            Loading…
+        </p>
+    </div>
+
+    <!-- The wall panel itself, as opposed to any one board on it. These are
+         the settings that were on the right-hand side of the old panel setup
+         block; they belong beside the board list because that is where
+         somebody thinking about the wall now is. -->
+    <div>
+        <h2 class="text-xl font-black text-white mb-2">The wall panel</h2>
+        <p class="text-sm text-gray-400 mb-5 max-w-2xl">
+            True of every board, rather than of any one of them.
+        </p>
+        {% include 'components/panel_settings.html' %}
+    </div>
+</div>
+
+<script>
+function boardsAdmin() {
+    return {
+        boards: [],
+        shippedBoards: [],
+        savingBoards: false,
+        dragKey: null,
+        // Only this tab's keys, never the whole settings object: /api/settings
+        // merges with exclude_unset, so a surface that owns some settings posts
+        // exactly those and nothing else can be clobbered by it.
+        panel: {
+            panel_background: '', panel_shipped_backgrounds: {},
+            panel_theme: 'dark', panel_theme_sunset_offset_minutes: 0,
+            panel_theme_sunrise_offset_minutes: 0,
+            panel_idle_return_seconds: 180,
+            panel_screensaver_enabled: true,
+            panel_screensaver_idle_seconds: 600,
+            panel_screensaver_source: 'photos',
+            panel_screensaver_media_path: '',
+            panel_screensaver_dwell_seconds: 20,
+            panel_allow_unsafe_controls: false, ha_browser_url: '',
+        },
+
+        get apiBase() {
+            const p = window.location.pathname;
+            return p.includes('/api/hassio_ingress/')
+                ? p.slice(0, p.indexOf('/', p.indexOf('/api/hassio_ingress/') + 20) + 1)
+                : '';
+        },
+
+        async loadBoards() {
+            try {
+                const [pages, cat, s] = await Promise.all([
+                    fetch(this.apiBase + 'api/home_board/pages').then(r => r.json()),
+                    fetch(this.apiBase + 'api/home_board/catalog').then(r => r.json()),
+                    fetch(this.apiBase + 'api/settings').then(r => r.json()),
+                ]);
+                for (const k of Object.keys(this.panel)) {
+                    if (s[k] !== undefined && s[k] !== null) this.panel[k] = s[k];
+                }
+                this.panel.panel_shipped_backgrounds =
+                    { ...(s.panel_shipped_backgrounds || {}) };
+                this._icons = {};
+                for (const ic of (cat.board_icons || [])) this._icons[ic.key] = ic.paths;
+                this._homeSlug = s.panel_home_board || 'home';
+                this._hidden = new Set(s.panel_board_hidden || []);
+
+                const own = (pages.pages || []).map(p => this.row(p, false));
+                this.shippedBoards = (pages.shipped || []).map(p => this.row(p, true));
+                const all = own.concat(this.shippedBoards);
+                // The stored order first, then anything it does not name —
+                // exactly what the server does, so the list a household drags
+                // is the shelf they get rather than a second opinion about it.
+                const order = s.panel_board_order && s.panel_board_order.length
+                    ? s.panel_board_order : (s.panel_tabs || []);
+                const at = k => {
+                    const i = order.indexOf(k);
+                    return i < 0 ? order.length + all.findIndex(b => b.key === k) : i;
+                };
+                all.sort((a, b) => at(a.key) - at(b.key));
+                this.boards = all;
+            } catch (e) { /* the list stays empty and says Loading… */ }
+        },
+
+        row(p, shipped) {
+            const isHome = p.slug === (this._homeSlug || 'home');
+            // The shelf's two key shapes: a shipped board answers to its bare
+            // destination slug, a household's own to `board:<slug>`. A board
+            // called Chores must not be able to shadow the Chores page, which
+            // is why the prefix exists and why it stays.
+            const key = shipped || p.slug === 'home' ? p.slug : 'board:' + p.slug;
+            const icon = String(p.icon || '🗂️');
+            return {
+                slug: p.slug, name: p.name || p.slug, shipped, isHome, key,
+                iconHtml: icon.startsWith('icon:')
+                    ? this.iconSvg((this._icons || {})[icon.slice(5)])
+                    : this.escape(icon),
+                address: p.slug === 'home' ? '/home'
+                    : (shipped ? '/' + p.slug + '?panel=true' : '/board/' + p.slug),
+                hidden: (this._hidden || new Set()).has(key),
+            };
+        },
+
+        escape(s) {
+            return String(s).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;',
+                '"': '&quot;', "'": '&#39;' }[c]));
+        },
+
+        iconSvg(paths) {
+            return `<svg class="w-4 h-4 inline-block" fill="none" stroke="currentColor"`
+                + ` stroke-width="1.8" viewBox="0 0 24 24">`
+                + (paths || []).map(d => `<path stroke-linecap="round"`
+                    + ` stroke-linejoin="round" d="${this.escape(d)}"/>`).join('')
+                + `</svg>`;
+        },
+
+        // ── Dragging, with pointer events rather than HTML5 drag-and-drop.
+        // `dragstart` does not fire for touch, and reordering a wall panel's
+        // shelf is a thing somebody does ON the wall panel. Same technique the
+        // board's own tiles use.
+        startBoardDrag(ev, key) {
+            if (ev.button !== undefined && ev.button !== 0) return;
+            const from = this.boards.findIndex(b => b.key === key);
+            if (from < 0) return;
+            let moved = false;
+            const slack = 6, y0 = ev.clientY;
+            const move = e => {
+                if (!moved && Math.abs(e.clientY - y0) < slack) return;
+                if (!moved) { moved = true; this.dragKey = key; }
+                const over = document.elementFromPoint(e.clientX, e.clientY);
+                const row = over && over.closest('[data-board-key]');
+                if (!row) return;
+                const to = this.boards.findIndex(
+                    b => b.key === row.getAttribute('data-board-key'));
+                const now = this.boards.findIndex(b => b.key === key);
+                if (to >= 0 && to !== now) {
+                    this.boards.splice(to, 0, this.boards.splice(now, 1)[0]);
+                }
+            };
+            const up = () => {
+                document.removeEventListener('pointermove', move);
+                document.removeEventListener('pointerup', up);
+                if (moved) { this.dragKey = null; this.saveOrder(); }
+            };
+            document.addEventListener('pointermove', move);
+            document.addEventListener('pointerup', up);
+        },
+
+        openBoard(b) {
+            // `?panel=false` deliberately: the panel latch re-adds panel mode
+            // on any load without it, so a wall tablet following this link
+            // would land back in kiosk and be unable to edit anything.
+            const href = b.slug === 'home' ? 'home'
+                : (b.shipped ? b.slug : 'board/' + b.slug);
+            window.location.href = this.apiBase + href + '?panel=false';
+        },
+
+        setShelf(b, on) {
+            b.hidden = !on;
+            this.saveOrder();
+        },
+
+        makeHome(b) {
+            this.boards.forEach(x => { x.isHome = x === b; });
+            this._homeSlug = b.slug;
+            this.saveOrder();
+        },
+
+        async newBoard() {
+            const name = await promptInput('New board', 'What is this board called?',
+                { placeholder: 'Hallway', okText: 'Create' });
+            if (name === null) return;
+            const clean = (name || '').trim() || 'Board';
+            const taken = new Set(this.boards.map(b => b.slug));
+            let slug = clean.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-|-$/g, '').slice(0, 31) || 'board';
+            if (taken.has(slug)) {
+                let n = 2;
+                while (taken.has(`${slug}-${n}`)) n += 1;
+                slug = `${slug}-${n}`;
+            }
+            const pages = await fetch(this.apiBase + 'api/home_board/pages')
+                .then(r => r.json());
+            const next = (pages.pages || []).concat([{
+                slug, name: clean, icon: '🗂️', v: 5,
+                widgets: [], spans: {}, columns: 64, row_height: 10, gap: 20,
+                background: '',
+            }]);
+            await this.post({ panel_pages: next });
+            // Straight to it: an empty board is not a thing to admire in a
+            // list, it is a thing to put tiles on.
+            window.location.href = this.apiBase + 'board/' + slug + '?panel=false';
+        },
+
+        async deleteBoard(b) {
+            if (!await promptConfirm('Delete this board?',
+                `"${b.name}" and everything on it. The wall panel loses its button.`,
+                'Delete')) return;
+            const pages = await fetch(this.apiBase + 'api/home_board/pages')
+                .then(r => r.json());
+            await this.post({
+                panel_pages: (pages.pages || []).filter(p => p.slug !== b.slug),
+            });
+            await this.loadBoards();
+        },
+
+        saveOrder() {
+            return this.post({
+                panel_board_order: this.boards.map(b => b.key),
+                panel_board_hidden: this.boards.filter(b => b.hidden).map(b => b.key),
+                panel_home_board: this._homeSlug || 'home',
+                // The old single-list form is cleared as this writes the new
+                // pair, so nothing is left for `resolve_tabs` to fall back to
+                // and disagree with what is on screen.
+                panel_tabs: [],
+            });
+        },
+
+        setShippedBackground(slug, value) {
+            const v = (value || '').trim();
+            if (v) { this.panel.panel_shipped_backgrounds[slug] = v; }
+            else { delete this.panel.panel_shipped_backgrounds[slug]; }
+            this.savePanel();
+        },
+
+        savePanel() { return this.post({ ...this.panel }); },
+
+        async post(body) {
+            this.savingBoards = true;
+            try {
+                await fetch(this.apiBase + 'api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+            } finally {
+                this.savingBoards = false;
+            }
+        },
+    };
+}
+</script>

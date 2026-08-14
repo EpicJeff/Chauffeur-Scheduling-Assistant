@@ -985,6 +985,23 @@ class Settings(BaseModel):
     panel_allow_unsafe_controls: bool = False
 
     panel_tabs: List[str] = Field(default_factory=list)
+    # The shelf, as ORDER plus a HIDDEN SET (v2.232.0). `panel_tabs` was one
+    # list that, once non-empty, WAS the shelf — anything left out was out.
+    # Fine while curating was a rare expert act; fatal once the editor writes a
+    # full order on every drag, because then every household is curated on day
+    # one and no board shipped afterwards ever appears for any of them.
+    #
+    # Order says where things go. Hiding says what is off. Anything known and
+    # unlisted is simply NEW, so it joins the end. `panel_tabs` is still read
+    # when these are absent, as order-plus-everything-else-hidden, so a
+    # household that curated keeps exactly the shelf they had.
+    panel_board_order: List[str] = Field(default_factory=list)
+    panel_board_hidden: List[str] = Field(default_factory=list)
+    # WHICH board is home. `/home` is the landing route, the idle-return
+    # target and what the shelf's Home button means, so "hide the Home board"
+    # needed this to not strand the wall: the designation moves, and hiding
+    # becomes an ordinary toggle with no special case.
+    panel_home_board: str = ''
     # Untouched for this long, any panel page returns to the home board. This
     # is what makes the panel an appliance rather than a browser: whatever
     # somebody wandered off into, the wall goes back to being the wall.

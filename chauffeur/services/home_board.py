@@ -3630,6 +3630,27 @@ def own_boards(settings: dict = None) -> List[dict]:
             if p['slug'] != HOME_SLUG and p['slug'] not in BUILTIN_PAGES]
 
 
+def home_slug(settings: dict = None) -> str:
+    """WHICH board is home. `home` unless the household said otherwise.
+
+    Hiding the Home board from the shelf was the ask; this is the primitive
+    that actually delivers it. `/home` is the landing route, the idle-return
+    target and what the shelf's Home button means, so hiding that board
+    without moving those left the wall snapping back every three minutes to a
+    board somebody had deliberately taken off the shelf.
+
+    With a designation, "build my own home board" is a first-class act and
+    hiding becomes an ordinary toggle with no special case. Falls back when it
+    names a board that is gone — a dangling pointer here is a wall with
+    nowhere to return to.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    wanted = str(settings.get('panel_home_board') or '').strip().lower()
+    if wanted and any(p['slug'] == wanted for p in normalize_pages(settings)):
+        return wanted
+    return HOME_SLUG
+
+
 def find_page(slug: Optional[str] = None, settings: dict = None) -> dict:
     """The page a URL asked for, or the home board.
 
@@ -3647,7 +3668,13 @@ def find_page(slug: Optional[str] = None, settings: dict = None) -> dict:
         built = builtin_page(wanted, settings)
         if built:
             return built
-    return next((p for p in pages if p['slug'] == HOME_SLUG), pages[0])
+    # No slug means HOME, and home is wherever the household put it. `/home`
+    # is the one address that means "the home board" rather than a particular
+    # board, so a designation here is all the idle timer and the shelf's Home
+    # button need — both already point at `/home`.
+    at_home = home_slug(settings)
+    return next((p for p in pages if p['slug'] == at_home),
+                next((p for p in pages if p['slug'] == HOME_SLUG), pages[0]))
 
 
 def resolve_instances(requested: Optional[str] = None,
@@ -3706,8 +3733,15 @@ def resolve_widgets(requested: Optional[str] = None, settings: dict = None) -> L
 # The shelf's vocabulary — the same slugs `?tabs=` already speaks, plus the
 # home board itself. Kept here rather than in the template because the panel
 # profile endpoint has to validate against it.
+# `intake` left this list in v2.232.0. It was the one nav slug that is not a
+# board — mail approvals and IMAP settings, an admin surface — and it was
+# already off DEFAULT_TABS for exactly that reason, so it could be added to a
+# shelf and never was on purpose. A vocabulary with one member that means
+# something else is a vocabulary with an exception to explain forever. It
+# stays on the desktop nav, where admin lives; if a kiosk-shaped intake is
+# ever designed, it joins the shipped boards like everything else.
 NAV_SLUGS = ['home', 'schedule', 'calendar', 'errands', 'shopping', 'occasions',
-             'chores', 'routines', 'intake', 'trips', 'map', 'moments']
+             'chores', 'routines', 'trips', 'map', 'moments']
 # Every destination except the admin one. An earlier six-slug default put more
 # than half the app out of reach from the panel, which is not a shelf, it is a
 # bookmark bar. The shelf measures itself and moves whatever does not fit into
@@ -3752,14 +3786,35 @@ def resolve_tabs(requested: Optional[str] = None, settings: dict = None) -> List
         picked = clean(requested.split(','))
         if picked:
             return picked
-    stored = clean((settings or {}).get('panel_tabs'))
-    if stored:
-        # A CURATED shelf is honoured exactly, boards included — the editor
-        # lists them, so leaving one out is a decision somebody made rather
-        # than an omission to be helpfully repaired. Adding it back would make
-        # the ✕ next to it do nothing.
-        return stored
-    return _with_boards(list(DEFAULT_TABS), settings)
+
+    settings = settings or {}
+    # ORDER plus a HIDDEN SET, since v2.232.0, and the pair matters.
+    #
+    # `panel_tabs` was one list that, once non-empty, WAS the shelf: anything
+    # left out was out. That is defensible while curating is a rare expert act
+    # and fatal the moment the editor writes a full order on every drag —
+    # every household would be curated on day one, and no board shipped
+    # afterwards would ever appear for any of them. Order says where things
+    # go; hiding says what is off. Anything known and unlisted is simply new,
+    # so it joins the end rather than vanishing.
+    order = clean(settings.get('panel_board_order'))
+    hidden = set(clean(settings.get('panel_board_hidden')))
+    if not order:
+        legacy = clean(settings.get('panel_tabs'))
+        if legacy:
+            # A curated `panel_tabs` meant "these and only these". Read as
+            # order + everything else hidden, so a household that curated
+            # keeps exactly the shelf they had. Read-only, like every other
+            # migration here — nothing is written until somebody saves.
+            order, hidden = legacy, (known - set(legacy))
+        else:
+            order = _with_boards(list(DEFAULT_TABS), settings)
+    # Everything that exists and nobody has placed goes on the end, in the
+    # order the defaults would have put it.
+    tail = [k for k in _with_boards(list(DEFAULT_TABS), settings)
+            if k not in order]
+    tail += [k for k in sorted(known) if k not in order and k not in tail]
+    return [k for k in order + tail if k not in hidden]
 
 
 def _with_boards(order: List[str], settings: dict = None) -> List[str]:

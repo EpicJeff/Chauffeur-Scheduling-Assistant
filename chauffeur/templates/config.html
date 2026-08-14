@@ -89,6 +89,26 @@
                             Themes
                         </button>
                     </li>
+                    <li>
+                        <!-- Boards. Foundational enough to be a tab here rather
+                             than a route of its own: from a household's side
+                             there is no difference, and inventing a page to
+                             host one list is a new flow for a single thing.
+                             The markup and script are an include, so this file
+                             grows by a line rather than by a thousand — which
+                             is the part of config-decentralisation that was
+                             ever about size. -->
+                        <button @click="activeTab = 'boards'"
+                            :class="activeTab === 'boards' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
+                            class="whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
+                            <svg class="w-5 h-5 mr-2 md:mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M4 5a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM13 5a1 1 0 011-1h5a1 1 0 011 1v2a1 1 0 01-1 1h-5a1 1 0 01-1-1V5zM13 12a1 1 0 011-1h5a1 1 0 011 1v7a1 1 0 01-1 1h-5a1 1 0 01-1-1v-7zM4 15a1 1 0 011-1h5a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4z">
+                                </path>
+                            </svg>
+                            Boards
+                        </button>
+                    </li>
                 </ul>
             </nav>
         </div>
@@ -3781,6 +3801,8 @@
                     </button>
                 </div>
             </div>
+
+                {% include 'components/boards_admin.html' %}
         </div>
     </div>
     <script>

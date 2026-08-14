@@ -165,7 +165,17 @@ def scenario_every_slug_is_filterable():
     content page missing from that vocabulary cannot be filtered off a kiosk
     card or a shelf at all."""
     from services import home_board
+    # `intake` is the ONE exception, and it is deliberate (v2.232.0): mail
+    # approvals and IMAP settings are an admin surface, it was already off
+    # DEFAULT_TABS for that reason, and a shelf vocabulary with one member
+    # that is not a board is an exception to explain forever. It keeps its
+    # desktop-nav link; it is simply not something a wall panel can show.
     for it in _items():
+        if it['slug'] == 'intake':
+            check(it['slug'] not in home_board.NAV_SLUGS,
+                  "intake is back in the shelf vocabulary — it is an admin "
+                  "page, and the shelf is boards")
+            continue
         check(it['slug'] in home_board.NAV_SLUGS,
               f"'{it['slug']}' is in the nav but not in home_board.NAV_SLUGS")
 
