@@ -482,6 +482,33 @@
             opacity: 0.75;
         }
         .tile-edit:hover { opacity: 1; }
+        /* The two "+" affordances, and they are deliberately the same object
+           at two scales: a dashed outline where the next thing will land. One
+           sits as the last cell of the BOARD's grid, the other along the
+           bottom of a container TILE. Neither is a solid button, because a
+           solid button reads as a tile/card that is already there. */
+        .tile-add, .tile-add-card {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px dashed color-mix(in srgb, var(--panel-accent) 55%, transparent);
+            border-radius: 14px;
+            color: var(--panel-accent);
+            font-weight: 700;
+            opacity: 0.7;
+        }
+        .tile-add { min-height: 90px; font-size: 0.95rem; }
+        .tile-add-card {
+            width: 100%;
+            margin-top: 10px;
+            padding: 8px 0;
+            border-radius: 10px;
+            font-size: 0.8rem;
+        }
+        .tile-add:hover, .tile-add-card:hover {
+            opacity: 1;
+            background: color-mix(in srgb, var(--panel-accent) 10%, transparent);
+        }
 
         /* ── The setup card.
            It was the one part of this page painted in literal greys —
@@ -715,15 +742,6 @@
             </button>
             <button x-show="arranging" @click="cancelArrange()"
                 class="text-xs ed-btn px-2 py-1.5">Cancel</button>
-            <!-- + Add tile, while arranging. The picker used to live only at
-                 the bottom of the setup form, so adding a tile meant leaving
-                 the board, and the tile appeared somewhere off-screen behind
-                 you. Here it lands at the end of the grid you are looking at
-                 and you drag it where you want it. -->
-            <button x-show="arranging" @click="picking = !picking"
-                class="text-xs font-semibold ed-input rounded-lg px-3 py-1.5">
-                <span x-text="picking ? '× Close' : '+ Add tile'"></span>
-            </button>
             <button x-show="!arranging" @click="startArrange()"
                 class="text-xs font-semibold ed-input rounded-lg px-3 py-1.5">
                 ⠿ Arrange tiles
@@ -875,6 +893,17 @@
                                 <div class="text-base panel-dim" x-text="t.data.empty"></div>
                             </template>
 
+                            <!-- + on the TILE, because that is where the card
+                                 lands. The alternative was a dropdown in a
+                                 list under the board, which is the same long
+                                 way round dragging already replaced for
+                                 position and size. Below the cards rather
+                                 than among them: it is not a card, and a
+                                 dashed cell in the grid reads as one. -->
+                            <button type="button" x-show="arranging"
+                                @click.prevent.stop="openCardPicker(t.id)"
+                                class="tile-add-card">+ Add card</button>
+
                             <div class="nc-stack-grid" :data-cards="t.id"
                                 @pointerdown="arranging && startTileCardDrag($event, t.id)"
                                 :class="tileFree(t) ? 'nc-free' : ''"
@@ -957,6 +986,16 @@
                     </template>
                 </a>
             </template>
+
+            <!-- + Add tile, ON the board, as the last cell of the
+                 grid. It was a button in the toolbar above for one
+                 release, which is nearer than the setup form but still
+                 not where the tile goes. A dashed cell at the end says
+                 where the next tile lands, which is the whole answer. -->
+            <button type="button" x-show="arranging" @click="picking = true"
+                class="tile-add" style="grid-column: span 2">
+                + Add tile
+            </button>
         </div>
 
         <!-- ── A card's settings, over the board it is sitting on.
@@ -1001,19 +1040,67 @@
                         </label>
                     </div>
 
+                    <!-- Every card can drop its surface — the card-level twin
+                         of the tile's own "No panel behind the cards". Offered
+                         HERE rather than declared per type in the catalog: it
+                         is a property of being a card in a tile, not of any one
+                         drawing, and nineteen copies of the same option is how
+                         a vocabulary drifts. -->
+                    <label class="flex items-center gap-1.5 text-[0.7rem] ed-note mb-4">
+                        <input type="checkbox" :checked="!!(editing.config || {}).bare"
+                            @change="setCfg(editing, { key: 'bare', type: 'bool', default: false }, $event.target.checked)">
+                        No panel behind this card
+                    </label>
+
                     <div class="space-y-3">
                         {% with OW = 'editing' %}
                             {% include 'components/board_options.html' %}
                         {% endwith %}
                     </div>
 
-                    <button type="button" @click="closeCardEditor()"
-                        class="w-full mt-5 rounded-lg py-2 text-sm font-semibold
-                               bg-sky-600 hover:bg-sky-500 text-white">
-                        Done
-                    </button>
+                    <div class="flex items-center gap-2 mt-5">
+                        <button type="button" @click="closeCardEditor()"
+                            class="flex-1 rounded-lg py-2 text-sm font-semibold
+                                   bg-sky-600 hover:bg-sky-500 text-white">
+                            Done
+                        </button>
+                        <!-- Removing the card from here, because this is where
+                             you are when you decide it should go. The ✕ in the
+                             list below did the same job at the end of a scroll. -->
+                        <button type="button" @click="removeEditingCard()"
+                            class="rounded-lg px-3 py-2 text-sm ed-btn hover:text-red-400
+                                   border border-gray-700">
+                            Remove
+                        </button>
+                    </div>
                 </div>
             </template>
+        </div>
+
+        <!-- The card picker, opened by the + on a container tile. Same
+             partial as the tile palette, minus the containers: a card cannot
+             hold cards, so offering Custom here is offering a box that goes
+             nowhere. Stays open like the tile one — filling a tile is one
+             errand, not four. -->
+        <div x-show="cardPicking" x-cloak @click.self="closeCardPicker()"
+            @keydown.escape.window="closeCardPicker()"
+            class="fixed inset-0 z-40 flex items-end sm:items-center justify-center p-3 sm:p-6"
+            style="background: rgba(0,0,0,.55)">
+            <div class="ed-card rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="text-base font-black ed-title">Add a card</span>
+                    <button type="button" class="ml-auto ed-btn px-2"
+                        @click="closeCardPicker()" title="Close">✕</button>
+                </div>
+                {% with GROUPS = 'cardPickGroups()', ADD = 'addPickedCard', NOUN = 'cards' %}
+                    {% include 'components/board_picker.html' %}
+                {% endwith %}
+                <button type="button" @click="closeCardPicker()"
+                    class="w-full mt-4 rounded-lg py-2 text-sm font-semibold
+                           bg-sky-600 hover:bg-sky-500 text-white">
+                    Done
+                </button>
+            </div>
         </div>
 
         <!-- The tile picker, over the board rather than under the form.
@@ -1030,7 +1117,7 @@
                     <button type="button" class="ml-auto ed-btn px-2"
                         @click="picking = false" title="Close">✕</button>
                 </div>
-                {% include 'components/board_picker.html' %}
+                {% with GROUPS = 'pickGroups()', ADD = 'addInstance', NOUN = 'tiles' %}{% include 'components/board_picker.html' %}{% endwith %}
                 <button type="button" @click="picking = false"
                     class="w-full mt-4 rounded-lg py-2 text-sm font-semibold
                            bg-sky-600 hover:bg-sky-500 text-white">
@@ -1416,281 +1503,19 @@
                         <span x-text="page().row_height * 2"></span>…
                         (small rows that divide the gutter give fine sizing AND alignment).
                     </p>
-                    <div class="space-y-1.5 mb-3">
-                        <!-- Keyed by INSTANCE id, not by type. Alpine uses this
-                             key to decide which DOM row belongs to which entry,
-                             so with two calendar tiles a type key would have
-                             made the second one silently unreachable — it would
-                             reuse the first one's row. -->
-                        <template x-for="(w, i) in page().widgets" :key="w.id">
-                            <div class="ed-panel rounded-lg">
-                            <div class="flex flex-wrap items-center gap-2 px-3 py-2">
-                                <span x-text="instanceIcon(w)"></span>
-                                <span class="flex-1 min-w-0">
-                                    <span class="text-sm font-semibold ed-title"
-                                        x-text="instanceLabel(w)"></span>
-                                    <span class="block text-[0.7rem] ed-note truncate"
-                                        x-text="widgetMeta(w.type).blurb"></span>
-                                </span>
-                                <!-- Size, per tile. A wall board is a layout,
-                                     not a list — the map earns two columns and
-                                     the intake counter does not. -->
-                                <!-- Number fields, not a list of sizes. A grid
-                                     of 12 columns has 12 widths, and picking
-                                     them off a dropdown is a menu that grows
-                                     with the setting.
-                                     The width carried a "· a quarter" suffix
-                                     for a while. It was a different LENGTH for
-                                     every value, so the row's controls shuffled
-                                     sideways under the hand that was changing
-                                     them — a caption that moves the thing you
-                                     are aiming at costs more than it explains. -->
-                                <label class="flex items-center gap-1 text-[0.7rem] ed-note">
-                                    <input type="number" min="1" :max="cols()" step="1"
-                                        :value="spanOf(w.id, 'cols')"
-                                        @change="setSpan(w.id, 'cols', $event.target.value)"
-                                        class="w-12 ed-input rounded text-xs ed-title px-1 py-0.5">
-                                    cols
-                                </label>
-                                <!-- Rows, or FIT. A list's height is not a
-                                     number anybody can type: four children with
-                                     eleven routine items each is a different
-                                     height every morning, and one guess is
-                                     either short (the wall cuts the last child
-                                     off) or tall (a band of empty panel).
-                                     Decided per INSTANCE, not per type: a
-                                     Drives card set to Compact list, or a
-                                     calendar showing its list view, is a LIST
-                                     and fits like one — which is why
-                                     `w.config` goes along.
-                                     Not offered on a map, a mosaic or a
-                                     mounted calendar: their content is laid
-                                     out INTO the tile, so there is no natural
-                                     height to fit. The drives TIMELINE is not
-                                     in that company and never was — it sizes
-                                     itself in real pixels, so it fits.
+                    <!-- The tile list lived here: a row per tile with number
+                         fields, a gear, and up/down/remove buttons, plus a
+                         nested list of the cards inside a container tile with
+                         the same vocabulary again.
 
-                                     ── And FILL, the third height.
-                                     `rows` is a number somebody guesses and
-                                     then re-guesses on the next screen: a
-                                     layout that works on a 1080p wall is wrong
-                                     on a 4K one. Fill asks the SCREEN instead
-                                     of the household — the tile runs from
-                                     wherever it lands down to the shelf,
-                                     whatever the display. It is the answer for
-                                     a single-subject board (a map, a calendar,
-                                     the driving schedule) where the point is
-                                     that the one tile takes the room. Offered
-                                     on every type, unlike fit: fill GIVES a
-                                     height, and content that cannot fit is
-                                     precisely content that wants to be given
-                                     one. -->
-                                <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                                    x-show="!spanOf(w.id, 'auto') && !spanOf(w.id, 'fill')">
-                                    <input type="number" min="1" step="1"
-                                        :value="spanOf(w.id, 'rows')"
-                                        @change="setSpan(w.id, 'rows', $event.target.value)"
-                                        class="w-12 ed-input rounded text-xs ed-title px-1 py-0.5">
-                                    rows
-                                </label>
-                                <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                                    x-show="canFit(w.type, w.config)"
-                                    title="As tall as whatever it is showing">
-                                    <input type="checkbox" :checked="!!spanOf(w.id, 'auto')"
-                                        @change="setSpan(w.id, 'auto', $event.target.checked)">
-                                    fit
-                                </label>
-                                <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                                    title="Down to the bottom of the screen, on any display">
-                                    <input type="checkbox" :checked="!!spanOf(w.id, 'fill')"
-                                        @change="setSpan(w.id, 'fill', $event.target.checked)">
-                                    fill
-                                </label>
-                                <!-- Parked, and NOT the same thing as rule 1
-                                     hiding a feature nobody set up. That is
-                                     the system deciding and it is invisible;
-                                     this is a person keeping a tile they are
-                                     not ready to delete. So it stays on the
-                                     board, ghosted, whenever they arrange. -->
-                                <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                                    title="Keep the tile but take it off the wall">
-                                    <input type="checkbox" :checked="isHidden(w)"
-                                        @change="setHidden(w, $event.target.checked)">
-                                    hide
-                                </label>
-                                <!-- The inverse: a tile the board is ABOUT,
-                                     which says it is empty instead of
-                                     vanishing. Not offered on chrome, which
-                                     never vanishes, or on a container, which
-                                     draws its cards. -->
-                                <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                                    x-show="canRequire(w.type)"
-                                    title="Say it is empty instead of disappearing">
-                                    <input type="checkbox" :checked="isRequired(w)"
-                                        @change="setRequired(w, $event.target.checked)">
-                                    always
-                                </label>
-                                <!-- Only offered when the type has something to
-                                     ask. A gear on a tile with no options is a
-                                     door onto an empty room. -->
-                                <button x-show="optionsFor(w.type).length"
-                                    @click="expanded = (expanded === w.id ? null : w.id)"
-                                    :class="expanded === w.id ? 'text-sky-300' : 'ed-btn'"
-                                    class="px-1" title="Options">⚙</button>
-                                <button @click="move(page().widgets, i, -1)" :disabled="i === 0"
-                                    class="ed-btn disabled:opacity-25 px-1">▲</button>
-                                <button @click="move(page().widgets, i, 1)"
-                                    :disabled="i === page().widgets.length - 1"
-                                    class="ed-btn disabled:opacity-25 px-1">▼</button>
-                                <button @click="removeInstance(i)"
-                                    class="ed-btn hover:text-red-400 px-1">✕</button>
-                            </div>
-
-                            <!-- This instance's options, rendered FROM THE
-                                 TYPE'S DECLARATION rather than from a form
-                                 written per tile. The pair that drifts apart in
-                                 a system like this is "what the editor offers"
-                                 and "what the builder honours"; one list in
-                                 home_board.WIDGETS is the only real defence, so
-                                 this loop deliberately knows nothing about
-                                 calendars or drivers. -->
-                            <div x-show="expanded === w.id" x-cloak
-                                class="border-t border-gray-700/70 px-3 py-3 space-y-3">
-                                {% include 'components/board_options.html' %}
-
-                                <!-- ── The cards inside a GROUP.
-                                     The same list as the board's, one level
-                                     down, over the same catalog — a card is an
-                                     instance and its options are the tile's
-                                     options, which is why the block below is
-                                     the same included file with `c` in place
-                                     of `w`. -->
-                                <template x-if="widgetMeta(w.type).container">
-                                    <div class="border-t border-gray-700/70 pt-3 space-y-2">
-                                        <div class="text-[0.7rem] font-bold uppercase tracking-wider ed-note">
-                                            Cards in this tile
-                                        </div>
-                                        <template x-for="(c, j) in tileCards(w)" :key="c.id">
-                                            <div class="ed-panel rounded-lg">
-                                                <div class="flex items-center gap-2 px-2.5 py-2">
-                                                    <span x-text="instanceIcon(c)"></span>
-                                                    <span class="flex-1 min-w-0 text-sm ed-title truncate"
-                                                        x-text="instanceLabel(c)"></span>
-                                                    <label class="flex items-center gap-1 text-[0.7rem] ed-note">
-                                                        <input type="number" min="1" max="12" step="1"
-                                                            :value="cardNum(c, 'cols', 12)"
-                                                            @change="setCardNum(c, 'cols', $event.target.value, 12)"
-                                                            class="w-11 ed-input rounded text-xs ed-title px-1 py-0.5">
-                                                        cols
-                                                    </label>
-                                                    <!-- A card's HEIGHT, and the way back from one.
-                                                         `rows: 0` has always meant "as tall as the
-                                                         content" — but the only thing that ever SET
-                                                         rows was dragging the card's grip in arrange
-                                                         mode, and nothing anywhere could put it back.
-                                                         A card left at a dragged height makes its
-                                                         TILE fit that height, which reads as the
-                                                         tile's fit being broken (reported exactly
-                                                         that way: "says 512px but it's way too tall
-                                                         for the content"). -->
-                                                    <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                                                        x-show="cardNum(c, 'rows', 0) && !(c.config || {}).fill">
-                                                        <input type="number" min="1" max="40" step="1"
-                                                            :value="cardNum(c, 'rows', 0)"
-                                                            @change="setCardNum(c, 'rows', $event.target.value, 0)"
-                                                            class="w-11 ed-input rounded text-xs ed-title px-1 py-0.5">
-                                                        rows
-                                                    </label>
-                                                    <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                                                        x-show="!(c.config || {}).fill"
-                                                        title="As tall as whatever it is showing">
-                                                        <input type="checkbox"
-                                                            :checked="!cardNum(c, 'rows', 0)"
-                                                            @change="setCardNum(c, 'rows',
-                                                                $event.target.checked ? 0 : 4, 0)">
-                                                        fit
-                                                    </label>
-                                                    <!-- The tile's third height, one level down: as
-                                                         tall as what is LEFT of the tile. The pairing
-                                                         a household actually builds is a heading card
-                                                         over a map card — and the map should take the
-                                                         rest, whatever the heading turned out to be
-                                                         and whatever screen it lands on. -->
-                                                    <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                                                        title="Down to the bottom of the tile">
-                                                        <input type="checkbox"
-                                                            :checked="!!(c.config || {}).fill"
-                                                            @change="setCardFill(c, $event.target.checked)">
-                                                        fill
-                                                    </label>
-                                                    <!-- Always offered on a CARD (unlike a
-                                                         tile's gear): every card carries the
-                                                         universal no-panel toggle now, so
-                                                         there is no such thing as a card with
-                                                         nothing to ask. -->
-                                                    <button
-                                                        @click="cardOpen = (cardOpen === c.id ? null : c.id)"
-                                                        :class="cardOpen === c.id ? 'text-sky-300' : 'ed-btn'"
-                                                        class="px-1" title="Options">⚙</button>
-                                                    <button @click="move(tileCards(w), j, -1)" :disabled="j === 0"
-                                                        class="ed-btn disabled:opacity-25 px-1">▲</button>
-                                                    <button @click="move(tileCards(w), j, 1)"
-                                                        :disabled="j === tileCards(w).length - 1"
-                                                        class="ed-btn disabled:opacity-25 px-1">▼</button>
-                                                    <button @click="removeCard(w, j)"
-                                                        class="ed-btn hover:text-red-400 px-1">✕</button>
-                                                </div>
-                                                <div x-show="cardOpen === c.id" x-cloak
-                                                    class="border-t border-gray-700/70 px-3 py-3 space-y-3">
-                                                    <!-- Every card can drop its surface — the
-                                                         card-level twin of the tile's own
-                                                         "No panel behind the cards". Offered
-                                                         HERE rather than declared per type in
-                                                         the catalog: it is a property of being
-                                                         a card in a tile, not of any one
-                                                         drawing, and nineteen copies of the
-                                                         same option is how a vocabulary
-                                                         drifts. -->
-                                                    <label class="flex items-center gap-2 text-[0.7rem] font-bold uppercase tracking-wider ed-note">
-                                                        <input type="checkbox" :checked="!!(c.config || {}).bare"
-                                                            @change="setCfg(c, { key: 'bare', type: 'bool', default: false }, $event.target.checked)">
-                                                        No panel behind this card
-                                                    </label>
-                                                    {% with OW = 'c' %}
-                                                        {% include 'components/board_options.html' %}
-                                                    {% endwith %}
-                                                </div>
-                                            </div>
-                                        </template>
-
-                                        <select @change="addCard(w, $event.target.value);
-                                                         $event.target.value = ''"
-                                            class="w-full ed-input rounded px-2 py-1.5 text-sm">
-                                            <option value="">+ Add a card…</option>
-                                            <template x-for="k in cardTypes()" :key="k.key">
-                                                <option :value="k.key"
-                                                    x-text="k.icon + '  ' + k.label
-                                                            + (k.subject ? '' : '  (shows everyone)')"></option>
-                                            </template>
-                                        </select>
-                                    </div>
-                                </template>
-                            </div>
-                            </div>
-                        </template>
-                        <div x-show="!page().widgets.length" class="text-sm ed-note italic">
-                            None picked — the panel will show every tile but Intake.
-                        </div>
-                    </div>
-                    <!-- ── ONE button, then a picker.
-                         Nineteen chips in a row is not a menu, it is a
-                         paragraph of buttons: everything is the same size and
-                         weight, so nothing reads as "start here" and the
-                         Home Assistant tiles sit in the middle of the family's
-                         own with nothing to say they are a different kind of
-                         thing. One button that opens a list fixes both — the
-                         list has room to be grouped and to carry each tile's
-                         blurb, which is what somebody choosing actually reads. -->
+                         All of it is on the BOARD now. Drag a tile to move it,
+                         drag its corner to size it, tap its pencil for its
+                         settings; the same three for the cards inside a tile,
+                         plus a + on the tile itself. Arranging a layout by
+                         typing into a list that looks nothing like the thing
+                         it describes was the long way round, and up/down
+                         arrows are the tell: an ordering control that cannot
+                         show you the order. -->
                     <button type="button" @click="picking = !picking"
                         class="w-full border border-dashed border-gray-600 hover:border-sky-500
                                ed-btn rounded-lg py-2 text-sm font-semibold">
@@ -1698,7 +1523,7 @@
                     </button>
 
                     <div x-show="picking" x-cloak class="mt-2 ed-panel rounded-lg p-2">
-                        {% include 'components/board_picker.html' %}
+                        {% with GROUPS = 'pickGroups()', ADD = 'addInstance', NOUN = 'tiles' %}{% include 'components/board_picker.html' %}{% endwith %}
                     </div>
                 </div>
 
@@ -2210,13 +2035,11 @@
                 // should keep asking.
                 haOptions: { available: false, entities: [], cameras: [], loaded: false },
                 _haLoading: false,
-                // Which instance's options panel is open. ONE at a time, by id:
-                // a board with ten tiles and ten expanded forms is a wall of
-                // fields with no way to tell which tile you are editing.
-                expanded: null,
-                // The same, one level down: which CARD's options are open
-                // inside the group being edited.
-                cardOpen: null,
+                // `expanded` and `cardOpen` lived here: which row of the tile
+                // list had its options open, and which card inside that row.
+                // Both went with the lists — options are an overlay over the
+                // thing they configure now, so there is no row to be open and
+                // no second level to keep track of.
                 // Which board the editor is looking at. An INDEX rather than a
                 // slug because a board being renamed changes its slug under the
                 // hand that is typing, and the selection must not jump.
@@ -4565,6 +4388,34 @@
                 // `requires`, not from a list written here: a new HA tile
                 // already has to declare that, and a second list would be a
                 // second place to forget.
+                // The same two groups, minus the containers: a tile can hold
+                // cards, a card cannot, so offering Custom inside a Custom is
+                // offering a box that goes nowhere.
+                cardPickGroups() {
+                    return this.pickGroups().map(g => ({
+                        name: g.name,
+                        rows: g.rows.filter(c => !c.container),
+                    }));
+                },
+
+                // + on a container tile. The tile is remembered rather than
+                // passed through the picker, because the picker is a shared
+                // partial and threading an argument through it is how it would
+                // stop being shared.
+                openCardPicker(tileId) {
+                    this.cardPicking = (this.page().widgets || [])
+                        .find(w => w.id === tileId) || null;
+                },
+
+                addPickedCard(type) {
+                    if (this.cardPicking) this.addCard(this.cardPicking, type);
+                },
+
+                async closeCardPicker() {
+                    this.cardPicking = null;
+                    await this.load();      // the tile redraws with its new card
+                },
+
                 pickGroups() {
                     const q = (this.pickFilter || '').trim().toLowerCase();
                     const match = c => !q
@@ -5002,7 +4853,6 @@
                     let id = type, n = 2;
                     while (taken.has(id)) id = `${type}-${n++}`;
                     cards.push({ id, type, config: {} });
-                    this.cardOpen = id;   // straight into its options
                 },
 
                 removeCard(w, j) {
@@ -5203,6 +5053,7 @@
                 editing: null,          // the card instance being edited
                 editingTile: null,
                 tileEditing: null,      // the TILE instance being edited
+                cardPicking: null,      // the container tile being added to
 
                 openCardEditor(tileId, drawnId) {
                     const cards = this._cardsOf(tileId);
@@ -5216,6 +5067,23 @@
                     this.editing = null;
                     this.editingTile = null;
                     await this.load();      // the board redraws with the change
+                },
+
+                // The card the overlay is about, off the tile it belongs to —
+                // looked up rather than remembered as an index, because the
+                // cards can be dragged into a different order while the
+                // overlay is open.
+                async removeEditingCard() {
+                    const c = this.editing, tileId = this.editingTile;
+                    if (!c || !tileId) return;
+                    if (!await promptConfirm('Remove this card?',
+                            `"${this.instanceLabel(c)}" comes off this tile.`,
+                            'Remove')) return;
+                    const w = (this.page().widgets || []).find(x => x.id === tileId);
+                    const cards = w && this.tileCards(w);
+                    const at = cards ? cards.findIndex(x => x.id === c.id) : -1;
+                    if (at >= 0) this.removeCard(w, at);
+                    await this.closeCardEditor();
                 },
 
                 // The TILE's own settings, reached from the ✎ on the tile

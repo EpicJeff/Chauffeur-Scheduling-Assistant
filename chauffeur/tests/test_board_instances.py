@@ -281,9 +281,15 @@ def scenario_the_tile_is_edited_on_the_tile():
     check(os.path.exists(os.path.join(TPL, 'components', 'board_picker.html')),
           "the tile palette is not a shared partial")
     used = tpl.count("{% include 'components/board_picker.html' %}")
-    check(used == 2,
-          f"the palette is included {used} times, not twice — it is offered "
-          f"over the board while arranging AND in the form below it")
+    check(used == 3,
+          f"the palette is included {used} times, not three — it is offered "
+          f"for a TILE over the board, for a CARD over a container tile, and "
+          f"in the form below")
+    # Parameterised by Jinja at compile time, the same way board_options.html
+    # serves three contexts — a runtime flag would make one partial that
+    # branches instead of one partial used three ways.
+    for ctx in ("ADD = 'addInstance'", "ADD = 'addPickedCard'"):
+        check(ctx in tpl, f"the palette has no {ctx} context")
 
 
 def scenario_a_board_can_be_copied_handed_over_and_pasted_back():

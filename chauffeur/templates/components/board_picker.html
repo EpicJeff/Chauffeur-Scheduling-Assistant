@@ -8,7 +8,7 @@
   Reads `pickFilter`, `pickGroups()`, `countOfType()` and `addInstance()` off
   homeBoard(), so it carries no state of its own.
 #}
-                        <input type="text" x-model="pickFilter" placeholder="Search tiles…"
+                        <input type="text" x-model="pickFilter" placeholder="Search {{ NOUN }}…"
                             class="w-full ed-input rounded px-2 py-1.5 text-sm ed-title mb-2">
                         <div class="max-h-80 overflow-y-auto space-y-3">
                             <!-- Two groups, and the divider is the point. The
@@ -16,7 +16,7 @@
                                  Home Assistant ones read somebody else's house.
                                  Mixed into one alphabet they look like the same
                                  kind of thing, and they are not. -->
-                            <template x-for="group in pickGroups()" :key="group.name">
+                            <template x-for="group in {{ GROUPS }}" :key="group.name">
                                 <div x-show="group.rows.length">
                                     <div class="flex items-center gap-2 mb-1.5">
                                         <span class="text-[0.65rem] font-black uppercase tracking-widest ed-note"
@@ -33,7 +33,7 @@
                                                  Home Assistant could add one and
                                                  then watch the wall never show
                                                  it. -->
-                                            <button type="button" @click="addInstance(c.key)"
+                                            <button type="button" @click="{{ ADD }}(c.key)"
                                                 :disabled="c.available === false"
                                                 class="w-full text-left flex items-start gap-2 rounded-md px-2 py-1.5"
                                                 :class="c.available === false
@@ -57,7 +57,7 @@
                                     </div>
                                 </div>
                             </template>
-                            <div x-show="!pickGroups().some(g => g.rows.length)"
+                            <div x-show="!{{ GROUPS }}.some(g => g.rows.length)"
                                 class="text-sm ed-note italic px-2 py-3">
                                 Nothing matches “<span x-text="pickFilter"></span>”.
                             </div>

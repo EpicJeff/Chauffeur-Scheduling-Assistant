@@ -703,8 +703,10 @@ def scenario_a_generic_tile_can_wear_its_own_icon():
     # And the EDITOR shows the override, or it can only be checked by walking
     # to the wall — which is the surface the icon exists to disambiguate.
     tpl = tpl_source.read('home.html')
-    check('instanceIcon(w)' in tpl and 'instanceIcon(c)' in tpl,
-          "the editor's rows still wear the type's emoji, so three cameras "
+    # In the overlays since v2.230.4 — the editor's ROWS are gone, because a
+    # tile and a card are opened on the board now rather than found in a list.
+    check('instanceIcon(tileEditing)' in tpl and 'instanceIcon(editing)' in tpl,
+          "the editor still wears the type's emoji, so three cameras "
           "are three identical rows")
 
 

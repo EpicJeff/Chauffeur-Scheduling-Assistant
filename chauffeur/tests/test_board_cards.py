@@ -252,7 +252,9 @@ def scenario_a_card_can_drop_its_own_panel():
     # And the option is reachable: the card gear is unconditional now, since
     # every card carries this toggle — a gear gated on the type's own option
     # list left a card with no options no road to it.
-    check("setCfg(c, { key: 'bare'" in home,
+    # In the card's own overlay since v2.230.4, because the list it used to
+    # live in is gone — cards are dragged, resized and opened on the board now.
+    check("setCfg(editing, { key: 'bare'" in home,
           "the editor offers no way to make a card bare")
 
 

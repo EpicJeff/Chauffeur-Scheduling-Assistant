@@ -224,9 +224,16 @@ month grid, where the day count does not apply.
 vocabulary. `WIDGETS` is built at import, so a constant used as an option
 default and defined 1,300 lines below it is a `NameError` on startup.
 
-**Shipped so far: v2.230.0 → v2.230.2.** `hidden` and `require`; Duplicate,
-export and import; the tile ✎ overlay and the Add-tile overlay. **Still open:
-card management inside the overlay, and then deleting the tile list.**
+**B1 COMPLETE: v2.230.0 → v2.230.4.** `hidden` and `require`; Duplicate, export
+and import; the tile ✎ overlay; + Add tile on the board and + Add card on the
+tile; both lists deleted.
+
+> **The rule this arc settled, and it governs B2 and B3 too:** management is
+> **visual and interactive**. You drag a thing to move it, drag its corner to
+> size it, tap its pencil for its settings, and press a **+** where the new one
+> will land. **No lists with up/down arrows** — an ordering control that cannot
+> show you the order is the long way round. This still applies to the boards
+> list (◀ ▶) and the shelf editor (▲▼✕), both of which B3 replaces.
 
 - **Editor bar** on `/board/<slug>` outside panel mode: **Edit** (today's
   arrange), **Settings** (B2), **+ Add Tile**. ✅ Add-tile landed on the arrange
@@ -247,12 +254,31 @@ card management inside the overlay, and then deleting the tile list.**
 - **`require` surfaces** as *"Always show, even when empty."* ✅ Offered only on
   types with an empty state to say, and never on chrome or a container, decided
   by `catalog().requirable` rather than a second list in the template.
-- **Deletes: the tile list and the inline picker from `#panel-setup`.** NOT YET,
-  and deliberately. The overlay covers the tile row (size, both heights, hidden,
-  always-show, options, remove) and `scenario_the_tile_is_edited_on_the_tile`
-  pins that, but the list also carries **the card management for a container
-  tile** — add, remove and reorder the cards inside a Custom tile. Until that is
-  in the overlay, deleting the list drops functionality.
+- **Deletes: the tile list and the card list from `#panel-setup`.** ✅ v2.230.4,
+  275 lines. The plan had been to port the card list *into* the overlay, which
+  was wrong and was corrected: **management is visual and interactive, not a
+  list in a different container.** Up/down arrows are the tell — an ordering
+  control that cannot show you the order.
+
+  What replaced each thing the lists did:
+
+  | was | is |
+  |---|---|
+  | ▲▼ to reorder a tile or card | drag it |
+  | cols/rows number fields | drag the corner (numbers still in the overlay, for exactness) |
+  | ⚙ to open options | ✎ on the tile or card |
+  | ✕ to remove | Remove in that thing's overlay |
+  | "+ Add tile" under the form | **+ Add tile** as the last cell of the grid |
+  | "+ Add a card…" dropdown | **+ Add card** on the container tile itself |
+
+  The palette is one partial used three ways (tile / card / form),
+  parameterised by Jinja `{% with %}` exactly as `board_options.html` is —
+  `GROUPS`, `ADD`, `NOUN`. A runtime flag would make one partial that branches
+  instead of one partial used three times.
+
+  **The tests caught a real loss during this deletion**: the card `bare` toggle
+  ("no panel behind this card") existed only in the deleted list, and is now in
+  the card overlay. That is what a test asserting reachability is for.
 
 **Two things this arc uncovered that are worth carrying forward:**
 
