@@ -133,11 +133,6 @@ ENTRIES: List[dict] = [
        'The photograph the wall panel floats on. A web address, or just a '
        'phrase like "mountains at dusk" to have one found for you.',
        page='home', anchor='panel-setup'),
-    _e('panel_page_backgrounds', 'panel', 'A picture per page',
-       'Give any page its own background — a highway behind the driving '
-       'schedule, the kitchen behind meals. Pages you leave blank use the '
-       'panel background.',
-       page='home', anchor='panel-setup'),
     _e('panel_theme', 'panel', 'Panel theme',
        'Light, dark, follow the device, or follow the sun. Auto matches Home '
        'Assistant while the panel is embedded in a dashboard, but falls back '

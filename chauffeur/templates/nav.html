@@ -439,7 +439,14 @@
         };
 
         function currentSlug() {
-            const page = window.location.pathname.split('/').filter(Boolean).pop() || '';
+            const parts = window.location.pathname.split('/').filter(Boolean);
+            const page = parts[parts.length - 1] || '';
+            // A board of the household's own is `/board/<slug>`, and its slug
+            // is not in PAGE_SLUGS (that map is the app's own destinations).
+            // Without this branch the background map was looked up under ''
+            // for every custom board, so they all fell back to the household
+            // default and a board's own picture did nothing on a wall.
+            if (parts.length >= 2 && parts[parts.length - 2] === 'board') return page;
             return PAGE_SLUGS[page] || '';
         }
 

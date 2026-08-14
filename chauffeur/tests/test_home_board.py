@@ -1292,11 +1292,23 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
 
 
 def scenario_a_page_is_configured_in_one_place():
-    """The shelf buttons and the per-page pictures were two lists of the same
-    twelve destinations: you picked Meals in one section and scrolled to
-    another to say what the meals page looks like. They are the same thing —
-    a page the panel shows — so the picture rides on the page's own row, the
-    way a tile's size rides on the tile's row."""
+    """A board's picture has exactly ONE editor, and it is on the board.
+
+    This has been wrong twice in opposite directions. First the pictures were
+    a separate list of the same twelve destinations — pick Meals in one
+    section, scroll to another to say what it looks like — so the field moved
+    onto the shelf row, where the destination already was.
+
+    Then every destination became a board (v2.216), and the shelf row's field
+    was suddenly the SECOND editor for a thing that now had a proper home in
+    the board's own settings. Worse, the one on the board did nothing for a
+    built-in board, so the household had two fields for one setting and the
+    one that looked right was the dead one.
+
+    So: the shelf row has no picture field at all, the board's settings do,
+    and it is the same field and the same workflow whether the household made
+    the board or Chauffeur ships it.
+    """
     import os
     tpl = tpl_source.read('home.html')
     setup = tpl[tpl.index('id="panel-setup"'):]
@@ -1305,8 +1317,13 @@ def scenario_a_page_is_configured_in_one_place():
           "destinations are configured in two places")
     row = setup[setup.index('x-for="(slug, i) in draft.panel_tabs"'):]
     row = row[:row.index('</template>')]
-    check('panel_page_backgrounds[slug]' in row,
-          "a page's picture is not on the page's own row")
+    check('panel_page_backgrounds[slug]' not in row,
+          "the shelf row edits a board's picture again — that is the second "
+          "field for one setting, and the board's own is the real one")
+    # The board's settings own it, next to the board's name and address.
+    board_box = setup[:setup.index('Tiles on <span')]
+    check("setPageField('background'" in board_box,
+          "a board's own settings cannot set its picture")
     for control in ('move(draft.panel_tabs', 'panel_tabs.splice'):
         check(control in row, f"the row lost its {control} control in the merge")
 

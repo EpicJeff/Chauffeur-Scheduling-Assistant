@@ -46,7 +46,7 @@ LEGACY = {
     'panel_tile_spans': {'calendar': {'cols': 6, 'rows': 2}, 'map': {'cols': 4, 'rows': 3}},
     'panel_grid_columns': 16,
     'panel_grid_row_height': 205,
-    'panel_page_backgrounds': {'home': 'mountains at dusk'},
+    'panel_background': 'mountains at dusk',
 }
 
 
@@ -79,8 +79,14 @@ def scenario_the_board_they_already_have_becomes_the_home_page():
     # one-release padding is undone, and only for boards saved AS v4).
     check(home['columns'] == 16 and home['row_height'] == 205,
           f"the household's grid was reset to somebody else's default: {home}")
-    check(home['background'] == 'mountains at dusk',
-          f"the board's picture was lost: {home['background']!r}")
+    # The board itself has no picture of its own, and never could have: this
+    # is the PRE-pages board, from before there was a per-board field. It takes
+    # the household's `panel_background`, which is the two-level rule every
+    # board follows — its own, else the household's.
+    check(home['background'] == '',
+          f"the migrated board invented a picture of its own: {home['background']!r}")
+    check(home_board.backgrounds(LEGACY)['default'].endswith('mountains%20at%20dusk'),
+          "the household's picture was lost on upgrade")
 
 
 def scenario_nothing_is_rewritten_behind_their_back():

@@ -498,16 +498,36 @@ def scenario_the_skin_stays_out_of_the_browser():
 
 
 def scenario_a_page_can_have_its_own_picture():
+    """A board's picture is a field ON THE BOARD, and this map is built from
+    the boards.
+
+    It used to be built from a separate `panel_page_backgrounds` setting with
+    its own editor field, which is how a household ended up with two settings
+    for one thing — and the one on the board, the one that looked
+    authoritative, was the dead one. A custom board was not even in this map
+    (the old build filtered to nav slugs), so on a wall it silently fell back
+    to the household default.
+    """
     from services import home_board
     got = home_board.backgrounds({
         'panel_background': 'mountains at dusk',
-        'panel_page_backgrounds': {'schedule': 'empty highway at dawn',
-                                   'nonsense': 'x', 'map': '   '}})
+        'panel_pages': [
+            {'slug': 'home', 'name': 'Home', 'v': 5, 'widgets': []},
+            {'slug': 'schedule', 'name': 'Drives', 'v': 5, 'widgets': [],
+             'background': 'empty highway at dawn'},
+            {'slug': 'hallway', 'name': 'Hallway', 'v': 5, 'widgets': [],
+             'background': 'the sea'},
+            {'slug': 'map', 'name': 'Map', 'v': 5, 'widgets': [],
+             'background': '   '},
+        ]})
     check(got['default'].startswith('api/unsplash/background?query=mountains'),
           "the default picture is gone")
     check('highway' in got['schedule'], "a page's own picture is not resolved")
-    check('nonsense' not in got, "an unknown page slug is stored anyway")
+    check('sea' in got.get('hallway', ''),
+          "a board the household made is not in the map, so a wall showing it "
+          "falls back to the household default")
     check('map' not in got, "a blank entry is treated as a picture")
+    check('home' not in got, "a board with no picture is claiming one")
 
 
 def scenario_the_shelf_has_no_background_and_the_content_fades_behind_it():

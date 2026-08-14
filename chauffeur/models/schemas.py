@@ -1038,12 +1038,6 @@ class Settings(BaseModel):
     # a plain phrase ("mountains at dusk") which is handed to the Unsplash
     # endpoint that already backs trip artwork. Empty = the built-in gradient.
     panel_background: str = ''
-    # Per-page override, keyed by nav slug: {'schedule': 'empty highway at
-    # dawn', 'meals': 'https://…'}. A page absent from this map uses
-    # `panel_background`. Same grammar as the default — a URL, or a phrase to
-    # look one up — because a household that has to find eleven image URLs
-    # will set zero of them.
-    panel_page_backgrounds: Dict[str, str] = Field(default_factory=dict)
     # --- Screensaver (idle photo slideshow) ---
     # The master switch. Separate from the seconds so turning the screensaver
     # off and on again does not forget how long the household tuned the idle

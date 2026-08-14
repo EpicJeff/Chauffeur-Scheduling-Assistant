@@ -2986,18 +2986,38 @@ def screensaver_playlist(settings: dict = None) -> dict:
 
 
 def backgrounds(settings: dict = None) -> dict:
-    """`{'default': url|None, '<nav slug>': url}` — every page's picture,
+    """`{'default': url|None, '<slug>': url}` — every board's picture,
     resolved. The whole map travels in the panel profile so a page change does
-    not cost a round trip: the panel already has the answer before you tap."""
+    not cost a round trip: the panel already has the answer before you tap.
+
+    Built from THE BOARDS, which is the fix for two halves of one bug.
+
+    It used to be built straight from a `panel_page_backgrounds` map — a
+    second, separately-edited setting — and filtered to `NAV_SLUGS`, and a
+    board's own `background` never entered into it. So:
+      * a BUILT-IN board's picture could only be set from the shelf editor's
+        second field, and the field on the board itself did nothing — reported
+        exactly that way;
+      * a CUSTOM board's picture was not in this map at all (its slug is not a
+        nav slug), so a wall panel showing one fell back to the household
+        default and the board's own field did nothing THERE either. The field
+        appeared to work only in a browser, where home.html applies the board
+        payload's answer directly.
+    """
     settings = settings if settings is not None else (storage.get_settings() or {})
     out = {'default': _background_url(settings)}
-    per_page = settings.get('panel_page_backgrounds') or {}
-    if isinstance(per_page, dict):
-        for slug, raw in per_page.items():
-            slug = str(slug).strip().lower()
-            url = _as_background(raw)
-            if slug in NAV_SLUGS and url:
-                out[slug] = url
+    pages = {p['slug']: p for p in normalize_pages(settings)}
+    # The shipped boards too: a destination nobody has edited is still a board
+    # a wall can be standing on, and it can still carry a legacy picture.
+    for slug in BUILTIN_PAGES:
+        if slug not in pages:
+            page = builtin_page(slug, settings)
+            if page:
+                pages[slug] = page
+    for slug, page in pages.items():
+        url = _as_background(page.get('background'))
+        if url:
+            out[slug] = url
     return out
 
 
@@ -3265,9 +3285,18 @@ def _page_from(item: dict, settings: dict, taken: set) -> dict:
         'columns': columns,
         'row_height': row_height,
         'gap': gap,
-        # Blank means the board's own background, which is itself blank-able.
-        # Two levels of "not set" rather than three: a page either has a
-        # picture of its own or takes the household's.
+        # Blank means the household's own background. Two levels of "not set"
+        # rather than three: a page either has a picture of its own or takes
+        # the household's.
+        #
+        # ONE place, since v2.227.0. Per-page pictures used to live in a
+        # `panel_page_backgrounds` map edited from a second field on the shelf
+        # row, and that map was what the wall actually applied — so a board's
+        # own field did nothing and the household had two settings for one
+        # thing, the wrong one of which looked authoritative. The map is gone,
+        # not deprecated: there is one install of this app, it had nothing
+        # stored under that key, and a compatibility path nobody needs is a
+        # second way for this to be wrong again.
         'background': str(item.get('background') or '').strip(),
     }
 
@@ -3288,7 +3317,9 @@ def _legacy_page(settings: dict) -> dict:
         'spans': (settings or {}).get('panel_tile_spans') or {},
         'columns': grid_columns(settings),
         'row_height': grid_row_height(settings),
-        'background': ((settings or {}).get('panel_page_backgrounds') or {}).get(HOME_SLUG) or '',
+        # No picture of its own: this is the PRE-pages board, and there was
+        # nowhere to have set one per page. It takes the household's.
+        'background': '',
     }, settings, set())
 
 
@@ -3487,10 +3518,10 @@ def builtin_page(slug: Optional[str] = None, settings: dict = None):
 
     A fresh copy every call — the spec above is module state, and `_page_from`
     hands its spans dict out to callers who are entitled to edit what they were
-    given. The board's picture still comes from the household's own
-    `panel_page_backgrounds`, keyed by this same slug, so a wall that has put a
-    picture behind its Errands board keeps it whether or not it has ever
-    edited the tiles.
+    given. The board's picture is the board's own field, like every other
+    board's — setting it HERE from a separate per-page map was the bug behind
+    "the field in the board settings does absolutely nothing": it overwrote
+    whatever the household had typed on the board, every single time.
     """
     wanted = str(slug or '').strip().lower()
     spec = BUILTIN_PAGES.get(wanted)
@@ -3499,8 +3530,6 @@ def builtin_page(slug: Optional[str] = None, settings: dict = None):
     settings = settings if settings is not None else (storage.get_settings() or {})
     item = json.loads(json.dumps(spec))
     item['slug'] = wanted
-    item['background'] = ((settings.get('panel_page_backgrounds') or {})
-                          .get(wanted) or '')
     return _page_from(item, settings, set())
 
 

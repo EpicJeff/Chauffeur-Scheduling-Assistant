@@ -1575,16 +1575,23 @@
                                     <button @click="draft.panel_tabs.splice(i, 1)"
                                         class="ed-btn hover:text-red-400 px-1">✕</button>
                                 </div>
-                                <!-- Not offered for a board: a board's picture
-                                     lives on the board, up in Boards, and two
-                                     fields setting one thing is how a household
-                                     ends up with a picture they cannot find the
-                                     switch for. -->
-                                <input type="text" x-show="tabMeta(slug).kind !== 'board'"
-                                    :value="draft.panel_page_backgrounds[slug] || ''"
-                                    @input="setPageBg(slug, $event.target.value)"
-                                    placeholder="its own picture — blank uses the board's"
-                                    class="mt-1.5 w-full ed-input rounded-lg px-2 py-1 text-xs placeholder-gray-600">
+                                <!-- The per-page picture used to be a second
+                                     field here, and the comment beside it said
+                                     exactly why it should not be: "a board's
+                                     picture lives on the board, and two fields
+                                     setting one thing is how a household ends
+                                     up with a picture they cannot find the
+                                     switch for."
+                                     It was written when only SOME shelf
+                                     buttons were boards, so it excluded those
+                                     and kept the field for the rest. Every
+                                     destination is a board now (v2.216), so
+                                     the exclusion covers everything the rule
+                                     was written for and the field is gone.
+                                     A board's picture is edited in Boards,
+                                     with the rest of that board's settings —
+                                     one field, one workflow, whether the
+                                     household made the board or we ship it. -->
                             </div>
                         </template>
                     </div>
@@ -2029,7 +2036,6 @@
                     panel_theme: 'dark', panel_background: '',
                     panel_theme_sunset_offset_minutes: 0,
                     panel_theme_sunrise_offset_minutes: 0,
-                    panel_page_backgrounds: {},
                     panel_screensaver_enabled: true,
                     panel_screensaver_idle_seconds: 600,
                     panel_screensaver_source: 'photos',
@@ -2160,7 +2166,16 @@
                         if (!r.ok) return;
                         this.board = await r.json();
                         this.hero = this.board.hero || {};
-                        if (!this.isPanelMode) this.applyBackground();
+                        // In PANEL mode too, since v2.227.0. nav.html puts the
+                        // picture up from the profile's map before this fetch
+                        // lands (which is what stops a flash on every page
+                        // change, and stays), but the board payload is this
+                        // page's own authoritative answer — resolved from the
+                        // board somebody just edited rather than from a map
+                        // built when the profile was fetched. Skipping it here
+                        // was half of why a board's own picture field looked
+                        // dead: on a wall, only the map was ever consulted.
+                        this.applyBackground();
                         this.recount();
                         // After Alpine has drawn the tiles, never before: the
                         // map and the timeline both mount into elements that
@@ -3268,7 +3283,6 @@
                                 s.panel_theme_sunrise_offset_minutes ?? 0,
                             panel_background: s.panel_background || '',
                             ha_browser_url: s.ha_browser_url || '',
-                            panel_page_backgrounds: { ...(s.panel_page_backgrounds || {}) },
                             // Same absent-vs-zero discipline as idle return:
                             // stored settings predate the screensaver, so
                             // absent means the default while 0 stays off.
@@ -4349,7 +4363,8 @@
 
                 setPageField(key, value) {
                     const p = this.page();
-                    if (p) p[key] = value;
+                    if (!p) return;
+                    p[key] = value;
                 },
 
                 // The slug is the ADDRESS, so editing it is editing every
@@ -5243,19 +5258,6 @@
                         .filter(t => !this.draft.panel_tabs.includes(t.slug));
                 },
 
-                // An emptied field stops being stored rather than persisting
-                // a blank that means the same as absent.
-                // Deliberately NOT cleared when a page leaves the shelf.
-                // Dropping Meals to make room for Chores should not silently
-                // throw away the photograph somebody chose for the meals page —
-                // put it back and the picture is still there. The cost is that
-                // an unpicked page's picture has nowhere to be edited, which is
-                // the honest trade for one list instead of two.
-                setPageBg(slug, value) {
-                    const v = (value || '').trim();
-                    if (v) this.draft.panel_page_backgrounds[slug] = v;
-                    else delete this.draft.panel_page_backgrounds[slug];
-                },
 
                 // Addressed by INSTANCE id — two calendar tiles are two
                 // sizes, and keying this by type gave them one.
@@ -5375,7 +5377,6 @@
                                         parseInt(this.draft.panel_theme_sunrise_offset_minutes, 10) || 0)),
                                 panel_background: this.draft.panel_background,
                                 ha_browser_url: (this.draft.ha_browser_url || '').trim(),
-                                panel_page_backgrounds: this.draft.panel_page_backgrounds,
                                 panel_screensaver_enabled: !!this.draft.panel_screensaver_enabled,
                                 panel_screensaver_idle_seconds:
                                     Number(this.draft.panel_screensaver_idle_seconds) || 0,

@@ -668,6 +668,92 @@ def scenario_the_gallery_card_ships_config_not_history():
         presence.moment_events = real
 
 
+def scenario_a_boards_picture_is_the_boards_own_field():
+    """Reported as "the field in the board settings appears to do absolutely
+    nothing", and it did nothing for two separate reasons.
+
+      * `builtin_page()` SET `background` from the legacy
+        `panel_page_backgrounds` after building the page, so whatever the
+        household had typed on the board was overwritten every single time.
+      * `backgrounds()` — the map the panel actually applies through nav.html —
+        was built straight from that legacy key and filtered to NAV_SLUGS. So a
+        board's own `background` never entered into it at all, and a CUSTOM
+        board (whose slug is not a nav slug) was not even in the map: on a wall
+        it fell back to the household default, and the field appeared to work
+        only in a browser, where home.html applies the board payload directly.
+
+    The map is GONE rather than deprecated. There is one install of this app
+    and nothing was stored under that key, so a compatibility path would only
+    be a second way for this to go wrong again.
+    """
+    saved = {
+        'panel_background': 'https://e/default.jpg',
+        'panel_pages': [
+            {'slug': 'home', 'name': 'Home', 'v': 5, 'widgets': [],
+             'background': 'https://e/home-own.jpg'},
+            {'slug': 'hallway', 'name': 'Hallway', 'v': 5, 'widgets': [],
+             'background': 'https://e/hallway-own.jpg'},
+            {'slug': 'chores', 'name': 'Chores', 'v': 5, 'widgets': [],
+             'background': 'https://e/chores-own.jpg'},
+        ],
+    }
+    # A board's own field survives the round trip, shipped-slug or not.
+    for slug, want in (('hallway', 'https://e/hallway-own.jpg'),
+                       ('chores', 'https://e/chores-own.jpg')):
+        page = next(p for p in home_board.normalize_pages(saved)
+                    if p['slug'] == slug)
+        check(page['background'] == want,
+              f"{slug} lost the picture set on the board: {page['background']}")
+    # A shipped board nobody has edited has no picture of its own and takes
+    # the household's — two levels of "not set", never three.
+    check(home_board.builtin_page('map', saved)['background'] == '',
+          "a shipped board invents a picture of its own")
+
+    # THE MAP THE WALL APPLIES. Every board is in it, keyed by its own slug —
+    # including the household's own, which were missing entirely.
+    bg = home_board.backgrounds(saved)
+    check(bg['default'] == 'https://e/default.jpg', f"the household default moved: {bg}")
+    check(bg.get('hallway') == 'https://e/hallway-own.jpg',
+          f"a custom board's picture never reaches the wall: {bg}")
+    check(bg.get('home') == 'https://e/home-own.jpg',
+          f"the home board's own picture is not in the map: {bg}")
+    check(bg.get('chores') == 'https://e/chores-own.jpg',
+          f"an edited destination board's picture is not in the map: {bg}")
+    check('map' not in bg,
+          f"a board with no picture is claiming one: {bg}")
+
+    # And there is exactly ONE setting for this. The second one is gone from
+    # the schema and the registry too, not just from the editor — a setting
+    # nothing writes and nothing reads is a trap for the next person.
+    import os
+    for path in ('models/schemas.py', 'services/settings_registry.py',
+                 'services/home_board.py'):
+        src = open(os.path.join(ROOT, path), encoding='utf-8').read()
+        # The NAME survives in prose explaining the removal, which is the
+        # point of the prose. What must not survive is code: the key quoted
+        # as a string, declared as a field, or assigned.
+        for form in ("'panel_page_backgrounds'", '"panel_page_backgrounds"',
+                     'panel_page_backgrounds:', 'panel_page_backgrounds ='):
+            check(form not in src,
+                  f"{path} still handles panel_page_backgrounds ({form})")
+
+    # And the panel APPLIES the board's own answer, not only the profile map —
+    # skipping it in panel mode was the other half of "it does nothing".
+    tpl = tpl_source.read('home.html')
+    load = tpl[tpl.index('async load() {'):]
+    load = load[:load.index('this.recount();')]
+    check('!this.isPanelMode) this.applyBackground' not in load
+          and 'this.applyBackground();' in load,
+          "the board's own picture is still skipped on a wall panel")
+    # nav resolves /board/<slug>, or a custom board looks itself up under ''.
+    nav = tpl_source.read('nav.html')
+    fn = nav[nav.index('function currentSlug() {'):]
+    fn = fn[:fn.index(chr(10) + '        }')]
+    check("'board'" in fn,
+          "nav cannot name a custom board, so every one of them falls back to "
+          "the household's default picture")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
