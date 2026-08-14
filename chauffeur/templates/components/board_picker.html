@@ -1,0 +1,64 @@
+{#
+  The tile palette, in ONE file because it is offered in two places: over the
+  board while arranging (where adding a tile belongs, next to the grid it lands
+  in) and in the setup form below it. Two copies of a list whose rows carry
+  availability rules, per-type counts and a disabled state is two lists that
+  drift, and the one that drifts is always the one you are not looking at.
+
+  Reads `pickFilter`, `pickGroups()`, `countOfType()` and `addInstance()` off
+  homeBoard(), so it carries no state of its own.
+#}
+                        <input type="text" x-model="pickFilter" placeholder="Search tiles…"
+                            class="w-full ed-input rounded px-2 py-1.5 text-sm ed-title mb-2">
+                        <div class="max-h-80 overflow-y-auto space-y-3">
+                            <!-- Two groups, and the divider is the point. The
+                                 family's own tiles read household data; the
+                                 Home Assistant ones read somebody else's house.
+                                 Mixed into one alphabet they look like the same
+                                 kind of thing, and they are not. -->
+                            <template x-for="group in pickGroups()" :key="group.name">
+                                <div x-show="group.rows.length">
+                                    <div class="flex items-center gap-2 mb-1.5">
+                                        <span class="text-[0.65rem] font-black uppercase tracking-widest ed-note"
+                                            x-text="group.name"></span>
+                                        <span class="flex-1 h-px bg-white/10"></span>
+                                    </div>
+                                    <div class="space-y-1">
+                                        <template x-for="c in group.rows" :key="c.key">
+                                            <!-- A tile that cannot exist here is
+                                                 offered DISABLED with the reason
+                                                 on it. The board hides an
+                                                 unconfigured feature's tile, so
+                                                 without this a household with no
+                                                 Home Assistant could add one and
+                                                 then watch the wall never show
+                                                 it. -->
+                                            <button type="button" @click="addInstance(c.key)"
+                                                :disabled="c.available === false"
+                                                class="w-full text-left flex items-start gap-2 rounded-md px-2 py-1.5"
+                                                :class="c.available === false
+                                                    ? 'opacity-40 cursor-not-allowed'
+                                                    : 'hover:bg-white/10/70'">
+                                                <span class="shrink-0" x-text="c.icon"></span>
+                                                <span class="min-w-0 flex-1">
+                                                    <span class="text-sm font-semibold ed-title"
+                                                        x-text="c.label"></span>
+                                                    <span x-show="countOfType(c.key)"
+                                                        class="text-[0.7rem] text-sky-300"
+                                                        x-text="' · ' + countOfType(c.key) + ' on this board'"></span>
+                                                    <span x-show="c.available === false"
+                                                        class="text-[0.7rem] text-amber-400/80"
+                                                        x-text="' · needs ' + c.requires"></span>
+                                                    <span class="block text-[0.7rem] ed-note"
+                                                        x-text="c.blurb"></span>
+                                                </span>
+                                            </button>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                            <div x-show="!pickGroups().some(g => g.rows.length)"
+                                class="text-sm ed-note italic px-2 py-3">
+                                Nothing matches “<span x-text="pickFilter"></span>”.
+                            </div>
+                        </div>

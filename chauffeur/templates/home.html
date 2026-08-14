@@ -464,6 +464,24 @@
             opacity: 0.7;
         }
         .tile-resize:hover { opacity: 1; }
+        /* The tile's settings, top-right so it is nowhere near the resize
+           corner: the two live on the same tile and one of them is a drag, so
+           putting them at opposite ends is what stops a slightly-off grab from
+           opening a dialog mid-resize. */
+        .tile-edit {
+            position: absolute;
+            right: 4px;
+            top: 4px;
+            z-index: 2;
+            line-height: 1;
+            padding: 2px 5px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: var(--panel-accent);
+            background: color-mix(in srgb, var(--panel-bg) 70%, transparent);
+            opacity: 0.75;
+        }
+        .tile-edit:hover { opacity: 1; }
 
         /* ── The setup card.
            It was the one part of this page painted in literal greys —
@@ -697,6 +715,15 @@
             </button>
             <button x-show="arranging" @click="cancelArrange()"
                 class="text-xs ed-btn px-2 py-1.5">Cancel</button>
+            <!-- + Add tile, while arranging. The picker used to live only at
+                 the bottom of the setup form, so adding a tile meant leaving
+                 the board, and the tile appeared somewhere off-screen behind
+                 you. Here it lands at the end of the grid you are looking at
+                 and you drag it where you want it. -->
+            <button x-show="arranging" @click="picking = !picking"
+                class="text-xs font-semibold ed-input rounded-lg px-3 py-1.5">
+                <span x-text="picking ? '× Close' : '+ Add tile'"></span>
+            </button>
             <button x-show="!arranging" @click="startArrange()"
                 class="text-xs font-semibold ed-input rounded-lg px-3 py-1.5">
                 ⠿ Arrange tiles
@@ -802,6 +829,14 @@
                          on every board that is not being arranged. -->
                     <div x-show="arranging" @pointerdown.stop="startTileResize($event, t.id)"
                         class="tile-resize" title="Drag to resize"></div>
+
+                    <!-- The tile's own settings, on the tile. Same affordance
+                         the cards inside a custom tile have had since the card
+                         overlay landed; a built-in tile having to be found in a
+                         list below the wall was the odd one out. -->
+                    <button type="button" x-show="arranging" class="tile-edit"
+                        title="Settings"
+                        @pointerdown.stop @click.prevent.stop="openTileEditor(t.id)">✎</button>
 
                     <!-- ── A BUILT-IN tile: the card IS the tile.
                          Rendered with NO grid and NO cell around it, and with
@@ -977,6 +1012,121 @@
                                bg-sky-600 hover:bg-sky-500 text-white">
                         Done
                     </button>
+                </div>
+            </template>
+        </div>
+
+        <!-- The tile picker, over the board rather than under the form.
+             Deliberately stays open after each add: "a calendar and two
+             cameras" is one errand, and a picker that closed on the first pick
+             would make it three. -->
+        <div x-show="picking && arranging" x-cloak @click.self="picking = false"
+            @keydown.escape.window="picking = false"
+            class="fixed inset-0 z-40 flex items-end sm:items-center justify-center p-3 sm:p-6"
+            style="background: rgba(0,0,0,.55)">
+            <div class="ed-card rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="text-base font-black ed-title">Add a tile</span>
+                    <button type="button" class="ml-auto ed-btn px-2"
+                        @click="picking = false" title="Close">✕</button>
+                </div>
+                {% include 'components/board_picker.html' %}
+                <button type="button" @click="picking = false"
+                    class="w-full mt-4 rounded-lg py-2 text-sm font-semibold
+                           bg-sky-600 hover:bg-sky-500 text-white">
+                    Done
+                </button>
+            </div>
+        </div>
+
+        <!-- ── A TILE's settings, over the tile they belong to.
+             Everything the row in the list below offers, in the place the
+             thing being changed actually is: size, the two heights, parked,
+             always-show, the type's own options, and remove. The list is what
+             this replaces — scrolling past the wall to find the row that
+             changes the tile you are looking at is the long way round that
+             dragging already got rid of once. -->
+        <div x-show="tileEditing" x-cloak @click.self="closeTileEditor()"
+            @keydown.escape.window="closeTileEditor()"
+            class="fixed inset-0 z-40 flex items-end sm:items-center justify-center p-3 sm:p-6"
+            style="background: rgba(0,0,0,.55)">
+            <template x-if="tileEditing">
+                <div class="ed-card rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="text-lg" x-text="instanceIcon(tileEditing)"></span>
+                        <span class="text-base font-black ed-title"
+                            x-text="instanceLabel(tileEditing)"></span>
+                        <button type="button" class="ml-auto ed-btn px-2"
+                            @click="closeTileEditor()" title="Close">✕</button>
+                    </div>
+                    <p class="text-xs ed-note mb-4"
+                        x-text="widgetMeta(tileEditing.type).blurb"></p>
+
+                    <div class="flex flex-wrap items-center gap-3 mb-4">
+                        <label class="flex items-center gap-1 text-[0.7rem] ed-note">
+                            <input type="number" min="1" :max="cols()" step="1"
+                                :value="spanOf(tileEditing.id, 'cols')"
+                                @change="setSpan(tileEditing.id, 'cols', $event.target.value)"
+                                class="w-14 ed-input rounded text-xs ed-title px-1 py-0.5">
+                            <span x-text="'of ' + cols() + ' columns'"></span>
+                        </label>
+                        <label class="flex items-center gap-1 text-[0.7rem] ed-note"
+                            x-show="!spanOf(tileEditing.id, 'auto') && !spanOf(tileEditing.id, 'fill')">
+                            <input type="number" min="1" step="1"
+                                :value="spanOf(tileEditing.id, 'rows')"
+                                @change="setSpan(tileEditing.id, 'rows', $event.target.value)"
+                                class="w-14 ed-input rounded text-xs ed-title px-1 py-0.5">
+                            rows
+                        </label>
+                        <label class="flex items-center gap-1 text-[0.7rem] ed-note"
+                            x-show="canFit(tileEditing.type, tileEditing.config)"
+                            title="As tall as whatever it is showing">
+                            <input type="checkbox" :checked="!!spanOf(tileEditing.id, 'auto')"
+                                @change="setSpan(tileEditing.id, 'auto', $event.target.checked)">
+                            fit
+                        </label>
+                        <label class="flex items-center gap-1 text-[0.7rem] ed-note"
+                            title="Down to the bottom of the screen, on any display">
+                            <input type="checkbox" :checked="!!spanOf(tileEditing.id, 'fill')"
+                                @change="setSpan(tileEditing.id, 'fill', $event.target.checked)">
+                            fill
+                        </label>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-4 mb-4">
+                        <label class="flex items-center gap-1.5 text-[0.7rem] ed-note"
+                            title="Keep the tile but take it off the wall">
+                            <input type="checkbox" :checked="isHidden(tileEditing)"
+                                @change="setHidden(tileEditing, $event.target.checked)">
+                            Hidden — kept, but not on the wall
+                        </label>
+                        <label class="flex items-center gap-1.5 text-[0.7rem] ed-note"
+                            x-show="canRequire(tileEditing.type)"
+                            title="Say it is empty instead of disappearing">
+                            <input type="checkbox" :checked="isRequired(tileEditing)"
+                                @change="setRequired(tileEditing, $event.target.checked)">
+                            Always show, even when empty
+                        </label>
+                    </div>
+
+                    <div class="space-y-3">
+                        {% with OW = 'tileEditing' %}
+                            {% include 'components/board_options.html' %}
+                        {% endwith %}
+                    </div>
+
+                    <div class="flex items-center gap-2 mt-5">
+                        <button type="button" @click="closeTileEditor()"
+                            class="flex-1 rounded-lg py-2 text-sm font-semibold
+                                   bg-sky-600 hover:bg-sky-500 text-white">
+                            Done
+                        </button>
+                        <button type="button" @click="removeEditingTile()"
+                            class="rounded-lg px-3 py-2 text-sm ed-btn hover:text-red-400
+                                   border border-gray-700">
+                            Remove
+                        </button>
+                    </div>
                 </div>
             </template>
         </div>
@@ -1548,60 +1698,7 @@
                     </button>
 
                     <div x-show="picking" x-cloak class="mt-2 ed-panel rounded-lg p-2">
-                        <input type="text" x-model="pickFilter" placeholder="Search tiles…"
-                            class="w-full ed-input rounded px-2 py-1.5 text-sm ed-title mb-2">
-                        <div class="max-h-80 overflow-y-auto space-y-3">
-                            <!-- Two groups, and the divider is the point. The
-                                 family's own tiles read household data; the
-                                 Home Assistant ones read somebody else's house.
-                                 Mixed into one alphabet they look like the same
-                                 kind of thing, and they are not. -->
-                            <template x-for="group in pickGroups()" :key="group.name">
-                                <div x-show="group.rows.length">
-                                    <div class="flex items-center gap-2 mb-1.5">
-                                        <span class="text-[0.65rem] font-black uppercase tracking-widest ed-note"
-                                            x-text="group.name"></span>
-                                        <span class="flex-1 h-px bg-white/10"></span>
-                                    </div>
-                                    <div class="space-y-1">
-                                        <template x-for="c in group.rows" :key="c.key">
-                                            <!-- A tile that cannot exist here is
-                                                 offered DISABLED with the reason
-                                                 on it. The board hides an
-                                                 unconfigured feature's tile, so
-                                                 without this a household with no
-                                                 Home Assistant could add one and
-                                                 then watch the wall never show
-                                                 it. -->
-                                            <button type="button" @click="addInstance(c.key)"
-                                                :disabled="c.available === false"
-                                                class="w-full text-left flex items-start gap-2 rounded-md px-2 py-1.5"
-                                                :class="c.available === false
-                                                    ? 'opacity-40 cursor-not-allowed'
-                                                    : 'hover:bg-white/10/70'">
-                                                <span class="shrink-0" x-text="c.icon"></span>
-                                                <span class="min-w-0 flex-1">
-                                                    <span class="text-sm font-semibold ed-title"
-                                                        x-text="c.label"></span>
-                                                    <span x-show="countOfType(c.key)"
-                                                        class="text-[0.7rem] text-sky-300"
-                                                        x-text="' · ' + countOfType(c.key) + ' on this board'"></span>
-                                                    <span x-show="c.available === false"
-                                                        class="text-[0.7rem] text-amber-400/80"
-                                                        x-text="' · needs ' + c.requires"></span>
-                                                    <span class="block text-[0.7rem] ed-note"
-                                                        x-text="c.blurb"></span>
-                                                </span>
-                                            </button>
-                                        </template>
-                                    </div>
-                                </div>
-                            </template>
-                            <div x-show="!pickGroups().some(g => g.rows.length)"
-                                class="text-sm ed-note italic px-2 py-3">
-                                Nothing matches “<span x-text="pickFilter"></span>”.
-                            </div>
-                        </div>
+                        {% include 'components/board_picker.html' %}
                     </div>
                 </div>
 
@@ -5105,6 +5202,7 @@
                 // is the same long way round that dragging replaced.
                 editing: null,          // the card instance being edited
                 editingTile: null,
+                tileEditing: null,      // the TILE instance being edited
 
                 openCardEditor(tileId, drawnId) {
                     const cards = this._cardsOf(tileId);
@@ -5118,6 +5216,35 @@
                     this.editing = null;
                     this.editingTile = null;
                     await this.load();      // the board redraws with the change
+                },
+
+                // The TILE's own settings, reached from the ✎ on the tile
+                // rather than from a row in a list far below the wall. Same
+                // bargain as the card overlay: size applies immediately
+                // because the draft draws the grid, and everything the server
+                // has to rebuild applies on Done.
+                openTileEditor(id) {
+                    this.tileEditing = (this.page().widgets || [])
+                        .find(w => w.id === id) || null;
+                },
+
+                async closeTileEditor() {
+                    this.tileEditing = null;
+                    await this.load();
+                },
+
+                // Deleting from inside the overlay: the tile it is about is
+                // the tile that goes, so the index is looked up rather than
+                // passed in from a list that may have been reordered since.
+                async removeEditingTile() {
+                    const w = this.tileEditing;
+                    if (!w) return;
+                    if (!await promptConfirm('Remove this tile?',
+                            `"${this.instanceLabel(w)}" comes off this board. `
+                            + `Its settings go with it.`, 'Remove')) return;
+                    const at = (this.page().widgets || []).indexOf(w);
+                    if (at >= 0) this.removeInstance(at);
+                    await this.closeTileEditor();
                 },
 
                 // --- per-instance options ---------------------------------

@@ -239,6 +239,53 @@ def scenario_the_calendar_tile_reads_its_own_day_count():
               f"a {n}-day tile did not say so: {data}")
 
 
+def scenario_the_tile_is_edited_on_the_tile():
+    """A tile's settings belong on the tile, not in a row of a list below the
+    wall — the same argument dragging already won for size.
+
+    The bar this has to clear is that the overlay carries EVERYTHING the row
+    does. Deleting the list is the next step, and a list deleted before its
+    replacement is complete is functionality dropped by accident.
+    """
+    # The RAW file, not tpl_source: this scenario is about how the page is
+    # ASSEMBLED, and tpl_source inlines each template only once, so an
+    # include's contents disappear at its second use — which is exactly the
+    # two-surfaces-one-partial arrangement being asserted here.
+    with open(os.path.join(TPL, 'home.html'), encoding='utf-8') as fh:
+        tpl = fh.read()
+    check('openTileEditor(' in tpl and 'tile-edit' in tpl,
+          "no way to open a tile's settings from the tile")
+    ov = tpl[tpl.index("<!-- ── A TILE's settings"):]
+    ov = ov[:ov.index('<!-- ── Panel setup')]
+    for needs, why in (
+            ("spanOf(tileEditing.id, 'cols')", 'width'),
+            ("spanOf(tileEditing.id, 'rows')", 'height'),
+            ("setSpan(tileEditing.id, 'auto'", 'fit'),
+            ("setSpan(tileEditing.id, 'fill'", 'fill'),
+            ('isHidden(tileEditing)', 'hidden'),
+            ('isRequired(tileEditing)', 'always-show'),
+            ('removeEditingTile()', 'remove')):
+        check(needs in ov,
+              f"the tile overlay cannot set {why}, so it is not yet a "
+              f"replacement for the row in the list")
+    # The type's own options, through the SAME declaration renderer every
+    # other surface uses rather than a form written twice.
+    check("OW = 'tileEditing'" in ov and 'board_options.html' in ov,
+          "the tile overlay hand-rolls its options instead of rendering the "
+          "type's declaration through the shared renderer")
+
+    # And ONE palette, included in BOTH places — over the board while
+    # arranging, and in the form below it. Two copies of a list whose rows
+    # carry availability rules and per-type counts is two lists that drift,
+    # and the one that drifts is always the one you are not looking at.
+    check(os.path.exists(os.path.join(TPL, 'components', 'board_picker.html')),
+          "the tile palette is not a shared partial")
+    used = tpl.count("{% include 'components/board_picker.html' %}")
+    check(used == 2,
+          f"the palette is included {used} times, not twice — it is offered "
+          f"over the board while arranging AND in the form below it")
+
+
 def scenario_a_board_can_be_copied_handed_over_and_pasted_back():
     """The three ways a board moves, and all three exist because the shipped
     boards are read-only: Duplicate is how a household changes one, and export
