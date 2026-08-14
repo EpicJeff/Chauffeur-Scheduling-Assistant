@@ -2878,6 +2878,20 @@ def _build_tile(inst, now, **kw):
         return None
     config = inst.get('config') or {}
 
+    if inst.get('hidden'):
+        # A STUB: no builder runs, so a parked tile costs the wall nothing —
+        # no query, no cache read, and no way for a tile somebody shelved to
+        # break the payload five other cards are waiting on. It still ships,
+        # because the editor has to be able to draw it ghosted and give it
+        # back. The client is what refuses to draw it outside arrange mode.
+        return {'id': inst['id'], 'type': inst['type'], 'hidden': True,
+                'icon': _icon_of(config, meta),
+                'label': (_cfg_str(config, 'title')
+                          or meta.get('heading') or meta['label']),
+                'locked': True, 'config': config,
+                'bare': inst['type'] in BARE_TILES, 'cards': [],
+                'data': {'empty': 'Hidden — showing only while you arrange.'}}
+
     if inst['type'] in container_types():
         cards = []
         for card in normalize_cards(config.get('cards')):
@@ -3182,6 +3196,14 @@ def normalize_instances(raw, settings: dict = None) -> List[dict]:
         # it survives normalisation so `_build_tile` can honour it.
         if item.get('require'):
             inst['require'] = True
+        # PARKED BY HAND, and not the same thing as rule 1 at all. Rule 1 is
+        # the system hiding a feature nobody has set up; this is a person
+        # keeping a tile they are not ready to delete. One is invisible and
+        # automatic, the other is a decision — so it has to be visible in the
+        # editor and undoable, which is why it rides on the instance rather
+        # than being expressed by removing the tile.
+        if item.get('hidden'):
+            inst['hidden'] = True
         # Size lives in `panel_tile_spans` keyed by instance id, which for a
         # migrated board is the same string it was always keyed by.
         span = item.get('span') if isinstance(item.get('span'), dict) else spans.get(iid)
@@ -4179,6 +4201,14 @@ def catalog() -> dict:
         if w['key'] in ('ha', 'ha_image', 'ha_dashboard', 'ha_card'):
             w['requires'] = 'Home Assistant'
             w['available'] = ha_ok
+        # Whether "always show, even when empty" is a question worth asking of
+        # this type. It needs a sentence to say when it IS empty, or the flag
+        # buys a blank panel instead of an explanation; chrome never vanishes,
+        # so there is nothing to keep; and a container draws its cards rather
+        # than a state of its own.
+        w['requirable'] = (w['key'] in REQUIRED_EMPTY
+                           and w['key'] not in BARE_TILES
+                           and not w.get('container'))
         widgets.append(w)
     # The shelf's vocabulary, as the editor needs to offer it: the app's own
     # destinations AND the household's boards. One list, because they end up in

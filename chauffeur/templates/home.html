@@ -440,6 +440,16 @@
         }
         .is-arranging .tile-arranging:active { cursor: grabbing; }
         .is-arranging .tile-dragging { opacity: 0.55; }
+        /* A tile somebody parked. Ghosted rather than absent, and only ever
+           on screen while arranging: hiding is a decision a person made, so
+           it has to be a thing they can see and take back. The dashes say
+           "this is not on the wall" without the tile having to explain
+           itself in words that would need room it does not have. */
+        .is-arranging .tile-hidden {
+            opacity: 0.4;
+            outline-style: dotted;
+            outline-width: 2px;
+        }
         .tile-resize {
             position: absolute;
             right: 2px;
@@ -755,7 +765,8 @@
                              tileFills(t) ? 'flex flex-col overflow-hidden'
                                           : 'block tile-scroll overflow-y-auto',
                              !arranging && opens(t) ? 'transition-transform active:scale-[0.985]' : '',
-                             arranging ? 'tile-arranging' : '']">
+                             arranging ? 'tile-arranging' : '',
+                             t.hidden ? 'tile-hidden' : '']">
                     <!-- A heading only if there is one. A custom tile nobody
                          named is a plain panel, which is exactly what somebody
                          wanting one surface under three cards is asking for.
@@ -1289,6 +1300,30 @@
                                     <input type="checkbox" :checked="!!spanOf(w.id, 'fill')"
                                         @change="setSpan(w.id, 'fill', $event.target.checked)">
                                     fill
+                                </label>
+                                <!-- Parked, and NOT the same thing as rule 1
+                                     hiding a feature nobody set up. That is
+                                     the system deciding and it is invisible;
+                                     this is a person keeping a tile they are
+                                     not ready to delete. So it stays on the
+                                     board, ghosted, whenever they arrange. -->
+                                <label class="flex items-center gap-1 text-[0.7rem] ed-note"
+                                    title="Keep the tile but take it off the wall">
+                                    <input type="checkbox" :checked="isHidden(w)"
+                                        @change="setHidden(w, $event.target.checked)">
+                                    hide
+                                </label>
+                                <!-- The inverse: a tile the board is ABOUT,
+                                     which says it is empty instead of
+                                     vanishing. Not offered on chrome, which
+                                     never vanishes, or on a container, which
+                                     draws its cards. -->
+                                <label class="flex items-center gap-1 text-[0.7rem] ed-note"
+                                    x-show="canRequire(w.type)"
+                                    title="Say it is empty instead of disappearing">
+                                    <input type="checkbox" :checked="isRequired(w)"
+                                        @change="setRequired(w, $event.target.checked)">
+                                    always
                                 </label>
                                 <!-- Only offered when the type has something to
                                      ask. A gear on a tile with no options is a
@@ -2091,7 +2126,11 @@
                     const all = this.board.tiles || [];
                     const hasClock = all.some(t => t.type === 'clock');
                     const list = all.filter(t => t.type !== 'weather' || !hasClock);
-                    if (!this.arranging) return list;
+                    // A tile somebody parked ships in the payload so the editor
+                    // can show it and hand it back, and is drawn ONLY while
+                    // arranging — ghosted, never silently absent, because a
+                    // tile you cannot see is a tile you cannot un-hide.
+                    if (!this.arranging) return list.filter(t => !t.hidden);
                     // Ordered by the DRAFT while arranging, so dragging a tile
                     // moves it now rather than after a save and a refetch.
                     // Tiles the draft does not know about (a type that has
@@ -3409,14 +3448,17 @@
                         }
                         taken.add(id);
                         const inst = { id, type, config: { ...(w.config || {}) } };
-                        // A tile the board is ABOUT, and the one field this
-                        // mirror used to drop. The server keeps it through
-                        // normalize_instances so `_build_tile` can honour it;
-                        // rebuilding the instance as {id,type,config} here
-                        // stripped it off every shipped board the moment the
-                        // editor loaded one, and a board that loses it goes
-                        // BLANK when it is empty instead of saying why.
-                        if (w.require) inst.require = true;
+                        // The instance-level flags, carried as a LIST rather
+                        // than one `if` per field. This mirror rebuilt every
+                        // instance as {id,type,config} and so dropped `require`
+                        // off all ten shipped boards the moment the editor
+                        // loaded one — a board that loses it goes blank when it
+                        // is empty instead of saying why. `hidden` would have
+                        // been the same bug a second time, which is the tell
+                        // that the shape, not the field, was wrong.
+                        for (const flag of ['require', 'hidden']) {
+                            if (w[flag]) inst[flag] = true;
+                        }
                         out.push(inst);
                     });
                     return out;
@@ -5268,6 +5310,35 @@
                     // button. The count on each row updates, so it is still
                     // obvious what has just happened.
                     this.pickFilter = '';
+                },
+
+                // Parked by hand, and the opposite of rule 1's automatic
+                // hiding. Absent rather than `false` when off: the instance is
+                // saved as-is, and a board carrying `hidden: false` on every
+                // tile is a board describing decisions nobody made.
+                isHidden(w) { return !!(w && w.hidden); },
+
+                setHidden(w, on) {
+                    if (on) { w.hidden = true; } else { delete w.hidden; }
+                },
+
+                // "Always show, even when empty." Rule 1 hides a feature
+                // nobody has set up, which is right on a mixed board and wrong
+                // on a board that is ABOUT the thing — an Errands board with
+                // no errands card reads as broken rather than as empty. Shown
+                // as a plain option because a household can want it too; the
+                // shipped boards are simply the ones that always set it.
+                // The server decides which types the question even applies to
+                // — it needs an empty-state sentence to say, and chrome and
+                // containers have nothing to keep. Asked of the catalog rather
+                // than answered with a list here, because a list here is the
+                // second place to get it wrong.
+                canRequire(type) { return !!this.widgetMeta(type).requirable; },
+
+                isRequired(w) { return !!(w && w.require); },
+
+                setRequired(w, on) {
+                    if (on) { w.require = true; } else { delete w.require; }
                 },
 
                 removeInstance(i) {

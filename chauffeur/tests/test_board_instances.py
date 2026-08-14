@@ -239,6 +239,43 @@ def scenario_the_calendar_tile_reads_its_own_day_count():
               f"a {n}-day tile did not say so: {data}")
 
 
+def scenario_a_parked_tile_costs_the_wall_nothing_but_comes_back():
+    """Hiding is a person's decision, so it must be reversible — which means
+    the tile has to still BE somewhere. It ships as a stub: no builder runs, so
+    a parked tile cannot cost a query or break the payload the other cards are
+    waiting on, and the editor can still draw it and hand it back.
+
+    The line this must not cross: rule 1 hides a feature nobody set up, and
+    that is the system acting invisibly. This is the opposite kind of thing.
+    """
+    board = home_board.build(
+        '[{"type": "map", "config": {}, "hidden": true},'
+        ' {"type": "calendar", "config": {}}]')
+    by = {t['type']: t for t in board['tiles']}
+    check('map' in by, "a parked tile vanished, so nobody can un-park it")
+    check(by['map'].get('hidden') is True,
+          f"the parked tile does not say it is parked: {by['map']}")
+    check(by['map'].get('cards') == [],
+          f"a parked tile built its cards anyway: {by['map']}")
+    check(by['calendar'].get('hidden') is not True,
+          "hiding one tile parked its neighbour")
+
+    # A builder that would blow up proves nothing ran.
+    boom = home_board.build('[{"type": "map", "config": {}, "hidden": true}]',
+                            now=None)
+    check(boom['tiles'][0].get('hidden') is True,
+          "the parked tile was built rather than stubbed")
+
+    # And it survives the round trip through the page normaliser, which is
+    # where `require` was being silently dropped.
+    page = home_board._page_from(
+        {'slug': 'x', 'name': 'X', 'v': 5,
+         'widgets': [{'id': 'map', 'type': 'map', 'config': {}, 'hidden': True}]},
+        {}, set())
+    check(page['widgets'][0].get('hidden') is True,
+          f"normalize_instances dropped `hidden`: {page['widgets'][0]}")
+
+
 def scenario_the_day_count_belongs_to_the_card_not_the_board():
     """This used to assert the opposite, and the opposite was a leftover.
 
@@ -430,7 +467,8 @@ b.setCfg(one, opt('calendar', 'days'), '99');
 // boards, and a board only reveals the loss on the day it has nothing to show.
 const normalised = b.toInstances([
   { id: 'chores_lanes', type: 'chores_lanes', config: {}, require: true },
-  { id: 'calendar', type: 'calendar', config: {} },
+  { id: 'calendar', type: 'calendar', config: {}, hidden: true },
+  { id: 'map', type: 'map', config: {} },
 ]);
 b.draft.panel_pages.push({
   slug: 'chores', name: 'Chores', icon: 'C', v: 5, widgets: normalised,
@@ -442,6 +480,29 @@ const savedRequire = b._cleanPages()
 console.log(JSON.stringify({
   requireLoaded: normalised.map(w => w.require || false),
   requireSaved: savedRequire,
+  hiddenLoaded: normalised.map(w => w.hidden || false),
+  hiddenSaved: b._cleanPages().find(p => p.slug === 'chores')
+      .widgets.map(w => w.hidden || false),
+  // Parked and un-parked, as the checkbox drives it. Absent rather than
+  // false when off: a board carrying `hidden: false` on every tile is a
+  // board describing decisions nobody made.
+  hideToggle: (function () {
+    const w = { id: 'x', type: 'map', config: {} };
+    b.setHidden(w, true);
+    const on = w.hidden === true;
+    b.setHidden(w, false);
+    return [on, Object.prototype.hasOwnProperty.call(w, 'hidden')];
+  })(),
+  requireToggle: (function () {
+    const w = { id: 'y', type: 'map', config: {} };
+    b.setRequired(w, true);
+    const on = w.require === true;
+    b.setRequired(w, false);
+    return [on, Object.prototype.hasOwnProperty.call(w, 'require')];
+  })(),
+  // Only types with an empty state to say, and never chrome.
+  requirable: ['map', 'heading', 'custom', 'chores_lanes']
+      .map(t => b.canRequire(t)),
   ids: b.page().widgets.map(w => w.id),
   untouched: one.config,
   configured: two.config,
@@ -541,14 +602,37 @@ def scenario_a_shipped_boards_empty_state_survives_the_editor():
     got = _run_editor()
     if got is None:
         return
-    check(got['requireLoaded'] == [True, False],
+    check(got['requireLoaded'] == [True, False, False],
           f"toInstances dropped `require`: {got['requireLoaded']} — merely "
           f"OPENING the editor strips every shipped board's empty state, so a "
           f"quiet Chores board goes blank instead of saying it is quiet")
-    check(got['requireSaved'] == [True, False],
+    check(got['requireSaved'] == [True, False, False],
           f"_cleanPages dropped `require`: {got['requireSaved']} — the flag "
           f"survives loading but not saving, so the strip lands the first time "
           f"anybody nudges a tile")
+
+
+def scenario_a_parked_tile_survives_the_editor_and_says_it_is_parked():
+    """`hidden` is a person keeping a tile they are not ready to delete, and it
+    goes through the same two normalisers `require` does — which dropped
+    `require` silently and would have dropped this one the same way."""
+    got = _run_editor()
+    if got is None:
+        return
+    check(got['hiddenLoaded'] == [False, True, False],
+          f"toInstances dropped `hidden`: {got['hiddenLoaded']} — opening the "
+          f"editor un-parks every parked tile")
+    check(got['hiddenSaved'] == [False, True, False],
+          f"_cleanPages dropped `hidden`: {got['hiddenSaved']}")
+    check(got['hideToggle'] == [True, False],
+          f"hiding is not a clean on/off: {got['hideToggle']} — off must "
+          f"REMOVE the key, not store `hidden: false` on every tile")
+    check(got['requireToggle'] == [True, False],
+          f"requiring is not a clean on/off: {got['requireToggle']}")
+    # map has an empty state; heading is chrome; custom is a container.
+    check(got['requirable'] == [True, False, False, True],
+          f"the editor offers 'always show' on the wrong types: "
+          f"{got['requirable']} for map/heading/custom/chores_lanes")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
