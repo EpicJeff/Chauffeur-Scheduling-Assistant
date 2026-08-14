@@ -131,10 +131,22 @@ product permanently — which is why B0's ordering matters.
 
 The foundation. Nothing else is safe until the fork model is gone.
 
-- **`BUILTIN_PAGES` moves out of the Python literal** into
-  `chauffeur/data/builtin_boards.json`, shipped as package data. JSON because
-  it has to be machine-written and because it diffs in git; the current dict's
-  explanatory comments move into this brief or a header key.
+**Landed v2.229.0**, except export/import and Duplicate (moved to B1, where the
+editor surface they hang off is being built). What shipped: the data file and
+loader, the ten boards re-authored from the household's own layouts with
+`require` restored, stored forks made inert, and the pristine-copy machinery
+deleted.
+
+- **`BUILTIN_PAGES` moved out of the Python literal** into
+  `chauffeur/services/builtin_boards.json` — beside the module that loads it,
+  **not** in `chauffeur/data/`, which `.gitignore` excludes as a secrets
+  folder. A boards file in there never reaches the repo, the image builds
+  without it, and the loader's empty-dict fallback means the app comes up with
+  no boards and no error. `scenario_the_shipped_boards_actually_ship` guards
+  all three failure modes.
+- The dict's explanatory comments stayed in `home_board.py` above the loader
+  rather than moving into the JSON: prose in a machine-written data file is
+  prose that gets destroyed the first time the file is rewritten.
 - **Export a board as JSON** — copy-to-clipboard plus a textarea, in the board
   settings overlay (B2) or the boards list (B3). No gate.
 - **Import a board from JSON** — creates an own board. Board sharing and board
@@ -146,29 +158,36 @@ The foundation. Nothing else is safe until the fork model is gone.
   was two normalisers disagreeing — `normalize_instances` on the server and
   `toInstances` in the editor. Whichever survives, the drift must be a test
   failure and not a comment.
-- **Shipped boards become read-only**; the editor bar and tile ✎ do not appear
-  on them. **Duplicate as my own board** appears instead.
-- **Deletes:** `_shippedPristine`, `cleanPages`'s pristine comparison, and the
-  `shipped` half of `/api/home_board/pages` (shipped boards are no longer
-  candidates for storage).
+- **Shipped boards are read-only.** ✅ `normalize_pages` drops any stored page
+  under a shipped slug, and the editor draft carries only the household's own
+  boards. **Duplicate as my own board** is the escape hatch — deferred to B1.
+- **Deleted:** ✅ `_shippedPristine` and `cleanPages`'s pristine JSON-string
+  comparison. `/api/home_board/pages` keeps its `shipped` half but now returns
+  **all ten always** — it used to return only the untouched ones, so a
+  household that had forked a board stopped being shown ours, and the fork hid
+  the very thing it forked from.
 
-**Migration, in this order — order is not optional:**
+**Migration — all five steps done, v2.229.0:**
 
-1. ~~Fix the `require` strip.~~ Done, v2.228.2.
-2. Clean up the ten boards on the live instance and dump them again.
-3. Write them into `builtin_boards.json`, **re-adding `require` by tile type**
-   from today's shipped defaults. Types line up 1:1; only the new `heading`
-   tiles have no counterpart.
-4. Delete the ten from the household's `panel_pages`. The wall then renders the
-   new shipped defaults — the household's layout *with* its empty states back.
-5. Only then enforce read-only.
+1. ~~Fix the `require` strip.~~ v2.228.2.
+2. ~~Clean up the ten boards on the live instance and dump them again.~~ The
+   house standard settled at **64 columns / 10px rows / 20px gutter**.
+3. ~~Write them into the data file, re-adding `require` by tile type.~~ All ten
+   restored; `kids` was the only flag with nowhere to land, because the
+   Routines board now reaches its kid strip through a `custom` container.
+4. ~~Drop the stored forks.~~ Done on READ, in `normalize_pages`, rather than by
+   rewriting settings — the same lazy rule the rest of the layer follows. The
+   stored pages are still in the household's settings and are simply never
+   consulted again.
+5. ~~Enforce read-only.~~ The editor no longer merges shipped boards into its
+   draft, so they cannot be edited or saved.
 
-Step 4 is also the repair: the v2.228.2 fix stops future stripping but does not
-restore what is already gone from stored data.
-
-**Blocked on:** the column question. Nine boards on 12 and four on 64 ships an
-inconsistency as the product's defaults. Decide whether 64 is the house
-standard before step 3.
+**One capability was removed by this and it is worth knowing:** a household
+could set a *background* on a shipped board's slug. That is gone — a shipped
+board's picture is authored with the board. The alternative was a per-slug
+override map, which is precisely the `panel_page_backgrounds` design deleted in
+v2.227.0 for having two settings for one thing. To personalise a shipped
+board's picture, Duplicate it.
 
 Target: **v2.229.0**
 

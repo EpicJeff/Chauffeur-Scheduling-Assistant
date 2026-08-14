@@ -1,0 +1,431 @@
+{
+  "schedule": {
+    "name": "Drives",
+    "icon": "🚗",
+    "v": 5,
+    "columns": 64,
+    "row_height": 10,
+    "gap": 20,
+    "widgets": [
+      {
+        "id": "heading",
+        "type": "heading",
+        "config": {
+          "title": "Driving Schedule"
+        }
+      },
+      {
+        "id": "drives",
+        "type": "drives",
+        "config": {
+          "view": "timeline",
+          "days": 7,
+          "icon": "🛣️"
+        },
+        "require": true
+      }
+    ],
+    "spans": {
+      "drives": {
+        "cols": 64,
+        "rows": 120,
+        "fill": true
+      },
+      "heading": {
+        "auto": true
+      }
+    }
+  },
+  "calendar": {
+    "name": "Calendar",
+    "icon": "📅",
+    "v": 5,
+    "columns": 64,
+    "row_height": 10,
+    "gap": 20,
+    "widgets": [
+      {
+        "id": "heading",
+        "type": "heading",
+        "config": {
+          "title": "Calendar"
+        }
+      },
+      {
+        "id": "calendar",
+        "type": "calendar",
+        "config": {
+          "view": "month",
+          "view_selector": true
+        },
+        "require": true
+      }
+    ],
+    "spans": {
+      "calendar": {
+        "cols": 64,
+        "rows": 120,
+        "fill": true
+      },
+      "heading": {
+        "rows": 15,
+        "auto": true
+      }
+    }
+  },
+  "errands": {
+    "name": "Errands",
+    "icon": "📋",
+    "v": 5,
+    "columns": 64,
+    "row_height": 10,
+    "gap": 20,
+    "widgets": [
+      {
+        "id": "heading",
+        "type": "heading",
+        "config": {
+          "title": "Errands & Tasks"
+        }
+      },
+      {
+        "id": "task_list",
+        "type": "task_list",
+        "config": {
+          "title": "The household owes"
+        },
+        "require": true
+      },
+      {
+        "id": "errand_list",
+        "type": "errand_list",
+        "config": {
+          "title": "Errands waiting",
+          "show_completed": false
+        },
+        "require": true
+      }
+    ],
+    "spans": {
+      "task_list": {
+        "cols": 32,
+        "rows": 36,
+        "fill": true
+      },
+      "errand_list": {
+        "cols": 32,
+        "rows": 36,
+        "fill": true
+      },
+      "heading": {
+        "auto": true
+      }
+    }
+  },
+  "shopping": {
+    "name": "Meals",
+    "icon": "🛒",
+    "v": 5,
+    "columns": 64,
+    "row_height": 10,
+    "gap": 20,
+    "widgets": [
+      {
+        "id": "heading",
+        "type": "heading",
+        "config": {
+          "title": "Shopping & Meals"
+        }
+      },
+      {
+        "id": "meals_week",
+        "type": "meals_week",
+        "config": {
+          "title": "The nights ahead"
+        },
+        "require": true
+      },
+      {
+        "id": "shopping_staples",
+        "type": "shopping_staples",
+        "config": {
+          "title": "🛒 Drop in the cart"
+        },
+        "require": true
+      },
+      {
+        "id": "shopping_list",
+        "type": "shopping_list",
+        "config": {
+          "title": "📝 The list"
+        },
+        "require": true
+      }
+    ],
+    "spans": {
+      "meals_week": {
+        "cols": 64,
+        "rows": 50,
+        "auto": true
+      },
+      "shopping_staples": {
+        "cols": 32,
+        "rows": 33,
+        "fill": true
+      },
+      "shopping_list": {
+        "cols": 32,
+        "rows": 33,
+        "fill": true
+      },
+      "heading": {
+        "auto": true
+      }
+    }
+  },
+  "occasions": {
+    "name": "Occasions",
+    "icon": "🎁",
+    "v": 5,
+    "columns": 64,
+    "row_height": 10,
+    "gap": 20,
+    "widgets": [
+      {
+        "id": "heading",
+        "type": "heading",
+        "config": {
+          "title": "Occasions"
+        }
+      },
+      {
+        "id": "occasions",
+        "type": "occasions",
+        "config": {
+          "count": 10,
+          "title": "Coming up"
+        },
+        "require": true
+      }
+    ],
+    "spans": {
+      "occasions": {
+        "cols": 64,
+        "fill": true
+      },
+      "heading": {
+        "auto": true
+      }
+    }
+  },
+  "chores": {
+    "name": "Chores",
+    "icon": "⭐",
+    "v": 5,
+    "columns": 64,
+    "row_height": 10,
+    "gap": 20,
+    "widgets": [
+      {
+        "id": "heading",
+        "type": "heading",
+        "config": {
+          "title": "Chores & Rewards"
+        }
+      },
+      {
+        "id": "chores_rewards",
+        "type": "chores_rewards",
+        "config": {},
+        "require": true
+      },
+      {
+        "id": "chores_lanes",
+        "type": "chores_lanes",
+        "config": {
+          "interactive": true
+        },
+        "require": true
+      }
+    ],
+    "spans": {
+      "chores_rewards": {
+        "cols": 64,
+        "rows": 15,
+        "auto": true
+      },
+      "chores_lanes": {
+        "cols": 64,
+        "rows": 140,
+        "fill": true
+      },
+      "heading": {
+        "auto": true
+      }
+    }
+  },
+  "routines": {
+    "name": "Routines",
+    "icon": "🔁",
+    "v": 5,
+    "columns": 64,
+    "row_height": 10,
+    "gap": 20,
+    "widgets": [
+      {
+        "id": "heading",
+        "type": "heading",
+        "config": {
+          "title": "Daily Routine"
+        }
+      },
+      {
+        "id": "custom",
+        "type": "custom",
+        "config": {
+          "cards": [
+            {
+              "id": "weather",
+              "type": "weather",
+              "config": {
+                "days": 7,
+                "bare": true
+              }
+            },
+            {
+              "id": "kids",
+              "type": "kids",
+              "config": {
+                "lines": 6,
+                "bare": true
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "routines_lanes",
+        "type": "routines_lanes",
+        "config": {
+          "title": "Today"
+        },
+        "require": true
+      }
+    ],
+    "spans": {
+      "routines_lanes": {
+        "cols": 64,
+        "rows": 91,
+        "fill": true
+      },
+      "heading": {
+        "auto": true
+      },
+      "custom": {
+        "rows": 8,
+        "cols": 64,
+        "auto": true
+      }
+    }
+  },
+  "trips": {
+    "name": "Trips",
+    "icon": "🧭",
+    "v": 5,
+    "columns": 64,
+    "row_height": 10,
+    "gap": 20,
+    "widgets": [
+      {
+        "id": "heading",
+        "type": "heading",
+        "config": {
+          "title": "Trips"
+        }
+      },
+      {
+        "id": "trips_gallery",
+        "type": "trips_gallery",
+        "config": {},
+        "require": true
+      }
+    ],
+    "spans": {
+      "trips_gallery": {
+        "fill": true,
+        "cols": 64
+      },
+      "heading": {
+        "auto": true
+      }
+    }
+  },
+  "map": {
+    "name": "Map",
+    "icon": "🗺️",
+    "v": 5,
+    "columns": 64,
+    "row_height": 10,
+    "gap": 20,
+    "widgets": [
+      {
+        "id": "heading",
+        "type": "heading",
+        "config": {
+          "title": "Map"
+        }
+      },
+      {
+        "id": "map",
+        "type": "map",
+        "config": {
+          "interactive": true
+        },
+        "require": true
+      }
+    ],
+    "spans": {
+      "map": {
+        "cols": 64,
+        "rows": 120,
+        "fill": true
+      },
+      "heading": {
+        "rows": 10,
+        "auto": true
+      }
+    }
+  },
+  "moments": {
+    "name": "Moments",
+    "icon": "📸",
+    "v": 5,
+    "columns": 64,
+    "row_height": 10,
+    "gap": 20,
+    "widgets": [
+      {
+        "id": "heading",
+        "type": "heading",
+        "config": {
+          "title": "Moments"
+        }
+      },
+      {
+        "id": "moments_gallery",
+        "type": "moments_gallery",
+        "config": {},
+        "require": true
+      }
+    ],
+    "spans": {
+      "heading": {
+        "auto": true
+      },
+      "moments_gallery": {
+        "fill": true,
+        "cols": 64
+      }
+    }
+  }
+}

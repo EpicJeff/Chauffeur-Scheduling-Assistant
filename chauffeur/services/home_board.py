@@ -40,6 +40,7 @@ web page:
 
 import datetime
 import json
+import os
 import re
 import time
 from typing import Callable, List, Optional
@@ -3450,6 +3451,14 @@ def normalize_pages(settings: dict = None) -> List[dict]:
     for item in (raw if isinstance(raw, list) else []):
         if not isinstance(item, dict):
             continue
+        # A stored page under a SHIPPED board's slug is a fork from the old
+        # model, and it does not win any more (v2.229.0). The shipped boards
+        # are authored data; a household changes one by duplicating it into a
+        # board of their own. Dropped on READ rather than migrated, like every
+        # other change in this layer — nothing rewrites anybody's settings
+        # behind their back, and the stored copy simply stops being consulted.
+        if str(item.get('slug') or '').strip().lower() in BUILTIN_PAGES:
+            continue
         page = _page_from(item, settings, taken)
         taken.add(page['slug'])
         pages.append(page)
@@ -3478,15 +3487,21 @@ def normalize_pages(settings: dict = None) -> List[dict]:
 # retitle, filter to one child, drop a card, add one from anywhere else in the
 # app — applies to it, because it is not a special screen. It is a board.
 #
-# These are DEFAULTS, not fixtures. Nothing is stored until somebody edits one,
-# at which point it is saved into `panel_pages` under this same slug and their
-# version wins forever after (and deleting it there brings this one back). A
-# household that never opens the editor tracks whatever ships, which is the
-# same bargain `DEFAULT_WIDGETS` has always offered.
+# These are AUTHORED, and they are the product. They are not defaults a
+# household edits into their own copy — that model is gone (v2.229.0). It read
+# as generous and behaved as a trap: editing one forked it into `panel_pages`,
+# their fork won forever, and no improvement we ever shipped reached them
+# again. By the time it was noticed all ten had forked on this very install and
+# none of them tracked anything. A household may HIDE one of these from the
+# shelf; to change one, they Duplicate it into a board of their own.
 #
-# `columns` is stated rather than inherited: a span here is a count of columns,
-# so a household that put their home board on a 24-column grid would otherwise
-# get every one of these at half width.
+# Which makes this file the way we author them: set a board up on a real
+# instance against real chores and real photos, export it, and write it here.
+# See `docs/boards_editor_design.md`.
+#
+# `columns`, `row_height` and `gap` are stated rather than inherited: a span
+# here is a count of columns, so a household that put their home board on a
+# 24-column grid would otherwise get every one of these at half width.
 #
 # Heights are `auto` almost everywhere, and that is not laziness. A list's
 # height is not a number anybody can type: four children with eleven routine
@@ -3502,135 +3517,53 @@ def normalize_pages(settings: dict = None) -> List[dict]:
 # set up, which is right on a mixed board and wrong here: an Errands board with
 # no errands card reads as broken rather than as empty, and that is exactly how
 # it reached a wall. A required tile says so instead of vanishing.
-BUILTIN_PAGES = {
-    'schedule': {
-        'name': 'Drives', 'icon': '🚗', 'v': 5, 'columns': 12,
-        'widgets': [{'id': 'drives', 'type': 'drives',
-                     'config': {'view': 'timeline', 'days': 1,
-                                'title': 'The rest of the day'}, 'require': True}],
-        'spans': {'drives': {'cols': 12, 'rows': 4}},
-    },
-    'calendar': {
-        'name': 'Calendar', 'icon': '📅', 'v': 5, 'columns': 12,
-        # The view buttons ON: this board IS the calendar page, and the page's
-        # one irreplaceable move is changing what you are looking at.
-        'widgets': [{'id': 'calendar', 'type': 'calendar',
-                     'config': {'view': 'agenda', 'view_selector': True}, 'require': True}],
-        'spans': {'calendar': {'cols': 12, 'rows': 4}},
-    },
-    'errands': {
-        'name': 'Errands', 'icon': '📋', 'v': 5, 'columns': 12,
-        # Side by side, deliberately: "do something" and "go somewhere" is the
-        # whole distinction the errands page exists to teach, and it is only
-        # learnable if both are in front of you.
-        'widgets': [
-            {'id': 'task_list', 'type': 'task_list',
-             'config': {'title': 'The household owes'}, 'require': True},
-            # `show_completed` off, and this is the one place the paradigm's
-            # "every part defaults on" is overridden — deliberately, and here
-            # rather than in the option's default, so the toggle keeps meaning
-            # "the page shows this". A wall is about what is left.
-            {'id': 'errand_list', 'type': 'errand_list',
-             'config': {'title': 'Errands waiting', 'show_completed': False}, 'require': True},
-        ],
-        'spans': {'task_list': {'cols': 6, 'auto': True},
-                  'errand_list': {'cols': 6, 'auto': True}},
-    },
-    # The shopping kiosk, in its own order: the week across the top, then the
-    # shortcut for saying we have run out of something, then the list.
-    'shopping': {
-        'name': 'Meals', 'icon': '🛒', 'v': 5, 'columns': 12,
-        'widgets': [
-            {'id': 'meals_week', 'type': 'meals_week',
-             'config': {'title': 'The nights ahead'}, 'require': True},
-            {'id': 'shopping_staples', 'type': 'shopping_staples',
-             'config': {'title': '🛒 Drop in the cart'}, 'require': True},
-            {'id': 'shopping_list', 'type': 'shopping_list',
-             'config': {'title': '📝 The list'}, 'require': True},
-        ],
-        'spans': {'meals_week': {'cols': 12, 'auto': True},
-                  'shopping_staples': {'cols': 5, 'auto': True},
-                  'shopping_list': {'cols': 7, 'auto': True}},
-    },
-    'occasions': {
-        'name': 'Occasions', 'icon': '🎁', 'v': 5, 'columns': 12,
-        'widgets': [{'id': 'occasions', 'type': 'occasions',
-                     'config': {'count': 10, 'title': 'Coming up'}, 'require': True}],
-        'spans': {'occasions': {'cols': 12, 'auto': True}},
-    },
-    'chores': {
-        'name': 'Chores', 'icon': '⭐', 'v': 5, 'columns': 12,
-        # The kiosk's own order: the shared goals across the top, the lanes
-        # under them. The leaderboard is not here because the lanes carry the
-        # rank in their own headers — showing it twice is what the kiosk
-        # already decided against.
-        'widgets': [
-            {'id': 'chores_rewards', 'type': 'chores_rewards', 'config': {}, 'require': True},
-            {'id': 'chores_lanes', 'type': 'chores_lanes',
-             'config': {'interactive': True}, 'require': True},
-        ],
-        'spans': {'chores_rewards': {'cols': 12, 'auto': True},
-                  'chores_lanes': {'cols': 12, 'auto': True}},
-    },
-    # The routines kiosk's own order: the day preview each child gets, then
-    # the lanes they tick things off in. The streak leaderboard is not here
-    # because each lane already carries its own 🔥 — the kiosk decided that.
-    'routines': {
-        'name': 'Routines', 'icon': '🔁', 'v': 5, 'columns': 12,
-        'widgets': [
-            # No typed title: the digest drawing carries its own heading
-            # ("☀️ Today" / "🌙 Tomorrow"), which is better information than
-            # "Each kid" ever was, and two headings is one too many. Lines at
-            # the cap — the page does not truncate a kid's day, so the board
-            # should not either.
-            {'id': 'kids', 'type': 'kids', 'config': {'lines': 8}, 'require': True},
-            {'id': 'routines_lanes', 'type': 'routines_lanes',
-             'config': {'title': 'Today'}, 'require': True},
-        ],
-        'spans': {'kids': {'cols': 12, 'auto': True},
-                  'routines_lanes': {'cols': 12, 'auto': True}},
-    },
-    # The trips PAGE, not the home board's trips tile — the same distinction
-    # the Moments board needed. The collage is "the next trip and how long
-    # until it starts", right beside eight other tiles; the page is a gallery
-    # you browse, a photograph per trip, each one opening that trip.
-    # FILL, because a gallery is the only thing on this screen and how many
-    # trips a family has is not a number anybody can type.
-    'trips': {
-        'name': 'Trips', 'icon': '🧭', 'v': 5, 'columns': 12,
-        'widgets': [{'id': 'trips_gallery', 'type': 'trips_gallery',
-                     'config': {}, 'require': True}],
-        'spans': {'trips_gallery': {'cols': 12, 'fill': True}},
-    },
-    'map': {
-        'name': 'Map', 'icon': '🗺️', 'v': 5, 'columns': 12,
-        # Interactive ON, and this is the one place it is worth saying out
-        # loud rather than leaving to the default: the option defaults OFF
-        # because a map tile on a mixed board is a door and a dragged view
-        # stays dragged. This board IS the Map page — there is no door to
-        # protect, the map is the whole surface, and a map you cannot pan is
-        # a screenshot.
-        'widgets': [{'id': 'map', 'type': 'map',
-                     'config': {'interactive': True}, 'require': True}],
-        'spans': {'map': {'cols': 12, 'rows': 5}},
-    },
-    # The Moments PAGE, not the home board's moments tile. Those are two
-    # different questions and this board was answering the wrong one: the
-    # mosaic is "the last few photos", right beside eight other tiles on a
-    # home board and wrong as the whole of the Moments screen, where the
-    # question is "which activity" and the answer is a block per event with
-    # its own photos one tap in.
-    #
-    # FILL, so the gallery takes the screen it is the only thing on — and it
-    # pages on scroll, so a stated number of rows would be an arbitrary window
-    # onto a history that has no length.
-    'moments': {
-        'name': 'Moments', 'icon': '📸', 'v': 5, 'columns': 12,
-        'widgets': [{'id': 'moments_gallery', 'type': 'moments_gallery',
-                     'config': {}, 'require': True}],
-        'spans': {'moments_gallery': {'cols': 12, 'fill': True}},
-    },
-}
+# The per-board reasoning that used to live in comments between these entries,
+# kept here because it is the kind of decision that gets undone by accident:
+#   - errands states `show_completed: False` — the one place the conversion
+#     paradigm's "every section defaults on" is overridden, and deliberately in
+#     the instance rather than in the option's default, so the toggle keeps
+#     meaning "the page shows this". A wall is about what is left.
+#   - map and chores_lanes state `interactive: True`. That option defaults OFF
+#     because a tile on a mixed board is a door and a dragged view stays
+#     dragged; these boards ARE that page, so there is no door to protect, and
+#     a map you cannot pan is a screenshot.
+#   - the galleries and lists FILL. How many trips a family has, or errands, is
+#     not a number anybody can type, and a stated height is either short (the
+#     wall cuts the last one off) or a band of empty panel.
+#   - no board carries a leaderboard or a streak strip: the lanes already carry
+#     rank and the streak in their own headers, and both kiosks decided against
+#     showing it twice.
+# Beside this module rather than in a `data/` directory, deliberately:
+# `chauffeur/data/` is git-ignored as a secrets folder, so a boards file in
+# there is one that never reaches the repo and never ships — the add-on would
+# build with no shipped boards at all and say nothing about it.
+_BUILTIN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             'builtin_boards.json')
+
+
+def _load_builtin_pages() -> dict:
+    """The shipped boards, off disk.
+
+    Data rather than a Python literal because this file is WRITTEN — a board is
+    authored by setting it up on a real instance and exporting it, and a dict
+    full of prose is not something a machine can rewrite without destroying the
+    prose. Hence the comment block above rather than notes in the JSON.
+
+    A missing or unreadable file leaves the app with no shipped boards rather
+    than no app: every destination is still reachable as its admin page, and
+    the shelf reads `NAV_SLUGS` rather than this. Loud on stdout, because the
+    only way it happens is a build that dropped its package data.
+    """
+    try:
+        with open(_BUILTIN_PATH, encoding='utf-8') as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        print(f"[home_board] shipped boards unavailable ({_BUILTIN_PATH}): {e}")
+        return {}
+
+
+BUILTIN_PAGES = _load_builtin_pages()
 
 
 def builtin_page(slug: Optional[str] = None, settings: dict = None):

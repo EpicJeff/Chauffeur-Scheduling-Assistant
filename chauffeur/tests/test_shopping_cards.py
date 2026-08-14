@@ -182,7 +182,10 @@ def scenario_nothing_shared_is_a_getter():
 
 def scenario_the_shopping_board_is_the_kiosk():
     page = home_board.builtin_page('shopping', {})
-    types_ = [w['type'] for w in page['widgets']]
+    # Chrome dropped before comparing: shipped boards open with a heading now,
+    # and what this defends is the order of the three drawings.
+    types_ = [w['type'] for w in page['widgets']
+              if w['type'] not in home_board.BARE_TILES]
     check(types_ == ['meals_week', 'shopping_staples', 'shopping_list'],
           f"the shopping board is not the kiosk's three drawings: {types_}")
     # The week leads, full width, the way the kiosk reads.

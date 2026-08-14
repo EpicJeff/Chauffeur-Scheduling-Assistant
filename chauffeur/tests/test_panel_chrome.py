@@ -513,20 +513,23 @@ def scenario_a_page_can_have_its_own_picture():
         'panel_background': 'mountains at dusk',
         'panel_pages': [
             {'slug': 'home', 'name': 'Home', 'v': 5, 'widgets': []},
-            {'slug': 'schedule', 'name': 'Drives', 'v': 5, 'widgets': [],
+            {'slug': 'garage', 'name': 'Garage', 'v': 5, 'widgets': [],
              'background': 'empty highway at dawn'},
             {'slug': 'hallway', 'name': 'Hallway', 'v': 5, 'widgets': [],
              'background': 'the sea'},
-            {'slug': 'map', 'name': 'Map', 'v': 5, 'widgets': [],
+            {'slug': 'landing', 'name': 'Landing', 'v': 5, 'widgets': [],
              'background': '   '},
         ]})
     check(got['default'].startswith('api/unsplash/background?query=mountains'),
           "the default picture is gone")
-    check('highway' in got['schedule'], "a page's own picture is not resolved")
+    # Boards the household OWNS. A stored page under a shipped slug is ignored
+    # entirely since v2.229.0 — a shipped board's picture is authored with the
+    # board — so the boards here are their own, not `schedule` and `map`.
+    check('highway' in got['garage'], "a page's own picture is not resolved")
     check('sea' in got.get('hallway', ''),
           "a board the household made is not in the map, so a wall showing it "
           "falls back to the household default")
-    check('map' not in got, "a blank entry is treated as a picture")
+    check('landing' not in got, "a blank entry is treated as a picture")
     check('home' not in got, "a board with no picture is claiming one")
 
 

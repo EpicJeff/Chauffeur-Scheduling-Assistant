@@ -118,26 +118,51 @@ def scenario_the_spec_is_never_handed_out():
           f"a tile's config leaked back into the spec: {b['widgets'][0]}")
 
 
-def scenario_stored_wins_and_nothing_is_stored_until_they_edit():
-    """The whole bargain. A household that never opens the editor tracks
-    whatever ships; the moment they save one it is theirs and the shipped board
-    stops applying — no merging, because a board half theirs and half ours is a
-    board nobody can explain."""
+def scenario_a_shipped_board_is_not_a_default_anybody_can_fork():
+    """The bargain, INVERTED at v2.229.0, and this is the scenario that used to
+    assert the opposite.
+
+    It used to read "stored wins": editing a shipped board copied it into
+    `panel_pages` and the household's copy won forever. That sounded generous
+    and behaved as a trap — the fork was silent, it stopped tracking every
+    improvement we shipped afterwards, and by the time anybody noticed, all ten
+    boards had forked on this very install and none of them tracked anything.
+
+    Now the shipped boards are authored data and always win. A page stored
+    under one of their slugs is inert: not merged, not preferred, not deleted
+    either — just never consulted. A household changes one by duplicating it
+    into a board of their own."""
     settings = {'panel_pages': [
         {'slug': 'home', 'name': 'Home', 'widgets': ['drives'], 'v': 5},
     ]}
     shipped = home_board.find_page('errands', settings)
-    check([w['type'] for w in shipped['widgets']] == ['task_list', 'errand_list'],
+    got = [w['type'] for w in shipped['widgets']]
+    # Against the shipped spec rather than a hardcoded list: this scenario is
+    # about WHICH board was reached, and spelling out the contents again ties
+    # it to a layout that is authored data and changes on purpose.
+    check(got == [w['type'] for w in
+                  home_board.builtin_page('errands', settings)['widgets']],
           f"the shipped errands board was not used: {shipped['widgets']}")
+    check('errand_list' in got, f"whatever this is, it is not Errands: {got}")
 
+    # A fork left over from the old model, which is what every install that
+    # ever opened the editor is carrying. It must not win, and it must not
+    # take the shipped board's grid down with it.
     theirs = {'panel_pages': settings['panel_pages'] + [
         {'slug': 'errands', 'name': 'Errands', 'widgets': ['errands'],
          'columns': 6, 'v': 5},
     ]}
     got = home_board.find_page('errands', theirs)
-    check([w['type'] for w in got['widgets']] == ['errands'],
-          f"a household's own errands board lost to the shipped one: {got}")
-    check(got['columns'] == 6, f"their grid was overridden: {got['columns']}")
+    check([w['type'] for w in got['widgets']] != ['errands'],
+          f"a stored fork still beats the shipped errands board: {got}")
+    check(got['columns'] != 6,
+          f"the fork's grid leaked into the shipped board: {got['columns']}")
+    check(got['columns'] == home_board.builtin_page('errands', {})['columns'],
+          f"the shipped errands board is not on its own grid: {got['columns']}")
+    # Inert, not deleted: dropping it on READ keeps this layer's promise that
+    # nothing rewrites a household's settings behind their back.
+    check(any(p.get('slug') == 'errands' for p in theirs['panel_pages']),
+          "resolving the board deleted the household's stored page")
 
     # And reading never writes: the same lazy rule the rest of this layer has.
     before = dict(theirs)
@@ -172,11 +197,14 @@ def scenario_the_editor_can_reach_a_board_nobody_has_saved():
     """A board you cannot find in the editor's list is a board you cannot fix,
     and the first thing anybody wanted to do with these was fix their heights.
 
-    So `/api/home_board/pages` answers with TWO lists: `pages` is what is
-    stored and `shipped` is the rest. Folding them into one would have the
-    editor write all ten into settings the first time somebody nudged a tile,
-    freezing every board this app will ever improve — which is the whole
-    bargain these are offered under.
+    So `/api/home_board/pages` answers with TWO lists: `pages` is the boards
+    the household owns and `shipped` is ours. They stay separate for a stronger
+    reason than they used to (v2.229.0): the shipped ten are not editable at
+    all, so a merged list would be an editor offering edits it cannot keep.
+
+    `shipped` is now ALWAYS all ten. It used to be "the ones nobody has saved
+    yet", which meant a household that had forked a board stopped being shown
+    ours — the fork hid the thing it forked from.
     """
     from services import storage
     real = storage.get_settings
@@ -186,26 +214,60 @@ def scenario_the_editor_can_reach_a_board_nobody_has_saved():
             {'slug': 'errands', 'name': 'Errands', 'widgets': ['errands'],
              'v': 5},
         ]}
+        # The stored 'errands' page is a fork from the old model. It is inert:
+        # the household's list is their own boards, and that is all.
         stored = [p['slug'] for p in home_board.normalize_pages()]
-        check(stored == ['home', 'errands'],
-              f"the shipped boards leaked into the stored list: {stored}")
+        check(stored == ['home'],
+              f"a stored fork is still counted as one of their boards: {stored}")
         import main
         got = main.home_board_pages()
         shipped = [p['slug'] for p in got['shipped']]
-        check([p['slug'] for p in got['pages']] == ['home', 'errands'],
+        check([p['slug'] for p in got['pages']] == ['home'],
               f"the stored list changed shape: {got['pages']}")
-        check('chores' in shipped and all(p['widgets'] for p in got['shipped']),
-              f"the editor cannot see an unsaved board: {shipped}")
-        # A board they HAVE customised must not appear twice — once as theirs
-        # and once as ours, with the editor asking which they meant.
-        check('errands' not in shipped,
-              f"a customised board is listed as shipped as well: {shipped}")
+        check(sorted(shipped) == sorted(home_board.BUILTIN_PAGES),
+              f"the editor cannot see all ten shipped boards: {shipped}")
+        check(all(p['widgets'] for p in got['shipped']),
+              "a shipped board arrived with no tiles on it")
+        # And it is listed even though this household forked it once: hiding
+        # ours because they have a stale copy is how the copy became invisible
+        # and unfixable in the first place.
+        check('errands' in shipped,
+              f"a board this household once forked is hidden from them: {shipped}")
         cat = home_board.catalog()
         check('errands' in (cat.get('builtin_pages') or []),
               f"the editor cannot tell a shipped board from a made one: "
               f"{cat.get('builtin_pages')}")
     finally:
         storage.get_settings = real
+
+
+def scenario_the_shipped_boards_actually_ship():
+    """The boards are a FILE now, and a file has ways of not being there that a
+    Python literal never had.
+
+    It was first written to `chauffeur/data/`, which `.gitignore` excludes as a
+    secrets folder — so it would never have reached the repo, the add-on image
+    would have built without it, and the loader's empty-dict fallback means the
+    app would have come up with no shipped boards and no error. Every failure
+    in this scenario is that shape: silent, and only visible on a wall.
+    """
+    import subprocess
+    check(os.path.exists(home_board._BUILTIN_PATH),
+          f"the shipped boards file is missing: {home_board._BUILTIN_PATH}")
+    check(len(home_board.BUILTIN_PAGES) == 10,
+          f"the loader found {len(home_board.BUILTIN_PAGES)} boards, not ten — "
+          f"an unreadable file degrades to an empty dict on purpose, so this "
+          f"is what that looks like from the outside")
+    try:
+        ignored = subprocess.run(
+            ['git', 'check-ignore', home_board._BUILTIN_PATH],
+            capture_output=True, text=True, cwd=os.path.dirname(TPL)).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        print('  skip  git unavailable — the ignore check did not run')
+        return
+    check(not ignored,
+          f"{home_board._BUILTIN_PATH} is git-ignored, so the boards never "
+          f"reach the repo and the add-on ships with none of them")
 
 
 def scenario_an_unknown_slug_still_lands_on_a_real_board():
@@ -266,15 +328,22 @@ def scenario_the_board_knows_which_board_it_is():
                 if 'function homeBoard()' in b)
     check('{{' not in body and '{%' not in body,
           "server-side templating leaked into the board script")
-    # And the editor has to list a board that is not in settings, while
-    # writing back only the ones that changed.
-    check('pg.shipped' in tpl,
-          "the editor no longer lists the boards nobody has saved yet")
-    check('_shippedPristine' in tpl,
-          "the editor saves every shipped board on the first save, which "
-          "freezes all of them against anything this app ships later")
+    # And the editor must NOT put the shipped boards in its editable draft.
+    # This pair used to assert the opposite — that it listed all ten and used a
+    # pristine JSON comparison to write back only the changed ones. That was a
+    # guard around a fork nobody wanted; the fork is gone (v2.229.0) and so is
+    # the guard, so the assertions are inverted rather than deleted, to stop
+    # the old model reappearing as a helpful-looking merge.
+    draft = tpl[tpl.index('panel_pages: '):]
+    draft = draft[:draft.index('panel_tabs:')]
+    check('pg.shipped' not in draft,
+          "the editor is merging shipped boards into its draft again, which is "
+          "how all ten of them forked and stopped tracking anything we ship")
+    check('_shippedPristine' not in tpl,
+          "the pristine-copy guard is back, and it only exists to make an "
+          "editable shipped board safe — shipped boards are not editable")
     check('isBuiltinPage' in tpl,
-          "the editor calls resetting a shipped board 'Delete'")
+          "the editor cannot tell a shipped board from the household's own")
 
 def scenario_a_list_is_as_tall_as_its_list():
     """`rows` is a promise about height, and for a list it is a promise nobody
@@ -355,9 +424,15 @@ def scenario_a_board_never_loses_the_card_it_is_about():
         home_board._CACHE.clear()
         board = home_board.build(page='errands')
         types_ = [t['type'] for t in board['tiles']]
-        check(types_ == ['task_list', 'errand_list'],
-              f"the errands board lost a card it is about: {types_}")
+        # Presence, not the exact list: shipped boards carry chrome now (each
+        # one opens with a heading), and this scenario is about the CARDS
+        # surviving an empty day, not about what else is on the screen.
+        for want in ('task_list', 'errand_list'):
+            check(want in types_,
+                  f"the errands board lost a card it is about: {types_}")
         for t in board['tiles']:
+            if t['type'] in home_board.BARE_TILES:
+                continue          # chrome has nothing to say and never vanishes
             said = (t['cards'][0]['data'] or {}).get('empty')
             check(said, f"{t['type']} is present but says nothing: {t}")
     finally:
@@ -365,10 +440,25 @@ def scenario_a_board_never_loses_the_card_it_is_about():
         home_board._CACHE.clear()
     # `require` is the shipped boards' alone — a household's own board is a mix,
     # where hiding an unused feature is still the right answer.
-    for spec in home_board.BUILTIN_PAGES.values():
+    #
+    # Every CONTENT tile carries it. Chrome is exempt because rule 1 never hides
+    # it in the first place, and a container is exempt because what it draws is
+    # its cards. Stated as a rule rather than a list so that adding a tile to a
+    # shipped board and forgetting the flag is a failing test — which is how the
+    # flag went missing from all ten of these to begin with (v2.228.2).
+    containers = {w['key'] for w in home_board.WIDGETS if w.get('container')}
+    for slug, spec in home_board.BUILTIN_PAGES.items():
         for w in spec['widgets']:
+            if w['type'] in home_board.BARE_TILES or w['type'] in containers:
+                check(not w.get('require'),
+                      f"{slug}: {w['type']} is chrome and cannot be required")
+                continue
             check(w.get('require'),
-                  f"{w['type']} on a shipped board can still vanish")
+                  f"{slug}: {w['type']} on a shipped board can still vanish")
+            # A flag with no sentence behind it is a flag that does nothing.
+            check(w['type'] in home_board.REQUIRED_EMPTY,
+                  f"{slug}: {w['type']} is required but has no empty state, so "
+                  f"requiring it draws a blank panel instead of an explanation")
 
 
 def scenario_the_kids_strip_survives_a_board_with_no_hero():
@@ -380,9 +470,13 @@ def scenario_the_kids_strip_survives_a_board_with_no_hero():
     digest = lambda: {'label': 'Today', 'kids': {
         'k1': {'name': 'Addison', 'lines': ['5:00 PM — practice']}}}
     board = home_board.build(page='routines', kid_digest_fn=digest)
-    check(any(t['type'] == 'kids' for t in board['tiles']),
-          f"the routines board lost its kid strip: "
-          f"{[t['type'] for t in board['tiles']]}")
+    # A tile OR a card inside one: the strip lives in a custom container beside
+    # the weather now. Where it sits on the board is a layout decision and may
+    # change again; that it is drawn at all is the thing this defends.
+    drawn = [c['type'] for t in board['tiles'] for c in (t.get('cards') or [])]
+    check('kids' in drawn or any(t['type'] == 'kids' for t in board['tiles']),
+          f"the routines board lost its kid strip: tiles="
+          f"{[t['type'] for t in board['tiles']]} cards={drawn}")
     home_board._CACHE.clear()
 
 def scenario_the_calendar_card_is_the_page_so_it_taps_like_the_page():
@@ -431,7 +525,11 @@ def scenario_the_calendar_card_is_the_page_so_it_taps_like_the_page():
 
     # And the shipped calendar board needs no config to get all of it.
     page = home_board.builtin_page('calendar', {})
-    cfg = page['widgets'][0]['config']
+    # By type, not by position: the board opens with a heading now, and asking
+    # index 0 whether it is interactive is a question the chrome answers None
+    # to — which is the value this asserts, so the test passed while checking
+    # nothing at all.
+    cfg = next(w for w in page['widgets'] if w['type'] == 'calendar')['config']
     check(cfg.get('interactive') is None,
           f"the shipped board hardcodes what the default already says: {cfg}")
 
@@ -491,7 +589,8 @@ def scenario_the_other_cards_with_taps_have_them_too():
     # The Map BOARD is the exception to the exception: it is the map page, so
     # there is no door to protect and a map you cannot pan is a screenshot.
     page = home_board.builtin_page('map', {})
-    check(page['widgets'][0]['config'].get('interactive') is True,
+    tile = next(w for w in page['widgets'] if w['type'] == 'map')
+    check(tile['config'].get('interactive') is True,
           f"the shipped Map board serves a map nobody can pan: {page['widgets']}")
 
 
@@ -564,9 +663,12 @@ def scenario_the_moments_board_is_the_moments_page():
     """
     page = home_board.builtin_page('moments', {})
     types = [w['type'] for w in page['widgets']]
-    check(types == ['moments_gallery'],
+    # The gallery, and NOT the home board's summary tile — chrome beside it is
+    # fine, a `moments` mosaic standing in for the page is the bug.
+    check('moments_gallery' in types and 'moments' not in types,
           f"the Moments board is not the Moments page: {types}")
-    check(page['widgets'][0].get('require'),
+    gallery = next(w for w in page['widgets'] if w['type'] == 'moments_gallery')
+    check(gallery.get('require'),
           "the Moments board can lose the only card it is about")
     # It pages on scroll, so a stated number of rows is an arbitrary window
     # onto a history that has no length. Fill is the honest answer.
@@ -697,13 +799,20 @@ def scenario_a_boards_picture_is_the_boards_own_field():
              'background': 'https://e/chores-own.jpg'},
         ],
     }
-    # A board's own field survives the round trip, shipped-slug or not.
+    # A board's own field survives the round trip — for the boards a household
+    # actually owns. A stored page under a SHIPPED slug is ignored entirely
+    # now (v2.229.0), picture included: a shipped board's picture is authored
+    # with the board, and reviving a per-slug override map here would rebuild
+    # the exact two-settings-for-one-thing bug v2.227.0 deleted.
     for slug, want in (('hallway', 'https://e/hallway-own.jpg'),
-                       ('chores', 'https://e/chores-own.jpg')):
+                       ('home', 'https://e/home-own.jpg')):
         page = next(p for p in home_board.normalize_pages(saved)
                     if p['slug'] == slug)
         check(page['background'] == want,
               f"{slug} lost the picture set on the board: {page['background']}")
+    check(not any(p['slug'] == 'chores'
+                  for p in home_board.normalize_pages(saved)),
+          "a stored page under a shipped slug is still overriding the board")
     # A shipped board nobody has edited has no picture of its own and takes
     # the household's — two levels of "not set", never three.
     check(home_board.builtin_page('map', saved)['background'] == '',
@@ -717,8 +826,8 @@ def scenario_a_boards_picture_is_the_boards_own_field():
           f"a custom board's picture never reaches the wall: {bg}")
     check(bg.get('home') == 'https://e/home-own.jpg',
           f"the home board's own picture is not in the map: {bg}")
-    check(bg.get('chores') == 'https://e/chores-own.jpg',
-          f"an edited destination board's picture is not in the map: {bg}")
+    check('chores' not in bg,
+          f"a stored page under a shipped slug still paints that board: {bg}")
     check('map' not in bg,
           f"a board with no picture is claiming one: {bg}")
 
@@ -767,7 +876,9 @@ def scenario_the_trips_board_is_the_trips_page():
     """
     page = home_board.builtin_page('trips', {})
     types = [w['type'] for w in page['widgets']]
-    check(types == ['trips_gallery'],
+    # The gallery, and NOT the home board's collage — same distinction the
+    # Moments board needed, and chrome beside it is fine.
+    check('trips_gallery' in types and 'trips' not in types,
           f"the Trips board is not the Trips page: {types}")
     span = page['spans']['trips_gallery']
     check(span.get('fill'),

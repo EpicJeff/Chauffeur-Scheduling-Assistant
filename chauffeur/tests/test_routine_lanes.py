@@ -297,9 +297,19 @@ def scenario_the_builder_ships_config_and_never_rows():
 
 def scenario_the_routines_board_is_the_kiosk():
     page = home_board.builtin_page('routines', {})
-    types_ = [w['type'] for w in page['widgets']]
-    check(types_ == ['kids', 'routines_lanes'],
-          f"the routines board is not the kiosk's own order: {types_}")
+    types_ = [w['type'] for w in page['widgets']
+              if w['type'] not in home_board.BARE_TILES]
+    check(types_[-1] == 'routines_lanes',
+          f"the lanes are not the last thing on the routines board: {types_}")
+    # The day preview each child gets, above the lanes they tick off. It rides
+    # inside a custom container beside the weather now rather than as a tile of
+    # its own — where it sits is a layout decision and this board is authored
+    # data; that the preview is drawn AT ALL, above the lanes, is the contract.
+    cards = [c.get('type') for w in page['widgets']
+             for c in ((w.get('config') or {}).get('cards') or [])]
+    check('kids' in cards or 'kids' in types_,
+          f"the routines board lost the preview above its lanes: "
+          f"tiles={types_} cards={cards}")
     # And the page's editors did not come with it.
     src = tpl_source.read('home.html')
     for editor in ('startEditItem(', 'saveEditItem(', 'copyRoutine('):

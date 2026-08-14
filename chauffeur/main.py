@@ -1029,16 +1029,17 @@ def home_board_pages():
     from services import home_board
     settings = storage.get_settings() or {}
     pages = home_board.normalize_pages(settings)
-    have = {p['slug'] for p in pages}
-    # The shipped boards the household has not touched, kept SEPARATE from the
-    # stored ones. The editor needs them — a board you cannot find in the list
-    # is a board you cannot fix, and the first thing anybody wanted to do with
-    # these was fix their heights — but folding them into `pages` would have
-    # the editor save all ten into settings the first time somebody nudged one
-    # tile, freezing every board this app will ever improve.
+    # ALL ten shipped boards, always, kept SEPARATE from the household's own.
+    # The editor needs them listed — a board you cannot find is a board you
+    # cannot fix — but they are authored data and not editable here, so folding
+    # them into `pages` would be an editor offering edits it cannot keep.
+    #
+    # This used to be "the shipped boards nobody has touched", so a household
+    # that had forked one stopped being shown ours: the fork hid the thing it
+    # forked from. Forks are inert now (`normalize_pages` drops them), which is
+    # also why no exclusion is needed here.
     shipped = [p for p in (home_board.builtin_page(slug, settings)
-                           for slug in home_board.BUILTIN_PAGES)
-               if p and p['slug'] not in have]
+                           for slug in home_board.BUILTIN_PAGES) if p]
     return {'pages': pages, 'shipped': shipped}
 
 @app.get("/api/home_board/catalog")

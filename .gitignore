@@ -38,3 +38,7 @@ chauffeur/serpapi_api_key.txt
 *_api_key.txt
 *.key
 .env
+
+# The household board dump used to author the shipped boards. Real member and
+# entity ids, and it sits inside the package that gets built into the add-on.
+chauffeur/boards.json

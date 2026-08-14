@@ -339,7 +339,11 @@ def scenario_the_builders_ship_config_and_never_rows():
 def scenario_the_errands_board_is_the_two_lists_and_no_editors():
     """What a wall actually lands on when somebody taps Errands."""
     page = home_board.builtin_page('errands', {})
-    types_ = [w['type'] for w in page['widgets']]
+    # Chrome dropped before comparing: shipped boards open with a heading now,
+    # and what this defends is the ORDER of the two lists, not the absence of
+    # anything else on the screen.
+    types_ = [w['type'] for w in page['widgets']
+              if w['type'] not in home_board.BARE_TILES]
     check(types_ == ['task_list', 'errand_list'],
           f"the errands board is not the two lists: {types_}")
     by_id = {w['id']: w['config'] for w in page['widgets']}
