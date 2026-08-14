@@ -248,59 +248,35 @@
     }
 
     const _mwApiBase = window.location.pathname.endsWith('/') ? '../' : '';
-    const _MW_TYPE_ICON = { track: '🎵', album: '💿', artist: '🎤', playlist: '📻', radio: '📡' };
+    // Everything that is not this widget's own drawing now lives in
+    // static/music_logic.js, shared with the board's music card. These stay as
+    // named wrappers so the 600 lines around them read exactly as before.
+    const _mwOpts = { apiBase: _mwApiBase };
+    const _MW_TYPE_ICON = MusicLogic.TYPE_ICON;
 
-    function _mwPlayerIcon(p) {
-        if (p.device_class === 'tv') return '📺';
-        if (p.device_class === 'receiver') return '🎚️';
-        if (p.device_class === 'speaker') return '🔊';
-        const n = `${p.entity_id} ${p.name}`.toLowerCase();
-        if (/\btv\b|television|shield|roku|apple_tv|appletv/.test(n)) return '📺';
-        if (/echo|alexa|nest|home_mini|homepod|sonos|speaker/.test(n)) return '🔊';
-        if (/group|everywhere|all\b/.test(n)) return '🏠';
-        return '🔊';
-    }
+    function _mwPlayerIcon(p) { return MusicLogic.playerIcon(p); }
 
     function _mwEsc(s) {
         return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    function _mwProxied(url) {
-        // https loads directly; http:// (MA's LAN image proxy) is mixed
-        // content on an https page — iOS blocks it silently — so it goes
-        // through the add-on's image proxy, like now-playing art.
-        return url.startsWith('https://')
-            ? url
-            : `${_mwApiBase}api/ha/image64/${btoa(url).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
-    }
+    // https loads directly; http:// (MA's LAN image proxy) and HA's relative
+    // entity_picture both go through the add-on's proxy — see music_logic.js.
+    function _mwProxied(url) { return MusicLogic.artwork(url, _mwOpts); }
 
-    function _mwImage(item) {
-        // MA serializes an image url on most items; only trust absolute urls.
-        const img = item.image || item.image_url ||
-            (item.metadata && item.metadata.images && item.metadata.images[0] && item.metadata.images[0].path);
-        return (typeof img === 'string' && img.startsWith('http')) ? _mwProxied(img) : null;
-    }
+    function _mwImage(item) { return MusicLogic.imageOf(item, _mwOpts); }
 
-    function _mwSubtitle(item) {
-        const artists = (item.artists || []).map(a => a.name).join(', ');
-        const album = item.album && item.album.name;
-        if (artists && album) return `${artists} · ${album}`;
-        if (artists) return artists;
-        if (item.owner) return item.owner;
-        return '';
-    }
+    function _mwSubtitle(item) { return MusicLogic.subtitleOf(item); }
 
     function _mwCurrent() {
         return _mwPlayers.find(p => p.entity_id === _mwSelected) || null;
     }
 
     async function mwRefresh() {
-        try {
-            const res = await fetch(`${_mwApiBase}api/ha/media_players`);
-            if (!res.ok) return;
-            _mwPlayers = await res.json();
-        } catch (e) { return; }
+        const fetched = await MusicLogic.players(_mwOpts);
+        if (!fetched) return;             // a blip goes quiet, never blank
+        _mwPlayers = fetched;
 
         // Prefer the logged-in member's configured player on first load.
         if (!_mwSelected && typeof membersData !== 'undefined' && typeof selectedMemberId !== 'undefined') {
@@ -346,11 +322,9 @@
                 // resolve on the wrong origin, and absolute http:// URLs
                 // (MA's LAN image proxy) are blocked as mixed content on an
                 // https page (iOS Safari blocks silently) — both go through
-                // the add-on's image proxy, base64url-encoded.
-                const pic = cur.entity_picture;
-                const src = pic.startsWith('http')
-                    ? _mwProxied(pic)
-                    : `${_mwApiBase}api/ha/image64/${btoa(pic).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+                // the add-on's image proxy, which is the ONE rule in
+                // MusicLogic.artwork rather than the two cases this was.
+                const src = _mwProxied(cur.entity_picture);
                 if (art.getAttribute('src') !== src) {
                     art.src = src;
                     art.style.display = 'block';
@@ -396,14 +370,8 @@
             } catch (e) { _mwToast('Command failed: ' + e.message); }
             return;
         }
-        try {
-            await fetch(`${_mwApiBase}api/ha/media_players/${encodeURIComponent(_mwSelected)}/command`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command, ...extra })
-            });
-            setTimeout(mwRefresh, 600);
-        } catch (e) { }
+        await MusicLogic.command(_mwSelected, command, extra, _mwOpts);
+        setTimeout(mwRefresh, 600);
     }
 
     function mwTogglePlay() {
@@ -453,31 +421,18 @@
         box.style.display = 'block';
         box.innerHTML = '<div class="p-3 text-gray-500 text-sm bg-gray-900">Searching…</div>';
         try {
-            const res = await fetch(`${_mwApiBase}api/music/search?q=${encodeURIComponent(q)}&limit=8`);
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                box.innerHTML = `<div class="p-3 text-red-400 text-sm bg-gray-900">${_mwEsc(err.detail || 'Search failed')}</div>`;
-                return;
-            }
-            const data = await res.json();
+            const data = await MusicLogic.search(q, 8, _mwOpts);
             if (input.value.trim() !== q) return; // stale response
-            const rows = [];
-            [['tracks', 'track'], ['albums', 'album'], ['playlists', 'playlist'], ['artists', 'artist'], ['radio', 'radio']].forEach(([key, type]) => {
-                (data[key] || []).slice(0, 5).forEach(item => rows.push(_mwResultRow(item, type)));
-            });
+            const rows = MusicLogic.flatten(data)
+                .map(item => _mwResultRow(item, item.media_type));
             box.innerHTML = rows.join('') || '<div class="p-3 text-gray-500 text-sm bg-gray-900">No results</div>';
         } catch (e) {
-            box.innerHTML = '<div class="p-3 text-red-400 text-sm bg-gray-900">Search failed</div>';
+            box.innerHTML = `<div class="p-3 text-red-400 text-sm bg-gray-900">${_mwEsc(e.message || 'Search failed')}</div>`;
         }
     }
 
     async function _mwFetchFavorites(type, limit) {
-        try {
-            const res = await fetch(`${_mwApiBase}api/music/favorites?media_type=${type}&limit=${limit}`);
-            if (!res.ok) return [];
-            const data = await res.json();
-            return data.items || data[type + 's'] || [];
-        } catch (e) { return []; }
+        return MusicLogic.favorites(type, limit, _mwOpts);
     }
 
     async function mwLoadFavorites() {
@@ -543,14 +498,8 @@
             }
             target = ent.entity_id;
         }
-        try {
-            await fetch(`${_mwApiBase}api/music/play`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entity_id: target, media_id: uri, media_type: mediaType })
-            });
-            setTimeout(mwRefresh, 1200);
-        } catch (e) { }
+        await MusicLogic.play(target, uri, mediaType, _mwOpts);
+        setTimeout(mwRefresh, 1200);
     }
 
     function startMusicWidget() {

@@ -1233,6 +1233,23 @@ def routines_page(request: Request):
 def family_map_page(request: Request):
     return _page_or_board(request, "map", "map.html")
 
+@app.get("/music")
+def music_page(request: Request):
+    """The one destination whose page IS its board, in a browser too.
+
+    Every other shelf slug is a page that predates boards plus a board that
+    rescues it from the wall, which is what `_page_or_board` is for. This one
+    was born the other way round: the family's music surface has only ever
+    been the PWA's Music tab — a phone layout inside an app shell — so there
+    is no admin page here to be hostile to a panel, and nothing to serve a
+    browser except the same board. It exists at all because of a shift in
+    what this app is: when Chauffeur was reached THROUGH Home Assistant,
+    Music Assistant was always one tab away; now that the family reaches the
+    house through Chauffeur, a wall panel had no way to play anything.
+    """
+    return _no_store(templates.TemplateResponse(
+        request=request, name="home.html", context={'board_slug': 'music'}))
+
 @app.get("/trips")
 def trips_list_view(request: Request):
     return _page_or_board(request, "trips", "trips.html")

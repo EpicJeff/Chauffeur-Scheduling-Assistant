@@ -716,6 +716,149 @@
                         </div>
                     </template>
 
+                    <!-- ── Music Assistant, at wall distance.
+                         The PWA widget's twin rather than its port: shared
+                         logic (static/music_logic.js), separate drawing,
+                         because that one is a phone control in fixed dark
+                         colours and this is read across a kitchen in whatever
+                         theme the wall is wearing. Everything here is on the
+                         card's OWN ten-second state (see syncMusic) — the
+                         board payload carries no transport state at all. -->
+                    <template x-if="t.type === 'music' && !t.data.empty">
+                        <div class="flex flex-col gap-3 min-h-0 flex-1">
+                            <!-- No speakers at all is a real state and says so,
+                                 rather than drawing transport buttons that
+                                 could never do anything. -->
+                            <template x-if="musicOf(t) && !musicOf(t).players.length">
+                                <div class="text-base panel-dim">No speakers in Home Assistant.</div>
+                            </template>
+
+                            <template x-if="musicOf(t) && musicOf(t).players.length">
+                                <div class="flex flex-col gap-3 min-h-0 flex-1">
+                                    <!-- Where it plays. A wall's most common
+                                         music question after "what is this" is
+                                         "put it in the kitchen instead". -->
+                                    <div x-show="t.data.show.picker && t.data.interactive"
+                                        class="flex items-center gap-2">
+                                        <select @change="musicPick(t, $event.target.value)"
+                                            class="flex-1 min-w-0 rounded-lg px-2 py-1.5 text-base font-bold panel-text bg-black/20 border border-white/10 focus:outline-none">
+                                            <template x-for="p in musicOf(t).players" :key="p.entity_id">
+                                                <option :value="p.entity_id"
+                                                    :selected="p.entity_id === musicOf(t).selected"
+                                                    x-text="musicPlayerLabel(p)"></option>
+                                            </template>
+                                        </select>
+                                    </div>
+                                    <!-- Display-only cards still say WHERE, or
+                                         a wall showing a song names no room. -->
+                                    <div x-show="!(t.data.show.picker && t.data.interactive) && t.data.room"
+                                        class="text-xs font-bold uppercase tracking-[0.15em] panel-dim"
+                                        x-text="t.data.room"></div>
+
+                                    <div class="flex items-center gap-4 min-w-0">
+                                        <img x-show="t.data.show.art && musicArt(t)" :src="musicArt(t)"
+                                            @error="$event.target.style.display = 'none'"
+                                            class="w-24 h-24 rounded-xl object-cover bg-black/20 shrink-0 shadow-md"
+                                            alt="">
+                                        <div class="min-w-0 flex-1">
+                                            <div class="text-xl font-black panel-text truncate"
+                                                x-text="(musicOf(t).now && musicOf(t).now.media_title) || 'Nothing playing'"></div>
+                                            <div class="text-base panel-dim truncate"
+                                                x-text="(musicOf(t).now && musicOf(t).now.media_artist) || ''"></div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Transport, at panel scale. Bigger than
+                                         the phone widget's on purpose: this is
+                                         pressed with a thumb somebody did not
+                                         aim, on the way past. -->
+                                    <div x-show="t.data.interactive" class="flex items-center gap-3">
+                                        <button @click="musicCommand(t, 'previous')"
+                                            class="p-3 rounded-full bg-black/20 panel-text active:opacity-70">
+                                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+                                        </button>
+                                        <button @click="musicToggle(t)"
+                                            class="p-4 rounded-full text-white active:opacity-70"
+                                            style="background: var(--panel-accent)">
+                                            <svg x-show="!musicPlaying(t)" class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                                            <svg x-show="musicPlaying(t)" class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                                        </button>
+                                        <button @click="musicCommand(t, 'next')"
+                                            class="p-3 rounded-full bg-black/20 panel-text active:opacity-70">
+                                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                                        </button>
+                                        <input x-show="t.data.show.volume" type="range" min="0" max="1" step="0.01"
+                                            :value="(musicOf(t).now && musicOf(t).now.volume_level) ?? 0.3"
+                                            @input="musicVolume(t, $event.target.value)"
+                                            class="flex-1 min-w-0 h-2" style="accent-color: var(--panel-accent)">
+                                    </div>
+
+                                    <div x-show="t.data.show.search && t.data.interactive">
+                                        <input type="text" placeholder="Search music…" autocomplete="off"
+                                            x-model="musicOf(t).q"
+                                            @keydown.enter.prevent="musicSearch(t)"
+                                            @input.debounce.450ms="musicSearch(t)"
+                                            class="w-full rounded-lg px-3 py-2 text-base panel-text bg-black/20 border border-white/10 focus:outline-none">
+                                    </div>
+
+                                    <div x-show="musicOf(t).error" class="text-sm text-red-400"
+                                        x-text="musicOf(t).error"></div>
+
+                                    <!-- Results REPLACE the favourites shelf
+                                         rather than stacking under it: a tile
+                                         is a fixed rectangle, and two scrolling
+                                         lists in one is how a card stops being
+                                         readable from across a room. -->
+                                    <template x-if="musicOf(t).results">
+                                        <div class="flex-1 min-h-0 overflow-y-auto tile-scroll rounded-xl border border-white/10 divide-y divide-white/10">
+                                            <template x-if="!musicOf(t).results.length && !musicOf(t).searching">
+                                                <div class="p-3 text-base panel-dim">No results</div>
+                                            </template>
+                                            <template x-for="item in musicOf(t).results" :key="item.uri">
+                                                <button @click="musicPlayItem(t, item)"
+                                                    class="w-full text-left px-3 py-2.5 flex items-center gap-3 active:opacity-70">
+                                                    <img x-show="musicRowArt(item)" :src="musicRowArt(item)" loading="lazy"
+                                                        class="w-12 h-12 rounded-lg object-cover bg-black/20 shrink-0" alt="">
+                                                    <span x-show="!musicRowArt(item)"
+                                                        class="w-12 h-12 rounded-lg bg-black/20 flex items-center justify-center text-xl shrink-0"
+                                                        x-text="musicIcon(item)"></span>
+                                                    <span class="min-w-0 flex-1">
+                                                        <span class="block text-base font-bold panel-text truncate"
+                                                            x-text="item.name"></span>
+                                                        <span class="block text-sm panel-dim truncate"
+                                                            x-text="musicSubtitle(item)"></span>
+                                                    </span>
+                                                </button>
+                                            </template>
+                                        </div>
+                                    </template>
+
+                                    <template x-if="!musicOf(t).results && t.data.show.favorites
+                                                    && t.data.interactive && musicOf(t).favorites.length">
+                                        <div class="min-h-0">
+                                            <div class="text-xs font-black uppercase tracking-[0.15em] panel-dim mb-2">
+                                                Favourites</div>
+                                            <div class="flex gap-3 overflow-x-auto no-scrollbar pb-1">
+                                                <template x-for="item in musicOf(t).favorites" :key="item.uri">
+                                                    <button @click="musicPlayItem(t, item)"
+                                                        class="w-24 shrink-0 text-left active:opacity-70">
+                                                        <img x-show="musicRowArt(item)" :src="musicRowArt(item)" loading="lazy"
+                                                            class="w-24 h-24 rounded-xl object-cover bg-black/20 shadow-md" alt="">
+                                                        <span x-show="!musicRowArt(item)"
+                                                            class="w-24 h-24 rounded-xl bg-black/20 flex items-center justify-center text-3xl"
+                                                            x-text="musicIcon(item)"></span>
+                                                        <span class="block text-sm font-bold panel-text truncate mt-1"
+                                                            x-text="item.name"></span>
+                                                    </button>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
                     <!-- A camera or image entity. The picture is fetched by the
                          BROWSER through the existing /api/ha/image proxy — the
                          board's payload carries a URL, never bytes, or every

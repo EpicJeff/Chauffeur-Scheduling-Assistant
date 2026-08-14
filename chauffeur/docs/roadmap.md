@@ -560,22 +560,16 @@ and tracked nothing we shipped.
   levels deep and would make every other card on the board wait on it, so
   the element is an instance-scoped mount (`board-occasions-<id>`) that
   fetches for itself.
-- **A Music board — panels should reach Music Assistant** (raised
-  2026-08-14). This is a *consequence of the pivot*: when Chauffeur was
-  mainly an admin panel, it was reached through Home Assistant, so MA was
-  always one tab away and a music surface would have been duplication. Now
-  that the family reaches HA *through* Chauffeur — wall panels, the PWA,
-  kiosk boards — there is no MA within reach of a panel. The asset already
-  exists: `components/music_widget.html` (605 lines, MA-only players, rich
-  search, favorites, artwork proxy, Sendspin phone players) is included by
-  `app.html` alone. So this is the same mount-point conversion as the
-  gallery above, plus three panel-specific decisions: (1) panel-distance
-  drawing — big artwork and touch targets sized for a wall, not a phone;
-  (2) **the panel should default to the player in ITS room** rather than
-  making someone pick every time (the announce arc already established one
-  target per room — reuse that binding, do not invent a second one); (3) it
-  must degrade to nothing sensible with no HA/MA present, per the standing
-  rule, since the card would otherwise be a dead tile on every dev install.
+- ~~**A Music board — panels should reach Music Assistant**~~ **SHIPPED
+  v2.233.0 (2026-08-14).** All three panel decisions landed as designed:
+  panel-distance drawing in the board's theme tokens, the room default
+  reusing `announce_targets` through `announce.pick_music_player`, and three
+  distinct degraded states. Two things the build corrected in the plan
+  above: it is NOT a mount-point conversion of the widget — that component
+  is a singleton with hardcoded element ids, fixed dark colours and a phone
+  player, so the card is a separate drawing over shared logic
+  (`static/music_logic.js`); and `/music` became a real destination whose
+  page IS its board, the first of those. Detail in system_capabilities.md.
 
 ## The native app track (never written down until 2026-08-14 — it should have been)
 

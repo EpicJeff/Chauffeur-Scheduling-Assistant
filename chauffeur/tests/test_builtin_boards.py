@@ -386,9 +386,9 @@ def scenario_the_shipped_boards_actually_ship():
     import subprocess
     check(os.path.exists(home_board._BUILTIN_PATH),
           f"the shipped boards file is missing: {home_board._BUILTIN_PATH}")
-    check(len(home_board.BUILTIN_PAGES) == 10,
-          f"the loader found {len(home_board.BUILTIN_PAGES)} boards, not ten — "
-          f"an unreadable file degrades to an empty dict on purpose, so this "
+    check(len(home_board.BUILTIN_PAGES) == 11,
+          f"the loader found {len(home_board.BUILTIN_PAGES)} boards, not eleven "
+          f"— an unreadable file degrades to an empty dict on purpose, so this "
           f"is what that looks like from the outside")
     try:
         ignored = subprocess.run(
@@ -433,8 +433,17 @@ def scenario_only_panel_mode_takes_the_board():
           "?kiosk=true was folded into panel mode, which retires a family's "
           "daily surface without anybody having looked at the new one")
 
-    # Every destination with a board actually routes through it.
+    # Every destination with a board actually routes through it. Music is the
+    # one exception, and it is the opposite failure rather than the same one:
+    # it has no admin page to serve a panel by mistake, so its route renders
+    # the board unconditionally. Asserted rather than skipped — a /music that
+    # quietly started resolving somewhere else would be just as invisible.
     for slug in home_board.BUILTIN_PAGES:
+        if slug == 'music':
+            check(re.search(r"name=\"home\.html\",\s*context=\{'board_slug': 'music'\}",
+                            src),
+                  "/music stopped rendering its board directly")
+            continue
         check(re.search(r'_page_or_board\(request,\s*"%s"' % slug, src),
               f"/{slug} still serves its admin page to a wall panel")
 

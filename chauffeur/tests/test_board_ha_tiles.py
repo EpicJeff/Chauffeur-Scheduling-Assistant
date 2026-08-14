@@ -178,7 +178,10 @@ def scenario_the_palette_refuses_a_tile_that_could_never_draw():
     wonder why the wall never shows it."""
     stub = _HA(available=False)
     cat = _with_ha(stub, home_board.catalog)
-    needs_ha = ('ha', 'ha_image', 'ha_dashboard', 'ha_card')
+    # `music` belongs here as squarely as the four raw-entity tiles: with no
+    # Home Assistant there is no Music Assistant behind it, so the palette
+    # refuses it rather than offering a card that could never draw.
+    needs_ha = ('ha', 'ha_image', 'ha_dashboard', 'ha_card', 'music')
     for w in cat['widgets']:
         if w['key'] in needs_ha:
             check(w.get('available') is False,

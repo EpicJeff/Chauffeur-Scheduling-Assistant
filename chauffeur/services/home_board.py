@@ -624,6 +624,49 @@ WIDGETS = [
               help='Leave empty for everyone.'),
          _opt('cars', 'Show cars', 'bool', True),
      ]},
+    # ── Music.
+    #
+    # This card exists because of a change in what the app IS. For a year
+    # Chauffeur was reached THROUGH Home Assistant, so Music Assistant was
+    # always one tab away and a music surface here would have been a second
+    # drawing of something already at hand. It is the other way round now: the
+    # family reaches the house through Chauffeur — wall panels, the PWA, the
+    # kiosk boards — and on a panel there is no MA within reach at all.
+    #
+    # It is the PWA's music widget's twin, not its port. Shared logic
+    # (static/music_logic.js: players, transport, search, favourites, and the
+    # artwork proxying that is genuinely hard-won), separate drawing — because
+    # the widget is a phone control in fixed dark colours, and this is read
+    # and pressed from across a kitchen in whatever theme the wall is wearing.
+    {'key': 'music', 'icon': '🎵', 'label': 'Music',
+     'heading': '',
+     'blurb': "Play, pause and search Music Assistant on a room's speaker. "
+              "Needs Home Assistant.",
+     'options': [
+         # A wall card whose buttons do nothing is a poster of a stereo. ON,
+         # per the conversion paradigm — but a household putting one on a
+         # bedroom panel a toddler can reach has the switch.
+         _opt('interactive', 'Interactive', 'bool', True,
+              help='Play, pause, skip, volume and search all work. Off, the '
+                   'card shows what is playing and nothing responds.'),
+         # The room, not the speaker: the same words the family already says
+         # to Argyle, resolved through the same pins.
+         _opt('room', 'Room', 'text', '',
+              help='A Home Assistant area — the card starts on that room\'s '
+                   'speaker, using the same pin room announcements use. '
+                   'Empty means whatever is already playing.'),
+         _opt('player', 'Speaker', 'entity', '', source='ha_players',
+              help='Pins this card to one speaker, ignoring the room.'),
+         # THE CONVERSION PARADIGM: every part of the drawing is a toggle, all
+         # on by default, so a card nobody configured equals the full surface.
+         _opt('show_art', 'Album art', 'bool', True),
+         _opt('show_picker', 'The speaker picker', 'bool', True,
+              help='Lets anybody move the music to another room from the '
+                   'card. Off, it stays on the one it was given.'),
+         _opt('show_volume', 'Volume', 'bool', True),
+         _opt('show_search', 'Search', 'bool', True),
+         _opt('show_favorites', 'Favourites', 'bool', True),
+     ]},
     # ── Home Assistant.
     #
     # Deliberately NOT in DEFAULT_WIDGETS: a household without HA should never
@@ -2410,6 +2453,65 @@ def toggle_domains(settings: dict = None) -> tuple:
         return HA_TOGGLE_DOMAINS + HA_UNSAFE_DOMAINS
     return HA_TOGGLE_DOMAINS
 
+def _tile_music(now, config=None, **_):
+    """Music Assistant, as a card on the wall.
+
+    The payload is CONFIG plus one resolved speaker, and carries no transport
+    state at all — deliberately, and this is the interesting decision in the
+    tile. Board payloads are cached (`TTL_SECONDS`) and the panel polls them a
+    minute apart, which is fine for what is for dinner and wrong for a play
+    button: a pause/play glyph twenty seconds stale is a control that lies
+    about what it will do, and the first thing anybody does with a wall music
+    card is press it. So the card fetches its own state on the widget's ten
+    second beat and this builder answers the two questions the browser cannot:
+    is there a Home Assistant here, and which speaker does this ROOM mean.
+
+    Room binding reuses `announce_targets` through `announce.pick_music_player`
+    rather than inventing a second one — a house that has already said "the
+    kitchen means the kitchen display" should not have to say it again because
+    this surface plays instead of talks.
+    """
+    if not ha_configured():
+        return None                       # see _tile_ha: unused, not quiet
+    if not ha_available():
+        return {'empty': "Needs Home Assistant."}
+    room = _cfg_str(config, 'room')
+    player = _cfg_str(config, 'player')
+    room_label = ''
+    try:
+        from services import announce as announce_svc
+        if not player and room:
+            area = announce_svc.match_area(room)
+            if area:
+                room_label = area.get('name') or room
+                player = announce_svc.pick_music_player(area) or ''
+            else:
+                # NAMED, not silently ignored: a room that was renamed in HA
+                # would otherwise look like a card that simply forgot its
+                # speaker, and nothing on the wall would ever lead anybody to
+                # the setting that is now wrong.
+                return {'empty': f"No room called “{room}” in Home Assistant."}
+        if not player:
+            player = announce_svc.pick_music_player() or ''
+    except Exception as e:
+        print(f"[home_board] music tile failed: {e}")
+        return {'empty': "Could not reach Home Assistant."}
+    return {
+        # May be '' — a house with HA and no speakers is a real state, and the
+        # card says so rather than drawing dead transport buttons.
+        'player': player,
+        'room': room_label,
+        'interactive': _cfg_bool(config, 'interactive', True),
+        'show': {
+            'art': _cfg_bool(config, 'show_art', True),
+            'picker': _cfg_bool(config, 'show_picker', True),
+            'volume': _cfg_bool(config, 'show_volume', True),
+            'search': _cfg_bool(config, 'show_search', True),
+            'favorites': _cfg_bool(config, 'show_favorites', True),
+        },
+    }
+
+
 # HA ships mdi icon names, and this app has no mdi font — an `mdi:thermometer`
 # rendered literally is worse than no icon. A glyph per domain is the honest
 # amount of decoration a board can promise for an arbitrary entity.
@@ -2470,7 +2572,7 @@ def ha_options() -> dict:
     that is indistinguishable from "no matches".
     """
     if not ha_available():
-        return {'available': False, 'entities': [], 'cameras': []}
+        return {'available': False, 'entities': [], 'cameras': [], 'players': []}
     try:
         from services import ha_api
         entities, cameras = [], []
@@ -2485,10 +2587,41 @@ def ha_options() -> dict:
                 cameras.append(row)
         entities.sort(key=lambda r: r['label'].lower())
         cameras.sort(key=lambda r: r['label'].lower())
-        return {'available': True, 'entities': entities, 'cameras': cameras}
+        return {'available': True, 'entities': entities, 'cameras': cameras,
+                'players': _player_options()}
     except Exception as e:
         print(f"[home_board] ha options failed: {e}")
-        return {'available': False, 'entities': [], 'cameras': []}
+        return {'available': False, 'entities': [], 'cameras': [], 'players': []}
+
+
+def _player_options() -> List[dict]:
+    """Speakers the music card can be pinned to.
+
+    Music Assistant's own players when there are any, the full media_player
+    list when there are not — the same rule `/api/ha/media_players` applies,
+    for the same reason: an HA instance accumulates dozens of TVs and cast
+    targets MA cannot play to, and offering them is offering a choice that
+    fails later.
+    """
+    try:
+        from services import ha_api
+        rows, ma = [], []
+        for s in (ha_api.get_states(ttl=30) or []):
+            eid = s.get('entity_id') or ''
+            if not eid.startswith('media_player.'):
+                continue
+            attrs = s.get('attributes') or {}
+            row = {'value': eid,
+                   'label': f"{attrs.get('friendly_name') or eid} — {eid}"}
+            rows.append(row)
+            if 'mass_player_type' in attrs:
+                ma.append(row)
+        out = ma or rows
+        out.sort(key=lambda r: r['label'].lower())
+        return out
+    except Exception as e:
+        print(f"[home_board] player options failed: {e}")
+        return []
 
 
 def _tile_ha(now, config=None, settings=None, **_):
@@ -2782,6 +2915,12 @@ REQUIRED_EMPTY = {
     # screen and had better say what the feature IS.
     'moments_gallery': "No moments yet. When somebody is at a game or a "
                        "recital, Chauffeur asks them to share one.",
+    # Reached only when there is no Home Assistant AT ALL (`_tile_music`
+    # returns None there; a configured-but-quiet HA answers with its own
+    # sentence). Same shape as the map board's: the Music board explains
+    # itself rather than vanishing off the shelf, because a board that
+    # disappears is indistinguishable from one that broke.
+    'music': "Needs Home Assistant — Chauffeur plays through Music Assistant.",
 }
 
 
@@ -2972,7 +3111,7 @@ _BUILDERS: dict = {
     'calendar': _tile_calendar, 'errands': _tile_errands, 'tasks': _tile_tasks,
     'task_list': _tile_task_list, 'errand_list': _tile_errand_list,
     'trips': _tile_trips, 'trips_gallery': _tile_trips_gallery,
-    'map': _tile_map, 'intake': _tile_intake,
+    'map': _tile_map, 'intake': _tile_intake, 'music': _tile_music,
     'ha': _tile_ha, 'ha_image': _tile_ha_image,
     'ha_dashboard': _tile_ha_dashboard, 'ha_card': _tile_ha_card,
     'web': _tile_web,
@@ -3741,7 +3880,7 @@ def resolve_widgets(requested: Optional[str] = None, settings: dict = None) -> L
 # stays on the desktop nav, where admin lives; if a kiosk-shaped intake is
 # ever designed, it joins the shipped boards like everything else.
 NAV_SLUGS = ['home', 'schedule', 'calendar', 'errands', 'shopping', 'occasions',
-             'chores', 'routines', 'trips', 'map', 'moments']
+             'chores', 'routines', 'trips', 'map', 'moments', 'music']
 # Every destination except the admin one. An earlier six-slug default put more
 # than half the app out of reach from the panel, which is not a shelf, it is a
 # bookmark bar. The shelf measures itself and moves whatever does not fit into
@@ -3750,7 +3889,7 @@ NAV_SLUGS = ['home', 'schedule', 'calendar', 'errands', 'shopping', 'occasions',
 # surface (mail approvals, IMAP settings) and the kiosk rule has always been to
 # keep it off shared screens.
 DEFAULT_TABS = ['home', 'schedule', 'calendar', 'chores', 'routines', 'shopping',
-                'errands', 'occasions', 'trips', 'map', 'moments']
+                'errands', 'occasions', 'trips', 'map', 'moments', 'music']
 
 
 def resolve_tabs(requested: Optional[str] = None, settings: dict = None) -> List[str]:
@@ -4253,7 +4392,7 @@ def catalog() -> dict:
         # The hand path for property 1. These two tiles do not exist without a
         # Home Assistant, so the palette says so instead of letting somebody
         # add one and wonder why the wall never shows it.
-        if w['key'] in ('ha', 'ha_image', 'ha_dashboard', 'ha_card'):
+        if w['key'] in ('ha', 'ha_image', 'ha_dashboard', 'ha_card', 'music'):
             w['requires'] = 'Home Assistant'
             w['available'] = ha_ok
         # Whether "always show, even when empty" is a question worth asking of

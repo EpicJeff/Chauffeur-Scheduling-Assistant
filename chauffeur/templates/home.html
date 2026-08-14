@@ -27,6 +27,11 @@
          that renders it is created, and that ordering is not something
          to leave to a race. -->
     <script src="{{ _up }}static/ha_form.js" defer></script>
+    <!-- Music Assistant's logic layer, shared with the PWA's music widget:
+         which speakers exist, how to reach one, and the artwork proxying that
+         is the part nobody should re-derive. Deferred like the rest — the
+         board's music card is Alpine, so nothing reads it during parse. -->
+    <script src="{{ _up }}static/music_logic.js" defer></script>
     <style>
         /* Tokens, the background layers and .panel-card/.panel-label all come
            from panel_skin.html now, so every page shares them. What stays here
@@ -1756,6 +1761,11 @@
                     this.seconds = String(d.getSeconds()).padStart(2, '0');
                     this.nowTs = d.getTime();
                     this.recount();
+                    // Music rides the same clock — a transport surface needs
+                    // ten-second freshness, not the board's sixty, and the
+                    // card is the one thing on a wall somebody presses and
+                    // then watches. A hidden panel refreshes nothing.
+                    if (!document.hidden) this.syncMusic(this.haImageTick % 10 === 0);
                     // Fit tiles ride the clock that is already running, for
                     // the same reason the camera tiles do — and because a
                     // measurement that only ever runs on an event is a
@@ -2286,8 +2296,13 @@
                 // history has no length, and asking for one would mean loading
                 // every season a family has ever shared to find out how tall
                 // it is. It takes the height it is given and scrolls inside.
+                // `music` has no content height either, and for a reason worth
+                // naming: its tallest part is a search result list that is
+                // empty until somebody types. Measured, the card would be one
+                // height at rest and another mid-search, and the tile would
+                // jump under the thumb that was using it.
                 DRAWN_TILES: ['map', 'calendar', 'moments_gallery',
-                              'trips_gallery',
+                              'trips_gallery', 'music',
                               'ha_image', 'ha_dashboard', 'ha_card', 'web'],
 
                 // ── Two different questions, kept apart.
@@ -4779,7 +4794,14 @@
                 // The errands cards join them for the same reason the lanes
                 // did: they hold tick-boxes and buttons, and an <a> may only
                 // contain those while it has no href.
+                // `music` is on this list for the opposite reason to the rest:
+                // not that its page would be hostile to a wall, but that its
+                // page IS this board (/music renders it in a browser too), so
+                // there is nowhere for a door to lead. Keep this literal free
+                // of comments — several tests read it as a fixed window of
+                // characters after the name.
                 PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web',
+                           'music',
                            'custom', 'clock', 'hero', 'heading',
                            'chores_lanes', 'chores_rewards',
                            'task_list', 'errand_list',
@@ -4813,6 +4835,156 @@
                     if (this.INTERACTIVE_TILES.includes(t.type)
                         && t.data && t.data.interactive) return false;
                     return true;
+                },
+
+                // ── The music card.
+                //
+                // The board payload deliberately carries no transport state
+                // (see `_tile_music`): it is cached and polled a minute apart,
+                // and a play/pause glyph that is twenty seconds stale is a
+                // control that lies about what it will do. So each card keeps
+                // its own state on a ten-second beat, off the clock that is
+                // already ticking rather than an interval of its own.
+                //
+                // Keyed by CARD id, not tile id, so two music cards — the
+                // kitchen on one board, a bedroom on another, or two in one
+                // custom tile — never share a speaker or a search box.
+                musicState: {},
+                _musicVolTimers: {},
+
+                musicOf(t) {
+                    return this.musicState[t.id] || null;
+                },
+
+                syncMusic(refresh) {
+                    const live = new Set();
+                    for (const t of this.drawnTiles().filter(c => c.type === 'music')) {
+                        if (!t.data || t.data.empty) continue;
+                        live.add(t.id);
+                        if (!this.musicState[t.id]) {
+                            this.musicState[t.id] = {
+                                // The server's room resolution is the STARTING
+                                // point, never a correction: once somebody has
+                                // moved the music to another room from the
+                                // card, a poll deciding the kitchen is playing
+                                // again would take it back off them mid-song.
+                                selected: t.data.player || '',
+                                players: [], now: null, q: '', results: null,
+                                searching: false, error: '', favorites: [],
+                            };
+                            this.refreshMusic(t);
+                            if (t.data.show && t.data.show.favorites) this.loadMusicFavorites(t);
+                        } else if (refresh) {
+                            this.refreshMusic(t);
+                        }
+                    }
+                    for (const id of Object.keys(this.musicState)) {
+                        if (!live.has(id)) delete this.musicState[id];
+                    }
+                },
+
+                async refreshMusic(t) {
+                    const s = this.musicState[t.id];
+                    if (!s) return;
+                    const players = await MusicLogic.players({ apiBase: this.apiBase });
+                    if (!players) return;   // a blip goes quiet, never blank
+                    s.players = players;
+                    // The pinned speaker was renamed, removed, or is simply
+                    // not in Music Assistant's list today. Fall back rather
+                    // than leave a card whose buttons all fail silently.
+                    if (s.selected && !players.some(p => p.entity_id === s.selected)) {
+                        s.selected = '';
+                    }
+                    if (!s.selected && players.length) s.selected = players[0].entity_id;
+                    s.now = players.find(p => p.entity_id === s.selected) || null;
+                },
+
+                async loadMusicFavorites(t) {
+                    const s = this.musicState[t.id];
+                    if (!s) return;
+                    const opts = { apiBase: this.apiBase };
+                    const [playlists, albums] = await Promise.all([
+                        MusicLogic.favorites('playlist', 12, opts),
+                        MusicLogic.favorites('album', 12, opts),
+                    ]);
+                    s.favorites = playlists.concat(albums).slice(0, 12);
+                },
+
+                musicPick(t, entityId) {
+                    const s = this.musicState[t.id];
+                    if (!s) return;
+                    s.selected = entityId;
+                    s.now = s.players.find(p => p.entity_id === entityId) || null;
+                },
+
+                musicPlaying(t) {
+                    const s = this.musicState[t.id];
+                    return !!(s && s.now && s.now.state === 'playing');
+                },
+
+                musicArt(t) {
+                    const s = this.musicState[t.id];
+                    const pic = s && s.now && s.now.entity_picture;
+                    return pic ? MusicLogic.artwork(pic, { apiBase: this.apiBase }) : null;
+                },
+
+                musicRowArt(item) {
+                    return MusicLogic.imageOf(item, { apiBase: this.apiBase });
+                },
+
+                musicSubtitle(item) { return MusicLogic.subtitleOf(item); },
+                musicIcon(item) {
+                    return MusicLogic.TYPE_ICON[item.media_type] || '🎵';
+                },
+                musicPlayerLabel(p) {
+                    return MusicLogic.playerIcon(p) + ' ' + (p.name || p.entity_id);
+                },
+
+                async musicCommand(t, command, extra) {
+                    const s = this.musicState[t.id];
+                    if (!s || !t.data.interactive || !s.selected) return;
+                    await MusicLogic.command(s.selected, command, extra,
+                                             { apiBase: this.apiBase });
+                    // MA answers the service call before the state settles.
+                    setTimeout(() => this.refreshMusic(t), 600);
+                },
+
+                musicToggle(t) {
+                    this.musicCommand(t, this.musicPlaying(t) ? 'pause' : 'play');
+                },
+
+                musicVolume(t, v) {
+                    clearTimeout(this._musicVolTimers[t.id]);
+                    this._musicVolTimers[t.id] = setTimeout(
+                        () => this.musicCommand(t, 'volume_set', { volume: parseFloat(v) }), 400);
+                },
+
+                async musicSearch(t) {
+                    const s = this.musicState[t.id];
+                    if (!s || !t.data.interactive) return;
+                    const q = (s.q || '').trim();
+                    if (!q) { s.results = null; s.error = ''; return; }
+                    s.searching = true;
+                    s.error = '';
+                    try {
+                        const data = await MusicLogic.search(q, 8, { apiBase: this.apiBase });
+                        if ((s.q || '').trim() !== q) return;   // stale response
+                        s.results = MusicLogic.flatten(data);
+                    } catch (e) {
+                        s.results = [];
+                        s.error = e.message || 'Search failed';
+                    }
+                    s.searching = false;
+                },
+
+                async musicPlayItem(t, item) {
+                    const s = this.musicState[t.id];
+                    if (!s || !t.data.interactive || !s.selected) return;
+                    await MusicLogic.play(s.selected, item.uri, item.media_type,
+                                          { apiBase: this.apiBase });
+                    s.q = '';
+                    s.results = null;
+                    setTimeout(() => this.refreshMusic(t), 1200);
                 },
 
                 // Cache-busted on a timer the household chose. A camera URL is
@@ -5059,8 +5231,9 @@
                 },
 
                 haRows(o) {
-                    return (o.source === 'ha_cameras'
-                        ? this.haOptions.cameras : this.haOptions.entities) || [];
+                    if (o.source === 'ha_cameras') return this.haOptions.cameras || [];
+                    if (o.source === 'ha_players') return this.haOptions.players || [];
+                    return this.haOptions.entities || [];
                 },
 
                 // The friendly name if we know it, the id if we do not — which

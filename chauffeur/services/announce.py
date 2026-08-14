@@ -22,6 +22,7 @@ pool pump don't silently eat the message.
 """
 import difflib
 import re
+from typing import Optional
 
 from services import ha_api
 
@@ -125,6 +126,49 @@ def pick_target(area: dict):
         return (-playing, -is_ma, eid)
 
     return 'media_player', sorted(players, key=rank)[0]
+
+
+def _music_rank(states: dict, eid: str):
+    """Playing beats idle, a Music Assistant player beats a bare cast target,
+    then name order so a wall picks the same speaker twice running."""
+    s = states.get(eid) or {}
+    st = s.get('state')
+    playing = 2 if st == 'playing' else (1 if st in ('paused', 'idle', 'on', 'buffering') else 0)
+    is_ma = 1 if 'mass_player_type' in (s.get('attributes') or {}) else 0
+    return (-playing, -is_ma, eid)
+
+
+def pick_music_player(area: dict = None) -> Optional[str]:
+    """The speaker a music surface in this room should start on, or None.
+
+    Shares `pick_target`'s pin and its ranking on purpose: `announce_targets`
+    already records "when you mean this room, you mean THIS speaker", and a
+    house should not have to answer that question twice because one surface
+    talks and the other plays. The one thing not shared is the satellite step
+    — a voice satellite is the room's Argyle, not something you put an album
+    on — so this walks straight to media players.
+
+    With no area it answers for the house: whatever is already playing, else
+    the best Music Assistant player anywhere. That is what a panel nobody has
+    bound to a room should open on, rather than nothing.
+    """
+    states = _states_by_id()
+
+    from services import storage
+    if area:
+        pinned = (storage.get_settings().get('announce_targets') or {}).get(area.get('id'))
+        # A pinned SATELLITE is announce's answer, not music's — fall through
+        # to the room's real players rather than trying to play into it.
+        if pinned and pinned.startswith('media_player.') and _usable(states, pinned):
+            return pinned
+        candidates = [e for e in (area.get('entities') or [])
+                      if e.startswith('media_player.') and _usable(states, e)]
+    else:
+        candidates = [eid for eid in states
+                      if eid.startswith('media_player.') and _usable(states, eid)]
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda e: _music_rank(states, e))[0]
 
 
 def _tts_config():

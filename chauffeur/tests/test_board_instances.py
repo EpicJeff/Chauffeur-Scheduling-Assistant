@@ -80,9 +80,17 @@ def scenario_every_declared_option_is_a_shape_the_editor_can_draw():
                 # Fed by ha_options(), NOT by the catalog — the whole reason
                 # this shape exists is to keep thousands of entities out of a
                 # payload every browser loads.
-                check(o.get('source') in ('ha_entities', 'ha_cameras'),
+                check(o.get('source') in ('ha_entities', 'ha_cameras', 'ha_players'),
                       f"{w['key']}.{o['key']} draws from '{o.get('source')}', "
                       f"which ha_options() does not supply")
+                # And the list it names is really in there, in BOTH shapes the
+                # function returns — the degraded one is the shape a household
+                # without Home Assistant actually gets, and a picker reading an
+                # absent key there is undefined, which draws as nothing rather
+                # than as "no Home Assistant".
+                key = o['source'].replace('ha_', '')
+                check(key in home_board.ha_options(),
+                      f"ha_options() has no '{key}' for {w['key']}.{o['key']}")
 
 
 def scenario_every_declared_option_survives_its_own_builder():
@@ -207,7 +215,11 @@ def scenario_the_picker_separates_home_assistant_from_the_household():
     family's own."""
     cat = home_board.catalog()
     ha = [w['key'] for w in cat['widgets'] if w.get('requires')]
-    check(set(ha) == {'ha', 'ha_image', 'ha_dashboard', 'ha_card'},
+    # Music is in this group for the same reason the other four are, not as an
+    # exception to it: without Home Assistant there is no Music Assistant to
+    # reach, so the palette says so rather than letting somebody add a card
+    # that could never draw.
+    check(set(ha) == {'ha', 'ha_image', 'ha_dashboard', 'ha_card', 'music'},
           f"the Home Assistant group is wrong: {ha}")
     for w in cat['widgets']:
         check(w.get('blurb'), f"{w['key']} has no blurb, so the picker row is "

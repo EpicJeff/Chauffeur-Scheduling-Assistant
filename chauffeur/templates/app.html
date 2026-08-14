@@ -103,6 +103,10 @@
         }
     </style>
     <link rel="stylesheet" href="static/tailwind-app.css">
+    <!-- Shared with the board's music card. NOT deferred: the music widget's
+         own script runs inline as the page parses and reads this at its top
+         level, and a deferred module would arrive after it. -->
+    <script src="static/music_logic.js"></script>
 </head>
 
 <body class="bg-gray-950 text-gray-100 font-sans h-dvh flex flex-col overflow-hidden">

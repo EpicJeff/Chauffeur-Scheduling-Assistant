@@ -427,5 +427,37 @@
         "cols": 64
       }
     }
+  },
+  "music": {
+    "name": "Music",
+    "icon": "🎵",
+    "v": 5,
+    "columns": 64,
+    "row_height": 10,
+    "gap": 20,
+    "widgets": [
+      {
+        "id": "heading",
+        "type": "heading",
+        "config": {
+          "title": "Music"
+        }
+      },
+      {
+        "id": "music",
+        "type": "music",
+        "config": {},
+        "require": true
+      }
+    ],
+    "spans": {
+      "heading": {
+        "auto": true
+      },
+      "music": {
+        "cols": 64,
+        "fill": true
+      }
+    }
   }
 }
