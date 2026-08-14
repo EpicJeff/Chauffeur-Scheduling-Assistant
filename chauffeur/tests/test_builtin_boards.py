@@ -754,6 +754,119 @@ def scenario_a_boards_picture_is_the_boards_own_field():
           "the household's default picture")
 
 
+def scenario_the_trips_board_is_the_trips_page():
+    """Third board caught answering the wrong question, and the second of this
+    exact shape (Moments was the first).
+
+    `trips` is the GLANCE — the next trip and how long until it starts, as a
+    small collage beside eight other tiles. The PAGE is a gallery you browse:
+    a photograph per trip with its status, dates, where it is and how many
+    stops are planned, each one opening that trip. `?panel=true` on /trips
+    drew the collage, so the Trips screen was one trip block with no way into
+    any of them.
+    """
+    page = home_board.builtin_page('trips', {})
+    types = [w['type'] for w in page['widgets']]
+    check(types == ['trips_gallery'],
+          f"the Trips board is not the Trips page: {types}")
+    span = page['spans']['trips_gallery']
+    check(span.get('fill'),
+          f"the gallery is not filling the screen it is the only thing on: {span}")
+    keys = {w['key'] for w in home_board.WIDGETS}
+    check('trips' in keys and 'trips_gallery' in keys,
+          "the collage and the gallery are not both offered")
+
+    # ONE drawing. The page must not keep a private card renderer.
+    gal = tpl_source.read('components/trip_gallery.html')
+    check('window.TripGallery' in gal and 'function render' in gal,
+          "the gallery is not shared, so only one surface can have it")
+    raw = open(os.path.join(TPL, 'trips.html'), encoding='utf-8').read()
+    check('TripGallery.render' in raw, "the Trips page draws its own cards again")
+    check('trip-card' not in raw,
+          "the page kept its own card markup — two renderers is how a wall and "
+          "a browser start disagreeing about what a trip looks like")
+
+    # It rides the PAYLOAD, and that is a rule: the page's own /api/trips calls
+    # Google Calendar and writes a snapshot on the way past, so a board polling
+    # it every minute would keep the calendar warm and rewrite a cache for a
+    # display nobody is looking at.
+    board = tpl_source.read('home.html')
+    sync = board[board.index('syncTripGalleries() {'):]
+    sync = sync[:sync.index(chr(10) + '                },')]
+    check('api/trips' not in sync,
+          "the trips gallery card fetches the page's endpoint, which writes")
+    check('tile.data.trips' in sync, "the card is not drawn from the payload")
+
+
+def scenario_the_gallery_rows_carry_what_the_page_shows():
+    """The card is only the page if the payload carries what the page draws.
+    Two things were missing and both are visible from across a room: how many
+    stops are planned, and a PICTURE — `_trip_rows` nulled anything that was
+    not already a URL, while the page turned the same phrase into a photograph
+    through the Unsplash endpoint that backs trip artwork.
+    """
+    import datetime
+    from services import storage
+    now = datetime.datetime(2026, 8, 14, 12, 0)
+
+    real_cached = storage.get_cached_trips
+    real_meta = storage.get_all_trip_metadata
+    real_one = storage.get_trip_metadata
+    real_sched = storage.get_cached_schedule
+    try:
+        storage.get_cached_trips = lambda: {'trips': [
+            {'id': 't1', 'title': 'Disney World: spring', 'location': 'Orlando',
+             'start': '2026-08-20', 'end': '2026-08-27',
+             'background_url': 'disney world castle'},
+            # Thirteen days ago: inside the gallery's month-long look-back
+            # and outside the glance tile's, which looks back not at all.
+            {'id': 't2', 'title': 'Ski week', 'location': 'Boone',
+             'start': '2026-07-28', 'end': '2026-08-01',
+             'background_url': 'https://e/ski.jpg'},
+        ]}
+        storage.get_all_trip_metadata = lambda: []
+        storage.get_trip_metadata = lambda tid: (
+            {'pois': [1, 2, 3]} if tid == 't1' else {})
+        storage.get_cached_schedule = lambda: {}
+
+        rows = {r['id']: r for r in home_board._trip_rows(now)}
+        check('t2' not in rows,
+              "a trip that is over is in the glance tile's rows")
+        check(rows['t1']['poi_count'] == 3,
+              f"the stop count never reaches the card: {rows['t1']}")
+        # A phrase becomes a photograph, exactly as the page does it.
+        check(rows['t1']['image'] is None,
+              "a search phrase is being used as an <img src>")
+        check('unsplash' in rows['t1']['art'],
+              f"a trip with no photograph got no picture found for it: "
+              f"{rows['t1']['art']}")
+
+        # The GALLERY asks for a window back, so trips that are over still
+        # appear — badged as past, at the bottom, which is what the page does.
+        back = {r['id']: r for r in
+                home_board._trip_rows(now, back_days=60)}
+        check('t2' in back and back['t2']['past'] is True,
+              f"the gallery cannot show a trip that is over: {list(back)}")
+        check(list(back)[-1] == 't2',
+              f"a trip you got home from is sorted among the plans: {list(back)}")
+        # A URL is left exactly alone.
+        check(back['t2']['art'] == 'https://e/ski.jpg',
+              f"a real photograph was replaced by a search: {back['t2']['art']}")
+
+        # And the card honours the toggle both ways.
+        on = home_board._tile_trips_gallery(now, config={})
+        off = home_board._tile_trips_gallery(now, config={'show_past': False})
+        check(any(t['id'] == 't2' for t in on['trips']),
+              "the gallery drops past trips the page shows")
+        check(not any(t['id'] == 't2' for t in off['trips']),
+              "turning past trips off did not stick")
+    finally:
+        storage.get_cached_trips = real_cached
+        storage.get_all_trip_metadata = real_meta
+        storage.get_trip_metadata = real_one
+        storage.get_cached_schedule = real_sched
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

@@ -1,0 +1,183 @@
+<!-- ── THE trips gallery, once.
+
+     A photograph per trip, carrying its status, its dates, where it is and
+     how many stops are planned; tapping one opens that trip.
+
+     It lived inside trips.html until v2.228.0, which meant the Trips BOARD
+     could not have it: `?panel=true` on /trips drew the `trips` card instead,
+     and that card is a different question — a small collage answering "what
+     is the next trip and how long until it starts", right on a home board
+     beside eight other tiles. Walking up to the Trips screen got you one trip
+     block with no way into any of them, where the page is a gallery you
+     browse. Reported exactly that way, and it is the second time: the Moments
+     board had the same shape of bug (v2.226.0).
+
+     Rendered from a row shape rather than from either caller's data, because
+     the two callers genuinely have different data and must not have different
+     drawings:
+
+       * the PAGE reads `/api/trips`, which calls Google Calendar and writes a
+         snapshot on the way past;
+       * the CARD reads the board payload, built by `home_board._trip_rows`
+         from what this install already has. It cannot use the page's endpoint
+         — a wall polling every minute would keep the calendar warm and
+         rewrite a cache for a display nobody is looking at.
+
+     So `fromApi()` normalises the page's rows into the shape the server
+     already sends, and `render()` draws that shape. One drawing, two sources,
+     and the shape is the server's so the card needs no translation at all. -->
+<style>
+    .tg-card {
+        position: relative;
+        overflow: hidden;
+        display: block;
+        background: #1f2937;
+        border: 1px solid rgba(55, 65, 81, 1);
+        transition: transform .25s ease, border-color .25s ease;
+    }
+    .tg-card.tg-tap:hover { transform: translateY(-2px); border-color: rgba(59,130,246,.6); }
+    .tg-card.tg-live { border-color: rgba(16, 185, 129, .6); }
+    .tg-card.tg-past { opacity: .72; }
+    html[data-panel] .tg-card {
+        background: var(--panel-card-lo, #1f2937);
+        border-color: var(--panel-line, rgba(55, 65, 81, 1));
+    }
+    .tg-scrim {
+        position: absolute; inset: 0; z-index: 10;
+        display: flex; flex-direction: column; justify-content: space-between;
+        background: linear-gradient(to top, rgba(0,0,0,.88) 0%, rgba(0,0,0,.25) 55%, transparent 100%);
+    }
+</style>
+<script>
+    window.TripGallery = (function () {
+
+        function esc(s) {
+            const d = document.createElement('div');
+            d.textContent = s == null ? '' : String(s);
+            return d.innerHTML;
+        }
+
+        function fmtDate(iso) {
+            const d = new Date(iso + (iso.length <= 10 ? 'T00:00:00' : ''));
+            return d.toLocaleDateString(undefined,
+                { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+
+        function dateLine(t) {
+            if (t.draft) return 'Flexible dates';
+            const a = fmtDate(t.start), b = fmtDate(t.end);
+            return a === b ? a : `${a} – ${b}`;
+        }
+
+        // The badge, in the page's own words. `days` counts from today and is
+        // never negative (a trip under way reports 0 and says so), which is
+        // the arithmetic the server already did — repeating it here is how the
+        // wall and the browser start disagreeing about what "in 2 days" means
+        // across a midnight.
+        function badge(t) {
+            if (t.draft) return ['Draft', 'bg-purple-500/80'];
+            if (t.past) return ['Past', 'bg-gray-500/80'];
+            if (t.live) return ['Active', 'bg-blue-500/80 animate-pulse'];
+            if (t.days === 0) return ['Today', 'bg-emerald-500/80'];
+            if (t.days === 1) return ['Tomorrow', 'bg-emerald-500/80'];
+            return [`In ${t.days} days`, 'bg-emerald-500/80'];
+        }
+
+        const PIN = `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/></svg>`;
+        const CAL = `<svg class="w-4 h-4 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>`;
+        const MAP = `<svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/></svg>`;
+
+        function cardHtml(t, opts) {
+            const show = opts.show;
+            const [text, cls] = badge(t);
+            const href = opts.interactive && t.id
+                ? `${opts.base}trip?event_id=${encodeURIComponent(t.id)}${opts.carry}`
+                : null;
+            // An <a> when it opens something, a <div> when it does not — an
+            // anchor with no href is not a link, and a card that looks tappable
+            // and is not is worse than one that looks inert.
+            const tag = href ? 'a' : 'div';
+            const art = t.art || t.image || '';
+            return `<${tag} ${href ? `href="${esc(href)}"` : ''}
+                    class="tg-card rounded-2xl ${href ? 'tg-tap cursor-pointer' : ''}
+                           ${t.live ? 'tg-live' : ''} ${t.past ? 'tg-past' : ''}"
+                    style="aspect-ratio: 16/10">
+                ${art ? `<img src="${esc(art)}" alt="" loading="lazy"
+                     class="absolute inset-0 w-full h-full object-cover opacity-60">` : ''}
+                <div class="tg-scrim p-4">
+                    <div class="flex justify-between items-start gap-2">
+                        ${show.status ? `<span class="px-2 py-1 rounded ${cls} text-white text-[10px]
+                            font-bold uppercase tracking-wider backdrop-blur-md">${text}</span>` : '<span></span>'}
+                        ${show.pois && t.poi_count ? `<span class="px-2 py-1 rounded bg-black/40 text-white
+                            text-[10px] font-bold tracking-wider backdrop-blur-md border border-white/10
+                            flex items-center gap-1">${PIN} ${t.poi_count} stop${t.poi_count !== 1 ? 's' : ''}</span>` : ''}
+                    </div>
+                    <div class="min-w-0">
+                        <h2 class="text-xl font-black text-white leading-tight drop-shadow-lg truncate"
+                            >${esc(t.title)}</h2>
+                        ${show.dates ? `<div class="flex items-center gap-1.5 text-gray-200 text-sm font-medium mt-1.5">
+                            ${CAL}<span class="truncate">${esc(dateLine(t))}</span></div>` : ''}
+                        ${show.location && t.location ? `<div class="flex items-center gap-1.5 text-gray-200 text-sm font-medium mt-1">
+                            ${MAP}<span class="truncate">${esc(t.location)}</span></div>` : ''}
+                    </div>
+                </div>
+            </${tag}>`;
+        }
+
+        // `rows` is the server's shape (home_board._trip_rows). The page hands
+        // its own rows through `fromApi` first.
+        function render(el, rows, opts) {
+            opts = Object.assign({
+                base: '', carry: '', interactive: true, tileMin: '320px',
+            }, opts || {});
+            opts.show = Object.assign({
+                status: true, dates: true, location: true, pois: true,
+            }, (opts || {}).show || {});
+            if (!el) return;
+            if (!rows || !rows.length) {
+                el.innerHTML = `<div class="rounded-2xl border border-gray-700 bg-gray-800/60 p-8 text-center">
+                    <div class="text-4xl mb-3">🧭</div>
+                    <div class="font-bold mb-1">No trips yet</div>
+                    <div class="text-sm opacity-70">Plan one on the Trips page and it will show up here.</div>
+                </div>`;
+                return;
+            }
+            el.innerHTML = `<div class="grid gap-4"
+                style="grid-template-columns: repeat(auto-fill, minmax(${opts.tileMin}, 1fr))">`
+                + rows.map(t => cardHtml(t, opts)).join('') + `</div>`;
+        }
+
+        // `/api/trips`' shape → the server's. The page is the only caller that
+        // needs this; the card's payload already arrives in the right shape,
+        // which is the point of borrowing the server's vocabulary rather than
+        // inventing a third one here.
+        function fromApi(t, now) {
+            now = now || new Date();
+            const start = new Date(t.start);
+            const end = t.end ? new Date(t.end) : start;
+            const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+            const iso = x => new Date(x.getTime() - x.getTimezoneOffset() * 60000)
+                .toISOString().slice(0, 10);
+            const phrase = t.background_url
+                || (t.title ? String(t.title).split(/[:\-]/)[0].trim() : '')
+                || t.location || 'travel';
+            const isUrl = /^(https?:\/\/|\/|data:)/.test(String(t.background_url || ''));
+            return {
+                id: t.id,
+                title: t.title || 'Trip',
+                location: t.location || null,
+                image: isUrl ? t.background_url : null,
+                art: isUrl ? t.background_url
+                           : 'api/unsplash/background?query=' + encodeURIComponent(phrase),
+                draft: !!t.is_draft,
+                poi_count: t.poi_count || 0,
+                start: iso(start), end: iso(end),
+                past: day(end) < day(now),
+                days: Math.max(0, Math.round((day(start) - day(now)) / 86400000)),
+                live: day(start) <= day(now) && day(now) <= day(end),
+            };
+        }
+
+        return { render: render, fromApi: fromApi, cardHtml: cardHtml };
+    })();
+</script>

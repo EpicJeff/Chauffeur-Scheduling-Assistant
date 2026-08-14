@@ -19,29 +19,9 @@
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         }
         
-        .trip-card {
-            background: rgba(30, 41, 59, 0.7);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .trip-card:hover {
-            transform: translateY(-4px) scale(1.02);
-            border-color: rgba(59, 130, 246, 0.5);
-            box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.5), 0 0 20px rgba(59, 130, 246, 0.2);
-        }
-        
-        .trip-card::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            background: linear-gradient(to top, rgba(15, 23, 42, 0.9) 0%, rgba(15, 23, 42, 0.2) 60%, transparent 100%);
-            z-index: 1;
-        }
+        /* A trip card's own look lives in components/trip_gallery.html, with
+           the markup it styles — the board draws the same cards, and a rule
+           that only exists on this page is how the two drift apart. */
 
         /* Custom scrollbar */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -69,12 +49,9 @@
             border-color: var(--ha-divider) !important;
             box-shadow: none !important;
         }
-        body.ha-theme .trip-card {
+        body.ha-theme .tg-card {
             background: var(--ha-card-bg) !important;
             border-color: var(--ha-divider) !important;
-        }
-        body.ha-theme .trip-card::before {
-            background: linear-gradient(to top, var(--ha-card-bg) 0%, transparent 100%) !important;
         }
         body.ha-theme h1, body.ha-theme h2, body.ha-theme h3, body.ha-theme span, body.ha-theme p {
             color: var(--ha-primary-text) !important;
@@ -84,6 +61,7 @@
 </head>
 <body class="flex flex-col">
     {% include 'nav.html' %}
+    {% include 'components/trip_gallery.html' %}
 
     <main class="panel-page flex-1 w-full p-4 sm:p-6 lg:p-8 flex flex-col max-w-7xl mx-auto">
         
@@ -119,9 +97,11 @@
             <p class="text-gray-400 text-center max-w-md">We couldn't find any events marked as trips. Add one of your trip hashtags to an event in Google Calendar, or mark an event as a trip in Chauffeur's settings.</p>
         </div>
 
-        <div id="trips-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5 hidden">
-            <!-- Trip Cards Will Be Injected Here -->
-        </div>
+        <!-- The gallery is components/trip_gallery.html now, and this page is one
+             of its two callers — the Trips BOARD is the other. The grid itself
+             is drawn by the component, so the two cannot disagree about what a
+             trip card looks like. -->
+        <div id="trips-grid" class="hidden"></div>
 
     </main>
 
@@ -244,72 +224,12 @@
                 countEl.classList.remove('hidden');
                 
                 const now = new Date();
-                
-                let html = '';
-                data.trips.forEach(trip => {
-                    const startDate = new Date(trip.start);
-                    const endDate = trip.end ? new Date(trip.end) : startDate;
-                    
-                    let statusBadge = '';
-                    if (trip.is_draft) {
-                        statusBadge = '<span class="px-2 py-1 rounded bg-purple-500/80 text-white text-[10px] font-bold uppercase tracking-wider backdrop-blur-md shadow-[0_0_8px_rgba(168,85,247,0.5)]">Draft</span>';
-                    } else if (endDate < now) {
-                        statusBadge = '<span class="px-2 py-1 rounded bg-gray-500/80 text-white text-[10px] font-bold uppercase tracking-wider backdrop-blur-md">Past</span>';
-                    } else if (startDate <= now && endDate >= now) {
-                        statusBadge = '<span class="px-2 py-1 rounded bg-blue-500/80 text-white text-[10px] font-bold uppercase tracking-wider backdrop-blur-md animate-pulse">Active</span>';
-                    } else {
-                        // calculate days until
-                        const diffTime = Math.abs(startDate - now);
-                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                        statusBadge = `<span class="px-2 py-1 rounded bg-emerald-500/80 text-white text-[10px] font-bold uppercase tracking-wider backdrop-blur-md">In ${diffDays} Days</span>`;
-                    }
-                    
-                    let finalDateStr = '';
-                    if (trip.is_draft) {
-                        finalDateStr = "Flexible Dates";
-                    } else {
-                        const dateFmtOptions = { month: 'short', day: 'numeric', year: 'numeric' };
-                        const dateStr = startDate.toLocaleDateString(undefined, dateFmtOptions);
-                        const endDateStr = endDate.toLocaleDateString(undefined, dateFmtOptions);
-                        finalDateStr = (dateStr === endDateStr) ? dateStr : `${dateStr} - ${endDateStr}`;
-                    }
-                    const fallbackLocation = trip.location || 'Unknown Location';
-                    const coreTitle = trip.title ? trip.title.split(/[:\-]/)[0].trim() : '';
-                    const searchQuery = trip.background_url || coreTitle || fallbackLocation || 'nature';
-                    const bgUrl = searchQuery.startsWith('http') ? searchQuery : `api/unsplash/background?query=${encodeURIComponent(searchQuery)}`;
-                    
-                    html += `
-                        <a href="trip?event_id=${encodeURIComponent(trip.id)}${carryParams}" class="trip-card rounded-2xl aspect-[16/10] max-h-[20rem] block group cursor-pointer shadow-lg">
-                            <!-- Background Image -->
-                            <img src="${bgUrl}" class="absolute inset-0 w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity duration-500" />
-                            
-                            <!-- Content -->
-                            <div class="absolute inset-0 z-10 p-5 flex flex-col justify-between">
-                                <div class="flex justify-between items-start">
-                                    ${statusBadge}
-                                    ${trip.poi_count > 0 ? `<span class="px-2 py-1 rounded bg-black/40 text-white text-[10px] font-bold tracking-wider backdrop-blur-md border border-white/10 flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg> ${trip.poi_count} POIs</span>` : ''}
-                                </div>
-                                
-                                <div>
-                                    <h2 class="text-2xl font-black text-white leading-tight mb-1 drop-shadow-lg group-hover:text-blue-300 transition-colors">${trip.title}</h2>
-                                    
-                                    <div class="flex flex-col gap-1 mt-2">
-                                        <div class="flex items-center gap-1.5 text-gray-300 text-sm font-medium">
-                                            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                                            ${finalDateStr}
-                                        </div>
-                                        <div class="flex items-center gap-1.5 text-gray-300 text-sm font-medium">
-                                            <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>
-                                            <span class="truncate">${fallbackLocation}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </a>
-                    `;
+                TripGallery.render(grid, data.trips.map(t => TripGallery.fromApi(t, now)), {
+                    // Relative, like every other link on this page.
+                    base: '', carry: carryParams,
+                    interactive: true,
+                    tileMin: isKioskTrips ? '340px' : '260px',
                 });
-                
-                grid.innerHTML = html;
                 grid.classList.remove('hidden');
                 
             } catch (err) {

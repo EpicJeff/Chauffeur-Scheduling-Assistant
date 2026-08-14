@@ -1812,6 +1812,7 @@
     {% include 'components/schedule_timeline.html' %}
     {% include 'components/family_calendar.html' %}
     {% include 'components/moments_gallery.html' %}
+    {% include 'components/trip_gallery.html' %}
 
     <script>
         // The Leaflet instance lives OUTSIDE Alpine. A map is a large graph of
@@ -2184,6 +2185,7 @@
                         this.$nextTick(() => {
                             this.syncMap(); this.syncTimeline(); this.syncCards();
                             this.syncCalendars(); this.syncGalleries();
+                            this.syncTripGalleries();
                             this.syncAutoTiles();
                             this.measureFills();
                         });
@@ -2237,7 +2239,11 @@
                     shopping: 'shopping', chores: 'chores', routines: 'routines',
                     occasions: 'occasions', errands: 'errands', trips: 'trips',
                     map: 'map', moments: 'moments', intake: 'intake',
-                    weather: 'calendar', kids: 'routines'
+                    weather: 'calendar', kids: 'routines',
+                    // The gallery cards summarise the same page their glance
+                    // twin does. Only reached when the card is display-only —
+                    // an interactive one is not a door (see INTERACTIVE_TILES).
+                    moments_gallery: 'moments', trips_gallery: 'trips'
                 },
 
                 link(key) {
@@ -2656,6 +2662,7 @@
                 // every season a family has ever shared to find out how tall
                 // it is. It takes the height it is given and scrolls inside.
                 DRAWN_TILES: ['map', 'calendar', 'moments_gallery',
+                              'trips_gallery',
                               'ha_image', 'ha_dashboard', 'ha_card', 'web'],
 
                 // ── Two different questions, kept apart.
@@ -3078,6 +3085,57 @@
                     for (const id of [...this._liveCalendars.keys()]) {
                         if (!live.has(id)) this._liveCalendars.delete(id);
                     }
+                },
+
+                // ── The trips gallery, drawn per card.
+                //
+                // Simpler than the moments one because it holds no state: the
+                // rows ride the payload, so this is a redraw rather than a
+                // mount, and a poll that changes nothing writes the same
+                // markup. Keyed on the data so it is not rebuilt on every
+                // poll — a wall panel re-rendering ten photographs a minute
+                // makes the images blink.
+                _tripsDrawn: {},
+                syncTripGalleries() {
+                    const live = new Set();
+                    for (const tile of this.drawnTiles()
+                                           .filter(t => t.type === 'trips_gallery')) {
+                        if (!tile.data || tile.data.empty) continue;
+                        const el = document.getElementById('board-trips-' + tile.id);
+                        if (!el) continue;
+                        live.add(tile.id);
+                        const key = JSON.stringify(tile.data);
+                        if (this._tripsDrawn[tile.id] === key && el.firstChild) continue;
+                        this._tripsDrawn[tile.id] = key;
+                        TripGallery.render(el, tile.data.trips || [], {
+                            // The board can be at /home, /trips or
+                            // /board/<slug>, and a trip link is relative — so
+                            // it needs the same base every other board link
+                            // uses rather than a bare 'trip?…'.
+                            base: this.apiBase,
+                            // The panel params, carried by hand: nav.html
+                            // rewrites links present at DOMContentLoaded and
+                            // these are drawn on a poll, so a tap would
+                            // otherwise drop the wall out of panel mode.
+                            carry: this.carryParams(),
+                            interactive: !!tile.data.interactive,
+                            tileMin: (tile.data.tile_width || 320) + 'px',
+                            show: tile.data.show || {},
+                        });
+                    }
+                    for (const id of Object.keys(this._tripsDrawn)) {
+                        if (!live.has(id)) delete this._tripsDrawn[id];
+                    }
+                },
+
+                // Whatever the panel is running with, as a query suffix — the
+                // same params nav.html propagates onto the links it can see.
+                carryParams() {
+                    const p = new URLSearchParams(window.location.search);
+                    p.delete('event_id');
+                    p.delete('page');
+                    const s = p.toString();
+                    return s ? '&' + s : '';
                 },
 
                 // ── The moments gallery, mounted per card.
@@ -4853,7 +4911,14 @@
                 // drawn from the payload and have no taps at all, so only the
                 // MOUNTED views (month, week, day) can be interactive, and
                 // `grid` is how the payload says which one this is.
-                INTERACTIVE_TILES: ['drives', 'map', 'moments', 'moments_gallery'],
+                // `trips_gallery` is here for a stronger reason than the
+                // others: its cards are real <a href> links to each trip, and
+                // an anchor inside an anchor is not markup a browser will keep
+                // — it un-nests them, and the tap lands wherever the fragments
+                // ended up. Display-only, the cards are <div>s and the tile
+                // goes back to being one door onto the Trips page.
+                INTERACTIVE_TILES: ['drives', 'map', 'moments',
+                                    'moments_gallery', 'trips_gallery'],
                 opens(t) {
                     if (this.PAGELESS.includes(t.type)) return false;
                     if (t.type === 'calendar' && t.data

@@ -554,6 +554,43 @@ WIDGETS = [
          _opt('count', 'Trips shown', 'int', 4, min=1, max=8,
               help='Ignored when a single trip is pinned.'),
      ]},
+    # ── The trips PAGE, as a card (kiosk-boards arc). `trips` above is the
+    # GLANCE — the next trip and how long until it starts, as a small collage.
+    # This is the page's own gallery: a big photograph per trip carrying its
+    # status, dates, where it is and how many stops are planned, and each one
+    # opens the trip. Its absence made the Trips BOARD the same mistake the
+    # Moments board was: `?panel=true` on /trips drew the collage, so walking
+    # up to the Trips screen got you one trip block with no way into any of
+    # them, where the page is a gallery you browse.
+    {'key': 'trips_gallery', 'icon': '🖼️', 'label': 'The trips gallery',
+     'heading': '',
+     'blurb': "A photograph per trip — status, dates, where and how many "
+              "stops — and tapping one opens it. The Trips page's own gallery.",
+     'options': [
+         # ON by default: a gallery of trips you cannot open is a slideshow.
+         # Opening a trip IS a navigation here (the trip viewer is its own
+         # page), unlike the calendar's dialog or the moments overlay — so
+         # this card stays a door, it just points each card at its own trip
+         # instead of all of them at the trips list.
+         _opt('interactive', 'Interactive', 'bool', True,
+              help='Tapping a trip opens it. Off, the gallery is a display '
+                   'and the tile opens the Trips page.'),
+         _opt('count', 'Trips shown', 'int', 0, min=0, max=40,
+              help='0 shows every one.'),
+         # The page shows recent trips with a "Past" badge, so the card does
+         # too — zero-config equals the page. A wall that only wants what is
+         # ahead turns it off.
+         _opt('show_past', 'Trips already over', 'bool', True,
+              help='The last month of them, badged as past.'),
+         _opt('tile_width', 'Block width', 'int', 320, min=180, max=700,
+              help='Pixels, minimum. The grid fits as many as the tile is wide.'),
+         # THE CONVERSION PARADIGM: every part of the page's drawing is a
+         # toggle, all on by default.
+         _opt('show_status', 'The status badge', 'bool', True),
+         _opt('show_dates', 'Dates', 'bool', True),
+         _opt('show_location', 'Where it is', 'bool', True),
+         _opt('show_pois', 'How many stops', 'bool', True),
+     ]},
     {'key': 'map', 'icon': '🗺️', 'label': 'Map',
      'heading': 'Where everyone is',
      'blurb': "Who is home, out, or driving. Needs Home Assistant.",
@@ -2064,7 +2101,7 @@ def _tile_errand_list(now, config=None, **_):
         return None
 
 
-def _trip_rows(now) -> List[dict]:
+def _trip_rows(now, back_days: int = 0) -> List[dict]:
     """Trips this install can know about WITHOUT calling Google, newest-first.
 
     Three sources, because no single one is complete:
@@ -2080,6 +2117,11 @@ def _trip_rows(now) -> List[dict]:
        its POIs are sitting in the schedule cache with real dates on them.
     """
     seen, rows = set(), []
+    # How far back a caller wants to look. The glance tile wants 0 — "the next
+    # trip" is not a trip you got home from last week. The GALLERY wants a
+    # window, because the trips page has always shown recent trips with a
+    # "Past" badge on them, and a card that is the page must be the page.
+    floor = now.date() - datetime.timedelta(days=max(0, back_days))
 
     def add(tid, title, start, end, location=None, image=None, draft=False):
         if not start or (tid and tid in seen):
@@ -2090,12 +2132,24 @@ def _trip_rows(now) -> List[dict]:
         # background_url is not always a URL — older trips stored a search
         # phrase ("disney world") in it, which as an <img src> is a broken
         # image on the kitchen wall.
-        img = str(image or '')
-        img = img if img.startswith(('http://', 'https://', '/', 'data:')) else None
+        raw = str(image or '')
+        img = raw if raw.startswith(('http://', 'https://', '/', 'data:')) else None
+        # …but a phrase is not nothing, and the trips PAGE has always turned
+        # one into a picture through the same Unsplash endpoint that backs
+        # trip artwork. So does this now: a trip with no photograph gets one
+        # found for it from the phrase, then its title, then where it is —
+        # which is exactly the ladder the page walks. Without it the gallery
+        # card drew grey boxes where the page drew photographs.
+        art = img or _as_background(
+            raw or (str(title or '').split(':')[0].split(' - ')[0].strip())
+            or location or 'travel')
         rows.append({
             'id': tid, 'title': title or 'Trip', 'location': location or None,
-            'image': img, 'draft': bool(draft),
+            'image': img, 'art': art, 'draft': bool(draft),
+            'poi_count': len(((storage.get_trip_metadata(tid) or {}).get('pois')
+                              or []) if tid else []),
             'start': start.isoformat(), 'end': end.isoformat(),
+            'past': bool(end < now.date()),
             # NEGATIVE days would mean "already started", so an in-progress
             # trip reports 0 and says so. The first version filtered anything
             # starting before today, which is precisely how a trip the family
@@ -2118,7 +2172,7 @@ def _trip_rows(now) -> List[dict]:
 
     for t in (storage.get_cached_trips() or {}).get('trips') or []:
         s, e = as_date(t.get('start')), as_date(t.get('end'))
-        if s and e and e >= now.date():
+        if s and e and e >= floor:
             add(t.get('id'), t.get('title'), s, e, t.get('location'),
                 t.get('background_url'), t.get('is_draft'))
 
@@ -2126,7 +2180,7 @@ def _trip_rows(now) -> List[dict]:
         if not t.get('is_draft'):
             continue
         s, e = as_date(t.get('mock_start_date')), as_date(t.get('mock_end_date'))
-        if s and (e or s) >= now.date():
+        if s and (e or s) >= floor:
             add(t.get('event_id'), t.get('title') or 'Draft trip', s, e,
                 t.get('location'), t.get('background_url'), True)
 
@@ -2139,13 +2193,17 @@ def _trip_rows(now) -> List[dict]:
         lo, hi = spans.get(tid, (s, e or s))
         spans[tid] = (min(lo, s), max(hi, e or s))
     for tid, (lo, hi) in spans.items():
-        if hi.date() < now.date():
+        if hi.date() < floor:
             continue
         meta = storage.get_trip_metadata(tid) or {}
         add(tid, meta.get('title'), lo.date(), hi.date(),
             meta.get('location'), meta.get('background_url'), meta.get('is_draft'))
 
-    rows.sort(key=lambda r: (not r['live'], r['start']))
+    # Under way first, then what is coming, then what is behind us. The past
+    # tail only exists when a caller asked for a window back, and it belongs
+    # at the bottom rather than interleaved by date — a trip you got home from
+    # is a memory, not a plan, whatever its start date says.
+    rows.sort(key=lambda r: (r['past'], not r['live'], r['start']))
     return rows
 
 
@@ -2168,6 +2226,48 @@ def _tile_trips(now, config=None, **_):
         return {'trips': rows[:count]} if rows else {'empty': "No trips planned."}
     except Exception as e:
         print(f"[home_board] trips failed: {e}")
+        return None
+
+
+# How far back the gallery looks. The same month `/api/trips` uses, so the
+# card and the page agree about what counts as recent enough to still show.
+TRIP_GALLERY_BACK_DAYS = 30
+
+
+def _tile_trips_gallery(now, config=None, **_):
+    """The trips page's own gallery, as a card.
+
+    Rides the PAYLOAD rather than self-fetching, and that is a rule rather
+    than a preference: the page's own `/api/trips` calls Google Calendar and
+    WRITES a snapshot on the way past. A wall panel polling it every minute
+    would keep the calendar warm and rewrite a cache for a display nobody is
+    looking at — rule 3, exactly. `_trip_rows` answers from what this install
+    already has (the snapshot, draft metadata, the schedule cache), which is
+    what the glance tile has always used.
+    """
+    try:
+        if not (storage.get_all_trip_metadata() or storage.get_cached_trips()):
+            return None                       # no trips ever: feature unused
+        show_past = _cfg_bool(config, 'show_past', True)
+        count = _cfg_int(config, 'count', 0, 0, 40)
+        rows = _trip_rows(now, back_days=TRIP_GALLERY_BACK_DAYS if show_past else 0)
+        if not show_past:
+            rows = [r for r in rows if not r['past']]
+        if not rows:
+            return {'empty': "No trips planned."}
+        return {
+            'trips': rows[:count] if count else rows,
+            'interactive': _cfg_bool(config, 'interactive', True),
+            'tile_width': _cfg_int(config, 'tile_width', 320, 180, 700),
+            'show': {
+                'status': _cfg_bool(config, 'show_status', True),
+                'dates': _cfg_bool(config, 'show_dates', True),
+                'location': _cfg_bool(config, 'show_location', True),
+                'pois': _cfg_bool(config, 'show_pois', True),
+            },
+        }
+    except Exception as e:
+        print(f"[home_board] trips gallery failed: {e}")
         return None
 
 
@@ -2668,6 +2768,8 @@ REQUIRED_EMPTY = {
     'kids': "Nothing on for the kids today.",
     'occasions': "Nothing coming up.",
     'trips': "No trips planned.",
+    'trips_gallery': "No trips yet. Plan one on the Trips page and it will "
+                     "show up here.",
     'calendar': "Nothing on the calendar.",
     'drives': "No drives today.",
     'map': "Nobody is sharing a location yet.",
@@ -2852,7 +2954,7 @@ _BUILDERS: dict = {
     'moments_gallery': _tile_moments_gallery,
     'calendar': _tile_calendar, 'errands': _tile_errands, 'tasks': _tile_tasks,
     'task_list': _tile_task_list, 'errand_list': _tile_errand_list,
-    'trips': _tile_trips,
+    'trips': _tile_trips, 'trips_gallery': _tile_trips_gallery,
     'map': _tile_map, 'intake': _tile_intake,
     'ha': _tile_ha, 'ha_image': _tile_ha_image,
     'ha_dashboard': _tile_ha_dashboard, 'ha_card': _tile_ha_card,
@@ -3476,11 +3578,17 @@ BUILTIN_PAGES = {
         'spans': {'kids': {'cols': 12, 'auto': True},
                   'routines_lanes': {'cols': 12, 'auto': True}},
     },
+    # The trips PAGE, not the home board's trips tile — the same distinction
+    # the Moments board needed. The collage is "the next trip and how long
+    # until it starts", right beside eight other tiles; the page is a gallery
+    # you browse, a photograph per trip, each one opening that trip.
+    # FILL, because a gallery is the only thing on this screen and how many
+    # trips a family has is not a number anybody can type.
     'trips': {
         'name': 'Trips', 'icon': '🧭', 'v': 5, 'columns': 12,
-        'widgets': [{'id': 'trips', 'type': 'trips',
-                     'config': {'count': 6, 'title': 'Trips'}, 'require': True}],
-        'spans': {'trips': {'cols': 12, 'rows': 4}},
+        'widgets': [{'id': 'trips_gallery', 'type': 'trips_gallery',
+                     'config': {}, 'require': True}],
+        'spans': {'trips_gallery': {'cols': 12, 'fill': True}},
     },
     'map': {
         'name': 'Map', 'icon': '🗺️', 'v': 5, 'columns': 12,

@@ -468,6 +468,18 @@
                         </div>
                     </template>
 
+                    <!-- ── The trips GALLERY: the page's own drawing, from the
+                         SAME renderer (components/trip_gallery.html), so a
+                         trip card looks the same on a wall and in a browser.
+                         Unlike the moments gallery this rides the payload —
+                         the trips page's `/api/trips` calls Google and writes
+                         a snapshot on the way past, which a board polling
+                         every minute must never do. -->
+                    <template x-if="t.type === 'trips_gallery' && !t.data.empty">
+                        <div class="flex-1 min-h-0 overflow-y-auto tile-scroll"
+                            :id="'board-trips-' + t.id"></div>
+                    </template>
+
                     <!-- ── The moments GALLERY: the page's own two-level
                          drawing, mounted from components/moments_gallery.html
                          exactly as the timeline, the map and the calendar grid

@@ -150,6 +150,24 @@ def _board(hero=None):
             # both draws it twice.
             {'id': 'meals', 'type': 'meals', 'icon': '🍽️', 'label': "Tonight's plate",
              'data': {'empty': 'Nothing pinned for tonight yet.'}},
+            # The Trips PAGE's gallery, as the Trips board draws it. Rides
+            # the payload (its page's endpoint calls Google and writes a
+            # snapshot, which a board poll must never do).
+            {'id': 'gal-trips', 'type': 'trips_gallery', 'icon': '🖼️',
+             'label': 'Trips', 'data': {
+                'interactive': True, 'tile_width': 320,
+                'show': {'status': True, 'dates': True, 'location': True,
+                         'pois': True},
+                'trips': [
+                    {'id': 'trip1', 'title': 'Disney World',
+                     'location': 'Orlando', 'image': None,
+                     'art': 'https://e/disney.jpg', 'draft': False,
+                     'poi_count': 12, 'start': TODAY, 'end': DAY_AFTER_NEXT,
+                     'past': False, 'days': 0, 'live': True},
+                    {'id': 'trip2', 'title': 'Ski week', 'location': 'Boone',
+                     'image': None, 'art': 'https://e/ski.jpg', 'draft': True,
+                     'poi_count': 0, 'start': TOMORROW, 'end': TOMORROW,
+                     'past': False, 'days': 1, 'live': False}]}},
             # The Moments PAGE's gallery, as the Moments board draws it:
             # config only, because the card fetches its own history.
             {'id': 'gallery', 'type': 'moments_gallery', 'icon': '🖼️',
@@ -372,6 +390,23 @@ setTimeout(async () => {
                style: el.getAttribute('style') || '' };
     })(),
     gallery: galleryProbe,
+    // The trips gallery: the page's own cards, each opening its own trip.
+    // The board used to draw the small collage here — one block, no way in.
+    trips: (() => {
+      const el = doc.getElementById('board-trips-gal-trips');
+      if (!el) return null;
+      const links = [...el.querySelectorAll('a')].map(a => a.getAttribute('href'));
+      return {
+        cards: el.querySelectorAll('.tg-card').length,
+        links: links,
+        text: el.textContent.replace(/\s+/g, ' ').trim(),
+        // An interactive gallery holds real anchors, so its TILE must not be
+        // one — an <a> inside an <a> is un-nested by the parser and the tap
+        // lands wherever the fragments ended up.
+        tileHref: (doc.querySelector('[data-tile-id="gal-trips"]') || {})
+          .getAttribute ? doc.querySelector('[data-tile-id="gal-trips"]').getAttribute('href') : null,
+      };
+    })(),
     map: { mounted: !!doc.getElementById('board-map-map'),
            // A display-only map must not take the tap the tile's door needs.
            quiet: /pointer-events:\s*none/.test(
@@ -654,8 +689,8 @@ def scenario_the_board_draws_without_throwing():
     # label its <a> answers with is the one INSIDE the band — hero_card.html's
     # "Happening now" — which is itself the proof the band drew.
     check(got['tiles'] == ['Happening now', 'The rest of the day', "What's coming",
-                           "Tonight's plate", 'Moments', 'Where everyone is',
-                           'Mornings'],
+                           "Tonight's plate", 'Trips', 'Moments',
+                           'Where everyone is', 'Mornings'],
           f"the tiles that came back: {got['tiles']}")
 
 
@@ -915,6 +950,36 @@ def scenario_the_map_tile_is_only_a_map():
     check(got['map']['quiet'],
           "a display-only map takes pointer events, so it eats the tap that "
           "opens the Map page")
+
+
+def scenario_the_trips_gallery_is_the_trips_page():
+    """The Trips board drew the home board's collage — one trip block, no way
+    into any of them — where the page is a gallery you browse: a photograph
+    per trip carrying its status, dates, where it is and how many stops, each
+    one opening that trip.
+
+    Second time for this exact shape (the Moments board was the first), and
+    the lesson is the same: a tile that summarises a page is not a substitute
+    for the page.
+    """
+    got = _run()
+    if got is None:
+        return
+    tr = got['trips']
+    check(tr is not None, "the trips gallery card never drew on the board")
+    check(tr['cards'] == 2,
+          f"the gallery drew {tr['cards']} trip cards, not one per trip")
+    check(all('event_id=trip' in (h or '') for h in tr['links']) and len(tr['links']) == 2,
+          f"a trip card does not open its own trip: {tr['links']}")
+    # The page's own content, not a smaller version of it.
+    for word in ('Disney World', 'Orlando', 'Active', '12 stops', 'Draft'):
+        check(word in tr['text'],
+              f"the gallery is missing what the page shows ({word}): "
+              f"{tr['text'][:220]}")
+    # An <a> inside an <a> is un-nested by the parser, so an interactive
+    # gallery's tile must not be a door.
+    check(not tr['tileHref'],
+          f"the tile is an <a> around cards that are also <a>: {tr['tileHref']}")
 
 
 def scenario_the_gallery_card_drills_in_and_comes_back():
