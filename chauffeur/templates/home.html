@@ -3398,7 +3398,16 @@
                             if (!id) { let n = 2; while (taken.has(`${type}-${n}`)) n++; id = `${type}-${n}`; }
                         }
                         taken.add(id);
-                        out.push({ id, type, config: { ...(w.config || {}) } });
+                        const inst = { id, type, config: { ...(w.config || {}) } };
+                        // A tile the board is ABOUT, and the one field this
+                        // mirror used to drop. The server keeps it through
+                        // normalize_instances so `_build_tile` can honour it;
+                        // rebuilding the instance as {id,type,config} here
+                        // stripped it off every shipped board the moment the
+                        // editor loaded one, and a board that loses it goes
+                        // BLANK when it is empty instead of saying why.
+                        if (w.require) inst.require = true;
+                        out.push(inst);
                     });
                     return out;
                 },

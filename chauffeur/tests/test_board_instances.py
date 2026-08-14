@@ -407,7 +407,26 @@ b.setCfg(drives, opt('drives', 'errands'), true);   // back to the default
 // And a number typed out of range.
 b.setCfg(one, opt('calendar', 'days'), '99');
 
+// ── `require` — "this board is ABOUT this tile", so an empty one says so
+// instead of vanishing. Only the shipped boards set it, and it has to survive
+// BOTH of the editor's normalisers: loadSetup runs every page through
+// toInstances before anybody edits, and _cleanPages is the shape that gets
+// saved. Dropping it in either place takes the empty state off all ten shipped
+// boards, and a board only reveals the loss on the day it has nothing to show.
+const normalised = b.toInstances([
+  { id: 'chores_lanes', type: 'chores_lanes', config: {}, require: true },
+  { id: 'calendar', type: 'calendar', config: {} },
+]);
+b.draft.panel_pages.push({
+  slug: 'chores', name: 'Chores', icon: 'C', v: 5, widgets: normalised,
+  spans: {}, columns: 12, row_height: 240, gap: 16, background: '',
+});
+const savedRequire = b._cleanPages()
+  .find(p => p.slug === 'chores').widgets.map(w => w.require || false);
+
 console.log(JSON.stringify({
+  requireLoaded: normalised.map(w => w.require || false),
+  requireSaved: savedRequire,
   ids: b.page().widgets.map(w => w.id),
   untouched: one.config,
   configured: two.config,
@@ -501,6 +520,20 @@ def scenario_removing_an_instance_takes_its_size_with_it():
     check(got['spansAfterRemove'] == {},
           f"a removed tile left its size behind: {got['spansAfterRemove']} — "
           f"the next instance given that id would inherit it")
+
+
+def scenario_a_shipped_boards_empty_state_survives_the_editor():
+    got = _run_editor()
+    if got is None:
+        return
+    check(got['requireLoaded'] == [True, False],
+          f"toInstances dropped `require`: {got['requireLoaded']} — merely "
+          f"OPENING the editor strips every shipped board's empty state, so a "
+          f"quiet Chores board goes blank instead of saying it is quiet")
+    check(got['requireSaved'] == [True, False],
+          f"_cleanPages dropped `require`: {got['requireSaved']} — the flag "
+          f"survives loading but not saving, so the strip lands the first time "
+          f"anybody nudges a tile")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
