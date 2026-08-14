@@ -754,6 +754,16 @@
                 class="text-xs font-semibold ed-input rounded-lg px-3 py-1.5">
                 ✎ Edit
             </button>
+            <!-- The BOARD's own settings — what it is called, what it wears,
+                 where it lives, and the grid its tiles are spans of. Beside
+                 Edit rather than inside it: these are true of the board whether
+                 or not you are moving tiles around, and a wall panel's address
+                 is the one thing somebody needs to read WITHOUT touching the
+                 layout. -->
+            <button @click="openBoardSettings()"
+                class="text-xs font-semibold ed-input rounded-lg px-3 py-1.5">
+                ⚙ Settings
+            </button>
         </div>
 
         <!-- The vertical lattice is ONE-PIXEL tracks, and a tile converts
@@ -1085,6 +1095,137 @@
             </template>
         </div>
 
+        <!-- ── The BOARD's settings, over the board.
+             Name, icon, address, picture, and the grid its tiles are spans of.
+             All of it used to be a card and three number fields in the setup
+             form; the numbers only mean anything next to the board they
+             describe, which is the same argument every other part of this arc
+             made. -->
+        <div x-show="boardSettings" x-cloak @click.self="closeBoardSettings()"
+            @keydown.escape.window="closeBoardSettings()"
+            class="fixed inset-0 z-40 flex items-end sm:items-center justify-center p-3 sm:p-6"
+            style="background: rgba(0,0,0,.55)">
+            <div class="ed-card rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5"
+                x-show="boardSettings">
+                <div class="flex items-center gap-2 mb-4">
+                    <span class="text-base font-black ed-title">Board settings</span>
+                    <button type="button" class="ml-auto ed-btn px-2"
+                        @click="closeBoardSettings()" title="Close">✕</button>
+                </div>
+
+                <!-- Icon and name, together: they are the shelf button. -->
+                <div class="flex items-center gap-2 mb-1">
+                    <button type="button" @click="iconPicking = !iconPicking"
+                        title="Icon" :class="iconPicking ? 'ring-1 ring-sky-500' : ''"
+                        class="w-12 h-9 shrink-0 flex items-center justify-center ed-input rounded"
+                        x-html="boardIconHtml(page().icon, 'w-5 h-5')"></button>
+                    <input type="text" :value="page().name"
+                        @input="setPageField('name', $event.target.value)"
+                        placeholder="Board name"
+                        class="flex-1 min-w-0 ed-input rounded px-2 py-1.5 text-sm ed-title">
+                </div>
+                <div x-show="iconPicking" x-cloak class="mb-3 flex flex-wrap items-center gap-1">
+                    <template x-for="ic in (catalog.board_icons || [])" :key="ic.key">
+                        <button type="button" :title="ic.key"
+                            @click="setPageField('icon', 'icon:' + ic.key); iconPicking = false"
+                            :class="page().icon === 'icon:' + ic.key
+                                ? 'ring-1 ring-sky-500' : ''"
+                            class="w-8 h-8 flex items-center justify-center ed-input rounded"
+                            x-html="iconSvg(ic.paths, 'w-4 h-4')"></button>
+                    </template>
+                    <button type="button" class="w-8 h-8 ed-input rounded text-sm"
+                        @click="EmojiPicker.open($event.currentTarget,
+                            v => setPageField('icon', v || '🗂️'))">🙂</button>
+                </div>
+
+                <!-- The ADDRESS. A wall panel is a bookmark, so this has to be
+                     somewhere it can be read and copied — and editable, because
+                     "new-board-2" forever was a bookmark nobody chose. -->
+                <div class="text-[0.7rem] ed-note mb-4">
+                    <template x-if="page().slug === 'home'">
+                        <span>The wall panel's home screen — at
+                            <code class="text-sky-300">/home</code>. An idle panel comes
+                            back here.</span>
+                    </template>
+                    <template x-if="page().slug !== 'home'">
+                        <span class="inline-flex items-center gap-0.5">At
+                            <code class="text-sky-300">/board/</code><input type="text"
+                                :value="page().slug"
+                                @input="setPageSlug($event.target.value)"
+                                maxlength="31" spellcheck="false" title="This board's address"
+                                class="ed-input rounded px-1.5 py-0.5 text-[0.7rem] text-sky-300 font-mono w-36">
+                        </span>
+                    </template>
+                </div>
+
+                <div class="text-[0.7rem] font-black uppercase tracking-widest ed-head mb-1">
+                    Picture
+                </div>
+                <input type="text" :value="page().background"
+                    @input="setPageField('background', $event.target.value)"
+                    placeholder="a web address, or a phrase like “mountains at dusk”"
+                    class="w-full ed-input rounded px-2 py-1.5 text-xs placeholder-gray-600 mb-1">
+                <p class="text-[0.7rem] ed-note mb-4">
+                    Blank uses the panel background set for the whole house.
+                </p>
+
+                <div class="text-[0.7rem] font-black uppercase tracking-widest ed-head mb-2">
+                    The grid
+                </div>
+                <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-2">
+                    This board is
+                    <input type="number" min="1" step="1"
+                        :value="page().columns"
+                        @input="setPageField('columns', parseInt($event.target.value, 10))"
+                        class="w-16 ed-input rounded text-xs ed-title px-2 py-1">
+                    <span class="font-normal ed-note">columns wide — tile widths are spans of
+                        these, so doubling this halves how wide every tile looks.</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-2">
+                    One row is
+                    <input type="number" min="1" step="5"
+                        :value="page().row_height"
+                        @input="setPageField('row_height', parseInt($event.target.value, 10))"
+                        class="w-20 ed-input rounded text-xs ed-title px-2 py-1">
+                    <span class="font-normal ed-note">pixels tall — a 2-row tile is exactly
+                        twice this</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-2">
+                    Tiles sit
+                    <input type="number" min="0" max="100" step="2"
+                        :value="page().gap"
+                        @input="setPageField('gap', parseInt($event.target.value, 10))"
+                        class="w-20 ed-input rounded text-xs ed-title px-2 py-1">
+                    <span class="font-normal ed-note">pixels apart — spacing only, never part
+                        of a tile's height</span>
+                </label>
+                <!-- The one geometric string attached, said where the numbers
+                     are typed: a stack of tiles beside one tall tile only
+                     bottom-aligns when the gutter divides into a whole number
+                     of rows. -->
+                <p x-show="page().gap % (page().row_height + page().gap) !== 0
+                           && (page().row_height + page().gap) % page().gap !== 0"
+                    class="text-[0.7rem] ed-note mb-4">
+                    A tile's footprint is its rows plus one gutter, so a stack beside a
+                    taller tile lines up at the bottom most neatly when the gutter
+                    divides evenly into a row.
+                </p>
+
+                <div class="flex items-center gap-2 mt-5">
+                    <button type="button" @click="closeBoardSettings()"
+                        class="flex-1 rounded-lg py-2 text-sm font-semibold
+                               bg-sky-600 hover:bg-sky-500 text-white">
+                        Done
+                    </button>
+                    <button type="button" x-show="page().slug !== 'home'"
+                        @click="removePage(); closeBoardSettings()"
+                        class="rounded-lg px-3 py-2 text-sm ed-btn hover:text-red-400
+                               border border-gray-700"
+                        x-text="isBuiltinPage(page().slug) ? 'Reset' : 'Delete'"></button>
+                </div>
+            </div>
+        </div>
+
         <!-- The card picker, opened by the + on a container tile. Same
              partial as the tile palette, minus the containers: a card cannot
              hold cards, so offering Custom here is offering a box that goes
@@ -1328,196 +1469,16 @@
                         </div>
                     </div>
 
-                    <!-- This board's own identity. The address is shown because
-                         it IS the board: a wall panel is a bookmark, so the
-                         thing somebody types into a tablet has to be visible
-                         somewhere they can copy it from. -->
-                    <div class="ed-panel rounded-lg p-3 mb-4" x-show="page()">
-                        <div class="flex items-center gap-2">
-                            <!-- A PICKER, not a bare text field: the shelf
-                                 draws the app's own buttons as stroked icons,
-                                 and a board wearing one of those sits on the
-                                 row as an equal instead of as the one emoji.
-                                 Typing an emoji still works, below. -->
-                            <button type="button" @click="iconPicking = !iconPicking"
-                                title="Icon" :class="iconPicking ? 'ring-1 ring-sky-500' : ''"
-                                class="w-12 h-8 shrink-0 flex items-center justify-center ed-input rounded text-sm"
-                                x-html="boardIconHtml(page().icon, 'w-5 h-5')"></button>
-                            <input type="text" :value="page().name"
-                                @input="setPageField('name', $event.target.value)"
-                                placeholder="Board name"
-                                class="flex-1 min-w-0 ed-input rounded px-2 py-1 text-sm ed-title">
-                            <!-- The home board is the panel's resting state and
-                                 the shelf's Home button. Deleting it would leave
-                                 an idle panel returning to nothing, so it is
-                                 offered as un-deletable rather than as a delete
-                                 that mysteriously fails. -->
-                            <!-- Order is not decoration here: the panel shelf
-                                 renders the boards in this order, and which
-                                 buttons stay under a thumb rather than behind
-                                 "More" is decided by it. -->
-                            <button type="button" @click="movePage(-1)"
-                                :disabled="pageIndex === 0" title="Earlier on the shelf"
-                                class="ed-btn disabled:opacity-25 px-1">◀</button>
-                            <button type="button" @click="movePage(1)"
-                                :disabled="pageIndex === (draft.panel_pages || []).length - 1"
-                                title="Later on the shelf"
-                                class="ed-btn disabled:opacity-25 px-1">▶</button>
-                            <button type="button" x-show="page().slug !== 'home'"
-                                @click="removePage()"
-                                class="text-xs ed-note hover:text-red-400 px-2 py-1"
-                                x-text="isBuiltinPage(page().slug) ? 'Reset' : 'Delete'"></button>
-                        </div>
-                        <div x-show="iconPicking" class="mt-2 flex flex-wrap items-center gap-1">
-                            <template x-for="ic in (catalog.board_icons || [])" :key="ic.key">
-                                <button type="button" :title="ic.key"
-                                    @click="setPageField('icon', 'icon:' + ic.key); iconPicking = false"
-                                    :class="page().icon === 'icon:' + ic.key
-                                        ? 'bg-sky-600 text-white' : 'ed-input hover:brightness-125'"
-                                    class="w-8 h-8 flex items-center justify-center rounded"
-                                    x-html="iconSvg(ic.paths, 'w-5 h-5')"></button>
-                            </template>
-                            <!-- Or any emoji at all. The field stays (pasting
-                                 works, and it shows what is set) but the
-                                 BUTTON is the control: this row is edited on
-                                 the panel it configures as often as on a
-                                 laptop, and a wall browser has no emoji key. -->
-                            <button type="button" title="Pick an emoji"
-                                @click="EmojiPicker.open($event.currentTarget,
-                                    v => setPageField('icon', v || '🗂️'))"
-                                class="w-8 h-8 flex items-center justify-center rounded ed-input text-lg leading-none"
-                                x-text="String(page().icon || '').startsWith('icon:') ? '😀' : (page().icon || '😀')"></button>
-                            <input type="text" maxlength="8" placeholder="emoji"
-                                :value="String(page().icon || '').startsWith('icon:') ? '' : page().icon"
-                                @input="$event.target.value.trim()
-                                    && setPageField('icon', $event.target.value.trim())"
-                                title="Or type an emoji"
-                                class="w-16 text-center ed-input rounded px-1 py-1 text-sm">
-                        </div>
-                        <div class="mt-2 text-[0.7rem] ed-note">
-                            <template x-if="page().slug === 'home'">
-                                <span>The wall panel's home screen — at
-                                    <code class="text-sky-300">/home</code>. An idle panel comes
-                                    back here.</span>
-                            </template>
-                            <!-- The address is EDITABLE, not just visible. It is
-                                 what somebody types into a tablet, so "new-board-2"
-                                 forever was a bookmark nobody chose. The shelf
-                                 entry follows the rename (setPageSlug), and the
-                                 server still validates and de-duplicates. -->
-                            <!-- A destination's own board has a FIXED address:
-                                 it is what `?panel=true` on that destination
-                                 draws, and renaming the slug would leave the
-                                 wall on the shipped board while the household's
-                                 edits sat at an address nothing points to. -->
-                            <template x-if="page().slug !== 'home' && isBuiltinPage(page().slug)">
-                                <span>The Chauffeur page's own board — what a wall panel
-                                    shows at <code class="text-sky-300"
-                                        x-text="'/' + page().slug + '?panel=true'"></code>.
-                                    Reset puts the shipped one back.</span>
-                            </template>
-                            <template x-if="page().slug !== 'home' && !isBuiltinPage(page().slug)">
-                                <span class="inline-flex items-center gap-0.5">At
-                                    <code class="text-sky-300">/board/</code><input type="text"
-                                        :value="page().slug"
-                                        @input="setPageSlug($event.target.value)"
-                                        maxlength="31" spellcheck="false" title="This board's address"
-                                        class="ed-input rounded px-1.5 py-0.5 text-[0.7rem] text-sky-300 font-mono w-36">
-                                </span>
-                            </template>
-                        </div>
-                        <input type="text" :value="page().background"
-                            @input="setPageField('background', $event.target.value)"
-                            placeholder="its own picture — blank uses the one below"
-                            class="mt-2 w-full ed-input rounded px-2 py-1 text-xs placeholder-gray-600">
-                    </div>
+                    <!-- The board's identity card and its three grid numbers
+                         lived here: name, icon, address, picture, columns, row
+                         height, gutter. All of it is the ⚙ Settings button
+                         beside Edit now, over the board those numbers
+                         describe — a column count only means something next
+                         to the tiles it is dividing.
 
-                    <div class="text-xs font-black uppercase tracking-widest ed-head mb-2">
-                        Tiles on <span x-text="page().name"></span>
-                    </div>
-                    <p class="text-xs ed-note mb-3">
-                        In the order they appear. A tile with nothing to say hides itself
-                        regardless — an empty box is worse than a shorter board.
-                    </p>
-                    <!-- What a row is WORTH. Sizes are meaningless without it:
-                         "2 rows" only means something once a row is a fixed
-                         measurement rather than however tall the neighbouring
-                         tiles turned out. -->
-                    <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-2">
-                        This board is
-                        <input type="number" min="1" step="1"
-                            :value="page().columns"
-                            @input="setPageField('columns', parseInt($event.target.value, 10))"
-                            class="w-14 ed-input rounded text-xs ed-title px-2 py-1">
-                        <span class="font-normal ed-note">columns wide — tile widths are spans of these.
-                            <!-- Worth knowing BEFORE the change, not after:
-                                 spans are counts of columns, so doubling the
-                                 grid halves every tile. -->
-                            Changing this does not resize the tiles, so doubling it
-                            halves how wide they look.</span>
-                    </label>
-                    <!-- The board-wide "calendar shows N days" field was here.
-                         It is a per-card option now: one number for the whole
-                         board could not describe two calendars, which is the
-                         thing instances exist to allow. Set it in the
-                         calendar tile's own settings. -->
-                    <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-3">
-                        One row is
-                        <!-- A NUMBER, like the two fields above it. The seven
-                             sizes this used to offer were not a technical
-                             limit — the grid takes any integer, and the server
-                             clamps 80–600, so the menu could not even reach
-                             two thirds of the valid range. What it cost was
-                             the last twenty pixels of a hosted card: the tile
-                             that needs 250 gets 240 and clips, and no amount of
-                             re-picking from a list of sevens fixes it. -->
-                        <input type="number" min="1" step="5"
-                            :value="page().row_height"
-                            @input="setPageField('row_height', parseInt($event.target.value, 10))"
-                            class="w-20 ed-input rounded text-xs ed-title px-2 py-1">
-                        <span class="font-normal ed-note">pixels tall — a 2-row tile is exactly
-                            twice this</span>
-                    </label>
-                    <!-- The gutter, out in the open AND out of the math: it
-                         spaces tiles and never changes their height stepping.
-                         (It used to be structural — a hardcoded row-gap that
-                         every multi-row span swallowed, which made fine
-                         height control and nice spacing mutually exclusive.)
-                         0 is legal and means seamless. -->
-                    <label class="flex items-center gap-2 text-xs ed-note font-semibold mb-3">
-                        Tiles sit
-                        <input type="number" min="0" max="100" step="2"
-                            :value="page().gap"
-                            @input="setPageField('gap', parseInt($event.target.value, 10))"
-                            class="w-20 ed-input rounded text-xs ed-title px-2 py-1">
-                        <span class="font-normal ed-note">pixels apart — spacing only, never part
-                            of a tile's height</span>
-                    </label>
-                    <!-- The one geometric string attached, said where the
-                         numbers are typed. A tile's lattice footprint is
-                         rows*height + one gutter, so a STACK of tiles beside
-                         one tall tile only bottom-aligns when the extra
-                         gutters are worth a whole number of rows: gutter
-                         divisible by row height. The price of tile heights
-                         that ignore the gutter — the closed geometries both
-                         had worse diseases. -->
-                    <p class="text-[0.7rem] ed-note mb-3 -mt-1"
-                        x-show="page().gap % Math.max(1, page().row_height) !== 0">
-                        ⚠ This gutter is not a multiple of the row height, so stacked
-                        tiles can never bottom-align with a taller neighbour — each
-                        stacked tile adds one gutter the neighbour cannot span. Rows of
-                        <span x-text="page().row_height"></span>px line up with gutters of
-                        0, <span x-text="page().row_height"></span>,
-                        <span x-text="page().row_height * 2"></span>…
-                        (small rows that divide the gutter give fine sizing AND alignment).
-                    </p>
-                    <!-- The tile list AND the add-tile button lived here.
-                         Both are on the board now: drag a tile to move it,
-                         drag its corner to size it, tap its pencil for its
-                         settings, and add one from the button beside Arrange.
-                         Nothing is left behind as each piece moves — this
-                         block is going away entirely, and a half-migrated
-                         control here is a second place to do the same job. -->
+                         What is left in this block is the boards chip row
+                         above and the household panel settings on the right,
+                         and B3 takes both. Nothing stays behind. -->
                 </div>
 
                 <div>
@@ -4650,18 +4611,28 @@
                     if (from) this.duplicatePage(from);
                 },
 
-                addPage() {
+                async addPage() {
+                    // ASK FIRST, then slugify what they said. Creating a board
+                    // called "New board" and slugging that left this household
+                    // with a board named "House Monitor" living at
+                    // /board/new-board — the address is a bookmark somebody
+                    // types into a tablet, and it was derived from a
+                    // placeholder nobody chose. The slug never follows a later
+                    // rename (that would break the bookmark); it is only ever
+                    // taken from the name at the moment the board is made.
+                    const name = await promptInput('New board',
+                        'What is this board called?',
+                        { placeholder: 'Hallway', okText: 'Create' });
+                    if (name === null) return;
                     const pages = this.draft.panel_pages || (this.draft.panel_pages = []);
-                    const fresh = this.blankPage('New board', '');
-                    // The slug is the ADDRESS, so it is derived here rather
-                    // than left to the server: the editor prints /board/<slug>
-                    // under the name, and a field that shows nothing until you
-                    // save is a field nobody trusts. The server re-derives and
-                    // de-duplicates anyway, which is what makes this safe to be
-                    // a guess.
+                    const fresh = this.blankPage((name || '').trim() || 'Board', '');
                     fresh.slug = this.freshSlug(fresh.name);
                     pages.push(fresh);
                     this.pageIndex = pages.length - 1;
+                    // Straight into its settings: a board with no tiles is not
+                    // a thing to look at yet, and its picture and grid are the
+                    // next two decisions anybody makes.
+                    this.boardSettings = true;
                 },
 
                 // A slug nothing else has claimed — checked against the SHIPPED
@@ -5067,6 +5038,7 @@
                 editingTile: null,
                 tileEditing: null,      // the TILE instance being edited
                 cardPicking: null,      // the container tile being added to
+                boardSettings: false,   // the board's own settings, open
 
                 openCardEditor(tileId, drawnId) {
                     const cards = this._cardsOf(tileId);
@@ -5097,6 +5069,31 @@
                     const at = cards ? cards.findIndex(x => x.id === c.id) : -1;
                     if (at >= 0) this.removeCard(w, at);
                     await this.closeCardEditor();
+                },
+
+                // The BOARD's settings. Points the editor at the board being
+                // LOOKED AT before opening — the same lock `startArrange` has,
+                // and for the same reason: renaming the board you are standing
+                // on should not rename a different one because the draft
+                // happened to be parked on index 0.
+                openBoardSettings() {
+                    if (this.pageSlug) {
+                        const i = (this.draft.panel_pages || [])
+                            .findIndex(p => p.slug === this.pageSlug);
+                        if (i >= 0) this.pageIndex = i;
+                    }
+                    this.iconPicking = false;
+                    this.boardSettings = true;
+                },
+
+                async closeBoardSettings() {
+                    this.boardSettings = false;
+                    this.iconPicking = false;
+                    // Saved on close rather than on a button somewhere else:
+                    // the grid numbers change what the board looks like, and
+                    // a change you have to go and confirm elsewhere is the
+                    // form this arc is dismantling.
+                    await this.save();
                 },
 
                 // The TILE's own settings, reached from the ✎ on the tile

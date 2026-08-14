@@ -1330,10 +1330,16 @@ def scenario_a_page_is_configured_in_one_place():
     check('panel_page_backgrounds[slug]' not in row,
           "the shelf row edits a board's picture again — that is the second "
           "field for one setting, and the board's own is the real one")
-    # The board's settings own it, next to the board's name and address.
-    board_box = setup[:setup.index('Tiles on <span')]
+    # The board's settings own it, next to the board's name and address —
+    # which since v2.231.0 is the ⚙ Settings OVERLAY rather than a card in
+    # this form. Same claim, one surface along.
+    board_box = tpl[tpl.index("<!-- ── The BOARD's settings, over the board."):]
+    board_box = board_box[:board_box.index('<!-- The card picker')]
     check("setPageField('background'" in board_box,
           "a board's own settings cannot set its picture")
+    check("setPageField('background'" not in setup,
+          "the setup form still edits a board's picture, so there are two "
+          "places again — the thing this scenario exists to prevent")
     for control in ('move(draft.panel_tabs', 'panel_tabs.splice'):
         check(control in row, f"the row lost its {control} control in the merge")
 

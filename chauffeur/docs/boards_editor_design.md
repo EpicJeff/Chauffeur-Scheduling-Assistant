@@ -329,17 +329,31 @@ tile; both lists deleted.
 
 Target: **v2.230.0**
 
-## B2 — Board settings overlay
+## B2 — Board settings overlay ✅ SHIPPED v2.231.0
 
-- One overlay: **name, icon, slug, background, columns, row height, gap**, plus
-  the agenda-days field. Keep the gutter-divisibility warning and the "going
-  from 12 to 48 makes every tile a quarter as wide" warning.
-- **Slugify the name on creation.** The slug stays editable here behind an
-  explicit warning and **never auto-follows a rename** — it is in bookmarks,
-  `?tabs=` strings, HA dashboard iframes, and the `board:` shelf key.
-- **Deletes:** the board identity card and the grid fields from `#panel-setup`.
+- One overlay behind **⚙ Settings**, beside ✎ Edit: **name, icon, address,
+  picture, columns, row height, gutter**, plus Delete/Reset. Both warnings kept
+  (doubling the columns halves every tile; the gutter-divisibility note). The
+  agenda-days field is gone rather than moved — it became a per-card option in
+  v2.229.2.
+- It **saves on close**, not from a button elsewhere. A change you have to go
+  and confirm somewhere else is the form this arc is dismantling.
+- It **points the editor at the board being looked at** before opening — the
+  same lock `startArrange` has, so renaming the board you are standing on
+  cannot rename whichever one the draft was parked on.
+- **Slugify the name on creation.** ✅ `addPage` now ASKS for the name first and
+  slugs that. This household has a board called "House Monitor" living at
+  `/board/new-board` precisely because the slug came from a placeholder nobody
+  chose. The slug stays editable in the overlay and **never auto-follows a
+  rename** — it is in bookmarks, `?tabs=` strings, HA dashboard iframes, and
+  the `board:` shelf key. Creating a board opens its settings straight away.
+- **Deleted:** the identity card and the three grid fields from `#panel-setup`
+  (190 lines). `setPageField`/`setPageSlug` appear nowhere in that form now,
+  and a test asserts it.
 
-Target: **v2.231.0**
+**`#panel-setup` is down to 408 lines and eight sections**, all of them B3's:
+Boards (chip row) · Shelf buttons · What a tap may do · Background · Pictures
+for the app's boards · Theme · Return home when idle · Screensaver.
 
 ## B3 — The Boards tab
 

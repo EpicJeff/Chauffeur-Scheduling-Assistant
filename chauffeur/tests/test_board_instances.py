@@ -239,6 +239,47 @@ def scenario_the_calendar_tile_reads_its_own_day_count():
               f"a {n}-day tile did not say so: {data}")
 
 
+def scenario_the_board_is_configured_over_the_board():
+    """Name, icon, address, picture and the grid, in an overlay over the board
+    they describe — a column count only means something next to the tiles it is
+    dividing. And nothing of it is left in the form, which is being dismantled
+    rather than reorganised."""
+    with open(os.path.join(TPL, 'home.html'), encoding='utf-8') as fh:
+        tpl = fh.read()
+    ov = tpl[tpl.index("<!-- ── The BOARD's settings, over the board."):]
+    ov = ov[:ov.index('<!-- The card picker')]
+    for needs, why in (("setPageField('name'", 'name'),
+                       ("setPageField('icon'", 'icon'),
+                       ('setPageSlug(', 'address'),
+                       ("setPageField('background'", 'picture'),
+                       ("setPageField('columns'", 'columns'),
+                       ("setPageField('row_height'", 'row height'),
+                       ("setPageField('gap'", 'gutter'),
+                       ('removePage()', 'delete/reset')):
+        check(needs in ov, f"the board settings overlay cannot set {why}")
+
+    # And the form keeps NONE of it. Bounded at the control-center include,
+    # which is where this page's MARKUP ends — running to EOF would sweep in
+    # the whole component script and match every function definition.
+    form = tpl[tpl.index('<!-- ── Panel setup'):]
+    form = form[:form.index('control_center.html')]
+    for gone in ("setPageField('columns'", "setPageField('row_height'",
+                 "setPageField('gap'", "setPageField('name'",
+                 "setPageField('background'", 'setPageSlug('):
+        check(gone not in form,
+              f"`{gone}` is still in the setup form — that block is being "
+              f"dismantled, and a control left in it is a second place to do "
+              f"a job the board already does")
+
+    # A new board is NAMED first and slugged from that name. This household
+    # has a board called "House Monitor" living at /board/new-board, because
+    # the slug was derived from a placeholder nobody chose.
+    add = tpl[tpl.index('async addPage()'):]
+    add = add[:add.index('\n                },')]
+    check('promptInput(' in add and 'freshSlug(fresh.name)' in add,
+          "a new board still takes its address from a placeholder name")
+
+
 def scenario_adding_a_tile_shows_the_tile():
     """Add and remove are not gated on Save.
 
