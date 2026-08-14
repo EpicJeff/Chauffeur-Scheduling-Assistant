@@ -150,6 +150,14 @@ def _board(hero=None):
             # both draws it twice.
             {'id': 'meals', 'type': 'meals', 'icon': '🍽️', 'label': "Tonight's plate",
              'data': {'empty': 'Nothing pinned for tonight yet.'}},
+            # The Moments PAGE's gallery, as the Moments board draws it:
+            # config only, because the card fetches its own history.
+            {'id': 'gallery', 'type': 'moments_gallery', 'icon': '🖼️',
+             'label': 'Moments', 'data': {
+                'events': 2, 'interactive': True, 'lightbox': True,
+                'tile_width': 260,
+                'show': {'count': True, 'who': True, 'when': True,
+                         'body': True, 'reactions': True}}},
             {'id': 'map', 'type': 'map', 'icon': '🗺️', 'label': 'Where everyone is', 'data': {
                 'mapped': 1,
                 'people': [{'member_id': 'm1', 'name': 'Sam', 'color_code': '#ef4444',
@@ -212,6 +220,23 @@ const routes = {
   'api/panel/profile': { theme: 'dark', tabs: [], widgets: [], backgrounds: {}, idle_seconds: 180 },
   // The calendar CARD fetches its own month; nothing is shipped in the board
   // payload for it, which is the point of the grid views.
+  // The gallery card fetches its own history, both levels — which is the
+  // point of it: none of this can ride in the board payload.
+  'api/presence/moment-events': { total: 2, has_more: false, offset: 0, items: [
+    { channel_id: 'ch1', event_title: 'Ballet recital', count: 3,
+      latest_ts: 1755000000, cover_url: '/api/media/a.jpg',
+      cover_media_url: '/api/media/a.jpg', cover_kind: 'photo',
+      sender_names: ['Vovo'] },
+    { channel_id: 'ch2', event_title: 'Swim meet', count: 1,
+      latest_ts: 1754900000, cover_url: '/api/media/b.jpg',
+      cover_media_url: '/api/media/b.jpg', cover_kind: 'video',
+      sender_names: ['Sam'] } ] },
+  'api/presence/event-moments': { total: 3, has_more: false, offset: 0,
+    event_title: 'Ballet recital', channel_id: 'ch1', items: [
+      { id: 'm1', body: 'She nailed it', sender_name: 'Vovo', ts: 1755000000,
+        kind: 'photo', poster_url: '/api/media/a.jpg',
+        media_url: '/api/media/a.jpg', event_title: 'Ballet recital',
+        reactions: {} } ] },
   'api/schedule': { events: [], assignments: {}, drivers: [], passengers: [],
                     members: [], calendar_metadata: {}, scheduled_errands: [],
                     car_assignments: {}, cars: [], true_unassigned: [],
@@ -258,8 +283,35 @@ w.document.addEventListener('DOMContentLoaded', () => {
   w.document.head.appendChild(s);
 });
 
-setTimeout(() => {
+setTimeout(async () => {
   const doc = w.document;
+  const settle = () => new Promise(r => setTimeout(r, 120));
+
+  // The gallery is driven BEFORE the snapshot, and awaited between taps:
+  // every level of it is a fetch, so a synchronous click-then-read would only
+  // ever see "Loading…" and would pass just as happily against a card that
+  // never loaded anything.
+  const galleryProbe = await (async () => {
+    const el = doc.getElementById('board-moments-gallery');
+    if (!el) return null;
+    const events = [...el.querySelectorAll('button')]
+      .map(b => (b.textContent || '').replace(/\s+/g, ' ').trim());
+    const first = el.querySelector('button');
+    if (first) first.click();
+    await settle();
+    const after = el.textContent.replace(/\s+/g, ' ').trim();
+    const back = [...el.querySelectorAll('button')]
+      .find(b => /All moments/.test(b.textContent || ''));
+    if (back) back.click();
+    await settle();
+    return {
+      events: events,
+      opened: after,
+      hadBack: !!back,
+      backHome: el.textContent.replace(/\s+/g, ' ').trim(),
+    };
+  })();
+
   // Mount points carry the INSTANCE id now, so two driving tiles are two
   // elements rather than two claims on one.
   const tl = doc.getElementById('board-timeline-drives');
@@ -319,6 +371,7 @@ setTimeout(() => {
                boxed: b.tileFills(b.tiles().find(t => t.id === 'map')),
                style: el.getAttribute('style') || '' };
     })(),
+    gallery: galleryProbe,
     map: { mounted: !!doc.getElementById('board-map-map'),
            // A display-only map must not take the tap the tile's door needs.
            quiet: /pointer-events:\s*none/.test(
@@ -601,7 +654,8 @@ def scenario_the_board_draws_without_throwing():
     # label its <a> answers with is the one INSIDE the band — hero_card.html's
     # "Happening now" — which is itself the proof the band drew.
     check(got['tiles'] == ['Happening now', 'The rest of the day', "What's coming",
-                           "Tonight's plate", 'Where everyone is', 'Mornings'],
+                           "Tonight's plate", 'Moments', 'Where everyone is',
+                           'Mornings'],
           f"the tiles that came back: {got['tiles']}")
 
 
@@ -861,6 +915,35 @@ def scenario_the_map_tile_is_only_a_map():
     check(got['map']['quiet'],
           "a display-only map takes pointer events, so it eats the tap that "
           "opens the Map page")
+
+
+def scenario_the_gallery_card_drills_in_and_comes_back():
+    """The Moments board drew the home board's mosaic — the last few photos —
+    where the page draws a block per ACTIVITY that opens that activity's own
+    grid. Both levels have to be reachable from a TILE, and there has to be a
+    way back: the page had a sticky bar of its own and a card had nothing, so
+    drilling into an event on a wall panel was a one-way trip until somebody
+    reloaded the board.
+
+    Driven the way a thumb drives it: tap the first activity, look at what
+    came back, tap the way out, confirm the activities are there again.
+    """
+    got = _run()
+    if got is None:
+        return
+    g = got['gallery']
+    check(g is not None, "the gallery card never mounted on the board")
+    check(any('Ballet recital' in e for e in g['events']),
+          f"the top level is not one block per activity: {g['events']}")
+    check(any('3 moments' in e for e in g['events']),
+          f"an activity block does not say how much is in it: {g['events']}")
+    check('She nailed it' in g['opened'],
+          f"tapping an activity did not open its moments: {g['opened'][:200]}")
+    check(g['hadBack'],
+          "there is no way back to the activities — drilling in on a wall "
+          "panel is a one-way trip")
+    check('Ballet recital' in g['backHome'] and 'Swim meet' in g['backHome'],
+          f"the way back did not land on the activities: {g['backHome'][:200]}")
 
 
 def scenario_a_fill_tile_takes_the_room_that_is_left():

@@ -284,22 +284,30 @@ def scenario_a_list_is_as_tall_as_its_list():
 
     So the list-shaped tiles say `auto` and the client measures them. The ones
     whose content is laid out INTO the tile — a map, a timeline, a mosaic —
-    keep a stated `rows`, because there the height decides the content.
+    may not: there the height decides the content, so they take a stated
+    `rows` or, since v2.225.0, `fill`.
+
+    `fill` is the third answer and it is the right one for a single-subject
+    board: the tile runs from where it lands down to the shelf, on any
+    display. It is legal for BOTH shapes — it hands the tile a height, which
+    is exactly what content that cannot fit is asking for — so the only thing
+    still forbidden is a laid-in tile set to `auto`, which collapses it.
     """
-    laid_in = {'map', 'drives', 'calendar', 'trips', 'moments'}
+    laid_in = {'map', 'drives', 'calendar', 'trips', 'moments',
+               'moments_gallery'}
     for slug, spec in home_board.BUILTIN_PAGES.items():
         page = home_board.builtin_page(slug, {})
         for w in page['widgets']:
             span = page['spans'].get(w['id']) or {}
             if w['type'] in laid_in:
-                check(span.get('rows'),
+                check(span.get('rows') or span.get('fill'),
                       f"{slug}'s {w['type']} has no height, and its content "
                       f"cannot supply one")
                 check(not span.get('auto'),
                       f"{slug}'s {w['type']} is set to fit, which collapses a "
                       f"tile whose content is drawn into it")
             else:
-                check(span.get('auto'),
+                check(span.get('auto') or span.get('fill'),
                       f"{slug}'s {w['type']} is a list on a typed height — it "
                       f"will cut its content off or leave a band of empty panel")
 
@@ -535,6 +543,129 @@ def scenario_a_generic_tile_can_wear_its_own_icon():
     check('instanceIcon(w)' in tpl and 'instanceIcon(c)' in tpl,
           "the editor's rows still wear the type's emoji, so three cameras "
           "are three identical rows")
+
+
+def scenario_the_moments_board_is_the_moments_page():
+    """The last board still answering the wrong question.
+
+    `moments` (the tile) and the Moments PAGE are two different drawings, and
+    only one of them belongs on a board about moments. The tile is a GLANCE —
+    a mosaic of the last few photos, right beside eight other tiles on a home
+    board. The page is a two-level gallery: a block per ACTIVITY, tapping one
+    opens that activity's photos, with a way back. `?panel=true` on /moments
+    drew the mosaic, so a family walking up to the Moments screen got "here
+    are six recent pictures" where the page says "here is every activity you
+    have ever shared, pick one."
+
+    This is the same trap as v2.221.0's kid digest, from the other direction:
+    there a stale tile drawing had never been seen on a wall, here a perfectly
+    good tile drawing was put on a wall that wanted a different one. **A tile
+    that summarises a page is not a substitute for the page.**
+    """
+    page = home_board.builtin_page('moments', {})
+    types = [w['type'] for w in page['widgets']]
+    check(types == ['moments_gallery'],
+          f"the Moments board is not the Moments page: {types}")
+    check(page['widgets'][0].get('require'),
+          "the Moments board can lose the only card it is about")
+    # It pages on scroll, so a stated number of rows is an arbitrary window
+    # onto a history that has no length. Fill is the honest answer.
+    span = page['spans']['moments_gallery']
+    check(span.get('fill') and not span.get('auto'),
+          f"the gallery is not filling the screen it is the only thing on: {span}")
+
+    # The GLANCE survives. It is the right card for a home board and the
+    # conversion must not have quietly replaced it.
+    keys = {w['key'] for w in home_board.WIDGETS}
+    check('moments' in keys and 'moments_gallery' in keys,
+          "the mosaic and the gallery are not both offered")
+
+    # ONE drawing, in a component both callers mount — the page must not keep
+    # a private copy, which is how a wall and a browser drift apart.
+    gal = tpl_source.read('components/moments_gallery.html')
+    check('window.MomentsGallery' in gal and 'function mount' in gal,
+          "the gallery is not mountable, so only one surface can have it")
+    # The RAW file, not `tpl_source.read` — that inlines includes, so the
+    # component's own `renderEvents` would come back as the page's and this
+    # assertion would pass while proving nothing.
+    pagesrc = open(os.path.join(TPL, 'moments.html'), encoding='utf-8').read()
+    check('MomentsGallery.mount' in pagesrc,
+          "the Moments page draws its own gallery again")
+    for gone in ('renderEvents', 'loadEventsPage', 'refreshEventInPlace'):
+        check(gone not in pagesrc,
+              f"the page kept its own {gone} — two gallery renderers is how "
+              f"the wall and the browser start disagreeing")
+
+    # The way back up belongs to the COMPONENT, not to whichever caller
+    # remembered one. The page had a sticky bar; a card had nothing, so
+    # drilling into an event on a wall panel was a one-way trip.
+    check('All moments' in gal,
+          "the gallery has no way back to the activities")
+    board = tpl_source.read('home.html')
+    check('board-moments-' in board and 'syncGalleries' in board,
+          "nothing on the board mounts the gallery")
+    # A board tile must never push history: the panel's back gesture would
+    # undo a tap inside one card, and two gallery cards would fight over one
+    # stack. The PAGE does push, so a phone's back swipe pops a level.
+    sync = board[board.index('syncGalleries() {'):]
+    sync = sync[:sync.index(chr(10) + '                },')]
+    check('history: false' in sync,
+          "a gallery card hijacks the browser's history")
+    check('history: true' in pagesrc,
+          "the Moments page stopped popping a level on the back gesture")
+    # And it is not ALSO a door — its own taps are the point.
+    check("'moments_gallery'" in board[board.index('INTERACTIVE_TILES:'):
+                                       board.index('INTERACTIVE_TILES:') + 160],
+          "an interactive gallery is still an <a> around its own taps")
+
+
+def scenario_the_gallery_card_ships_config_not_history():
+    """Rule 4: an interactive card self-fetches. This one has no choice — it
+    is the family's whole history, two levels deep, paged on scroll, and none
+    of that can ride in a board payload five other cards are waiting on.
+
+    What the builder DOES owe is the one fact the client cannot answer for
+    itself: whether this household has any moments at all. Rule 1 hides a
+    feature nobody has set up, and by the time the component has fetched
+    enough to know, it has already drawn an empty grid where a tile should not
+    have been.
+    """
+    import datetime
+    from services import presence
+    now = datetime.datetime(2026, 8, 13, 12, 0)
+
+    real = presence.moment_events
+    try:
+        presence.moment_events = lambda offset=0, limit=24: {'items': [], 'total': 0}
+        check(home_board._tile_moments_gallery(now, config={}) is None,
+              "a household with no moments is shown a gallery tile anyway")
+
+        presence.moment_events = lambda offset=0, limit=24: {'items': [], 'total': 7}
+        data = home_board._tile_moments_gallery(now, config={})
+        check(data and data['events'] == 7,
+              f"the builder did not report what it found: {data}")
+        # No moments in the payload. If this ever carries `items`, the whole
+        # history is being pushed through a 20-second cache.
+        check('items' not in data and 'moments' not in data,
+              f"the gallery card is shipping history in the board payload: {data}")
+        check(data['interactive'] is True and data['lightbox'] is True,
+              f"a gallery nobody configured came up inert: {data}")
+        check(data['show'] == {'count': True, 'who': True, 'when': True,
+                               'body': True, 'reactions': True},
+              f"the conversion paradigm's defaults are not all on: {data['show']}")
+
+        off = home_board._tile_moments_gallery(
+            now, config={'interactive': False, 'show_who': False,
+                         'tile_width': 400})
+        check(off['interactive'] is False and off['show']['who'] is False
+              and off['tile_width'] == 400,
+              f"display-only and the toggles did not stick: {off}")
+        # Clamped, not trusted: a stored 9999 would make one block per screen.
+        wide = home_board._tile_moments_gallery(now, config={'tile_width': 9999})
+        check(wide['tile_width'] == 600,
+              f"the block width is unbounded: {wide['tile_width']}")
+    finally:
+        presence.moment_events = real
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

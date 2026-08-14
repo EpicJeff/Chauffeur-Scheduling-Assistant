@@ -1,0 +1,459 @@
+<!-- ── THE moments gallery, once.
+
+     Two levels: a card per EVENT, then that event's own moments, with a way
+     back up. No time limit — moments are exempt from the chat retention cap,
+     so this is the family's whole history; both levels page on scroll and load
+     media by URL (never inline data URLs) so opening it is cheap however many
+     seasons pile up.
+
+     It lived inside moments.html until v2.226.0, which meant the Moments BOARD
+     could not have it: `?panel=true` on /moments drew the `moments` card
+     instead, and that card is a different question — a flat mosaic of the last
+     few photos, right on a home board beside eight other tiles and wrong as
+     the whole of the Moments screen. A family walking up to the Moments panel
+     got "here are six recent pictures" where the page says "here is every
+     activity you have ever shared, pick one". Reported exactly that way.
+
+     So it is a component, and the page is now one of its two callers. Plain
+     JS with a mount function rather than Alpine macros, deliberately: this
+     drawing is imperative and stateful in a way the errand and chore lists are
+     not — two levels, two paging cursors, an IntersectionObserver, an
+     in-place refresh that must not disturb a reader's scroll. That is the same
+     shape as the timeline, the map and the calendar, and those are mounted by
+     the board the same way (syncTimeline / syncMap / syncCalendars).
+
+         const g = MomentsGallery.mount(el, opts);
+         g.showEvents(); g.showEvent(id); g.refresh(); g.destroy();
+
+     Everything the two callers genuinely differ about is an option, and the
+     list is short: whether a tap drills in at all, whether the browser's back
+     button should pop a level (the PAGE yes, a card on a wall no — a board
+     tile hijacking history would send the panel to whatever it was showing
+     before), how wide a tile wants to be, and which parts of the caption to
+     draw. -->
+<style>
+    .mg-media { width: 100%; height: 100%; object-fit: cover; background: #000; }
+    /* The card's surface is the board's, not this component's — a gallery
+       inside a tile must not draw a second panel behind every cell. The page
+       keeps the grey it always had. */
+    .mg-tile { background: rgba(31, 41, 55, 0.6); border-color: rgba(131, 24, 67, 0.4); }
+    html[data-panel] .mg-tile {
+        background: var(--panel-card-lo, rgba(31, 41, 55, 0.6));
+        border-color: var(--panel-line, rgba(131, 24, 67, 0.4));
+        color: var(--panel-text, #e5e7eb);
+    }
+    html[data-panel] .mg-dim { color: var(--panel-dim, #9ca3af); }
+</style>
+<script>
+    window.MomentsGallery = (function () {
+
+        // A soft play glyph, not the OS emoji (which renders differently on
+        // every panel and looks like a sticker).
+        const PLAY_BADGE = `
+            <span class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span class="flex items-center justify-center w-12 h-12 rounded-full bg-black/55 backdrop-blur-sm ring-1 ring-white/25">
+                    <svg viewBox="0 0 24 24" class="w-6 h-6 translate-x-[1px]" fill="white" opacity="0.95">
+                        <path d="M8 5.5v13a1 1 0 001.53.85l10-6.5a1 1 0 000-1.7l-10-6.5A1 1 0 008 5.5z"/>
+                    </svg>
+                </span>
+            </span>`;
+
+        function esc(s) {
+            const d = document.createElement('div');
+            d.textContent = s == null ? '' : String(s);
+            return d.innerHTML;
+        }
+
+        function dayLabel(ts) {
+            const d = new Date(ts * 1000), now = new Date();
+            const startOf = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+            const diff = Math.round((startOf(now) - startOf(d)) / 86400000);
+            if (diff === 0) return 'Today';
+            if (diff === 1) return 'Yesterday';
+            if (diff > 1 && diff < 7) return d.toLocaleDateString([], { weekday: 'long' });
+            if (d.getFullYear() === now.getFullYear())
+                return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+            return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+
+        function timeLabel(ts) {
+            return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        // A thumbnail that fails (a missing poster frame) must never leave an
+        // empty tile — fall back to the media itself. Global because it is
+        // reached from an `onerror` attribute in generated markup, and shared
+        // with moments_hearth's identical need.
+        window.momentThumbFallback = window.momentThumbFallback || function (img) {
+            const src = img.getAttribute('data-fallback');
+            if (!src || img.dataset.fellBack) return;
+            img.dataset.fellBack = '1';
+            const v = document.createElement('video');
+            v.src = src; v.muted = true; v.playsInline = true;
+            v.preload = 'metadata'; v.className = img.className;
+            img.replaceWith(v);
+        };
+
+        // Instances are addressed by id from generated onclick attributes —
+        // the same reason the hearth's rail is index-addressed. Two galleries
+        // on one board (the card, plus a second card filtered differently) must
+        // not answer each other's taps.
+        const INSTANCES = {};
+        let seq = 0;
+
+        window.__mgTap = function (id, kind, arg) {
+            const g = INSTANCES[id];
+            if (!g) return;
+            if (kind === 'event') g.showEvent(arg);
+            else if (kind === 'back') g.back();
+            else if (kind === 'moment') g.openMoment(arg);
+        };
+
+        function mount(el, opts) {
+            opts = Object.assign({
+                apiBase: '',
+                scroller: null,       // what actually scrolls; null = the element
+                tileMin: '220px',
+                interactive: true,    // tapping an event opens its moments
+                lightbox: true,       // tapping a moment opens it full screen
+                history: false,       // push/pop browser history on drill-in
+                poll: 0,              // seconds; 0 = never
+                backBleed: '',        // extra classes for the sticky back bar
+                eventsLimit: 24,
+                momentsLimit: 30,
+                show: {},
+                onView: null,
+            }, opts || {});
+            const show = Object.assign({
+                count: true, who: true, when: true, body: true, reactions: true,
+            }, opts.show || {});
+
+            const id = 'mg' + (++seq);
+            const url = u => `${opts.apiBase}${String(u || '').replace(/^\//, '')}`;
+            const scroller = () => opts.scroller || el;
+
+            const g = {
+                el: el, id: id, view: 'events',
+                evOffset: 0, evMore: true, evItems: [],
+                mOffset: 0, mMore: true, mItems: [], mChannel: null, mTitle: '',
+                mTotal: 0, evTotal: 0,
+                loading: false, dead: false,
+            };
+            INSTANCES[id] = g;
+
+            // Tiles ALWAYS render a still image — never a <video>. Clips carry
+            // an ffmpeg poster frame, so a grid of 200 clips costs 200
+            // thumbnails rather than 200 video streams (and never shows the
+            // black box browsers paint for preload=metadata).
+            function thumb(posterUrl, kind, fullUrl) {
+                return `<img src="${url(posterUrl)}" loading="lazy" data-fallback="${url(fullUrl || posterUrl)}"
+                            onerror="momentThumbFallback(this)" class="mg-media">`
+                    + (kind === 'video' ? PLAY_BADGE : '');
+            }
+
+            function reactionPills(m) {
+                const r = m.reactions || {};
+                const keys = Object.keys(r).filter(e => (r[e] || []).length);
+                if (!keys.length) return '';
+                // Display-only: a wall panel has no signed-in identity to
+                // attribute a tap to (reacting lives in the PWA).
+                return `<div class="flex gap-1 flex-wrap mt-1">` + keys.map(e =>
+                    `<span class="text-[11px] leading-none px-1.5 py-0.5 rounded-full bg-gray-800 border border-gray-700">${e}${r[e].length > 1 ? `<span class="text-[10px] text-gray-400 ml-0.5">${r[e].length}</span>` : ''}</span>`
+                ).join('') + `</div>`;
+            }
+
+            function gridOpen() {
+                return `<div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax(${opts.tileMin}, 1fr))">`;
+            }
+
+            // THE WAY BACK UP, and it belongs to the component rather than to
+            // whichever caller remembered one. The page had a sticky bar of its
+            // own; a card had nothing, so drilling into an event on a wall
+            // panel was a one-way trip until somebody reloaded the board.
+            // Sticky against the nearest scrolling ancestor, which is the page
+            // scroller in one caller and the tile's own scroll box in the
+            // other — the same rule works for both without knowing which.
+            function backBar() {
+                if (g.view !== 'event') return '';
+                return `<div class="sticky top-0 z-20 py-2 mb-2 flex items-center gap-3
+                                    bg-gray-900/90 backdrop-blur-sm ${opts.backBleed}">
+                    <button type="button" onclick="__mgTap('${id}','back')"
+                        class="shrink-0 flex items-center gap-1.5 pl-2 pr-3.5 py-1.5 rounded-full bg-gray-800/90
+                               border border-pink-500/40 text-pink-200 hover:text-white hover:border-pink-400
+                               text-sm font-bold transition-colors">
+                        <svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+                        </svg>
+                        All moments
+                    </button>
+                    <span class="text-sm font-bold text-white truncate">${esc(g.mTitle)}</span>
+                    ${show.count && g.mTotal ? `<span class="text-xs mg-dim shrink-0">${g.mTotal} moment${g.mTotal !== 1 ? 's' : ''}</span>` : ''}
+                </div>`;
+            }
+
+            function renderEvents() {
+                if (!g.evItems.length) {
+                    el.innerHTML = `<div class="mg-tile rounded-2xl border p-8 text-center">
+                        <div class="text-4xl mb-3">📸</div>
+                        <div class="font-bold mb-1">No moments yet</div>
+                        <div class="mg-dim text-sm">When someone's at a game or a recital, Chauffeur asks them
+                            to share a moment — it'll show up here for everyone who couldn't be there.</div>
+                    </div>`;
+                    return;
+                }
+                const tap = opts.interactive;
+                el.innerHTML = gridOpen() + g.evItems.map(e => `
+                    <${tap ? 'button type="button"' : 'div'}
+                        ${tap ? `onclick="__mgTap('${id}','event','${esc(e.channel_id)}')"` : ''}
+                        class="text-left mg-tile rounded-2xl border overflow-hidden
+                               ${tap ? 'hover:border-pink-500/60 transition-colors' : ''}">
+                        <div class="relative w-full" style="aspect-ratio: 4/3">
+                            ${thumb(e.cover_url, e.cover_kind, e.cover_media_url)}
+                            ${show.count ? `<span class="absolute top-2 right-2 text-[11px] font-bold bg-black/70 text-white px-2 py-0.5 rounded-full">
+                                ${e.count} moment${e.count !== 1 ? 's' : ''}</span>` : ''}
+                        </div>
+                        <div class="p-3">
+                            <div class="font-bold text-sm truncate">${esc(e.event_title)}</div>
+                            ${show.when || show.who ? `<div class="text-[11px] mg-dim mt-1">${
+                                show.when ? dayLabel(e.latest_ts) : ''}${
+                                show.who && e.sender_names.length
+                                    ? (show.when ? ' · ' : '') + esc(e.sender_names.join(', ')) : ''
+                            }</div>` : ''}
+                        </div>
+                    </${tap ? 'button' : 'div'}>`).join('') + `</div>`;
+            }
+
+            function renderMoments() {
+                const tap = opts.lightbox;
+                el.innerHTML = backBar() + gridOpen() + g.mItems.map(m => `
+                    <${tap ? 'button type="button"' : 'div'}
+                        ${tap ? `onclick="__mgTap('${id}','moment','${esc(m.id)}')"` : ''}
+                        class="text-left mg-tile rounded-2xl border overflow-hidden
+                               ${tap ? 'hover:border-pink-500/60 transition-colors' : ''}">
+                        <div class="relative w-full" style="aspect-ratio: 4/3">${thumb(m.poster_url, m.kind, m.media_url)}</div>
+                        <div class="p-3">
+                            ${show.body && m.body ? `<div class="text-[13px]">${esc(m.body)}</div>` : ''}
+                            ${show.who || show.when ? `<div class="text-[11px] mg-dim mt-1">${
+                                show.who ? 'from ' + esc(m.sender_name) : ''}${
+                                show.when ? (show.who ? ' · ' : '') + dayLabel(m.ts) + ' ' + timeLabel(m.ts) : ''
+                            }</div>` : ''}
+                            ${show.reactions ? reactionPills(m) : ''}
+                        </div>
+                    </${tap ? 'button' : 'div'}>`).join('') + `</div>`;
+            }
+
+            function announce() {
+                if (opts.onView) opts.onView({
+                    view: g.view, title: g.mTitle,
+                    total: g.view === 'event' ? g.mTotal : g.evTotal,
+                });
+            }
+
+            async function loadEventsPage() {
+                if (g.dead || g.loading || !g.evMore) return;
+                g.loading = true;
+                try {
+                    const res = await fetch(`${opts.apiBase}api/presence/moment-events?offset=${g.evOffset}&limit=${opts.eventsLimit}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        g.evItems = g.evItems.concat(data.items || []);
+                        g.evMore = !!data.has_more;
+                        g.evTotal = data.total || 0;
+                        g.evOffset += opts.eventsLimit;
+                        if (g.view === 'events') renderEvents();
+                        announce();
+                    }
+                } catch (e) { }
+                g.loading = false;
+            }
+
+            async function loadMomentsPage() {
+                if (g.dead || g.loading || !g.mMore || !g.mChannel) return;
+                g.loading = true;
+                try {
+                    const res = await fetch(`${opts.apiBase}api/presence/event-moments?channel_id=${encodeURIComponent(g.mChannel)}&offset=${g.mOffset}&limit=${opts.momentsLimit}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        g.mItems = g.mItems.concat(data.items || []);
+                        g.mMore = !!data.has_more;
+                        g.mOffset += opts.momentsLimit;
+                        g.mTitle = data.event_title || 'Moments';
+                        g.mTotal = data.total || 0;
+                        if (g.view === 'event') renderMoments();
+                        announce();
+                    }
+                } catch (e) { }
+                g.loading = false;
+            }
+
+            g.showEvent = function (channelId, fromPop) {
+                if (!opts.interactive) return;
+                g.view = 'event';
+                g.mChannel = channelId; g.mItems = []; g.mOffset = 0;
+                g.mMore = true; g.mTitle = ''; g.mTotal = 0;
+                el.innerHTML = `<div class="mg-dim">Loading…</div>`;
+                scroller().scrollTop = 0;
+                announce();
+                loadMomentsPage();
+                if (opts.history && !fromPop) {
+                    history.pushState({ momentsEvent: channelId }, '');
+                }
+            };
+
+            g.showEvents = function () {
+                g.view = 'events';
+                g.mChannel = null; g.mItems = []; g.mTitle = '';
+                renderEvents();
+                scroller().scrollTop = 0;
+                announce();
+            };
+
+            // One way up, whichever gesture you reach for. On the PAGE,
+            // opening an event pushes a history entry so a phone's back swipe
+            // pops it like any other screen, and this routes through history
+            // so both paths land in the same place. A board card never pushes
+            // (a tile hijacking history would send the whole panel back to
+            // whatever it was showing before), so there it is a plain return.
+            g.back = function () {
+                if (opts.history && history.state && history.state.momentsEvent) history.back();
+                else g.showEvents();
+            };
+
+            g.openMoment = function (momentId) {
+                const m = g.mItems.find(x => x.id === momentId);
+                if (!m || !opts.lightbox) return;
+                const clip = m.kind === 'video';
+                const media = clip
+                    ? `<video src="${url(m.media_url)}" poster="${url(m.poster_url)}" autoplay muted loop playsinline controls preload="auto" class="max-h-[68vh] rounded-2xl mx-auto"></video>`
+                    : `<img src="${url(m.media_url)}" class="max-h-[68vh] rounded-2xl mx-auto object-contain">`;
+                const overlay = document.createElement('div');
+                overlay.className = 'fixed inset-0 z-[210] flex items-center justify-center p-6';
+                overlay.style.background = 'rgba(0,0,0,0.88)';
+                // Same reasoning as the hearth overlay: nothing behind a
+                // full-screen lightbox is visible, so no backdrop-filter on the
+                // page should be re-blurred for every frame the clip paints.
+                overlay.innerHTML = `
+                    ${clip ? `<style>
+                        html.clip-playing *,
+                        html.clip-playing *::before,
+                        html.clip-playing *::after {
+                            -webkit-backdrop-filter: none !important;
+                            backdrop-filter: none !important;
+                        }
+                    </style>` : ''}
+                    <div class="relative text-center bg-gray-900 border border-pink-500/40 rounded-3xl shadow-2xl p-6 max-w-4xl">
+                        <div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${esc(m.event_title)}</div>
+                        ${media}
+                        ${m.body ? `<div class="text-xl text-white font-bold mt-3">${esc(m.body)}</div>` : ''}
+                        <div class="text-sm text-gray-400 mt-2">from ${esc(m.sender_name)} · ${dayLabel(m.ts)} ${timeLabel(m.ts)}</div>
+                    </div>`;
+                overlay.addEventListener('click', () => {
+                    overlay.remove();
+                    document.documentElement.classList.remove('clip-playing');
+                });
+                document.body.appendChild(overlay);
+                if (clip) document.documentElement.classList.add('clip-playing');
+            };
+
+            // Prune deletions from an OPEN event grid without disturbing it.
+            // The top level can afford to rebuild from scratch; this level
+            // cannot — a panel someone is reading must keep its scroll position
+            // and its paging state. So: re-fetch exactly the range already on
+            // screen, swap it in, restore the scroll. Without this, a panel left
+            // sitting inside an event was the one surface where a deleted
+            // moment stayed up indefinitely rather than for a minute.
+            async function refreshEventInPlace() {
+                if (g.dead || g.loading || !g.mChannel || !g.mOffset) return;
+                const channelAtStart = g.mChannel;
+                // One request, so the refreshed window is the endpoint's cap.
+                // A panel parked more than 100 moments deep keeps its tail
+                // until it navigates — not worth paging the whole way back.
+                const span = Math.min(g.mOffset, 100);
+                const keepScroll = scroller().scrollTop;
+                g.loading = true;
+                try {
+                    const res = await fetch(`${opts.apiBase}api/presence/event-moments?channel_id=${encodeURIComponent(g.mChannel)}&offset=0&limit=${span}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        // The view may have moved on while we were waiting.
+                        if (g.view === 'event' && g.mChannel === channelAtStart) {
+                            if (!data.total) {
+                                g.showEvents();       // last moment deleted
+                            } else {
+                                const items = data.items || [];
+                                // Deletions shift later moments INTO the
+                                // refreshed window, so dedupe by id before
+                                // re-attaching the un-refreshed tail.
+                                const seen = new Set(items.map(x => x.id));
+                                g.mItems = items.concat(
+                                    g.mItems.slice(span).filter(x => !seen.has(x.id)));
+                                g.mTotal = data.total;
+                                renderMoments();
+                                scroller().scrollTop = keepScroll;
+                                announce();
+                            }
+                        }
+                    }
+                } catch (e) { }
+                g.loading = false;
+            }
+
+            g.refresh = function () {
+                if (g.loading) return;
+                if (g.view === 'events') {
+                    g.evItems = []; g.evOffset = 0; g.evMore = true;
+                    loadEventsPage();
+                } else {
+                    refreshEventInPlace();
+                }
+            };
+
+            g.more = function () {
+                if (g.view === 'events') loadEventsPage(); else loadMomentsPage();
+            };
+
+            g.destroy = function () {
+                g.dead = true;
+                if (g._io) { try { g._io.disconnect(); } catch (e) { } }
+                if (g._timer) clearInterval(g._timer);
+                if (g._pop) window.removeEventListener('popstate', g._pop);
+                delete INSTANCES[id];
+            };
+
+            // Infinite scroll for whichever level is showing. The sentinel is
+            // the component's own, appended after the grid, so a caller does
+            // not have to supply one — the page did, and a card would have
+            // had to grow the same piece of furniture.
+            const sentinel = document.createElement('div');
+            sentinel.className = 'h-12';
+            el.after(sentinel);
+            g._sentinel = sentinel;
+            if (window.IntersectionObserver) {
+                g._io = new IntersectionObserver(entries => {
+                    if (entries.some(e => e.isIntersecting)) g.more();
+                }, { root: opts.scroller || null, rootMargin: '400px' });
+                g._io.observe(sentinel);
+            }
+
+            if (opts.history) {
+                g._pop = function (e) {
+                    const channelId = e.state && e.state.momentsEvent;
+                    if (channelId) g.showEvent(channelId, true);
+                    else g.showEvents();
+                };
+                window.addEventListener('popstate', g._pop);
+            }
+
+            // Unattended panels stay current on their own: the top level
+            // rebuilds outright, an open event prunes in place rather than
+            // being yanked out from under a reader.
+            if (opts.poll) g._timer = setInterval(g.refresh, opts.poll * 1000);
+
+            el.innerHTML = `<div class="mg-dim">Loading…</div>`;
+            loadEventsPage();
+            return g;
+        }
+
+        return { mount: mount };
+    })();
+</script>

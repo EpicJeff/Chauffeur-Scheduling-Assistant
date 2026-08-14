@@ -1804,6 +1804,7 @@
          second drawing of it. -->
     {% include 'components/schedule_timeline.html' %}
     {% include 'components/family_calendar.html' %}
+    {% include 'components/moments_gallery.html' %}
 
     <script>
         // The Leaflet instance lives OUTSIDE Alpine. A map is a large graph of
@@ -1812,6 +1813,12 @@
         // Keyed by INSTANCE id: the board can carry more than one map tile now,
         // and a single module variable would have had them fighting over it.
         const boardMaps = {};
+
+        // The moments galleries, outside Alpine for exactly the same reason:
+        // each one holds two paging cursors, an IntersectionObserver and a
+        // timer, and a reactive proxy would wrap all of it to watch state
+        // nothing in the markup reads.
+        const boardGalleries = {};
 
         // ── Measuring a fit-to-content tile.
         //
@@ -2161,7 +2168,8 @@
                         // rendered.
                         this.$nextTick(() => {
                             this.syncMap(); this.syncTimeline(); this.syncCards();
-                            this.syncCalendars(); this.syncAutoTiles();
+                            this.syncCalendars(); this.syncGalleries();
+                            this.syncAutoTiles();
                             this.measureFills();
                         });
                     } catch (e) { /* a wall panel keeps showing the last good board */ }
@@ -2627,7 +2635,13 @@
                 // real `height: Npx`, so it has a height of its own to fit and
                 // never belonged here. It is the one type that is drawn into
                 // its tile OR flows, decided per instance — see `fillsTile`.
-                DRAWN_TILES: ['map', 'calendar', 'ha_image', 'ha_dashboard', 'ha_card', 'web'],
+                // `moments_gallery` belongs here for a reason worth stating:
+                // it pages on scroll. There is no content height to fit — the
+                // history has no length, and asking for one would mean loading
+                // every season a family has ever shared to find out how tall
+                // it is. It takes the height it is given and scrolls inside.
+                DRAWN_TILES: ['map', 'calendar', 'moments_gallery',
+                              'ha_image', 'ha_dashboard', 'ha_card', 'web'],
 
                 // ── Two different questions, kept apart.
                 //
@@ -3048,6 +3062,56 @@
                     // A card the household removed takes its calendar with it.
                     for (const id of [...this._liveCalendars.keys()]) {
                         if (!live.has(id)) this._liveCalendars.delete(id);
+                    }
+                },
+
+                // ── The moments gallery, mounted per card.
+                //
+                // Same bookkeeping as the maps and the calendars, and for the
+                // same reasons: mount into the instance's own element, rebuild
+                // when the CONFIG changes (or a card switched to display-only
+                // in the editor would keep its taps until a reload), and
+                // destroy on the way out so a removed card does not leave an
+                // observer and a 60-second timer holding a detached node.
+                //
+                // It never re-mounts on a poll. The board refetches every
+                // minute; this component is two levels deep with its own
+                // paging and scroll position, and rebuilding it would throw
+                // somebody out of the event they were looking at once a
+                // minute. It keeps itself current instead (`poll`), which is
+                // the same in-place refresh the page uses.
+                syncGalleries() {
+                    const live = new Set();
+                    for (const tile of this.drawnTiles()
+                                           .filter(t => t.type === 'moments_gallery')) {
+                        if (!tile.data || tile.data.empty) continue;
+                        const el = document.getElementById('board-moments-' + tile.id);
+                        if (!el) continue;
+                        live.add(tile.id);
+                        const key = JSON.stringify(tile.data);
+                        const held = boardGalleries[tile.id];
+                        if (held && held.el === el && held.key === key) continue;
+                        if (held) { try { held.g.destroy(); } catch (e) { } }
+                        const g = MomentsGallery.mount(el, {
+                            apiBase: this.apiBase,
+                            scroller: el,
+                            tileMin: (tile.data.tile_width || 260) + 'px',
+                            interactive: !!tile.data.interactive,
+                            lightbox: !!tile.data.lightbox,
+                            // NEVER on a board. A tile that pushes history
+                            // makes the panel's back gesture undo a tap inside
+                            // one card, and two gallery cards would fight over
+                            // the same stack.
+                            history: false,
+                            poll: 60,
+                            show: tile.data.show || {},
+                        });
+                        boardGalleries[tile.id] = { el: el, key: key, g: g };
+                    }
+                    for (const id of Object.keys(boardGalleries)) {
+                        if (live.has(id)) continue;
+                        try { boardGalleries[id].g.destroy(); } catch (e) { }
+                        delete boardGalleries[id];
                     }
                 },
 
@@ -4768,7 +4832,7 @@
                 // drawn from the payload and have no taps at all, so only the
                 // MOUNTED views (month, week, day) can be interactive, and
                 // `grid` is how the payload says which one this is.
-                INTERACTIVE_TILES: ['drives', 'map', 'moments'],
+                INTERACTIVE_TILES: ['drives', 'map', 'moments', 'moments_gallery'],
                 opens(t) {
                     if (this.PAGELESS.includes(t.type)) return false;
                     if (t.type === 'calendar' && t.data

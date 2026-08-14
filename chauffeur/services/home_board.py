@@ -411,6 +411,44 @@ WIDGETS = [
          _opt('within_days', 'Going back', 'int', 30, min=1, max=365,
               help='Days. A wall of last summer is a screensaver, not a board.'),
      ]},
+    # ── The moments PAGE, as a card (kiosk-boards arc). `moments` above is the
+    # GLANCE — the last few photos as a mosaic, right on a home board beside
+    # eight other tiles. This is the page's own two-level gallery, and its
+    # absence is what made the Moments BOARD wrong: `?panel=true` on /moments
+    # drew the mosaic, so a family walking up to the Moments screen got "here
+    # are six recent pictures" where the page says "here is every activity you
+    # have ever shared, pick one". Reported exactly that way.
+    #
+    # Self-fetching (rule 4) and necessarily so: it is the whole history, two
+    # levels deep, paged on scroll. Nothing about that can ride in a board
+    # payload that five other cards are waiting on — which is also why this
+    # builder ships CONFIG and one fact the client cannot know for itself.
+    {'key': 'moments_gallery', 'icon': '🖼️', 'label': 'The moments gallery',
+     'heading': '',
+     'blurb': "Every activity with moments, a block each. Tapping one opens "
+              "its photos, with a way back. The Moments page's own gallery.",
+     'options': [
+         # ON by default: an inert gallery is the mosaic with extra steps, and
+         # drilling into an event is the entire point of the top level. Off,
+         # the blocks are a display and nothing opens.
+         _opt('interactive', 'Interactive', 'bool', True,
+              help='Tapping an activity opens its moments, with a button back '
+                   'to the list. Off, the blocks are a display.'),
+         _opt('lightbox', 'Photos open full screen', 'bool', True,
+              help='Inside an activity, tapping a photo opens it big.'),
+         # A wall is read from across a room; a browser is not. The page picks
+         # this from `?kiosk=true` and a card cannot, so it is asked.
+         _opt('tile_width', 'Block width', 'int', 260, min=140, max=600,
+              help='Pixels, minimum. The grid fits as many as the tile is '
+                   'wide — bigger blocks, fewer of them.'),
+         # THE CONVERSION PARADIGM: every part of the page's drawing is a
+         # toggle, all on by default, so zero-config equals the page.
+         _opt('show_count', 'How many moments', 'bool', True),
+         _opt('show_who', 'Who shared them', 'bool', True),
+         _opt('show_when', 'When', 'bool', True),
+         _opt('show_body', 'What they said', 'bool', True),
+         _opt('show_reactions', 'Reactions', 'bool', True),
+     ]},
     {'key': 'calendar', 'icon': '📅', 'label': 'Calendar',
      'heading': "What's coming",
      'blurb': "The next few days on the family calendar, drives or not.",
@@ -1653,6 +1691,42 @@ def _tile_moments(now, config=None, **_):
         return None
 
 
+def _tile_moments_gallery(now, config=None, **_):
+    """The Moments page's own gallery, as a card.
+
+    Config only, plus the one fact the client genuinely cannot answer for
+    itself: whether this household has ANY moments. Rule 1 hides a feature
+    nobody has set up, and the component cannot make that call — by the time
+    it has fetched enough to know, it has already drawn an empty grid where a
+    tile should not have been. One index read here settles it.
+    """
+    try:
+        from services import presence
+        # `limit=1` — the count is what matters and the page is thrown away.
+        total = (presence.moment_events(offset=0, limit=1) or {}).get('total', 0)
+    except Exception as e:
+        print(f"[home_board] moments gallery failed: {e}")
+        return None
+    if not total:
+        # Not an error and not empty-state prose: a household that has never
+        # shared a moment has no gallery, and the Moments BOARD says so for
+        # itself through `require` (REQUIRED_EMPTY).
+        return None
+    return {
+        'events': total,
+        'interactive': _cfg_bool(config, 'interactive', True),
+        'lightbox': _cfg_bool(config, 'lightbox', True),
+        'tile_width': _cfg_int(config, 'tile_width', 260, 140, 600),
+        'show': {
+            'count': _cfg_bool(config, 'show_count', True),
+            'who': _cfg_bool(config, 'show_who', True),
+            'when': _cfg_bool(config, 'show_when', True),
+            'body': _cfg_bool(config, 'show_body', True),
+            'reactions': _cfg_bool(config, 'show_reactions', True),
+        },
+    }
+
+
 # How far the calendar tile looks ahead when the household has not said. Five
 # days is a working week seen from a Monday; the calendar page's agenda offers
 # 3–14 and this is the middle of that.
@@ -2598,6 +2672,11 @@ REQUIRED_EMPTY = {
     'drives': "No drives today.",
     'map': "Nobody is sharing a location yet.",
     'moments': "No moments yet.",
+    # Deliberately the fuller sentence rather than "No moments yet." — this is
+    # the whole of the Moments board, so an empty one is the only thing on the
+    # screen and had better say what the feature IS.
+    'moments_gallery': "No moments yet. When somebody is at a game or a "
+                       "recital, Chauffeur asks them to share one.",
 }
 
 
@@ -2770,6 +2849,7 @@ _BUILDERS: dict = {
     'chores_lanes': _tile_chores_lanes, 'chores_rewards': _tile_chores_goals,
     'routines': _tile_routines, 'routines_lanes': _tile_routines_lanes,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,
+    'moments_gallery': _tile_moments_gallery,
     'calendar': _tile_calendar, 'errands': _tile_errands, 'tasks': _tile_tasks,
     'task_list': _tile_task_list, 'errand_list': _tile_errand_list,
     'trips': _tile_trips,
@@ -3383,11 +3463,21 @@ BUILTIN_PAGES = {
                      'config': {'interactive': True}, 'require': True}],
         'spans': {'map': {'cols': 12, 'rows': 5}},
     },
+    # The Moments PAGE, not the home board's moments tile. Those are two
+    # different questions and this board was answering the wrong one: the
+    # mosaic is "the last few photos", right beside eight other tiles on a
+    # home board and wrong as the whole of the Moments screen, where the
+    # question is "which activity" and the answer is a block per event with
+    # its own photos one tap in.
+    #
+    # FILL, so the gallery takes the screen it is the only thing on — and it
+    # pages on scroll, so a stated number of rows would be an arbitrary window
+    # onto a history that has no length.
     'moments': {
         'name': 'Moments', 'icon': '📸', 'v': 5, 'columns': 12,
-        'widgets': [{'id': 'moments', 'type': 'moments',
-                     'config': {'count': 9}, 'require': True}],
-        'spans': {'moments': {'cols': 12, 'rows': 5}},
+        'widgets': [{'id': 'moments_gallery', 'type': 'moments_gallery',
+                     'config': {}, 'require': True}],
+        'spans': {'moments_gallery': {'cols': 12, 'fill': True}},
     },
 }
 

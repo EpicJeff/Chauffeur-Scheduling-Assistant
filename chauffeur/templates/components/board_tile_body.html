@@ -468,6 +468,23 @@
                         </div>
                     </template>
 
+                    <!-- ── The moments GALLERY: the page's own two-level
+                         drawing, mounted from components/moments_gallery.html
+                         exactly as the timeline, the map and the calendar grid
+                         are. Nothing is drawn here — the element is the mount
+                         point and the component fetches for itself, because
+                         this is the family's whole history two levels deep and
+                         none of that can ride in a board payload five other
+                         cards are waiting on.
+                         `board-moments-<id>` carries the INSTANCE: two gallery
+                         cards on one board would otherwise be two claims on
+                         one element, and the second would draw into the
+                         first. -->
+                    <template x-if="t.type === 'moments_gallery' && !t.data.empty">
+                        <div class="flex-1 min-h-0 overflow-y-auto tile-scroll"
+                            :id="'board-moments-' + t.id"></div>
+                    </template>
+
                     <!-- what's coming, as the calendar's AGENDA view: a card
                          per day rather than a flat list of the next six
                          things. A list cannot say that Thursday is empty, and
