@@ -3244,7 +3244,13 @@
                                 widgets: this.toInstances(p.widgets),
                                 spans: { ...(p.spans || {}) },
                             })),
-                            panel_tabs: (s.panel_tabs || []).slice(),
+                            // Cleaned on the way in, not on the way out: the
+                            // editor must show the shelf the WALL shows, and
+                            // the wall has always dropped a `board:` pointed at
+                            // one of the app's own destinations. See cleanTabs.
+                            // `this.catalog` is assigned above, so the builtin
+                            // list is already there to check against.
+                            panel_tabs: this.cleanTabs(s.panel_tabs),
                             panel_idle_return_seconds:
                                 s.panel_idle_return_seconds === undefined
                                     ? 180 : s.panel_idle_return_seconds,
@@ -5161,14 +5167,62 @@
                 // "make a board, then put it on the shelf" is one thought, not
                 // a thought with a save and a page reload in the middle of it.
                 // Renames show up the same way.
+                // A DESTINATION'S board is not a second destination.
+                //
+                // The draft holds the household's own boards AND the shipped
+                // board for every one of the app's destinations — both are
+                // editable, which is the whole point of listing them (v2.220).
+                // This list was written before that was true, when the draft
+                // WAS the household's own boards, so it mapped every page to a
+                // `board:<slug>` chip. The moment shipped boards joined the
+                // draft, the shelf picker silently doubled: `+ Drives` and
+                // `+ 🚗 Drives`, `+ Chores` and `+ ⭐ Chores`, all the way down.
+                // Reported exactly that way — "there should be only one Drives,
+                // Calendar, Map, and then all of the custom boards."
+                //
+                // Both chips went to the same screen, because `?panel=true` on
+                // /chores IS the Chores board — so the pair was never two
+                // things, it was one thing offered twice.
+                //
+                // The rule is `own_boards()`'s, and this is a second place
+                // stating it rather than a second rule: a page whose slug is
+                // one of the app's own destinations is that destination's
+                // board, and the shelf already has a button for it. The server
+                // has always agreed — `resolve_tabs` validates against
+                // `own_boards`, so a stored `board:chores` was dropped on the
+                // way to the wall. That is why adding both put one button up:
+                // the editor offered a chip the shelf would never honour.
                 allTabs() {
                     const pages = (this.catalog.tabs || []).filter(t => t.kind !== 'board');
                     const boards = (this.draft.panel_pages || [])
-                        .filter(p => p.slug !== 'home')
+                        .filter(p => p.slug !== 'home' && !this.isBuiltinPage(p.slug))
                         .map(p => ({ slug: 'board:' + p.slug, kind: 'board',
                             label: (p.name || '').trim() || 'Board',
                             icon: p.icon || '🗂️' }));
                     return pages.concat(boards);
+                },
+
+                // What a shelf MEANS, applied to a stored one on the way in.
+                //
+                // A household that pressed the duplicate chip has
+                // `board:chores` sitting in their saved shelf. The wall has
+                // always ignored it (resolve_tabs drops what own_boards does
+                // not know), so nothing was broken — but left alone it would
+                // now render in the editor as "chores (deleted)", which is a
+                // lie about something they never deleted. It is the same
+                // destination under a longer name, so it becomes that name and
+                // dedupes against a button already there.
+                cleanTabs(list) {
+                    const out = [];
+                    for (const raw of list || []) {
+                        let slug = String(raw);
+                        if (slug.startsWith('board:')
+                            && (this.isBuiltinPage(slug.slice(6)) || slug === 'board:home')) {
+                            slug = slug.slice(6);
+                        }
+                        if (!out.includes(slug)) out.push(slug);
+                    }
+                    return out;
                 },
 
                 tabMeta(slug) {

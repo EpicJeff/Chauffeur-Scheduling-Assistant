@@ -214,6 +214,27 @@ const afterFill = JSON.stringify(page().spans.weather);
 b.setSpan('weather', 'fill', false);
 const fillOff = b.spanOf('weather', 'fill');
 
+// ── The SHELF picker, against a draft shaped the way loadSetup shapes it:
+// the household's own boards AND the shipped board for every destination.
+b.catalog = { tabs: [
+    { slug: 'home', label: 'Home', kind: 'page' },
+    { slug: 'chores', label: 'Chores', kind: 'page' },
+    { slug: 'map', label: 'Map', kind: 'page' } ],
+  builtin_pages: ['chores', 'map', 'drives', 'calendar'] };
+b.draft.panel_pages = [
+  { slug: 'home', name: 'Home', icon: 'H', spans: {}, widgets: [] },
+  { slug: 'hallway', name: 'Hallway', icon: '🚪', spans: {}, widgets: [] },
+  // Shipped boards for the app's own destinations — in the draft because
+  // they are editable, NOT because they are extra shelf buttons.
+  { slug: 'chores', name: 'Chores', icon: '⭐', spans: {}, widgets: [] },
+  { slug: 'map', name: 'Map', icon: '🗺️', spans: {}, widgets: [] },
+];
+b.draft.panel_tabs = ['home'];
+const shelfChoices = b.allTabs().map(t => t.slug);
+// And a shelf somebody already saved with the duplicate chip on it.
+const shelfCleaned = b.cleanTabs(['home', 'board:chores', 'chores',
+                                  'board:hallway', 'board:home']);
+
 // ── And what fill actually RESOLVES to, against the stated boxes above.
 // A 1000px screen, a 90px shelf, 24px of board padding, a grid starting at
 // 100 and the tile 200px into it: 1000 - 90 - 24 - 100 - 200 - gap.
@@ -245,6 +266,8 @@ console.log(JSON.stringify({
   fillOff: fillOff,
   fillResolved: fillResolved,
   inset: inset,
+  shelfChoices: shelfChoices,
+  shelfCleaned: shelfCleaned,
   afterFit: afterFit,
   afterFill: afterFill,
   afterCancel: afterCancel,
@@ -502,6 +525,46 @@ def scenario_a_height_switch_survives_being_read_back():
           f"turning fit on left fill set: {got['afterFit']}")
     check('auto' not in got['afterFill'],
           f"turning fill on left fit set: {got['afterFill']}")
+
+
+def scenario_a_destinations_board_is_not_a_second_shelf_button():
+    """The shelf picker was offering every destination twice — `+ Drives` and
+    `+ 🚗 Drives`, `+ Chores` and `+ ⭐ Chores`, all the way down.
+
+    `allTabs()` was written when `draft.panel_pages` WAS the household's own
+    boards, so it mapped every page to a `board:<slug>` chip. v2.220 put the
+    shipped board for each destination into the draft too — both are editable,
+    which is the point — and this list silently doubled. Both chips went to the
+    same screen, because `?panel=true` on /chores IS the Chores board, so the
+    pair was never two things.
+
+    The server has agreed all along: `resolve_tabs` validates against
+    `own_boards`, which excludes a page whose slug is a destination, so a
+    stored `board:chores` was dropped on the way to the wall. That is exactly
+    what "I can add both Chores to the shelf, but only one actually shows"
+    was — the editor offering a chip the shelf would never honour.
+    """
+    got = _run()
+    if got is None:
+        return
+    picks = got['shelfChoices']
+    check(picks.count('chores') == 1 and 'board:chores' not in picks,
+          f"the Chores destination is offered twice: {picks}")
+    check('board:map' not in picks,
+          f"the Map destination is offered twice: {picks}")
+    # The household's OWN boards must survive — that is the whole reason this
+    # list walks the draft rather than the catalog, so a board made a moment
+    # ago can go on the shelf without a save and a reload in between.
+    check('board:hallway' in picks,
+          f"a board somebody made can no longer be put on the shelf: {picks}")
+    check('board:home' not in picks,
+          f"the wall's home board is offered as a board as well: {picks}")
+
+    # And a shelf somebody already saved with the duplicate on it is repaired
+    # rather than shown as deleted — they never deleted anything.
+    check(got['shelfCleaned'] == ['home', 'chores', 'board:hallway'],
+          f"a saved shelf with the duplicate chip came back as "
+          f"{got['shelfCleaned']}")
 
 
 def scenario_a_filled_tile_stops_above_the_shelf():
