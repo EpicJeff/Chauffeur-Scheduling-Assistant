@@ -5348,6 +5348,20 @@ def ha_media_command(entity_id: str, req: MediaCommandRequest):
         raise HTTPException(status_code=502, detail="Home Assistant service call failed")
     return {"status": "ok"}
 
+@app.get("/api/music/health")
+def music_health():
+    """Which music path this house is on, and why.
+
+    Three states worth telling apart, because they look identical from a wall
+    panel: no token (the HA bridge is running, and that is fine), a token that
+    MA refuses, and a server nothing can find. `ma_api.health()` names the
+    hosts it probed rather than saying "unreachable", since the family cannot
+    open devtools on a kitchen screen to find out."""
+    from services import ma_api
+    ma = ma_api.health()
+    return {'ma': ma, 'ha_bridge': bool(_ma_entry_id()),
+            'path': 'music_assistant' if ma['ok'] else 'home_assistant'}
+
 @app.get("/api/music/search")
 def music_search(q: str, media_type: Optional[str] = None, limit: int = 8):
     from services import ha_api
@@ -6360,19 +6374,14 @@ def _ma_ws_candidates():
         if '/sendspin' not in url:
             url = url.rstrip('/') + '/sendspin'
         out.append(url)
-    # Official MA add-on hostname on HA's internal docker network
-    out.append('ws://d5369777-music-assistant:8927/sendspin')
-    # MA commonly runs on the HA host itself
-    ha_base = os.environ.get('HA_BASE_URL', '') or storage.get_settings().get('ha_base_url', '')
-    if ha_base:
-        try:
-            from urllib.parse import urlparse
-            host = urlparse(ha_base).hostname
-            if host:
-                out.append(f'ws://{host}:8927/sendspin')
-        except Exception:
-            pass
-    out.append('ws://homeassistant.local:8927/sendspin')
+    # Where MA might be when nobody has said: the official add-on hostname on
+    # HA's internal docker network, then the HA host, then mDNS. That list is
+    # `ma_api.fallback_hosts()` now rather than a second copy here — a house
+    # that gains a plausible location should gain it for the audio relay and
+    # the API at once, and these drifting apart would show up as the relay
+    # finding a server the API swears is not there.
+    from services import ma_api
+    out.extend(f'ws://{host}:8927/sendspin' for host in ma_api.fallback_hosts())
     seen = set()
     return [u for u in out if not (u in seen or seen.add(u))]
 
@@ -10251,6 +10260,15 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
     if 'routing_avoid_tolls' in incoming and \
             bool(incoming.get('routing_avoid_tolls')) != bool(current.get('routing_avoid_tolls')):
         storage.clear_route_caches()
+    # A new Music Assistant address or token must not wait behind a cached
+    # failure: `resolve_base` holds its "nothing answered" verdict for a
+    # minute so a ten-second music poll doesn't re-probe four hosts, and
+    # without this the family pastes a working token and watches it do
+    # nothing for the rest of that minute.
+    if 'ma_token' in incoming or 'ma_server_url' in incoming:
+        from services import ma_api
+        ma_api.reset()
+        _MA_WS_CACHE['url'] = None
     current.update(incoming)
     storage.update_settings(current)
     # Panel-shaped settings (layout, theme, screensaver…) edited on one device

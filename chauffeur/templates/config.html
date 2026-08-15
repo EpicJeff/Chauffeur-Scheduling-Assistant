@@ -454,6 +454,21 @@
                         <p class="text-gray-500 text-sm mt-1">Only needed if the "This phone" music player can't find
                             Music Assistant automatically. Host (and optional port) of the MA server's Sendspin
                             endpoint.</p>
+
+                        <label class="block text-gray-400 font-bold mb-2 mt-4 text-sm uppercase tracking-wider">Music
+                            Assistant Token</label>
+                        <div class="flex gap-2 max-w-lg flex-wrap">
+                            <input type="password" x-model="maToken" @change="saveSettings(); checkMusicAssistant()"
+                                placeholder="Long-lived token from MA → Settings → Profile"
+                                class="flex-1 bg-gray-800 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-mono">
+                            <button @click="checkMusicAssistant()"
+                                class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-4 rounded-lg">Check</button>
+                        </div>
+                        <p class="text-gray-500 text-sm mt-1">Optional. Music works without it, through Home
+                            Assistant. With it, Chauffeur talks to Music Assistant directly and gains the queue you
+                            can reorder, favourites you can remove, provider filters and playlists.</p>
+                        <p x-show="maHealth" class="text-sm mt-2"
+                            :class="maHealthOk ? 'text-green-400' : 'text-yellow-400'" x-text="maHealth"></p>
                     </div>
 
                     <!-- HA API dev fallback (add-on uses the supervisor token automatically) -->
@@ -4063,6 +4078,9 @@
                 haBaseUrl: '',
                 haToken: '',
                 maServerUrl: '',
+                maToken: '',
+                maHealth: '',
+                maHealthOk: false,
                 haStatus: null,
                 haPersons: [],
                 haMediaPlayers: [],
@@ -4367,6 +4385,7 @@
                     this.haBaseUrl = data.ha_base_url || '';
                     this.haToken = data.ha_token || '';
                     this.maServerUrl = data.ma_server_url || '';
+                    this.maToken = data.ma_token || '';
                     this.tripHashtags = data.trip_hashtags || [];
                     this.calendarIds = data.calendar_ids || [];
                     this.defaultCalendarId = data.default_calendar_id || '';
@@ -4509,6 +4528,7 @@
                             ha_base_url: this.haBaseUrl || '',
                             ha_token: this.haToken || '',
                             ma_server_url: this.maServerUrl || '',
+                            ma_token: this.maToken || '',
                             trip_hashtags: this.tripHashtags || [],
                             llm_provider: this.llmProvider,
                             llm_gemini_api_key: this.llmGeminiApiKey,
@@ -5725,6 +5745,31 @@
                     } catch (e) {
                         console.error("Failed to load HA options", e);
                         this.haStatus = { available: false, mode: 'error' };
+                    }
+                },
+                async checkMusicAssistant() {
+                    // The save this rides behind is async and the server
+                    // resets its host cache on ma_* changes, so a beat of
+                    // delay keeps the check from racing its own settings.
+                    this.maHealth = 'Checking…';
+                    this.maHealthOk = false;
+                    await new Promise(r => setTimeout(r, 600));
+                    try {
+                        const res = await fetch(`${this.apiBase}api/music/health`);
+                        const data = await res.json();
+                        const ma = data.ma || {};
+                        if (ma.ok) {
+                            this.maHealthOk = true;
+                            this.maHealth = `Connected to Music Assistant ${ma.version || ''} at ${ma.base}`;
+                        } else if (!ma.configured) {
+                            this.maHealth = data.ha_bridge
+                                ? 'No token — music runs through Home Assistant (that works, with fewer features).'
+                                : 'No token, and no Music Assistant integration in Home Assistant either.';
+                        } else {
+                            this.maHealth = ma.detail || 'Music Assistant did not answer.';
+                        }
+                    } catch (e) {
+                        this.maHealth = 'The check itself failed: ' + e.message;
                     }
                 },
                 async testNotify(member) {

@@ -883,6 +883,13 @@ class Settings(BaseModel):
     # "ws://192.168.1.50:8927". Empty = auto-discover (official add-on
     # hostname, then the HA host on port 8927).
     ma_server_url: str = ""
+    # A long-lived token from Music Assistant's own UI (Settings → Profile),
+    # which unlocks MA's API directly (services/ma_api.py) — the queue as a
+    # list, removable favourites, provider filters, recommendations. There is
+    # no Supervisor shortcut for this the way there is for HA, so it is typed
+    # by hand and everything that uses it falls back to the HA bridge when it
+    # is empty.
+    ma_token: str = ""
     # Room announcements: HA area id -> the entity announce() must use there,
     # overriding the satellite-first/playing-first pick. Only rooms the family
     # has pinned appear; everything else resolves automatically.

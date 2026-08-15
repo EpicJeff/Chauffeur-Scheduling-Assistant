@@ -318,6 +318,10 @@ ENTRIES: List[dict] = [
        page='config', anchor='boards'),
     _e('ha_token', 'integrations', 'Home Assistant token', 'A long-lived access token.'),
     _e('ma_server_url', 'integrations', 'Music Assistant URL', 'Where Music Assistant lives.'),
+    _e('ma_token', 'integrations', 'Music Assistant token',
+       'A long-lived token from Music Assistant (Settings → Profile). Without '
+       'it music still works through Home Assistant; with it the queue, '
+       'provider filters, playlists and removable favourites appear.'),
     _e('stage_cutoffs', 'kids', 'When the kid stages change',
        'The three ages where a child moves from Sprout to Explorer to '
        'Navigator to Copilot — roughly preschool, elementary, middle and high '
