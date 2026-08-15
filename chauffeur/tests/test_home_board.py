@@ -174,6 +174,60 @@ def scenario_the_hero_is_the_next_drive_that_has_not_happened():
          storage.get_completed_drives, storage.get_in_progress_drives) = (orig_s, orig_d, orig_c, orig_p)
 
 
+def scenario_a_covered_event_still_reaches_the_wall():
+    """Asked from the wall: "if an event is being covered by outside help
+    does it still get shown on the hero tile so everyone knows it's coming
+    up and they can get ready?" It did not — coverage removes the event from
+    the SOLVE (that is the feature), and the runs builder read assignments,
+    so the hero was blind to it. Emma's mom pulling up to a house where
+    nobody knew the game was coming is not "load removed"."""
+    orig_s, orig_d, orig_c, orig_p = (storage.get_cached_schedule, storage.get_all_drivers,
+                                      storage.get_completed_drives, storage.get_in_progress_drives)
+    try:
+        sched = {
+            'events': [
+                {'id': 'game', 'title': 'Soccer game',
+                 'start': _at(15).isoformat(), 'end': _at(16).isoformat()},
+                {'id': 'ours', 'title': 'Piano',
+                 'start': _at(17).isoformat(), 'end': _at(18).isoformat()},
+            ],
+            # The covered event has NO assignment — that is the whole point.
+            'assignments': {'ours': 'drv1'},
+            'scheduled_errands': [],
+            'assist_assignments': {'game': 'c1'},
+            'assist_contacts': [{'id': 'c1', 'name': 'Rachel Stern',
+                                 'relation_label': "Emma's mom"}],
+        }
+        storage.get_cached_schedule = lambda: sched
+        storage.get_all_drivers = lambda: [{'id': 'drv1', 'name': 'Sam', 'color_code': '#fff'}]
+        storage.get_completed_drives = lambda: []
+        storage.get_in_progress_drives = lambda: []
+
+        runs = home_board.todays_runs(now=_at(12))
+        check([r['id'] for r in runs] == ['game', 'ours'],
+              f"the covered event is a run, in time order: {[r['id'] for r in runs]}")
+        game = runs[0]
+        check(game.get('assist') is True, "the run says it is covered")
+        check(game['driver'] == "Emma's mom",
+              "the driver slot wears the household word, not the formal name")
+        check(game['driver_id'] is None, "no member is chased for it")
+        check('leave_label' not in game and 'leave_at' not in game,
+              "no leave-by on a ride the house does not drive — a guessed "
+              "departure is how the board stops being believed")
+
+        hero = home_board._hero(_at(12), runs)
+        check(hero['next']['id'] == 'game',
+              "the hero shows the covered game so the family gets ready")
+
+        # The hero card wears the chip that explains the missing Leave time.
+        card = tpl_source.read('components/hero_card.html')
+        check('assist' in card and '🤝' in card,
+              "the hero card never says the ride is covered")
+    finally:
+        (storage.get_cached_schedule, storage.get_all_drivers,
+         storage.get_completed_drives, storage.get_in_progress_drives) = (orig_s, orig_d, orig_c, orig_p)
+
+
 def scenario_the_hero_says_when_to_leave():
     """Asked for from the wall: *"it would be nice if the hero said 'leave at
     4:20pm' or 'leave in 1 hr 46 min' instead of just telling me the event

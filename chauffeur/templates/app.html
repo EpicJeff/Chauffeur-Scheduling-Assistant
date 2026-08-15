@@ -4431,7 +4431,10 @@
 
         function assistContactLabel(c) {
             if (!c) return 'Someone outside the house';
-            return c.relation_label ? `${c.name} (${c.relation_label})` : c.name;
+            // "What we call them" IS what we call them — "Emma's mom", not
+            // "Rachel Stern (Emma's mom)". The formal name lives on the
+            // contact editor, where it is the point.
+            return c.relation_label || c.name;
         }
 
         function populateEventAssist(ev) {

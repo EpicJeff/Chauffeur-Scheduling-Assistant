@@ -857,7 +857,9 @@
                 const out = document.createElement('optgroup');
                 out.label = 'Outside hands';
                 taskHands.forEach(c => out.appendChild(new Option(
-                    c.relation_label ? `${c.name} (${c.relation_label})` : c.name,
+                    // The household word alone; the formal name lives on
+                    // the contact editor.
+                    c.relation_label || c.name,
                     `assist:${c.id}`)));
                 el.appendChild(out);
             }

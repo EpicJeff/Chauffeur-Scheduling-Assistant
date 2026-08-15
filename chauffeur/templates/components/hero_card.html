@@ -115,8 +115,13 @@
                 : (next.optional_decision === 'attend'
                     ? `<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">✓ going</span>`
                     : `<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">optional</span>`);
+            // A covered event names the outside hand in the driver slot like
+            // any other run; this chip says WHY there is no Leave time under
+            // it — the ride is theirs, the getting-ready is still ours.
+            const assistChip = !next.assist ? ''
+                : `<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300">🤝 covered</span>`;
             const label = `<span class="panel-label ${on ? 'text-emerald-300' : ''}">${on ? 'Happening now' : 'Next up'}</span>
-                <span class="text-xs font-bold px-2 py-0.5 rounded-full ${cd.cls}">${esc(cd.text)}</span>${optChip}`;
+                <span class="text-xs font-bold px-2 py-0.5 rounded-full ${cd.cls}">${esc(cd.text)}</span>${optChip}${assistChip}`;
             // LEAVE time leads, start time supports it: the departure is the
             // one a family sets an alarm by. No travel time -> no honest
             // departure, and the start takes the big slot back.

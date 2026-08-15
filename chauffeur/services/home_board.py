@@ -1139,6 +1139,54 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
             'over': bool(end < now),
         })
 
+    # Outside hands (load arc A1, reaching the wall at last). A covered event
+    # leaves the SOLVE — outside help removes load, and that is the point —
+    # but it must not leave the WALL: Emma's mom pulling up to a house where
+    # nobody knew the game was coming is not "load removed". The kid digest
+    # learnt this in A1 ("a carpool-covered ride had no driver, so the digest
+    # simply said nothing"); the hero had the same blindness for a year
+    # because this builder reads assignments, and a covered event has none.
+    # No leave-by on these rows, deliberately: nobody in this house drives,
+    # so the honest numbers are the start time and who is coming.
+    assist_map = dict(sched.get('assist_assignments') or {})
+    if assist_map:
+        try:
+            contacts = {c['id']: c for c in
+                        (sched.get('assist_contacts')
+                         or storage.get_assist_contacts(include_inactive=True))}
+        except Exception:
+            contacts = {}
+        assigned = sched.get('assignments') or {}
+        for ev_id, cid in assist_map.items():
+            ev = events.get(ev_id)
+            start = _parse((ev or {}).get('start'))
+            if not ev or not start or start.date() != target:
+                continue
+            # Belt and braces: if a solve somehow also assigned it, the
+            # household's own assignment is the row that already exists.
+            if assigned.get(ev_id):
+                continue
+            c = contacts.get(cid) or {}
+            # The label the family says out loud — a child knows "Emma's
+            # mom" and may not know her name. Same rule as the digest.
+            who = c.get('relation_label') or c.get('name') or 'Outside help'
+            end = _parse(ev.get('end')) or start
+            runs.append({
+                'id': ev_id, 'kind': 'event',
+                'title': ev.get('title') or 'Event',
+                'location': ev.get('location') or None,
+                'start': start.isoformat(), 'at': _clock(start),
+                'end': end.isoformat(),
+                'driver_id': None, 'driver': who, 'color': '#a78bfa',
+                'avatar': None, 'image': None,
+                'assist': True,
+                'done': False, 'live': False,
+                'optional': bool((ev.get('app_config') or {}).get('is_optional')),
+                'optional_decision': ev.get('optional_decision'),
+                'underway': bool(start <= now <= end),
+                'over': bool(end < now),
+            })
+
     # The order a family ACTS in, not the order hosts expect them: sorted by
     # the departure when the schedule knows it (start as the fallback),
     # because two events starting together are not the same urgency when one
