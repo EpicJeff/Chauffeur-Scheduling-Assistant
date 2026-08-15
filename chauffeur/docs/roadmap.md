@@ -55,11 +55,12 @@ routines + streaks · rewards store with parent-approved redemptions.
   (leaderboard-only collapse, 60s refresh; `/routines?kiosk=true` = streak
   board). Only unbuilt remnant, if ever wanted: a compact points strip ON
   the main schedule dashboard's kiosk view, so one panel shows both.
-- **Per-member notification preferences — PARTLY SUPERSEDED by load-arc A6
-  (v2.151.0)**, which put quiet hours on the identity. What A6 did NOT
-  address, and what survives of this item: members with both web push and HA
-  notify still get every message twice (accepted v1 tradeoff) — the open work
-  is a per-member LANE preference or dedupe, not a second quiet-hours model.
+- ~~**Per-member notification preferences.**~~ **FULLY SHIPPED in load-arc A6
+  (v2.151.0) — stale item, verified 2026-08-15.** Both halves are done:
+  `FamilyMember.notify_lanes` (`all|push|ha`, editable on the member card in
+  Config → People) settles the double-delivery this item was written about,
+  and member quiet hours put the timing preference on the identity. Nothing
+  survives; the item is closed rather than reduced.
 - **Unify Config's Drivers/Passengers/Family tabs into one People tab.
   SHIPPED v2.22.0 (2026-08-01)** — member cards are the hub; the intact
   driver/passenger forms open on demand as role profiles; solver toggles
