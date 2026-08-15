@@ -1411,7 +1411,7 @@
                                         </div>
                                         <div x-show="memberEdit.role === 'child'">
                                             <label class="block text-gray-400 mb-1 text-sm">🚌 School bus
-                                                <span class="text-gray-600">(AM stop time enables bus leave-by lines + the bus-home dismissal push; live times come from Here Comes The Bus in HA automatically)</span></label>
+                                                <span class="text-gray-600">(AM stop time is required — it is both the switch and the baseline "late" is measured against; the sensors themselves are found automatically from the first name)</span></label>
                                             <div class="flex items-center gap-2 flex-wrap">
                                                 <div>
                                                     <span class="block text-xs text-gray-500 mb-0.5">AM stop</span>
@@ -1471,7 +1471,7 @@
                                                     </div>
                                                     <div>
                                                         <span class="block text-xs text-gray-500 mb-0.5">Where-the-bus-is sensor</span>
-                                                        <input type="text" x-model="memberEdit.bus_location_entity" placeholder="sensor.…"
+                                                        <input type="text" x-model="memberEdit.bus_location_entity" placeholder="sensor.… (HCTB: found automatically)"
                                                             class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
                                                     </div>
                                                 </div>

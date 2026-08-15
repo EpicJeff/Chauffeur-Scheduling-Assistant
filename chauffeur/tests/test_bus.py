@@ -267,6 +267,45 @@ def scenario_every_b2_field_has_a_hand_path():
               f"{field} is not on the member model, so the PUT drops it")
 
 
+
+def scenario_the_autodiscovered_names_are_the_ones_hctb_publishes():
+    """A default entity name that nothing publishes is a feature that silently
+    never fires — and it cannot be caught by watching the wall, because the
+    absence looks exactly like "the bus has no location today".
+
+    HCTB names the DEVICE "{First} Bus" and its keys are bare (`address`,
+    `am_stop_arrival_time`), so Home Assistant builds `sensor.{first}_bus_*`.
+    The address one was first written as `_bus_location`, which is a name from
+    nowhere."""
+    seen = {}
+
+    def fake_get_state(entity_id):
+        seen['id'] = entity_id
+        return {'state': 'Elm & 3rd'}
+
+    with mock.patch('services.ha_api.get_state', side_effect=fake_get_state):
+        bus.bus_where({"name": "John Smith"})
+    check(seen['id'] == 'sensor.john_bus_address',
+          f"the location default is not what HCTB publishes: {seen['id']}")
+    # And the override still wins, which is how every other platform plugs in.
+    with mock.patch('services.ha_api.get_state', side_effect=fake_get_state):
+        bus.bus_where({"name": "John Smith",
+                       "bus_location_entity": "sensor.somewhere_else"})
+    check(seen['id'] == 'sensor.somewhere_else',
+          f"an explicit location entity was ignored: {seen['id']}")
+
+
+def scenario_the_stop_time_is_required_even_with_a_live_tracker():
+    """It is the opt-in AND the baseline, and both matter: nothing else says
+    which children ride a bus, and lateness is live-minus-static, so a kid
+    with a perfect HCTB feed and no stop time has no bus feature at all."""
+    perfect_feed = {**KID, "bus_am_stop_time": None}
+    with mock.patch.object(bus, 'bus_active', return_value=True),             mock.patch.object(bus, 'live_stop_time',
+                              return_value=datetime.time(7, 30)):
+        check(bus.morning_launch(perfect_feed, MONDAY.isoformat()) is None,
+              "a live tracker alone turned the bus feature on")
+
+
 SCENARIOS = [
     scenario_static_morning_launch,
     scenario_car_ride_wins_the_morning,
@@ -284,6 +323,8 @@ SCENARIOS = [
     scenario_the_location_sensor_refuses_nonsense,
     scenario_where_is_only_read_while_the_bus_is_out,
     scenario_every_b2_field_has_a_hand_path,
+    scenario_the_autodiscovered_names_are_the_ones_hctb_publishes,
+    scenario_the_stop_time_is_required_even_with_a_live_tracker,
 ]
 
 if __name__ == "__main__":

@@ -36,8 +36,19 @@ family's fifteen-year-old does not want the nudge their seven-year-old needs.
   because they are different kinds of message: one is a routine, the other
   is news, and a family may well want the news and not the routine.
 - bus_location_entity  str — where the bus IS, for the live chip. Any sensor
-  whose state reads as a place; blank guesses HCTB's. Absent, the chip simply
-  says the bus is on the way without saying where, which is most of the value.
+  whose state reads as a place; blank uses HCTB's `sensor.{first}_bus_address`.
+  Absent, the chip simply says the bus is on the way without saying where,
+  which is most of the value.
+
+WITH HERE COMES THE BUS, THE ONLY REQUIRED FIELD IS `bus_am_stop_time`, and it
+is required for two reasons rather than one. It is the OPT-IN — nothing else
+tells this app which children ride a bus, and guessing from the presence of
+sensors would turn one HA integration into a claim about a child's morning.
+And it is the BASELINE: HCTB's arrival sensors answer while the bus is out and
+say nothing at 8pm on a Sunday, so without a static time there is no evening
+digest line, no leave-by over the summer, and — because lateness is
+live-minus-static — no way to know the bus is late at all. Everything else
+about HCTB is discovered from the child's first name.
 """
 import datetime
 
@@ -133,8 +144,15 @@ def bus_where(member):
     """
     try:
         from services import ha_api
+        # `_bus_address`, verified against the integration rather than guessed:
+        # HCTB names the DEVICE "{First} Bus" and the entity key is `address`,
+        # so HA builds `sensor.{first}_bus_address` — the same shape B1's ETA
+        # and in-service entities take. A first cut of this defaulted to
+        # `_bus_location`, a name nothing publishes, so the chip would have
+        # silently never carried a location for the one integration this arc
+        # was built for.
         ent = (member.get('bus_location_entity') or '').strip() \
-            or f"sensor.{_prefix(member)}_bus_location"
+            or f"sensor.{_prefix(member)}_bus_address"
         st = ha_api.get_state(ent)
         if not st:
             return None
