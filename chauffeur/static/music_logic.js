@@ -147,23 +147,39 @@
             }
         },
 
-        /** Throws with the server's own message — a search that failed has
-         *  something to say, unlike a poll that missed. */
-        async search(q, limit, opts) {
-            return json(base(opts) + 'api/music/search?q=' + encodeURIComponent(q)
-                + '&limit=' + (limit || 8));
+        /** What a group of results is called over its section. */
+        GROUP_LABEL: {
+            track: 'Songs', album: 'Albums', playlist: 'Playlists',
+            artist: 'Artists', radio: 'Radio', audiobook: 'Audiobooks',
+            podcast: 'Podcasts',
         },
 
-        /** Search results as one flat list, in the page's own order. */
+        /** Grouped search. Throws with the server's own message — a search
+         *  that failed has something to say, unlike a poll that missed.
+         *
+         * `params`: {types: ['track',...], limit, libraryOnly, provider}.
+         * Returns {source, groups: [{type, items}], providers, total} — the
+         * groups exactly as Music Assistant answered them. The old shape of
+         * this function flattened the groups into one interleaved list of
+         * five-per-type, which threw away the half of MA's answer the family
+         * actually missed.
+         */
+        async search(q, params, opts) {
+            const p = params || {};
+            let url = base(opts) + 'api/music/search?q=' + encodeURIComponent(q)
+                + '&limit=' + (p.limit || 20);
+            if (p.types && p.types.length) url += '&media_type=' + p.types.join(',');
+            if (p.libraryOnly) url += '&library_only=true';
+            if (p.provider) url += '&provider=' + encodeURIComponent(p.provider);
+            return json(url);
+        },
+
+        /** The grouped response as one flat list, for a surface that wants a
+         *  single column anyway. */
         flatten(data) {
-            const out = [];
-            [['tracks', 'track'], ['albums', 'album'], ['playlists', 'playlist'],
-             ['artists', 'artist'], ['radio', 'radio']].forEach(([key, type]) => {
-                (data[key] || []).slice(0, 5).forEach(item => {
-                    out.push(Object.assign({}, item, { media_type: item.media_type || type }));
-                });
-            });
-            return out;
+            return (data.groups || []).flatMap(g =>
+                g.items.map(item => Object.assign({}, item,
+                    { media_type: item.media_type || g.type })));
         },
 
         async favorites(mediaType, limit, opts) {

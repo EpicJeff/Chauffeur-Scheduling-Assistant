@@ -815,6 +815,38 @@
                                             @keydown.enter.prevent="musicSearch(t)"
                                             @input.debounce.450ms="musicSearch(t)"
                                             class="w-full rounded-lg px-3 py-2 text-base panel-text bg-black/20 border border-white/10 focus:outline-none">
+                                        <!-- Filters, at panel scale: what kind
+                                             of thing, whose catalogue, only
+                                             the library. Provider chips exist
+                                             only when the results named any —
+                                             the HA path carries no provider
+                                             data and gets no dead chips. -->
+                                        <div x-show="musicOf(t).results" class="flex gap-2 overflow-x-auto no-scrollbar mt-2">
+                                            <template x-for="tp in [['', 'All'], ['track', 'Songs'], ['album', 'Albums'], ['playlist', 'Playlists'], ['artist', 'Artists'], ['radio', 'Radio']]" :key="tp[0]">
+                                                <button @click="musicSetType(t, tp[0])"
+                                                    class="shrink-0 px-3 py-1.5 rounded-full text-sm font-bold border"
+                                                    :class="musicOf(t).searchType === tp[0]
+                                                        ? 'text-white border-transparent'
+                                                        : 'panel-text bg-black/20 border-white/10'"
+                                                    :style="musicOf(t).searchType === tp[0] ? 'background: var(--panel-accent)' : ''"
+                                                    x-text="tp[1]"></button>
+                                            </template>
+                                            <button @click="musicToggleLib(t)"
+                                                class="shrink-0 px-3 py-1.5 rounded-full text-sm font-bold border"
+                                                :class="musicOf(t).searchLib
+                                                    ? 'text-white border-transparent'
+                                                    : 'panel-text bg-black/20 border-white/10'"
+                                                :style="musicOf(t).searchLib ? 'background: var(--panel-accent)' : ''">In library</button>
+                                            <template x-for="p in musicOf(t).searchProviders" :key="p.domain">
+                                                <button @click="musicSetProvider(t, p.domain)"
+                                                    class="shrink-0 px-3 py-1.5 rounded-full text-sm font-bold border"
+                                                    :class="musicOf(t).searchProvider === p.domain
+                                                        ? 'text-white border-transparent'
+                                                        : 'panel-text bg-black/20 border-white/10'"
+                                                    :style="musicOf(t).searchProvider === p.domain ? 'background: var(--panel-accent)' : ''"
+                                                    x-text="p.name"></button>
+                                            </template>
+                                        </div>
                                     </div>
 
                                     <!-- Two fields, two voices: connecting and
@@ -840,21 +872,29 @@
                                             <template x-if="!musicOf(t).results.length && !musicOf(t).searching">
                                                 <div class="p-3 text-base panel-dim">No results</div>
                                             </template>
-                                            <template x-for="item in musicOf(t).results" :key="item.uri">
-                                                <button @click="musicPlayItem(t, item)"
-                                                    class="w-full text-left px-3 py-2.5 flex items-center gap-3 active:opacity-70">
-                                                    <img x-show="musicRowArt(item)" :src="musicRowArt(item)" loading="lazy"
-                                                        class="w-12 h-12 rounded-lg object-cover bg-black/20 shrink-0" alt="">
-                                                    <span x-show="!musicRowArt(item)"
-                                                        class="w-12 h-12 rounded-lg bg-black/20 flex items-center justify-center text-xl shrink-0"
-                                                        x-text="musicIcon(item)"></span>
-                                                    <span class="min-w-0 flex-1">
-                                                        <span class="block text-base font-bold panel-text truncate"
-                                                            x-text="item.name"></span>
-                                                        <span class="block text-sm panel-dim truncate"
-                                                            x-text="musicSubtitle(item)"></span>
-                                                    </span>
-                                                </button>
+                                            <!-- Grouped as MA answered: a header
+                                                 per type, rows beneath it. -->
+                                            <template x-for="grp in musicOf(t).results" :key="grp.type">
+                                                <div class="divide-y divide-white/10">
+                                                    <div class="px-3 pt-2.5 pb-1 text-xs font-black uppercase tracking-[0.15em] panel-dim"
+                                                        x-text="musicGroupLabel(grp.type)"></div>
+                                                    <template x-for="item in grp.items" :key="item.uri">
+                                                        <button @click="musicPlayItem(t, item)"
+                                                            class="w-full text-left px-3 py-2.5 flex items-center gap-3 active:opacity-70">
+                                                            <img x-show="musicRowArt(item)" :src="musicRowArt(item)" loading="lazy"
+                                                                class="w-12 h-12 rounded-lg object-cover bg-black/20 shrink-0" alt="">
+                                                            <span x-show="!musicRowArt(item)"
+                                                                class="w-12 h-12 rounded-lg bg-black/20 flex items-center justify-center text-xl shrink-0"
+                                                                x-text="musicIcon(item)"></span>
+                                                            <span class="min-w-0 flex-1">
+                                                                <span class="block text-base font-bold panel-text truncate"
+                                                                    x-text="item.name"></span>
+                                                                <span class="block text-sm panel-dim truncate"
+                                                                    x-text="musicSubtitle(item)"></span>
+                                                            </span>
+                                                        </button>
+                                                    </template>
+                                                </div>
                                             </template>
                                         </div>
                                     </template>

@@ -4986,6 +4986,12 @@
                                 players: [], now: null, q: '', results: null,
                                 searching: false, error: '', notice: '',
                                 favorites: [],
+                                // Search filters: a type, a provider, and the
+                                // library switch. Provider chips are kept from
+                                // the last response that named any, so picking
+                                // one does not erase the row it belongs to.
+                                searchType: '', searchProvider: '',
+                                searchLib: false, searchProviders: [],
                                 // The local player's state, mirrored in from
                                 // outside Alpine — see musicNow().
                                 localActive: false, localConnecting: false,
@@ -5146,18 +5152,55 @@
                     const s = this.musicState[t.id];
                     if (!s || !t.data.interactive) return;
                     const q = (s.q || '').trim();
-                    if (!q) { s.results = null; s.error = ''; return; }
+                    if (!q) {
+                        s.results = null; s.error = '';
+                        s.searchType = ''; s.searchProvider = '';
+                        s.searchLib = false; s.searchProviders = [];
+                        return;
+                    }
                     s.searching = true;
                     s.error = '';
                     try {
-                        const data = await MusicLogic.search(q, 8, { apiBase: this.apiBase });
+                        const data = await MusicLogic.search(q, {
+                            types: s.searchType ? [s.searchType] : [],
+                            libraryOnly: s.searchLib,
+                            provider: s.searchProvider,
+                            limit: 20,
+                        }, { apiBase: this.apiBase });
                         if ((s.q || '').trim() !== q) return;   // stale response
-                        s.results = MusicLogic.flatten(data);
+                        // Grouped, exactly as MA answered. `results` stays the
+                        // "a search happened" flag the template already keys
+                        // its replace-the-shelf rule on.
+                        s.results = data.groups || [];
+                        if ((data.providers || []).length) s.searchProviders = data.providers;
                     } catch (e) {
                         s.results = [];
                         s.error = e.message || 'Search failed';
                     }
                     s.searching = false;
+                },
+
+                musicGroupLabel(type) {
+                    return MusicLogic.GROUP_LABEL[type] || type;
+                },
+
+                musicSetType(t, type) {
+                    const s = this.musicState[t.id];
+                    if (!s) return;
+                    s.searchType = (s.searchType === type) ? '' : type;
+                    this.musicSearch(t);
+                },
+                musicSetProvider(t, domain) {
+                    const s = this.musicState[t.id];
+                    if (!s) return;
+                    s.searchProvider = (s.searchProvider === domain) ? '' : domain;
+                    this.musicSearch(t);
+                },
+                musicToggleLib(t) {
+                    const s = this.musicState[t.id];
+                    if (!s) return;
+                    s.searchLib = !s.searchLib;
+                    this.musicSearch(t);
                 },
 
                 async musicPlayItem(t, item) {

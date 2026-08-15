@@ -39,6 +39,11 @@
             oninput="mwSearchDebounced()" onkeydown="if(event.key==='Enter'){event.preventDefault();mwSearch();}"
             class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500">
     </div>
+    <!-- The filter chips live between the box and the results: type always,
+         provider + Library only once a search has shown they mean anything
+         (the HA path carries no provider data, so those chips simply never
+         appear there rather than promising a filter that cannot run). -->
+    <div id="mw-search-filters" class="mt-2 flex gap-1.5 overflow-x-auto no-scrollbar" style="display: none"></div>
     <div id="mw-results" class="mt-2 rounded-xl overflow-hidden border border-gray-700/60 divide-y divide-gray-800 max-h-[45vh] overflow-y-auto" style="display: none"></div>
 
     <div id="mw-favorites-section" style="display: none">
@@ -302,11 +307,62 @@
         _mwVolDebounce = setTimeout(() => mwCommand('volume_set', { volume: parseFloat(v) }), 500);
     }
 
+    // Search filters. Type narrows on the server; provider narrows on the
+    // server too but its chips are built from the previous response, so both
+    // survive a re-search. Library is the third axis.
+    let _mwSearchType = '';
+    let _mwSearchProvider = '';
+    let _mwSearchLib = false;
+    let _mwProviders = [];   // chips from the last response, kept across re-searches
+
     function mwSearchDebounced() {
         clearTimeout(_mwSearchDebounce);
         const q = document.getElementById('mw-search').value.trim();
-        if (!q) { document.getElementById('mw-results').style.display = 'none'; return; }
+        if (!q) {
+            document.getElementById('mw-results').style.display = 'none';
+            document.getElementById('mw-search-filters').style.display = 'none';
+            _mwSearchType = ''; _mwSearchProvider = ''; _mwSearchLib = false;
+            _mwProviders = [];
+            return;
+        }
         _mwSearchDebounce = setTimeout(mwSearch, 450);
+    }
+
+    function mwSetSearchType(t) {
+        _mwSearchType = (t === _mwSearchType) ? '' : t;
+        mwSearch();
+    }
+    function mwSetSearchProvider(d) {
+        _mwSearchProvider = (d === _mwSearchProvider) ? '' : d;
+        mwSearch();
+    }
+    function mwToggleSearchLib() {
+        _mwSearchLib = !_mwSearchLib;
+        mwSearch();
+    }
+
+    const _MW_CHIP = 'shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border';
+    const _MW_CHIP_ON = _MW_CHIP + ' bg-blue-600 border-blue-500 text-white';
+    const _MW_CHIP_OFF = _MW_CHIP + ' bg-gray-800 border-gray-700 text-gray-300';
+
+    function _mwRenderFilters() {
+        const box = document.getElementById('mw-search-filters');
+        if (!box) return;
+        const chips = [];
+        [['', 'All'], ['track', 'Songs'], ['album', 'Albums'],
+         ['playlist', 'Playlists'], ['artist', 'Artists'], ['radio', 'Radio']]
+            .forEach(([t, label]) => {
+                chips.push(`<button onclick="mwSetSearchType('${t}')"
+                    class="${(_mwSearchType === t) ? _MW_CHIP_ON : _MW_CHIP_OFF}">${label}</button>`);
+            });
+        chips.push(`<button onclick="mwToggleSearchLib()"
+            class="${_mwSearchLib ? _MW_CHIP_ON : _MW_CHIP_OFF}">In library</button>`);
+        _mwProviders.forEach(p => {
+            chips.push(`<button onclick="mwSetSearchProvider('${_mwEsc(p.domain)}')"
+                class="${(_mwSearchProvider === p.domain) ? _MW_CHIP_ON : _MW_CHIP_OFF}">${_mwEsc(p.name)}</button>`);
+        });
+        box.innerHTML = chips.join('');
+        box.style.display = 'flex';
     }
 
     function _mwResultRow(item, fallbackType) {
@@ -334,12 +390,26 @@
         if (!q) { box.style.display = 'none'; return; }
         box.style.display = 'block';
         box.innerHTML = '<div class="p-3 text-gray-500 text-sm bg-gray-900">Searching…</div>';
+        _mwRenderFilters();
         try {
-            const data = await MusicLogic.search(q, 8, _mwOpts);
+            const data = await MusicLogic.search(q, {
+                types: _mwSearchType ? [_mwSearchType] : [],
+                libraryOnly: _mwSearchLib,
+                provider: _mwSearchProvider,
+                limit: 20,
+            }, _mwOpts);
             if (input.value.trim() !== q) return; // stale response
-            const rows = MusicLogic.flatten(data)
-                .map(item => _mwResultRow(item, item.media_type));
-            box.innerHTML = rows.join('') || '<div class="p-3 text-gray-500 text-sm bg-gray-900">No results</div>';
+            // Provider chips come from the response, and only a response that
+            // NAMED providers may change them — otherwise picking a chip
+            // would erase the chip row it belongs to.
+            if ((data.providers || []).length) _mwProviders = data.providers;
+            _mwRenderFilters();
+            const sections = (data.groups || []).map(g => {
+                const rows = g.items.map(item => _mwResultRow(item, g.type)).join('');
+                const label = MusicLogic.GROUP_LABEL[g.type] || g.type;
+                return `<div class="px-3 pt-2.5 pb-1 text-xs font-black uppercase tracking-widest text-gray-500 bg-gray-900">${label}</div>` + rows;
+            });
+            box.innerHTML = sections.join('') || '<div class="p-3 text-gray-500 text-sm bg-gray-900">No results</div>';
         } catch (e) {
             box.innerHTML = `<div class="p-3 text-red-400 text-sm bg-gray-900">${_mwEsc(e.message || 'Search failed')}</div>`;
         }
@@ -390,6 +460,9 @@
     async function mwPlay(uri, mediaType) {
         document.getElementById('mw-results').style.display = 'none';
         document.getElementById('mw-search').value = '';
+        document.getElementById('mw-search-filters').style.display = 'none';
+        _mwSearchType = ''; _mwSearchProvider = ''; _mwSearchLib = false;
+        _mwProviders = [];
         if (!_mwSelected) return;
         let target = _mwSelected;
         if (target === MW_PHONE) {

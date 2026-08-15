@@ -5363,18 +5363,22 @@ def music_health():
             'path': 'music_assistant' if ma['ok'] else 'home_assistant'}
 
 @app.get("/api/music/search")
-def music_search(q: str, media_type: Optional[str] = None, limit: int = 8):
-    from services import ha_api
-    entry = _ma_entry_id()
-    if not entry:
-        raise HTTPException(status_code=503, detail="Music Assistant integration not found")
-    payload = {'config_entry_id': entry, 'name': q, 'limit': limit}
-    if media_type:
-        payload['media_type'] = [media_type]
-    result = ha_api.call_service('music_assistant', 'search', payload, return_response=True)
-    if result is None:
-        raise HTTPException(status_code=502, detail="Music Assistant search failed")
-    return result.get('service_response', result)
+def music_search(q: str, media_type: Optional[str] = None, limit: int = 20,
+                 library_only: bool = False, provider: Optional[str] = None):
+    """Grouped search — the groups MA answered with, never flattened here.
+
+    `media_type` is a comma list ('track,album'); `provider` narrows to one
+    provider's results (chips for it come back in the same response); both
+    empty means everything. The MA path answers with provider chips and
+    favourite flags; the HA path answers the same shape with those parts
+    empty, and the surfaces draw what is there."""
+    from services.music_search import search as do_search, MusicSearchError
+    types = [t.strip() for t in (media_type or '').split(',') if t.strip()]
+    try:
+        return do_search(q, media_types=types, limit=limit,
+                         library_only=library_only, provider=provider)
+    except MusicSearchError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
 
 @app.get("/api/music/favorites")
 def music_favorites(media_type: str = 'playlist', limit: int = 25):

@@ -99,13 +99,21 @@ def scenario_command_mapping():
 
 
 def scenario_search_uses_config_entry_and_unwraps():
+    """The HA fallback path of the grouped search (no ma_token in these
+    tests, so the MA path answers None and the bridge runs)."""
     import main
     from fastapi import HTTPException
     with mock.patch.object(ha_api, 'get_config_entry_id', return_value='entry42'), \
          mock.patch.object(ha_api, 'call_service',
-                           return_value={'service_response': {'tracks': [{'name': 'X'}]}}) as call:
+                           return_value={'service_response': {'tracks': [{'name': 'X', 'uri': 'u1'}]}}) as call:
         result = main.music_search(q='abba', media_type='track', limit=5)
-        check(result == {'tracks': [{'name': 'X'}]}, "service_response unwrapped")
+        check(result['source'] == 'ha', "HA path taken without an MA token")
+        check(result['groups'] == [{'type': 'track', 'items': [{
+            'uri': 'u1', 'name': 'X', 'media_type': 'track', 'artists': [],
+            'album': None, 'owner': None, 'image': None, 'favorite': None,
+            'in_library': None, 'providers': []}]}],
+              f"grouped + normalized, got {result['groups']}")
+        check(result['providers'] == [], "HA path offers no provider chips")
         args, kwargs = call.call_args
         check(args[0] == 'music_assistant' and args[1] == 'search', "MA search called")
         check(args[2] == {'config_entry_id': 'entry42', 'name': 'abba',
