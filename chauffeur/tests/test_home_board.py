@@ -219,13 +219,69 @@ def scenario_a_covered_event_still_reaches_the_wall():
         check(hero['next']['id'] == 'game',
               "the hero shows the covered game so the family gets ready")
 
-        # The hero card wears the chip that explains the missing Leave time.
+        # The hero card wears the chip that explains whose car it is.
         card = tpl_source.read('components/hero_card.html')
         check('assist' in card and '🤝' in card,
               "the hero card never says the ride is covered")
     finally:
         (storage.get_cached_schedule, storage.get_all_drivers,
          storage.get_completed_drives, storage.get_in_progress_drives) = (orig_s, orig_d, orig_c, orig_p)
+
+
+def scenario_a_covered_ride_says_when_to_be_ready():
+    """*"We can still calculate the drive time from home to the event for a
+    covered event so why can't we have a 'be ready at' time?"* Right: the
+    pickup happens at our door and the road is the same road whoever is at
+    the wheel. Not a departure of ours — a be-ready — and it obeys the same
+    silence as `leave_by`: no cached travel time, no claim."""
+    from services import leave_by
+    ev = {'id': 'game', 'title': 'Soccer game', 'location': 'Riverside Fields',
+          'start': _at(15).isoformat(), 'end': _at(16).isoformat()}
+    orig_settings, orig_cached = storage.get_settings, storage.get_cached_travel_time
+    try:
+        storage.get_settings = lambda: {'home_location': '1 Home St',
+                                        'assist_ready_buffer_mins': 10}
+        storage.get_cached_travel_time = lambda o, d, **kw: 22
+
+        out = leave_by.ready_for_covered(ev, _at(15))
+        check(out['ready_label'] == leave_by.clock(_at(14, 28)),
+              f"start 3pm − 22 min ride − 10 min buffer = 2:28pm, got {out}")
+        check(out['travel_mins'] == 22 and out['ready_buffer_mins'] == 10,
+              "the parts of the claim are carried so a surface can show them")
+        check('leave_at' not in out and 'leave_label' not in out,
+              "a covered ride must never state a departure of ours")
+
+        # The buffer is the household's, and zero is a real answer.
+        storage.get_settings = lambda: {'home_location': '1 Home St',
+                                        'assist_ready_buffer_mins': 0}
+        out = leave_by.ready_for_covered(ev, _at(15))
+        check(out['ready_label'] == leave_by.clock(_at(14, 38)),
+              f"a zero buffer means ready as the car arrives, got {out}")
+
+        # THE SILENCE, same rule as a departure: an uncached or unroutable
+        # pair produces no sentence rather than a guessed one.
+        storage.get_settings = lambda: {'home_location': '1 Home St'}
+        storage.get_cached_travel_time = lambda o, d, **kw: None
+        check(leave_by.ready_for_covered(ev, _at(15)) is None,
+              "an uncached pair invented a be-ready time")
+        storage.get_cached_travel_time = lambda o, d, **kw: storage.UNROUTABLE
+        check(leave_by.ready_for_covered(ev, _at(15)) is None,
+              "an unroutable pair invented a be-ready time")
+        storage.get_cached_travel_time = lambda o, d, **kw: 22
+        check(leave_by.ready_for_covered({**ev, 'location': ''}, _at(15)) is None,
+              "an event with no location invented a be-ready time")
+        storage.get_settings = lambda: {}
+        check(leave_by.ready_for_covered(ev, _at(15)) is None,
+              "no home address invented a be-ready time")
+    finally:
+        storage.get_settings, storage.get_cached_travel_time = orig_settings, orig_cached
+
+    # The card says BE READY rather than LEAVE, and counts down to it.
+    card = tpl_source.read('components/hero_card.html')
+    check('ready_at' in card and 'Be ready' in card,
+          "the hero card has no be-ready slot")
+    check('ready in ' in card and 'min ride' in card,
+          "the pill still says 'leave in' about a car nobody here is driving")
 
 
 def scenario_the_hero_says_when_to_leave():

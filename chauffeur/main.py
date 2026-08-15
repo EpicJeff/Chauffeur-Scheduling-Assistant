@@ -12709,6 +12709,15 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         for e in daily_events_to_solve:
             if getattr(e, 'location', None):
                 daily_locations.add(e.location)
+        # Covered events too, though nobody here drives them. The wall says
+        # "be ready at" for those, which is start − the drive from OUR door −
+        # a buffer, and the board may only read the distance cache (a panel
+        # polling every minute must never buy a matrix element). If the solve
+        # does not prime the pair, that sentence can never be said. One
+        # element, bought once, cached forever.
+        for e in assist_events:
+            if getattr(e, 'location', None):
+                daily_locations.add(e.location)
         for trip in trip_metadata:
             if trip.get('location'):
                 daily_locations.add(trip['location'])

@@ -220,8 +220,15 @@
                                         :role="t.data.interactive ? 'button' : null"
                                         :tabindex="t.data.interactive ? 0 : null"
                                         @click="t.data.interactive && showDriveRow($event, r)">
+                                        <!-- The LABEL, not the ISO stamp:
+                                             `leave_at` is an isoformat string
+                                             and printing it put
+                                             "2026-08-15T16:20:00" in a column
+                                             two characters wide. A covered
+                                             ride shows its be-ready time in
+                                             the same slot. -->
                                         <span class="text-sm tabular-nums panel-dim shrink-0"
-                                            x-text="r.leave_at || r.at"></span>
+                                            x-text="r.leave_label || r.ready_label || r.at"></span>
                                         <span class="w-2 h-2 rounded-full shrink-0"
                                             :style="'background:' + (r.color || '#64748b')"></span>
                                         <span class="text-base panel-text truncate flex-1"

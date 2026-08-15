@@ -127,6 +127,72 @@ def for_run(sched: dict, driver_id: str, event_id: str,
     return out
 
 
+DEFAULT_READY_BUFFER_MINS = 10
+
+
+def ready_for_covered(event: dict, start: datetime.datetime,
+                      buffer_mins: int = None, live: bool = False,
+                      now: datetime.datetime = None) -> Optional[dict]:
+    """**Be ready at** — the covered-event twin of `for_run`.
+
+    An outside hand drives it, so there is no departure of ours to state. But
+    the pickup still happens at OUR door, and the drive from here to there is
+    the same road whoever is at the wheel: `start − travel − buffer` is when a
+    child needs shoes on and a bag by the door. The buffer is not a driver's
+    scheduling slack (there is no driver of ours) — it is the minutes between
+    being ready and the car actually arriving, so nobody is met at the kerb
+    still looking for a shin pad.
+
+    The honesty rule from `for_run` carries over verbatim: **no travel time,
+    no claim**. And the read is CACHE-ONLY (`get_cached_travel_time`, the
+    day-of row) — this runs inside a board builder a wall panel polls every
+    sixty seconds, and that must never become an API call. The solve primes
+    covered events' locations for exactly this reason.
+    """
+    from services import storage
+    if not event or not start:
+        return None
+    if start.tzinfo is not None:
+        start = start.replace(tzinfo=None)
+    if now is not None and now.tzinfo is not None:
+        now = now.replace(tzinfo=None)
+    dest = (event.get('location') or '').strip()
+    if not dest:
+        return None
+    settings = storage.get_settings() or {}
+    origin = (settings.get('home_location') or '').strip()
+    if not origin:
+        return None
+    if buffer_mins is None:
+        try:
+            buffer_mins = int(settings.get('assist_ready_buffer_mins')
+                              if settings.get('assist_ready_buffer_mins') is not None
+                              else DEFAULT_READY_BUFFER_MINS)
+        except (TypeError, ValueError):
+            buffer_mins = DEFAULT_READY_BUFFER_MINS
+    buffer_mins = max(0, min(120, buffer_mins))
+    # ignore_age: these are free-flow durations between fixed addresses and
+    # never go stale — the same reasoning the solve primes with.
+    mins = storage.get_cached_travel_time(origin, dest, ignore_age=True)
+    if mins is None or mins == storage.UNROUTABLE or mins <= 0:
+        return None
+    delay = None
+    if live and now is not None and start.date() == now.date() and now < start:
+        # Today's traffic, cache-read, EARLIER-only — identical to the rule
+        # `_day_of_overlay` applies to a departure of our own.
+        from services import maps
+        row = maps.get_day_of_traffic(origin, dest)
+        if row and row.get('duration_mins', 0) > mins:
+            delay = row['duration_mins'] - mins
+            mins = row['duration_mins']
+    when = start - datetime.timedelta(minutes=mins + buffer_mins)
+    out = {'ready_at': when.isoformat(), 'ready_label': clock(when),
+           'travel_mins': mins, 'ready_buffer_mins': buffer_mins}
+    if delay:
+        out['traffic_delay_mins'] = delay
+    return out
+
+
 def _base_id(event_id: str) -> str:
     return event_id[:-8] if str(event_id).endswith('_dropoff') else str(event_id)
 

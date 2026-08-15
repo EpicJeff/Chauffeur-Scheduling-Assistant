@@ -70,14 +70,22 @@
                     cls: 'bg-emerald-500/20 text-emerald-300'
                 };
             }
-            if (next.leave_at) {
-                const go = Math.round((new Date(next.leave_at) - now) / 60000);
+            // A covered event counts down to being READY, not to leaving —
+            // the lift is somebody else's, the shoes are ours. Same shape,
+            // same urgency colours, different verb, because "leave in 5 min"
+            // about a car you are not driving is a false instruction.
+            const act = next.leave_at || next.ready_at;
+            if (act) {
+                const ready = !next.leave_at;
+                const go = Math.round((new Date(act) - now) / 60000);
                 if (go > 0) return {
-                    text: 'leave in ' + this.spell(go),
+                    text: (ready ? 'ready in ' : 'leave in ') + this.spell(go),
                     cls: go <= 15 ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-700/60 text-gray-300'
                 };
-                if (go > -2) return { text: 'leave now', cls: 'bg-amber-500/20 text-amber-300' };
-                return { text: 'should have left ' + this.spell(-go) + ' ago',
+                if (go > -2) return { text: ready ? 'be ready now' : 'leave now',
+                                      cls: 'bg-amber-500/20 text-amber-300' };
+                return { text: (ready ? 'should be ready — ' : 'should have left ')
+                             + this.spell(-go) + ' ago',
                          cls: 'bg-red-500/25 text-red-300' };
             }
             const mins = Math.round((new Date(next.start) - now) / 60000);
@@ -125,7 +133,18 @@
             // LEAVE time leads, start time supports it: the departure is the
             // one a family sets an alarm by. No travel time -> no honest
             // departure, and the start takes the big slot back.
-            const showLeave = next.leave_label && !on;
+            //
+            // A covered event puts BE READY in that slot instead. The number
+            // is start − the drive from our door − a buffer, which is the
+            // moment a child has to be standing there with a bag; the lift
+            // is somebody else's but the getting-ready never was.
+            const actLabel = next.leave_label || next.ready_label;
+            const readyMode = !next.leave_label && !!next.ready_label;
+            const showLeave = actLabel && !on;
+            const bigWord = readyMode ? 'Be ready' : 'Leave';
+            // The supporting line says whose road it is: on a covered event
+            // the minutes are the RIDE's, not a drive we are making.
+            const driveWord = readyMode ? ' min ride' : ' min drive';
 
             if (opts.compact) {
                 return `
@@ -137,9 +156,9 @@
                         ${next.location ? `<div class="text-sm text-white/70 mt-0.5">${esc(next.location)}</div>` : ''}
                         ${showLeave ? `
                         <div class="mt-2">
-                            <span class="text-xs font-black uppercase tracking-[0.18em] text-white/60 align-middle mr-2">Leave</span>
-                            <span class="text-4xl font-black tabular-nums text-white whitespace-nowrap">${esc(next.leave_label)}</span>
-                            <div class="text-sm text-white/70 tabular-nums whitespace-nowrap mt-0.5">for ${esc(next.at)}${next.travel_mins ? ' · ' + esc(next.travel_mins) + ' min drive' : ''}${next.traffic_delay_mins ? ` <span class="text-amber-300">+${esc(next.traffic_delay_mins)} traffic</span>` : ''}</div>
+                            <span class="text-xs font-black uppercase tracking-[0.18em] text-white/60 align-middle mr-2">${bigWord}</span>
+                            <span class="text-4xl font-black tabular-nums text-white whitespace-nowrap">${esc(actLabel)}</span>
+                            <div class="text-sm text-white/70 tabular-nums whitespace-nowrap mt-0.5">for ${esc(next.at)}${next.travel_mins ? ' · ' + esc(next.travel_mins) + driveWord : ''}${next.traffic_delay_mins ? ` <span class="text-amber-300">+${esc(next.traffic_delay_mins)} traffic</span>` : ''}</div>
                         </div>` : `
                         <div class="text-3xl font-black tabular-nums text-white whitespace-nowrap mt-1">${esc(next.at)}</div>`}
                         ${next.driver ? `<div class="text-lg font-bold mt-1" style="color:${tone}">${esc(next.driver)}</div>` : ''}
@@ -158,10 +177,10 @@
                     <div class="text-right shrink-0">
                         ${showLeave ? `
                         <div>
-                            <div class="text-xs font-black uppercase tracking-[0.18em] panel-dim">Leave</div>
-                            <div class="text-3xl md:text-5xl font-black tabular-nums panel-text leading-none">${esc(next.leave_label)}</div>
+                            <div class="text-xs font-black uppercase tracking-[0.18em] panel-dim">${bigWord}</div>
+                            <div class="text-3xl md:text-5xl font-black tabular-nums panel-text leading-none">${esc(actLabel)}</div>
                             <div class="text-sm md:text-base panel-dim mt-1 tabular-nums">
-                                <span>for ${esc(next.at)}</span>${next.travel_mins ? ` <span>· ${esc(next.travel_mins)} min drive</span>` : ''}${next.traffic_delay_mins ? ` <span class="text-amber-400 font-bold">+${esc(next.traffic_delay_mins)} traffic</span>` : ''}
+                                <span>for ${esc(next.at)}</span>${next.travel_mins ? ` <span>· ${esc(next.travel_mins)}${driveWord}</span>` : ''}${next.traffic_delay_mins ? ` <span class="text-amber-400 font-bold">+${esc(next.traffic_delay_mins)} traffic</span>` : ''}
                             </div>
                         </div>` : `
                         <div class="text-3xl md:text-5xl font-black tabular-nums panel-text">${esc(next.at)}</div>`}

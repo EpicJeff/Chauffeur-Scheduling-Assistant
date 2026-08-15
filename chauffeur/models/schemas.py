@@ -890,6 +890,11 @@ class Settings(BaseModel):
     # by hand and everything that uses it falls back to the HA bridge when it
     # is empty.
     ma_token: str = ""
+    # Covered events: the minutes between "be ready" and the outside hand's
+    # car actually pulling up. Not a driver's scheduling slack — there is no
+    # driver of ours — just the gap that stops somebody being met at the kerb
+    # still looking for a shin pad.
+    assist_ready_buffer_mins: int = 10
     # Room announcements: HA area id -> the entity announce() must use there,
     # overriding the satellite-first/playing-first pick. Only rooms the family
     # has pinned appear; everything else resolves automatically.

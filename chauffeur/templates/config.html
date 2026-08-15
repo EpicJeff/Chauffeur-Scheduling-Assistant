@@ -2105,15 +2105,30 @@
                      NOT members — no login, no PIN, no headcount, no wall
                      board. The `helper` role is the other thing entirely, an
                      external person who DOES hold the app. -->
-                <div x-show="activeTab === 'family'" x-cloak x-transition.opacity
+                <div id="outside-hands" x-show="activeTab === 'family'" x-cloak x-transition.opacity
                     class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
                     <h2 class="text-3xl font-bold mb-2 text-teal-300">Outside hands</h2>
                     <p class="text-gray-400 text-sm mb-4">People outside this house who do work for it —
                         the carpool parent, the neighbour who comes to do the dishes. They have no login
-                        and never appear on the wall board; they exist so the app can be told
+                        and are never counted as family; they exist so the app can be told
                         <b>this one isn't ours</b>. Hand a drive to one of them on the schedule and it
                         leaves the solver entirely: no driver is scheduled, nobody gets chased about it,
-                        and the kids' digest says who they're riding with.</p>
+                        and the kids' digest says who they're riding with. The event still shows on the
+                        wall — with them named and a <b>be ready at</b> time — because knowing to be
+                        ready is the part that stays ours.</p>
+
+                    <!-- The one number the covered-ride sentence needs. Lives
+                         here rather than the config firehose: it means nothing
+                         to a household with no outside hands. -->
+                    <div class="bg-gray-900 p-4 rounded-xl mb-4 flex flex-wrap items-center gap-3">
+                        <label class="text-sm font-bold text-gray-300">Be ready this many minutes
+                            before the car arrives</label>
+                        <input type="number" min="0" max="120" x-model.number="assistReadyBuffer"
+                            @change="saveSettings()"
+                            class="w-24 bg-gray-800 border border-gray-600 rounded-lg p-2 text-white text-center focus:outline-none focus:border-teal-500">
+                        <span class="text-xs text-gray-500">The wall shows the start time minus the
+                            drive from here minus this.</span>
+                    </div>
                     <div class="space-y-3">
                         <template x-for="c in assistContacts" :key="c.id">
                             <div class="bg-gray-900 p-4 rounded-xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3"
@@ -4079,6 +4094,7 @@
                 haToken: '',
                 maServerUrl: '',
                 maToken: '',
+                assistReadyBuffer: 10,
                 maHealth: '',
                 maHealthOk: false,
                 haStatus: null,
@@ -4386,6 +4402,7 @@
                     this.haToken = data.ha_token || '';
                     this.maServerUrl = data.ma_server_url || '';
                     this.maToken = data.ma_token || '';
+                    this.assistReadyBuffer = (data.assist_ready_buffer_mins ?? 10);
                     this.tripHashtags = data.trip_hashtags || [];
                     this.calendarIds = data.calendar_ids || [];
                     this.defaultCalendarId = data.default_calendar_id || '';
@@ -4529,6 +4546,8 @@
                             ha_token: this.haToken || '',
                             ma_server_url: this.maServerUrl || '',
                             ma_token: this.maToken || '',
+                            assist_ready_buffer_mins: Math.max(0, Math.min(120,
+                                parseInt(this.assistReadyBuffer, 10) || 0)),
                             trip_hashtags: this.tripHashtags || [],
                             llm_provider: this.llmProvider,
                             llm_gemini_api_key: this.llmGeminiApiKey,

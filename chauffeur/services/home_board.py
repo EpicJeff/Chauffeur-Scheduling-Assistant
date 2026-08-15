@@ -1146,8 +1146,11 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
     # learnt this in A1 ("a carpool-covered ride had no driver, so the digest
     # simply said nothing"); the hero had the same blindness for a year
     # because this builder reads assignments, and a covered event has none.
-    # No leave-by on these rows, deliberately: nobody in this house drives,
-    # so the honest numbers are the start time and who is coming.
+    # No leave-by on these rows — nobody in this house drives — but there IS
+    # a "be ready at": the pickup happens at our door, and the road from here
+    # to there is the same road whoever is at the wheel. See
+    # `leave_by.ready_for_covered`; cache-only, and silent when it cannot be
+    # supported, exactly like a departure of our own.
     assist_map = dict(sched.get('assist_assignments') or {})
     if assist_map:
         try:
@@ -1180,6 +1183,7 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
                 'driver_id': None, 'driver': who, 'color': '#a78bfa',
                 'avatar': None, 'image': None,
                 'assist': True,
+                **(leave_by.ready_for_covered(ev, start, live=True, now=now) or {}),
                 'done': False, 'live': False,
                 'optional': bool((ev.get('app_config') or {}).get('is_optional')),
                 'optional_decision': ev.get('optional_decision'),
@@ -1194,7 +1198,11 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
     # first. The id tail makes the order TOTAL: ties used to fall through to
     # the assignments dict's order from the last solve, and the hero flipped
     # between two same-time events on every refetch.
-    runs.sort(key=lambda r: (r.get('leave_at') or r['start'], r['start'], str(r['id'])))
+    # `ready_at` counts as a departure for ordering: on a covered event the
+    # thing this house DOES is be ready, and "next up is the one you act on
+    # first" is the rule the sort exists to express.
+    runs.sort(key=lambda r: (r.get('leave_at') or r.get('ready_at') or r['start'],
+                             r['start'], str(r['id'])))
     return runs
 
 
