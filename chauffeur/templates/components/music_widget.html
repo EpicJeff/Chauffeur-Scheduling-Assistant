@@ -70,12 +70,18 @@
     <div id="mw-search-filters" class="mt-2 flex gap-1.5 overflow-x-auto no-scrollbar" style="display: none"></div>
     <div id="mw-results" class="mt-2 rounded-xl overflow-hidden border border-gray-700/60 divide-y divide-gray-800 max-h-[45vh] overflow-y-auto" style="display: none"></div>
 
+    <!-- The personal shelf: THIS member's favourites and recent choices,
+         never the house pile — everyone hearting into one shared shelf is
+         how a shelf becomes something everybody scrolls past. The house's
+         own MA favourites live on the wall panel with nobody selected. -->
     <div id="mw-favorites-section" style="display: none">
-        <div class="text-xs font-black uppercase tracking-widest text-gray-500 mt-3 mb-2">Favorites</div>
+        <div class="text-xs font-black uppercase tracking-widest text-gray-500 mt-3 mb-2">My Favorites</div>
         <div id="mw-favorites" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
+        <div id="mw-favorites-hint" class="text-sm text-gray-500" style="display: none">
+            Tap ♥ on anything to keep it here.</div>
     </div>
     <div id="mw-fav-tracks-section" style="display: none">
-        <div class="text-xs font-black uppercase tracking-widest text-gray-500 mt-3 mb-2">Favorite Songs</div>
+        <div class="text-xs font-black uppercase tracking-widest text-gray-500 mt-3 mb-2">Recently Played</div>
         <div id="mw-fav-tracks" class="rounded-xl overflow-hidden border border-gray-700/60 divide-y divide-gray-800"></div>
     </div>
 </div>
@@ -459,16 +465,23 @@
         box.style.display = 'flex';
     }
 
+    // Items by uri from whatever was last rendered, so a tapped heart or a
+    // queued row can hand the FULL item to the snapshot — an onclick
+    // attribute can only carry strings.
+    const _mwItemsByUri = {};
+
     function _mwResultRow(item, fallbackType) {
         const type = item.media_type || fallbackType;
+        _mwItemsByUri[item.uri] = Object.assign({}, item, { media_type: type });
         const img = _mwImage(item);
         const sub = _mwSubtitle(item);
         const artHtml = img
             ? `<img src="${_mwEsc(img)}" loading="lazy" class="w-12 h-12 rounded-lg object-cover bg-gray-800 shrink-0" alt="">`
             : `<div class="w-12 h-12 rounded-lg bg-gray-800 flex items-center justify-center text-xl shrink-0">${_MW_TYPE_ICON[type] || '🎵'}</div>`;
+        const faved = _mwFavUris.has(item.uri);
         // A div holding buttons, not a button holding buttons: the tap plays
-        // now, the two icons queue — next in line, or the end of the line.
-        return `<div class="w-full px-3 py-2.5 bg-gray-900 flex items-center gap-3">
+        // now, the heart keeps it, the two icons queue.
+        return `<div class="w-full px-3 py-2.5 bg-gray-900 flex items-center gap-2.5">
             <button onclick="mwPlay('${_mwEsc(item.uri)}', '${_mwEsc(type)}')"
                 class="min-w-0 flex-1 text-left flex items-center gap-3 active:opacity-70">
                 ${artHtml}
@@ -477,6 +490,9 @@
                     ${sub ? `<span class="block text-xs text-gray-400 truncate">${_mwEsc(sub)}</span>` : ''}
                 </span>
             </button>
+            <button onclick="mwToggleFav('${_mwEsc(item.uri)}')" data-mwfav="${_mwEsc(item.uri)}"
+                title="Favorite" aria-label="Favorite"
+                class="p-2 rounded-full shrink-0 text-lg leading-none ${faved ? 'text-pink-500' : 'text-gray-600'}">${faved ? '♥' : '♡'}</button>
             <button onclick="mwPlay('${_mwEsc(item.uri)}', '${_mwEsc(type)}', 'next')"
                 title="Play next" aria-label="Play next"
                 class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 shrink-0">
@@ -522,42 +538,88 @@
         }
     }
 
-    async function _mwFetchFavorites(type, limit) {
-        return MusicLogic.favorites(type, limit, _mwOpts);
+    let _mwFavUris = new Set();
+
+    function _mwMemberId() {
+        return (typeof selectedMemberId !== 'undefined' && selectedMemberId) || '';
     }
 
+    async function mwToggleFav(uri) {
+        const memberId = _mwMemberId();
+        if (!memberId) { _mwToast('Pick who you are first (top of the app).'); return; }
+        const item = _mwItemsByUri[uri];
+        try {
+            if (_mwFavUris.has(uri)) {
+                await MusicLogic.removeFavorite(memberId, uri, _mwOpts);
+                _mwFavUris.delete(uri);
+            } else if (item) {
+                await MusicLogic.addFavorite(memberId, item, _mwOpts);
+                _mwFavUris.add(uri);
+            }
+        } catch (e) {
+            _mwToast(e.message || 'Favorite failed');
+            return;
+        }
+        // Repaint every heart wearing this uri (a row can be drawn twice —
+        // once in results, once on the shelf) and rebuild the shelf itself.
+        const faved = _mwFavUris.has(uri);
+        document.querySelectorAll('[data-mwfav]').forEach(btn => {
+            if (btn.getAttribute('data-mwfav') !== uri) return;
+            btn.textContent = faved ? '♥' : '♡';
+            btn.classList.toggle('text-pink-500', faved);
+            btn.classList.toggle('text-gray-600', !faved);
+        });
+        mwLoadFavorites();
+    }
+
+    /** The personal shelf: this member's favourites (tiles) and recent
+     *  choices (rows). The house's MA favourites are deliberately NOT here —
+     *  the PWA always knows who is holding it. */
     async function mwLoadFavorites() {
         const section = document.getElementById('mw-favorites-section');
         const shelf = document.getElementById('mw-favorites');
+        const hint = document.getElementById('mw-favorites-hint');
         const tracksSection = document.getElementById('mw-fav-tracks-section');
         const tracksBox = document.getElementById('mw-fav-tracks');
         if (!section || !shelf) return;
-        const [playlists, albums, tracks] = await Promise.all([
-            _mwFetchFavorites('playlist', 12),
-            _mwFetchFavorites('album', 12),
-            _mwFetchFavorites('track', 8),
-        ]);
-        const tiles = playlists.concat(albums).slice(0, 12);
-        if (tiles.length) {
-            section.style.display = 'block';
-            shelf.innerHTML = tiles.map(item => {
+        const memberId = _mwMemberId();
+        if (!memberId) {
+            section.style.display = 'none';
+            if (tracksSection) tracksSection.style.display = 'none';
+            return;
+        }
+        const data = await MusicLogic.myShelf(memberId, _mwOpts);
+        const favorites = data.favorites || [];
+        const recent = data.recent || [];
+        _mwFavUris = new Set(favorites.map(f => f.uri));
+        section.style.display = 'block';
+        if (favorites.length) {
+            if (hint) hint.style.display = 'none';
+            shelf.style.display = 'flex';
+            shelf.innerHTML = favorites.slice(0, 16).map(item => {
+                _mwItemsByUri[item.uri] = item;
                 const img = _mwImage(item);
-                const type = item.media_type || 'playlist';
+                const type = item.media_type || 'track';
                 const artHtml = img
                     ? `<img src="${_mwEsc(img)}" loading="lazy" class="w-20 h-20 rounded-xl object-cover bg-gray-800 shadow-md" alt="">`
-                    : `<div class="w-20 h-20 rounded-xl bg-gray-800 flex items-center justify-center text-2xl shadow-md">${_MW_TYPE_ICON[type] || '📻'}</div>`;
+                    : `<div class="w-20 h-20 rounded-xl bg-gray-800 flex items-center justify-center text-2xl shadow-md">${_MW_TYPE_ICON[type] || '🎵'}</div>`;
                 return `<button onclick="mwPlay('${_mwEsc(item.uri)}', '${_mwEsc(type)}')" class="w-20 shrink-0 text-left active:opacity-70">
                     ${artHtml}
                     <span class="block text-xs text-gray-300 font-bold truncate mt-1">${_mwEsc(item.name)}</span>
                 </button>`;
             }).join('');
         } else {
-            section.style.display = 'none';
+            // The section stays, saying HOW to fill it — a shelf that only
+            // appears once you know the secret is a shelf nobody fills.
+            shelf.style.display = 'none';
+            shelf.innerHTML = '';
+            if (hint) hint.style.display = 'block';
         }
         if (tracksSection && tracksBox) {
-            if (tracks.length) {
+            if (recent.length) {
                 tracksSection.style.display = 'block';
-                tracksBox.innerHTML = tracks.map(t => _mwResultRow(t, 'track')).join('');
+                tracksBox.innerHTML = recent.slice(0, 8)
+                    .map(t => _mwResultRow(t, t.media_type || 'track')).join('');
             } else {
                 tracksSection.style.display = 'none';
             }
@@ -601,13 +663,19 @@
             target = found.entity.entity_id;
         }
         try {
-            await MusicLogic.play(target, uri, mediaType, _mwOpts,
-                                  enqueue ? { enqueue } : null);
+            await MusicLogic.play(target, uri, mediaType, _mwOpts, {
+                enqueue: enqueue || null,
+                // Who chose it — the personal recently-played shelf records
+                // only what our surfaces start, and this is the attribution.
+                memberId: _mwMemberId() || null,
+                item: _mwItemsByUri[uri] || null,
+            });
             if (enqueue) _mwToast(enqueue === 'next' ? 'Playing next ⏭' : 'Added to the queue ➕');
         } catch (e) {
             _mwToast(e.message || 'Play failed');
         }
         setTimeout(mwRefresh, 1200);
+        setTimeout(mwLoadFavorites, 1500);
     }
 
     function startMusicWidget() {
@@ -630,6 +698,8 @@
     // `_mwIdentity` reads both through getters, so stop-then-start is all
     // this takes — the new name is picked up at connect time.
     function mwOnMemberChanged() {
+        // The shelf is the member's own, so it follows the identity switch.
+        mwLoadFavorites();
         if (!_mwPhone.player && !_mwPhone.connecting && _mwSelected !== MW_PHONE) return;
         _mwStopPhonePlayer();
         if (_mwSelected === MW_PHONE) {

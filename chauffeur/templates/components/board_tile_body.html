@@ -881,6 +881,33 @@
                                         </div>
                                     </div>
 
+                                    <!-- Who is listening. A wall panel is the
+                                         one surface that does not know, and
+                                         these faces are how it asks: pick one
+                                         and the shelf is yours (hearts too);
+                                         it decays back to the house after a
+                                         few quiet minutes. -->
+                                    <div x-show="t.data.show.members && t.data.interactive
+                                                 && (t.data.members || []).length"
+                                        class="flex gap-2 overflow-x-auto no-scrollbar items-center">
+                                        <template x-for="m in (t.data.members || [])" :key="m.id">
+                                            <button @click="musicPickMember(t, m.id)"
+                                                class="shrink-0 flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border"
+                                                :class="musicOf(t).member === m.id
+                                                    ? 'text-white border-transparent'
+                                                    : 'panel-text bg-black/20 border-white/10'"
+                                                :style="musicOf(t).member === m.id ? 'background: var(--panel-accent)' : ''">
+                                                <img x-show="m.image" :src="m.image"
+                                                    class="w-7 h-7 rounded-full object-cover" alt="">
+                                                <span x-show="!m.image"
+                                                    class="w-7 h-7 rounded-full flex items-center justify-center text-sm font-black text-white"
+                                                    :style="'background:' + (m.color_code || '#666')"
+                                                    x-text="m.avatar || (m.name || '?').charAt(0)"></span>
+                                                <span class="text-sm font-bold" x-text="m.name"></span>
+                                            </button>
+                                        </template>
+                                    </div>
+
                                     <!-- Two fields, two voices: connecting and
                                          connected are ordinary news, and only
                                          a failure is red. Both wrap — the
@@ -930,6 +957,12 @@
                                                                         x-text="musicSubtitle(item)"></span>
                                                                 </span>
                                                             </button>
+                                                            <button x-show="musicOf(t).member"
+                                                                @click="musicToggleFav(t, item)"
+                                                                title="Favorite" aria-label="Favorite"
+                                                                class="p-2.5 rounded-full text-xl leading-none shrink-0"
+                                                                :class="musicIsFaved(t, item.uri) ? 'text-pink-500' : 'panel-dim'"
+                                                                x-text="musicIsFaved(t, item.uri) ? '♥' : '♡'"></button>
                                                             <button @click="musicPlayItem(t, item, 'next')"
                                                                 title="Play next" aria-label="Play next"
                                                                 class="p-2.5 rounded-full bg-black/20 panel-text active:opacity-70 shrink-0">
@@ -947,8 +980,11 @@
                                         </div>
                                     </template>
 
+                                    <!-- The house shelf: stock Music Assistant
+                                         favourites, when nobody is picked. -->
                                     <template x-if="!musicOf(t).results && t.data.show.favorites
-                                                    && t.data.interactive && musicOf(t).favorites.length">
+                                                    && t.data.interactive && !musicOf(t).member
+                                                    && musicOf(t).favorites.length">
                                         <div class="min-h-0">
                                             <div class="text-xs font-black uppercase tracking-[0.15em] panel-dim mb-2">
                                                 Favourites</div>
@@ -965,6 +1001,70 @@
                                                             x-text="item.name"></span>
                                                     </button>
                                                 </template>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- The personal shelf: the picked
+                                         member's own, never merged with the
+                                         house pile. -->
+                                    <template x-if="!musicOf(t).results && t.data.show.favorites
+                                                    && t.data.interactive && musicOf(t).member">
+                                        <div class="min-h-0 overflow-y-auto tile-scroll flex flex-col gap-3">
+                                            <div>
+                                                <div class="text-xs font-black uppercase tracking-[0.15em] panel-dim mb-2">
+                                                    <span x-text="musicMemberName(t)"></span>'s favourites</div>
+                                                <div x-show="musicOf(t).myShelf.favorites.length"
+                                                    class="flex gap-3 overflow-x-auto no-scrollbar pb-1">
+                                                    <template x-for="item in musicOf(t).myShelf.favorites" :key="item.uri">
+                                                        <div class="w-24 shrink-0 relative">
+                                                            <button @click="musicPlayItem(t, item)"
+                                                                class="w-full text-left active:opacity-70">
+                                                                <img x-show="musicRowArt(item)" :src="musicRowArt(item)" loading="lazy"
+                                                                    class="w-24 h-24 rounded-xl object-cover bg-black/20 shadow-md" alt="">
+                                                                <span x-show="!musicRowArt(item)"
+                                                                    class="w-24 h-24 rounded-xl bg-black/20 flex items-center justify-center text-3xl"
+                                                                    x-text="musicIcon(item)"></span>
+                                                                <span class="block text-sm font-bold panel-text truncate mt-1"
+                                                                    x-text="item.name"></span>
+                                                            </button>
+                                                            <button @click.stop="musicToggleFav(t, item)"
+                                                                title="Remove favorite" aria-label="Remove favorite"
+                                                                class="absolute top-1 right-1 w-8 h-8 rounded-full bg-black/50 text-pink-400 text-base leading-none flex items-center justify-center">♥</button>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                                <div x-show="!musicOf(t).myShelf.favorites.length"
+                                                    class="text-sm panel-dim">Tap ♥ on anything to keep it here.</div>
+                                            </div>
+                                            <div x-show="musicOf(t).myShelf.recent.length">
+                                                <div class="text-xs font-black uppercase tracking-[0.15em] panel-dim mb-2">
+                                                    Recently played</div>
+                                                <div class="rounded-xl border border-white/10 divide-y divide-white/10">
+                                                    <template x-for="item in musicOf(t).myShelf.recent.slice(0, 6)" :key="item.uri">
+                                                        <div class="w-full px-3 py-2 flex items-center gap-3">
+                                                            <button @click="musicPlayItem(t, item)"
+                                                                class="min-w-0 flex-1 text-left flex items-center gap-3 active:opacity-70">
+                                                                <img x-show="musicRowArt(item)" :src="musicRowArt(item)" loading="lazy"
+                                                                    class="w-10 h-10 rounded-lg object-cover bg-black/20 shrink-0" alt="">
+                                                                <span x-show="!musicRowArt(item)"
+                                                                    class="w-10 h-10 rounded-lg bg-black/20 flex items-center justify-center text-lg shrink-0"
+                                                                    x-text="musicIcon(item)"></span>
+                                                                <span class="min-w-0 flex-1">
+                                                                    <span class="block text-base font-bold panel-text truncate"
+                                                                        x-text="item.name"></span>
+                                                                    <span class="block text-sm panel-dim truncate"
+                                                                        x-text="musicSubtitle(item)"></span>
+                                                                </span>
+                                                            </button>
+                                                            <button @click="musicToggleFav(t, item)"
+                                                                title="Favorite" aria-label="Favorite"
+                                                                class="p-2 rounded-full text-lg leading-none shrink-0"
+                                                                :class="musicIsFaved(t, item.uri) ? 'text-pink-500' : 'panel-dim'"
+                                                                x-text="musicIsFaved(t, item.uri) ? '♥' : '♡'"></button>
+                                                        </div>
+                                                    </template>
+                                                </div>
                                             </div>
                                         </div>
                                     </template>

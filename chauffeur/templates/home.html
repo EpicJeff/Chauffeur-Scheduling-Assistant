@@ -4992,6 +4992,15 @@
                                 // one does not erase the row it belongs to.
                                 searchType: '', searchProvider: '',
                                 searchLib: false, searchProviders: [],
+                                // Who is listening. '' is the house: stock MA
+                                // favourites, nobody's hearts. A picked member
+                                // swaps the shelf to their own and DECAYS back
+                                // after a few quiet minutes — a shared screen
+                                // that stays on Dad's shelf is the clutter
+                                // problem wearing a different hat.
+                                member: '', memberTouched: 0,
+                                myShelf: { favorites: [], recent: [] },
+                                favUris: [],
                                 // The local player's state, mirrored in from
                                 // outside Alpine — see musicNow().
                                 localActive: false, localConnecting: false,
@@ -5010,6 +5019,17 @@
                     }
                     for (const id of Object.keys(this.musicState)) {
                         if (!live.has(id)) delete this.musicState[id];
+                    }
+                    // The member selection decays: five quiet minutes and the
+                    // card is the house's again.
+                    for (const id of Object.keys(this.musicState)) {
+                        const s = this.musicState[id];
+                        if (s.member && s.memberTouched
+                            && Date.now() - s.memberTouched > 5 * 60 * 1000) {
+                            s.member = '';
+                            s.myShelf = { favorites: [], recent: [] };
+                            s.favUris = [];
+                        }
                     }
                     // A card removed from the board takes its player with it,
                     // or a panel left editing all afternoon accumulates sockets.
@@ -5125,6 +5145,7 @@
                 async musicCommand(t, command, extra) {
                     const s = this.musicState[t.id];
                     if (!s || !t.data.interactive || !s.selected) return;
+                    this.musicTouch(t);
                     if (s.selected === this.MUSIC_LOCAL) {
                         // Straight to the client — this browser IS the player,
                         // so there is no service call and nothing to wait for.
@@ -5151,6 +5172,7 @@
                 async musicSearch(t) {
                     const s = this.musicState[t.id];
                     if (!s || !t.data.interactive) return;
+                    this.musicTouch(t);
                     const q = (s.q || '').trim();
                     if (!q) {
                         s.results = null; s.error = '';
@@ -5182,6 +5204,69 @@
 
                 musicGroupLabel(type) {
                     return MusicLogic.GROUP_LABEL[type] || type;
+                },
+
+                // ── Who is listening (the per-person shelf).
+
+                musicTouch(t) {
+                    const s = this.musicState[t.id];
+                    if (s && s.member) s.memberTouched = Date.now();
+                },
+
+                musicPickMember(t, id) {
+                    const s = this.musicState[t.id];
+                    if (!s) return;
+                    s.member = (s.member === id) ? '' : id;
+                    s.memberTouched = Date.now();
+                    if (s.member) {
+                        this.loadMyMusicShelf(t);
+                    } else {
+                        s.myShelf = { favorites: [], recent: [] };
+                        s.favUris = [];
+                    }
+                },
+
+                async loadMyMusicShelf(t) {
+                    const s = this.musicState[t.id];
+                    if (!s || !s.member) return;
+                    const member = s.member;
+                    const data = await MusicLogic.myShelf(member, { apiBase: this.apiBase });
+                    // The selection may have decayed or changed mid-fetch.
+                    if (s.member !== member) return;
+                    s.myShelf = { favorites: data.favorites || [],
+                                  recent: data.recent || [] };
+                    s.favUris = s.myShelf.favorites.map(f => f.uri);
+                },
+
+                musicMemberName(t) {
+                    const s = this.musicState[t.id];
+                    if (!s || !s.member) return '';
+                    const m = (t.data.members || []).find(m => m.id === s.member);
+                    return (m && m.name) || '';
+                },
+
+                musicIsFaved(t, uri) {
+                    const s = this.musicState[t.id];
+                    return !!(s && s.member && s.favUris.includes(uri));
+                },
+
+                async musicToggleFav(t, item) {
+                    const s = this.musicState[t.id];
+                    if (!s || !s.member) return;
+                    this.musicTouch(t);
+                    try {
+                        if (s.favUris.includes(item.uri)) {
+                            await MusicLogic.removeFavorite(s.member, item.uri,
+                                                            { apiBase: this.apiBase });
+                        } else {
+                            await MusicLogic.addFavorite(s.member, item,
+                                                         { apiBase: this.apiBase });
+                        }
+                    } catch (e) {
+                        s.error = e.message || 'Favorite failed';
+                        return;
+                    }
+                    await this.loadMyMusicShelf(t);
                 },
 
                 musicSetType(t, type) {
@@ -5274,12 +5359,19 @@
                     // back, plays something — and the card still says to go
                     // and do it, because nothing ever cleared the sentence.
                     s.error = '';
+                    this.musicTouch(t);
                     const ent = await this.musicQueueTarget(t);
                     if (!ent) return;
                     try {
                         await MusicLogic.play(ent.entity_id, item.uri, item.media_type,
-                                              { apiBase: this.apiBase },
-                                              enqueue ? { enqueue } : null);
+                                              { apiBase: this.apiBase }, {
+                            enqueue: enqueue || null,
+                            // Attribution for the personal recently-played
+                            // shelf — the selected face IS the attribution
+                            // on a shared screen. No face, no guess.
+                            memberId: s.member || null,
+                            item: s.member ? item : null,
+                        });
                     } catch (e) {
                         s.error = e.message || 'Play failed';
                         return;
@@ -5297,6 +5389,7 @@
                         s.results = null;
                     }
                     setTimeout(() => this.refreshMusic(t), 1200);
+                    if (s.member) setTimeout(() => this.loadMyMusicShelf(t), 1500);
                 },
 
                 async musicRadio(t) {

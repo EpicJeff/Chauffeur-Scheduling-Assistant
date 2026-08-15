@@ -213,6 +213,61 @@ def scenario_favorites_and_play():
         check(not kwargs.get('return_response'), "play_media needs no response")
 
 
+def scenario_personal_shelf_is_member_shaped():
+    """Favorites and recently-played are OUR tables keyed by member — MA
+    keeps one shared pile and its lead has declined per-user libraries, so
+    member-shaped shelves can only exist here."""
+    import main
+    from services import storage
+
+    item = {'uri': 'spotify://track/1', 'media_type': 'track',
+            'name': 'Song', 'image': 'http://ma:8095/imageproxy/x',
+            'subtitle': 'Artist · Album'}
+    # Idempotent add: a double-tapped heart is one favourite.
+    storage.add_music_favorite('lily', item)
+    storage.add_music_favorite('lily', item)
+    check(len(storage.get_music_favorites('lily')) == 1, "add is idempotent")
+    check(storage.get_music_favorites('cole') == [],
+          "one member's heart is invisible to another")
+
+    shelf = main.music_my_shelf(member_id='lily')
+    check(shelf['favorites'][0]['name'] == 'Song'
+          and shelf['favorites'][0]['subtitle'] == 'Artist · Album',
+          "the shelf serves the snapshot that was stored")
+
+    check(storage.remove_music_favorite('lily', item['uri']) is True, "removed")
+    check(storage.get_music_favorites('lily') == [], "gone")
+    check(storage.remove_music_favorite('lily', item['uri']) is False,
+          "removing twice says not-found rather than lying")
+
+
+def scenario_recent_plays_are_recorded_and_capped():
+    import main
+    from services import storage
+
+    # Playing with an attribution records; without one it must not guess.
+    with mock.patch.object(ha_api, 'get_config_entry_id', return_value='e'), \
+         mock.patch.object(ha_api, 'call_service', return_value={}):
+        main.music_play(main.MusicPlayRequest(
+            entity_id='media_player.k', media_id='lib://t/9',
+            media_type='track', member_id='lily',
+            item=main.MusicItemSnapshot(uri='lib://t/9', name='Nine')))
+        main.music_play(main.MusicPlayRequest(
+            entity_id='media_player.k', media_id='lib://t/10'))
+    recent = storage.get_music_recent('lily')
+    check([r['uri'] for r in recent] == ['lib://t/9'],
+          f"attributed play recorded, unattributed NOT guessed: {recent}")
+
+    # Replaying moves to the front rather than duplicating; the cap holds.
+    for i in range(35):
+        storage.record_music_play('lily', {'uri': f'u{i}', 'name': f'N{i}'})
+    storage.record_music_play('lily', {'uri': 'u3', 'name': 'N3'})
+    rows = storage.get_music_recent('lily', limit=100)
+    check(rows[0]['uri'] == 'u3', "replay moves to the front")
+    check(len([r for r in rows if r['uri'] == 'u3']) == 1, "no duplicates")
+    check(len(rows) <= storage._MUSIC_RECENT_CAP, "the shelf is capped")
+
+
 def scenario_image_proxy():
     import main
     from fastapi import HTTPException
@@ -351,6 +406,8 @@ SCENARIOS = [
     scenario_media_players_listing,
     scenario_queue_verbs_map_to_ha_services,
     scenario_media_players_carry_queue_state,
+    scenario_personal_shelf_is_member_shaped,
+    scenario_recent_plays_are_recorded_and_capped,
     scenario_image_proxy,
     scenario_image64_roundtrip,
     scenario_absolute_url_artwork,

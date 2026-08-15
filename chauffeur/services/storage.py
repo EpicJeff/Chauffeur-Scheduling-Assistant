@@ -438,6 +438,12 @@ with db_lock:
     household_tasks_table = db.table('household_tasks')
     requests_table = db.table('requests')
     protected_commitments_table = db.table('protected_commitments')
+    # Per-member music (favorites + recently chosen). OURS on purpose: Music
+    # Assistant's lead has declined per-user libraries outright — MA 2.7 user
+    # profiles scope providers and speakers, favourites stay one shared pile.
+    # So the member-shaped shelf lives here, keyed by member_id + uri.
+    music_favorites_table = db.table('music_favorites')
+    music_recent_table = db.table('music_recent')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -4789,6 +4795,82 @@ def delete_status_day(day_id: str) -> Optional[dict]:
 def status_auto_dismissed(date: str, protocol_id: str) -> bool:
     tombs = get_app_state('status_auto_dismissed') or {}
     return f"{date}:{protocol_id}" in tombs
+
+
+# --- Per-member music: favorites + recently chosen -------------------------
+#
+# The row shape is what a music surface DRAWS (uri, media_type, name, image,
+# subtitle) — a snapshot taken at the moment of the tap, not a reference to be
+# re-resolved. Deliberate: re-resolving every shelf row through Music
+# Assistant would make the family's own shelf unavailable exactly when MA is,
+# and a favourite whose provider was removed should still be visible to
+# un-favourite.
+
+_MUSIC_ITEM_KEYS = ('uri', 'media_type', 'name', 'image', 'subtitle')
+_MUSIC_RECENT_CAP = 30
+
+
+def _music_item(item: dict) -> dict:
+    return {k: item.get(k) for k in _MUSIC_ITEM_KEYS}
+
+
+def get_music_favorites(member_id: str) -> list:
+    with db_lock:
+        rows = [dict(r) for r in
+                music_favorites_table.search(Query().member_id == member_id)]
+    rows.sort(key=lambda r: r.get('added_at', 0), reverse=True)
+    return rows
+
+
+def add_music_favorite(member_id: str, item: dict) -> dict:
+    """Idempotent on (member, uri): a double-tapped heart is one favourite."""
+    import time as _time
+    with db_lock:
+        q = Query()
+        existing = music_favorites_table.search(
+            (q.member_id == member_id) & (q.uri == item.get('uri')))
+        if existing:
+            return dict(existing[0])
+        row = {'member_id': member_id, 'added_at': _time.time(),
+               **_music_item(item)}
+        music_favorites_table.insert(row)
+        return row
+
+
+def remove_music_favorite(member_id: str, uri: str) -> bool:
+    with db_lock:
+        q = Query()
+        removed = music_favorites_table.remove(
+            (q.member_id == member_id) & (q.uri == uri))
+    return bool(removed)
+
+
+def record_music_play(member_id: str, item: dict):
+    """One row per (member, uri): replaying something moves it to the front
+    rather than papering the shelf with duplicates. Capped per member —
+    'recently' is a shelf, not a history."""
+    import time as _time
+    with db_lock:
+        q = Query()
+        music_recent_table.remove(
+            (q.member_id == member_id) & (q.uri == item.get('uri')))
+        music_recent_table.insert({'member_id': member_id,
+                                   'played_at': _time.time(),
+                                   **_music_item(item)})
+        rows = music_recent_table.search(q.member_id == member_id)
+        overflow = len(rows) - _MUSIC_RECENT_CAP
+        if overflow > 0:
+            rows.sort(key=lambda r: r.get('played_at', 0))
+            music_recent_table.remove(
+                doc_ids=[r.doc_id for r in rows[:overflow]])
+
+
+def get_music_recent(member_id: str, limit: int = 12) -> list:
+    with db_lock:
+        rows = [dict(r) for r in
+                music_recent_table.search(Query().member_id == member_id)]
+    rows.sort(key=lambda r: r.get('played_at', 0), reverse=True)
+    return rows[:limit]
 
 
 # Runs last: the seed reads settings and dishes, both defined above. One-shot

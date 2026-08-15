@@ -5418,6 +5418,15 @@ def music_queue(entity_id: str):
         raise HTTPException(status_code=502, detail="Music Assistant get_queue failed")
     return result.get('service_response', result)
 
+class MusicItemSnapshot(BaseModel):
+    """What a shelf row draws, captured at the tap. See storage's music
+    section for why it is a snapshot and not a reference."""
+    uri: str
+    media_type: Optional[str] = None
+    name: Optional[str] = None
+    image: Optional[str] = None
+    subtitle: Optional[str] = None
+
 class MusicPlayRequest(BaseModel):
     entity_id: str
     media_id: str
@@ -5427,6 +5436,12 @@ class MusicPlayRequest(BaseModel):
     # can (MA raises on the rest), so the error path matters as much as the
     # feature: the surfaces show MA's own sentence rather than a bare 502.
     radio_mode: Optional[bool] = None
+    # Who chose it, and what it looked like — the personal recently-played
+    # shelf records only what OUR surfaces start. A play begun in MA's app or
+    # by voice has no member attached, and guessing one would file music
+    # under the wrong person; those land in the house's own history instead.
+    member_id: Optional[str] = None
+    item: Optional[MusicItemSnapshot] = None
 
 @app.post("/api/music/play")
 def music_play(req: MusicPlayRequest):
@@ -5448,7 +5463,38 @@ def music_play(req: MusicPlayRequest):
                 "provider that supports it (Spotify, for one). Try playing "
                 "it normally."))
         raise HTTPException(status_code=502, detail="Music Assistant play_media failed")
+    if req.member_id and req.item:
+        try:
+            storage.record_music_play(req.member_id, req.item.model_dump())
+        except Exception as e:
+            print(f"[music] recording recent play failed: {e}")
     return {"status": "ok"}
+
+# --- Per-member music shelves: favorites + recently chosen.
+# OURS on purpose — Music Assistant keeps one shared favourites pile and its
+# lead has declined per-user libraries, so the member-shaped shelf is a
+# Chauffeur table. The house's own MA favourites stay a separate surface
+# (the wall panel with nobody selected).
+
+class MusicFavoriteRequest(BaseModel):
+    member_id: str
+    item: MusicItemSnapshot
+
+@app.get("/api/music/my")
+def music_my_shelf(member_id: str):
+    """One fetch for a personal shelf: favourites + recently chosen."""
+    return {'favorites': storage.get_music_favorites(member_id),
+            'recent': storage.get_music_recent(member_id)}
+
+@app.post("/api/music/my/favorites")
+def music_add_favorite(req: MusicFavoriteRequest):
+    row = storage.add_music_favorite(req.member_id, req.item.model_dump())
+    return {'status': 'ok', 'favorite': row}
+
+@app.delete("/api/music/my/favorites")
+def music_remove_favorite(member_id: str, uri: str):
+    removed = storage.remove_music_favorite(member_id, uri)
+    return {'status': 'ok' if removed else 'not_found'}
 
 # --- Chores + points API ---
 # Marketplace: parents post chores (open-admin config page, same trust as the

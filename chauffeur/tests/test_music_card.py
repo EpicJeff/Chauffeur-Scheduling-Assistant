@@ -525,13 +525,53 @@ def scenario_every_section_is_a_toggle_and_they_start_on():
     out = _tile({})
     check(out['interactive'] is True,
           "a wall music card arrived that nobody can press")
-    for key in ('art', 'picker', 'volume', 'search', 'favorites'):
+    for key in ('art', 'picker', 'volume', 'search', 'favorites', 'members'):
         check(out['show'][key] is True, f"{key} is off by default")
     off = _tile({'interactive': False, 'show_search': False,
-                 'show_favorites': False})
+                 'show_favorites': False, 'show_members': False})
     check(off['interactive'] is False and off['show']['search'] is False
           and off['show']['favorites'] is False,
           f"the toggles do not turn anything off: {off}")
+    check(off['show']['members'] is False and off['members'] == [],
+          "turning the member row off still ships the member list")
+
+
+def scenario_the_personal_shelf_is_never_merged():
+    """A member selected means THEIR shelf only; nobody selected means stock
+    Music Assistant. Merging was considered and rejected — everybody hearting
+    into one pile is the clutter the per-member shelf exists to prevent."""
+    body = tpl_source.read('components/board_tile_body.html')
+    frag = body[body.index("t.type === 'music'"):]
+    frag = frag[:frag.index('ha_image')]
+    # The house shelf must hide when a member is picked…
+    house = frag[frag.index('The house shelf'):frag.index('The personal shelf')]
+    check('!musicOf(t).member' in house,
+          "the house favourites draw while a member is selected — merged shelves")
+    # …and the personal shelf must be the member's own, with a way OUT of a
+    # favourite (the thing MA's own button can never do).
+    personal = frag[frag.index('The personal shelf'):]
+    check('myShelf.favorites' in personal, "the personal shelf draws MA's pile")
+    check('musicToggleFav' in personal,
+          "no un-favourite on the shelf — the heart is one-way again")
+    tpl = tpl_source.read('home.html')
+    check('musicPickMember' in tpl, "no member selector on the card")
+    check("5 * 60 * 1000" in tpl,
+          "the member selection never decays — a shared screen stays on "
+          "somebody's shelf forever")
+
+
+def scenario_recent_is_attributed_never_guessed():
+    """The recently-played shelf records only what OUR surfaces start, and
+    only when a face was picked. A play with no member attached must not be
+    filed under whoever happened to be selected once."""
+    tpl = tpl_source.read('home.html')
+    fn = tpl[tpl.index('async musicPlayItem(t, item, enqueue) {'):]
+    fn = fn[:fn.index('async musicRadio')]
+    check('memberId: s.member || null' in fn,
+          "the panel invents an attribution when nobody is picked")
+    widget = tpl_source.read('components/music_widget.html')
+    check('_mwMemberId() || null' in widget,
+          "the PWA plays without attributing to the signed-in member")
 
 
 def scenario_the_speaker_picker_offers_only_players_music_can_reach():

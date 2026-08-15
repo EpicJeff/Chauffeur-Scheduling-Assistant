@@ -66,22 +66,69 @@
             return base(opts) + 'api/ha/image64/' + b64;
         },
 
-        /** The cover for a search/favourite row, or null when it has none. */
-        imageOf(item, opts) {
+        /** The cover's RAW URL — what a snapshot stores. Never proxied here:
+         *  the proxy path is relative to a page depth, and a shelf row is
+         *  drawn from every depth there is. */
+        rawImageOf(item) {
             const img = item.image || item.image_url
                 || (item.metadata && item.metadata.images && item.metadata.images[0]
                     && item.metadata.images[0].path);
-            return (typeof img === 'string' && img.startsWith('http'))
-                ? MusicLogic.artwork(img, opts) : null;
+            return (typeof img === 'string' && img.startsWith('http')) ? img : null;
         },
 
-        /** "Artist · Album", the artist alone, or a playlist's owner. */
+        /** The cover for a search/favourite row, or null when it has none. */
+        imageOf(item, opts) {
+            const img = MusicLogic.rawImageOf(item);
+            return img ? MusicLogic.artwork(img, opts) : null;
+        },
+
+        /** "Artist · Album", the artist alone, or a playlist's owner. A row
+         *  from a personal shelf carries its subtitle pre-rendered — it was
+         *  snapshotted at the tap and has no artists array to rebuild from. */
         subtitleOf(item) {
+            if (item.subtitle) return item.subtitle;
             const artists = (item.artists || []).map(a => a.name).join(', ');
             const album = item.album && item.album.name;
             if (artists && album) return artists + ' · ' + album;
             if (artists) return artists;
             return item.owner || '';
+        },
+
+        /** A row as the personal shelf stores it: what was drawn, frozen.
+         *  The image is the RAW URL — rendering proxies it per page. */
+        snapshot(item) {
+            return {
+                uri: item.uri,
+                media_type: item.media_type || null,
+                name: item.name || '',
+                image: MusicLogic.rawImageOf(item),
+                subtitle: MusicLogic.subtitleOf(item),
+            };
+        },
+
+        /** {favorites, recent} for one member — the personal shelf. */
+        async myShelf(memberId, opts) {
+            try {
+                return await json(base(opts) + 'api/music/my?member_id='
+                                  + encodeURIComponent(memberId));
+            } catch (e) {
+                return { favorites: [], recent: [] };
+            }
+        },
+
+        async addFavorite(memberId, item, opts) {
+            return json(base(opts) + 'api/music/my/favorites', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ member_id: memberId,
+                                       item: MusicLogic.snapshot(item) }),
+            });
+        },
+
+        async removeFavorite(memberId, uri, opts) {
+            return json(base(opts) + 'api/music/my/favorites?member_id='
+                + encodeURIComponent(memberId) + '&uri=' + encodeURIComponent(uri),
+                { method: 'DELETE' });
         },
 
         /** A glyph for a speaker, from its device class or failing that its
@@ -460,6 +507,10 @@
             const body = { entity_id: entityId, media_id: uri, media_type: mediaType };
             if (extra && extra.enqueue) body.enqueue = extra.enqueue;
             if (extra && extra.radioMode) body.radio_mode = true;
+            if (extra && extra.memberId && extra.item) {
+                body.member_id = extra.memberId;
+                body.item = MusicLogic.snapshot(extra.item);
+            }
             await json(base(opts) + 'api/music/play', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

@@ -683,6 +683,10 @@ WIDGETS = [
          _opt('show_volume', 'Volume', 'bool', True),
          _opt('show_search', 'Search', 'bool', True),
          _opt('show_favorites', 'Favourites', 'bool', True),
+         _opt('show_members', 'Who is listening', 'bool', True,
+              help='A row of faces on the card. Picking one swaps the '
+                   'favourites shelf to that person\'s own, and it falls '
+                   'back to the house shelf after a few quiet minutes.'),
      ]},
     # ── Home Assistant.
     #
@@ -2572,6 +2576,18 @@ def _tile_music(now, config=None, **_):
     # happened to know, and the name is also how the HA entity is found again.
     screen = (_cfg_str(config, 'screen_name')
               or (f"{room_label} screen" if room_label else 'Chauffeur screen'))
+    # The member row, for the per-person shelf. A wall panel is the one
+    # surface that does not know who is standing at it — these chips are how
+    # it asks. Kept to what the chips draw.
+    members = []
+    if _cfg_bool(config, 'show_members', True):
+        try:
+            members = [{'id': m['id'], 'name': m.get('name'),
+                        'color_code': m.get('color_code'),
+                        'avatar': m.get('avatar'), 'image': m.get('image')}
+                       for m in storage.get_all_members()]
+        except Exception:
+            members = []
     return {
         # May be '' — a house with HA and no speakers is a real state, and the
         # card says so rather than drawing dead transport buttons.
@@ -2580,12 +2596,14 @@ def _tile_music(now, config=None, **_):
         'local_player': _cfg_bool(config, 'local_player', True),
         'screen_name': screen,
         'interactive': _cfg_bool(config, 'interactive', True),
+        'members': members,
         'show': {
             'art': _cfg_bool(config, 'show_art', True),
             'picker': _cfg_bool(config, 'show_picker', True),
             'volume': _cfg_bool(config, 'show_volume', True),
             'search': _cfg_bool(config, 'show_search', True),
             'favorites': _cfg_bool(config, 'show_favorites', True),
+            'members': _cfg_bool(config, 'show_members', True),
         },
     }
 
