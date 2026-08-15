@@ -502,6 +502,17 @@
          *  the everything-omitted case. Throws with the server's sentence on
          *  a refusal — radio mode refuses on providers that cannot do it,
          *  and "nothing happened" is the one wrong way to deliver that. */
+        /** What is playing on one player, as a row every heart can act on.
+         *  Null on a miss — the heart hides rather than lying. */
+        async nowPlayingItem(entityId, opts) {
+            try {
+                return await json(base(opts) + 'api/music/now?entity_id='
+                                  + encodeURIComponent(entityId));
+            } catch (e) {
+                return null;
+            }
+        },
+
         /** A real MA favourite — the shared house pile. Throws with the
          *  server's sentence. */
         async houseFavorite(uri, opts) {

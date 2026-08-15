@@ -5442,6 +5442,43 @@ def music_shelves(limit: int = 8):
     from services import music_shelves as shelves_svc
     return shelves_svc.shelves(limit=limit)
 
+@app.get("/api/music/now")
+def music_now(entity_id: str):
+    """What is playing on one player, AS A ROW — the shape every heart and
+    shelf already speaks. The entity itself only knows a uri and two strings;
+    with the MA path the uri resolves to the real item (`music/item_by_uri`),
+    which is where the favourite flag, the canonical uri and proper artwork
+    come from. Without MA, `favorite` stays null and the house heart
+    correctly does not draw."""
+    from services import ha_api, ma_api
+    from services.music_search import _row_from_ma
+    state = ha_api.get_state(entity_id) or {}
+    attrs = state.get('attributes') or {}
+    uri = attrs.get('media_content_id')
+    row = {'uri': uri, 'media_type': None,
+           'name': attrs.get('media_title') or '',
+           'subtitle': attrs.get('media_artist') or '',
+           'image': attrs.get('entity_picture'),
+           'favorite': None}
+    if uri and ma_api.available():
+        item = ma_api.command('music/item_by_uri', uri=uri)
+        if isinstance(item, dict) and item.get('uri'):
+            enriched = _row_from_ma(item, ma_api.resolve_base())
+            artists = ', '.join(a.get('name') or ''
+                                for a in (enriched.get('artists') or []))
+            album = (enriched.get('album') or {}).get('name') \
+                if enriched.get('album') else None
+            row.update({
+                'uri': enriched.get('uri') or uri,
+                'media_type': enriched.get('media_type'),
+                'name': enriched.get('name') or row['name'],
+                'subtitle': (f"{artists} · {album}" if artists and album
+                             else artists or album or row['subtitle']),
+                'image': enriched.get('image') or row['image'],
+                'favorite': enriched.get('favorite'),
+            })
+    return row
+
 class HouseFavoriteRequest(BaseModel):
     uri: str
 

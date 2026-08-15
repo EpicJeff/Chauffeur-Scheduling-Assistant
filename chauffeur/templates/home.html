@@ -5006,6 +5006,9 @@
                                 // MA's own shelves for the house view, and
                                 // the playlist picker's target item.
                                 shelves: null, plItem: null,
+                                // What is playing, as a heartable row —
+                                // fetched when the playing uri changes.
+                                nowRow: null,
                                 // The local player's state, mirrored in from
                                 // outside Alpine — see musicNow().
                                 localActive: false, localConnecting: false,
@@ -5068,6 +5071,7 @@
                         // metadata ones, which would otherwise leave a track
                         // change unpainted until somebody pressed something.
                         this.syncLocalState(t);
+                        this.updateNowRow(t);
                         return;
                     }
                     // The pinned speaker was renamed, removed, or is simply
@@ -5083,6 +5087,56 @@
                     s.now = s.players.find(p => p.entity_id === s.selected) || null;
                     // An open queue rides the same beat as the transport.
                     if (s.queueOpen) this.loadMusicQueue(t);
+                    this.updateNowRow(t);
+                },
+
+                /** The playing item as a heartable row. Fetched only when
+                 *  the playing uri CHANGES — a track change, not every ten
+                 *  second poll — and enriched server-side with the real
+                 *  favourite flag and canonical uri via item_by_uri. */
+                async updateNowRow(t) {
+                    const s = this.musicState[t.id];
+                    if (!s) return;
+                    const ent = this.musicCurrent(t);
+                    const uri = ent && ent.media_content_id;
+                    if (!uri) { s.nowRow = null; return; }
+                    if (s.nowRow && s.nowRow.src_uri === uri) return;
+                    s.nowRow = { src_uri: uri, uri, media_type: null,
+                                 name: ent.media_title || '',
+                                 subtitle: ent.media_artist || '',
+                                 image: null, favorite: null };
+                    const row = await MusicLogic.nowPlayingItem(
+                        ent.entity_id, { apiBase: this.apiBase });
+                    if (row && row.uri && s.nowRow && s.nowRow.src_uri === uri) {
+                        s.nowRow = Object.assign({ src_uri: uri }, row);
+                    }
+                },
+
+                /** Member picked: heartable whenever something plays. House:
+                 *  only when MA answered with a real flag — same rule as the
+                 *  row hearts. */
+                musicNowHeartVisible(t) {
+                    const s = this.musicState[t.id];
+                    if (!s || !s.nowRow || !s.nowRow.uri) return false;
+                    return s.member ? true
+                                    : typeof s.nowRow.favorite === 'boolean';
+                },
+
+                musicNowHeartOn(t) {
+                    const s = this.musicState[t.id];
+                    if (!s || !s.nowRow) return false;
+                    if (s.member) {
+                        return s.favUris.includes(s.nowRow.uri)
+                            || s.favUris.includes(s.nowRow.src_uri);
+                    }
+                    return s.nowRow.favorite === true;
+                },
+
+                async musicNowFav(t) {
+                    const s = this.musicState[t.id];
+                    if (!s || !s.nowRow || !s.nowRow.uri) return;
+                    // The same two-pile routing as every other heart.
+                    await this.musicToggleFav(t, s.nowRow);
                 },
 
                 async loadMusicFavorites(t) {

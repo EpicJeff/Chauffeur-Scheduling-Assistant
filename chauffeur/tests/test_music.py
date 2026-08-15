@@ -268,6 +268,64 @@ def scenario_recent_plays_are_recorded_and_capped():
     check(len(rows) <= storage._MUSIC_RECENT_CAP, "the shelf is capped")
 
 
+def scenario_now_playing_resolves_to_a_heartable_row():
+    """The entity knows a uri and two strings; the heart needs a ROW — with
+    the MA path it gains the real favourite flag and canonical uri, without
+    it favorite stays None and the house heart correctly does not draw."""
+    import main
+    from services import ma_api
+    state = {'entity_id': 'media_player.k', 'attributes': {
+        'media_content_id': 'spotify://track/42', 'media_title': 'Song',
+        'media_artist': 'Artist', 'entity_picture': '/api/media_player_proxy/x'}}
+
+    with mock.patch.object(ha_api, 'get_state', return_value=state), \
+            mock.patch.object(ma_api, 'available', return_value=False):
+        row = main.music_now(entity_id='media_player.k')
+    check(row['uri'] == 'spotify://track/42' and row['name'] == 'Song',
+          f"bare attrs still make a row: {row}")
+    check(row['favorite'] is None, "no MA -> favourite unknown, not False")
+
+    def fake_command(cmd, **kw):
+        check(kw == {'uri': 'spotify://track/42'}, f"resolved by uri: {kw}")
+        return {'uri': 'library://track/7', 'item_id': '7', 'name': 'Song',
+                'media_type': 'track', 'provider': 'library', 'favorite': True,
+                'artists': [{'name': 'Artist'}], 'album': {'name': 'Album'},
+                'provider_mappings': [], 'metadata': {'images': []}}
+
+    with mock.patch.object(ha_api, 'get_state', return_value=state), \
+            mock.patch.object(ma_api, 'available', return_value=True), \
+            mock.patch.object(ma_api, 'command', side_effect=fake_command), \
+            mock.patch.object(ma_api, 'resolve_base', return_value='http://ma:8095'):
+        row = main.music_now(entity_id='media_player.k')
+    check(row['favorite'] is True, "MA's flag carried")
+    check(row['uri'] == 'library://track/7', "canonical uri wins")
+    check(row['subtitle'] == 'Artist · Album', f"subtitle rebuilt: {row['subtitle']}")
+
+    empty = {'entity_id': 'media_player.k', 'attributes': {}}
+    with mock.patch.object(ha_api, 'get_state', return_value=empty):
+        row = main.music_now(entity_id='media_player.k')
+    check(row['uri'] is None, "nothing playing -> uri None, heart hides")
+
+
+def scenario_the_now_heart_exists_on_both_surfaces():
+    """Reported from the family: hearts landed on every ROW and never on the
+    thing actually playing — the one place 'what is this? keep it' happens."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    widget = open(os.path.join(root, 'templates', 'components',
+                               'music_widget.html'), encoding='utf-8').read()
+    check('mwNowFav' in widget and 'mw-now-fav' in widget,
+          "the PWA now-playing block has no heart")
+    tpl = open(os.path.join(root, 'templates', 'home.html'),
+               encoding='utf-8').read()
+    check('musicNowFav' in tpl and 'musicNowHeartVisible' in tpl,
+          "the board card has no now-playing heart")
+    check('musicToggleFav(t, s.nowRow)' in tpl,
+          "the now heart bypasses the two-pile routing every other heart uses")
+    body = open(os.path.join(root, 'templates', 'components',
+                             'board_tile_body.html'), encoding='utf-8').read()
+    check('musicNowFav(t)' in body, "the panel template never draws it")
+
+
 def scenario_image_proxy():
     import main
     from fastapi import HTTPException
@@ -408,6 +466,8 @@ SCENARIOS = [
     scenario_media_players_carry_queue_state,
     scenario_personal_shelf_is_member_shaped,
     scenario_recent_plays_are_recorded_and_capped,
+    scenario_now_playing_resolves_to_a_heartable_row,
+    scenario_the_now_heart_exists_on_both_surfaces,
     scenario_image_proxy,
     scenario_image64_roundtrip,
     scenario_absolute_url_artwork,

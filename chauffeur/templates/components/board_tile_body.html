@@ -782,6 +782,16 @@
                                             <div class="text-base panel-dim truncate"
                                                 x-text="(musicNow(t) && musicNow(t).media_artist) || ''"></div>
                                         </div>
+                                        <!-- The now-playing heart: the picked
+                                             member's shelf, or the house's
+                                             real MA favourite — same routing
+                                             as every other heart. -->
+                                        <button x-show="t.data.interactive && musicNowHeartVisible(t)"
+                                            @click="musicNowFav(t)"
+                                            title="Favorite" aria-label="Favorite"
+                                            class="p-3 text-3xl leading-none shrink-0"
+                                            :class="musicNowHeartOn(t) ? 'text-pink-500' : 'panel-dim'"
+                                            x-text="musicNowHeartOn(t) ? '♥' : '♡'"></button>
                                     </div>
 
                                     <!-- Transport, at panel scale. Bigger than

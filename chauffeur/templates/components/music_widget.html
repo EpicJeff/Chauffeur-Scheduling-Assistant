@@ -17,6 +17,10 @@
             <div id="mw-title" class="text-white font-bold text-base truncate"></div>
             <div id="mw-artist" class="text-gray-400 text-sm truncate"></div>
         </div>
+        <!-- The now-playing heart — "what is this? keep it" is pressed HERE
+             more than anywhere. Same member shelf as every other heart. -->
+        <button id="mw-now-fav" onclick="mwNowFav()" title="Favorite" aria-label="Favorite"
+            class="p-2 text-2xl leading-none text-gray-600 shrink-0" style="display: none">♡</button>
     </div>
 
     <div class="flex items-center gap-2 mb-1">
@@ -193,6 +197,57 @@
 
     function _mwPhoneEntity() { return _mwPhone.entityIn(_mwPlayers); }
 
+    // --- the now-playing heart -------------------------------------------
+    // The row for whatever is on, fetched when the playing uri CHANGES (a
+    // track change, not every poll) and enriched server-side into the same
+    // shape every other heart acts on.
+    let _mwNowRow = null;
+
+    function _mwPaintNowHeart() {
+        const btn = document.getElementById('mw-now-fav');
+        if (!btn) return;
+        const on = _mwNowRow && (_mwFavUris.has(_mwNowRow.uri)
+                                 || _mwFavUris.has(_mwNowRow.src_uri));
+        btn.textContent = on ? '♥' : '♡';
+        btn.classList.toggle('text-pink-500', !!on);
+        btn.classList.toggle('text-gray-600', !on);
+    }
+
+    function _mwUpdateNowHeart(ent) {
+        const btn = document.getElementById('mw-now-fav');
+        if (!btn) return;
+        const uri = ent && ent.media_content_id;
+        if (!uri || !_mwMemberId()) {
+            btn.style.display = 'none';
+            _mwNowRow = null;
+            return;
+        }
+        if (!_mwNowRow || _mwNowRow.src_uri !== uri) {
+            // The attrs are enough to draw the heart NOW; the enrichment
+            // (canonical uri, media_type, real artwork) lands when it lands.
+            _mwNowRow = { src_uri: uri, uri, media_type: null,
+                          name: ent.media_title || '',
+                          subtitle: ent.media_artist || '', image: null };
+            MusicLogic.nowPlayingItem(ent.entity_id, _mwOpts).then(row => {
+                if (row && row.uri && _mwNowRow && _mwNowRow.src_uri === uri) {
+                    _mwNowRow = Object.assign({ src_uri: uri }, row);
+                    _mwPaintNowHeart();
+                }
+            });
+        }
+        btn.style.display = 'block';
+        _mwPaintNowHeart();
+    }
+
+    async function mwNowFav() {
+        if (!_mwNowRow || !_mwNowRow.uri) return;
+        // Ride the row-heart path: it owns the toggle, the repaint of every
+        // heart wearing this uri, and the shelf reload.
+        _mwItemsByUri[_mwNowRow.uri] = _mwNowRow;
+        await mwToggleFav(_mwNowRow.uri);
+        _mwPaintNowHeart();
+    }
+
     // Broken artwork: hide the ugly broken-image icon and surface WHY once
     // per URL (phones have no devtools; this is the field diagnostic).
     async function _mwArtError(img) {
@@ -274,10 +329,13 @@
         }
         if (_mwSelected === MW_PHONE) {
             mwRenderPhoneState();
-            // Queue switches read the phone's HA entity when it is in the
-            // cached list; neutral otherwise, which is honest — the queue
-            // lives in MA and this browser does not know it.
-            _mwPaintQueueSwitches(_mwPhoneEntity());
+            // Queue switches and the now-heart read the phone's HA entity
+            // when it is in the cached list; neutral/hidden otherwise, which
+            // is honest — the queue lives in MA and this browser does not
+            // know it.
+            const phoneEnt = _mwPhoneEntity();
+            _mwPaintQueueSwitches(phoneEnt);
+            _mwUpdateNowHeart(phoneEnt);
             return;
         }
         const cur = _mwCurrent();
@@ -313,6 +371,7 @@
             vol.value = cur.volume_level;
         }
         _mwPaintQueueSwitches(cur);
+        _mwUpdateNowHeart(cur);
     }
 
     // Shuffle and repeat draw the player's answer, not our last request.
