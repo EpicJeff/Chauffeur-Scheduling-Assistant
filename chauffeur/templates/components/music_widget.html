@@ -56,7 +56,16 @@
             class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 text-xs font-bold">
             📡 Radio
         </button>
+        <button id="mw-queue-btn" onclick="mwToggleQueue()" title="Queue"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 text-xs font-bold">
+            🧾 Queue
+        </button>
     </div>
+
+    <!-- The queue, visible. Rows can be jumped to, nudged and removed when
+         Music Assistant is on the direct path; through the HA bridge this is
+         the current+next peek and says so. -->
+    <div id="mw-queue" class="mb-1 rounded-xl overflow-hidden border border-gray-700/60" style="display: none"></div>
 
     <div class="mt-2">
         <input id="mw-search" type="text" placeholder="Search music…" autocomplete="off"
@@ -379,6 +388,79 @@
 
     function mwStop() { mwCommand('stop'); }
 
+    let _mwQueueOpen = false;
+
+    function mwToggleQueue() {
+        _mwQueueOpen = !_mwQueueOpen;
+        const box = document.getElementById('mw-queue');
+        const btn = document.getElementById('mw-queue-btn');
+        if (btn) btn.classList.toggle('bg-blue-600', _mwQueueOpen);
+        if (btn) btn.classList.toggle('text-white', _mwQueueOpen);
+        if (!_mwQueueOpen) { if (box) box.style.display = 'none'; return; }
+        if (box) {
+            box.style.display = 'block';
+            box.innerHTML = '<div class="p-3 text-gray-500 text-sm bg-gray-900">Loading…</div>';
+        }
+        mwLoadQueue();
+    }
+
+    async function mwLoadQueue() {
+        const box = document.getElementById('mw-queue');
+        if (!box || !_mwQueueOpen) return;
+        const ent = await _mwQueueTarget();
+        if (!ent) { box.innerHTML = '<div class="p-3 text-gray-500 text-sm bg-gray-900">No player.</div>'; return; }
+        const data = await MusicLogic.queue(ent.entity_id, _mwOpts);
+        if (!_mwQueueOpen) return;
+        if (!data || !(data.items || []).length) {
+            box.innerHTML = '<div class="p-3 text-gray-500 text-sm bg-gray-900">The queue is empty.</div>';
+            return;
+        }
+        const canEdit = !!data.can_edit;
+        const head = `<div class="flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-800">
+            <span class="text-xs font-black uppercase tracking-widest text-gray-500">
+                ${canEdit ? 'Queue' : 'Up next (peek — token unlocks the full queue)'}</span>
+            ${canEdit ? `<button onclick="mwQueueCmd('clear')" class="text-xs font-bold text-red-400 active:opacity-70">Clear</button>` : ''}
+        </div>`;
+        const rows = data.items.map(item => {
+            const art = item.image
+                ? `<img src="${_mwEsc(_mwProxied(item.image))}" loading="lazy" class="w-10 h-10 rounded-lg object-cover bg-gray-800 shrink-0" alt="">`
+                : `<div class="w-10 h-10 rounded-lg bg-gray-800 flex items-center justify-center text-lg shrink-0">🎵</div>`;
+            const controls = canEdit && !item.current ? `
+                <button onclick="mwQueueCmd('move_up', '${_mwEsc(item.id)}')" class="p-1.5 text-gray-500 active:text-white" title="Up">▲</button>
+                <button onclick="mwQueueCmd('move_down', '${_mwEsc(item.id)}')" class="p-1.5 text-gray-500 active:text-white" title="Down">▼</button>
+                <button onclick="mwQueueCmd('remove', '${_mwEsc(item.id)}')" class="p-1.5 text-gray-500 active:text-red-400" title="Remove">✕</button>` : '';
+            const mainAttrs = canEdit && !item.current && item.index !== null
+                ? `onclick="mwQueueCmd('play_index', null, ${item.index})"` : '';
+            return `<div class="w-full px-3 py-2 flex items-center gap-2.5 ${item.current ? 'bg-blue-950/60' : 'bg-gray-900'} border-b border-gray-800 last:border-0">
+                <button ${mainAttrs} class="min-w-0 flex-1 text-left flex items-center gap-2.5 ${mainAttrs ? 'active:opacity-70' : ''}">
+                    ${art}
+                    <span class="min-w-0 flex-1">
+                        <span class="block text-sm ${item.current ? 'text-blue-300' : 'text-white'} font-bold truncate">${item.current ? '▶ ' : ''}${_mwEsc(item.name)}</span>
+                        ${item.subtitle ? `<span class="block text-xs text-gray-400 truncate">${_mwEsc(item.subtitle)}</span>` : ''}
+                    </span>
+                </button>
+                <span class="flex items-center shrink-0">${controls}</span>
+            </div>`;
+        }).join('');
+        box.innerHTML = head + `<div class="max-h-[35vh] overflow-y-auto">${rows}</div>`;
+    }
+
+    async function mwQueueCmd(action, queueItemId, index) {
+        const ent = await _mwQueueTarget();
+        if (!ent) return;
+        try {
+            await MusicLogic.queueCommand(ent.entity_id, action, {
+                queue_item_id: queueItemId || null,
+                index: (index === undefined) ? null : index,
+            }, _mwOpts);
+        } catch (e) {
+            _mwToast(e.message || 'Queue change failed');
+            return;
+        }
+        setTimeout(mwLoadQueue, 400);
+        if (action === 'play_index' || action === 'clear') setTimeout(mwRefresh, 900);
+    }
+
     async function mwRadio() {
         const ent = await _mwQueueTarget();
         if (!ent) return;
@@ -684,7 +766,10 @@
         if (_mwTimer) clearInterval(_mwTimer);
         _mwTimer = setInterval(() => {
             const el = document.getElementById('music-widget');
-            if (document.visibilityState === 'visible' && el && el.offsetParent !== null) mwRefresh();
+            if (document.visibilityState === 'visible' && el && el.offsetParent !== null) {
+                mwRefresh();
+                if (_mwQueueOpen) mwLoadQueue();
+            }
         }, 10000);
     }
 

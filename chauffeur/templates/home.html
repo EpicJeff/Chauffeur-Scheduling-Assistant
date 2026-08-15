@@ -5001,6 +5001,8 @@
                                 member: '', memberTouched: 0,
                                 myShelf: { favorites: [], recent: [] },
                                 favUris: [],
+                                // The queue, when opened: {can_edit, items}.
+                                queueOpen: false, queue: null,
                                 // The local player's state, mirrored in from
                                 // outside Alpine — see musicNow().
                                 localActive: false, localConnecting: false,
@@ -5072,6 +5074,8 @@
                     // panel offers itself than says there is no music here.
                     if (!s.selected && !s.players.length && lp) s.selected = this.MUSIC_LOCAL;
                     s.now = s.players.find(p => p.entity_id === s.selected) || null;
+                    // An open queue rides the same beat as the transport.
+                    if (s.queueOpen) this.loadMusicQueue(t);
                 },
 
                 async loadMusicFavorites(t) {
@@ -5426,6 +5430,49 @@
                     await MusicLogic.command(ent.entity_id, command, extra,
                                              { apiBase: this.apiBase });
                     setTimeout(() => this.refreshMusic(t), 600);
+                },
+
+                async musicToggleQueue(t) {
+                    const s = this.musicState[t.id];
+                    if (!s || !t.data.interactive) return;
+                    this.musicTouch(t);
+                    s.queueOpen = !s.queueOpen;
+                    if (s.queueOpen) {
+                        s.queue = null;
+                        await this.loadMusicQueue(t);
+                    }
+                },
+
+                async loadMusicQueue(t) {
+                    const s = this.musicState[t.id];
+                    if (!s || !s.queueOpen) return;
+                    const ent = await this.musicQueueTarget(t);
+                    if (!ent) { s.queueOpen = false; return; }
+                    const data = await MusicLogic.queue(ent.entity_id,
+                                                        { apiBase: this.apiBase });
+                    if (!s.queueOpen) return;
+                    s.queue = data || { can_edit: false, items: [] };
+                },
+
+                async musicQueueEdit(t, action, item) {
+                    const s = this.musicState[t.id];
+                    if (!s) return;
+                    this.musicTouch(t);
+                    const ent = await this.musicQueueTarget(t);
+                    if (!ent) return;
+                    try {
+                        await MusicLogic.queueCommand(ent.entity_id, action, {
+                            queue_item_id: (item && item.id) || null,
+                            index: (action === 'play_index' && item) ? item.index : null,
+                        }, { apiBase: this.apiBase });
+                    } catch (e) {
+                        s.error = e.message || 'Queue change failed';
+                        return;
+                    }
+                    setTimeout(() => this.loadMusicQueue(t), 400);
+                    if (action === 'play_index' || action === 'clear') {
+                        setTimeout(() => this.refreshMusic(t), 900);
+                    }
                 },
 
                 musicShuffle(t) {

@@ -248,7 +248,11 @@ def command(name: str, timeout: float = None, **args):
         if 'result' in body:
             with _lock:
                 _status.update(ok=True, detail='')
-            return body['result']
+            # Void commands (queue edits, favourites writes) answer with
+            # result: null on SUCCESS. None is this module's failure value,
+            # so a successful nothing comes back as {} — callers test
+            # `is not None`, and null-success must not read as failure.
+            return body['result'] if body['result'] is not None else {}
     with _lock:
         _status.update(ok=True, detail='')
     return body

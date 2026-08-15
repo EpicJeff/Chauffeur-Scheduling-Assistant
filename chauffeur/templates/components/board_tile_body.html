@@ -839,7 +839,67 @@
                                             class="px-4 py-2 rounded-full bg-black/20 panel-text border border-white/10 active:opacity-70 text-sm font-bold">
                                             📡 Radio
                                         </button>
+                                        <button @click="musicToggleQueue(t)" title="Queue"
+                                            class="px-4 py-2 rounded-full text-sm font-bold border"
+                                            :class="musicOf(t).queueOpen
+                                                ? 'text-white border-transparent'
+                                                : 'panel-text bg-black/20 border-white/10'"
+                                            :style="musicOf(t).queueOpen ? 'background: var(--panel-accent)' : ''">
+                                            🧾 Queue
+                                        </button>
                                     </div>
+
+                                    <!-- The queue, visible. Editable on the
+                                         direct MA path; the HA bridge only
+                                         sees current+next, and the header
+                                         says so instead of drawing dead
+                                         buttons. -->
+                                    <template x-if="musicOf(t).queueOpen">
+                                        <div class="flex-1 min-h-0 overflow-y-auto tile-scroll rounded-xl border border-white/10">
+                                            <div class="flex items-center justify-between px-3 py-2 border-b border-white/10">
+                                                <span class="text-xs font-black uppercase tracking-[0.15em] panel-dim"
+                                                    x-text="musicOf(t).queue && !musicOf(t).queue.can_edit
+                                                        ? 'Up next (peek — token unlocks the full queue)' : 'Queue'"></span>
+                                                <button x-show="musicOf(t).queue && musicOf(t).queue.can_edit"
+                                                    @click="musicQueueEdit(t, 'clear')"
+                                                    class="text-sm font-bold text-red-400 active:opacity-70">Clear</button>
+                                            </div>
+                                            <div x-show="!musicOf(t).queue" class="p-3 text-base panel-dim">Loading…</div>
+                                            <div x-show="musicOf(t).queue && !(musicOf(t).queue.items || []).length"
+                                                class="p-3 text-base panel-dim">The queue is empty.</div>
+                                            <template x-for="item in (musicOf(t).queue ? musicOf(t).queue.items : [])"
+                                                :key="item.id || item.name + item.index">
+                                                <div class="w-full px-3 py-2 flex items-center gap-3 border-b border-white/10 last:border-0"
+                                                    :class="item.current ? 'bg-white/10' : ''">
+                                                    <button @click="musicOf(t).queue.can_edit && !item.current && item.index !== null
+                                                            ? musicQueueEdit(t, 'play_index', item) : null"
+                                                        class="min-w-0 flex-1 text-left flex items-center gap-3 active:opacity-70">
+                                                        <img x-show="item.image" :src="musicRowArt(item)" loading="lazy"
+                                                            class="w-10 h-10 rounded-lg object-cover bg-black/20 shrink-0" alt="">
+                                                        <span x-show="!item.image"
+                                                            class="w-10 h-10 rounded-lg bg-black/20 flex items-center justify-center text-lg shrink-0">🎵</span>
+                                                        <span class="min-w-0 flex-1">
+                                                            <span class="block text-base font-bold truncate"
+                                                                :class="item.current ? '' : 'panel-text'"
+                                                                :style="item.current ? 'color: var(--panel-accent)' : ''"
+                                                                x-text="(item.current ? '▶ ' : '') + item.name"></span>
+                                                            <span class="block text-sm panel-dim truncate"
+                                                                x-text="item.subtitle"></span>
+                                                        </span>
+                                                    </button>
+                                                    <span x-show="musicOf(t).queue.can_edit && !item.current"
+                                                        class="flex items-center gap-1 shrink-0">
+                                                        <button @click="musicQueueEdit(t, 'move_up', item)"
+                                                            class="p-2 panel-dim active:opacity-70" title="Up">▲</button>
+                                                        <button @click="musicQueueEdit(t, 'move_down', item)"
+                                                            class="p-2 panel-dim active:opacity-70" title="Down">▼</button>
+                                                        <button @click="musicQueueEdit(t, 'remove', item)"
+                                                            class="p-2 text-red-400 active:opacity-70" title="Remove">✕</button>
+                                                    </span>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
 
                                     <div x-show="t.data.show.search && t.data.interactive">
                                         <input type="text" placeholder="Search music…" autocomplete="off"

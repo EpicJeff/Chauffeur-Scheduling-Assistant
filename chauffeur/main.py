@@ -5411,12 +5411,29 @@ def music_favorites(media_type: str = 'playlist', limit: int = 25):
 
 @app.get("/api/music/queue")
 def music_queue(entity_id: str):
-    from services import ha_api
-    result = ha_api.call_service('music_assistant', 'get_queue',
-                                 {'entity_id': entity_id}, return_response=True)
-    if result is None:
+    """The queue as a list. MA path: the whole thing, editable. HA path: the
+    current+next peek that service can see, `can_edit: false`, and the
+    surfaces draw only what is there."""
+    from services import music_queue as mq
+    out = mq.get_queue(entity_id)
+    if out is None:
         raise HTTPException(status_code=502, detail="Music Assistant get_queue failed")
-    return result.get('service_response', result)
+    return out
+
+class QueueCommandRequest(BaseModel):
+    entity_id: str
+    action: str  # play_index | move_up | move_down | remove | clear
+    queue_item_id: Optional[str] = None
+    index: Optional[int] = None
+
+@app.post("/api/music/queue/command")
+def music_queue_command(req: QueueCommandRequest):
+    from services import music_queue as mq
+    ok, detail = mq.command(req.entity_id, req.action,
+                            queue_item_id=req.queue_item_id, index=req.index)
+    if not ok:
+        raise HTTPException(status_code=502, detail=detail)
+    return {'status': 'ok'}
 
 class MusicItemSnapshot(BaseModel):
     """What a shelf row draws, captured at the tap. See storage's music

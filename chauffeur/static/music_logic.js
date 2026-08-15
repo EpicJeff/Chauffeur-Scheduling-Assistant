@@ -502,6 +502,30 @@
          *  the everything-omitted case. Throws with the server's sentence on
          *  a refusal — radio mode refuses on providers that cannot do it,
          *  and "nothing happened" is the one wrong way to deliver that. */
+        /** The queue as rows: {source, can_edit, items: [{id, index, name,
+         *  subtitle, image, current}]}. Null on a miss — a queue panel
+         *  should go quiet on a blip, not paint an error. */
+        async queue(entityId, opts) {
+            try {
+                return await json(base(opts) + 'api/music/queue?entity_id='
+                                  + encodeURIComponent(entityId));
+            } catch (e) {
+                return null;
+            }
+        },
+
+        /** play_index | move_up | move_down | remove | clear. Throws with
+         *  the server's sentence — an edit that failed has something to say
+         *  ("needs the Music Assistant token"), unlike a poll. */
+        async queueCommand(entityId, action, extra, opts) {
+            return json(base(opts) + 'api/music/queue/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(Object.assign(
+                    { entity_id: entityId, action }, extra || {})),
+            });
+        },
+
         async play(entityId, uri, mediaType, opts, extra) {
             if (!entityId || !uri) return false;
             const body = { entity_id: entityId, media_id: uri, media_type: mediaType };
