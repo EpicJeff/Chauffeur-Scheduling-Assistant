@@ -415,9 +415,25 @@ def scenario_finding_our_own_entity_searches_the_unfiltered_list():
     play = play[:play.index('// Cache-busted')]
     check('findLocalEntity(' in play,
           "the board card searches for itself in the filtered list")
+    # The same rule holds for the SYNCHRONOUS lookups the now-heart and the
+    # queue switches use. Two ways to get it wrong, both shipped once: the
+    # MA-only filter, and the card's own twin-hide, which removes exactly
+    # the entity being looked for from s.players. `allPlayers` is the
+    # pre-hide, unfiltered list, kept for "which of these is me".
+    cur = tpl[tpl.index('musicCurrent(t) {'):][:700]
+    check('allPlayers' in cur,
+          "musicCurrent searches the twin-hidden list, so the screen player "
+          "can never find itself")
+    refresh = tpl[tpl.index('async refreshMusic(t) {'):]
+    refresh = refresh[:refresh.index('updateNowRow(t) {')]
+    check('s.allPlayers = players' in refresh,
+          "refreshMusic never keeps the pre-hide list")
     widget = tpl_source.read('components/music_widget.html')
     check('findLocalEntity(' in widget,
           "the PWA still searches for the phone in the filtered list")
+    check('_mwPlayersAll' in widget,
+          "the PWA's synchronous phone-entity lookup reads only the "
+          "MA-filtered list")
     check('ma_only=false' not in widget,
           "the widget still fetches the full list by hand — that fetch existed "
           "only to LOG what the lookup could not see")

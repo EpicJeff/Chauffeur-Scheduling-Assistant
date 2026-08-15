@@ -4983,7 +4983,8 @@
                                 // card, a poll deciding the kitchen is playing
                                 // again would take it back off them mid-song.
                                 selected: t.data.player || '',
-                                players: [], now: null, q: '', results: null,
+                                players: [], allPlayers: [],
+                                now: null, q: '', results: null,
                                 searching: false, error: '', notice: '',
                                 favorites: [],
                                 // Search filters: a type, a provider, and the
@@ -5063,8 +5064,21 @@
                     // the picker offers the same speaker twice and only one of
                     // the two entries knows it is this browser.
                     const mine = lp ? lp.entityIn(players) : null;
+                    // The twin-hide is for the PICKER alone. `allPlayers`
+                    // keeps the pre-hide list, because "which of these is
+                    // me" must never search a list its answer was just
+                    // removed from — hiding the twin was exactly how the
+                    // screen player's now-heart could never find itself.
+                    s.allPlayers = players;
                     s.players = players.filter(p => !mine || p.entity_id !== mine.entity_id);
                     if (s.selected === this.MUSIC_LOCAL) {
+                        // And the FULL list when this screen is the player:
+                        // a Sendspin entity exposed without mass_player_type
+                        // is invisible to the MA-only list — the v2.234.1
+                        // lesson, applied to the lookup below.
+                        const all = await MusicLogic.players(
+                            { apiBase: this.apiBase }, true);
+                        if (all) s.allPlayers = all;
                         // Mirrored rather than skipped. The push from the
                         // client is the fast path; this is the safety net for
                         // a client that reports playback changes but not
@@ -5091,24 +5105,38 @@
                 },
 
                 /** The playing item as a heartable row. Fetched only when
-                 *  the playing uri CHANGES — a track change, not every ten
-                 *  second poll — and enriched server-side with the real
-                 *  favourite flag and canonical uri via item_by_uri. */
+                 *  the playing TRACK changes — keyed on the uri when the
+                 *  entity carries one, on title|artist when it does not
+                 *  (some players report only the strings; the server then
+                 *  resolves the uri from the MA queue's current item). */
                 async updateNowRow(t) {
                     const s = this.musicState[t.id];
                     if (!s) return;
                     const ent = this.musicCurrent(t);
-                    const uri = ent && ent.media_content_id;
-                    if (!uri) { s.nowRow = null; return; }
-                    if (s.nowRow && s.nowRow.src_uri === uri) return;
-                    s.nowRow = { src_uri: uri, uri, media_type: null,
+                    const key = ent && (ent.media_content_id
+                        || ((ent.media_title || ent.media_artist)
+                            ? (ent.media_title || '') + '|' + (ent.media_artist || '')
+                            : null));
+                    if (!ent || !key) { s.nowRow = null; return; }
+                    if (s.nowRow && s.nowRow.src_key === key) return;
+                    s.nowRow = { src_key: key,
+                                 src_uri: ent.media_content_id || null,
+                                 uri: ent.media_content_id || null,
+                                 media_type: null,
                                  name: ent.media_title || '',
                                  subtitle: ent.media_artist || '',
                                  image: null, favorite: null };
                     const row = await MusicLogic.nowPlayingItem(
                         ent.entity_id, { apiBase: this.apiBase });
-                    if (row && row.uri && s.nowRow && s.nowRow.src_uri === uri) {
-                        s.nowRow = Object.assign({ src_uri: uri }, row);
+                    if (!s.nowRow || s.nowRow.src_key !== key) return;
+                    if (row && row.uri) {
+                        s.nowRow = Object.assign(
+                            { src_key: key, src_uri: s.nowRow.src_uri || row.uri },
+                            row);
+                    } else if (!s.nowRow.uri) {
+                        // Neither the entity nor the server produced a uri —
+                        // there is nothing a heart could act on.
+                        s.nowRow = null;
                     }
                 },
 
@@ -5684,14 +5712,18 @@
                 musicStop(t) { this.musicQueueCommand(t, 'stop'); },
 
                 /** The selected REMOTE player's row from the last poll, for
-                 *  reading shuffle/repeat state. The local screen reads its
-                 *  own entity out of the same list when it is there. */
+                 *  reading shuffle/repeat state. The local screen finds its
+                 *  own entity in `allPlayers` — the pre-twin-hide list —
+                 *  because `s.players` just had that exact entity removed
+                 *  for the picker's sake. */
                 musicCurrent(t) {
                     const s = this.musicState[t.id];
                     if (!s) return null;
                     if (s.selected === this.MUSIC_LOCAL) {
                         const lp = boardLocalPlayers[t.id];
-                        return (lp && lp.entityIn(s.players)) || null;
+                        return (lp && lp.entityIn(
+                            (s.allPlayers && s.allPlayers.length)
+                                ? s.allPlayers : s.players)) || null;
                     }
                     return s.players.find(p => p.entity_id === s.selected) || null;
                 },

@@ -195,7 +195,15 @@
         }
     }
 
-    function _mwPhoneEntity() { return _mwPhone.entityIn(_mwPlayers); }
+    // The FULL player list, kept only while "This phone" is the player:
+    // finding our OWN entity must search a list it cannot have been
+    // filtered out of (a Sendspin entity exposed without mass_player_type
+    // is invisible to the MA-only list — the v2.234.1 lesson).
+    let _mwPlayersAll = [];
+
+    function _mwPhoneEntity() {
+        return _mwPhone.entityIn(_mwPlayersAll.length ? _mwPlayersAll : _mwPlayers);
+    }
 
     // --- the now-playing heart -------------------------------------------
     // The row for whatever is on, fetched when the playing uri CHANGES (a
@@ -213,30 +221,52 @@
         btn.classList.toggle('text-gray-600', !on);
     }
 
-    function _mwUpdateNowHeart(ent) {
+    function _mwApplyNowHeart() {
         const btn = document.getElementById('mw-now-fav');
         if (!btn) return;
-        const uri = ent && ent.media_content_id;
-        if (!uri || !_mwMemberId()) {
-            btn.style.display = 'none';
+        // Visible only once there is a uri a heart could act on — the
+        // server may still be resolving one from the MA queue.
+        btn.style.display = (_mwNowRow && _mwNowRow.uri) ? 'block' : 'none';
+        _mwPaintNowHeart();
+    }
+
+    function _mwUpdateNowHeart(ent) {
+        // Keyed on the TRACK: the uri when the entity carries one, the
+        // title|artist strings when it does not (the Sendspin phone player
+        // reports only the strings; the server resolves the uri from the
+        // MA queue's current item).
+        const key = ent && (ent.media_content_id
+            || ((ent.media_title || ent.media_artist)
+                ? (ent.media_title || '') + '|' + (ent.media_artist || '')
+                : null));
+        if (!ent || !key || !_mwMemberId()) {
             _mwNowRow = null;
+            _mwApplyNowHeart();
             return;
         }
-        if (!_mwNowRow || _mwNowRow.src_uri !== uri) {
-            // The attrs are enough to draw the heart NOW; the enrichment
-            // (canonical uri, media_type, real artwork) lands when it lands.
-            _mwNowRow = { src_uri: uri, uri, media_type: null,
+        if (!_mwNowRow || _mwNowRow.src_key !== key) {
+            // The attrs are enough to draw the heart NOW when they carry a
+            // uri; the enrichment (canonical uri, media_type, artwork)
+            // lands when it lands.
+            _mwNowRow = { src_key: key,
+                          src_uri: ent.media_content_id || null,
+                          uri: ent.media_content_id || null,
+                          media_type: null,
                           name: ent.media_title || '',
                           subtitle: ent.media_artist || '', image: null };
             MusicLogic.nowPlayingItem(ent.entity_id, _mwOpts).then(row => {
-                if (row && row.uri && _mwNowRow && _mwNowRow.src_uri === uri) {
-                    _mwNowRow = Object.assign({ src_uri: uri }, row);
-                    _mwPaintNowHeart();
+                if (!_mwNowRow || _mwNowRow.src_key !== key) return;
+                if (row && row.uri) {
+                    _mwNowRow = Object.assign(
+                        { src_key: key, src_uri: _mwNowRow.src_uri || row.uri },
+                        row);
+                } else if (!_mwNowRow.uri) {
+                    _mwNowRow = null;
                 }
+                _mwApplyNowHeart();
             });
         }
-        btn.style.display = 'block';
-        _mwPaintNowHeart();
+        _mwApplyNowHeart();
     }
 
     async function mwNowFav() {
@@ -329,10 +359,10 @@
         }
         if (_mwSelected === MW_PHONE) {
             mwRenderPhoneState();
-            // Queue switches and the now-heart read the phone's HA entity
-            // when it is in the cached list; neutral/hidden otherwise, which
-            // is honest — the queue lives in MA and this browser does not
-            // know it.
+            // Queue switches and the now-heart read the phone's OWN entity,
+            // searched in the full list — see _mwPlayersAll.
+            const all = await MusicLogic.players(_mwOpts, true);
+            if (all) _mwPlayersAll = all;
             const phoneEnt = _mwPhoneEntity();
             _mwPaintQueueSwitches(phoneEnt);
             _mwUpdateNowHeart(phoneEnt);

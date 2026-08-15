@@ -5460,6 +5460,22 @@ def music_now(entity_id: str):
            'subtitle': attrs.get('media_artist') or '',
            'image': attrs.get('entity_picture'),
            'favorite': None}
+    if not uri and ma_api.available():
+        # Some players — the Sendspin screen player among them — report the
+        # title strings without a media_content_id. The QUEUE still knows
+        # exactly what is on, and its player id is stamped on the entity.
+        pid = attrs.get('mass_player_id')
+        if isinstance(pid, str) and pid:
+            queue = ma_api.command('player_queues/get_active_queue',
+                                   player_id=pid)
+            cur = (queue or {}).get('current_item') \
+                if isinstance(queue, dict) else None
+            if isinstance(cur, dict):
+                uri = (cur.get('uri')
+                       or (cur.get('media_item') or {}).get('uri'))
+                if uri:
+                    row['uri'] = uri
+                    row['name'] = row['name'] or cur.get('name') or ''
     if uri and ma_api.available():
         item = ma_api.command('music/item_by_uri', uri=uri)
         if isinstance(item, dict) and item.get('uri'):

@@ -307,6 +307,46 @@ def scenario_now_playing_resolves_to_a_heartable_row():
     check(row['uri'] is None, "nothing playing -> uri None, heart hides")
 
 
+def scenario_now_playing_falls_back_to_the_queue():
+    """The Sendspin screen player reports the title strings without a
+    media_content_id — the case a real wall found. The QUEUE still knows
+    what is on, and its player id is stamped on the entity."""
+    import main
+    from services import ma_api
+    state = {'entity_id': 'media_player.screen', 'attributes': {
+        'mass_player_id': 'screen-1',
+        'media_title': 'Vapour Trail', 'media_artist': 'Ride'}}
+
+    def fake_command(cmd, **kw):
+        if cmd == 'player_queues/get_active_queue':
+            check(kw == {'player_id': 'screen-1'}, f"queue by player id: {kw}")
+            return {'queue_id': 'screen-1',
+                    'current_item': {'uri': 'library://track/99',
+                                     'name': 'Vapour Trail'}}
+        if cmd == 'music/item_by_uri':
+            check(kw == {'uri': 'library://track/99'}, "enriched by queue uri")
+            return {'uri': 'library://track/99', 'item_id': '99',
+                    'name': 'Vapour Trail', 'media_type': 'track',
+                    'provider': 'library', 'favorite': False,
+                    'artists': [{'name': 'Ride'}], 'album': {'name': 'Nowhere'},
+                    'provider_mappings': [], 'metadata': {'images': []}}
+        return {}
+
+    with mock.patch.object(ha_api, 'get_state', return_value=state), \
+            mock.patch.object(ma_api, 'available', return_value=True), \
+            mock.patch.object(ma_api, 'command', side_effect=fake_command), \
+            mock.patch.object(ma_api, 'resolve_base', return_value='http://ma:8095'):
+        row = main.music_now(entity_id='media_player.screen')
+    check(row['uri'] == 'library://track/99', f"uri from the queue: {row}")
+    check(row['favorite'] is False, "the flag rode the fallback too")
+
+    # Without MA there is no queue to ask, and no uri means no heart.
+    with mock.patch.object(ha_api, 'get_state', return_value=state), \
+            mock.patch.object(ma_api, 'available', return_value=False):
+        row = main.music_now(entity_id='media_player.screen')
+    check(row['uri'] is None, "no MA, no queue fallback — the heart hides")
+
+
 def scenario_the_now_heart_exists_on_both_surfaces():
     """Reported from the family: hearts landed on every ROW and never on the
     thing actually playing — the one place 'what is this? keep it' happens."""
@@ -467,6 +507,7 @@ SCENARIOS = [
     scenario_personal_shelf_is_member_shaped,
     scenario_recent_plays_are_recorded_and_capped,
     scenario_now_playing_resolves_to_a_heartable_row,
+    scenario_now_playing_falls_back_to_the_queue,
     scenario_the_now_heart_exists_on_both_surfaces,
     scenario_image_proxy,
     scenario_image64_roundtrip,
