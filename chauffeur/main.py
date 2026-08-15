@@ -275,12 +275,18 @@ async def push_notification_loop():
             except Exception as se:
                 print(f"School-end push error: {se}")
 
-            # --- Bus morning pushes (B2): the "get ready" nudge at leave-by
-            # minus the child's own lead, and a one-off "running late, no
-            # rush" when the tracker says the bus is behind. Both are per
-            # member, per day, quiet-hours gated, and both are OFF until a
-            # parent sets the field — the bus arc's rule is that Chauffeur
-            # says nothing about buses it was not asked about.
+            # --- Bus morning pushes (B2 + B3). Four things a bus morning can
+            # say, all per member, per day, quiet-hours gated, all OFF until a
+            # parent sets the field — the bus arc's rule is that Chauffeur says
+            # nothing about buses it was not asked about.
+            #
+            # The two that matter are B3's EVENTS: the route starting, and the
+            # bus coming inside the radius of the house. Both are things the
+            # tracker reports. B2's pair — a countdown to a leave-by time and
+            # "running late" — are arithmetic against a stop time somebody
+            # typed months ago, which is only ever true relative to a guess;
+            # they stay because they are opt-in and shipped, but the events are
+            # the ones to reach for.
             #
             # Only inside the morning window, and only on a school day: the
             # whole live layer is HA reads, and doing them at four in the
@@ -299,7 +305,10 @@ async def push_notification_loop():
                         if m.get('role') != 'child' or not m.get('bus_am_stop_time'):
                             continue
                         wants_ready = int(m.get('bus_ready_lead_mins') or 0) > 0
-                        if not wants_ready and not m.get('bus_late_push'):
+                        if not any((wants_ready, m.get('bus_late_push'),
+                                    m.get('bus_route_push'),
+                                    int(m.get('bus_near_radius_m') or 0) > 0,
+                                    m.get('bus_near_zone'))):
                             continue
                         # The launch dict is the single source for both of
                         # these — same leave-by, same lateness, same live
@@ -309,6 +318,38 @@ async def push_notification_loop():
                         launch = day.get('launch')
                         if not (launch and launch.get('bus')):
                             continue
+                        # B3: the two EVENTS. Both are things the tracker
+                        # reports rather than clock arithmetic against a time
+                        # a parent typed months ago — which is the whole
+                        # reason they exist: "the bus has started" and "the
+                        # bus is nearly here" are true statements, while
+                        # "running late" is only ever true relative to a
+                        # guess. Each fires once per child per day, and each
+                        # can SPEAK into a room as well as push, because a
+                        # phone in another room is not how you tell a
+                        # seven-year-old to put their shoes on.
+                        active = _bus.bus_active(m)
+                        for key, want, fires, msg in (
+                            ('route', m.get('bus_route_push'), active,
+                             _bus.route_start_message(m)),
+                            ('near', bool(m.get('bus_near_zone'))
+                             or int(m.get('bus_near_radius_m') or 0) > 0,
+                             active and _bus.bus_is_near(m), _bus.near_message(m)),
+                        ):
+                            state_key = f"{key}:{m['id']}:{today_str}"
+                            if not want or state_key in sent or not fires:
+                                continue
+                            sent[state_key] = time.time()
+                            dirty = True
+                            _notify_member_lanes(m, msg[0], msg[1], '/app')
+                            room = _bus.announce_room(m)
+                            if room:
+                                try:
+                                    from services import announce as _ann
+                                    _ann.announce(room, msg[2])
+                                except Exception as ae:
+                                    print(f"Bus announce failed: {ae}")
+
                         late_key = f"late:{m['id']}:{today_str}"
                         if m.get('bus_late_push') and late_key not in sent \
                                 and launch.get('bus_late_mins'):
@@ -8232,7 +8273,7 @@ def _send_school_end_push(member, now=None):
 
 # --- Kid evening digest (kid-support arc K1) ---
 
-def _build_kid_digests(target_date=None):
+def _build_kid_digests(target_date=None, routine_bus=True):
     """Per-child digest content for one day (default TOMORROW), built on
     member_day's ride resolution so the digest always matches what the kid's
     My Day shows (three-way passenger binding, split-leg collapse, per-leg
@@ -8345,7 +8386,18 @@ def _build_kid_digests(target_date=None):
             # is this minute's — two lines about one bus is a wall arguing
             # with itself. Outside the morning run the chip returns None and
             # the plan line stands, which is every other hour of the day.
-            lines.insert(0, bus.live_chip(m, launch) or bus.digest_line(launch))
+            # `routine_bus=False` drops the PLAN line and keeps only a live
+            # one. The evening DM is built for TOMORROW, where a launch can
+            # never be live, so what it printed every single weeknight was
+            # "🚌 Bus at 7:22 AM — out the door by 7:17": a fact that has not
+            # changed since September, in a message whose whole job is to say
+            # what is different about tomorrow. Family verdict, and they are
+            # right — a digest that always says the same thing teaches people
+            # not to read it. The morning surfaces are unchanged: there the
+            # line is either live or the only bus information on the screen.
+            chip = bus.live_chip(m, launch)
+            if chip or routine_bus:
+                lines.insert(0, chip or bus.digest_line(launch))
         elif launch and lines:
             who = (launch.get('driver') or {}).get('name')
             lines.insert(0, f"🚀 Leave by {launch['leave_label']}"
@@ -8477,7 +8529,7 @@ def _send_kid_digests():
     The DM rails push to kids with phones for free; phone-less kids see the
     SAME content on the kiosk strip (and the DM waits in their thread for
     whatever shared device they next pick up)."""
-    digest = _build_kid_digests()
+    digest = _build_kid_digests(routine_bus=False)
     weather = digest.get('weather')
     for m_id, k in (digest.get('kids') or {}).items():
         parts = [f"🌙 Tomorrow, {k['name']}!"]

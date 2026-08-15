@@ -623,6 +623,12 @@ WIDGETS = [
          _opt('members', 'People', 'select', [], source='members', multi=True,
               help='Leave empty for everyone.'),
          _opt('cars', 'Show cars', 'bool', True),
+         # OFF by default, unlike cars: a bus is only real for the twenty
+         # minutes it is running, and a household with no bus kids would get
+         # a permanently absent row it never asked about.
+         _opt('buses', 'Show school buses', 'bool', False,
+              help='While a tracked bus is actually running, it appears with '
+                   'the stop it is heading for.'),
      ]},
     # ── Music.
     #
@@ -2417,6 +2423,39 @@ def _tile_map(now, runs=None, config=None, **_):
                              'driving': None})
         except Exception as e:
             print(f"[home_board] map cars failed: {e}")
+        # Buses, and ONLY while one is actually running. A car sits in the
+        # drive all day and "where is the car" is a real question at any hour;
+        # a bus is somebody else's vehicle that matters for twenty minutes,
+        # and a stale pin on a kitchen wall at 3pm is a claim about a bus that
+        # is not there. The stop rides along as its own pin, because "how far
+        # is it from the stop" is the actual question being asked.
+        try:
+            from services import bus as bus_svc
+            for m in (storage.get_all_members() if _cfg_bool(config, 'buses', False) else []):
+                if m.get('role') != 'child' or not m.get('bus_am_stop_time'):
+                    continue
+                if not bus_svc.bus_active(m):
+                    continue
+                pos = bus_svc.bus_position(m)
+                if not pos:
+                    continue
+                first = ((m.get('name') or '').split() or [''])[0]
+                rows.append({'member_id': f"bus:{m.get('id')}",
+                             'name': f"{first}'s bus" if first else 'School bus',
+                             'avatar': '🚌', 'is_car': True,
+                             'state': bus_svc.bus_where(m) or 'on the way',
+                             'latitude': pos[0], 'longitude': pos[1],
+                             'driving': None})
+                stop = bus_svc.stop_position(m)
+                if stop:
+                    rows.append({'member_id': f"stop:{m.get('id')}",
+                                 'name': f"{first}'s stop" if first else 'Bus stop',
+                                 'avatar': '🚏', 'is_car': True,
+                                 'state': None,
+                                 'latitude': stop[0], 'longitude': stop[1],
+                                 'driving': None})
+        except Exception as e:
+            print(f"[home_board] map buses failed: {e}")
         return {'people': rows,
                 # Read by the markup (whether the canvas takes pointer events),
                 # by the renderer (Leaflet's own handlers and the marker

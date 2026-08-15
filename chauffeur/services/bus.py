@@ -132,6 +132,173 @@ def bus_active(member):
     return False
 
 
+def _entity(member, field, default_suffix):
+    """An explicit per-member entity, else HCTB's composed name. The one
+    ladder every live reading in this module walks."""
+    return (member.get(field) or '').strip() \
+        or f"{default_suffix}".format(prefix=_prefix(member))
+
+
+def _coords_of(entity_id):
+    """(lat, lon) from any entity carrying them as attributes — a
+    device_tracker, a person, a zone — or None."""
+    try:
+        from services import ha_api
+        st = ha_api.get_state(entity_id) or {}
+        attrs = st.get('attributes') or {}
+        lat, lon = attrs.get('latitude'), attrs.get('longitude')
+        if lat is None or lon is None:
+            return None
+        return float(lat), float(lon)
+    except (TypeError, ValueError, Exception):
+        return None
+
+
+def bus_position(member):
+    """Where the bus is, as (lat, lon), or None. HCTB's device_tracker by
+    default; any tracker on any platform via the override."""
+    return _coords_of(_entity(member, 'bus_tracker_entity',
+                              'device_tracker.{prefix}_bus_location'))
+
+
+def stop_position(member):
+    """The child's stop, as (lat, lon), or None.
+
+    NO default entity, deliberately, and this is the one live reading in this
+    module that does not guess. The stop is usually an HA **zone** a parent
+    drew on a map — `zone.bus_stop`, or whatever they called it — and a zone's
+    name is a household's own word, not something an integration composes from
+    a child's first name. Guessing one would be inventing a name again, which
+    is exactly how the address sensor went wrong.
+
+    Any entity carrying `latitude`/`longitude` works: a zone, a device_tracker
+    on a platform that publishes stops, even a person. Blank simply means the
+    stop is not drawn.
+    """
+    ent = (member.get('bus_stop_entity') or '').strip()
+    return _coords_of(ent) if ent else None
+
+
+def _haversine_m(lat1, lon1, lat2, lon2):
+    import math
+    r = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = (math.sin(dp / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2)
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def _home_coords():
+    """The household's home, geocoded through the existing cache. None when
+    no home address is set — the proximity trigger then simply never fires,
+    which is the right answer rather than a guess about where a family lives."""
+    try:
+        from services import maps, storage
+        addr = (maps.get_home_location() or '').strip()
+        if not addr:
+            return None
+        g = storage.get_cached_geocode(addr)
+        if not g or g.get('precision') == 'failed':
+            got = maps.geocode_address(addr)
+            return (float(got[0]), float(got[1])) if got else None
+        return float(g['lat']), float(g['lon'])
+    except Exception:
+        return None
+
+
+def metres_from_home(member):
+    """How far the bus is from the house, or None when either end is unknown.
+
+    HOME rather than the stop, deliberately: the question this answers is
+    "should we be walking out of the door", and the door is the thing the
+    family is standing behind. A stop-centred radius would fire while the bus
+    is still three streets the other side of it.
+    """
+    bus = bus_position(member)
+    home = _home_coords()
+    if not bus or not home:
+        return None
+    return _haversine_m(bus[0], bus[1], home[0], home[1])
+
+
+def _zone(entity_id):
+    """(lat, lon, radius_m) for an HA zone, or None. A zone already carries
+    its own radius, which is the whole reason to prefer one here."""
+    try:
+        from services import ha_api
+        st = ha_api.get_state(entity_id) or {}
+        attrs = st.get('attributes') or {}
+        lat, lon = attrs.get('latitude'), attrs.get('longitude')
+        if lat is None or lon is None:
+            return None
+        return float(lat), float(lon), float(attrs.get('radius') or 0)
+    except (TypeError, ValueError, Exception):
+        return None
+
+
+def bus_is_near(member):
+    """True when the bus has come inside this child's "nearly here" geofence.
+
+    A ZONE first, because a zone is already a geofence: a parent drags a
+    circle onto a map in Home Assistant and the radius comes with it, so
+    there is no number to type and no unit to get wrong. Whichever zone they
+    point at is the trigger — the stop, the corner, the end of the street —
+    and the app has no business insisting which.
+
+    Falling back to a radius around HOME keeps the version that needs no zone
+    at all. Both blank is off, like every other bus field.
+    """
+    zone_ent = (member.get('bus_near_zone') or '').strip()
+    if zone_ent:
+        z = _zone(zone_ent)
+        bus = bus_position(member)
+        if not z or not bus:
+            return False
+        # A zone with no radius is a pin, not a fence. Rather than treat that
+        # as "never", fall through to the typed radius if there is one.
+        if z[2] > 0:
+            return _haversine_m(bus[0], bus[1], z[0], z[1]) <= z[2]
+    radius = int(member.get('bus_near_radius_m') or 0)
+    if radius <= 0:
+        return False
+    d = metres_from_home(member)
+    return d is not None and d <= radius
+
+
+# The old name, kept because the loop and the tests both read better with it
+# and renaming a predicate is not worth a migration.
+near_home = bus_is_near
+
+
+def route_start_message(member):
+    """What a route starting is worth saying. An EVENT the tracker reports,
+    not a clock — which is the whole reason this replaced a countdown against
+    a time somebody typed months ago."""
+    name = ((member.get('name') or '').split() or [''])[0]
+    who = f"{name}, the" if name else "The"
+    return ("🚌 Bus has started",
+            f"The bus has started its route — time to get ready.",
+            f"{who} bus has started its route. Time to get ready.")
+
+
+def near_message(member):
+    """The second and sharper event: the bus is nearly here."""
+    name = ((member.get('name') or '').split() or [''])[0]
+    who = f"{name}, the" if name else "The"
+    return ("🚌 Bus is close",
+            "The bus is nearly here — head out to the stop.",
+            f"{who} bus is nearly here. Time to head out to the stop.")
+
+
+def announce_room(member):
+    """The HA area to speak into for this child, or None. Blank means the
+    pushes go out silently — a house with a sleeping baby in it should not
+    have to accept a talking kitchen to get a phone notification."""
+    return (member.get('bus_announce_room') or '').strip() or None
+
+
 def bus_where(member):
     """Where the bus is right now, as a short human phrase, or None.
 

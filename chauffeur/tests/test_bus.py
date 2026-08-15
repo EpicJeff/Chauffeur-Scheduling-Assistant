@@ -306,6 +306,115 @@ def scenario_the_stop_time_is_required_even_with_a_live_tracker():
               "a live tracker alone turned the bus feature on")
 
 
+
+# --- B3: the morning as EVENTS ---------------------------------------------
+
+def scenario_the_stop_is_never_guessed():
+    """Every other live reading composes an HCTB name from the first name.
+    The stop does not, and that is the point: it is usually an HA ZONE a
+    parent drew on a map, and a zone's name is a household's own word. This
+    is the third bug of that shape avoided rather than shipped."""
+    check(bus.stop_position(dict(KID)) is None,
+          "a member with no stop entity resolved one anyway")
+    with mock.patch('services.ha_api.get_state',
+                    return_value={'state': 'zoning',
+                                  'attributes': {'latitude': 35.7, 'longitude': -78.8}}):
+        got = bus.stop_position({**KID, 'bus_stop_entity': 'zone.bus_stop'})
+    check(got == (35.7, -78.8), f"a zone's coordinates were not read: {got}")
+
+
+def scenario_near_home_needs_a_radius_and_two_ends():
+    """The radius IS the opt-in, and a missing end is not a reason to fire:
+    an unknown distance must never read as zero."""
+    at_home = {'state': 'x', 'attributes': {'latitude': 35.0, 'longitude': -78.0}}
+    with mock.patch.object(bus, '_home_coords', return_value=(35.0, -78.0)),             mock.patch('services.ha_api.get_state', return_value=at_home):
+        check(bus.near_home(dict(KID)) is False,
+              "a kid with no radius set was reported as near")
+        check(bus.near_home({**KID, 'bus_near_radius_m': 500}) is True,
+              "the bus at the house was not near")
+    far = {'state': 'x', 'attributes': {'latitude': 36.0, 'longitude': -78.0}}
+    with mock.patch.object(bus, '_home_coords', return_value=(35.0, -78.0)),             mock.patch('services.ha_api.get_state', return_value=far):
+        check(bus.near_home({**KID, 'bus_near_radius_m': 500}) is False,
+              "a bus 100km away was reported as near")
+    # No home address set: the trigger simply never fires rather than
+    # guessing where a family lives.
+    with mock.patch.object(bus, '_home_coords', return_value=None),             mock.patch('services.ha_api.get_state', return_value=at_home):
+        check(bus.near_home({**KID, 'bus_near_radius_m': 500}) is False,
+              "an unknown home resolved to a distance anyway")
+
+
+def scenario_the_events_have_something_to_say_out_loud():
+    """A phone in another room is not how you tell a seven-year-old to put
+    their shoes on, so each event carries a SPOKEN form as well as a push."""
+    for msg in (bus.route_start_message(dict(KID)), bus.near_message(dict(KID))):
+        check(len(msg) == 3, f"an event has no spoken form: {msg}")
+        title, body, spoken = msg
+        check(title and body and spoken, f"an empty part: {msg}")
+        check('Addison' in spoken, f"the spoken form does not name the kid: {spoken}")
+        # Pushes go to the kid's own phone; the room hears it about them.
+        check('Addison' not in body, f"the push talks about them in the third person: {body}")
+
+
+def scenario_speaking_is_opt_in_per_child():
+    """A house with a sleeping baby should not have to accept a talking
+    kitchen to get a phone notification."""
+    check(bus.announce_room(dict(KID)) is None, "silence is not the default")
+    check(bus.announce_room({**KID, 'bus_announce_room': ' Kitchen '}) == 'Kitchen',
+          "the room is not read (or not trimmed)")
+
+
+def scenario_every_b3_field_has_a_hand_path():
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = open(os.path.join(root, 'templates', 'config.html'), encoding='utf-8').read()
+    from models import schemas
+    for field in ('bus_tracker_entity', 'bus_stop_entity', 'bus_route_push',
+                  'bus_near_radius_m', 'bus_near_zone', 'bus_announce_room'):
+        check(f'memberEdit.{field}' in cfg, f"{field} has no input")
+        check(f'{field}: member.{field}' in cfg or f'{field}: !!member.{field}' in cfg,
+              f"{field} is never loaded")
+        check(f'updates.{field}' in cfg, f"{field} is never saved")
+        check(field in schemas.FamilyMember.model_fields,
+              f"{field} is not on the model, so the PUT drops it")
+
+
+
+def scenario_a_zone_is_already_a_geofence():
+    """The best thing about pointing at a zone is that a zone carries its own
+    radius: a parent drags a circle onto a map in HA and there is no number to
+    type here and no unit to get wrong. Whichever zone they point at is the
+    trigger — the stop, the corner, the end of the street — and the app has no
+    business insisting which."""
+    zone = {'state': 'zoning',
+            'attributes': {'latitude': 35.0, 'longitude': -78.0, 'radius': 400}}
+    inside = {'state': 'x', 'attributes': {'latitude': 35.001, 'longitude': -78.0}}
+    outside = {'state': 'x', 'attributes': {'latitude': 35.05, 'longitude': -78.0}}
+    kid = {**KID, 'bus_near_zone': 'zone.bus_stop'}
+
+    def states(bus_state):
+        def get(entity_id):
+            return zone if entity_id.startswith('zone.') else bus_state
+        return mock.patch('services.ha_api.get_state', side_effect=get)
+
+    with states(inside):
+        check(bus.bus_is_near(kid) is True, "a bus inside the zone was not near")
+    with states(outside):
+        check(bus.bus_is_near(kid) is False, "a bus 5km out was inside the zone")
+    # No radius on the zone is a PIN, not a fence — fall through to the typed
+    # metres rather than silently never firing.
+    pin = {'state': 'zoning',
+           'attributes': {'latitude': 35.0, 'longitude': -78.0, 'radius': 0}}
+
+    def pin_states(entity_id):
+        return pin if entity_id.startswith('zone.') else inside
+
+    with mock.patch('services.ha_api.get_state', side_effect=pin_states),             mock.patch.object(bus, '_home_coords', return_value=(35.0, -78.0)):
+        check(bus.bus_is_near(kid) is False,
+              "a radiusless zone fired with no fallback radius set")
+        check(bus.bus_is_near({**kid, 'bus_near_radius_m': 500}) is True,
+              "a radiusless zone did not fall through to metres from home")
+
+
 SCENARIOS = [
     scenario_static_morning_launch,
     scenario_car_ride_wins_the_morning,
@@ -325,6 +434,12 @@ SCENARIOS = [
     scenario_every_b2_field_has_a_hand_path,
     scenario_the_autodiscovered_names_are_the_ones_hctb_publishes,
     scenario_the_stop_time_is_required_even_with_a_live_tracker,
+    scenario_the_stop_is_never_guessed,
+    scenario_near_home_needs_a_radius_and_two_ends,
+    scenario_the_events_have_something_to_say_out_loud,
+    scenario_speaking_is_opt_in_per_child,
+    scenario_every_b3_field_has_a_hand_path,
+    scenario_a_zone_is_already_a_geofence,
 ]
 
 if __name__ == "__main__":

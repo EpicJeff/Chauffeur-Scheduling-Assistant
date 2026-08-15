@@ -213,6 +213,13 @@ class FamilyMember(BaseModel):
     bus_location_entity: Optional[str] = None   # where the bus is, for the chip
     bus_ready_lead_mins: Optional[int] = None   # "get ready" push, blank = off
     bus_late_push: Optional[bool] = None        # "running late, no rush" push
+    # B3 — the morning as EVENTS rather than a countdown against a typed time.
+    bus_tracker_entity: Optional[str] = None    # the bus's own device_tracker
+    bus_stop_entity: Optional[str] = None       # the stop, for the map
+    bus_route_push: Optional[bool] = None       # "the bus has started its route"
+    bus_near_zone: Optional[str] = None         # HA zone = the geofence itself
+    bus_near_radius_m: Optional[int] = None     # or metres from home; blank = off
+    bus_announce_room: Optional[str] = None     # HA area to SPEAK into
     pin_hash: Optional[str] = None            # pbkdf2; never exposed via API
     pin_salt: Optional[str] = None
     created_at: float = Field(default_factory=time.time)

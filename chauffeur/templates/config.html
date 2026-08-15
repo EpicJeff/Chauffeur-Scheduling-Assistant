@@ -1451,6 +1451,33 @@
                                                     Tell them when the bus is running late
                                                 </label>
                                             </div>
+                                            <!-- B3: the two EVENTS. These are what the
+                                                 tracker actually reports, rather than
+                                                 arithmetic against the stop time above —
+                                                 "the bus has started" and "the bus is
+                                                 nearly here" are true statements. -->
+                                            <div class="flex items-center gap-4 flex-wrap mt-2">
+                                                <label class="flex items-center gap-2 text-sm text-gray-300">
+                                                    <input type="checkbox" x-model="memberEdit.bus_route_push"
+                                                        class="w-5 h-5 accent-blue-500">
+                                                    Tell them when the bus starts its route
+                                                </label>
+                                                <div class="min-w-[150px]">
+                                                    <span class="block text-xs text-gray-500 mb-0.5">"Nearly here" zone (its radius is the fence)</span>
+                                                    <input type="text" x-model="memberEdit.bus_near_zone" placeholder="zone.bus_stop"
+                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                                                </div>
+                                                <div>
+                                                    <span class="block text-xs text-gray-500 mb-0.5">…or metres from home</span>
+                                                    <input type="number" min="0" max="20000" step="50" x-model.number="memberEdit.bus_near_radius_m" placeholder="off"
+                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-28">
+                                                </div>
+                                                <div class="flex-1 min-w-[160px]">
+                                                    <span class="block text-xs text-gray-500 mb-0.5">Say it out loud in (HA area, blank = silent)</span>
+                                                    <input type="text" x-model="memberEdit.bus_announce_room" placeholder="Kitchen"
+                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                                                </div>
+                                            </div>
                                             <details class="mt-2">
                                                 <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300">Other bus platforms: explicit HA entities (blank = Here Comes The Bus auto-discovery)</summary>
                                                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
@@ -1472,6 +1499,16 @@
                                                     <div>
                                                         <span class="block text-xs text-gray-500 mb-0.5">Where-the-bus-is sensor</span>
                                                         <input type="text" x-model="memberEdit.bus_location_entity" placeholder="sensor.… (HCTB: found automatically)"
+                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                                                    </div>
+                                                    <div>
+                                                        <span class="block text-xs text-gray-500 mb-0.5">Bus tracker (for the map + "nearly here")</span>
+                                                        <input type="text" x-model="memberEdit.bus_tracker_entity" placeholder="device_tracker.…"
+                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                                                    </div>
+                                                    <div>
+                                                        <span class="block text-xs text-gray-500 mb-0.5">Bus stop (an HA zone works)</span>
+                                                        <input type="text" x-model="memberEdit.bus_stop_entity" placeholder="zone.bus_stop"
                                                             class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
                                                     </div>
                                                 </div>
@@ -5542,6 +5579,12 @@
                         bus_location_entity: member.bus_location_entity || '',
                         bus_ready_lead_mins: member.bus_ready_lead_mins || null,
                         bus_late_push: !!member.bus_late_push,
+                        bus_tracker_entity: member.bus_tracker_entity || '',
+                        bus_stop_entity: member.bus_stop_entity || '',
+                        bus_route_push: !!member.bus_route_push,
+                        bus_near_zone: member.bus_near_zone || '',
+                        bus_near_radius_m: member.bus_near_radius_m || null,
+                        bus_announce_room: member.bus_announce_room || '',
                     };
                 },
                 async addMemberCalendarId() {
@@ -5606,6 +5649,12 @@
                     updates.bus_location_entity = (updates.bus_location_entity || '').trim() || null;
                     updates.bus_ready_lead_mins = parseInt(updates.bus_ready_lead_mins) || null;
                     updates.bus_late_push = !!updates.bus_late_push;
+                    updates.bus_tracker_entity = (updates.bus_tracker_entity || '').trim() || null;
+                    updates.bus_stop_entity = (updates.bus_stop_entity || '').trim() || null;
+                    updates.bus_route_push = !!updates.bus_route_push;
+                    updates.bus_near_zone = (updates.bus_near_zone || '').trim() || null;
+                    updates.bus_near_radius_m = parseInt(updates.bus_near_radius_m) || null;
+                    updates.bus_announce_room = (updates.bus_announce_room || '').trim() || null;
                     updates.calendar_ids = updates.calendar_ids || [];
                     await fetch(`${this.apiBase}api/members/${member.id}`, {
                         method: 'PUT',
