@@ -5003,6 +5003,9 @@
                                 favUris: [],
                                 // The queue, when opened: {can_edit, items}.
                                 queueOpen: false, queue: null,
+                                // MA's own shelves for the house view, and
+                                // the playlist picker's target item.
+                                shelves: null, plItem: null,
                                 // The local player's state, mirrored in from
                                 // outside Alpine — see musicNow().
                                 localActive: false, localConnecting: false,
@@ -5015,6 +5018,10 @@
                             this.localPlayerFor(t);
                             this.refreshMusic(t);
                             if (t.data.show && t.data.show.favorites) this.loadMusicFavorites(t);
+                            if (t.data.show && t.data.show.shelves && t.data.interactive) {
+                                this.loadMusicShelves(t);
+                            }
+                            if (t.data.interactive) this.loadMusicPlaylists();
                         } else if (refresh) {
                             this.refreshMusic(t);
                         }
@@ -5087,6 +5094,69 @@
                         MusicLogic.favorites('album', 12, opts),
                     ]);
                     s.favorites = playlists.concat(albums).slice(0, 12);
+                },
+
+                async loadMusicShelves(t) {
+                    const s = this.musicState[t.id];
+                    if (!s) return;
+                    const data = await MusicLogic.shelves({ apiBase: this.apiBase });
+                    const s2 = this.musicState[t.id];
+                    if (s2) s2.shelves = (data && data.available) ? data : null;
+                },
+
+                // House-wide, so held once on the component, not per card.
+                // null = not asked yet; [] = asked, MA said none (or is
+                // absent), and the ⋯ never draws.
+                musicPlaylists: null,
+                async loadMusicPlaylists() {
+                    if (this.musicPlaylists !== null) return;
+                    this.musicPlaylists = [];
+                    this.musicPlaylists = await MusicLogic.editablePlaylists(
+                        { apiBase: this.apiBase });
+                },
+
+                musicPlaylistOpen(t, item) {
+                    const s = this.musicState[t.id];
+                    if (!s) return;
+                    this.musicTouch(t);
+                    s.plItem = (s.plItem && s.plItem.uri === item.uri) ? null : item;
+                },
+
+                async musicPlaylistAdd(t, playlistId) {
+                    const s = this.musicState[t.id];
+                    if (!s || !s.plItem) return;
+                    const item = s.plItem;
+                    s.plItem = null;
+                    try {
+                        await MusicLogic.addToPlaylist(playlistId, item.uri,
+                                                       { apiBase: this.apiBase });
+                        const p = (this.musicPlaylists || [])
+                            .find(p => String(p.item_id) === String(playlistId));
+                        s.notice = `Added to ${p ? p.name : 'the playlist'} 🎶`;
+                        setTimeout(() => { if (s.notice) s.notice = ''; }, 4000);
+                    } catch (e) {
+                        s.error = e.message || 'Playlist add failed';
+                    }
+                },
+
+                async musicPlaylistNew(t) {
+                    const s = this.musicState[t.id];
+                    if (!s || !s.plItem) return;
+                    const item = s.plItem;
+                    const name = await promptInput('New playlist',
+                        'What is it called?', { placeholder: 'Road trip' });
+                    if (!name) return;
+                    s.plItem = null;
+                    try {
+                        await MusicLogic.createPlaylist(name.trim(), item.uri,
+                                                        { apiBase: this.apiBase });
+                        this.musicPlaylists = null;
+                        this.loadMusicPlaylists();
+                        s.notice = `"${name.trim()}" started with this song 🎶`;
+                        setTimeout(() => { if (s.notice) s.notice = ''; }, 4000);
+                    } catch (e) {
+                        s.error = e.message || 'Could not create the playlist';
+                    }
                 },
 
                 musicPick(t, entityId) {

@@ -502,6 +502,43 @@
          *  the everything-omitted case. Throws with the server's sentence on
          *  a refusal — radio mode refuses on providers that cannot do it,
          *  and "nothing happened" is the one wrong way to deliver that. */
+        /** MA's own shelves for the house view. {available: false} hides
+         *  them — the HA bridge has no recommendations to offer. */
+        async shelves(opts) {
+            try {
+                return await json(base(opts) + 'api/music/shelves');
+            } catch (e) {
+                return { available: false, recently_played: [], recommendations: [] };
+            }
+        },
+
+        /** The playlists a track can be added to; [] hides the verb. */
+        async editablePlaylists(opts) {
+            try {
+                return await json(base(opts) + 'api/music/playlists/editable');
+            } catch (e) {
+                return [];
+            }
+        },
+
+        /** Throws with the server's sentence. */
+        async addToPlaylist(playlistId, uri, opts) {
+            return json(base(opts) + 'api/music/playlists/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ playlist_id: playlistId, uri }),
+            });
+        },
+
+        /** Create (optionally seeded with one track). Throws on refusal. */
+        async createPlaylist(name, uri, opts) {
+            return json(base(opts) + 'api/music/playlists/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, uri: uri || null }),
+            });
+        },
+
         /** The queue as rows: {source, can_edit, items: [{id, index, name,
          *  subtitle, image, current}]}. Null on a miss — a queue panel
          *  should go quiet on a blip, not paint an error. */

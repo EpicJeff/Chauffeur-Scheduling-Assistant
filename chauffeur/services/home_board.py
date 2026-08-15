@@ -687,6 +687,11 @@ WIDGETS = [
               help='A row of faces on the card. Picking one swaps the '
                    'favourites shelf to that person\'s own, and it falls '
                    'back to the house shelf after a few quiet minutes.'),
+         _opt('show_shelves', 'Music Assistant shelves', 'bool', True,
+              help='Recently played and MA\'s recommendations, on the house '
+                   'view. Typing is the worst part of a wall music card — '
+                   'these are the taps that replace it. Needs the Music '
+                   'Assistant token; hidden without it.'),
      ]},
     # ── Home Assistant.
     #
@@ -2604,6 +2609,7 @@ def _tile_music(now, config=None, **_):
             'search': _cfg_bool(config, 'show_search', True),
             'favorites': _cfg_bool(config, 'show_favorites', True),
             'members': _cfg_bool(config, 'show_members', True),
+            'shelves': _cfg_bool(config, 'show_shelves', True),
         },
     }
 

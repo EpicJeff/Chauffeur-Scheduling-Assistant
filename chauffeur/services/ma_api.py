@@ -186,12 +186,16 @@ def resolve_base(force: bool = False):
     return None
 
 
-def command(name: str, timeout: float = None, **args):
+def command(cmd: str, timeout: float = None, **args):
     """One MA command. Returns its result, or None for every kind of failure —
     no host, no token, a refused token, an error from MA itself. Callers are
     all fall-back-shaped, so a raise here would only be caught and dropped one
     frame up; the reason lands in `_status` instead, where the health endpoint
-    can say it out loud."""
+    can say it out loud.
+
+    First parameter is `cmd`, not `name`, so MA commands whose own argument
+    is literally called `name` (create_playlist) can pass it as a kwarg."""
+    name = cmd
     tok = token()
     if not tok:
         with _lock:

@@ -981,6 +981,26 @@
                                         class="text-sm text-red-400 leading-snug"
                                         x-text="musicOf(t).error"></div>
 
+                                    <!-- The playlist picker: one block for
+                                         whichever row's ⋯ opened it, naming
+                                         the track so a thumb that wandered
+                                         still knows what it is filing. -->
+                                    <template x-if="musicOf(t).plItem">
+                                        <div class="rounded-xl border border-white/10 bg-black/20 p-3 flex flex-wrap items-center gap-2">
+                                            <span class="text-sm panel-dim">
+                                                Add <span class="font-bold panel-text" x-text="'“' + musicOf(t).plItem.name + '”'"></span> to:</span>
+                                            <template x-for="p in (musicPlaylists || [])" :key="p.item_id">
+                                                <button @click="musicPlaylistAdd(t, p.item_id)"
+                                                    class="px-3 py-1.5 rounded-full text-sm font-bold panel-text bg-black/20 border border-white/10 active:opacity-70"
+                                                    x-text="p.name"></button>
+                                            </template>
+                                            <button @click="musicPlaylistNew(t)"
+                                                class="px-3 py-1.5 rounded-full text-sm font-bold panel-text bg-black/20 border border-white/10 active:opacity-70">＋ New…</button>
+                                            <button @click="musicOf(t).plItem = null"
+                                                class="px-3 py-1.5 rounded-full text-sm font-bold panel-dim active:opacity-70">Cancel</button>
+                                        </div>
+                                    </template>
+
                                     <!-- Results REPLACE the favourites shelf
                                          rather than stacking under it: a tile
                                          is a fixed rectangle, and two scrolling
@@ -1033,6 +1053,10 @@
                                                                 class="p-2.5 rounded-full bg-black/20 panel-text active:opacity-70 shrink-0">
                                                                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg>
                                                             </button>
+                                                            <button x-show="item.media_type === 'track' && (musicPlaylists || []).length"
+                                                                @click="musicPlaylistOpen(t, item)"
+                                                                title="Add to a playlist" aria-label="Add to a playlist"
+                                                                class="p-2.5 rounded-full bg-black/20 panel-text active:opacity-70 shrink-0 text-base font-black leading-none">⋯</button>
                                                         </div>
                                                     </template>
                                                 </div>
@@ -1062,6 +1086,58 @@
                                                     </button>
                                                 </template>
                                             </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- MA's own shelves, house view only:
+                                         what the house has been playing and
+                                         what MA suggests. Typing is the worst
+                                         part of a wall music card; these are
+                                         the taps that replace it. Absent
+                                         without the token — never an error,
+                                         just not there. -->
+                                    <template x-if="!musicOf(t).results && t.data.interactive
+                                                    && !musicOf(t).member && t.data.show.shelves
+                                                    && musicOf(t).shelves && !musicOf(t).queueOpen">
+                                        <div class="min-h-0 overflow-y-auto tile-scroll flex flex-col gap-3">
+                                            <div x-show="(musicOf(t).shelves.recently_played || []).length">
+                                                <div class="text-xs font-black uppercase tracking-[0.15em] panel-dim mb-2">
+                                                    Recently played</div>
+                                                <div class="flex gap-3 overflow-x-auto no-scrollbar pb-1">
+                                                    <template x-for="item in musicOf(t).shelves.recently_played" :key="item.uri">
+                                                        <button @click="musicPlayItem(t, item)"
+                                                            class="w-24 shrink-0 text-left active:opacity-70">
+                                                            <img x-show="musicRowArt(item)" :src="musicRowArt(item)" loading="lazy"
+                                                                class="w-24 h-24 rounded-xl object-cover bg-black/20 shadow-md" alt="">
+                                                            <span x-show="!musicRowArt(item)"
+                                                                class="w-24 h-24 rounded-xl bg-black/20 flex items-center justify-center text-3xl"
+                                                                x-text="musicIcon(item)"></span>
+                                                            <span class="block text-sm font-bold panel-text truncate mt-1"
+                                                                x-text="item.name"></span>
+                                                        </button>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                            <template x-for="rec in (musicOf(t).shelves.recommendations || [])" :key="rec.name">
+                                                <div>
+                                                    <div class="text-xs font-black uppercase tracking-[0.15em] panel-dim mb-2"
+                                                        x-text="rec.name"></div>
+                                                    <div class="flex gap-3 overflow-x-auto no-scrollbar pb-1">
+                                                        <template x-for="item in rec.items" :key="item.uri">
+                                                            <button @click="musicPlayItem(t, item)"
+                                                                class="w-24 shrink-0 text-left active:opacity-70">
+                                                                <img x-show="musicRowArt(item)" :src="musicRowArt(item)" loading="lazy"
+                                                                    class="w-24 h-24 rounded-xl object-cover bg-black/20 shadow-md" alt="">
+                                                                <span x-show="!musicRowArt(item)"
+                                                                    class="w-24 h-24 rounded-xl bg-black/20 flex items-center justify-center text-3xl"
+                                                                    x-text="musicIcon(item)"></span>
+                                                                <span class="block text-sm font-bold panel-text truncate mt-1"
+                                                                    x-text="item.name"></span>
+                                                            </button>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                            </template>
                                         </div>
                                     </template>
 
@@ -1122,6 +1198,10 @@
                                                                 class="p-2 rounded-full text-lg leading-none shrink-0"
                                                                 :class="musicIsFaved(t, item.uri) ? 'text-pink-500' : 'panel-dim'"
                                                                 x-text="musicIsFaved(t, item.uri) ? '♥' : '♡'"></button>
+                                                            <button x-show="(item.media_type || 'track') === 'track' && (musicPlaylists || []).length"
+                                                                @click="musicPlaylistOpen(t, item)"
+                                                                title="Add to a playlist" aria-label="Add to a playlist"
+                                                                class="p-2 rounded-full panel-dim active:opacity-70 shrink-0 text-base font-black leading-none">⋯</button>
                                                         </div>
                                                     </template>
                                                 </div>

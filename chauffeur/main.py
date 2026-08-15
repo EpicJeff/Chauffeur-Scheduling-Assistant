@@ -5435,6 +5435,45 @@ def music_queue_command(req: QueueCommandRequest):
         raise HTTPException(status_code=502, detail=detail)
     return {'status': 'ok'}
 
+# --- MA's own shelves + playlist writes (direct path only; absent = hidden).
+
+@app.get("/api/music/shelves")
+def music_shelves(limit: int = 8):
+    from services import music_shelves as shelves_svc
+    return shelves_svc.shelves(limit=limit)
+
+@app.get("/api/music/playlists/editable")
+def music_editable_playlists():
+    from services import music_shelves as shelves_svc
+    return shelves_svc.editable_playlists()
+
+class PlaylistAddRequest(BaseModel):
+    playlist_id: str
+    uri: str
+
+@app.post("/api/music/playlists/add")
+def music_playlist_add(req: PlaylistAddRequest):
+    from services import music_shelves as shelves_svc
+    ok, detail = shelves_svc.add_to_playlist(req.playlist_id, req.uri)
+    if not ok:
+        raise HTTPException(status_code=502, detail=detail)
+    return {'status': 'ok'}
+
+class PlaylistCreateRequest(BaseModel):
+    name: str
+    uri: Optional[str] = None
+
+@app.post("/api/music/playlists/create")
+def music_playlist_create(req: PlaylistCreateRequest):
+    from services import music_shelves as shelves_svc
+    name = (req.name or '').strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A playlist needs a name")
+    ok, detail, playlist = shelves_svc.create_playlist(name, uri=req.uri)
+    if not ok:
+        raise HTTPException(status_code=502, detail=detail)
+    return {'status': 'ok', 'playlist': playlist}
+
 class MusicItemSnapshot(BaseModel):
     """What a shelf row draws, captured at the tap. See storage's music
     section for why it is a snapshot and not a reference."""
