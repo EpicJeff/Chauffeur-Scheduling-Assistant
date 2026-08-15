@@ -477,6 +477,44 @@ def scenario_one_bus_says_one_sentence_naming_everyone():
           "three names are not listed like a person would say them")
 
 
+
+def scenario_the_bus_is_out_sensor_is_found_not_assumed():
+    """Reported from a real house: their trigger is `sensor.{first}_ignition_on`
+    — a different DOMAIN and a different shape from the pair we composed. That
+    is not a cosmetic miss. `bus_active` gates the live estimate, the chip, the
+    route-start event and "nearly here", so probing only our own guess left the
+    entire live layer switched off, and NOTHING said so: a bus that is never
+    out and a bus we cannot see produce the same silence."""
+    bus._active_entity_cache.clear()
+
+    def only(entity_id, state='on'):
+        def get(eid):
+            return {'state': state} if eid == entity_id else None
+        return mock.patch('services.ha_api.get_state', side_effect=get)
+
+    for ent in ('binary_sensor.addison_bus_ignition_on',   # the confirmed one
+                'sensor.addison_bus_ignition_on',
+                'sensor.addison_ignition_on',
+                'binary_sensor.addison_bus_in_service'):
+        bus._active_entity_cache.clear()
+        with only(ent):
+            check(bus.bus_active(dict(KID)) is True,
+                  f"the bus-is-out sensor was not found as {ent}")
+    # Off is off, whichever name it wears.
+    bus._active_entity_cache.clear()
+    with only('binary_sensor.addison_bus_ignition_on', state='off'):
+        check(bus.bus_active(dict(KID)) is False, "an off sensor read as out")
+    # An explicit override still wins outright.
+    bus._active_entity_cache.clear()
+    with only('binary_sensor.somewhere_else'):
+        check(bus.bus_active({**KID, 'bus_active_entity': 'binary_sensor.somewhere_else'})
+              is True, "an explicit bus-is-out entity was ignored")
+    # Nothing at all is False, not an exception.
+    bus._active_entity_cache.clear()
+    with mock.patch('services.ha_api.get_state', return_value=None):
+        check(bus.bus_active(dict(KID)) is False, "no entity did not resolve to False")
+
+
 SCENARIOS = [
     scenario_static_morning_launch,
     scenario_car_ride_wins_the_morning,
@@ -505,6 +543,7 @@ SCENARIOS = [
     scenario_each_child_points_at_their_own_stop,
     scenario_siblings_share_one_bus,
     scenario_one_bus_says_one_sentence_naming_everyone,
+    scenario_the_bus_is_out_sensor_is_found_not_assumed,
 ]
 
 if __name__ == "__main__":

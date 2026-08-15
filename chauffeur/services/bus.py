@@ -112,24 +112,74 @@ def live_stop_time(member, period='am'):
         return None
 
 
+# Every name a "the bus is out" entity has been seen under. ORDER MATTERS
+# only in that the first one that EXISTS wins — not the first one that is on.
+#
+# This list is longer than it looks like it should be, and the reason is worth
+# keeping. The original pair was composed from the integration's own naming
+# rule and probed nothing else — so on a house whose entity is named even
+# slightly differently, `bus_active` answered False forever, which silently
+# disables the ENTIRE live layer: no live stop estimate, no chip, no
+# route-start event, no "nearly here". Nothing reports it, because a bus that
+# is never out and a bus we cannot see produce identical silence. A guessed
+# name that is wrong is not a small miss here; it is the whole feature off.
+_ACTIVE_CANDIDATES = (
+    # CONFIRMED on a live install: this is the entity the household's own
+    # Home Assistant automation triggers on. `_ignition_on`, not `_ignition`,
+    # which is what the composed guess had.
+    'binary_sensor.{p}_bus_ignition_on',
+    'binary_sensor.{p}_bus_in_service',
+    'binary_sensor.{p}_bus_ignition',
+    'sensor.{p}_bus_ignition_on',
+    'sensor.{p}_bus_in_service',
+    'sensor.{p}_bus_ignition',
+    'sensor.{p}_ignition_on',
+    'binary_sensor.{p}_ignition_on',
+)
+# member id -> the candidate that actually exists here. Probing six entities
+# per member every thirty seconds to learn the same answer is wasteful; the
+# first hit is remembered for the life of the process and re-probed if it ever
+# stops answering (an integration reload can rename things).
+_active_entity_cache = {}
+
+_ON_STATES = ('on', 'true', 'running', 'active')
+
+
+def active_entity(member):
+    """The entity that answers "is the bus out" for this child, or None."""
+    explicit = (member.get('bus_active_entity') or '').strip()
+    if explicit:
+        return explicit
+    from services import ha_api
+    mid = member.get('id')
+    cached = _active_entity_cache.get(mid)
+    if cached and ha_api.get_state(cached):
+        return cached
+    for tpl in _ACTIVE_CANDIDATES:
+        ent = tpl.format(p=_prefix(member))
+        if ha_api.get_state(ent):
+            _active_entity_cache[mid] = ent
+            return ent
+    return None
+
+
 def bus_active(member):
-    """True while the tracker says the bus is actually out. An explicit
-    bus_active_entity (any platform) is authoritative when set; else the
-    HCTB in-service/ignition pair. Live estimates are only trusted while
-    this holds."""
+    """True while the tracker says the bus is actually out.
+
+    An explicit `bus_active_entity` is authoritative on any platform; failing
+    that the name is discovered, because districts and integration versions
+    disagree about both the domain and the wording. Live estimates and every
+    B3 event are only trusted while this holds.
+    """
     try:
         from services import ha_api
-        explicit = (member.get('bus_active_entity') or '').strip()
-        if explicit:
-            st = ha_api.get_state(explicit)
-            return bool(st and st.get('state') == 'on')
-        for key in ('in_service', 'ignition'):
-            st = ha_api.get_state(f"binary_sensor.{_prefix(member)}_bus_{key}")
-            if st and st.get('state') == 'on':
-                return True
+        ent = active_entity(member)
+        if not ent:
+            return False
+        st = ha_api.get_state(ent)
+        return bool(st and str(st.get('state')).lower() in _ON_STATES)
     except Exception:
-        pass
-    return False
+        return False
 
 
 def _entity(member, field, default_suffix):

@@ -2155,3 +2155,14 @@ Raised by the family the moment B3 landed, and correctly: two children on the sa
 - **The push stays per child, the announcement is grouped.** They are different objects: a push goes to that child's own phone and says "head out to the stop" to them, while a spoken message fills a room. So the loop pushes per member and collects `(room, event, bus)` → children, then speaks once per group, naming everyone it is for ("Addison and Cole, the bus has started its route" — Oxford-free, listed the way a person would say it).
 - **The map groups too**: one 🚌 per vehicle labelled with every child who rides it, and stops grouped by POSITION rather than by child — one bus can serve two stops (different schools, same vehicle), and two children at one stop is still one place to stand.
 - **The stop pin falls back to the "nearly here" zone.** In most houses they are the same circle on the same map, and asking for it twice means asking somebody to keep two fields in agreement forever. Both remain per member, necessarily: two kids at different schools have different stops.
+
+## The bus-is-out sensor is found, not assumed (v2.236.2)
+
+The household reported the entity their own Home Assistant automation triggers on: `binary_sensor.{first}_bus_ignition_on`. B1 probed `binary_sensor.{first}_bus_ignition` and `_bus_in_service`, composed from the integration's naming rule and nothing else.
+
+**That is not a cosmetic miss — it is the entire live layer switched off.** `bus_active()` gates the live stop estimate, the kiosk chip, the route-start event and "nearly here". Probing only a guessed name meant it answered False forever on that install, and **nothing anywhere reports it**, because a bus that is never out and a bus we cannot see produce identical silence. Every one of those features would have looked simply unused.
+
+- `_ACTIVE_CANDIDATES` now probes eight names across both domains, confirmed-first, and `active_entity()` returns the first that EXISTS rather than the first that is on. The explicit `bus_active_entity` still wins outright for other platforms.
+- The winner is remembered per member (`_active_entity_cache`) so eight probes do not repeat every thirty seconds, and is re-probed if it ever stops answering — an integration reload can rename things.
+- Truthiness widened past `'on'` to cover `true`/`running`/`active`, since a `sensor` carrying this can word it however it likes.
+- **The pattern to notice**: this is the fourth invented-name bug in three days (`_bus_location`, the screensaver's `folder`, the MA-filtered player list, and now this). The shape is always the same — one side composes a name the other side never publishes, and the failure looks like the feature being quiet rather than broken. Where a name is guessed, probe a list and remember what answered; where it comes from a picker we ship, assert the vocabularies match in a test.
