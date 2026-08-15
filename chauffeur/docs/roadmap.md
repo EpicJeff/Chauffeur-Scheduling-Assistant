@@ -184,14 +184,20 @@ never enters the solver.
   explicit ETA/active entity fields make the live bus layer work with ANY
   district tracker that has an HA integration (HCTB auto-discovery stays
   the zero-config default).
-- **B2 — the live morning layer (next).** (1) Kiosk live chip during the AM
-  run window: the routines-kiosk digest strip polls a light bus-status
-  endpoint (~60s while 6-9am) showing "🚌 on the way · stop ~7:24 ·
-  {address}". (2) Opt-in "get ready" push at leave-by − N (setting, default
-  ~10 min lead, once per kid per day, quiet-hours gated). (3) "Running
-  late — no rush" push when the live estimate exceeds the baseline
-  (threshold shared with B1), once per day. All pushes ride
-  `_notify_member_lanes` + the `school_end_push_sent`-style marker pattern.
+- **B2 — the live morning layer. SHIPPED v2.235.0 (2026-08-14).** All three
+  pieces, with two deliberate reshapes. (1) The live chip needed **no new
+  endpoint and no new poll**: the design predates the boards arc, and the
+  board already refetches every 60 seconds — so the chip rides the kid-digest
+  line the kids card already draws, and REPLACES the plan line while the bus
+  is rolling rather than joining it ("out the door by 7:19" is last night's
+  sentence; "on the way · stop ~7:24 · Elm & 3rd" is this minute's, and two
+  lines about one bus is a wall arguing with itself). (2) The settings are
+  **per member, not household** — every other bus field already lives on the
+  member card, and a fifteen-year-old does not want the nudge a seven-year-old
+  needs. The lead IS the opt-in (blank/0 = off); a switch beside a number is
+  two ways to say the same thing. (3) Lateness is its own switch, because news
+  and routine are different kinds of message. Details in
+  system_capabilities.md.
 - Explicitly out: a direct reverse-engineered HCTB client in Chauffeur
   (fragile, credentialed — the HA integration boundary keeps that risk
   outside the app); bus in the solver; countdown spam.
@@ -574,6 +580,37 @@ and tracked nothing we shipped.
   control that could reach every room except the one the panel is bolted to.
   The screen is now a Sendspin player like the phone app, over a shared
   lifecycle in `music_logic.js` — a phone is a person, a panel is a place.
+
+- **The music slice, queued next (decided 2026-08-14).** Four things, three of
+  them nearly free because the backend is already half-built and nothing uses
+  it: `/api/music/play` accepts `enqueue` and no surface sends it, and
+  `GET /api/music/queue` wraps `get_queue` with no caller anywhere.
+  1. **Queue** — `enqueue` (`play|replace|next|replace_next|add`; our comment
+     lists four of the five) on search results and favourites, plus a queue
+     view off the existing endpoint.
+  2. **Radio mode** — a boolean on `play_media` the endpoint currently drops;
+     play an artist and it never ends.
+  3. **Follow me** — `transfer_queue` targets the DESTINATION and takes
+     `source_player` + `auto_play`, so a panel's button is "move the music
+     here" with nothing to pick: the card already knows its room, and it
+     composes with the local player (bring the kitchen queue to this screen).
+     The only one of the three that is genuinely new for a WALL rather than
+     catching up with the phone. Needs a new endpoint.
+  4. **Return-to-home kills the music** (reported from the wall 2026-08-14).
+     The panel's idle return navigates away, the page unloads, `pagehide`
+     stops the local player, and the music stops for no reason a person in
+     the room can see. The idle return should not fire while this screen is
+     playing — the same shape as any other "don't interrupt what somebody is
+     doing" rule, and a bug in what v2.234.0 shipped rather than a new
+     feature.
+  Favourites are read-only for now and that is deliberate: HA's integration
+  has NO favourite-write action (`favorite` is a read filter on
+  `get_library`), and the full path needs a long-lived MA bearer token on
+  port 8095 — a new credential and Chauffeur's first direct-to-MA channel,
+  weeks before a dedicated HA action that maintainers say is coming. The
+  cheap half is free though: the integration ships a per-player
+  `favorite_now_playing` BUTTON entity, so a ❤ for what is playing costs one
+  `button.press` through the channel we already use.
 
 ## The native app track (never written down until 2026-08-14 — it should have been)
 

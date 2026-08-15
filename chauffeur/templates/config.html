@@ -1434,6 +1434,23 @@
                                                         class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
                                                 </div>
                                             </div>
+                                            <!-- B2, the live morning layer. Both OFF until somebody
+                                                 sets them: the bus arc's rule is that Chauffeur says
+                                                 nothing about buses it was not asked about. The lead
+                                                 IS the opt-in — a switch beside a number is two ways
+                                                 to say the same thing. -->
+                                            <div class="flex items-center gap-4 flex-wrap mt-2">
+                                                <div>
+                                                    <span class="block text-xs text-gray-500 mb-0.5">"Get ready" push (min before leaving, blank = off)</span>
+                                                    <input type="number" min="0" max="60" x-model.number="memberEdit.bus_ready_lead_mins" placeholder="off"
+                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-24">
+                                                </div>
+                                                <label class="flex items-center gap-2 text-sm text-gray-300 mt-4">
+                                                    <input type="checkbox" x-model="memberEdit.bus_late_push"
+                                                        class="w-5 h-5 accent-blue-500">
+                                                    Tell them when the bus is running late
+                                                </label>
+                                            </div>
                                             <details class="mt-2">
                                                 <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300">Other bus platforms: explicit HA entities (blank = Here Comes The Bus auto-discovery)</summary>
                                                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
@@ -1450,6 +1467,11 @@
                                                     <div>
                                                         <span class="block text-xs text-gray-500 mb-0.5">Bus-running binary sensor</span>
                                                         <input type="text" x-model="memberEdit.bus_active_entity" placeholder="binary_sensor.…"
+                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                                                    </div>
+                                                    <div>
+                                                        <span class="block text-xs text-gray-500 mb-0.5">Where-the-bus-is sensor</span>
+                                                        <input type="text" x-model="memberEdit.bus_location_entity" placeholder="sensor.…"
                                                             class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
                                                     </div>
                                                 </div>
@@ -5517,6 +5539,9 @@
                         bus_am_eta_entity: member.bus_am_eta_entity || '',
                         bus_pm_eta_entity: member.bus_pm_eta_entity || '',
                         bus_active_entity: member.bus_active_entity || '',
+                        bus_location_entity: member.bus_location_entity || '',
+                        bus_ready_lead_mins: member.bus_ready_lead_mins || null,
+                        bus_late_push: !!member.bus_late_push,
                     };
                 },
                 async addMemberCalendarId() {
@@ -5578,6 +5603,9 @@
                     updates.bus_am_eta_entity = (updates.bus_am_eta_entity || '').trim() || null;
                     updates.bus_pm_eta_entity = (updates.bus_pm_eta_entity || '').trim() || null;
                     updates.bus_active_entity = (updates.bus_active_entity || '').trim() || null;
+                    updates.bus_location_entity = (updates.bus_location_entity || '').trim() || null;
+                    updates.bus_ready_lead_mins = parseInt(updates.bus_ready_lead_mins) || null;
+                    updates.bus_late_push = !!updates.bus_late_push;
                     updates.calendar_ids = updates.calendar_ids || [];
                     await fetch(`${this.apiBase}api/members/${member.id}`, {
                         method: 'PUT',

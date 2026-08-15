@@ -207,6 +207,12 @@ class FamilyMember(BaseModel):
     bus_am_eta_entity: Optional[str] = None
     bus_pm_eta_entity: Optional[str] = None
     bus_active_entity: Optional[str] = None
+    # B2, the live morning layer. Per member like every other bus field: the
+    # bus is a fact about one child, and a fifteen-year-old does not want the
+    # nudge a seven-year-old needs. The lead IS the opt-in — blank or 0 is off.
+    bus_location_entity: Optional[str] = None   # where the bus is, for the chip
+    bus_ready_lead_mins: Optional[int] = None   # "get ready" push, blank = off
+    bus_late_push: Optional[bool] = None        # "running late, no rush" push
     pin_hash: Optional[str] = None            # pbkdf2; never exposed via API
     pin_salt: Optional[str] = None
     created_at: float = Field(default_factory=time.time)

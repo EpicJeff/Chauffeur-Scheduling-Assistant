@@ -275,6 +275,65 @@ async def push_notification_loop():
             except Exception as se:
                 print(f"School-end push error: {se}")
 
+            # --- Bus morning pushes (B2): the "get ready" nudge at leave-by
+            # minus the child's own lead, and a one-off "running late, no
+            # rush" when the tracker says the bus is behind. Both are per
+            # member, per day, quiet-hours gated, and both are OFF until a
+            # parent sets the field — the bus arc's rule is that Chauffeur
+            # says nothing about buses it was not asked about.
+            #
+            # Only inside the morning window, and only on a school day: the
+            # whole live layer is HA reads, and doing them at four in the
+            # afternoon asks a tracker about somebody else's route. ---
+            try:
+                from services import bus as _bus, family_digest, school
+                now_dt = datetime.now()
+                settings = storage.get_settings() or {}
+                if _bus.in_am_window(now_dt) \
+                        and school.school_in_session(now_dt.date()) \
+                        and not family_digest.in_kid_quiet_hours(now_dt, settings):
+                    today_str = now_dt.strftime('%Y-%m-%d')
+                    sent = dict(storage.get_app_state("bus_push_sent") or {})
+                    dirty = False
+                    for m in storage.get_all_members():
+                        if m.get('role') != 'child' or not m.get('bus_am_stop_time'):
+                            continue
+                        wants_ready = int(m.get('bus_ready_lead_mins') or 0) > 0
+                        if not wants_ready and not m.get('bus_late_push'):
+                            continue
+                        # The launch dict is the single source for both of
+                        # these — same leave-by, same lateness, same live
+                        # estimate the kiosk and the digest are reading, so a
+                        # push can never disagree with the screen.
+                        day = member_day(m['id'], today_str) or {}
+                        launch = day.get('launch')
+                        if not (launch and launch.get('bus')):
+                            continue
+                        late_key = f"late:{m['id']}:{today_str}"
+                        if m.get('bus_late_push') and late_key not in sent \
+                                and launch.get('bus_late_mins'):
+                            msg = _bus.late_push(m, launch)
+                            if msg:
+                                sent[late_key] = time.time()
+                                dirty = True
+                                _notify_member_lanes(m, msg[0], msg[1], '/app')
+                        ready_key = f"ready:{m['id']}:{today_str}"
+                        if wants_ready and ready_key not in sent:
+                            msg = _bus.ready_push(m, launch, now_dt)
+                            if msg:
+                                # Marker FIRST, like every other push in this
+                                # loop: a half-failing send must not retry
+                                # every thirty seconds into a child's morning.
+                                sent[ready_key] = time.time()
+                                dirty = True
+                                _notify_member_lanes(m, msg[0], msg[1], '/app')
+                    if dirty:
+                        cutoff = time.time() - 2 * 86400
+                        storage.set_app_state("bus_push_sent",
+                                              {k: v for k, v in sent.items() if v >= cutoff})
+            except Exception as be:
+                print(f"Bus morning push error: {be}")
+
             # --- Daily stats snapshot (late evening, before the day rolls out
             # of the forward-looking schedule cache) ---
             try:
@@ -8280,7 +8339,13 @@ def _build_kid_digests(target_date=None):
         launch = day.get('launch')
         if launch and launch.get('bus'):
             from services import bus
-            lines.insert(0, bus.digest_line(launch))
+            # B2's live chip REPLACES the plan line rather than joining it.
+            # While the bus is actually rolling, "out the door by 7:19" is
+            # last night's sentence and "on the way, stop ~7:24, Elm & 3rd"
+            # is this minute's — two lines about one bus is a wall arguing
+            # with itself. Outside the morning run the chip returns None and
+            # the plan line stands, which is every other hour of the day.
+            lines.insert(0, bus.live_chip(m, launch) or bus.digest_line(launch))
         elif launch and lines:
             who = (launch.get('driver') or {}).get('name')
             lines.insert(0, f"🚀 Leave by {launch['leave_label']}"
