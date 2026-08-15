@@ -146,6 +146,13 @@ function boardsAdmin() {
                 for (const k of Object.keys(this.panel)) {
                     if (s[k] !== undefined && s[k] !== null) this.panel[k] = s[k];
                 }
+                // 'folder' is what this editor stored before v2.235.1, and the
+                // server never knew the word — see SCREENSAVER_SOURCE_ALIASES.
+                // Normalised on the way in so the select shows the choice that
+                // was actually made rather than coming up blank.
+                if (this.panel.panel_screensaver_source === 'folder') {
+                    this.panel.panel_screensaver_source = 'media';
+                }
                 this.panel.panel_shipped_backgrounds =
                     { ...(s.panel_shipped_backgrounds || {}) };
                 this._icons = {};

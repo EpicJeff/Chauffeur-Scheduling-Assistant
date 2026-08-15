@@ -182,8 +182,9 @@ ENTRIES: List[dict] = [
        'wallpaper slow-panned.',
        page='config', anchor='boards'),
     _e('panel_screensaver_media_path', 'panel', 'Media folder',
-       'Subfolder of the HA media share to scan for pictures (when the '
-       'source is the media folder). Empty scans the whole share.',
+       'Folder in the HA media share to scan for pictures (when the source '
+       'is the media folder). Either a name inside the share (photos) or the '
+       'full path (/media/photos). Empty scans the whole share.',
        page='config', anchor='boards'),
     _e('panel_screensaver_dwell_seconds', 'panel', 'Seconds per photo',
        'How long each picture holds before crossfading to the next.',

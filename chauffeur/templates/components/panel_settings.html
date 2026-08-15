@@ -124,14 +124,15 @@
                 <select x-model="panel.panel_screensaver_source" @change="savePanel()"
                     class="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white">
                     <option value="photos">the family's moments</option>
-                    <option value="folder">a folder</option>
+                    <option value="media">a folder</option>
                 </select>
             </label>
-            <label x-show="panel.panel_screensaver_source === 'folder'" x-cloak
+            <label x-show="panel.panel_screensaver_source === 'media'" x-cloak
                 class="flex items-center gap-2">
                 Path
                 <input type="text" x-model="panel.panel_screensaver_media_path"
-                    @change="savePanel()" placeholder="/media/photos"
+                    @change="savePanel()" placeholder="photos (blank = all of /media)"
+                    title="A folder in the Home Assistant media share. Either a name inside it (photos) or the full path (/media/photos). Blank scans the whole share."
                     class="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white">
             </label>
         </div>

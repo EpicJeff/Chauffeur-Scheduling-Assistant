@@ -2999,7 +2999,11 @@
                             panel_screensaver_idle_seconds:
                                 s.panel_screensaver_idle_seconds === undefined
                                     ? 600 : s.panel_screensaver_idle_seconds,
-                            panel_screensaver_source: s.panel_screensaver_source || 'photos',
+                            // 'folder' was what the editor stored before
+                            // v2.235.1, and the server never knew the word.
+                            panel_screensaver_source:
+                                (s.panel_screensaver_source === 'folder'
+                                    ? 'media' : s.panel_screensaver_source) || 'photos',
                             panel_screensaver_media_path: s.panel_screensaver_media_path || '',
                             panel_screensaver_dwell_seconds: s.panel_screensaver_dwell_seconds || 20
                         };

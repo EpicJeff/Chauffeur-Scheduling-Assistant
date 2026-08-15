@@ -432,6 +432,64 @@ def scenario_the_corner_card_keeps_white_ink_in_light_mode():
     check(remap < ink, "the exemption must come after the blanket remap it corrects")
 
 
+
+def scenario_the_editors_word_and_the_servers_word_are_the_same_source():
+    """Reported from a wall: the screensaver only ever played the family's
+    moments, however it was set.
+
+    The editor's select said `folder` because that is what a person calls it;
+    this module knew `media` because that is the HA share it reads. The two
+    words were never introduced, so choosing "a folder" stored a value that
+    failed the membership test and fell back to `photos` — silently, forever.
+    Aliased rather than renamed on one side, so a household that already
+    chose it starts working without going back to re-pick.
+    """
+    check(home_board.screensaver_config(
+        {'panel_screensaver_source': 'folder'})['source'] == 'media',
+        "the stored word for a folder still resolves to the family's moments")
+    # And the editor stores the canonical word from now on, or every new
+    # install re-creates the same mismatch under a different name.
+    panel = open(os.path.join(TPL, 'components', 'panel_settings.html'),
+                 encoding='utf-8').read()
+    check('<option value="media">' in panel,
+          "the screensaver source select still stores a word the server "
+          "does not know")
+    check("panel_screensaver_source === 'media'" in panel,
+          "the folder path field is shown for a value that can no longer "
+          "be selected, so it is unreachable")
+    # A genuinely unknown value must still land somewhere sane.
+    check(home_board.screensaver_config(
+        {'panel_screensaver_source': 'wat'})['source'] == 'photos',
+        "an unknown source no longer falls back")
+
+
+def scenario_the_path_the_field_suggests_is_a_path_that_works():
+    """The other half of the same bug. The field's placeholder taught people
+    to type `/media/photos`, and the value was read as a SUBPATH of /media —
+    so the one path the UI suggested resolved to /media/media/photos, found
+    nothing, and fell back to the wallpaper."""
+    def run(root):
+        os.makedirs(os.path.join(root, 'photos'))
+        open(os.path.join(root, 'photos', 'a.jpg'), 'w').write('x')
+        rel = home_board._media_share_images('photos')
+        check(rel == ['photos/a.jpg'], f"a plain subfolder name: {rel}")
+        absolute = home_board._media_share_images(root + '/photos')
+        check(absolute == ['photos/a.jpg'],
+              f"the absolute form of the same folder: {absolute}")
+    _with_media_root(run)
+    # Absolute paths are taken at their word, so containment is doing real
+    # work now rather than being a formality — pin it.
+    def escape(root):
+        outside = os.path.join(os.path.dirname(root), 'outside_abs')
+        os.makedirs(outside, exist_ok=True)
+        open(os.path.join(outside, 'leak.jpg'), 'w').write('x')
+        check(home_board._media_share_images(outside) == [],
+              "an absolute path outside the share listed files")
+        check(home_board._media_share_images('/etc') == [],
+              "an absolute path well outside the share listed files")
+    _with_media_root(escape)
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

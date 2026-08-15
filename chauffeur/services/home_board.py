@@ -3167,6 +3167,18 @@ MEDIA_SHARE_ROOT = '/media'
 _IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif')
 
 
+# Words for the same source. The canonical value is on the LEFT of the arrow
+# nowhere — these are the ones a stored setting might hold that this module
+# would otherwise not recognise. Coercing an unknown value to `photos` is the
+# right default and was also what hid this: a setting that silently means
+# something else can only be found by someone watching the wall.
+SCREENSAVER_SOURCE_ALIASES = {
+    'folder': 'media',
+    'media_folder': 'media',
+    'wallpaper': 'background',
+}
+
+
 def screensaver_config(settings: dict = None) -> dict:
     """The screensaver's knobs, resolved with the same absent-means-default
     discipline as idle_seconds: stored settings dicts predate this arc, so
@@ -3182,6 +3194,14 @@ def screensaver_config(settings: dict = None) -> dict:
         return max(lo, min(hi, v))
 
     source = str(settings.get('panel_screensaver_source') or 'photos').lower()
+    # The editor says "a folder" because that is what a person calls it; this
+    # module says `media` because that is the HA media share it reads. Those
+    # two words were never introduced to each other, so picking "a folder"
+    # stored `folder`, failed the membership test below, and fell back to
+    # `photos` — a screensaver that could ONLY ever show the family's moments,
+    # however it was set. Aliased rather than renamed on one side, so a
+    # household that already chose it starts working without re-picking.
+    source = SCREENSAVER_SOURCE_ALIASES.get(source, source)
     if source not in ('photos', 'media', 'background'):
         source = 'photos'
     # The master switch folds into idle_seconds: 0 already means "never
@@ -3203,7 +3223,15 @@ def _media_share_images(subpath: str) -> List[str]:
     judgment call."""
     import os
     root = os.path.realpath(MEDIA_SHARE_ROOT)
-    base = os.path.realpath(os.path.join(root, (subpath or '').strip().strip('/\\')))
+    raw = (subpath or '').strip()
+    # ABSOLUTE paths are taken at their word, relative ones hang off the share
+    # root. Both, because the field's own placeholder taught people to type
+    # `/media/photos` while the code read the value as a SUBPATH of /media —
+    # so the one path the UI suggested resolved to /media/media/photos, found
+    # nothing, and fell back to the wallpaper. Containment below is what makes
+    # accepting an absolute path safe rather than a decision.
+    base = os.path.realpath(raw if raw.startswith('/')
+                            else os.path.join(root, raw.strip('/\\')))
     if not (base == root or base.startswith(root + os.sep)):
         return []
     if not os.path.isdir(base):
