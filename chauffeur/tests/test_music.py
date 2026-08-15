@@ -130,6 +130,69 @@ def scenario_search_uses_config_entry_and_unwraps():
             check(e.status_code == 503, "no MA integration -> 503")
 
 
+def scenario_queue_verbs_map_to_ha_services():
+    """Shuffle, repeat and stop were always one service call away — they are
+    plain media_player services, no MA API needed. Radio mode and enqueue are
+    fields play_media already accepted and nothing ever sent."""
+    import main
+    from fastapi import HTTPException
+    with mock.patch.object(ha_api, 'call_service', return_value={}) as call:
+        main.ha_media_command('media_player.k', main.MediaCommandRequest(command='stop'))
+        check(call.call_args.args[1] == 'media_stop', "stop maps")
+
+        main.ha_media_command('media_player.k',
+                              main.MediaCommandRequest(command='shuffle_set', shuffle=True))
+        check(call.call_args.args[1] == 'shuffle_set'
+              and call.call_args.args[2]['shuffle'] is True, "shuffle payload")
+
+        main.ha_media_command('media_player.k',
+                              main.MediaCommandRequest(command='repeat_set', repeat='one'))
+        check(call.call_args.args[2]['repeat'] == 'one', "repeat payload")
+
+        main.music_play(main.MusicPlayRequest(
+            entity_id='media_player.k', media_id='lib://t/1',
+            media_type='track', enqueue='add'))
+        check(call.call_args.args[2]['enqueue'] == 'add', "enqueue rides along")
+
+        main.music_play(main.MusicPlayRequest(
+            entity_id='media_player.k', media_id='lib://t/1', radio_mode=True))
+        check(call.call_args.args[2]['radio_mode'] is True, "radio_mode rides along")
+        check('enqueue' not in call.call_args.args[2],
+              "absent options stay absent — MA validates its schemas")
+
+    try:
+        main.ha_media_command('media_player.k',
+                              main.MediaCommandRequest(command='repeat_set', repeat='forever'))
+        check(False, "expected 400")
+    except HTTPException as e:
+        check(e.status_code == 400, "bad repeat mode -> 400")
+
+    # A refused radio start must say WHY — it is the one refusal a person
+    # can act on (pick a provider that does radio), and the generic 502
+    # reads as "music is broken".
+    with mock.patch.object(ha_api, 'call_service', return_value=None):
+        try:
+            main.music_play(main.MusicPlayRequest(
+                entity_id='media_player.k', media_id='x', radio_mode=True))
+            check(False, "expected 502")
+        except HTTPException as e:
+            check('adio mode' in e.detail, f"radio refusal explains itself: {e.detail}")
+
+
+def scenario_media_players_carry_queue_state():
+    """Shuffle/repeat buttons draw the player's answer, and radio-from-this
+    needs the playing uri — all three must survive the listing."""
+    import main
+    states = [{"entity_id": "media_player.k", "state": "playing",
+               "attributes": {"friendly_name": "K", "mass_player_type": "player",
+                              "shuffle": True, "repeat": "all",
+                              "media_content_id": "spotify://track/42"}}]
+    with mock.patch.object(ha_api, 'get_states', return_value=states):
+        p = main.ha_media_players()[0]
+    check(p['shuffle'] is True and p['repeat'] == 'all', "queue switches surfaced")
+    check(p['media_content_id'] == 'spotify://track/42', "playing uri surfaced")
+
+
 def scenario_favorites_and_play():
     import main
     with mock.patch.object(ha_api, 'get_config_entry_id', return_value='entry42'), \
@@ -286,6 +349,8 @@ def scenario_sendspin_relay_setup():
 SCENARIOS = [
     scenario_sendspin_relay_setup,
     scenario_media_players_listing,
+    scenario_queue_verbs_map_to_ha_services,
+    scenario_media_players_carry_queue_state,
     scenario_image_proxy,
     scenario_image64_roundtrip,
     scenario_absolute_url_artwork,

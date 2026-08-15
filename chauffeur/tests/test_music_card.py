@@ -355,7 +355,9 @@ def scenario_playing_to_this_screen_names_the_one_time_setup():
     SENT an album until MA exposes it to HA — a per-player one-time toggle. An
     album that silently does nothing is how somebody concludes it is broken."""
     tpl = tpl_source.read('home.html')
-    fn = tpl[tpl.index('async musicPlayItem(t, item) {'):]
+    # The lookup lives in musicQueueTarget now — one resolver shared by play,
+    # enqueue, radio and the queue switches, so its failure story exists once.
+    fn = tpl[tpl.index('async musicQueueTarget(t) {'):]
     fn = fn[:fn.index('// Cache-busted')]
     check('Expose this player to Home Assistant' in fn,
           "nothing tells anybody about the one-time Music Assistant toggle")
@@ -409,7 +411,7 @@ def scenario_finding_our_own_entity_searches_the_unfiltered_list():
           "the local-entity search still reads the MA-filtered list")
     # Both surfaces go through it, or the fix is half a fix.
     tpl = tpl_source.read('home.html')
-    play = tpl[tpl.index('async musicPlayItem(t, item) {'):]
+    play = tpl[tpl.index('async musicQueueTarget(t) {'):]
     play = play[:play.index('// Cache-busted')]
     check('findLocalEntity(' in play,
           "the board card searches for itself in the filtered list")
@@ -426,7 +428,7 @@ def scenario_the_failure_says_what_it_looked_for():
     the lookup came back empty, and telling somebody to enable something they
     already enabled is a dead end with nothing to try next."""
     tpl = tpl_source.read('home.html')
-    fn = tpl[tpl.index('async musicPlayItem(t, item) {'):]
+    fn = tpl[tpl.index('async musicQueueTarget(t) {'):]
     fn = fn[:fn.index('// Cache-busted')]
     check('Cannot find this screen' in fn,
           "the message still asserts one cause for every failure")
@@ -439,9 +441,8 @@ def scenario_a_fixed_problem_stops_being_reported():
     read 'enable Expose this player', go and do it, come back, press play, and
     the card still says to go and do it. Reported from a real wall."""
     tpl = tpl_source.read('home.html')
-    fn = tpl[tpl.index('async musicPlayItem(t, item) {'):]
-    fn = fn[:fn.index('// Cache-busted')]
-    body = fn[:fn.index('let target')]
+    fn = tpl[tpl.index('async musicPlayItem(t, item, enqueue) {'):]
+    body = fn[:fn.index('musicQueueTarget(t)')]
     check("s.error = ''" in body,
           "playing something does not clear the last failure, so the card "
           "keeps reporting a problem that has been fixed")

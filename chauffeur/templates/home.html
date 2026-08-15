@@ -5203,15 +5203,16 @@
                     this.musicSearch(t);
                 },
 
-                async musicPlayItem(t, item) {
+                /** The HA entity queue-level things aim at: the selection, or
+                 *  this screen's own entity — or null, with the diagnosis
+                 *  already written onto the card. Shared by play, enqueue,
+                 *  radio, shuffle, repeat and stop, because every one of them
+                 *  goes through Music Assistant rather than the local audio
+                 *  pipe, and the local player's whole failure story lives in
+                 *  this lookup. */
+                async musicQueueTarget(t) {
                     const s = this.musicState[t.id];
-                    if (!s || !t.data.interactive || !s.selected) return;
-                    // FIRST. Without this the message from a failed attempt
-                    // outlives whatever fixed it: somebody reads "enable
-                    // Expose this player", goes and does exactly that, comes
-                    // back, plays something — and the card still says to go
-                    // and do it, because nothing ever cleared the sentence.
-                    s.error = '';
+                    if (!s || !s.selected) return null;
                     let target = s.selected;
                     if (target === this.MUSIC_LOCAL) {
                         // Playing is the one thing the local player cannot do
@@ -5225,7 +5226,7 @@
                         if (!lp || !lp.active) {
                             s.error = 'This screen is not connected — pick it in '
                                     + 'the speaker list first.';
-                            return;
+                            return null;
                         }
                         // The FULL list, not the MA-filtered one the picker
                         // uses — see MusicLogic.players(). Searching the
@@ -5256,15 +5257,108 @@
                             console.warn('[local-player] no entity for',
                                          t.data.screen_name, lp.playerId,
                                          all.map(p => `${p.name} (${p.entity_id})`));
-                            return;
+                            return null;
                         }
-                        target = ent.entity_id;
+                        return ent;
                     }
-                    await MusicLogic.play(target, item.uri, item.media_type,
-                                          { apiBase: this.apiBase });
-                    s.q = '';
-                    s.results = null;
+                    return s.players.find(p => p.entity_id === target)
+                        || { entity_id: target };
+                },
+
+                async musicPlayItem(t, item, enqueue) {
+                    const s = this.musicState[t.id];
+                    if (!s || !t.data.interactive || !s.selected) return;
+                    // FIRST. Without this the message from a failed attempt
+                    // outlives whatever fixed it: somebody reads "enable
+                    // Expose this player", goes and does exactly that, comes
+                    // back, plays something — and the card still says to go
+                    // and do it, because nothing ever cleared the sentence.
+                    s.error = '';
+                    const ent = await this.musicQueueTarget(t);
+                    if (!ent) return;
+                    try {
+                        await MusicLogic.play(ent.entity_id, item.uri, item.media_type,
+                                              { apiBase: this.apiBase },
+                                              enqueue ? { enqueue } : null);
+                    } catch (e) {
+                        s.error = e.message || 'Play failed';
+                        return;
+                    }
+                    if (enqueue) {
+                        // Queueing keeps the results up — "add" is a verb
+                        // somebody does three times in a row.
+                        s.notice = enqueue === 'next' ? 'Playing next ⏭'
+                                                      : 'Added to the queue ➕';
+                        setTimeout(() => {
+                            if (s.notice) s.notice = '';
+                        }, 4000);
+                    } else {
+                        s.q = '';
+                        s.results = null;
+                    }
                     setTimeout(() => this.refreshMusic(t), 1200);
+                },
+
+                async musicRadio(t) {
+                    const s = this.musicState[t.id];
+                    if (!s || !t.data.interactive) return;
+                    s.error = '';
+                    const ent = await this.musicQueueTarget(t);
+                    if (!ent) return;
+                    const uri = ent.media_content_id;
+                    if (!uri) {
+                        s.error = 'Nothing is playing to start a radio from.';
+                        return;
+                    }
+                    try {
+                        await MusicLogic.play(ent.entity_id, uri, null,
+                                              { apiBase: this.apiBase },
+                                              { radioMode: true });
+                        s.notice = 'Radio started from this song 📡';
+                        setTimeout(() => { if (s.notice) s.notice = ''; }, 4000);
+                    } catch (e) {
+                        s.error = e.message || 'Radio mode failed';
+                    }
+                    setTimeout(() => this.refreshMusic(t), 1200);
+                },
+
+                // Queue-shaped commands go to the HA entity even for the
+                // local screen — the Sendspin client speaks transport and
+                // volume, but the QUEUE lives in Music Assistant.
+                async musicQueueCommand(t, command, extra) {
+                    const s = this.musicState[t.id];
+                    if (!s || !t.data.interactive) return;
+                    const ent = await this.musicQueueTarget(t);
+                    if (!ent) return;
+                    await MusicLogic.command(ent.entity_id, command, extra,
+                                             { apiBase: this.apiBase });
+                    setTimeout(() => this.refreshMusic(t), 600);
+                },
+
+                musicShuffle(t) {
+                    const cur = this.musicCurrent(t);
+                    this.musicQueueCommand(t, 'shuffle_set',
+                                           { shuffle: !(cur && cur.shuffle) });
+                },
+                musicRepeat(t) {
+                    const cur = this.musicCurrent(t);
+                    const next = { off: 'all', all: 'one', one: 'off' }[
+                        (cur && cur.repeat) || 'off'] || 'all';
+                    this.musicQueueCommand(t, 'repeat_set', { repeat: next });
+                },
+                musicStop(t) { this.musicQueueCommand(t, 'stop'); },
+
+                /** The selected REMOTE player's row from the last poll, for
+                 *  reading shuffle/repeat state. The local screen reads its
+                 *  own entity out of the same list when it is there. */
+                musicCurrent(t) {
+                    const s = this.musicState[t.id];
+                    if (!s) return null;
+                    if (s.selected === this.MUSIC_LOCAL) {
+                        const lp = boardLocalPlayers[t.id];
+                        return (lp && lp.entityIn(s.players)) || null;
+                    }
+                    return s.players.find(p => p.entity_id === s.selected) || null;
                 },
 
                 // Cache-busted on a timer the household chose. A camera URL is

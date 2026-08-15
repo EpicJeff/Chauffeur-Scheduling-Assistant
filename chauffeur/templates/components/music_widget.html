@@ -34,6 +34,30 @@
             class="flex-1 accent-blue-500">
     </div>
 
+    <!-- The queue's own switches, under the transport: shuffle and repeat
+         show the player's REAL state (painted on refresh, never remembered
+         from what was last sent), radio starts more-like-this from whatever
+         is playing, stop is stop. -->
+    <div class="flex items-center gap-2 mb-1">
+        <button id="mw-shuffle" onclick="mwShuffle()" title="Shuffle"
+            class="p-2 rounded-full bg-gray-800 text-gray-500 active:bg-gray-700">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
+        </button>
+        <button id="mw-repeat" onclick="mwRepeat()" title="Repeat"
+            class="p-2 rounded-full bg-gray-800 text-gray-500 active:bg-gray-700 relative">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+            <span id="mw-repeat-one" class="absolute -top-0.5 -right-0.5 text-[9px] font-black" style="display:none">1</span>
+        </button>
+        <button onclick="mwStop()" title="Stop"
+            class="p-2 rounded-full bg-gray-800 text-gray-500 active:bg-gray-700">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+        </button>
+        <button onclick="mwRadio()" title="Start radio from this song"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 text-xs font-bold">
+            📡 Radio
+        </button>
+    </div>
+
     <div class="mt-2">
         <input id="mw-search" type="text" placeholder="Search music…" autocomplete="off"
             oninput="mwSearchDebounced()" onkeydown="if(event.key==='Enter'){event.preventDefault();mwSearch();}"
@@ -235,6 +259,10 @@
         }
         if (_mwSelected === MW_PHONE) {
             mwRenderPhoneState();
+            // Queue switches read the phone's HA entity when it is in the
+            // cached list; neutral otherwise, which is honest — the queue
+            // lives in MA and this browser does not know it.
+            _mwPaintQueueSwitches(_mwPhoneEntity());
             return;
         }
         const cur = _mwCurrent();
@@ -269,6 +297,20 @@
         if (vol && cur && typeof cur.volume_level === 'number' && document.activeElement !== vol) {
             vol.value = cur.volume_level;
         }
+        _mwPaintQueueSwitches(cur);
+    }
+
+    // Shuffle and repeat draw the player's answer, not our last request.
+    function _mwPaintQueueSwitches(cur) {
+        const sh = document.getElementById('mw-shuffle');
+        if (sh) sh.className = 'p-2 rounded-full active:bg-gray-700 '
+            + (cur && cur.shuffle ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-500');
+        const rp = document.getElementById('mw-repeat');
+        const mode = (cur && cur.repeat) || 'off';
+        if (rp) rp.className = 'p-2 rounded-full active:bg-gray-700 relative '
+            + (mode !== 'off' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-500');
+        const one = document.getElementById('mw-repeat-one');
+        if (one) one.style.display = mode === 'one' ? 'block' : 'none';
     }
 
     function mwSelectPlayer(entityId) {
@@ -283,14 +325,66 @@
         mwRefresh();
     }
 
+    // Queue-shaped commands only exist on the HA entity — the Sendspin
+    // client speaks transport and volume, but shuffle, repeat, stop and
+    // radio belong to the QUEUE, which lives in Music Assistant.
+    const _MW_QUEUE_COMMANDS = ['stop', 'shuffle_set', 'repeat_set'];
+
+    /** The HA entity to aim queue-level things at: the selection itself, or
+     *  the phone's own entity, or null (with the why already toasted). */
+    async function _mwQueueTarget() {
+        if (_mwSelected !== MW_PHONE) return _mwCurrent();
+        const found = await MusicLogic.findLocalEntity(_mwPhone, _mwOpts);
+        if (!found.entity) {
+            _mwToast(_mwPhone.active
+                ? `Cannot find "${_mwPhoneName()}" in Home Assistant yet — play something first.`
+                : 'Phone player is not connected — re-select "This phone" from the player list.');
+            return null;
+        }
+        return found.entity;
+    }
+
     async function mwCommand(command, extra = {}) {
         if (!_mwSelected) return;
         if (_mwSelected === MW_PHONE) {
+            if (_MW_QUEUE_COMMANDS.includes(command)) {
+                const ent = await _mwQueueTarget();
+                if (ent) await MusicLogic.command(ent.entity_id, command, extra, _mwOpts);
+                setTimeout(mwRefresh, 600);
+                return;
+            }
             _mwPhone.command(command, extra);
             return;
         }
         await MusicLogic.command(_mwSelected, command, extra, _mwOpts);
         setTimeout(mwRefresh, 600);
+    }
+
+    function mwShuffle() {
+        const cur = _mwCurrent();
+        mwCommand('shuffle_set', { shuffle: !(cur && cur.shuffle) });
+    }
+
+    function mwRepeat() {
+        const cur = _mwCurrent();
+        const next = { off: 'all', all: 'one', one: 'off' }[(cur && cur.repeat) || 'off'] || 'all';
+        mwCommand('repeat_set', { repeat: next });
+    }
+
+    function mwStop() { mwCommand('stop'); }
+
+    async function mwRadio() {
+        const ent = await _mwQueueTarget();
+        if (!ent) return;
+        const uri = ent.media_content_id;
+        if (!uri) { _mwToast('Nothing is playing to start a radio from.'); return; }
+        try {
+            await MusicLogic.play(ent.entity_id, uri, null, _mwOpts, { radioMode: true });
+            _mwToast('Radio started from this song 📡');
+        } catch (e) {
+            _mwToast(e.message || 'Radio mode failed');
+        }
+        setTimeout(mwRefresh, 1200);
     }
 
     function mwTogglePlay() {
@@ -372,15 +466,28 @@
         const artHtml = img
             ? `<img src="${_mwEsc(img)}" loading="lazy" class="w-12 h-12 rounded-lg object-cover bg-gray-800 shrink-0" alt="">`
             : `<div class="w-12 h-12 rounded-lg bg-gray-800 flex items-center justify-center text-xl shrink-0">${_MW_TYPE_ICON[type] || '🎵'}</div>`;
-        return `<button onclick="mwPlay('${_mwEsc(item.uri)}', '${_mwEsc(type)}')"
-            class="w-full text-left px-3 py-2.5 bg-gray-900 hover:bg-gray-800 active:bg-gray-700 flex items-center gap-3">
-            ${artHtml}
-            <span class="min-w-0 flex-1">
-                <span class="block text-[15px] text-white font-bold truncate">${_mwEsc(item.name)}</span>
-                ${sub ? `<span class="block text-xs text-gray-400 truncate">${_mwEsc(sub)}</span>` : ''}
-            </span>
-            <span class="text-xs font-black uppercase tracking-wider text-gray-500 bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 shrink-0">${_mwEsc(type)}</span>
-        </button>`;
+        // A div holding buttons, not a button holding buttons: the tap plays
+        // now, the two icons queue — next in line, or the end of the line.
+        return `<div class="w-full px-3 py-2.5 bg-gray-900 flex items-center gap-3">
+            <button onclick="mwPlay('${_mwEsc(item.uri)}', '${_mwEsc(type)}')"
+                class="min-w-0 flex-1 text-left flex items-center gap-3 active:opacity-70">
+                ${artHtml}
+                <span class="min-w-0 flex-1">
+                    <span class="block text-[15px] text-white font-bold truncate">${_mwEsc(item.name)}</span>
+                    ${sub ? `<span class="block text-xs text-gray-400 truncate">${_mwEsc(sub)}</span>` : ''}
+                </span>
+            </button>
+            <button onclick="mwPlay('${_mwEsc(item.uri)}', '${_mwEsc(type)}', 'next')"
+                title="Play next" aria-label="Play next"
+                class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 shrink-0">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+            </button>
+            <button onclick="mwPlay('${_mwEsc(item.uri)}', '${_mwEsc(type)}', 'add')"
+                title="Add to queue" aria-label="Add to queue"
+                class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 shrink-0">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg>
+            </button>
+        </div>`;
     }
 
     async function mwSearch() {
@@ -457,12 +564,16 @@
         }
     }
 
-    async function mwPlay(uri, mediaType) {
-        document.getElementById('mw-results').style.display = 'none';
-        document.getElementById('mw-search').value = '';
-        document.getElementById('mw-search-filters').style.display = 'none';
-        _mwSearchType = ''; _mwSearchProvider = ''; _mwSearchLib = false;
-        _mwProviders = [];
+    async function mwPlay(uri, mediaType, enqueue) {
+        // Queueing keeps the results up — the whole point of "add" is doing
+        // it a few times in a row. Play-now is a destination and closes them.
+        if (!enqueue) {
+            document.getElementById('mw-results').style.display = 'none';
+            document.getElementById('mw-search').value = '';
+            document.getElementById('mw-search-filters').style.display = 'none';
+            _mwSearchType = ''; _mwSearchProvider = ''; _mwSearchLib = false;
+            _mwProviders = [];
+        }
         if (!_mwSelected) return;
         let target = _mwSelected;
         if (target === MW_PHONE) {
@@ -489,7 +600,13 @@
             }
             target = found.entity.entity_id;
         }
-        await MusicLogic.play(target, uri, mediaType, _mwOpts);
+        try {
+            await MusicLogic.play(target, uri, mediaType, _mwOpts,
+                                  enqueue ? { enqueue } : null);
+            if (enqueue) _mwToast(enqueue === 'next' ? 'Playing next ⏭' : 'Added to the queue ➕');
+        } catch (e) {
+            _mwToast(e.message || 'Play failed');
+        }
         setTimeout(mwRefresh, 1200);
     }
 

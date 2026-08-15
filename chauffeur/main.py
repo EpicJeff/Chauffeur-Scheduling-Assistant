@@ -5164,6 +5164,13 @@ def ha_media_players(ma_only: bool = True):
             'volume_level': attrs.get('volume_level'),
             'supported_features': attrs.get('supported_features'),
             'device_class': attrs.get('device_class'),
+            # What is playing, as a URI ("start radio from this" needs it —
+            # MA sets it to the current queue item's uri), and the two queue
+            # switches, so the buttons can draw their real state instead of
+            # remembering what they last sent.
+            'media_content_id': attrs.get('media_content_id'),
+            'shuffle': attrs.get('shuffle'),
+            'repeat': attrs.get('repeat'),
             'is_ma_player': 'mass_player_type' in attrs,
             # Every `mass_*` attribute, verbatim. A browser that registered
             # itself as a Sendspin player has to find its OWN entity again
@@ -5322,9 +5329,12 @@ def ha_image(path: str, request: Request = None):
                     headers={'Cache-Control': 'max-age=30'})
 
 class MediaCommandRequest(BaseModel):
-    command: str  # play | pause | next | previous | volume_set | volume_mute
+    command: str  # play | pause | stop | next | previous | volume_set |
+    #               volume_mute | shuffle_set | repeat_set
     volume: Optional[float] = None
     mute: Optional[bool] = None
+    shuffle: Optional[bool] = None
+    repeat: Optional[str] = None  # off | all | one
 
 @app.post("/api/ha/media_players/{entity_id}/command")
 def ha_media_command(entity_id: str, req: MediaCommandRequest):
@@ -5332,16 +5342,21 @@ def ha_media_command(entity_id: str, req: MediaCommandRequest):
     service_map = {
         'play': ('media_play', {}),
         'pause': ('media_pause', {}),
+        'stop': ('media_stop', {}),
         'next': ('media_next_track', {}),
         'previous': ('media_previous_track', {}),
         'volume_set': ('volume_set', {'volume_level': req.volume}),
         'volume_mute': ('volume_mute', {'is_volume_muted': bool(req.mute)}),
+        'shuffle_set': ('shuffle_set', {'shuffle': bool(req.shuffle)}),
+        'repeat_set': ('repeat_set', {'repeat': req.repeat}),
     }
     if req.command not in service_map:
         raise HTTPException(status_code=400, detail=f"Unknown command {req.command}")
     service, extra = service_map[req.command]
     if req.command == 'volume_set' and req.volume is None:
         raise HTTPException(status_code=400, detail="volume required for volume_set")
+    if req.command == 'repeat_set' and req.repeat not in ('off', 'all', 'one'):
+        raise HTTPException(status_code=400, detail="repeat must be off|all|one")
     result = ha_api.call_service('media_player', service,
                                  {'entity_id': entity_id, **extra})
     if result is None:
@@ -5407,7 +5422,11 @@ class MusicPlayRequest(BaseModel):
     entity_id: str
     media_id: str
     media_type: Optional[str] = None
-    enqueue: Optional[str] = None  # play | next | add | replace
+    enqueue: Optional[str] = None  # play | next | add | replace | replace_next
+    # Play the item, then keep going with more like it. Only some providers
+    # can (MA raises on the rest), so the error path matters as much as the
+    # feature: the surfaces show MA's own sentence rather than a bare 502.
+    radio_mode: Optional[bool] = None
 
 @app.post("/api/music/play")
 def music_play(req: MusicPlayRequest):
@@ -5417,8 +5436,17 @@ def music_play(req: MusicPlayRequest):
         payload['media_type'] = req.media_type
     if req.enqueue:
         payload['enqueue'] = req.enqueue
+    if req.radio_mode:
+        payload['radio_mode'] = True
     result = ha_api.call_service('music_assistant', 'play_media', payload)
     if result is None:
+        # The REST bridge flattens HA's error body into a log line, so the
+        # one refusal a person can actually fix gets its own sentence.
+        if req.radio_mode:
+            raise HTTPException(status_code=502, detail=(
+                "Radio mode was refused — it only works on items from a "
+                "provider that supports it (Spotify, for one). Try playing "
+                "it normally."))
         raise HTTPException(status_code=502, detail="Music Assistant play_media failed")
     return {"status": "ok"}
 

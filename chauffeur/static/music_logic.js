@@ -451,20 +451,21 @@
             return self;
         },
 
-        async play(entityId, uri, mediaType, opts) {
+        /** `extra`: {enqueue: 'add'|'next'|..., radioMode: true}. Play-now is
+         *  the everything-omitted case. Throws with the server's sentence on
+         *  a refusal — radio mode refuses on providers that cannot do it,
+         *  and "nothing happened" is the one wrong way to deliver that. */
+        async play(entityId, uri, mediaType, opts, extra) {
             if (!entityId || !uri) return false;
-            try {
-                await fetch(base(opts) + 'api/music/play', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        entity_id: entityId, media_id: uri, media_type: mediaType,
-                    }),
-                });
-                return true;
-            } catch (e) {
-                return false;
-            }
+            const body = { entity_id: entityId, media_id: uri, media_type: mediaType };
+            if (extra && extra.enqueue) body.enqueue = extra.enqueue;
+            if (extra && extra.radioMode) body.radio_mode = true;
+            await json(base(opts) + 'api/music/play', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            return true;
         },
     };
 
