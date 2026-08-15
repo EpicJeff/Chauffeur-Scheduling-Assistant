@@ -15,6 +15,9 @@ atexit.register(lambda: shutil.rmtree(_TMP, ignore_errors=True))
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tests'))
+import tpl_source  # noqa: E402
 from services import ma_api, music_shelves as ms  # noqa: E402
 
 
@@ -107,7 +110,69 @@ def scenario_playlist_writes_map_to_ma_verbs():
               "the seeding track landed in the NEW list")
 
 
+def scenario_house_hearts_are_real_ma_favorites():
+    """The house view's heart writes MA's own pile — what a heart in MA's
+    app does — and un-favourite resolves the LIBRARY id by uri, because
+    remove_item does not speak uri and the surfaces must never learn MA's
+    id scheme."""
+    calls = []
+
+    def fake_command(cmd, **kw):
+        calls.append((cmd, kw))
+        if cmd == 'music/item_by_uri':
+            return {'provider': 'library', 'item_id': '77', 'media_type': 'track'}
+        return {}
+
+    with mock.patch.object(ma_api, 'available', return_value=True), \
+            mock.patch.object(ma_api, 'command', side_effect=fake_command):
+        ok, _ = ms.house_favorite_add('spotify://track/1')
+        check(ok and calls[-1] == ('music/favorites/add_item',
+                                   {'item': 'spotify://track/1'}),
+              f"add maps to add_item by uri: {calls[-1]}")
+        ok, _ = ms.house_favorite_remove('library://track/77')
+        check(ok, "remove ok")
+        check(calls[-1] == ('music/favorites/remove_item',
+                            {'media_type': 'track', 'library_item_id': '77'}),
+              f"remove resolved the library id: {calls[-1]}")
+
+    # Not in the library -> nothing to remove, said out loud.
+    def not_in_library(cmd, **kw):
+        return {'provider': 'spotify', 'item_id': 'x'} \
+            if cmd == 'music/item_by_uri' else {}
+
+    with mock.patch.object(ma_api, 'available', return_value=True), \
+            mock.patch.object(ma_api, 'command', side_effect=not_in_library):
+        ok, detail = ms.house_favorite_remove('spotify://track/9')
+        check(not ok and 'library' in detail.lower(),
+              f"non-library removal explains itself: {detail}")
+
+    with mock.patch.object(ma_api, 'available', return_value=False):
+        ok, detail = ms.house_favorite_add('u')
+        check(not ok and 'token' in detail.lower(), "tokenless names the piece")
+
+
+def scenario_the_house_heart_draws_only_on_real_knowledge():
+    """The card: with nobody selected the heart exists exactly where the row
+    carries MA's boolean flag (the HA path answers null = unknown), and the
+    toggle routes to the house pile, not a member table."""
+    tpl = tpl_source.read('home.html')
+    vis = tpl[tpl.index('musicHeartVisible(t, item) {'):]
+    vis = vis[:vis.index('musicHeartOn(')]
+    check("typeof item.favorite === 'boolean'" in vis,
+          "the house heart draws off unknown favourite state")
+    toggle = tpl[tpl.index('async musicToggleFav(t, item) {'):]
+    toggle = toggle[:toggle.index('musicHouseFav(t, item) {')]
+    check('if (!s.member) return this.musicHouseFav(t, item)' in toggle,
+          "an unselected panel's heart falls into the member path")
+    body = tpl_source.read('components/board_tile_body.html')
+    frag = body[body.index("t.type === 'music'"):body.index('ha_image')]
+    check('musicHeartVisible(t, item)' in frag and 'musicHouseUnfav' in frag,
+          "the template still gates hearts on a picked member only")
+
+
 SCENARIOS = [
+    scenario_house_hearts_are_real_ma_favorites,
+    scenario_the_house_heart_draws_only_on_real_knowledge,
     scenario_no_ma_means_absent_never_error,
     scenario_shelves_parse_both_recommendation_shapes,
     scenario_only_editable_playlists_are_offered,

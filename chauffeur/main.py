@@ -5442,6 +5442,27 @@ def music_shelves(limit: int = 8):
     from services import music_shelves as shelves_svc
     return shelves_svc.shelves(limit=limit)
 
+class HouseFavoriteRequest(BaseModel):
+    uri: str
+
+@app.post("/api/music/house/favorites")
+def music_house_favorite(req: HouseFavoriteRequest):
+    """A real MA favourite — the house pile. The panel's heart with nobody
+    selected; a member's heart posts to /api/music/my/favorites instead."""
+    from services import music_shelves as shelves_svc
+    ok, detail = shelves_svc.house_favorite_add(req.uri)
+    if not ok:
+        raise HTTPException(status_code=502, detail=detail)
+    return {'status': 'ok'}
+
+@app.delete("/api/music/house/favorites")
+def music_house_unfavorite(uri: str, media_type: Optional[str] = None):
+    from services import music_shelves as shelves_svc
+    ok, detail = shelves_svc.house_favorite_remove(uri, media_type=media_type)
+    if not ok:
+        raise HTTPException(status_code=502, detail=detail)
+    return {'status': 'ok'}
+
 @app.get("/api/music/playlists/editable")
 def music_editable_playlists():
     from services import music_shelves as shelves_svc

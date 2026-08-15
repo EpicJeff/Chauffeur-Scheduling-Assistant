@@ -5324,9 +5324,29 @@
                     return !!(s && s.member && s.favUris.includes(uri));
                 },
 
+                /** Whether a row shows a heart at all. A member's heart is
+                 *  always drawable; the HOUSE heart exists only where the
+                 *  row carries MA's real favourite flag (a boolean — the HA
+                 *  path answers null, meaning unknown, and a heart drawn
+                 *  off an unknown would claim knowledge nobody has). */
+                musicHeartVisible(t, item) {
+                    const s = this.musicState[t.id];
+                    if (!s) return false;
+                    return !!s.member || typeof item.favorite === 'boolean';
+                },
+
+                /** Filled or hollow: the member's own table, or MA's flag. */
+                musicHeartOn(t, item) {
+                    const s = this.musicState[t.id];
+                    if (!s) return false;
+                    return s.member ? s.favUris.includes(item.uri)
+                                    : item.favorite === true;
+                },
+
                 async musicToggleFav(t, item) {
                     const s = this.musicState[t.id];
-                    if (!s || !s.member) return;
+                    if (!s) return;
+                    if (!s.member) return this.musicHouseFav(t, item);
                     this.musicTouch(t);
                     try {
                         if (s.favUris.includes(item.uri)) {
@@ -5341,6 +5361,57 @@
                         return;
                     }
                     await this.loadMyMusicShelf(t);
+                },
+
+                /** The house heart: a REAL Music Assistant favourite, same
+                 *  pile a heart in MA's own app lands in. The row's flag is
+                 *  flipped locally on success — a search result does not
+                 *  re-fetch itself — and the house shelf reloads, since
+                 *  that is where the change shows up. */
+                async musicHouseFav(t, item) {
+                    const s = this.musicState[t.id];
+                    if (!s || typeof item.favorite !== 'boolean') return;
+                    this.musicTouch(t);
+                    s.error = '';
+                    try {
+                        if (item.favorite) {
+                            await MusicLogic.houseUnfavorite(item.uri, item.media_type,
+                                                             { apiBase: this.apiBase });
+                            item.favorite = false;
+                            s.notice = 'Removed from the house favourites';
+                        } else {
+                            await MusicLogic.houseFavorite(item.uri,
+                                                           { apiBase: this.apiBase });
+                            item.favorite = true;
+                            s.notice = 'Added to the house favourites ♥';
+                        }
+                        setTimeout(() => { if (s.notice) s.notice = ''; }, 4000);
+                    } catch (e) {
+                        s.error = e.message || 'Favorite failed';
+                        return;
+                    }
+                    if (t.data.show.favorites) this.loadMusicFavorites(t);
+                },
+
+                /** Un-heart from the house favourites shelf itself. Those
+                 *  rows come through the HA bridge and carry no favourite
+                 *  flag — but a row ON the favourites shelf is a favourite
+                 *  by definition, so this is remove-only. */
+                async musicHouseUnfav(t, item) {
+                    const s = this.musicState[t.id];
+                    if (!s) return;
+                    this.musicTouch(t);
+                    s.error = '';
+                    try {
+                        await MusicLogic.houseUnfavorite(item.uri, item.media_type,
+                                                         { apiBase: this.apiBase });
+                        s.notice = 'Removed from the house favourites';
+                        setTimeout(() => { if (s.notice) s.notice = ''; }, 4000);
+                    } catch (e) {
+                        s.error = e.message || 'Favorite failed';
+                        return;
+                    }
+                    this.loadMusicFavorites(t);
                 },
 
                 musicSetType(t, type) {

@@ -1037,12 +1037,17 @@
                                                                         x-text="musicSubtitle(item)"></span>
                                                                 </span>
                                                             </button>
-                                                            <button x-show="musicOf(t).member"
+                                                            <!-- Two hearts, one button: a picked
+                                                                 member's goes to their own shelf,
+                                                                 the house's is a REAL MA favourite
+                                                                 (drawn only where the row carries
+                                                                 MA's flag — the HA path doesn't). -->
+                                                            <button x-show="musicHeartVisible(t, item)"
                                                                 @click="musicToggleFav(t, item)"
                                                                 title="Favorite" aria-label="Favorite"
                                                                 class="p-2.5 rounded-full text-xl leading-none shrink-0"
-                                                                :class="musicIsFaved(t, item.uri) ? 'text-pink-500' : 'panel-dim'"
-                                                                x-text="musicIsFaved(t, item.uri) ? '♥' : '♡'"></button>
+                                                                :class="musicHeartOn(t, item) ? 'text-pink-500' : 'panel-dim'"
+                                                                x-text="musicHeartOn(t, item) ? '♥' : '♡'"></button>
                                                             <button @click="musicPlayItem(t, item, 'next')"
                                                                 title="Play next" aria-label="Play next"
                                                                 class="p-2.5 rounded-full bg-black/20 panel-text active:opacity-70 shrink-0">
@@ -1074,16 +1079,26 @@
                                                 Favourites</div>
                                             <div class="flex gap-3 overflow-x-auto no-scrollbar pb-1">
                                                 <template x-for="item in musicOf(t).favorites" :key="item.uri">
-                                                    <button @click="musicPlayItem(t, item)"
-                                                        class="w-24 shrink-0 text-left active:opacity-70">
-                                                        <img x-show="musicRowArt(item)" :src="musicRowArt(item)" loading="lazy"
-                                                            class="w-24 h-24 rounded-xl object-cover bg-black/20 shadow-md" alt="">
-                                                        <span x-show="!musicRowArt(item)"
-                                                            class="w-24 h-24 rounded-xl bg-black/20 flex items-center justify-center text-3xl"
-                                                            x-text="musicIcon(item)"></span>
-                                                        <span class="block text-sm font-bold panel-text truncate mt-1"
-                                                            x-text="item.name"></span>
-                                                    </button>
+                                                    <div class="w-24 shrink-0 relative">
+                                                        <button @click="musicPlayItem(t, item)"
+                                                            class="w-full text-left active:opacity-70">
+                                                            <img x-show="musicRowArt(item)" :src="musicRowArt(item)" loading="lazy"
+                                                                class="w-24 h-24 rounded-xl object-cover bg-black/20 shadow-md" alt="">
+                                                            <span x-show="!musicRowArt(item)"
+                                                                class="w-24 h-24 rounded-xl bg-black/20 flex items-center justify-center text-3xl"
+                                                                x-text="musicIcon(item)"></span>
+                                                            <span class="block text-sm font-bold panel-text truncate mt-1"
+                                                                x-text="item.name"></span>
+                                                        </button>
+                                                        <!-- Un-heart, gated on the direct MA path
+                                                             (the shelves object is its witness) —
+                                                             the one verb MA's own button never
+                                                             offers anywhere. -->
+                                                        <button x-show="musicOf(t).shelves"
+                                                            @click.stop="musicHouseUnfav(t, item)"
+                                                            title="Remove favorite" aria-label="Remove favorite"
+                                                            class="absolute top-1 right-1 w-8 h-8 rounded-full bg-black/50 text-pink-400 text-base leading-none flex items-center justify-center">♥</button>
+                                                    </div>
                                                 </template>
                                             </div>
                                         </div>
@@ -1105,16 +1120,26 @@
                                                     Recently played</div>
                                                 <div class="flex gap-3 overflow-x-auto no-scrollbar pb-1">
                                                     <template x-for="item in musicOf(t).shelves.recently_played" :key="item.uri">
-                                                        <button @click="musicPlayItem(t, item)"
-                                                            class="w-24 shrink-0 text-left active:opacity-70">
-                                                            <img x-show="musicRowArt(item)" :src="musicRowArt(item)" loading="lazy"
-                                                                class="w-24 h-24 rounded-xl object-cover bg-black/20 shadow-md" alt="">
-                                                            <span x-show="!musicRowArt(item)"
-                                                                class="w-24 h-24 rounded-xl bg-black/20 flex items-center justify-center text-3xl"
-                                                                x-text="musicIcon(item)"></span>
-                                                            <span class="block text-sm font-bold panel-text truncate mt-1"
-                                                                x-text="item.name"></span>
-                                                        </button>
+                                                        <div class="w-24 shrink-0 relative">
+                                                            <button @click="musicPlayItem(t, item)"
+                                                                class="w-full text-left active:opacity-70">
+                                                                <img x-show="musicRowArt(item)" :src="musicRowArt(item)" loading="lazy"
+                                                                    class="w-24 h-24 rounded-xl object-cover bg-black/20 shadow-md" alt="">
+                                                                <span x-show="!musicRowArt(item)"
+                                                                    class="w-24 h-24 rounded-xl bg-black/20 flex items-center justify-center text-3xl"
+                                                                    x-text="musicIcon(item)"></span>
+                                                                <span class="block text-sm font-bold panel-text truncate mt-1"
+                                                                    x-text="item.name"></span>
+                                                            </button>
+                                                            <!-- "We keep playing this" is exactly
+                                                                 when a house heart gets pressed. -->
+                                                            <button x-show="typeof item.favorite === 'boolean'"
+                                                                @click.stop="musicHouseFav(t, item)"
+                                                                title="Favorite" aria-label="Favorite"
+                                                                class="absolute top-1 right-1 w-8 h-8 rounded-full bg-black/50 text-base leading-none flex items-center justify-center"
+                                                                :class="item.favorite ? 'text-pink-400' : 'text-white/70'"
+                                                                x-text="item.favorite ? '♥' : '♡'"></button>
+                                                        </div>
                                                     </template>
                                                 </div>
                                             </div>

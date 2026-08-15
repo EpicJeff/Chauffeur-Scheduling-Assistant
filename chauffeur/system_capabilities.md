@@ -2239,3 +2239,11 @@ MA's own shelves on the wall, and playlists as a write surface. Both direct-path
 - Tests: `tests/test_music_shelves.py` (4 scenarios).
 
 **Music arc summary (v2.237.0–v2.242.0):** `ma_api` direct client → grouped/filterable search → radio + enqueue + queue switches → per-member favourites & recent → visible editable queue → MA shelves + playlist writes. The HA bridge remains the zero-setup floor for every feature that can exist on it; everything MA-only hides rather than errors. On-device verification pending for the whole arc (needs the MA token created and pasted in).
+
+## The house heart (v2.243.0)
+
+The gap the family caught in the arc: the panel with nobody selected — the stock-MA view — had no way to favourite at all. Now the heart exists there too, and it writes a REAL Music Assistant favourite (`music/favorites/add_item`), the same pile a heart in MA's own app lands in. Two hearts, one button, routed by whether a face is picked (`musicToggleFav` → `musicHouseFav` when `!s.member`); the piles never mix.
+
+- **The house heart draws only on real knowledge**: rows on the direct MA path carry MA's boolean `favorite` flag; HA-path rows answer null (unknown), and a heart is not drawn off an unknown. So house hearts appear on search rows exactly when MA answered the search, and on the recently-played tiles (overlay ♥/♡ — "we keep playing this" is exactly when a house heart gets pressed).
+- **Un-favourite works here too** — the verb MA's own button never offers: `music/favorites/remove_item` wants the LIBRARY item id, so `house_favorite_remove` resolves it by uri (`music/item_by_uri`) server-side; a non-library item says "no house favourite to remove" instead of erroring. The house favourites shelf tiles get a remove-only ♥ overlay (a row on that shelf is a favourite by definition — its HA-reduced dict carries no flag), gated on the shelves object as the MA-path witness.
+- Endpoints: `POST/DELETE /api/music/house/favorites`. Row flags flip locally on success (a search result does not re-fetch itself) and the house shelf reloads.

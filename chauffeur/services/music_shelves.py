@@ -62,6 +62,40 @@ def shelves(limit: int = 8) -> dict:
     }
 
 
+def house_favorite_add(uri) -> tuple:
+    """(ok, detail). A REAL Music Assistant favourite — the shared house
+    pile, exactly what a heart pressed in MA's own app does. This is the
+    house view's heart; a picked member's heart goes to their own table
+    instead (slice 4), and the two never mix."""
+    from services import ma_api
+    if not ma_api.available():
+        return False, ('House favourites need the Music Assistant token '
+                       '(Config → Integrations).')
+    result = ma_api.command('music/favorites/add_item', item=uri)
+    if result is None:
+        return False, ma_api.health()['detail'] or 'Music Assistant refused.'
+    return True, ''
+
+
+def house_favorite_remove(uri, media_type=None) -> tuple:
+    """(ok, detail). `remove_item` wants the LIBRARY item id, not a uri —
+    resolved here so the surfaces never learn MA's id scheme. An item that
+    is not in the library has no favourite to remove, and says so."""
+    from services import ma_api
+    if not ma_api.available():
+        return False, ('House favourites need the Music Assistant token '
+                       '(Config → Integrations).')
+    item = ma_api.command('music/item_by_uri', uri=uri)
+    if not isinstance(item, dict) or item.get('provider') != 'library':
+        return False, 'That item is not in the library, so it has no house favourite to remove.'
+    result = ma_api.command('music/favorites/remove_item',
+                            media_type=media_type or item.get('media_type'),
+                            library_item_id=item.get('item_id'))
+    if result is None:
+        return False, ma_api.health()['detail'] or 'Music Assistant refused.'
+    return True, ''
+
+
 def editable_playlists() -> list:
     """[{item_id, name}] — the playlists a track can be added to. Empty when
     MA is absent, which the surfaces read as "hide the verb"."""

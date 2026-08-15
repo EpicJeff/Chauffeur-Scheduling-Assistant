@@ -502,6 +502,23 @@
          *  the everything-omitted case. Throws with the server's sentence on
          *  a refusal — radio mode refuses on providers that cannot do it,
          *  and "nothing happened" is the one wrong way to deliver that. */
+        /** A real MA favourite — the shared house pile. Throws with the
+         *  server's sentence. */
+        async houseFavorite(uri, opts) {
+            return json(base(opts) + 'api/music/house/favorites', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uri }),
+            });
+        },
+
+        async houseUnfavorite(uri, mediaType, opts) {
+            return json(base(opts) + 'api/music/house/favorites?uri='
+                + encodeURIComponent(uri)
+                + (mediaType ? '&media_type=' + encodeURIComponent(mediaType) : ''),
+                { method: 'DELETE' });
+        },
+
         /** MA's own shelves for the house view. {available: false} hides
          *  them — the HA bridge has no recommendations to offer. */
         async shelves(opts) {
