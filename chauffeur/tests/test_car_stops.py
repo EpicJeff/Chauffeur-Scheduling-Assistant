@@ -15,7 +15,14 @@ from harness import check  # noqa: F401
 from services import storage, ha_api, cars, maps, chat_actions
 
 
-NOW = datetime.datetime.now().astimezone().replace(minute=0, second=0, microsecond=0)
+# 9am, PINNED — not just "this hour, rounded". Scenarios below place events a
+# few hours out (`_ev(..., hours_from_now=3)`) and assert the proposal is keyed
+# on TODAY, so run after about 9pm the event crossed midnight and the sweep
+# correctly keyed it on tomorrow. The test failed nightly and passed all day,
+# which reads as flakiness and was really a fixture describing "now" instead
+# of describing a morning.
+NOW = datetime.datetime.now().astimezone().replace(
+    hour=9, minute=0, second=0, microsecond=0)
 TODAY = NOW.strftime('%Y-%m-%d')
 TOMORROW = (NOW + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
 

@@ -573,11 +573,25 @@ def scenario_beat_need_overrides_drive_solver():
     storage.add_status_day({"date": TODAY.isoformat(), "protocol_id": pid})
     end = (TODAY + datetime.timedelta(days=4)).isoformat()
     feed = status_protocols.unavailable_driver_dates(TODAY.isoformat(), end)
-    dates = sorted(f["date"] for f in feed)
+    by_date = {f["date"]: f for f in feed}
     d1 = (TODAY + datetime.timedelta(days=1)).isoformat()
-    check(dates == [TODAY.isoformat(), d1],
-          f"cover on day 0 (protocol) + day 1 (beat override) ONLY — day+3's "
-          f"give_space beat frees the driver, got {dates}")
+    d3 = (TODAY + datetime.timedelta(days=3)).isoformat()
+    # Written before the load arc, this asserted day+3's `give_space` beat
+    # FREED the driver entirely, because back then give_space emitted nothing
+    # at all. A6 gave it teeth — the design doc had promised "the solver
+    # protects the evening" and the code never did — so it now bans the
+    # EVENING only. Whole-day on cover, 17:00-on for give_space: banning the
+    # school run too would overshoot the family's own words.
+    check(sorted(by_date) == [TODAY.isoformat(), d1, d3],
+          f"cover on days 0 and 1, evening-only on day 3, got {sorted(by_date)}")
+    for whole in (TODAY.isoformat(), d1):
+        check('time_start' not in by_date[whole],
+              f"{whole} is a cover day and must ban the whole day")
+    check(by_date[d3].get('time_start') == '17:00'
+          and by_date[d3].get('time_end') == '23:59',
+          f"give_space must protect the evening only, got {by_date[d3]}")
+    check('(evening)' in by_date[d3]['label'],
+          f"the evening ban does not say so: {by_date[d3]['label']}")
     # inside a span, a beat can RELAX the default: 3-day cover span, day 2
     # beat says give_space -> day 2 is drivable
     _reset()
@@ -588,9 +602,16 @@ def scenario_beat_need_overrides_drive_solver():
     storage.add_status_day({"date": TODAY.isoformat(), "protocol_id": pid,
                             "end_date": d_end})
     feed = status_protocols.unavailable_driver_dates(TODAY.isoformat(), d_end)
-    dates = sorted(f["date"] for f in feed)
-    check(dates == [TODAY.isoformat(), d_end],
-          f"the middle day's beat relaxes cover -> only days 0 and 2 banned, got {dates}")
+    by_date = {f["date"]: f for f in feed}
+    mid = (TODAY + datetime.timedelta(days=1)).isoformat()
+    check(sorted(by_date) == [TODAY.isoformat(), mid, d_end],
+          f"all three days appear; the middle one relaxed, got {sorted(by_date)}")
+    check(by_date[mid].get('time_start') == '17:00',
+          f"the middle day's beat relaxes a cover span to evening-only, "
+          f"got {by_date[mid]}")
+    check('time_start' not in by_date[TODAY.isoformat()]
+          and 'time_start' not in by_date[d_end],
+          "the days either side of the relaxed one are still full cover")
 
 
 def scenario_beat_dms_audiences_once():

@@ -37,10 +37,15 @@ def reset_db():
 
 
 def _member(mid, name, **kw):
+    # Quiet hours EXPLICITLY DISABLED (`start == end`). Absent means the
+    # household default of 21:00-08:00 (load arc A6), which silently emptied
+    # the moment fan-out assertions every evening — the scenario is about who
+    # a moment reaches, not about when adults are asleep.
     doc = {"id": mid, "name": name, "color_code": "#3b82f6", "avatar": None,
            "bio": "", "can_drive": False, "is_child": False, "driver_id": None,
            "passenger_id": None, "ha_person_entity": None, "notify_service": None,
-           "media_player_entity": None, "pin": None, "created_at": time.time()}
+           "media_player_entity": None, "pin": None, "created_at": time.time(),
+           "quiet_start": "00:00", "quiet_end": "00:00"}
     doc.update(kw)
     storage.add_member(doc)
     return doc

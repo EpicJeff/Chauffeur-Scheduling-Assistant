@@ -35,10 +35,17 @@ def reset_db():
 
 
 def _member(mid, name, **kw):
+    # Quiet hours EXPLICITLY DISABLED (`start == end`, the documented
+    # grammar). Absent means the household default of 21:00-08:00 (load arc
+    # A6), so every scenario below that asserts who got a push passed all day
+    # and failed all evening — which reads as flakiness and is really a
+    # fixture that forgot adults have a night. Quiet hours have their own
+    # tests; these are about WHO a message reaches.
     doc = {"id": mid, "name": name, "color_code": "#3b82f6", "avatar": None,
            "bio": "", "can_drive": False, "is_child": False, "driver_id": None,
            "passenger_id": None, "ha_person_entity": None, "notify_service": None,
-           "media_player_entity": None, "pin": None, "created_at": time.time()}
+           "media_player_entity": None, "pin": None, "created_at": time.time(),
+           "quiet_start": "00:00", "quiet_end": "00:00"}
     doc.update(kw)
     storage.add_member(doc)
     return doc
@@ -177,31 +184,58 @@ def scenario_argyle_dm():
 
 
 def scenario_tomorrow_digest_argyle_dm():
+    """Who gets WHAT, which the load arc's A6 briefing split in two and this
+    scenario had not caught up with.
+
+    A parent or adult gets the HOUSEHOLD BRIEFING — tomorrow for the whole
+    family, openings first — because the non-driving parent otherwise learns
+    the day changed by happening to look at a screen. A driver who is not a
+    parent (a helper, another family's nanny) keeps the per-driver digest:
+    they have no business receiving this household's whole picture.
+
+    Both land in the Argyle DM rather than a raw web-push; the push is only
+    the fallback for a driver with no linked member at all.
+    """
     import datetime as _dt
     import main
 
     _member("mom", "Mom", role="parent", driver_id="d1")
+    _member("nan", "Nan", role="helper", driver_id="d2")
     tomorrow = _dt.date.today() + _dt.timedelta(days=1)
     cache = {
         "events": [{"id": "ev1", "title": "Soccer",
                     "start": f"{tomorrow.isoformat()}T09:00:00",
-                    "end": f"{tomorrow.isoformat()}T10:00:00"}],
-        "assignments": {"ev1": "d1"},
+                    "end": f"{tomorrow.isoformat()}T10:00:00"},
+                   {"id": "ev2", "title": "Swimming",
+                    "start": f"{tomorrow.isoformat()}T11:00:00",
+                    "end": f"{tomorrow.isoformat()}T12:00:00"}],
+        "assignments": {"ev1": "d1", "ev2": "d2"},
         "scheduled_errands": [],
     }
     from services import family_digest
-    with mock.patch.object(storage, 'get_cached_schedule', return_value=cache), \
-         mock.patch.object(family_digest, 'weather_line', return_value=None), \
-         mock.patch.object(main, 'send_push') as push:
+    with mock.patch.object(storage, 'get_cached_schedule', return_value=cache),          mock.patch.object(family_digest, 'weather_line', return_value=None),          mock.patch.object(main, 'send_push') as push:
         main._send_tomorrow_digests([])
         check(push.call_count == 0,
-              "driver with a linked member gets the DM, not the raw push")
-    dm = storage.get_or_create_dm("argyle", "mom")
-    msgs = storage.get_channel_messages(dm["id"])
-    check(msgs and msgs[-1]["sender_member_id"] == "argyle",
-          "digest posted as Argyle into the driver's DM")
-    check("Tomorrow: 1 drive" in msgs[-1]["body"] and "Soccer" in msgs[-1]["body"],
-          "digest body lists tomorrow's drives")
+              "drivers with linked members get DMs, not raw pushes")
+
+    def last_dm(member_id):
+        dm = storage.get_or_create_dm("argyle", member_id)
+        msgs = storage.get_channel_messages(dm["id"])
+        check(msgs and msgs[-1]["sender_member_id"] == "argyle",
+              f"nothing posted as Argyle into {member_id}'s DM")
+        return msgs[-1]["body"]
+
+    # The parent: the briefing, which speaks for the household rather than
+    # for her own driving.
+    mom = last_dm("mom")
+    check("🏠" in mom, f"the parent did not get the household briefing: {mom!r}")
+
+    # The helper: her own drive, and NOT the household's picture.
+    nan = last_dm("nan")
+    check("Tomorrow: 1 drive" in nan and "Swimming" in nan,
+          f"the helper's per-driver digest is wrong: {nan!r}")
+    check("🏠" not in nan,
+          f"a helper received the household briefing: {nan!r}")
 
 
 def scenario_event_channel_lifecycle():
