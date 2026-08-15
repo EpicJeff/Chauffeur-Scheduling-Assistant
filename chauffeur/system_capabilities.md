@@ -2238,7 +2238,7 @@ MA's own shelves on the wall, and playlists as a write surface. Both direct-path
 - **`ma_api.command` first param renamed `cmd`** — a first parameter called `name` made any MA command whose own argument is `name` (create_playlist) impossible to send; the test mock's signature pins it.
 - Tests: `tests/test_music_shelves.py` (4 scenarios).
 
-**Music arc summary (v2.237.0–v2.242.0):** `ma_api` direct client → grouped/filterable search → radio + enqueue + queue switches → per-member favourites & recent → visible editable queue → MA shelves + playlist writes. The HA bridge remains the zero-setup floor for every feature that can exist on it; everything MA-only hides rather than errors. On-device verification pending for the whole arc (needs the MA token created and pasted in).
+**Music arc summary (v2.237.0–v2.242.0):** `ma_api` direct client → grouped/filterable search → radio + enqueue + queue switches → per-member favourites & recent → visible editable queue → MA shelves + playlist writes. The HA bridge remains the zero-setup floor for every feature that can exist on it; everything MA-only hides rather than errors. **Verified on the live add-on instance 2026-08-15** with a real MA token pasted in — v2.243.0–v2.243.2 are that verification's findings, which is what a device pass is for.
 
 ## The house heart (v2.243.0)
 

@@ -3,10 +3,17 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-14 (v2.232.3 — the boards editor arc SHIPPED
-B0–B3; added the native app track and the music panel, both surfaced by the
-same shift: Chauffeur stopped being an admin panel reached from HA and became
-the surface the family actually holds).
+up cold. Last updated: 2026-08-15 (v2.245.0 — the music arc SHIPPED, closing
+the queued slice; covered rides reached the wall and grew a "be ready at",
+finishing the visible half of load-arc A1).
+
+**Verification status (2026-08-15): everything shipped through v2.245.0 has
+been exercised on device or on the live add-on instance.** Every arc in this
+file previously carried an "on-device verification pending" note — presence,
+kid support, cars, meals, bus, occasions, load, wall panel, boards, boards
+editor, announce, optional events, music — and they are all cleared. New
+work starts from a verified baseline, so a pending note from here on means
+that arc specifically, not the backlog of everything before it.
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -38,14 +45,21 @@ routines + streaks · rewards store with parent-approved redemptions.
   (local dev without HA shows dead features today). Backends already degrade
   gracefully — this is a UI-visibility pass only. Note the proper dev
   alternative: `ha_base_url`/`ha_token` settings point local dev at real HA.
+  **Now a two-layer problem, not one** (2026-08-15): the music arc added a
+  SECOND axis — HA reachable but no MA token — and solved its own case with
+  the hide-don't-error rule. Music is also a real destination now, not just a
+  tab. Whatever ships here should adopt that rule rather than invent a third
+  degraded style; `/music` is the worked example.
 - **Kiosk points leaderboard — ALREADY SHIPPED, stale item (noticed
   2026-08-01).** `/chores?kiosk=true` has been exactly this since v2.20.0
   (leaderboard-only collapse, 60s refresh; `/routines?kiosk=true` = streak
   board). Only unbuilt remnant, if ever wanted: a compact points strip ON
   the main schedule dashboard's kiosk view, so one panel shows both.
-- **Per-member notification preferences.** Members with both web push and HA
-  notify get every message twice (accepted v1 tradeoff). Add a per-member
-  lane preference or dedupe.
+- **Per-member notification preferences — PARTLY SUPERSEDED by load-arc A6
+  (v2.151.0)**, which put quiet hours on the identity. What A6 did NOT
+  address, and what survives of this item: members with both web push and HA
+  notify still get every message twice (accepted v1 tradeoff) — the open work
+  is a per-member LANE preference or dedupe, not a second quiet-hours model.
 - **Unify Config's Drivers/Passengers/Family tabs into one People tab.
   SHIPPED v2.22.0 (2026-08-01)** — member cards are the hub; the intact
   driver/passenger forms open on demand as role profiles; solver toggles
@@ -399,7 +413,7 @@ one derived lens. Built from a code audit, not from these docs. ALL SIX ARCS
 SHIPPED: A1 outside hands (v2.146.0) · A2 household tasks + assist tier
 (v2.147.0) · A3 requests (v2.148.0) · A4 stages, cutoffs 6/12/15 configurable
 (v2.149.0) · A5 dual-income net (v2.150.0) · A6 outlets + member quiet hours
-+ household briefing (v2.151.0). On-device verification pending for all of it.
++ household briefing (v2.151.0).
 Deferred from the design, with reasons in system_capabilities.md: the carpool
 turn ledger (A1 slice 2) and chore/task coverage by outside hands (wants usage
 data first); driver availability windows/radius from "Three layers of no"
@@ -498,6 +512,30 @@ look like — the only one that should be about driving).
   pot). **Slice the machinery, not the noun**: contact book + drive coverage
   first, then the turn ledger ("you've driven 2 of the last 9"), then chore and
   task coverage after A2.
+
+  **A1's visible half finished 2026-08-15 (v2.244.0 → v2.245.0)**, from a
+  question asked at the wall: does an event covered by outside help still show
+  on the hero so everyone can get ready? It did not — coverage removes the
+  event from the SOLVE (that IS the feature), but `todays_runs` read
+  `sched['assignments']`, so a covered event was invisible to the hero and the
+  drives tile. The kid digest had fixed this exact blindness in A1; the wall
+  had carried it for a year. Now covered events build runs from
+  `assist_assignments`, with the outside hand in the driver slot wearing the
+  household word and a `🤝 covered` chip.
+  Then the better correction, again from the family: v2.244.0 showed no time
+  but the start, reasoning that we must never state a departure for a car we
+  are not driving — but **the drive from OUR door is still computable, so the
+  answer is a "be ready at", not silence.** What is not ours is the driving;
+  the getting-ready never stopped being ours. `leave_by.ready_for_covered`
+  keeps `ready_at`/`ready_label` strictly separate from `leave_at` so no
+  surface can ever tell somebody to leave, inherits the silence rule verbatim
+  (no cached travel, no location, no home, unroutable → no claim at all), and
+  reads cache-only because a wall polls it every 60s — which is why the solve
+  now primes covered events' locations even though coverage removed them from
+  it. Buffer: `assist_ready_buffer_mins`, on the Outside hands panel rather
+  than the config firehose.
+  **Still open in A1**: the turn ledger, and chore/task coverage by outside
+  hands (both still want usage data first).
 - **A2 — household tasks + assignee. The keystone.** Task = do something,
   errand = go somewhere. Yearly recurrence (errands lack it). Unassigned is a
   real state meaning the household owes it. Unlocks intake's fourth target —
@@ -540,7 +578,7 @@ dashboard workflow — a reorderable boards list with **+ Add Board**, an editor
 bar on the board itself, a ✎ on every tile, and settings as overlays over the
 thing they configure. Four arcs, **B0 → B3**, each deleting its counterpart out
 of `#panel-setup`; after B3 `#panel-setup` does not exist. Full brief:
-`chauffeur/docs/boards_editor_design.md`. On-device verification pending.
+`chauffeur/docs/boards_editor_design.md`.
 
 The load-bearing decision, shipped: **built-in boards are read-only, authored
 data** (`chauffeur/services/builtin_boards.json`), households may only hide
@@ -581,36 +619,54 @@ and tracked nothing we shipped.
   The screen is now a Sendspin player like the phone app, over a shared
   lifecycle in `music_logic.js` — a phone is a person, a panel is a place.
 
-- **The music slice, queued next (decided 2026-08-14).** Four things, three of
-  them nearly free because the backend is already half-built and nothing uses
-  it: `/api/music/play` accepts `enqueue` and no surface sends it, and
-  `GET /api/music/queue` wraps `get_queue` with no caller anywhere.
-  1. **Queue** — `enqueue` (`play|replace|next|replace_next|add`; our comment
-     lists four of the five) on search results and favourites, plus a queue
-     view off the existing endpoint.
-  2. **Radio mode** — a boolean on `play_media` the endpoint currently drops;
-     play an artist and it never ends.
-  3. **Follow me** — `transfer_queue` targets the DESTINATION and takes
-     `source_player` + `auto_play`, so a panel's button is "move the music
-     here" with nothing to pick: the card already knows its room, and it
-     composes with the local player (bring the kitchen queue to this screen).
-     The only one of the three that is genuinely new for a WALL rather than
-     catching up with the phone. Needs a new endpoint.
-  4. **Return-to-home kills the music** (reported from the wall 2026-08-14).
-     The panel's idle return navigates away, the page unloads, `pagehide`
-     stops the local player, and the music stops for no reason a person in
-     the room can see. The idle return should not fire while this screen is
-     playing — the same shape as any other "don't interrupt what somebody is
-     doing" rule, and a bug in what v2.234.0 shipped rather than a new
-     feature.
-  Favourites are read-only for now and that is deliberate: HA's integration
-  has NO favourite-write action (`favorite` is a read filter on
-  `get_library`), and the full path needs a long-lived MA bearer token on
-  port 8095 — a new credential and Chauffeur's first direct-to-MA channel,
-  weeks before a dedicated HA action that maintainers say is coming. The
-  cheap half is free though: the integration ships a per-player
-  `favorite_now_playing` BUTTON entity, so a ❤ for what is playing costs one
-  `button.press` through the channel we already use.
+## The music arc (SHIPPED 2026-08-14/15, v2.237.0 → v2.243.2)
+
+The slice queued on 2026-08-14 as "four things, three of them nearly free"
+grew into a real arc once the token question was settled. Detail in
+`system_capabilities.md`; the shape of what changed:
+
+**The load-bearing decision, shipped: Chauffeur talks to Music Assistant
+directly** (`services/ma_api.py`, port 8095, one pasted long-lived token) —
+the app's first direct-to-MA channel, taken rather than waiting weeks on a
+dedicated HA action. The rule that made it safe to take: **the HA bridge
+stays the zero-setup floor for everything that can exist on it, and every
+MA-only verb HIDES rather than errors.** No token, no dead buttons.
+
+That reversed the read-only-favourites cut in the plan above — hearts are
+now real writes on both piles (a member's shelf, and the house's actual MA
+favourites via `music/favorites/add_item`), including un-favourite, the verb
+MA's own `favorite_now_playing` button never offered.
+
+Slices as built: `ma_api` (v2.237.0) · search stops flattening MA's groups
+(v2.238.0) · radio mode + the queue verbs + the switches (v2.239.0) ·
+per-member shelves, never mixed with the house's (v2.240.0) · a visible
+editable queue (v2.241.0) · MA shelves + playlist writes, because typing was
+the worst part of a wall (v2.242.0) · the house heart (v2.243.0) · the heart
+on the thing actually PLAYING, both surfaces (v2.243.1) · and the screen
+player finding its own heart (v2.243.2).
+
+Three of the four queued items are therefore done (queue, radio, and the
+favourites half that was supposed to be impossible). **Two remain:**
+
+- **Follow me — still unbuilt, and still the only one that is genuinely new
+  for a WALL** rather than catching up with the phone. `transfer_queue`
+  targets the DESTINATION and takes `source_player` + `auto_play`, so a
+  panel's button is "move the music here" with nothing to pick: the card
+  already knows its room, and it composes with the local player (bring the
+  kitchen queue to this screen). Needs a new endpoint; today `transfer_queue`
+  appears in the repo only inside an `ma_api.py` docstring.
+- **Return-to-home still kills the music** (reported from the wall
+  2026-08-14, unfixed as of v2.245.0). The panel's idle return navigates
+  away, the page unloads, `pagehide` stops the local player, and the music
+  stops for no reason a person in the room can see. `goHome()` in
+  `templates/nav.html` already guards one case — an active screensaver sets
+  `_chfSsPendingHome` and lets wake-up do the navigating — and playing audio
+  wants the same shape: don't interrupt what somebody is doing. A bug in what
+  v2.234.0 shipped, not a new feature, and the cheapest open item in this
+  file.
+
+Deliberately still out: writing to MA's favourites from the HA path (no such
+action exists), and any second credential beyond the one token.
 
 ## The native app track (never written down until 2026-08-14 — it should have been)
 
