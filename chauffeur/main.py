@@ -301,6 +301,9 @@ async def push_notification_loop():
                     today_str = now_dt.strftime('%Y-%m-%d')
                     sent = dict(storage.get_app_state("bus_push_sent") or {})
                     dirty = False
+                    # (room, event, which bus) -> the children it is for. One
+                    # bus is one announcement however many siblings ride it.
+                    to_speak = {}
                     for m in storage.get_all_members():
                         if m.get('role') != 'child' or not m.get('bus_am_stop_time'):
                             continue
@@ -329,26 +332,29 @@ async def push_notification_loop():
                         # phone in another room is not how you tell a
                         # seven-year-old to put their shoes on.
                         active = _bus.bus_active(m)
-                        for key, want, fires, msg in (
-                            ('route', m.get('bus_route_push'), active,
-                             _bus.route_start_message(m)),
+                        for key, want, fires in (
+                            ('route', m.get('bus_route_push'), active),
                             ('near', bool(m.get('bus_near_zone'))
                              or int(m.get('bus_near_radius_m') or 0) > 0,
-                             active and _bus.bus_is_near(m), _bus.near_message(m)),
+                             active and _bus.bus_is_near(m)),
                         ):
                             state_key = f"{key}:{m['id']}:{today_str}"
                             if not want or state_key in sent or not fires:
                                 continue
                             sent[state_key] = time.time()
                             dirty = True
+                            # The PUSH is per child — it goes to their own
+                            # phone and says "head out to the stop" to them.
+                            # The SPOKEN form is collected and grouped below,
+                            # because siblings on one bus in one kitchen must
+                            # not hear the same sentence twice.
+                            msg = (_bus.route_start_message([m]) if key == 'route'
+                                   else _bus.near_message([m]))
                             _notify_member_lanes(m, msg[0], msg[1], '/app')
                             room = _bus.announce_room(m)
                             if room:
-                                try:
-                                    from services import announce as _ann
-                                    _ann.announce(room, msg[2])
-                                except Exception as ae:
-                                    print(f"Bus announce failed: {ae}")
+                                to_speak.setdefault(
+                                    (room, key, _bus.bus_key(m)), []).append(m)
 
                         late_key = f"late:{m['id']}:{today_str}"
                         if m.get('bus_late_push') and late_key not in sent \
@@ -368,6 +374,14 @@ async def push_notification_loop():
                                 sent[ready_key] = time.time()
                                 dirty = True
                                 _notify_member_lanes(m, msg[0], msg[1], '/app')
+                    for (room, key, _bus_id), kids in to_speak.items():
+                        try:
+                            from services import announce as _ann
+                            msg = (_bus.route_start_message(kids) if key == 'route'
+                                   else _bus.near_message(kids))
+                            _ann.announce(room, msg[2])
+                        except Exception as ae:
+                            print(f"Bus announce failed: {ae}")
                     if dirty:
                         cutoff = time.time() - 2 * 86400
                         storage.set_app_state("bus_push_sent",

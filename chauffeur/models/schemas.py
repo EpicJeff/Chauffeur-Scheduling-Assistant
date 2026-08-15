@@ -215,6 +215,8 @@ class FamilyMember(BaseModel):
     bus_late_push: Optional[bool] = None        # "running late, no rush" push
     # B3 — the morning as EVENTS rather than a countdown against a typed time.
     bus_tracker_entity: Optional[str] = None    # the bus's own device_tracker
+    bus_number_entity: Optional[str] = None     # the bus NUMBER — how siblings
+    #                                             on one bus become one bus
     bus_stop_entity: Optional[str] = None       # the stop, for the map
     bus_route_push: Optional[bool] = None       # "the bus has started its route"
     bus_near_zone: Optional[str] = None         # HA zone = the geofence itself

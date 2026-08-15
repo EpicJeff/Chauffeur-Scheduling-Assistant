@@ -2431,6 +2431,11 @@ def _tile_map(now, runs=None, config=None, **_):
         # is it from the stop" is the actual question being asked.
         try:
             from services import bus as bus_svc
+            # Grouped by VEHICLE, not by child. Siblings on one bus each have
+            # their own tracker entity reporting the same vehicle, so drawn
+            # per child the wall would stack two identical pins and label them
+            # separately — "Addison's bus" hiding "Cole's bus" underneath.
+            buses, stops = {}, {}
             for m in (storage.get_all_members() if _cfg_bool(config, 'buses', False) else []):
                 if m.get('role') != 'child' or not m.get('bus_am_stop_time'):
                     continue
@@ -2440,20 +2445,35 @@ def _tile_map(now, runs=None, config=None, **_):
                 if not pos:
                     continue
                 first = ((m.get('name') or '').split() or [''])[0]
-                rows.append({'member_id': f"bus:{m.get('id')}",
-                             'name': f"{first}'s bus" if first else 'School bus',
-                             'avatar': '🚌', 'is_car': True,
-                             'state': bus_svc.bus_where(m) or 'on the way',
-                             'latitude': pos[0], 'longitude': pos[1],
-                             'driving': None})
+                key = bus_svc.bus_key(m)
+                entry = buses.setdefault(key, {'pos': pos, 'names': [],
+                                               'where': bus_svc.bus_where(m)})
+                if first and first not in entry['names']:
+                    entry['names'].append(first)
                 stop = bus_svc.stop_position(m)
                 if stop:
-                    rows.append({'member_id': f"stop:{m.get('id')}",
-                                 'name': f"{first}'s stop" if first else 'Bus stop',
-                                 'avatar': '🚏', 'is_car': True,
-                                 'state': None,
-                                 'latitude': stop[0], 'longitude': stop[1],
-                                 'driving': None})
+                    # Stops group on POSITION: one bus can serve two stops
+                    # (different schools, same vehicle), and two children at
+                    # one stop is still one place to stand.
+                    skey = (round(stop[0], 5), round(stop[1], 5))
+                    sentry = stops.setdefault(skey, {'pos': stop, 'names': []})
+                    if first and first not in sentry['names']:
+                        sentry['names'].append(first)
+            for key, b in buses.items():
+                who = bus_svc._and_list(b['names'])
+                rows.append({'member_id': f"bus:{key}",
+                             'name': f"{who}'s bus" if who else 'School bus',
+                             'avatar': '🚌', 'is_car': True,
+                             'state': b['where'] or 'on the way',
+                             'latitude': b['pos'][0], 'longitude': b['pos'][1],
+                             'driving': None})
+            for skey, st in stops.items():
+                who = bus_svc._and_list(st['names'])
+                rows.append({'member_id': f"stop:{skey[0]},{skey[1]}",
+                             'name': f"{who}'s stop" if who else 'Bus stop',
+                             'avatar': '🚏', 'is_car': True, 'state': None,
+                             'latitude': st['pos'][0], 'longitude': st['pos'][1],
+                             'driving': None})
         except Exception as e:
             print(f"[home_board] map buses failed: {e}")
         return {'people': rows,

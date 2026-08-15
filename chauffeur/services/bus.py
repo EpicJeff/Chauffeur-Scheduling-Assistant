@@ -174,8 +174,17 @@ def stop_position(member):
     Any entity carrying `latitude`/`longitude` works: a zone, a device_tracker
     on a platform that publishes stops, even a person. Blank simply means the
     stop is not drawn.
+
+    Per CHILD, necessarily: two kids at different schools have different
+    stops, so this is a member field like every other bus setting rather than
+    anything household-wide.
+
+    Falls back to the "nearly here" zone, because in most houses they are the
+    same circle on the same map and asking for it twice is asking somebody to
+    keep two fields in agreement forever.
     """
-    ent = (member.get('bus_stop_entity') or '').strip()
+    ent = (member.get('bus_stop_entity') or '').strip() \
+        or (member.get('bus_near_zone') or '').strip()
     return _coords_of(ent) if ent else None
 
 
@@ -272,24 +281,85 @@ def bus_is_near(member):
 near_home = bus_is_near
 
 
-def route_start_message(member):
+def bus_number(member):
+    """The bus's own number/name, or None. HCTB publishes it per student, so
+    two siblings on one bus report the SAME number — which is what makes
+    "these children share a bus" answerable rather than guessed at."""
+    try:
+        from services import ha_api
+        st = ha_api.get_state(_entity(member, 'bus_number_entity',
+                                      'sensor.{prefix}_bus_number')) or {}
+        raw = str(st.get('state') or '').strip()
+        if not raw or raw.lower() in ('unknown', 'unavailable', 'none'):
+            return None
+        return raw
+    except Exception:
+        return None
+
+
+def bus_key(member):
+    """An identity for the VEHICLE, so siblings on one bus are one bus.
+
+    The tracker entity cannot be it: HCTB creates one per STUDENT, so two
+    children on the same bus have two entities reporting the same vehicle at
+    the same coordinates — and the wall would draw two pins on top of each
+    other and the kitchen would say the same sentence twice.
+
+    The bus number is the honest key when the platform publishes one. Failing
+    that, position: two trackers at the same coordinates are the same bus, and
+    rounding to ~10m absorbs the jitter between two students' updates. Failing
+    both, the entity itself, which at least never merges two real buses.
+    """
+    num = bus_number(member)
+    if num:
+        return f"num:{num}"
+    pos = bus_position(member)
+    if pos:
+        return f"at:{round(pos[0], 4)},{round(pos[1], 4)}"
+    return f"ent:{_entity(member, 'bus_tracker_entity', 'device_tracker.{prefix}_bus_location')}"
+
+
+def _first_names(members):
+    out = []
+    for m in members if isinstance(members, (list, tuple)) else [members]:
+        n = ((m.get('name') or '').split() or [''])[0]
+        if n and n not in out:
+            out.append(n)
+    return out
+
+
+def _and_list(names):
+    if not names:
+        return ''
+    if len(names) == 1:
+        return names[0]
+    return ', '.join(names[:-1]) + ' and ' + names[-1]
+
+
+def route_start_message(members):
     """What a route starting is worth saying. An EVENT the tracker reports,
     not a clock — which is the whole reason this replaced a countdown against
-    a time somebody typed months ago."""
-    name = ((member.get('name') or '').split() or [''])[0]
-    who = f"{name}, the" if name else "The"
+    a time somebody typed months ago.
+
+    Takes a LIST because one bus can be several children's bus: the push is
+    per child (it goes to their own phone) but the spoken form names everyone
+    it is for, since a kitchen saying the same sentence twice is worse than
+    saying it once.
+    """
+    who = _and_list(_first_names(members))
     return ("🚌 Bus has started",
-            f"The bus has started its route — time to get ready.",
-            f"{who} bus has started its route. Time to get ready.")
+            "The bus has started its route — time to get ready.",
+            f"{who + ', the' if who else 'The'} bus has started its route. "
+            f"Time to get ready.")
 
 
-def near_message(member):
+def near_message(members):
     """The second and sharper event: the bus is nearly here."""
-    name = ((member.get('name') or '').split() or [''])[0]
-    who = f"{name}, the" if name else "The"
+    who = _and_list(_first_names(members))
     return ("🚌 Bus is close",
             "The bus is nearly here — head out to the stop.",
-            f"{who} bus is nearly here. Time to head out to the stop.")
+            f"{who + ', the' if who else 'The'} bus is nearly here. "
+            f"Time to head out to the stop.")
 
 
 def announce_room(member):

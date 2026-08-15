@@ -1507,6 +1507,11 @@
                                                             class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
                                                     </div>
                                                     <div>
+                                                        <span class="block text-xs text-gray-500 mb-0.5">Bus number sensor (matches siblings onto one bus)</span>
+                                                        <input type="text" x-model="memberEdit.bus_number_entity" placeholder="sensor.… (HCTB: found automatically)"
+                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                                                    </div>
+                                                    <div>
                                                         <span class="block text-xs text-gray-500 mb-0.5">Bus stop (an HA zone works)</span>
                                                         <input type="text" x-model="memberEdit.bus_stop_entity" placeholder="zone.bus_stop"
                                                             class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
@@ -5580,6 +5585,7 @@
                         bus_ready_lead_mins: member.bus_ready_lead_mins || null,
                         bus_late_push: !!member.bus_late_push,
                         bus_tracker_entity: member.bus_tracker_entity || '',
+                        bus_number_entity: member.bus_number_entity || '',
                         bus_stop_entity: member.bus_stop_entity || '',
                         bus_route_push: !!member.bus_route_push,
                         bus_near_zone: member.bus_near_zone || '',
@@ -5650,6 +5656,7 @@
                     updates.bus_ready_lead_mins = parseInt(updates.bus_ready_lead_mins) || null;
                     updates.bus_late_push = !!updates.bus_late_push;
                     updates.bus_tracker_entity = (updates.bus_tracker_entity || '').trim() || null;
+                    updates.bus_number_entity = (updates.bus_number_entity || '').trim() || null;
                     updates.bus_stop_entity = (updates.bus_stop_entity || '').trim() || null;
                     updates.bus_route_push = !!updates.bus_route_push;
                     updates.bus_near_zone = (updates.bus_near_zone || '').trim() || null;

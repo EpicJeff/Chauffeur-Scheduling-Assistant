@@ -346,7 +346,7 @@ def scenario_near_home_needs_a_radius_and_two_ends():
 def scenario_the_events_have_something_to_say_out_loud():
     """A phone in another room is not how you tell a seven-year-old to put
     their shoes on, so each event carries a SPOKEN form as well as a push."""
-    for msg in (bus.route_start_message(dict(KID)), bus.near_message(dict(KID))):
+    for msg in (bus.route_start_message([dict(KID)]), bus.near_message([dict(KID)])):
         check(len(msg) == 3, f"an event has no spoken form: {msg}")
         title, body, spoken = msg
         check(title and body and spoken, f"an empty part: {msg}")
@@ -369,7 +369,8 @@ def scenario_every_b3_field_has_a_hand_path():
     cfg = open(os.path.join(root, 'templates', 'config.html'), encoding='utf-8').read()
     from models import schemas
     for field in ('bus_tracker_entity', 'bus_stop_entity', 'bus_route_push',
-                  'bus_near_radius_m', 'bus_near_zone', 'bus_announce_room'):
+                  'bus_near_radius_m', 'bus_near_zone', 'bus_announce_room',
+                  'bus_number_entity'):
         check(f'memberEdit.{field}' in cfg, f"{field} has no input")
         check(f'{field}: member.{field}' in cfg or f'{field}: !!member.{field}' in cfg,
               f"{field} is never loaded")
@@ -415,6 +416,67 @@ def scenario_a_zone_is_already_a_geofence():
               "a radiusless zone did not fall through to metres from home")
 
 
+
+def scenario_each_child_points_at_their_own_stop():
+    """Two kids at different schools have different stops, so every bus field
+    is a MEMBER field — and the stop pin falls back to the "nearly here" zone,
+    because in most houses they are the same circle and asking twice means
+    asking somebody to keep two fields in agreement forever."""
+    from models import schemas
+    for field in ('bus_stop_entity', 'bus_near_zone'):
+        check(field in schemas.FamilyMember.model_fields,
+              f"{field} is not per-member, so siblings would share a stop")
+    seen = {}
+
+    def get(entity_id):
+        seen['id'] = entity_id
+        return {'state': 'zoning',
+                'attributes': {'latitude': 35.0, 'longitude': -78.0, 'radius': 300}}
+
+    with mock.patch('services.ha_api.get_state', side_effect=get):
+        got = bus.stop_position({**KID, 'bus_near_zone': 'zone.addison_stop'})
+        check(got == (35.0, -78.0) and seen['id'] == 'zone.addison_stop',
+              f"the fence zone was not reused as the stop pin: {seen}")
+        bus.stop_position({**KID, 'bus_near_zone': 'zone.a',
+                           'bus_stop_entity': 'zone.b'})
+        check(seen['id'] == 'zone.b',
+              f"an explicit stop lost to the fence zone: {seen['id']}")
+
+
+
+def scenario_siblings_share_one_bus():
+    """Two kids on one bus is one vehicle, one pin and one sentence. HCTB
+    gives each STUDENT their own tracker entity, so keyed by entity the wall
+    would stack two identical pins and the kitchen would say the same thing
+    twice — which is the failure this exists to prevent."""
+    a = {**KID, "id": "a", "name": "Addison Smith"}
+    b = {**KID, "id": "b", "name": "Cole Smith"}
+    # Same bus number: the honest key when the platform publishes one.
+    with mock.patch.object(bus, 'bus_number', return_value='42'):
+        check(bus.bus_key(a) == bus.bus_key(b),
+              "siblings on bus 42 were treated as two buses")
+    # No number: same coordinates is the same vehicle.
+    same = {'state': 'x', 'attributes': {'latitude': 35.12345, 'longitude': -78.5}}
+    with mock.patch.object(bus, 'bus_number', return_value=None),             mock.patch('services.ha_api.get_state', return_value=same):
+        check(bus.bus_key(a) == bus.bus_key(b),
+              "two trackers at one point were treated as two buses")
+    # Different buses must never merge.
+    with mock.patch.object(bus, 'bus_number', side_effect=['42', '17']):
+        check(bus.bus_key(a) != bus.bus_key(b), "two real buses were merged")
+
+
+def scenario_one_bus_says_one_sentence_naming_everyone():
+    """The push is per child — it goes to their own phone. The spoken form is
+    for a room, so it names everyone it is for."""
+    kids = [{**KID, "name": "Addison Smith"}, {**KID, "name": "Cole Smith"}]
+    title, body, spoken = bus.route_start_message(kids)
+    check('Addison and Cole' in spoken, f"the room is not told who: {spoken}")
+    check('Addison' not in body, f"the push names them in the third person: {body}")
+    three = kids + [{**KID, "name": "Rey Smith"}]
+    check('Addison, Cole and Rey' in bus.near_message(three)[2],
+          "three names are not listed like a person would say them")
+
+
 SCENARIOS = [
     scenario_static_morning_launch,
     scenario_car_ride_wins_the_morning,
@@ -440,6 +502,9 @@ SCENARIOS = [
     scenario_speaking_is_opt_in_per_child,
     scenario_every_b3_field_has_a_hand_path,
     scenario_a_zone_is_already_a_geofence,
+    scenario_each_child_points_at_their_own_stop,
+    scenario_siblings_share_one_bus,
+    scenario_one_bus_says_one_sentence_naming_everyone,
 ]
 
 if __name__ == "__main__":
