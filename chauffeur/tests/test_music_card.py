@@ -198,7 +198,8 @@ def scenario_this_screen_can_play_music_itself():
     out = _tile({})
     check(out['local_player'] is True,
           f"the screen does not offer itself as a player by default: {out}")
-    check(out['screen_name'], "the screen has no name to register under")
+    check('screen_name' in out,
+          "the card carries no name field for the browser to build on")
     body = tpl_source.read('components/board_tile_body.html')
     frag = body[body.index("t.type === 'music'"):]
     frag = frag[:frag.index('ha_image')]
@@ -210,17 +211,145 @@ def scenario_this_screen_can_play_music_itself():
 
 
 def scenario_the_screen_is_named_for_its_place():
-    """A phone is a person ("Lily's phone"); a panel is a place. The name is
-    also how the Home Assistant entity is found again once Music Assistant
-    exposes it, so it is resolved SERVER-side — a name computed in the browser
-    would drift with whatever that browser happened to know."""
+    """A phone is a person ("Lily's phone"); a panel is a place. The SHARED
+    half of the name is resolved server-side, because it is the same on every
+    browser pointed at this board and because the name is also how the Home
+    Assistant entity is found again."""
     check(_tile({'room': 'Kitchen'})['screen_name'] == 'Kitchen screen',
           "a card bound to a room does not name its screen after it")
-    check(_tile({})['screen_name'] == 'Chauffeur screen',
-          "an unbound screen has no fallback name")
     named = _tile({'room': 'Kitchen', 'screen_name': 'Big Telly'})
     check(named['screen_name'] == 'Big Telly',
           f"an explicit name lost to the room: {named}")
+
+
+def scenario_an_unnamed_screen_gets_no_shared_fallback_name():
+    """The duplicate-player bug, at its source.
+
+    The fallback used to be the literal "Chauffeur screen", so a house with two
+    unnamed panels registered TWO Music Assistant players wearing one name:
+    indistinguishable in every picker, and — since Home Assistant deduplicates
+    the entity_id and not the friendly name — able to bind to each other's
+    entity, which put one screen's heart on the other room's track.
+
+    It cannot be fixed here either, and that is why the answer is empty rather
+    than clever: this payload is CACHED across panels, so any device-specific
+    name minted server-side would be served to the second panel as the first
+    one's. Empty means "the browser must name itself", and it does.
+    """
+    check(_tile({})['screen_name'] == '',
+          "an unbound screen still gets a name every other unbound screen in "
+          "the house would also get")
+    tpl = tpl_source.read('home.html')
+    fn = tpl[tpl.index('screenPlayerName(t) {'):]
+    fn = fn[:fn.index('localPlayerFor(t) {')]
+    check('deviceLabel' in fn and 'MusicLogic.deviceTag()' in fn,
+          "the browser has no per-device answer, so two unnamed panels still "
+          "arrive in Music Assistant as duplicates")
+    check(fn.index('t.data.screen_name') < fn.index('deviceLabel')
+          < fn.index('deviceTag'),
+          "the name ladder is out of order — a card's own name, then the "
+          "device's label, then the unique-but-ugly floor")
+    logic = open(os.path.join(ROOT, 'static', 'music_logic.js'),
+                 encoding='utf-8').read()
+    check("localStorage.getItem('chauffeur_device_id')" in logic,
+          "the music layer mints its own device id instead of reusing the one "
+          "the auth shells already named this device with")
+    src = open(os.path.join(ROOT, 'main.py'), encoding='utf-8').read()
+    check('/api/account/this-device' in src and '_GENERIC_DEVICE_LABELS' in src,
+          "nothing tells a panel what it was named, or which default labels "
+          "are not names at all")
+
+
+def scenario_the_ui_says_this_panel_and_music_assistant_gets_the_real_name():
+    """Two different jobs. The Music Assistant name must be unique across the
+    house so a person can tell two screens apart in that list; the person
+    standing at this panel does not need telling which panel they are touching,
+    and "Chauffeur screen a71b" in the speaker picker tells them nothing. The
+    phone widget already drew this split — "This phone"."""
+    tpl = tpl_source.read('home.html')
+    fn = tpl[tpl.index('musicLocalLabel(t) {'):]
+    fn = fn[:fn.index('syncMusic(refresh) {')]
+    check('This Panel' in fn,
+          "the picker names this screen something other than This Panel")
+    check('screen_name' not in fn,
+          "the speaker picker is drawing the Music Assistant name, which is "
+          "the one thing on this card nobody standing at it needs")
+
+
+def scenario_two_screens_wearing_one_name_are_refused_not_guessed_at():
+    """`find` returned the FIRST match, so a house with two panels called
+    "Chauffeur screen" silently bound one of them to the other's entity: its
+    now-heart hearted the other room's track and its picker hid the wrong row
+    as its own twin. Two answers is not an answer."""
+    logic = open(os.path.join(ROOT, 'static', 'music_logic.js'),
+                 encoding='utf-8').read()
+    fn = logic[logic.index('self.entityIn = function (players) {'):]
+    fn = fn[:fn.index('self.clashesIn')]
+    check('exact.length === 1' in fn and 'loose.length === 1' in fn,
+          "the entity lookup still takes the first of several matches")
+    check('self.ambiguous' in fn,
+          "an ambiguous lookup is indistinguishable from a missing one, so "
+          "the card cannot say which it is")
+    tpl = tpl_source.read('home.html')
+    check('clashesIn(' in tpl,
+          "nothing notices that another Music Assistant player is already "
+          "using this screen's name")
+    fn = tpl[tpl.index('async musicQueueTarget(t) {'):]
+    fn = fn[:fn.index('// Cache-busted')]
+    check('lp.ambiguous' in fn,
+          "the cannot-find sentence still blames the exposure toggle when the "
+          "real cause is two players sharing a name")
+
+
+def scenario_one_device_is_one_player():
+    """Two music cards on one board used to be two clients registering with the
+    same stored id — Music Assistant kicks one, it reconnects, it kicks the
+    other, which is a connect/die/connect loop reading as "(connecting…)"
+    flickering on the wall. A device has one set of speakers, so it is one
+    player, shared by every card that draws it and stopped when the last one
+    goes."""
+    tpl = tpl_source.read('home.html')
+    fn = tpl[tpl.index('localPlayerFor(t) {'):]
+    fn = fn[:fn.index('musicIsLocal(t) {')]
+    check('MusicLogic.deviceId()' in fn,
+          "the local player's slot is not keyed to the device")
+    check('_tiles.add(t.id)' in fn,
+          "cards do not subscribe to the shared player, so nothing knows when "
+          "the last one has gone")
+    fn = tpl[tpl.index('// A card removed from the board'):]
+    fn = fn[:fn.index('async refreshMusic')]
+    check('_tiles.size' in fn,
+          "the first card to leave stops a player the others are still using")
+    logic = open(os.path.join(ROOT, 'static', 'music_logic.js'),
+                 encoding='utf-8').read()
+    check('legacyKeys' in logic,
+          "changing the storage slot orphans every player already exposed in "
+          "Music Assistant")
+
+
+def scenario_a_connection_that_dies_immediately_is_not_a_success():
+    """The wall symptom: "(connecting…)" once or twice a second, forever.
+
+    `retries` was cleared the instant `connect()` resolved, so a socket that
+    opened and died 200ms later reset the backoff to 1.5 seconds and the player
+    sat in a tight reconnect loop instead of backing off and saying so. A
+    connection counts only once it has HELD, and how the last one ended is
+    always recorded — a wall panel has no devtools, so "1006 after 0.4s" has to
+    be readable on the card."""
+    logic = open(os.path.join(ROOT, 'static', 'music_logic.js'),
+                 encoding='utf-8').read()
+    fn = logic[logic.index('self.start = async function () {'):]
+    fn = fn[:fn.index('self.stop = function () {')]
+    check('stableTimer' in fn,
+          "nothing waits to see whether the connection actually holds")
+    check(fn.count('self.retries = 0') == 1
+          and fn.index('stableTimer = setTimeout') < fn.index('self.retries = 0'),
+          "the retry counter is cleared outside the stability timer, so a "
+          "socket that opens and dies still resets the backoff")
+    check('self.lastClose' in fn,
+          "a socket that closes leaves no trace to diagnose it with")
+    check('closeReason' in logic,
+          "the close code and how long it held are recorded but unreadable")
 
 
 def scenario_the_board_survives_a_missing_music_layer():
@@ -258,12 +387,12 @@ def scenario_the_local_player_lives_outside_alpine_and_outlives_a_poll():
           "the local players are inside Alpine's reactive state")
     fn = tpl[tpl.index('localPlayerFor(t) {'):]
     fn = fn[:fn.index('musicIsLocal(t)')]
-    check('if (!boardLocalPlayers[t.id])' in fn,
+    check('if (!boardLocalPlayers[key])' in fn,
           "the player is rebuilt every time something asks for it")
     sync = tpl[tpl.index('syncMusic(refresh) {'):]
     sync = sync[:sync.index('async refreshMusic')]
-    check('boardLocalPlayers[id].stop()' in sync,
-          "a card removed from the board leaves its socket open")
+    check('inst.stop()' in sync,
+          "the last card to leave the board leaves its socket open")
 
 
 def scenario_the_local_players_state_is_mirrored_into_alpine():
@@ -294,8 +423,10 @@ def scenario_the_local_players_state_is_mirrored_into_alpine():
         check(field in mirror, f"{field} is never mirrored in")
     # Pushed on change, AND on the beat — a client that reports playback
     # changes but not metadata ones would leave a track change unpainted.
-    check('onState: () => this.syncLocalState(t)' in tpl,
-          "the player's own state changes do not reach the card")
+    # Fanned out by id rather than aimed at one tile: the player is shared by
+    # every music card on the board, and they are all showing that speaker.
+    check('this.syncLocalStateById(id)' in tpl,
+          "the player's own state changes do not reach the cards")
     refresh = tpl[tpl.index('async refreshMusic(t) {'):]
     refresh = refresh[:refresh.index('async loadMusicFavorites')]
     check('this.syncLocalState(t)' in refresh,
@@ -377,7 +508,7 @@ def scenario_the_screen_is_found_by_id_not_by_its_name():
     fn = fn[:fn.index('// iOS suspends')]
     check('self.playerId' in fn,
           "the entity lookup still has only the display name to go on")
-    check(fn.index('self.playerId') < fn.index('const norm'),
+    check(fn.index('self.playerId') < fn.index('const want'),
           "the name match runs before the id match, so a renamed player is "
           "matched by name or not at all")
     check('self.playerId = pid' in logic,

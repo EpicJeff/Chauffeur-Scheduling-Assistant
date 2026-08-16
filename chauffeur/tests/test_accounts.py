@@ -313,6 +313,44 @@ def scenario_o_a_pin_opens_a_trusted_device_and_nothing_else():
           "revoking a device did not actually revoke it")
 
 
+def scenario_o2_a_device_may_ask_what_it_is_called_but_only_about_itself():
+    """Not parent-gated, unlike the list a lost tablet is revoked from: the
+    caller already knows the id it is asking about — it minted the thing — so
+    the answer carries nothing it did not bring.
+
+    `named` is the half that matters. `trust_device` defaults the label to "A
+    device" and pairing to "Wall panel", so a house with two paired panels has
+    two devices with one label; a surface that treated that as an identity
+    would register two Music Assistant players called the same thing, which is
+    the bug this exists to stop.
+    """
+    import main
+
+    class _Req:
+        headers = {}
+        query_params = {}
+
+    storage.untrust_device('panel-named')
+    storage.untrust_device('panel-default')
+    storage.trust_device('panel-named', label='Kitchen tablet', by_member='mum')
+    storage.trust_device('panel-default', by_member='mum')
+
+    named = main.this_device(_Req(), 'panel-named')
+    check(named['label'] == 'Kitchen tablet' and named['named'] is True,
+          f"a device a parent named cannot find out what it is called: {named}")
+    default = main.this_device(_Req(), 'panel-default')
+    check(default['trusted'] is True and default['named'] is False,
+          f"a default label was handed out as an identity: {default}")
+    unknown = main.this_device(_Req(), 'never-seen')
+    check(unknown['trusted'] is False and unknown['named'] is False,
+          f"an unpaired device was answered for: {unknown}")
+    none = main.this_device(_Req(), None)
+    check(none['device_id'] is None and none['named'] is False,
+          f"asking with no device id got an answer anyway: {none}")
+    storage.untrust_device('panel-named')
+    storage.untrust_device('panel-default')
+
+
 def scenario_p_young_children_are_never_asked_for_an_email():
     """A five-year-old has no inbox, and requiring one to appear on the
     family's schedule would be absurd. The stage says so, so no surface has to

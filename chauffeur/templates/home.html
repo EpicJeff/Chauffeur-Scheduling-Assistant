@@ -1436,8 +1436,14 @@
         // The music cards' LOCAL players, outside Alpine for the same reason
         // the maps are: each one holds a live WebSocket, an audio pipeline and
         // a decoder, and handing that to a reactive proxy wraps every node of
-        // it. Keyed by CARD id, so two music cards on one screen are two
-        // players rather than one fought over.
+        // it.
+        //
+        // Keyed by IDENTITY, not by card id, and that is the correction. A
+        // device has ONE set of speakers, so two music cards on one screen are
+        // one player — keying by card built two clients that then registered
+        // with the same stored id and took turns being kicked by Music
+        // Assistant, which is a connect/die/connect loop, not two players. The
+        // cards subscribe (`_tiles`) and share the instance.
         const boardLocalPlayers = {};
 
         // ── Measuring a fit-to-content tile.
@@ -4862,6 +4868,12 @@
                 // custom tile — never share a speaker or a search box.
                 musicState: {},
                 _musicVolTimers: {},
+                // What a parent called THIS device, when they named it. Empty
+                // until the fetch lands and empty forever on a device nobody
+                // named — `screenPlayerName` falls through to a short unique
+                // code rather than to a name another panel could also be using.
+                deviceLabel: '',
+                _deviceLabelAsked: false,
                 // The picker's sentinel for "play it here". A LITERAL, not
                 // `MusicLogic.LOCAL`: this object is built the moment Alpine
                 // starts, and reaching into another file's global there makes
@@ -4886,37 +4898,102 @@
                 // The instance is created ONCE per card and never rebuilt on a
                 // poll — it owns a socket and an audio pipeline, and dropping
                 // it every minute would stop the music.
+                // What MUSIC ASSISTANT will call this screen — never what the
+                // card shows, which is "This Panel". The two are different
+                // jobs: this one has to be unique across a house so a person
+                // can pick the right screen out of the MA list, and that makes
+                // it precisely the wrong thing to read off the panel you are
+                // already standing in front of.
+                //
+                // The ladder, most-human first. Everything below the board's
+                // own answer is per-DEVICE, which is the whole point: the old
+                // fallback was the literal "Chauffeur screen" on every panel
+                // in the house.
+                screenPlayerName(t) {
+                    // What a person typed on the card, or the room it is bound
+                    // to. Resolved server-side, identical on every browser
+                    // pointed at this board — see the music tile builder.
+                    const given = (t.data && t.data.screen_name) || '';
+                    if (given) return given;
+                    // What a parent called this tablet when they paired it.
+                    // Only when they actually chose it: the flow defaults to
+                    // "Wall panel", and two of those is the problem again.
+                    if (this.deviceLabel) return this.deviceLabel;
+                    // The floor, and still unique. Ugly, and the card option
+                    // says so — a house that wants "Kitchen screen" has two
+                    // pretty ways to get it before reaching this one.
+                    return 'Chauffeur screen ' + MusicLogic.deviceTag();
+                },
+
+                // The one local player this device has, or null before any
+                // music card has asked for it. There can only ever be one —
+                // see `boardLocalPlayers`.
+                boardPlayer() {
+                    return boardLocalPlayers[
+                        'chauffeur_sendspin_id::screen::' + MusicLogic.deviceId()] || null;
+                },
+
                 localPlayerFor(t) {
                     if (!t.data || !t.data.local_player) return null;
-                    if (!boardLocalPlayers[t.id]) {
-                        const name = t.data.screen_name || 'Chauffeur screen';
-                        boardLocalPlayers[t.id] = MusicLogic.localPlayer({
-                            name: name,
-                            // Keyed by NAME, not by card id: the same screen
-                            // must come back as the same Music Assistant
-                            // player after a reload, and a board edited or
-                            // duplicated gives its cards new ids. Two panels
-                            // sharing a name is what `screen_name` is for.
-                            key: 'chauffeur_sendspin_id::screen::'
-                                + name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+                    // A getter below needs the component, and a getter in an
+                    // object literal does not inherit `this` the way an arrow
+                    // function does.
+                    const board = this;
+                    // ONE slot per device, and NOT derived from the name. The
+                    // name can arrive late (the device label is a fetch) or
+                    // change (a room renamed), and a key that moved with it
+                    // would mint a new id and orphan the player Music
+                    // Assistant already has exposed. The id is the identity;
+                    // the name is a label on it — which is exactly the split
+                    // `entityIn` relies on to survive a rename.
+                    const key = 'chauffeur_sendspin_id::screen::' + MusicLogic.deviceId();
+                    if (!boardLocalPlayers[key]) {
+                        const inst = MusicLogic.localPlayer({
+                            // A GETTER: read at connect time, not when the card
+                            // was built, so the device label that lands a
+                            // moment after the board does is the name that gets
+                            // registered rather than the fallback.
+                            get name() { return board.screenPlayerName(t); },
+                            key: key,
+                            // Slots earlier versions wrote, keyed by the name
+                            // of the day. Adopted, or every panel already
+                            // exposed in Music Assistant would come back as a
+                            // second player and leave a dead first one.
+                            legacyKeys: [t.data.screen_name, 'Chauffeur screen']
+                                .filter(Boolean)
+                                .map(n => 'chauffeur_sendspin_id::screen::'
+                                     + n.toLowerCase().replace(/[^a-z0-9]+/g, '-')),
                         }, {
                             apiBase: this.apiBase,
                             // A NOTICE, not an error. "This screen is now a
                             // Music Assistant player 🎉" is the happy path,
                             // and it was being painted in the same red as a
                             // failure because both went to the same field.
+                            //
+                            // Fanned out to every card sharing the player: they
+                            // are all showing the same speaker, so a message
+                            // about it belongs on all of them.
                             onNotice: (msg) => {
-                                const s = this.musicState[t.id];
-                                if (s) s.notice = msg;
+                                for (const id of (inst._tiles || [])) {
+                                    const s = this.musicState[id];
+                                    if (s) s.notice = msg;
+                                }
                             },
                             // The ONLY thing that makes a local player visible.
                             // See musicNow(): the player itself is outside
                             // Alpine, so its state has to be copied in or the
                             // card never repaints for it.
-                            onState: () => this.syncLocalState(t),
+                            onState: () => {
+                                for (const id of (inst._tiles || [])) {
+                                    this.syncLocalStateById(id);
+                                }
+                            },
                         });
+                        inst._tiles = new Set();
+                        boardLocalPlayers[key] = inst;
                     }
-                    return boardLocalPlayers[t.id];
+                    boardLocalPlayers[key]._tiles.add(t.id);
+                    return boardLocalPlayers[key];
                 },
 
                 musicIsLocal(t) {
@@ -4948,9 +5025,13 @@
                 // Called on every state change the player reports AND on the
                 // ten-second beat, because a client that only announces
                 // playback changes would leave a track change unpainted.
-                syncLocalState(t) {
-                    const s = this.musicState[t.id];
-                    const lp = boardLocalPlayers[t.id];
+                syncLocalState(t) { this.syncLocalStateById(t.id); },
+
+                // By id, because the player is shared between every music card
+                // on the board and its callback has ids rather than tiles.
+                syncLocalStateById(id) {
+                    const s = this.musicState[id];
+                    const lp = this.boardPlayer();
                     if (!s || !lp) return;
                     s.localActive = lp.active;
                     s.localConnecting = lp.connecting;
@@ -4959,11 +5040,30 @@
                     s.localPlaying = lp.isPlaying();
                 },
 
+                // "This Panel" — NOT the Music Assistant name. The MA name has
+                // to be unique across the house so a person can tell two
+                // screens apart in that list; the person standing at this one
+                // does not need telling which screen they are touching, and a
+                // picker reading "Chauffeur screen a71b" tells them nothing.
+                // Same split the phone widget already draws: "This phone".
                 musicLocalLabel(t) {
                     const s = this.musicState[t.id];
-                    const name = (t.data && t.data.screen_name) || 'This screen';
-                    if (s && s.localConnecting) return `📻 ${name} (connecting…)`;
-                    return `📻 ${name}${s && s.localActive ? ' ●' : ''}`;
+                    if (s && s.localConnecting) return '📻 This Panel (connecting…)';
+                    return `📻 This Panel${s && s.localActive ? ' ●' : ''}`;
+                },
+
+                // What a parent named this device when they paired it, once
+                // per page. Asked for BEFORE anybody taps a speaker, because
+                // the answer becomes the name this screen registers under and
+                // a name that arrived late would register the fallback.
+                async loadDeviceLabel() {
+                    if (this._deviceLabelAsked) return;
+                    this._deviceLabelAsked = true;
+                    const row = await MusicLogic.thisDevice({ apiBase: this.apiBase });
+                    // `named` is the server's judgement, not ours: it owns the
+                    // default labels ("Wall panel", "A device") and knows which
+                    // of them a human actually chose.
+                    if (row && row.named && row.label) this.deviceLabel = row.label;
                 },
 
                 syncMusic(refresh) {
@@ -5019,6 +5119,7 @@
                             // picks it — a wall panel must not seize an audio
                             // context nobody asked for, and browsers would
                             // refuse it anyway without a gesture.
+                            this.loadDeviceLabel();
                             this.localPlayerFor(t);
                             this.refreshMusic(t);
                             if (t.data.show && t.data.show.favorites) this.loadMusicFavorites(t);
@@ -5044,12 +5145,21 @@
                             s.favUris = [];
                         }
                     }
-                    // A card removed from the board takes its player with it,
-                    // or a panel left editing all afternoon accumulates sockets.
-                    for (const id of Object.keys(boardLocalPlayers)) {
-                        if (live.has(id)) continue;
-                        try { boardLocalPlayers[id].stop(); } catch (e) { }
-                        delete boardLocalPlayers[id];
+                    // A card removed from the board drops its SUBSCRIPTION; the
+                    // player itself only goes when the last card holding it
+                    // does, or a panel left editing all afternoon accumulates
+                    // sockets. Refcounted rather than keyed by card, because
+                    // the instance is now shared — tearing it down on the first
+                    // card to leave would stop music the second is still
+                    // playing.
+                    for (const key of Object.keys(boardLocalPlayers)) {
+                        const inst = boardLocalPlayers[key];
+                        for (const id of Array.from(inst._tiles || [])) {
+                            if (!live.has(id)) inst._tiles.delete(id);
+                        }
+                        if (inst._tiles && inst._tiles.size) continue;
+                        try { inst.stop(); } catch (e) { }
+                        delete boardLocalPlayers[key];
                     }
                 },
 
@@ -5058,7 +5168,7 @@
                     if (!s) return;
                     const players = await MusicLogic.players({ apiBase: this.apiBase });
                     if (!players) return;   // a blip goes quiet, never blank
-                    const lp = boardLocalPlayers[t.id];
+                    const lp = this.boardPlayer();
                     // Once Music Assistant has been told to expose it, this
                     // screen also arrives in the HA list — hide that twin, or
                     // the picker offers the same speaker twice and only one of
@@ -5071,6 +5181,19 @@
                     // screen player's now-heart could never find itself.
                     s.allPlayers = players;
                     s.players = players.filter(p => !mine || p.entity_id !== mine.entity_id);
+                    // Somebody else in Music Assistant is wearing this screen's
+                    // name. Said out loud, because every symptom of it is
+                    // baffling in isolation: a picker with two identical rows,
+                    // a heart that hearts the wrong room, a screen that cannot
+                    // find itself. The card knows the cause and the fix, and
+                    // the fix is a text box on this very card.
+                    const clash = lp ? lp.clashesIn(players, mine) : [];
+                    if (clash.length) {
+                        s.notice = `Another player in Music Assistant is also `
+                            + `called “${this.screenPlayerName(t)}”. Give this `
+                            + `screen its own name in the card's settings, or `
+                            + `they cannot be told apart.`;
+                    }
                     if (s.selected === this.MUSIC_LOCAL) {
                         // And the FULL list when this screen is the player:
                         // a Sendspin entity exposed without mass_player_type
@@ -5248,7 +5371,7 @@
                     // Both, because both belong to the speaker being left.
                     s.error = '';
                     s.notice = '';
-                    const lp = boardLocalPlayers[t.id];
+                    const lp = this.boardPlayer();
                     if (lp) {
                         // `wanted` gates the reconnect-on-visible, so it has to
                         // fall as well as rise: a panel moved to the kitchen
@@ -5305,7 +5428,7 @@
                     if (s.selected === this.MUSIC_LOCAL) {
                         // Straight to the client — this browser IS the player,
                         // so there is no service call and nothing to wait for.
-                        const lp = boardLocalPlayers[t.id];
+                        const lp = this.boardPlayer();
                         if (lp) lp.command(command, extra);
                         return;
                     }
@@ -5534,7 +5657,7 @@
                         // expose it. That toggle is per player and one-time,
                         // and until somebody does it the screen can be a
                         // speaker for a group but cannot be sent an album.
-                        const lp = boardLocalPlayers[t.id];
+                        const lp = this.boardPlayer();
                         if (!lp || !lp.active) {
                             s.error = 'This screen is not connected — pick it in '
                                     + 'the speaker list first.';
@@ -5559,15 +5682,25 @@
                             // enabled is a dead end with nothing to try next.
                             // A wall panel has no devtools, so the diagnosis
                             // has to be on the card.
+                            const name = this.screenPlayerName(t);
                             s.error = `Cannot find this screen in Home Assistant. `
-                                + `Looked for “${t.data.screen_name}” (id `
+                                + `Looked for “${name}” (id `
                                 + `${lp.playerId || '?'}) among ${all.length} players. `
-                                + `If Music Assistant already exposes it, pick it `
-                                + `from the speaker list under the name you gave it `
-                                + `there; otherwise turn on `
-                                + `“Expose this player to Home Assistant” for it.`;
+                                // Ambiguity is now REFUSED rather than guessed
+                                // at, so it has to be explained: the old code
+                                // silently bound to whichever twin came first.
+                                + (lp.ambiguous
+                                    ? `More than one of them answers to that name, `
+                                      + `so none was used — rename this screen in `
+                                      + `the card's settings. `
+                                    : `If Music Assistant already exposes it, pick it `
+                                      + `from the speaker list under the name you gave `
+                                      + `it there; otherwise turn on `
+                                      + `“Expose this player to Home Assistant” for it. `)
+                                + (lp.closeReason()
+                                    ? `Last connection ${lp.closeReason()}.` : '');
                             console.warn('[local-player] no entity for',
-                                         t.data.screen_name, lp.playerId,
+                                         name, lp.playerId, lp.lastClose,
                                          all.map(p => `${p.name} (${p.entity_id})`));
                             return null;
                         }
@@ -5720,7 +5853,7 @@
                     const s = this.musicState[t.id];
                     if (!s) return null;
                     if (s.selected === this.MUSIC_LOCAL) {
-                        const lp = boardLocalPlayers[t.id];
+                        const lp = this.boardPlayer();
                         return (lp && lp.entityIn(
                             (s.allPlayers && s.allPlayers.length)
                                 ? s.allPlayers : s.players)) || null;

@@ -55,8 +55,51 @@
         track: '🎵', album: '💿', artist: '🎤', playlist: '📻', radio: '📡',
     };
 
+    /** Two names are the same name if Music Assistant and Home Assistant could
+     *  have produced both from one string. MA→HA naming differs by version on
+     *  apostrophes, case and punctuation, so all of it goes. */
+    function normName(s) {
+        return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
     const MusicLogic = {
         TYPE_ICON,
+
+        /** This browser, named once and never rotated.
+         *
+         * The SAME slot the auth shells mint `X-Device-Id` into, deliberately:
+         * a panel a parent has already paired HAS an identity, and a second
+         * one minted here would mean the trusted-device list and the Music
+         * Assistant player list disagreed about which screen this is.
+         */
+        deviceId() {
+            let id = null;
+            try { id = localStorage.getItem('chauffeur_device_id'); } catch (e) { }
+            if (!id) {
+                id = (crypto.randomUUID ? crypto.randomUUID()
+                      : String(Date.now()) + Math.random().toString(16).slice(2));
+                try { localStorage.setItem('chauffeur_device_id', id); } catch (e) { }
+            }
+            return id;
+        },
+
+        /** Four characters of it — enough to tell two panels apart in a Music
+         *  Assistant list, short enough to read off a wall. */
+        deviceTag() {
+            return MusicLogic.deviceId().replace(/[^a-z0-9]/gi, '').slice(-4).toLowerCase();
+        },
+
+        /** What a parent named THIS device, or null. `named` is false for the
+         *  labels the pairing flow hands out when nobody typed one — "Wall
+         *  panel" is not an identity, it is two of them. */
+        async thisDevice(opts) {
+            try {
+                return await json(base(opts) + 'api/account/this-device',
+                                  { headers: { 'X-Device-Id': MusicLogic.deviceId() } });
+            } catch (e) {
+                return null;
+            }
+        },
 
         /** Proxy anything that is not already an absolute https URL. */
         artwork(url, opts) {
@@ -282,7 +325,15 @@
          *           is found again later, so it must be stable.
          *   {key}   the localStorage slot holding this player's id, so the
          *           SAME screen or handset comes back as the SAME player
-         *           rather than littering MA with one entry per reload.
+         *           rather than littering MA with one entry per reload. It
+         *           must NOT be derived from the name — a name can change
+         *           (a room renamed, a device label arriving a moment after
+         *           the board did) and a key that moved with it would orphan
+         *           the registration in Music Assistant every time.
+         *   {legacyKeys}
+         *           slots earlier versions wrote. Adopted rather than
+         *           ignored: minting a fresh id would leave the player this
+         *           screen is ALREADY exposed as sitting dead in the list.
          *
          * Callbacks rather than DOM: `onState` fires on every state change,
          * `onNotice` carries the sentences a human needs to see. The surface
@@ -292,17 +343,39 @@
             const self = {
                 player: null, active: false, connecting: false, state: null,
                 retries: 0, reconnectTimer: null, everConnected: false,
+                // How the last socket ended, ALWAYS recorded. A wall panel has
+                // no devtools, and "1006 after 0.4s, six times" is the entire
+                // diagnosis of a player that will not stay up.
+                lastClose: null, stableTimer: null, connectedAt: 0,
+                // Set by `entityIn` when more than one player answers to our
+                // name — the state that used to be silently resolved by
+                // picking whichever came first.
+                ambiguous: false,
             };
+            // Long enough that a socket which is going to be closed upstream
+            // has already been. Under it, a connection is not yet a success.
+            const STABLE_MS = 20000;
             const notice = (msg) => {
                 console.warn('[local-player]', msg);
                 if (opts && opts.onNotice) opts.onNotice(msg);
             };
             const changed = () => { if (opts && opts.onState) opts.onState(self); };
 
+            /** Why the last socket ended, as a phrase or ''. */
+            self.closeReason = function () {
+                const c = self.lastClose;
+                if (!c) return '';
+                return `closed ${c.code}${c.reason ? ': ' + c.reason : ''}`
+                     + ` after ${c.heldSeconds}s`;
+            };
+
             function scheduleReconnect() {
                 if (self.reconnectTimer) return;
                 if (self.retries >= 6) {
-                    notice(`${identity.name} lost its connection — select it again to retry.`);
+                    const why = self.closeReason();
+                    notice(`${identity.name} keeps losing its connection`
+                           + (why ? ` (${why})` : '')
+                           + ' — select it again to retry.');
                     return;
                 }
                 const delay = Math.min(15000, 1500 * Math.pow(2, self.retries));
@@ -312,6 +385,23 @@
                     if (!self.player && !self.connecting
                         && document.visibilityState === 'visible') self.start();
                 }, delay);
+            }
+
+            /** This player's id, adopting whatever an older version stored.
+             *  Written back to the current slot so the migration happens once
+             *  rather than on every connect. */
+            function readId() {
+                const keys = [identity.key].concat(identity.legacyKeys || []);
+                for (const k of keys) {
+                    let v = null;
+                    try { v = k && localStorage.getItem(k); } catch (e) { }
+                    if (!v) continue;
+                    if (k !== identity.key) {
+                        try { localStorage.setItem(identity.key, v); } catch (e) { }
+                    }
+                    return v;
+                }
+                return null;
             }
 
             self.start = async function () {
@@ -325,12 +415,12 @@
                 self.connecting = true;
                 changed();
                 try {
-                    let pid = localStorage.getItem(identity.key);
+                    let pid = readId();
                     if (!pid) {
                         pid = 'chauffeur-' + (crypto.randomUUID
                             ? crypto.randomUUID()
                             : Math.random().toString(36).slice(2));
-                        localStorage.setItem(identity.key, pid);
+                        try { localStorage.setItem(identity.key, pid); } catch (e) { }
                     }
                     // Kept on the instance: this id, not the display name, is
                     // what identifies this browser to Music Assistant, and it
@@ -343,6 +433,21 @@
                     const socket = new WebSocket(wsUrl);
                     socket.binaryType = 'arraybuffer';
                     socket.addEventListener('close', (e) => {
+                        // Recorded whether or not we were up, and whether or
+                        // not anybody is told: the interesting close is the
+                        // one that carries no reason and happens in under a
+                        // second, which is the only trace a flapping player
+                        // leaves behind.
+                        self.lastClose = {
+                            code: e.code, reason: e.reason || '',
+                            heldSeconds: self.connectedAt
+                                ? Math.round((Date.now() - self.connectedAt) / 100) / 10
+                                : 0,
+                        };
+                        if (self.stableTimer) {
+                            clearTimeout(self.stableTimer);
+                            self.stableTimer = null;
+                        }
                         if (!self.active) return;
                         self.active = false;
                         self.player = null;
@@ -369,11 +474,24 @@
                     if (typeof player.connect === 'function') await player.connect();
                     self.player = player;
                     self.active = true;
+                    self.connectedAt = Date.now();
                     if (!self.everConnected) {
                         self.everConnected = true;
                         notice(`${identity.name} is now a Music Assistant player 🎉`);
                     }
-                    self.retries = 0;
+                    // NOT `retries = 0` here, which is what it used to be. A
+                    // socket that opens and dies 200ms later is not a success,
+                    // and counting it as one resets the backoff to 1.5 seconds
+                    // — so a player something upstream keeps closing sits in a
+                    // connect/die/connect loop forever, which on the wall reads
+                    // as "(connecting…)" flickering once a second. The counter
+                    // clears only once the connection has HELD, so a flap now
+                    // backs off like the failure it is and then says so.
+                    if (self.stableTimer) clearTimeout(self.stableTimer);
+                    self.stableTimer = setTimeout(() => {
+                        self.stableTimer = null;
+                        self.retries = 0;
+                    }, STABLE_MS);
                 } catch (e) {
                     self.player = null;
                     self.active = false;
@@ -392,6 +510,11 @@
                     clearTimeout(self.reconnectTimer);
                     self.reconnectTimer = null;
                 }
+                if (self.stableTimer) {
+                    clearTimeout(self.stableTimer);
+                    self.stableTimer = null;
+                }
+                self.connectedAt = 0;
                 self.retries = 0;
                 const p = self.player;
                 self.player = null;
@@ -469,18 +592,55 @@
              */
             self.entityIn = function (players) {
                 const list = players || [];
+                self.ambiguous = false;
                 if (self.playerId) {
                     const byId = list.find(p => Object.values(p.mass || {})
                         .some(v => typeof v === 'string' && v === self.playerId));
                     if (byId) return byId;
                 }
-                const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-                const want = norm(identity.name);
+                const want = normName(identity.name);
                 if (!want) return null;
-                return list.find(p => {
-                    const got = norm(p.name) || norm((p.entity_id || '').replace('media_player.', ''));
-                    return got === want || got.includes(want) || want.includes(got);
-                }) || null;
+                const nameOf = p => normName(p.name)
+                    || normName((p.entity_id || '').replace('media_player.', ''));
+                // ONE match or none — never "the first of several", which is
+                // what `find` used to do. Home Assistant deduplicates the
+                // entity_id and not the friendly name, so a house with two
+                // panels both called "Chauffeur screen" had two entities whose
+                // names normalise identically (and, via the loose tier below,
+                // `chauffeurscreen2` matching `chauffeurscreen` as well). This
+                // screen then bound to the OTHER room's player: its heart
+                // hearted whatever that room was playing, and the picker hid
+                // the wrong row as its own twin. Two answers is not an answer.
+                const exact = list.filter(p => nameOf(p) === want);
+                if (exact.length === 1) return exact[0];
+                if (!exact.length) {
+                    // Kept, because MA versions differ on what they append —
+                    // but held to the same rule.
+                    const loose = list.filter(p => {
+                        const got = nameOf(p);
+                        return got && (got.includes(want) || want.includes(got));
+                    });
+                    if (loose.length === 1) return loose[0];
+                    self.ambiguous = loose.length > 1;
+                    return null;
+                }
+                self.ambiguous = true;
+                return null;
+            };
+
+            /** Players wearing our name that are NOT us — `mine` being whatever
+             *  `entityIn` resolved, passed in rather than recomputed so this
+             *  cannot disagree with the caller about which one we are.
+             *
+             * Two screens registered under one name is not a crash. It is a
+             * speaker list nobody can choose from, and the only surface in a
+             * position to notice is one of the screens itself. */
+            self.clashesIn = function (players, mine) {
+                const want = normName(identity.name);
+                if (!want) return [];
+                return (players || [])
+                    .filter(p => normName(p.name) === want)
+                    .filter(p => !mine || p.entity_id !== mine.entity_id);
             };
 
             // iOS suspends the socket when the page backgrounds, and a wall

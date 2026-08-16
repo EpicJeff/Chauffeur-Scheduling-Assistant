@@ -104,6 +104,13 @@ RULES = [
     # minted and nobody else knows. Approval itself is parent-only, below.
     ('POST', '/api/account/devices/pair-request', ANYONE),
     ('GET', '/api/account/devices/pair-status', ANYONE),
+    # "What am I called?", answered for the caller's OWN device and nothing
+    # else. Open for the same reason as the two above: the id in the header is
+    # one the screen minted, so the answer contains nothing it did not arrive
+    # with, and a wall panel naming itself to Music Assistant has no
+    # credential to offer. Deliberately NOT under /api/account/devices/, which
+    # is the parent-only list a lost tablet gets revoked from.
+    ('GET', '/api/account/this-device', ANYONE),
     # The device list is where a lost tablet gets revoked, so it is admin —
     # as is saying yes to a screen, and minting Argyle's credential.
     (ANY, '/api/account/devices', PARENTS),

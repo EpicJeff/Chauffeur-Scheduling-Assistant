@@ -4990,6 +4990,41 @@ def list_trusted_devices(x_member_token: Optional[str] = Header(None)):
             for d in storage.get_trusted_devices()]
 
 
+# Labels `trust_device` and the pairing flow hand out when nobody chose one.
+# They are perfectly good in the parent's device list, where they sit next to a
+# date and a "trusted by", and useless as an identity: a house with two paired
+# panels has two devices both called "Wall panel".
+_GENERIC_DEVICE_LABELS = {'a device', 'wall panel', 'chauffeur screen',
+                          'chauffeur phone', 'panel', 'screen'}
+
+
+@app.get("/api/account/this-device")
+def this_device(request: Request, x_device_id: Optional[str] = Header(None)):
+    """What THIS device is called — its own record and nothing else.
+
+    Unlike the list above this is NOT parent-gated, because it cannot tell a
+    caller anything it did not already bring: the device id in the header is
+    one the browser minted itself, and the answer is that row or nothing.
+
+    `named` is the half that matters to a caller wanting a name it can
+    register somewhere. A label a parent typed identifies a screen; the
+    defaults handed out when nobody typed one do not, and a surface that
+    treated "Wall panel" as an identity would put two of them into the same
+    list. The music card asks exactly this before naming itself to Music
+    Assistant.
+    """
+    device_id = (x_device_id or request.headers.get('x-device-id')
+                 or request.query_params.get('device_id') or '').strip()
+    if not device_id:
+        return {'device_id': None, 'label': None, 'named': False, 'trusted': False}
+    row = storage.get_trusted_device(device_id) or {}
+    label = (row.get('label') or '').strip()
+    return {'device_id': device_id,
+            'label': label or None,
+            'named': bool(label) and label.lower() not in _GENERIC_DEVICE_LABELS,
+            'trusted': bool(row)}
+
+
 @app.delete("/api/account/devices/{device_id}")
 def revoke_trusted_device(device_id: str, x_member_token: Optional[str] = Header(None)):
     """Untrust a device AND cut the sessions on it.

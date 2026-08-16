@@ -671,9 +671,10 @@ WIDGETS = [
               help='Adds this screen to the speaker list as a real Music '
                    'Assistant player, so music comes out of the panel itself.'),
          _opt('screen_name', 'What to call this screen', 'text', '',
-              help='How it appears in Music Assistant. Empty uses the room, '
-                   'then "Chauffeur screen" — name it if the house has more '
-                   'than one panel, or they arrive as duplicates.'),
+              help='How it appears in Music Assistant — not on this card, '
+                   'which just says "This Panel". Empty uses the room, then '
+                   'the name this device was paired under, then a short code '
+                   'unique to it, so two panels never arrive as duplicates.'),
          # THE CONVERSION PARADIGM: every part of the drawing is a toggle, all
          # on by default, so a card nobody configured equals the full surface.
          _opt('show_art', 'Album art', 'bool', True),
@@ -2631,12 +2632,22 @@ def _tile_music(now, config=None, **_):
     except Exception as e:
         print(f"[home_board] music tile failed: {e}")
         return {'empty': "Could not reach Home Assistant."}
-    # What Music Assistant will call this screen. Resolved server-side so the
-    # name is the same on every reload and every browser pointed at this board
-    # — a name computed in the client would drift with whatever that client
-    # happened to know, and the name is also how the HA entity is found again.
+    # What Music Assistant will call this screen — the SHARED half of it.
+    # Resolved server-side so the name is the same on every reload and every
+    # browser pointed at this board, and because the name is also how the HA
+    # entity is found again.
+    #
+    # And ONLY the shared half. The old fallback was the literal "Chauffeur
+    # screen", which a house with two unnamed panels registered twice: two
+    # Music Assistant players wearing one name, indistinguishable in the
+    # picker, and — since HA deduplicates the entity_id and not the friendly
+    # name — able to bind to each OTHER's entity. Empty now means "this board
+    # has no name to give you", and the browser answers with one unique to the
+    # device (`screenPlayerName` in home.html). It could not be minted here in
+    # any case: this payload is CACHED across panels, so the second panel would
+    # be served the first one's name.
     screen = (_cfg_str(config, 'screen_name')
-              or (f"{room_label} screen" if room_label else 'Chauffeur screen'))
+              or (f"{room_label} screen" if room_label else ''))
     # The member row, for the per-person shelf. A wall panel is the one
     # surface that does not know who is standing at it — these chips are how
     # it asks. Kept to what the chips draw.
