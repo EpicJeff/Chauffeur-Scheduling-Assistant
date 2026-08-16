@@ -313,6 +313,45 @@ def scenario_o_a_pin_opens_a_trusted_device_and_nothing_else():
           "revoking a device did not actually revoke it")
 
 
+def scenario_the_set_password_page_is_the_first_thing_the_app_ever_shows():
+    """A standalone page with no shell, opened from a mail client by somebody
+    who may never have heard of Chauffeur. It should look like the app they are
+    about to be handed, and it must not lie about the rule it enforces.
+
+    The minimum is pinned across the Python/template boundary: the button
+    disables below it, and a form that lets somebody type nine characters and
+    press Set password only to be refused by the server has wasted the one
+    interaction it gets.
+    """
+    import main
+    import tpl_source
+    page = tpl_source.read('set_password.html')
+
+    # The app's own mark, not a second one invented for this screen.
+    nav = tpl_source.read('nav.html')
+    mark = 'M13 10V3L4 14h7v7l9-11h-7z'
+    check(mark in nav and mark in page,
+          "the set-password page does not carry the app's wordmark")
+    check('from-blue-400 to-indigo-400' in page,
+          "the wordmark is drawn in colours the rest of the app does not use")
+
+    # Themed by the token layer rather than by hand, or this one page keeps a
+    # palette of its own that drifts from every other surface.
+    check("'static/theme.css'|ver" in page,
+          "the page does not load the theme tokens, so it cannot follow the "
+          "app's light and dark")
+    check('prefers-color-scheme' in page,
+          "nobody opening an invite has a stored theme choice, so the OS "
+          "preference is the only signal there is")
+
+    check(f'password.length < {main._MIN_PASSWORD}' in page,
+          f"the form's minimum drifted from the server's "
+          f"({main._MIN_PASSWORD}) — somebody types a short password, presses "
+          f"the button and is refused by an endpoint instead of the field")
+    check(f'At least {main._MIN_PASSWORD} characters' in page,
+          "the page states a different minimum than it enforces")
+
+
 def scenario_an_invite_link_carries_an_address_that_works():
     """`{"detail":"Not Found"}`, reported by the household from a link that had
     just been mailed. The route was fine; the ADDRESS in front of it was not.
