@@ -5900,7 +5900,7 @@
                 // Argyle's credential (auth arc S7)
                 async rotateServiceToken() {
                     if (this.settings.service_token && !await promptConfirm(
-                        'Replace Argyle's token',
+                        "Replace Argyle's token",
                         'The current token stops working straight away, and Argyle stays quiet until you paste the new one into Home Assistant. Carry on?',
                         'Replace')) return;
                     this.serviceBusy = true;

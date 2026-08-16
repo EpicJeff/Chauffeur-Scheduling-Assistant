@@ -2369,3 +2369,15 @@ The HA custom component calls `http://local-chauffeur:8000`, so it has always ar
 - **The grace is a switch, not a law.** `service_local_grace` defaults **on**, and **absent means on** — every install that predates this release has no such key, and defaulting to off would have silenced Argyle in every household the moment the add-on rebuilt. Turn it off once the integration holds its token; the UI says exactly that, and says what leaving it on means (a permanently trusted network, guest phones and smart plugs included).
 - Optional token in the component for the same reason: a household mid-migration still has the grace on, and requiring one would take Argyle away before they had one to paste.
 - Tests: `test_accounts.py` scenarios v–w (the grace is a switch; absent defaults to on) and `scenario_u` from S6 (a service token must MATCH, not merely be present). The route-classification test caught `/api/account/service-token` unclassified on its first run — working as designed.
+
+## One apostrophe blanked the config page (v2.254.1)
+
+Reported from the box: the config page came up as a row of tabs with nothing underneath. The cause was a single character — `'Replace Argyle's token'` in the S7 rotate button, where the apostrophe closed the string and ended `configApp()`'s entire script.
+
+The failure mode is what makes this worth a test rather than a fix:
+
+- **Silent.** No Python raised, no test failed, the server returned 200. The error existed only in a browser console nobody was looking at.
+- **Total.** When an Alpine component fails to initialise, every `x-show` on it evaluates falsey, so one bad character hides the whole page rather than one control.
+- **Easy to reintroduce**, because this project writes a great deal of JavaScript inside Jinja, where no editor offers syntax help.
+
+`tests/test_template_js.py` now parses every inline `<script>` in every template with `node --check`, substituting the Jinja away first (`{{ }}` → a literal, `{% %}` → nothing) since the subject is the JavaScript's shape rather than the render. Verified against the broken tree: it fails there and passes here.
