@@ -88,6 +88,58 @@ def scenario_every_inline_script_parses():
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
+
+
+# Alpine's own magics and globals: `$store.x`, `window.y`, `Math.round` are
+# roots that are never component state, so they are not evidence of anything.
+_NOT_STATE = {
+    'window', 'document', 'location', 'localStorage', 'sessionStorage',
+    'navigator', 'console', 'Math', 'JSON', 'Object', 'Array', 'String',
+    'Number', 'Boolean', 'Date', 'this', 'e', 'event', 'crypto',
+}
+
+
+def scenario_every_x_model_root_is_defined_somewhere():
+    """`x-model="settings.smtp_host"` where nothing defines `settings`.
+
+    The other half of the blank-page failure, and the half a parser cannot
+    see: the script was perfectly valid, the binding simply named state that
+    did not exist. Alpine throws `ReferenceError: settings is not defined` on
+    every affected control — into the console, where nobody is looking — and
+    the panel renders as nothing.
+
+    Deliberately loose: it asks only whether the root identifier appears
+    ANYWHERE in the template and its includes, not whether it is in scope.
+    A tighter check would need to model Alpine's component tree, and the bug
+    worth catching is the invented name rather than the misplaced one."""
+    import re as _re
+    import tpl_source
+    broken = []
+    for path in sorted(glob.glob(os.path.join(TPL, '*.html'))):
+        name = os.path.basename(path)
+        try:
+            full = tpl_source.read(name)
+        except Exception:
+            full = open(path, encoding='utf-8').read()
+        roots = set(_re.findall(r'x-model(?:\.\w+)*="\s*([A-Za-z_$][\w$]*)\s*\.', full))
+        # Names introduced by `x-for` are scope, not state — `entry` in
+        # `x-for="(entry, i) in rows"` is defined by Alpine and appears
+        # nowhere in the script, which is correct and must not be flagged.
+        scoped = set(_re.findall(r'x-for="\s*\(?\s*([A-Za-z_$][\w$]*)', full))
+        for root in sorted(roots - _NOT_STATE - scoped):
+            # Defined as component state (`root: {`), a declaration, or an
+            # assignment — any of which means somebody meant it to exist.
+            if _re.search(r'(?:^|[\s{,])' + _re.escape(root) + r'\s*[:=]', full, _re.M):
+                continue
+            broken.append(f"{name}: x-model binds `{root}.…` but nothing defines `{root}`")
+    check(not broken,
+          "Alpine bindings naming state that does not exist — every control "
+          "using them renders as nothing, with the error only in the console:"
+          "\n  " + "\n  ".join(broken))
+
+
+SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
+
 if __name__ == "__main__":
     for fn in SCENARIOS:
         fn()

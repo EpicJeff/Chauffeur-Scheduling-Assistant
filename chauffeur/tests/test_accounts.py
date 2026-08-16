@@ -155,12 +155,31 @@ def scenario_i_a_from_address_the_account_does_not_own_is_flagged():
 def scenario_j_ingress_headers_are_only_believed_off_the_tunnel():
     """The trap this avoids is worse than the hole being closed: `X-Hass-Is-
     Admin` is trivially forged, so believing it on a tunnelled request would
-    hand the household to anyone who read the source."""
+    hand the household to anyone who read the source.
+
+    The discriminator is CLOUDFLARE's own headers, not `X-Forwarded-For`.
+    That distinction is the bug this scenario grew: supervisor sets
+    `X-Forwarded-For` itself when proxying ingress, so leaning on it made
+    every genuine ingress request look external and the first-run panel could
+    never appear."""
     from services import auth
     ingress = {'x-ingress-path': '/api/hassio_ingress/abc', 'x-hass-is-admin': 'true'}
     check(auth.arrived_via_ingress(ingress),
           "a genuine ingress request was not recognised")
     check(auth.ingress_is_admin(ingress), "an HA admin was not recognised")
+
+    # Supervisor proxies with X-Forwarded-For. This MUST still read as ingress.
+    proxied = {'x-ingress-path': '/api/hassio_ingress/abc',
+               'x-forwarded-for': '192.168.1.50', 'x-forwarded-proto': 'https'}
+    check(auth.arrived_via_ingress(proxied),
+          "supervisor's own X-Forwarded-For disqualified a real ingress request")
+    check(auth.ingress_is_admin(proxied),
+          "first-run was impossible on an install whose supervisor sends no admin flag")
+
+    # Header spellings differ by supervisor version; all the plausible ones count.
+    for spelling in ('x-remote-user-id', 'x-remote-user-name', 'x-hass-user-id'):
+        check(auth.arrived_via_ingress({spelling: 'abc'}),
+              f"ingress went unrecognised when identified by {spelling}")
 
     forged = dict(ingress)
     forged['cf-connecting-ip'] = '203.0.113.7'      # came through cloudflared
@@ -168,6 +187,8 @@ def scenario_j_ingress_headers_are_only_believed_off_the_tunnel():
           "FORGED ingress headers were believed on a tunnelled request")
     check(not auth.ingress_is_admin(forged),
           "a stranger could claim to be the HA admin from the internet")
+    check(not auth.arrived_via_ingress({**ingress, 'cf-ray': 'abc123'}),
+          "CF-Ray alone did not mark a request as coming through the tunnel")
 
     check(not auth.ingress_is_admin({'x-ingress-path': '/x', 'x-hass-is-admin': 'false'}),
           "a non-admin HA user was treated as an admin")

@@ -5099,6 +5099,39 @@ def approve_device_pairing(req: ApprovePairRequest,
     return {"status": "ok", "label": row['label']}
 
 
+@app.get("/api/account/env")
+def account_env(request: Request = None):
+    """What this request actually looks like to the auth layer.
+
+    Exists because the first-run panel depends on recognising a Home Assistant
+    ingress request, and the header names for that were GUESSED — the same
+    mistake the bus arc made with entity ids, where a plausible name meant the
+    whole feature was silently off. This reports what really arrives so the
+    answer comes from the box rather than from me.
+
+    Safe to leave open: it echoes back only the caller's OWN request headers
+    and says nothing about the household. Values are shown for the routing
+    headers and withheld for anything that could carry a credential."""
+    from services import auth as _auth
+    headers = request.headers if request else {}
+    interesting = ('x-ingress-path', 'x-hass-user-id', 'x-hass-is-admin',
+                   'x-remote-user-id', 'x-remote-user-name',
+                   'x-remote-user-display-name', 'x-forwarded-for',
+                   'x-forwarded-host', 'x-forwarded-proto', 'cf-connecting-ip',
+                   'cf-ray', 'host', 'referer', 'user-agent')
+    seen = {k: (headers.get(k) or '')[:120] for k in interesting if headers.get(k)}
+    return {
+        "headers_seen": seen,
+        "all_header_names": sorted(k.lower() for k in headers.keys()),
+        "verdict": {
+            "arrived_via_tunnel": _auth.arrived_via_tunnel(headers),
+            "arrived_via_ingress": _auth.arrived_via_ingress(headers),
+            "ingress_is_admin": _auth.ingress_is_admin(headers),
+            "household_claimed": _any_parent_has_password(),
+        },
+    }
+
+
 @app.get("/api/account/setup")
 def account_setup_state(request: Request = None):
     """Does this household need its first account, and may THIS caller create

@@ -1154,13 +1154,13 @@
                             <div class="flex items-center gap-2 flex-wrap">
                                 <button type="button" @click="rotateServiceToken()" :disabled="serviceBusy"
                                     class="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 px-4 py-2 rounded font-semibold text-sm">
-                                    <span x-text="settings.service_token ? 'Generate a new token' : 'Generate a token'"></span>
+                                    <span x-text="authSettings.service_token ? 'Generate a new token' : 'Generate a token'"></span>
                                 </button>
                                 <span class="text-xs px-2 py-1 rounded-full"
-                                      :class="settings.service_token ? 'bg-green-900/50 text-green-300' : 'bg-gray-700 text-gray-400'"
-                                      x-text="settings.service_token ? 'token set' : 'no token yet'"></span>
+                                      :class="authSettings.service_token ? 'bg-green-900/50 text-green-300' : 'bg-gray-700 text-gray-400'"
+                                      x-text="authSettings.service_token ? 'token set' : 'no token yet'"></span>
                             </div>
-                            <p x-show="settings.service_token && !serviceToken" class="text-xs text-gray-500">
+                            <p x-show="authSettings.service_token && !serviceToken" class="text-xs text-gray-500">
                                 A token is set. It is not shown again &mdash; generate a new one if you need it,
                                 which replaces the old one immediately.
                             </p>
@@ -1180,7 +1180,7 @@
                             </div>
 
                             <label class="flex items-start gap-2 pt-2 border-t border-gray-800">
-                                <input type="checkbox" x-model="settings.service_local_grace" class="mt-1">
+                                <input type="checkbox" x-model="authSettings.service_local_grace" @change="saveAuthSettings()" class="mt-1">
                                 <span>
                                     <b>Trust anything from my own network</b>
                                     <span class="block text-gray-400 text-xs">On while you set this up, so Argyle
@@ -1208,7 +1208,7 @@
                                 gives you a link to hand over yourself.</p>
 
                             <label class="flex items-start gap-2">
-                                <input type="checkbox" x-model="settings.smtp_use_intake" class="mt-1">
+                                <input type="checkbox" x-model="authSettings.smtp_use_intake" @change="saveAuthSettings()" class="mt-1">
                                 <span>
                                     <b>Send from the intake mailbox</b>
                                     <span class="block text-gray-400 text-xs">Reuses the address intake polls,
@@ -1220,40 +1220,41 @@
                             </label>
 
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-3"
-                                 :class="settings.smtp_use_intake ? 'opacity-40 pointer-events-none' : ''">
+                                 :class="authSettings.smtp_use_intake ? 'opacity-40 pointer-events-none' : ''">
                                 <label class="block">
                                     <span class="text-xs uppercase tracking-wide text-gray-400">SMTP host</span>
-                                    <input type="text" x-model="settings.smtp_host" placeholder="smtp.gmail.com"
-                                           :disabled="settings.smtp_use_intake"
+                                    <input type="text" x-model="authSettings.smtp_host" @change="saveAuthSettings()" placeholder="smtp.gmail.com"
+                                           :disabled="authSettings.smtp_use_intake"
                                            class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2">
                                 </label>
                                 <label class="block">
                                     <span class="text-xs uppercase tracking-wide text-gray-400">SMTP port</span>
-                                    <input type="number" x-model.number="settings.smtp_port" placeholder="587"
-                                           :disabled="settings.smtp_use_intake"
+                                    <input type="number" x-model.number="authSettings.smtp_port"
+                                           @change="saveAuthSettings()" placeholder="587"
+                                           :disabled="authSettings.smtp_use_intake"
                                            class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2">
                                 </label>
                                 <label class="block">
                                     <span class="text-xs uppercase tracking-wide text-gray-400">SMTP account</span>
-                                    <input type="text" x-model="settings.smtp_user" autocomplete="off"
-                                           :disabled="settings.smtp_use_intake"
+                                    <input type="text" x-model="authSettings.smtp_user" @change="saveAuthSettings()" autocomplete="off"
+                                           :disabled="authSettings.smtp_use_intake"
                                            class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2">
                                 </label>
                                 <label class="block">
                                     <span class="text-xs uppercase tracking-wide text-gray-400">SMTP password</span>
-                                    <input type="password" x-model="settings.smtp_password" autocomplete="new-password"
-                                           placeholder="app password" :disabled="settings.smtp_use_intake"
+                                    <input type="password" x-model="authSettings.smtp_password" @change="saveAuthSettings()" autocomplete="new-password"
+                                           placeholder="app password" :disabled="authSettings.smtp_use_intake"
                                            class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2">
                                 </label>
                                 <label class="block md:col-span-2">
                                     <span class="text-xs uppercase tracking-wide text-gray-400">Send invites as</span>
-                                    <input type="text" x-model="settings.smtp_from" placeholder="family@example.com"
-                                           :disabled="settings.smtp_use_intake"
+                                    <input type="text" x-model="authSettings.smtp_from" @change="saveAuthSettings()" placeholder="family@example.com"
+                                           :disabled="authSettings.smtp_use_intake"
                                            class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2">
                                     <!-- Said here rather than discovered as a silent bounce. -->
                                     <span class="block mt-1 text-xs text-amber-300"
-                                          x-show="!settings.smtp_use_intake && settings.smtp_from && settings.smtp_user
-                                                  && settings.smtp_from.trim().toLowerCase() !== settings.smtp_user.trim().toLowerCase()">
+                                          x-show="!authSettings.smtp_use_intake && authSettings.smtp_from && authSettings.smtp_user
+                                                  && authSettings.smtp_from.trim().toLowerCase() !== authSettings.smtp_user.trim().toLowerCase()">
                                         Most providers reject a From address the account does not own, and the
                                         rejection comes back as a bounce rather than an error here. Keep it the
                                         same as the account, or a verified alias.
@@ -4289,6 +4290,15 @@
                 trustedDevices: [],                          // auth arc S5
                 pairCode: '', pairLabel: '', pairFound: null,  // auth arc S6
                 serviceToken: '', serviceBusy: false,          // auth arc S7
+                // This panel owns these keys and POSTs only these keys — the
+                // decentralisation rule. config.html otherwise keeps flat
+                // camelCase properties; a small object here keeps the auth
+                // settings together and makes "send what you own" literal.
+                authSettings: {
+                    smtp_use_intake: false, smtp_host: '', smtp_port: 587,
+                    smtp_user: '', smtp_password: '', smtp_from: '',
+                    service_local_grace: true, service_token: ''
+                },
                 pairBusy: false,
                 // Status Days (Presence & Status arc P1)
                 statusProtocols: [],
@@ -4605,6 +4615,7 @@
                 async loadSettings() {
                     const res = await fetch(`${this.apiBase}api/settings`);
                     const data = await res.json();
+                    this.loadAuthSettings(data);          // auth arcs S3/S7
                     this.daysToShow = data.days_to_show || 7;
                     this.daysToBuild = data.days_to_build || 7;
                     this.routeCacheDurationMins = data.route_cache_duration_mins || 1440;
@@ -5897,9 +5908,45 @@
                     if (!res.ok) showGlobalAlert('Could not set PIN.');
                     await this.loadMembers();
                 },
+                // Auth panel settings (arcs S3/S7). Saved on change rather
+                // than waiting for a Save button the panel does not have.
+                loadAuthSettings(data) {
+                    this.authSettings = {
+                        smtp_use_intake: data.smtp_use_intake === true,
+                        smtp_host: data.smtp_host || '',
+                        smtp_port: data.smtp_port || 587,
+                        smtp_user: data.smtp_user || '',
+                        smtp_password: data.smtp_password || '',
+                        smtp_from: data.smtp_from || '',
+                        // Absent means ON, matching the server: an install
+                        // that predates S7 has no key and must not read as
+                        // "Argyle is cut off".
+                        service_local_grace: data.service_local_grace !== false,
+                        service_token: data.service_token || ''
+                    };
+                },
+
+                async saveAuthSettings() {
+                    try {
+                        await fetch(`${this.apiBase}api/settings`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                smtp_use_intake: this.authSettings.smtp_use_intake,
+                                smtp_host: this.authSettings.smtp_host,
+                                smtp_port: Number(this.authSettings.smtp_port) || 587,
+                                smtp_user: this.authSettings.smtp_user,
+                                smtp_password: this.authSettings.smtp_password,
+                                smtp_from: this.authSettings.smtp_from,
+                                service_local_grace: this.authSettings.service_local_grace
+                            })
+                        });
+                    } catch (e) { showGlobalAlert('Could not save that setting.'); }
+                },
+
                 // Argyle's credential (auth arc S7)
                 async rotateServiceToken() {
-                    if (this.settings.service_token && !await promptConfirm(
+                    if (this.authSettings.service_token && !await promptConfirm(
                         "Replace Argyle's token",
                         'The current token stops working straight away, and Argyle stays quiet until you paste the new one into Home Assistant. Carry on?',
                         'Replace')) return;
@@ -5909,7 +5956,7 @@
                         const d = await r.json();
                         if (!r.ok) { showGlobalAlert(d.detail || 'Could not generate a token.'); return; }
                         this.serviceToken = d.service_token;
-                        this.settings.service_token = d.service_token;
+                        this.authSettings.service_token = d.service_token;
                     } catch (e) { showGlobalAlert('Could not reach the server.'); }
                     finally { this.serviceBusy = false; }
                 },

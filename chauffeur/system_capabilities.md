@@ -2381,3 +2381,15 @@ The failure mode is what makes this worth a test rather than a fix:
 - **Easy to reintroduce**, because this project writes a great deal of JavaScript inside Jinja, where no editor offers syntax help.
 
 `tests/test_template_js.py` now parses every inline `<script>` in every template with `node --check`, substituting the Jinja away first (`{{ }}` → a literal, `{% %}` → nothing) since the subject is the JavaScript's shape rather than the render. Verified against the broken tree: it fails there and passes here.
+
+## The first-run panel could never appear (v2.255.0)
+
+Two independent bugs, both found on the box, both silent.
+
+**1. `settings` was never a thing.** The S3/S7 panels bound `x-model="settings.smtp_host"` and friends, but `configApp()` keeps flat camelCase properties and has no `settings` object at all — six invented bindings. Alpine threw `ReferenceError: settings is not defined` per control, into a console nobody reads, and the panels rendered as nothing. They now use an `authSettings` object that loads from `/api/settings` and **POSTs only its own keys**, which is the decentralisation rule stated literally.
+
+**2. Supervisor sets `X-Forwarded-For` itself.** `arrived_via_ingress()` disqualified any request that looked forwarded — and supervisor forwards ingress to the add-on with exactly that header, so **every genuine ingress request read as external** and `may_claim` was never true. The discriminator is now Cloudflare's own `CF-Connecting-IP`/`CF-Ray`, which cloudflared stamps on everything it forwards and an outside caller cannot remove; supervisor never sends them. Also widened the identity header to the spellings supervisor actually uses (`X-Remote-User-Id`/`-Name`) and made an absent admin flag permissive, since refusing on its absence makes first-run impossible on exactly the installs that lack it. **Caveat recorded**: behind a plain reverse proxy that sets no CF headers, `X-Ingress-Path` could be forged from outside — this is sound for cloudflared specifically, which is what the household runs.
+
+**`GET /api/account/env`** was added to settle it from evidence rather than from my guesses about header names — the bus arc's "a guessed entity name is the whole feature off", one layer down. It echoes back only the caller's OWN headers plus the computed verdicts, so it says nothing about the household.
+
+**`tests/test_template_js.py` gained the second half of the blank-page guard**: every `x-model` root must be defined somewhere in the template and its includes. The parse check could not see this one — the script was valid, the binding simply named state that did not exist. `x-for` scope names are excluded, since Alpine defines those.

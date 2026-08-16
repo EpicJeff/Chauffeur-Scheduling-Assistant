@@ -94,6 +94,9 @@ RULES = [
     # one parent holds a password.
     ('GET', '/api/account/setup', ANYONE),
     ('POST', '/api/account/claim', ANYONE),
+    # Echoes back only the caller's OWN headers; says nothing about the
+    # household. Open so it can answer when nothing else will.
+    ('GET', '/api/account/env', ANYONE),
     # Pairing (S6). The two the DEVICE calls are open by necessity — a screen
     # with no credential is exactly who calls them — and neither grants
     # anything on its own: the request only produces a code somebody still has
@@ -322,10 +325,33 @@ def arrived_via_ingress(headers) -> bool:
     there. Header trust without the origin check would be a hole far worse
     than the one this arc is closing.
     """
-    if arrived_via_tunnel(headers):
+    # NOT `arrived_via_tunnel` — that treats `X-Forwarded-For` as evidence of
+    # the public internet, and **supervisor sets X-Forwarded-For itself when
+    # it proxies ingress to the add-on**. Using it here made every genuine
+    # ingress request look external, so the first-run panel could never
+    # appear: the header the check leaned on is one the proxy we are trying to
+    # RECOGNISE also sends.
+    #
+    # The discriminator that actually works on this deployment is Cloudflare's
+    # own: cloudflared stamps `CF-Connecting-IP` and `CF-Ray` on everything it
+    # forwards, and an outside caller cannot remove them because they have no
+    # other way in. Supervisor never sends them. So: an ingress signal, and no
+    # sign of the tunnel.
+    #
+    # Worth knowing if the front door ever changes: behind a plain reverse
+    # proxy that sets no CF headers, `X-Ingress-Path` could be forged from
+    # outside. This is sound for cloudflared specifically, which is what the
+    # household runs.
+    if headers.get('cf-connecting-ip') or headers.get('cf-ray'):
         return False
+    # Header names for the user identity differ by supervisor version, so all
+    # the plausible spellings count — being wrong about which one is why this
+    # needed `/api/account/env` to answer from the box rather than from a
+    # guess.
     return bool(headers.get('x-ingress-path')
-                or headers.get('x-hass-user-id'))
+                or headers.get('x-hass-user-id')
+                or headers.get('x-remote-user-id')
+                or headers.get('x-remote-user-name'))
 
 
 def ingress_is_admin(headers) -> bool:
@@ -335,9 +361,12 @@ def ingress_is_admin(headers) -> bool:
     if not arrived_via_ingress(headers):
         return False
     flag = str(headers.get('x-hass-is-admin') or '').strip().lower()
-    # Absent is treated as allowed: older supervisors do not send the flag at
-    # all, and refusing there would make first-run impossible on those. The
-    # ingress boundary is still doing the real work.
+    # Absent is treated as allowed, and that is doing real work rather than
+    # being lax: supervisor may not send an admin flag at all, and refusing on
+    # its absence would make first-run impossible on exactly the installs
+    # where it is missing — the failure the household just hit. The ingress
+    # boundary is what is actually being trusted; the flag only narrows it
+    # further when it happens to be there.
     return flag in ('', '1', 'true', 'yes')
 
 
