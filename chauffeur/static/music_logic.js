@@ -89,6 +89,28 @@
             return MusicLogic.deviceId().replace(/[^a-z0-9]/gi, '').slice(-4).toLowerCase();
         },
 
+        /** Why a browser on THIS page may fail to stay a player, or ''.
+         *
+         * A page served over plain http is not a "secure context", and the
+         * Opus decoder sendspin-js wants is unavailable in one — the library
+         * says so ("[Opus] Running in insecure context, falling back to
+         * FLAC/PCM") and then Music Assistant hangs up on the client hello.
+         * From the room that looks like a player that connects and dies once a
+         * second forever, with the cause visible only in a console a wall
+         * panel does not have.
+         *
+         * Not a BLOCK: some setups may negotiate the fallback happily, and
+         * refusing to try would remove a working feature to prevent a possible
+         * one. It is the sentence to show once it does fail.
+         */
+        contextWarning() {
+            if (typeof window === 'undefined') return '';
+            if (window.isSecureContext !== false) return '';
+            return 'this page is not served over HTTPS, so the browser will '
+                 + 'not give it the Opus decoder — reach Chauffeur through '
+                 + 'Home Assistant, or over https, and this screen can play';
+        },
+
         /** What a parent named THIS device, or null. `named` is false for the
          *  labels the pairing flow hands out when nobody typed one — "Wall
          *  panel" is not an identity, it is two of them. */
@@ -373,9 +395,11 @@
                 if (self.reconnectTimer) return;
                 if (self.retries >= 6) {
                     const why = self.closeReason();
+                    const ctx = MusicLogic.contextWarning();
                     notice(`${identity.name} keeps losing its connection`
                            + (why ? ` (${why})` : '')
-                           + ' — select it again to retry.');
+                           + (ctx ? ` — ${ctx}` : ' — select it again to retry')
+                           + '.');
                     return;
                 }
                 const delay = Math.min(15000, 1500 * Math.pow(2, self.retries));
@@ -448,12 +472,39 @@
                             clearTimeout(self.stableTimer);
                             self.stableTimer = null;
                         }
-                        if (!self.active) return;
+                        if (!self.active) {
+                            // NEVER CAME UP, and this used to return in
+                            // silence. The relay closes with its own words
+                            // when it cannot find or reach Music Assistant,
+                            // and throwing them away here is why the phone
+                            // showed sendspin-js's "Adopted WebSocket closed
+                            // before opening" — a sentence that names the
+                            // symptom and none of the causes.
+                            if (e.reason) notice(`${identity.name}: ${e.reason}`);
+                            return;
+                        }
                         self.active = false;
                         self.player = null;
                         // Quietly self-heal; only bother anybody when it is
-                        // hopeless (the relay refused, so `reason` is set).
-                        if (e.reason) notice(`${identity.name} disconnected: ${e.reason}`);
+                        // hopeless (the relay refused, so `reason` is set) —
+                        // or when the shape of the failure is one a reconnect
+                        // cannot fix, which is the next branch.
+                        const ctx = MusicLogic.contextWarning();
+                        if (e.reason) {
+                            notice(`${identity.name} disconnected: ${e.reason}`);
+                        } else if (ctx && !self.warnedContext
+                                   && self.lastClose.heldSeconds < 20) {
+                            // Connected, negotiated, gone inside a second, no
+                            // reason given: that is Music Assistant hanging up
+                            // on a client hello it did not like, and on an
+                            // insecure page the reason it did not like it is
+                            // sitting right there. Said ONCE — the reconnect
+                            // is still worth attempting, but silently retrying
+                            // something that cannot succeed is what made this
+                            // a mystery.
+                            self.warnedContext = true;
+                            notice(`${identity.name} keeps dropping — ${ctx}.`);
+                        }
                         changed();
                         scheduleReconnect();
                     });

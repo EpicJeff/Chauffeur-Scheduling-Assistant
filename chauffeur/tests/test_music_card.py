@@ -352,6 +352,35 @@ def scenario_a_connection_that_dies_immediately_is_not_a_success():
           "the close code and how long it held are recorded but unreadable")
 
 
+def scenario_a_refusal_is_repeated_rather_than_swallowed():
+    """Two field reports, one cause: the thing that KNOWS why never said.
+
+      * The phone showed sendspin-js's "Adopted WebSocket closed before
+        opening". Our relay had already closed that socket with its own words
+        ("Music Assistant Sendspin server not found"), and the close handler
+        threw them away because `self.active` was still false — the player had
+        never come up, which is exactly when the reason matters most.
+      * The panel connected, sent its client hello and was gone inside a
+        second, no reason given. On a page served over plain http that is
+        Music Assistant refusing a client with no Opus decoder, and the
+        browser says so in a console a wall panel does not have.
+    """
+    logic = open(os.path.join(ROOT, 'static', 'music_logic.js'),
+                 encoding='utf-8').read()
+    fn = logic[logic.index("socket.addEventListener('close'"):]
+    fn = fn[:fn.index('const player = new Player(')]
+    check('if (!self.active) {' in fn and 'e.reason' in fn[fn.index('if (!self.active) {'):],
+          "a socket refused before it opened still closes in silence")
+    check('contextWarning' in logic and 'isSecureContext' in logic,
+          "nothing names the insecure page that costs the player its decoder")
+    src = open(os.path.join(ROOT, 'main.py'), encoding='utf-8').read()
+    relay = src[src.index('async def sendspin_relay('):]
+    relay = relay[:relay.index('# --- Passenger day view API ---')]
+    check('close_reason' in relay and 'websocket.close(code=code' in relay,
+          "the relay is the only party that sees Music Assistant's close "
+          "frame and it drops it, so the browser can never be told why")
+
+
 def scenario_the_board_survives_a_missing_music_layer():
     """The board is the wall's ENTIRE screen. It must not fail to construct
     because the music module was slow, blocked or 404'd — which is exactly

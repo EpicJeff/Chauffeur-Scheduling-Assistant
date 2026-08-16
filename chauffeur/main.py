@@ -7263,12 +7263,27 @@ async def sendspin_relay(websocket: WebSocket):
     except Exception as e:
         print(f"[sendspin] relay error: {e}")
     finally:
+        # WHY Music Assistant hung up, carried through to the browser instead
+        # of dropped here. This relay is the only party that ever sees MA's
+        # close frame: the browser just sees its socket end, which is how a
+        # player that MA rejected at the client hello showed up on a wall as
+        # "(connecting…)" once a second with nothing to explain it. Logged for
+        # the add-on log and forwarded as the close reason so the card can say
+        # it out loud.
+        code = getattr(upstream, 'close_code', None) or 1011
+        reason = getattr(upstream, 'close_reason', '') or ''
+        # 1005/1006 mean "no status was sent" and are not valid to send on.
+        if code in (1005, 1006):
+            code = 1011
+        if code not in (1000, 1001) or reason:
+            print(f"[sendspin] upstream closed {code}"
+                  + (f": {reason}" if reason else " (no reason given)"))
         try:
             await upstream.close()
         except Exception:
             pass
         try:
-            await websocket.close()
+            await websocket.close(code=code, reason=reason)
         except Exception:
             pass
 
