@@ -2,7 +2,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, BackgroundTasks, Response, HTTPException, WebSocket, WebSocketDisconnect, Header, UploadFile, File, Form, Body
+from fastapi import FastAPI, BackgroundTasks, Response, HTTPException, WebSocket, WebSocketDisconnect, Header, UploadFile, File, Form, Body, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -950,7 +950,30 @@ async def lifespan(app: FastAPI):
     ingest_task.cancel()
     migration_task.cancel()
 
-app = FastAPI(title="Family Driver Graph Scheduler", lifespan=lifespan)
+async def _auth_guard(request: Request):
+    """Default-deny guard, applied to every route (auth arc S1).
+
+    A GLOBAL dependency rather than middleware, for one reason that matters:
+    dependencies run after routing, so `scope['route'].path` is the route
+    TEMPLATE — `/api/members/{member_id}/auth`, not the concrete path. The
+    table is written against templates, so a member id can never be mistaken
+    for part of an authorization decision.
+
+    Ships dark: `services.auth.check_request` returns None for everything
+    while `auth_enforce` is off, having recorded what it would have refused.
+    """
+    from services import auth as _auth
+    route = request.scope.get('route')
+    path = getattr(route, 'path', None) or request.url.path
+    verdict = _auth.check_request(request.method, path,
+                                  request.headers, request.query_params)
+    if verdict:
+        raise HTTPException(status_code=verdict['status'],
+                            detail=f"Requires {' or '.join(verdict['needs'])}")
+
+
+app = FastAPI(title="Family Driver Graph Scheduler", lifespan=lifespan,
+              dependencies=[Depends(_auth_guard)])
 
 @app.middleware("http")
 async def slow_request_logger(request, call_next):
@@ -13430,6 +13453,29 @@ def force_refresh_schedule(background_tasks: BackgroundTasks, start_date: str = 
     return {"status": "sync_finished"}
 
 
+
+
+@app.get("/api/admin/auth_audit")
+def auth_audit():
+    """What the auth guard WOULD have refused, worst first (auth arc S1).
+
+    Read this before flipping enforcement on. Two kinds of row matter and they
+    mean opposite things: a row whose `needs` is empty is a route the table
+    never classified (our bug — fix the table), and a row with `needs` set is a
+    real caller that would start failing (either the caller needs a credential
+    or the tier is wrong). Both are cheaper to find here than on a school
+    morning."""
+    from services import auth as _auth
+    return _auth.audit_report()
+
+
+@app.post("/api/admin/auth_audit/reset")
+def auth_audit_reset():
+    """Clear the record — so a run can start from a known-empty state after
+    the table changes, rather than reading yesterday's mistakes as today's."""
+    from services import auth as _auth
+    _auth.reset_audit()
+    return {"status": "cleared"}
 
 
 @app.get("/api/admin/clear_cache")

@@ -1,0 +1,366 @@
+"""Trust tiers and the default-deny guard (the auth arc, slice S1).
+
+Full brief: `docs/auth_design.md`. The state this replaces: the app is
+published publicly by the cloudflared add-on with no Cloudflare Access, 417
+routes are registered, and five of them check anything at all. The only thing
+in front of the family's messages, schedules, home address and photos is that
+nobody has guessed the hostname.
+
+Three properties are load-bearing here, and all three are about not breaking
+the house on the way to locking it:
+
+  1. **Default deny, but only once we know the table is right.** Every route
+     is classified in `RULES` below and `resolve()` returns None for anything
+     unmatched. A test fails on any unclassified route, so the next route
+     somebody adds cannot be public by accident — which is exactly how this
+     state was reached. That discipline is `settings_registry.audit()`'s,
+     pointed at routes instead of settings.
+
+  2. **Audit mode first.** With `auth_enforce` off (the default, and the only
+     behaviour S1 ships) the guard refuses NOTHING. It records what it would
+     have refused, so the family can use the house normally — the wall panel
+     at 6am, phones, Argyle, the Android share sheet — and the record says
+     which real callers the table got wrong. Flipping to enforce before that
+     evidence exists means discovering the panel cannot reach its board on a
+     school morning.
+
+  3. **A tier is a SET, not a rank.** The kiosk pages are read by a parent in
+     a browser AND by a panel bolted to a wall; `/api/chat` is Argyle's and
+     nobody else's. Ranking those on one axis forces a lie in one direction or
+     the other, so a rule names exactly who may call it.
+
+Identity is resolved but NOT yet enforced or derived from — S2 makes the token
+the identity everywhere and stops trusting the client-asserted member id the
+PWA sends today.
+"""
+import time
+from typing import Optional
+
+# --- tiers ------------------------------------------------------------------
+
+PUBLIC = 'public'    # no proof; the tier IS the allowlist
+MEMBER = 'member'    # a signed-in family member
+PARENT = 'parent'    # a member whose role is parent
+DEVICE = 'device'    # an enrolled wall panel: a place, not a person
+SERVICE = 'service'  # the HA component / agent stack
+
+# Allow-sets, named for what they mean rather than built ad hoc at each rule.
+ANYONE = frozenset()                              # public
+SIGNED_IN = frozenset({MEMBER, PARENT})           # any family member
+WALL = frozenset({MEMBER, PARENT, DEVICE})        # people and panels
+WALL_OR_SERVICE = frozenset({MEMBER, PARENT, DEVICE, SERVICE})
+PARENTS = frozenset({PARENT})                     # admin
+ROBOTS = frozenset({SERVICE, PARENT})             # Argyle, and a human debugging it
+
+# --- the table --------------------------------------------------------------
+# (method_or_ANY, path_template_or_prefix, allowed_tiers)
+#
+# Matched in order, first hit wins, so a specific rule sits above the prefix it
+# carves out of. A path ending in '*' is a prefix match on the ROUTE TEMPLATE
+# (e.g. '/api/members/{member_id}/auth'), never on the concrete path — matching
+# raw paths would make a member id containing a slash into an auth decision.
+ANY = '*'
+
+RULES = [
+    # --- public: the things that must answer before anyone can sign in ------
+    (ANY, '/health', ANYONE),
+    (ANY, '/manifest.json', ANYONE),
+    (ANY, '/sw.js', ANYONE),
+    (ANY, '/api/vapid_public_key', ANYONE),
+    # Sign-in itself. `/auth` mints the token, so it cannot require one; it is
+    # the single most attackable route in the app and S4 gives it persistent,
+    # per-IP rate limiting to match.
+    ('POST', '/api/members/{member_id}/auth', ANYONE),
+    # The picker list. S3 deletes its pre-auth role by replacing the picker
+    # with a sign-in page; until then it must answer or nobody can log in.
+    ('GET', '/api/members', ANYONE),
+
+    # --- parent-only: administration and anything that hands over the house --
+    # These are the routes where "open" was worth a whole compromise.
+    (ANY, '/api/download_db', PARENTS),
+    (ANY, '/api/debug_db', PARENTS),
+    (ANY, '/api/debug/*', PARENTS),
+    (ANY, '/api/admin/*', PARENTS),
+    (ANY, '/api/test/*', PARENTS),
+    (ANY, '/api/cache/*', PARENTS),
+    (ANY, '/api/members/{member_id}/pin/clear', PARENTS),
+    (ANY, '/api/members/{member_id}/pin', SIGNED_IN),   # own PIN; S4 tightens
+    ('POST', '/api/members/*', PARENTS),                # create/edit members
+    ('PUT', '/api/members/*', PARENTS),
+    ('PATCH', '/api/members/*', PARENTS),
+    ('DELETE', '/api/members/*', PARENTS),
+    (ANY, '/api/settings/*', PARENTS),
+    (ANY, '/api/settings', PARENTS),
+    (ANY, '/api/ics_feeds/*', PARENTS),
+    (ANY, '/api/drivers/*', PARENTS),
+    (ANY, '/api/passengers/*', PARENTS),
+    (ANY, '/api/rules/*', PARENTS),
+    (ANY, '/api/priority_rules/*', PARENTS),
+    (ANY, '/api/errand_rules/*', PARENTS),
+    (ANY, '/api/status-tiers/*', PARENTS),
+    (ANY, '/api/stages/*', PARENTS),
+    (ANY, '/api/themes/*', PARENTS),
+    (ANY, '/api/calendars/*', PARENTS),
+    (ANY, '/api/walmart/*', PARENTS),
+    (ANY, '/api/ha_sensors/*', PARENTS),
+    (ANY, '/api/ha/*', PARENTS),
+    (ANY, '/api/telemetry/*', PARENTS),
+    (ANY, '/api/push_subscriptions/*', PARENTS),
+    (ANY, '/config', PARENTS),
+    (ANY, '/dashboard', PARENTS),
+    (ANY, '/dashboard_v2', PARENTS),
+    (ANY, '/settings', PARENTS),
+
+    # FastAPI's generated docs. Found UNCLASSIFIED by the S1 test, which is
+    # the first thing it caught and on its own worth the file: `/docs` is a
+    # complete, interactive map of all 417 routes with a try-it-out console
+    # attached, and it has been served to the public internet next to an app
+    # with no authentication. Parents-only here; S8 should consider switching
+    # them off outright, since nobody in this household reads them.
+    (ANY, '/docs', PARENTS),
+    (ANY, '/docs/*', PARENTS),
+    (ANY, '/redoc', PARENTS),
+    (ANY, '/openapi.json', PARENTS),
+
+    # --- Argyle ------------------------------------------------------------
+    (ANY, '/api/chat/*', ROBOTS),
+    (ANY, '/api/v2/*', ROBOTS),
+    (ANY, '/api/announce/*', ROBOTS),
+
+    # --- the wall: pages and payloads a panel legitimately draws ------------
+    (ANY, '/', WALL),
+    (ANY, '/home', WALL),
+    (ANY, '/board/{slug}', WALL),
+    (ANY, '/api/home_board/*', WALL),
+    (ANY, '/api/panel/*', WALL),
+    (ANY, '/api/schedule/*', WALL),
+    (ANY, '/api/weather/*', WALL),
+    (ANY, '/api/presence/*', WALL),
+    (ANY, '/api/moments/*', WALL),
+    (ANY, '/api/media/*', WALL),
+    (ANY, '/api/music/*', WALL),
+    (ANY, '/api/announce', WALL),
+    # Kiosk-capable destinations: a parent opens these in a browser and a panel
+    # draws the same page with ?panel=true. Both, therefore, or one of the two
+    # is a lie (see property 3 above).
+    (ANY, '/chores', WALL),
+    (ANY, '/routines', WALL),
+    (ANY, '/shopping', WALL),
+    (ANY, '/calendar', WALL),
+    (ANY, '/errands', WALL),
+    (ANY, '/occasions', WALL),
+    (ANY, '/moments', WALL),
+    (ANY, '/moment', WALL),
+    (ANY, '/map', WALL),
+    (ANY, '/music', WALL),
+    (ANY, '/trips', WALL),
+    (ANY, '/trip', WALL),
+    (ANY, '/intake', WALL),
+    (ANY, '/app', WALL),
+    # Interactive board actions — a wall may claim a chore and check a routine;
+    # that is the whole point of `interactive` tiles.
+    (ANY, '/api/chores/*', WALL),
+    (ANY, '/api/routines/*', WALL),
+    (ANY, '/api/points/*', WALL),
+    (ANY, '/api/rewards/*', WALL),
+    (ANY, '/api/redemptions/*', WALL),
+    (ANY, '/api/shopping/*', WALL),
+    (ANY, '/api/kid-tasks/*', WALL),
+    (ANY, '/api/kids/*', WALL),
+    (ANY, '/api/meals/*', WALL),
+    (ANY, '/api/prep-kits/*', WALL),
+    (ANY, '/api/prep_status/*', WALL),
+    (ANY, '/api/stream/*', WALL),
+
+    # --- signed-in members: the ordinary app ------------------------------
+    (ANY, '/api/messages/*', SIGNED_IN),
+    (ANY, '/api/channels/*', SIGNED_IN),
+    (ANY, '/api/events/*', SIGNED_IN),
+    (ANY, '/api/errands/*', SIGNED_IN),
+    (ANY, '/api/overrides/*', SIGNED_IN),
+    (ANY, '/api/occasions/*', SIGNED_IN),
+    (ANY, '/api/trip/*', SIGNED_IN),
+    (ANY, '/api/trips/*', SIGNED_IN),
+    (ANY, '/api/proposals/*', SIGNED_IN),
+    (ANY, '/api/action-proposals/*', SIGNED_IN),
+    (ANY, '/api/ingest/*', SIGNED_IN),
+    (ANY, '/api/status/*', SIGNED_IN),
+    (ANY, '/api/requests/*', SIGNED_IN),
+    (ANY, '/api/household-tasks/*', SIGNED_IN),
+    (ANY, '/api/household-load/*', SIGNED_IN),
+    (ANY, '/api/commitments/*', SIGNED_IN),
+    (ANY, '/api/assist-contacts/*', SIGNED_IN),
+    (ANY, '/api/assist-coverage/*', SIGNED_IN),
+    (ANY, '/api/assist-history/*', SIGNED_IN),
+    (ANY, '/api/cars/*', SIGNED_IN),
+    (ANY, '/api/places/*', SIGNED_IN),
+    (ANY, '/api/maps/*', SIGNED_IN),
+    (ANY, '/api/calendar/*', SIGNED_IN),
+    (ANY, '/api/school/*', SIGNED_IN),
+    (ANY, '/api/drive_status/*', SIGNED_IN),
+    (ANY, '/api/family/*', SIGNED_IN),
+    (ANY, '/api/unsplash/*', SIGNED_IN),
+    (ANY, '/api/push_subscribe/*', SIGNED_IN),
+    (ANY, '/api/members/*', SIGNED_IN),   # reads; the writes are gated above
+    (ANY, '/api/sendspin/*', SIGNED_IN),
+    # The Android share target. The OS posts it with none of our headers, so
+    # it will show up in the audit as a would-deny; S3 decides whether the
+    # service worker attaches the token or the route lands on a signed-in page.
+    (ANY, '/share', SIGNED_IN),
+]
+
+
+def _rule_matches(rule_method, rule_path, method, path):
+    if rule_method != ANY and rule_method != method:
+        return False
+    if rule_path.endswith('/*'):
+        return path.startswith(rule_path[:-1]) or path == rule_path[:-2]
+    return path == rule_path
+
+
+def resolve(method: str, path_template: str) -> Optional[frozenset]:
+    """The allowed tiers for a route, or None if it is unclassified.
+
+    None is not 'deny' and not 'allow' — it means the table has not been
+    taught about this route, which is a bug in the table that the test catches
+    before it can become a hole in the app."""
+    for rule_method, rule_path, tiers in RULES:
+        if _rule_matches(rule_method, rule_path, method, path_template):
+            return tiers
+    return None
+
+
+# --- who is calling ---------------------------------------------------------
+
+def arrived_via_tunnel(headers) -> bool:
+    """Did this request come in off the public internet?
+
+    cloudflared sets `CF-Connecting-IP` on everything it forwards, and an
+    outside caller cannot strip it — they have no other way in. So the ABSENCE
+    of it (and of any forwarding header) means the request reached us directly,
+    which on this deployment means the LAN. Conservative on purpose: anything
+    that looks forwarded counts as external, so a misread fails toward
+    requiring credentials rather than away from it."""
+    return bool(headers.get('cf-connecting-ip')
+                or headers.get('x-forwarded-for')
+                or headers.get('cf-ray'))
+
+
+def identify(headers, query) -> dict:
+    """Best available identity for a request. S1 only OBSERVES this — nothing
+    is enforced and nothing derives from it yet (S2 does that).
+
+    Query-parameter fallbacks are not laziness: `EventSource` cannot set
+    headers, so the SSE routes under /api/stream have no other way to carry a
+    token."""
+    from services import storage
+
+    device = headers.get('x-device-token') or query.get('device_token')
+    if device:
+        return {'tier': DEVICE, 'device_token': device, 'member': None}
+
+    service = headers.get('x-service-token') or query.get('service_token')
+    if service:
+        return {'tier': SERVICE, 'member': None}
+
+    token = headers.get('x-member-token') or query.get('member_token')
+    if token:
+        try:
+            member = storage.get_member_by_token(token)
+        except Exception:
+            member = None
+        if member:
+            tier = PARENT if member.get('role') == 'parent' else MEMBER
+            return {'tier': tier, 'member': member}
+
+    # The local-origin grace for Argyle (Decision 6). Dated, not permanent:
+    # S7 gives the component a real service token and a setting ends this.
+    if not arrived_via_tunnel(headers):
+        return {'tier': SERVICE, 'member': None, 'via': 'local-grace'}
+
+    return {'tier': None, 'member': None}
+
+
+# --- the audit record -------------------------------------------------------
+# Deliberately in memory and deliberately small. Its whole job is to answer one
+# question once — "what would break if we flipped this on?" — and then be
+# thrown away. Persisting it would mean a schema and a migration for a thing
+# with a two-week life.
+
+_AUDIT = {}          # (method, path_template) -> {'n', 'tiers', 'saw', 'last'}
+_AUDIT_CAP = 500     # a runaway route cannot eat the add-on's memory
+
+
+def record(method: str, path_template: str, allowed, saw) -> None:
+    key = (method, path_template)
+    entry = _AUDIT.get(key)
+    if entry is None:
+        if len(_AUDIT) >= _AUDIT_CAP:
+            return
+        entry = _AUDIT[key] = {'n': 0, 'tiers': sorted(allowed) if allowed else [],
+                               'saw': set(), 'last': 0.0}
+    entry['n'] += 1
+    entry['saw'].add(saw or 'anonymous')
+    entry['last'] = time.time()
+
+
+def audit_report() -> dict:
+    """What would have been refused, worst first. Read this before flipping
+    `auth_enforce` on — that is the entire point of shipping S1 dark."""
+    rows = [{'method': m, 'path': p, 'count': e['n'],
+             'needs': e['tiers'], 'saw': sorted(e['saw']),
+             'last': e['last']}
+            for (m, p), e in _AUDIT.items()]
+    rows.sort(key=lambda r: -r['count'])
+    return {'would_deny': rows, 'routes': len(rows), 'capped': len(_AUDIT) >= _AUDIT_CAP}
+
+
+def reset_audit() -> None:
+    _AUDIT.clear()
+
+
+# --- the guard --------------------------------------------------------------
+
+def enforcing() -> bool:
+    """Is the guard refusing anything yet? Through S7, no.
+
+    `auth_enforce` is deliberately NOT in `Settings` or the settings registry
+    yet. A registry entry obliges a hand path on a real surface (the registry's
+    own `audit_ui` test enforces that, correctly), and the surface that should
+    own this switch is the one S8 builds. Until then it is a stored key with no
+    model field: absent reads as False, which is audit mode, which is the only
+    behaviour S1 ships. S8 promotes it to a declared setting with its control.
+    """
+    try:
+        from services import storage
+        return bool((storage.get_settings() or {}).get('auth_enforce'))
+    except Exception:
+        # A settings read that fails must not lock the family out of the house.
+        return False
+
+
+def check_request(method: str, path_template: str, headers, query) -> Optional[dict]:
+    """Returns None to allow, or a dict describing the refusal.
+
+    In audit mode it always returns None, having written down what it would
+    have said."""
+    allowed = resolve(method, path_template)
+    who = identify(headers, query)
+
+    if allowed is None:
+        # Unclassified: the table is wrong. Record it loudly; never deny on it,
+        # because a table gap is our bug and the family should not pay for it.
+        record(method, path_template, None, who.get('tier'))
+        return None
+
+    if allowed is ANYONE or not allowed:
+        return None
+
+    if who.get('tier') in allowed:
+        return None
+
+    record(method, path_template, allowed, who.get('tier'))
+    if not enforcing():
+        return None
+    return {'status': 401 if who.get('tier') is None else 403,
+            'needs': sorted(allowed), 'saw': who.get('tier')}
