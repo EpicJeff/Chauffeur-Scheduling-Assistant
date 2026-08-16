@@ -4927,9 +4927,105 @@ def _any_parent_has_password() -> bool:
                for m in storage.get_all_members())
 
 
-def _account_link(token: str) -> str:
-    base = (storage.get_settings().get('public_base_url') or '').rstrip('/')
+_PAGE_SEGMENTS = None
+
+
+def _own_page_segments() -> set:
+    """The first path segment of every route this app serves."""
+    global _PAGE_SEGMENTS
+    if _PAGE_SEGMENTS is None:
+        segs = set()
+        for route in app.routes:
+            head = (getattr(route, 'path', '') or '').strip('/').split('/', 1)[0]
+            if head and '{' not in head:
+                segs.add(head.lower())
+        _PAGE_SEGMENTS = segs
+    return _PAGE_SEGMENTS
+
+
+def _public_origin() -> str:
+    """`public_base_url`, reduced to something an absolute path can be stuck on.
+
+    The setting reads "the address links point back to", so a household
+    reasonably pasted the address they actually use — `https://host/app`, the
+    PWA. But every consumer here appends its OWN absolute path, so that one
+    value silently produced `https://host/app/account/set-password` (a 404 in
+    a grandparent's inbox, which is how this was found) and `https://host/app/
+    app` for every push deep link.
+
+    A trailing path is therefore dropped WHEN IT NAMES A PAGE OF THIS APP,
+    which is the mistake actually available to make. A path that matches no
+    route of ours is left alone — that is a mount prefix, and stripping it
+    would break an install served under one.
+    """
+    raw = (storage.get_settings().get('public_base_url') or '').strip().rstrip('/')
+    if not raw or '://' not in raw:
+        return raw
+    scheme, rest = raw.split('://', 1)
+    host, _, path = rest.partition('/')
+    if not path:
+        return raw
+    if path.split('/', 1)[0].lower() in _own_page_segments():
+        return f"{scheme}://{host}"
+    return raw
+
+
+def _account_link(token: str, request: Request = None) -> str:
+    """Where an invite or reset link points.
+
+    `public_base_url` wins when it is set: a household that has told us where
+    the app answers from outside knows better than any single request does.
+
+    Otherwise the ORIGIN OF THE REQUEST THAT CREATED THE LINK. The old
+    fallback was the empty string, which produced a bare
+    `/account/set-password?token=…` — mailed to somebody's phone, routable
+    from nowhere. A parent issuing an invite is by definition holding a
+    working address for this app, and using it beats emitting something that
+    cannot work. Same rule the push lane already follows for the same reason:
+    a mismatched or absent base must never be what 404s the tap.
+
+    Forwarded scheme and host are honoured, or every link minted from behind
+    the tunnel would say `http://` and name the container.
+    """
+    base = _public_origin()
+    if not base and request is not None:
+        h = request.headers
+        scheme = (h.get('x-forwarded-proto') or request.url.scheme or 'http').split(',')[0].strip()
+        host = (h.get('x-forwarded-host') or h.get('host') or request.url.netloc or '').split(',')[0].strip()
+        if host:
+            base = f"{scheme}://{host}"
     return f"{base}/account/set-password?token={token}"
+
+
+def _account_link_warning(link: str, request: Request = None) -> Optional[str]:
+    """What is wrong with the address this link carries, or None.
+
+    Checked at the moment of SENDING, in front of the parent who is about to
+    hand it over, because every other moment is too late: the person who finds
+    out it was wrong is a grandparent looking at `{"detail":"Not Found"}` with
+    nobody to ask.
+    """
+    if not link.startswith(('http://', 'https://')):
+        return ("This link has no address in front of it, so it will not open "
+                "anywhere. Set the Public URL in Integrations to wherever the "
+                "family reaches Chauffeur.")
+    if request is None:
+        return None
+    h = request.headers
+    # Ingress hands out a token in the path that ROTATES, so a link built from
+    # this request would be dead by the time anybody clicked it.
+    if h.get('x-ingress-path') and not (
+            storage.get_settings().get('public_base_url') or '').strip():
+        return ("You are on Home Assistant's ingress, whose address changes "
+                "between sessions, so this link will stop working. Set the "
+                "Public URL in Integrations first.")
+    here = (h.get('x-forwarded-host') or h.get('host') or '').split(',')[0].strip()
+    points_at = link.split('://', 1)[1].split('/', 1)[0]
+    if here and points_at and here.lower() != points_at.lower():
+        return (f"This link points at {points_at}, but you are on {here}. If "
+                f"that is not where the family reaches Chauffeur from, fix the "
+                f"Public URL in Integrations.")
+    return None
 
 
 class InviteRequest(BaseModel):
@@ -4980,12 +5076,15 @@ def invite_member(member_id: str, req: InviteRequest, request: Request = None,
     storage.update_member(member_id, {'email': email})
 
     token = storage.create_auth_link(member_id, 'invite', ttl_hours=168)
-    link = _account_link(token)
+    link = _account_link(token, request)
     result = mailer.send(email, "Your Chauffeur account",
                          mailer.invite_body(member.get('name') or 'there',
                                             "the family", link))
     return {"status": "ok", "sent": result['sent'], "reason": result['reason'],
-            "link": link, "email": email}
+            "link": link, "email": email,
+            # Said HERE, to the parent holding the invite, because the next
+            # person to find out is a grandparent reading a 404.
+            "link_warning": _account_link_warning(link, request)}
 
 
 class AcceptRequest(BaseModel):
@@ -5349,7 +5448,7 @@ class ForgotRequest(BaseModel):
 
 
 @app.post("/api/account/forgot")
-def account_forgot(req: ForgotRequest):
+def account_forgot(req: ForgotRequest, request: Request = None):
     """Always answers the same. Whether an address is on the family's account
     is not something a stranger gets to test."""
     from services import mailer
@@ -5358,7 +5457,7 @@ def account_forgot(req: ForgotRequest):
         token = storage.create_auth_link(member['id'], 'reset', ttl_hours=2)
         mailer.send(member['email'], "Reset your Chauffeur password",
                     mailer.reset_body(member.get('name') or 'there',
-                                      _account_link(token)))
+                                      _account_link(token, request)))
     return {"status": "ok"}
 
 
@@ -5728,7 +5827,7 @@ def _fanout_message_notifications(channel, message):
         else:
             title = f"{sender_name} · Family"
         body = (message.get('body') or '')[:180]
-        base = (storage.get_settings().get('public_base_url') or '').rstrip('/')
+        base = _public_origin()
         # Relative for web push (sw navigates on the PWA's own origin —
         # immune to public_base_url mismatch), absolute for HA companion.
         path = f"/app?open_channel={channel['id']}"
@@ -6303,7 +6402,7 @@ def _notify_member_lanes(member, title, body, path='/app', urgent=False):
         if not urgent and _fd.in_member_quiet_hours(member):
             return
         lanes = member.get('notify_lanes') or 'all'
-        base = (storage.get_settings().get('public_base_url') or '').rstrip('/')
+        base = _public_origin()
         if lanes in ('all', 'push'):
             send_push_to_member(member['id'], title, body, path)
         svc = member.get('notify_service') if lanes in ('all', 'ha') else None

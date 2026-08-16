@@ -344,7 +344,10 @@ ENTRIES: List[dict] = [
 
     # --- integrations
     _e('public_base_url', 'integrations', 'Public URL',
-       'The address push notifications and share links point back to.'),
+       'The address push notifications, invites and share links point back '
+       'to — just the address, with no page after it: '
+       'https://chauffeur.example.com, not .../app. Everything that uses it '
+       'adds its own page, so a page here lands people on /app/app or a 404.'),
     _e('ha_base_url', 'integrations', 'Home Assistant URL', 'Where Home Assistant lives.'),
     _e('ha_browser_url', 'panel', 'Home Assistant address for the panel',
        'Where a BROWSER reaches Home Assistant, for the dashboard tile — '

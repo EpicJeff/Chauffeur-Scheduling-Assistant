@@ -441,8 +441,18 @@
                         <input type="text" x-model="publicBaseUrl" @change="saveSettings()"
                             placeholder="https://chauffeur.example.com"
                             class="w-full max-w-lg bg-gray-800 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-mono">
-                        <p class="text-gray-500 text-sm mt-1">The HTTPS address the family's phones use to open the
-                            app. Used to build tap-through links in notifications.</p>
+                        <!-- "The address the phones use to open the app" is what
+                             put `/app` in here, and it was a fair reading: that
+                             IS the address a phone opens. But invites, push
+                             deep links and share links each add their own page
+                             on the end, so a page here produced /app/app and a
+                             404 in a grandparent's inbox. The app strips a
+                             trailing page of its own now; the wording should
+                             stop asking for one. -->
+                        <p class="text-gray-500 text-sm mt-1">The HTTPS address Chauffeur answers on from outside —
+                            the domain only, with no page after it. Invites, notification taps and share links each
+                            add their own page, so <span class="font-mono">/app</span> on the end sends people to
+                            <span class="font-mono">/app/app</span>.</p>
                     </div>
 
                     <!-- Music Assistant server (Sendspin phone player) -->
@@ -1596,6 +1606,12 @@
                                                         class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-xs">Copy</button>
                                                 </div>
                                                 <p class="text-xs text-gray-500 mt-1">Works once, expires in seven days.</p>
+                                                <!-- The address the link carries, checked while the
+                                                     parent still has it in front of them. The next
+                                                     person to notice it was wrong is whoever opens
+                                                     it and gets a bare 404 with nobody to ask. -->
+                                                <p x-show="inviteWarning" x-text="inviteWarning"
+                                                   class="text-xs text-amber-300 mt-2 leading-snug"></p>
                                             </div>
                                         </div>
                                         <div>
@@ -4286,7 +4302,7 @@
                 memberEdit: { calendar_ids: [] },
                 newMemberCalendarInput: '',
                 // Invites (auth arc S3)
-                inviteBusy: false, inviteLink: '', inviteSent: false,
+                inviteBusy: false, inviteLink: '', inviteSent: false, inviteWarning: '',
                 trustedDevices: [],                          // auth arc S5
                 pairCode: '', pairLabel: '', pairFound: null,  // auth arc S6
                 serviceToken: '', serviceBusy: false,          // auth arc S7
@@ -6036,7 +6052,8 @@
                         showGlobalAlert('Open a member and give them an email address first.');
                         return;
                     }
-                    this.inviteBusy = true; this.inviteLink = ''; this.inviteSent = false;
+                    this.inviteBusy = true; this.inviteLink = '';
+                    this.inviteSent = false; this.inviteWarning = '';
                     try {
                         const res = await fetch(`api/members/${memberId}/invite`, {
                             method: 'POST',
@@ -6057,6 +6074,11 @@
                         }
                         this.inviteLink = data.link;
                         this.inviteSent = !!data.sent;
+                        // Shown beside the link rather than as an alert: the
+                        // parent is about to hand this address over, and the
+                        // next person to discover it was wrong is whoever
+                        // opens it and gets a bare 404.
+                        this.inviteWarning = data.link_warning || '';
                         if (!data.sent && data.reason && data.reason !== 'no mail sender configured') {
                             showGlobalAlert(`Mail did not send (${data.reason}). The link below still works.`);
                         }

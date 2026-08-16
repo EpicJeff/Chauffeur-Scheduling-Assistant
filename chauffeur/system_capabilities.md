@@ -2486,3 +2486,18 @@ Valid JavaScript, valid Alpine, a real route, a real object, a 404 — the fifth
 
 - **`sendInvite()` takes no argument now**, and that is the fix rather than a tidy-up: it reads `editMemberId` and `memberEdit.email` from the component's own state, where the two cannot disagree, instead of trusting a caller to pass the right object. The button is disabled without an `editMemberId` as well as without an email. The email posted is the one TYPED rather than the one last saved — the server persists whatever it is given, and somebody who just entered an address and pressed Invite means that one.
 - **Test: `test_template_js.scenario_an_id_in_a_url_comes_from_something_that_has_one`**, and it follows the whole chain rather than one end of it — markup handler `fn(arg)` → `fn`'s body interpolating `${param.id}` into a template literal → `arg` being a component-state object literal that never gets an id. The first draft of this test only inspected the function body, where `member` is a PARAMETER and therefore unknowable; it passed on the broken code. Verified against HEAD: it names `sendInvite() <- memberEdit` and nothing else.
+
+## One setting with a page on the end broke three kinds of link (v2.257.2)
+
+`{"detail":"Not Found"}` from a freshly mailed invite. The route was fine; the ADDRESS in front of it was not — the link read `https://<host>/app/account/set-password`.
+
+**Public App URL** (`public_base_url`) held the address the family's phones actually open, which is the PWA at `/app`. A fair reading of a field whose help said *"the HTTPS address the family's phones use to open the app"*. But every consumer appends its OWN absolute path, so that single value silently produced:
+
+- `…/app/account/set-password` — invites and password resets, 404
+- `…/app/app` — the HA companion notification deep link (the web-push lane was already immune: it goes RELATIVE, which is the same lesson learned once before)
+
+- **`_public_origin()`** drops a trailing path **when it names a page of this app** — the segment is checked against the first path component of every registered route. A path matching no route of ours is kept, because that is a mount prefix and stripping it would break an install served under one. All three consumers go through it.
+- **`_account_link` no longer emits a bare path.** With no setting at all it falls back to the origin of the request that minted the link, forwarded scheme and host honoured — a parent issuing an invite is by definition holding a working address, and the old fallback was `''`, which mailed `/account/set-password?token=…` to somebody's phone.
+- **`_account_link_warning`** says what is wrong with the address while the PARENT still has it: no origin at all, minted through ingress (whose path token rotates, so the link would rot), or pointing somewhere other than where they are standing. Shown beside the link in the invite box. The next person to notice otherwise is a grandparent reading a 404 with nobody to ask.
+- **The wording that invited it is fixed** in both the registry and the field's own help: the domain only, no page, and why.
+- Tests: `test_accounts.scenario_an_invite_link_carries_an_address_that_works` covers all five states including the `/app` case and a genuine mount prefix.

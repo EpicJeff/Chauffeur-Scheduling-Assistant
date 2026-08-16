@@ -313,6 +313,91 @@ def scenario_o_a_pin_opens_a_trusted_device_and_nothing_else():
           "revoking a device did not actually revoke it")
 
 
+def scenario_an_invite_link_carries_an_address_that_works():
+    """`{"detail":"Not Found"}`, reported by the household from a link that had
+    just been mailed. The route was fine; the ADDRESS in front of it was not.
+
+    `_account_link` pasted `public_base_url` in front of the path and did
+    nothing when that setting was empty — producing a bare
+    `/account/set-password?token=…`, sent to somebody's phone, routable from
+    nowhere. The push lane learned this already ("a mismatched or stale
+    public_base_url must never be what 404s the tap") and went relative; an
+    email cannot, so it falls back to the origin of the request that minted it.
+    A parent issuing an invite is by definition holding a working address.
+
+    And whatever is wrong with it is said in front of the PARENT, while they
+    still have the link — the next person to find out is a grandparent looking
+    at a 404 with nobody to ask.
+    """
+    import main
+    from starlette.requests import Request
+
+    def _req(headers):
+        return Request({'type': 'http', 'method': 'POST', 'path': '/x',
+                        'headers': [(k.encode(), v.encode())
+                                    for k, v in headers.items()],
+                        'query_string': b'', 'scheme': 'http',
+                        'server': ('addon', 8000), 'root_path': ''})
+
+    # `harness` stubs `storage.get_settings` to a constant, so the setting is
+    # swapped on the accessor rather than written to the database.
+    real_get = storage.get_settings
+
+    def _with(url):
+        storage.get_settings = lambda: {'calendar_ids': [], 'public_base_url': url}
+
+    tunnel = _req({'host': 'chauffeur.example.com', 'x-forwarded-proto': 'https'})
+    try:
+        # No setting: the request's own origin, forwarded scheme honoured, or
+        # every link minted behind the tunnel would say http:// and name the
+        # container.
+        _with('')
+        link = main._account_link('TOK', tunnel)
+        check(link == 'https://chauffeur.example.com/account/set-password?token=TOK',
+              f"an invite mailed from the tunnel does not point at it: {link}")
+        check(main._account_link_warning(link, tunnel) is None,
+              "a link that is already right was complained about")
+
+        # Nothing to go on at all: still flagged rather than mailed blind.
+        bare = main._account_link('TOK')
+        check(bare.startswith('/'), f"expected the bare path case: {bare}")
+        check(main._account_link_warning(bare),
+              "a link with no address in front of it was sent without a word")
+
+        # Ingress: the token in that path rotates, so a link built from it is
+        # dead by the time anybody clicks. Say so instead of minting it quietly.
+        ing = _req({'host': 'ha.local:8123',
+                    'x-ingress-path': '/api/hassio_ingress/AB12'})
+        warn = main._account_link_warning(main._account_link('TOK', ing), ing)
+        check(warn and 'ingress' in warn.lower(),
+              f"an invite minted through ingress was not flagged: {warn}")
+
+        # THE ONE THAT BIT THE HOUSEHOLD: the Public URL was the address they
+        # actually use, `https://chauffeur.example.com/app` — and every consumer
+        # appends its own absolute path, so the invite pointed at
+        # `/app/account/set-password` and 404'd in an inbox. A trailing path
+        # that names a page of ours is dropped; a mount prefix is not.
+        _with('https://chauffeur.example.com/app')
+        link = main._account_link('TOK', tunnel)
+        check(link == 'https://chauffeur.example.com/account/set-password?token=TOK',
+              f"a Public URL pointing at the PWA still poisons the invite: {link}")
+        _with('https://host.example/chauffeur')
+        link = main._account_link('TOK', tunnel)
+        check(link.startswith('https://host.example/chauffeur/account/'),
+              f"a genuine mount prefix was stripped: {link}")
+
+        # A setting that no longer matches where the parent actually is.
+        _with('http://192.168.1.9:8000')
+        link = main._account_link('TOK', tunnel)
+        check(link.startswith('http://192.168.1.9:8000'),
+              f"an explicit Public URL lost to the request: {link}")
+        warn = main._account_link_warning(link, tunnel)
+        check(warn and '192.168.1.9:8000' in warn and 'chauffeur.example.com' in warn,
+              f"a stale Public URL was mailed without comment: {warn}")
+    finally:
+        storage.get_settings = real_get
+
+
 def scenario_o2_a_device_may_ask_what_it_is_called_but_only_about_itself():
     """Not parent-gated, unlike the list a lost tablet is revoked from: the
     caller already knows the id it is asking about — it minted the thing — so
