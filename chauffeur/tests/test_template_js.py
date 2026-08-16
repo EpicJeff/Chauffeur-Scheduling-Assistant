@@ -138,6 +138,43 @@ def scenario_every_x_model_root_is_defined_somewhere():
           "\n  " + "\n  ".join(broken))
 
 
+def scenario_a_cloaked_element_is_hidden_by_something_the_page_actually_has():
+    """The third member of the blank-page family, and the worst so far.
+
+    `x-cloak` hides nothing on its own. It needs a `[x-cloak] { display: none }`
+    rule from the page AND Alpine to take the attribute off afterwards — and a
+    shared component included by nav.html cannot assume either. Six admin pages
+    (Schedule, Calendar, Trips, Map, Moments, the trip pages) run no Alpine and
+    define no cloak rule, so S6's pairing overlay — `fixed inset-0 z-[9500]
+    bg-black` — painted over all of them permanently. A black screen with only
+    Home Assistant's chrome around it, no error, HTTP 200.
+
+    So: any page that ends up with a cloaked element must ALSO end up with a
+    rule that hides one. Checked on the ASSEMBLED page, includes and all,
+    because the element and the rule usually live in different files.
+    """
+    import re as _re
+    import tpl_source
+    broken = []
+    for path in sorted(glob.glob(os.path.join(TPL, '*.html'))):
+        name = os.path.basename(path)
+        try:
+            full = tpl_source.read(name)
+        except Exception:
+            full = open(path, encoding='utf-8').read()
+        if 'x-cloak' not in full:
+            continue
+        # The rule as a CSS selector, not the attribute: `[x-cloak]` followed
+        # by a declaration block is what actually hides anything.
+        if _re.search(r'\[x-cloak\][^{]*\{[^}]*display\s*:\s*none', full):
+            continue
+        broken.append(name)
+    check(not broken,
+          "pages carrying x-cloak with no rule that hides it — every cloaked "
+          "element draws, and a full-screen one is a blank page:\n  "
+          + "\n  ".join(broken))
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

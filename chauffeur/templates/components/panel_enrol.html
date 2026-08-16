@@ -14,7 +14,32 @@
    It also self-heals: a factory-reset screen just needs the URL again, with
    no admin action first. #}
 
+{# HIDDEN BY ITS OWN MARKUP, not by the host page's stylesheet.
+
+   This shipped relying on `[x-cloak] { display: none }` and on Alpine being
+   there to take the attribute off — and nav.html is included by pages that
+   provide NEITHER. Six of them (Schedule, Calendar, Trips, Map, Moments and
+   the trip pages) run no Alpine at all and define no cloak rule, so a
+   `fixed inset-0 z-[9500] bg-black` div sat over the whole page forever: a
+   black screen with only Home Assistant's chrome around it, on every admin
+   page that mattered, with nothing in the console to explain it.
+
+   So it carries both halves itself. The inline `display:none` is the one that
+   actually holds on a page with no Alpine and no stylesheet rule; Alpine's
+   `x-show` removes the property outright when it shows the overlay, so the
+   two do not fight. The rule below is here for the same component's sake and
+   for anything else drawn under nav that cloaks itself.
+
+   KNOWN GAP, and it is the honest consequence: on a page with no Alpine this
+   overlay can never DRAW either, so a kiosk refused on /trip?kiosk=true has
+   no way to show its pairing code. Nothing is lost today — `chfRequestPairing`
+   only fires on a 401/403 and the guard is still dark — but S8 must not flip
+   enforcement until those pages either run Alpine or send a refused screen
+   somewhere that does. #}
+<style>[x-cloak] { display: none !important; }</style>
+
 <div id="panel-enrol" x-data="panelEnrol()" x-init="init()" x-show="open" x-cloak
+     style="display: none"
      class="fixed inset-0 z-[9500] bg-black flex items-center justify-center p-8">
   <div class="w-full max-w-2xl text-center space-y-8">
 
