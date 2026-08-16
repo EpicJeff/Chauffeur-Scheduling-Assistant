@@ -81,18 +81,74 @@ school morning.
 impersonation hole (today any caller can post a message as any member) and is
 the part that must land before enforcement means anything.
 
-### Decision 4 — the dashboard gets a real parent login
+### Decision 4 — real accounts: adding a person IS creating a user
 
-Not a LAN check. Parents administer remotely, so `/dashboard` and `/config`
-get the same member-token session the PWA has, with a parent role gate.
-Consequence, accepted: **parents must have a PIN** — the "members without a
-PIN authenticate freely" default is right for a household and wrong for the
-public internet, so it survives for kids and ends for parents.
+Decided by the household 2026-08-15, and it supersedes the picker-and-PIN
+model this brief originally proposed. **If we are shipping a native app, this
+is a real service and it gets real accounts**: a parent adds a person with an
+email address, that person receives a link, verifies, and sets a password.
 
-`/api/members/{id}/pin/clear` becomes parent-gated in the same slice, because
-gating it before the dashboard has an identity would silently remove the
-parent's PIN reset ([config.html](../templates/config.html) calls it with no
-token today).
+The reasoning that makes it more than convention: the load arc deliberately
+brought outsiders into the model — helpers, carpool parents, grandparents —
+and the native app track exists because *those* are the people who will only
+ever install one app. "Pick your face off a list and type four digits" is a
+kitchen-tablet gesture. It does not survive contact with a public origin or
+with a grandparent two states away, and no amount of rate limiting makes it
+into an account.
+
+**The account IS the `FamilyMember`.** One entity gains `email`,
+`password_hash`, and verification state — no parallel `User` table, which
+would drift from the member record within a release (the app already treats
+the member as the identity everywhere; a second identity object would just be
+two things to keep in sync). `AssistContact` is unaffected: a contact is
+someone the household records, not someone who signs in. Promoting a contact
+to a helper still means creating a member, which now means sending an invite.
+
+### Decision 4b — not everyone has an email, and that is fine
+
+A seven-year-old has no inbox, and making one a prerequisite for appearing on
+the family's schedule would be absurd. So:
+
+- **Members with an email** get the full flow: invite → verify → password.
+- **Members without one** are parent-created and parent-managed. Their
+  credential is a PIN, set and reset by a parent, and they never receive mail.
+- Which one a child gets follows the **stage** primitive A4 already shipped —
+  Sprout and Explorer are PIN-only by default, Navigator and Copilot can hold
+  an email and a password. Growing up is granted, exactly as A4 says.
+
+### Decision 4c — the PIN survives, demoted to what it is good at
+
+PINs do not die; they stop being the front door. The pattern every banking app
+uses: **the password establishes the account on a device, the PIN re-opens it
+on a device already trusted.** That keeps the thing the family actually does
+every day — fast identity switching on the shared tablet and the wall — while
+the credential that faces the internet is a real password.
+
+Consequence, accepted: **parents must have a password** (their own answer to
+the same question), and `/api/members/{id}/pin/clear` becomes parent-gated in
+the slice that gives the dashboard an identity. Gating it before then would
+silently remove the parent's PIN reset —
+[config.html](../templates/config.html) calls it with no token today.
+
+### Decision 4d — email plumbing, and the fallback when there is none
+
+Outbound mail does not exist yet; inbound does. Intake already stores
+`ingest_email_host` / `ingest_email_user` / `ingest_email_password` for a
+dedicated Gmail polled over IMAP, and **a Gmail app password authenticates
+SMTP just as well** — so invites, verifications and resets go out from the
+family's own address with no new credential and no third-party mail service.
+Links are built from the `public_base_url` setting the cloudflared hostname
+already populates.
+
+**Email must not become a hard dependency**, in the same spirit as the
+standing rule that every HA touchpoint degrades gracefully. With no mail
+configured, an invite produces a **copyable one-time link** the parent hands
+over however they like. Same token, same expiry, one less moving part.
+
+**Noted honestly:** password reset by email makes the intake mailbox a master
+key to the household. That mailbox is already a curated forwarding address
+rather than a personal inbox, which helps, but it belongs in the security
+section rather than in a footnote.
 
 ### Decision 5 — panels enrol as devices
 
@@ -110,18 +166,18 @@ hostname keep working during a **grace window controlled by a setting**, so
 nothing breaks the day this ships. The grace is a dated migration step, not a
 permanent tier — a permanently trusted LAN is a second open door.
 
-## Open questions for the household
+## Settled by the household 2026-08-15
 
-- **The member picker leaks names.** `/api/members` must answer before anyone
-  can sign in, so family first names and avatars are readable by anyone with
-  the hostname. Options: accept it (they are first names), or put a household
-  passphrase in front of the whole origin (one more secret to share with
-  helpers, and it weakens the per-member story).
-- **Parent credential strength.** A 4-digit PIN is thin as the only barrier on
-  a public origin. Options: require 6–8 digits for parents, or a real password
-  for the parent role while kids keep PINs.
-- **Rate limiting is in-memory** (`_PIN_ATTEMPTS`) and resets on every add-on
-  restart. It should be persisted and per-IP as well as per-member.
+- **Accounts, not a picker** (Decision 4). The member-name leak that the
+  picker created is settled by deleting the picker as the front door: with a
+  login, `/api/members` no longer has to answer before authentication.
+- **Parents hold a real password**, not a longer PIN.
+- **Argyle gets a grace window, then a service token** (Decision 6) — nothing
+  breaks in the sitting where enforcement flips.
+
+Still to fix, not a question: **rate limiting is in-memory**
+(`_PIN_ATTEMPTS`) and resets on every add-on restart. It must be persisted,
+and per-IP as well as per-identity, before anything faces the internet.
 
 ## Slices
 
@@ -130,12 +186,24 @@ permanent tier — a permanently trusted LAN is a second open door.
   user-visible.
 - **S2 — identity from the token.** Derive the member; stop trusting supplied
   ids. Impersonation closes here.
-- **S3 — the parent login.** Dashboard/config session, mandatory parent PINs,
-  `pin/clear` gated, persistent and per-IP rate limiting.
-- **S4 — device enrolment** for panels.
-- **S5 — the service token** and the component update; grace window ends.
-- **S6 — flip enforcement**, tighten CORS off `*`, token expiry and
+- **S3 — accounts.** `email` / `password_hash` / verification state on
+  `FamilyMember`; invite, verify, set-password and reset flows with signed
+  expiring tokens; SMTP send over the existing intake credentials, with the
+  copyable-link fallback; the sign-in page that replaces the picker.
+- **S4 — the parent login on the admin surface.** Dashboard/config sessions,
+  parent passwords mandatory, `pin/clear` gated, rate limiting persisted and
+  per-IP.
+- **S5 — PIN demoted to device re-auth**, so shared-device switching stays
+  fast; stage-driven defaults for children (Sprout/Explorer PIN-only).
+- **S6 — device enrolment** for panels.
+- **S7 — the service token** and the component update; grace window ends.
+- **S8 — flip enforcement**, tighten CORS off `*`, token expiry and
   revocation, and the security section in `system_capabilities.md`.
+
+Accounts grew this from six slices to eight, and S3 is the largest single
+piece of work in it. That is the honest cost of the decision, and it buys the
+thing the native app track needs anyway: a person who holds this app has an
+account, not a seat at a kitchen tablet.
 
 ## Deliberately out
 
