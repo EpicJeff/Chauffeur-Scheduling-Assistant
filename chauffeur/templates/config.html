@@ -1089,22 +1089,37 @@
                                 on it with their password. After that, everyone in the family &mdash;
                                 including kids with no account &mdash; can get back in by tapping their
                                 face and typing a PIN. Revoke one you no longer have.</p>
-                            <div class="flex items-center gap-2 flex-wrap py-2">
-                                <button type="button" @click="makeEnrolCode()" :disabled="enrolBusy"
-                                    class="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 px-4 py-2 rounded font-semibold text-sm">
-                                    ➕ Add a wall panel
-                                </button>
-                                <template x-if="enrolCode">
-                                    <div class="flex items-center gap-3">
-                                        <span class="font-mono text-3xl tracking-[0.3em] text-sky-300"
-                                              x-text="enrolCode"></span>
-                                        <span class="text-xs text-gray-400">
-                                            On the panel, open
-                                            <code class="text-gray-300">?panel=true&amp;enrol=1</code>
-                                            and type this. Expires in 10 minutes.
-                                        </span>
-                                    </div>
-                                </template>
+                            <!-- The screen shows a code; a parent types it HERE,
+                                 where they are already signed in. -->
+                            <div class="py-3 border-b border-gray-800 space-y-2">
+                                <p class="text-gray-300 text-sm font-semibold">Pair a screen</p>
+                                <p class="text-gray-500 text-xs">Open Chauffeur on the wall panel or
+                                    tablet. If it isn't paired yet it will show a six-digit code —
+                                    type that in here.</p>
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <input type="text" inputmode="numeric" maxlength="6"
+                                        x-model="pairCode" @input="lookupPairing()"
+                                        placeholder="000000"
+                                        class="bg-gray-800 border border-gray-600 rounded px-3 py-2 font-mono text-xl tracking-[0.3em] w-40 text-center">
+                                    <input type="text" x-model="pairLabel" placeholder="Kitchen panel"
+                                        class="bg-gray-800 border border-gray-600 rounded px-3 py-2 flex-1 min-w-[180px]">
+                                    <button type="button" @click="approvePairing()"
+                                        :disabled="pairBusy || pairCode.length !== 6"
+                                        class="bg-green-700 hover:bg-green-600 disabled:opacity-40 px-4 py-2 rounded font-semibold text-sm">
+                                        Let it in
+                                    </button>
+                                </div>
+                                <!-- What is asking, so approval is a decision about a
+                                     specific screen rather than a blind six digits. -->
+                                <p x-show="pairFound" class="text-xs text-green-300">
+                                    A screen is waiting
+                                    <span x-show="pairFound && pairFound.context && pairFound.context.from"
+                                          x-text="'(from ' + pairFound.context.from + ')'"></span>.
+                                </p>
+                                <p x-show="pairCode.length === 6 && !pairFound && !pairBusy"
+                                   class="text-xs text-amber-300">
+                                    No screen is waiting with that code — check it's still on screen.
+                                </p>
                             </div>
                             <template x-for="d in trustedDevices" :key="d.device_id">
                                 <div class="flex items-center gap-3 py-2 border-b border-gray-800">
@@ -4220,7 +4235,8 @@
                 // Invites (auth arc S3)
                 inviteBusy: false, inviteLink: '', inviteSent: false,
                 trustedDevices: [],                          // auth arc S5
-                enrolCode: '', enrolBusy: false,              // auth arc S6
+                pairCode: '', pairLabel: '', pairFound: null,  // auth arc S6
+                pairBusy: false,
                 // Status Days (Presence & Status arc P1)
                 statusProtocols: [],
                 // Stages (load arc A4)
@@ -5828,21 +5844,32 @@
                     if (!res.ok) showGlobalAlert('Could not set PIN.');
                     await this.loadMembers();
                 },
-                // Pairing a wall panel (auth arc S6)
-                async makeEnrolCode() {
-                    this.enrolBusy = true;
+                // Pairing a screen (auth arc S6). The DEVICE shows the
+                // code; this is where a signed-in parent says yes.
+                async lookupPairing() {
+                    this.pairFound = null;
+                    if ((this.pairCode || '').length !== 6) return;
                     try {
-                        const r = await fetch('api/account/devices/enrol-code', {
+                        const r = await fetch(
+                            `api/account/devices/pair-pending/${encodeURIComponent(this.pairCode)}`);
+                        if (r.ok) this.pairFound = await r.json();
+                    } catch (e) { /* the message below covers not-found */ }
+                },
+
+                async approvePairing() {
+                    this.pairBusy = true;
+                    try {
+                        const r = await fetch('api/account/devices/pair-approve', {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ label: 'Wall panel' }) });
+                            body: JSON.stringify({ code: this.pairCode,
+                                                   label: this.pairLabel || 'Wall panel' }) });
                         const d = await r.json();
-                        if (!r.ok) { showGlobalAlert(d.detail || 'Could not make a code.'); return; }
-                        this.enrolCode = d.code;
-                        // Gone after ten minutes on screen too, so a code left
-                        // on a laptop does not read as still good.
-                        setTimeout(() => { this.enrolCode = ''; this.loadDevices(); }, 600000);
+                        if (!r.ok) { showGlobalAlert(d.detail || 'Could not pair that screen.'); return; }
+                        showGlobalAlert(`${d.label} is in. The screen will load its board in a moment.`);
+                        this.pairCode = ''; this.pairLabel = ''; this.pairFound = null;
+                        this.loadDevices();
                     } catch (e) { showGlobalAlert('Could not reach the server.'); }
-                    finally { this.enrolBusy = false; }
+                    finally { this.pairBusy = false; }
                 },
 
                 // Trusted devices (auth arc S5)

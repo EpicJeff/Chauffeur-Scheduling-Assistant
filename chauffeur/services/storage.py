@@ -408,6 +408,8 @@ with db_lock:
     rate_limits_table = db.table('rate_limits')
     # Devices a PIN may re-open (auth arc S5); panels join them in S6.
     trusted_devices_table = db.table('trusted_devices')
+    # Screens asking to be let in, waiting on a parent (auth arc S6).
+    pending_pairings_table = db.table('pending_pairings')
     chores_table = db.table('chores')
     points_ledger_table = db.table('points_ledger')
     routines_table = db.table('routines')
@@ -1456,6 +1458,74 @@ def trust_device(device_id: str, label: str = None, by_member: str = None,
     return row
 
 
+# --- Pairing requests: the DEVICE asks, a parent approves (auth arc S6) ---
+# The direction matters and an earlier draft had it backwards. A parent minted
+# a code and somebody typed it into the panel, which meant the secret
+# travelled TO the untrusted screen and a human stood at a hallway touchscreen
+# entering six digits and a label. Every pairing flow anybody has actually
+# used — a TV, a console, a streaming box — works the other way: the device
+# displays a code, and the human carries it to a surface where they are
+# already signed in. Approval then happens where authentication already is,
+# and the panel never takes input at all.
+
+
+def request_pairing(device_id: str, code: str, ttl_minutes: int = 15,
+                    context: dict = None) -> dict:
+    """A screen asking to be let in. One live request per device — asking
+    again replaces the old code rather than leaving two valid."""
+    import time
+    now = time.time()
+    row = {'device_id': device_id, 'code': code, 'requested_at': now,
+           'expires_at': now + ttl_minutes * 60, 'approved_at': None,
+           'device_token': None, 'label': None,
+           # Carried so the approving parent can tell whether the thing asking
+           # is the thing in front of them, rather than approving a code blind.
+           'context': context or {}}
+    with db_lock:
+        pending_pairings_table.remove(Query().device_id == device_id)
+        pending_pairings_table.insert(row)
+    return row
+
+
+def get_pairing_by_code(code: str) -> Optional[dict]:
+    import time
+    if not code:
+        return None
+    with db_lock:
+        rows = pending_pairings_table.search(Query().code == str(code))
+    live = [r for r in rows if not r.get('approved_at')
+            and r.get('expires_at', 0) > time.time()]
+    return live[0] if live else None
+
+
+def get_pairing_by_device(device_id: str) -> Optional[dict]:
+    if not device_id:
+        return None
+    with db_lock:
+        rows = pending_pairings_table.search(Query().device_id == device_id)
+    return rows[0] if rows else None
+
+
+def approve_pairing(code: str, label: str, by_member: str = None) -> Optional[dict]:
+    """Mint the device's token and mark the request done. The panel is
+    polling for exactly this."""
+    import time
+    row = get_pairing_by_code(code)
+    if not row:
+        return None
+    token = enrol_device_token(row['device_id'], label, by_member=by_member)
+    with db_lock:
+        pending_pairings_table.update(
+            {'approved_at': time.time(), 'device_token': token, 'label': label},
+            Query().device_id == row['device_id'])
+    return {**row, 'device_token': token, 'label': label}
+
+
+def clear_pairing(device_id: str) -> None:
+    with db_lock:
+        pending_pairings_table.remove(Query().device_id == device_id)
+
+
 def enrol_device_token(device_id: str, label: str, by_member: str = None) -> str:
     """Give a device its own credential (auth arc S6).
 
@@ -1676,18 +1746,6 @@ def consume_auth_link(token: str) -> Optional[dict]:
     with db_lock:
         auth_links_table.update({'used_at': time.time()}, Query().token == token)
     return link
-
-
-def get_auth_links_by_prefix(prefix: str) -> List[dict]:
-    """Live links whose kind starts with a prefix — how a pairing code is
-    looked up without the code itself becoming a row id."""
-    import time
-    now = time.time()
-    with db_lock:
-        rows = auth_links_table.all()
-    return [r for r in rows
-            if str(r.get('kind') or '').startswith(prefix)
-            and not r.get('used_at') and r.get('expires_at', 0) > now]
 
 
 def invalidate_auth_links(member_id: str, kind: str = None) -> None:

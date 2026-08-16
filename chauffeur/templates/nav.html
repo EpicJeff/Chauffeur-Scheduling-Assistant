@@ -339,7 +339,17 @@
                     }
                 }
             } catch (e) { /* auth plumbing must never break a fetch */ }
-            return _fetch(input, init);
+            return _fetch(input, init).then(res => {
+                // A screen that is refused asks to be let in — reactively, so
+                // nothing is demanded of a panel that is working fine today.
+                try {
+                    if (res && (res.status === 401 || res.status === 403)
+                        && typeof window.chfRequestPairing === 'function') {
+                        window.chfRequestPairing();
+                    }
+                } catch (e) { /* never let this swallow the response */ }
+                return res;
+            });
         };
     })();
 

@@ -355,20 +355,59 @@ def scenario_s_a_panel_gets_the_room_not_the_admin_keys():
               f"a wall panel could reach {admin}")
 
 
-def scenario_t_a_pairing_code_is_short_lived_and_single_use():
-    """Six digits is only safe because it expires and cannot be reused."""
-    m = _member('Pairing')
-    code = '424242'
-    storage.create_auth_link(m, f"enrol:{code}:Kitchen panel", ttl_hours=1 / 6)
-    found = storage.get_auth_links_by_prefix(f"enrol:{code}:")
-    check(found, "a fresh pairing code could not be found")
-    storage.consume_auth_link(found[0]['token'])
-    check(not storage.get_auth_links_by_prefix(f"enrol:{code}:"),
-          "a spent pairing code was still live")
-    # And an expired one is never offered.
-    storage.create_auth_link(m, "enrol:999999:Old", ttl_hours=0)
-    check(not storage.get_auth_links_by_prefix("enrol:999999:"),
-          "an expired pairing code was still live")
+def scenario_t_the_device_asks_and_a_parent_answers():
+    """The direction is the design. An earlier draft had a parent mint the
+    code and somebody type it into the panel, which sent the secret TO the
+    untrusted screen and made a person stand at a hallway touchscreen typing
+    six digits. The device asks; the human approves where they are already
+    signed in; the panel never takes input."""
+    storage.clear_pairing('panel-9')
+    storage.untrust_device('panel-9')
+    storage.request_pairing('panel-9', '123456', ttl_minutes=15,
+                            context={'from': 'this network'})
+
+    # The screen is waiting, and nothing has been granted yet.
+    waiting = storage.get_pairing_by_code('123456')
+    check(waiting and waiting['device_id'] == 'panel-9',
+          "the screen's request was not findable by its code")
+    check(not waiting.get('device_token'),
+          "asking to pair handed out a token before anybody approved")
+    check(storage.get_pairing_by_device('panel-9')['approved_at'] is None,
+          "the request started out approved")
+
+    # A parent says yes.
+    done = storage.approve_pairing('123456', 'Kitchen panel', by_member='mum')
+    check(done and done['device_token'], f"approval minted no token: {done}")
+    check(storage.get_device_by_token(done['device_token']) is not None,
+          "the approved token was not usable")
+
+    # And the code cannot be spent twice.
+    check(storage.get_pairing_by_code('123456') is None,
+          "an approved code was still live for a second screen")
+    storage.clear_pairing('panel-9')
+
+
+def scenario_t2_asking_again_replaces_the_old_code():
+    """A screen left up all night re-asks; two live codes for one panel would
+    mean a parent could approve one nobody is looking at."""
+    storage.clear_pairing('panel-10')
+    storage.request_pairing('panel-10', '111111', ttl_minutes=15)
+    storage.request_pairing('panel-10', '222222', ttl_minutes=15)
+    check(storage.get_pairing_by_code('111111') is None,
+          "the old code stayed live after the screen asked again")
+    check(storage.get_pairing_by_code('222222') is not None,
+          "the new code did not take")
+    storage.clear_pairing('panel-10')
+
+
+def scenario_t3_an_expired_request_is_never_approvable():
+    storage.clear_pairing('panel-11')
+    storage.request_pairing('panel-11', '333333', ttl_minutes=0)
+    check(storage.get_pairing_by_code('333333') is None,
+          "an expired pairing request was still offered")
+    check(storage.approve_pairing('333333', 'Nope') is None,
+          "an expired pairing request could still be approved")
+    storage.clear_pairing('panel-11')
 
 
 def scenario_u_a_service_token_must_match_the_configured_one():

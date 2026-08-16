@@ -1943,6 +1943,11 @@
                 return;
             }
             const params = new URLSearchParams(window.location.search);
+            // Pairing deeplink (auth arc S6): a screen asked to join, the push
+            // carried the code, and this is the tap that finishes it. Handled
+            // before the view routing below because it is a one-shot action
+            // rather than a place to be.
+            if (params.get('pair')) offerPairing(params.get('pair'));
             const openChannelParam = params.get('open_channel');
             if (openChannelParam && selectedMemberId) {
                 setView('messages');
@@ -3281,6 +3286,53 @@
 
         function memberToken() {
             return localStorage.getItem('chauffeur_member_token') || '';
+        }
+
+        // Finish a pairing from the push (auth arc S6).
+        //
+        // The whole point is that the person holding the phone is usually the
+        // one standing at the panel — telling them to go and find a laptop is
+        // how a two-minute job becomes a Saturday one. So the code rides in
+        // the notification and the tap lands here.
+        async function offerPairing(code) {
+            const clean = String(code).replace(/\D/g, '').slice(0, 6);
+            if (clean.length !== 6) return;
+            // Only a parent can approve, and saying so beats a 403 nobody can
+            // act on. The server enforces it regardless; this is the manners.
+            const me = (membersData || []).find(m => m.id === selectedMemberId);
+            if (me && me.role !== 'parent') {
+                showGlobalAlert('Ask a parent to let that screen in.');
+                return;
+            }
+            let info = null;
+            try {
+                const r = await fetch(`${apiBase}api/account/devices/pair-pending/${clean}`,
+                                      { headers: { 'X-Member-Token': memberToken() } });
+                if (r.ok) info = await r.json();
+            } catch (e) { /* the confirm below still stands on the code */ }
+            if (!info) {
+                showGlobalAlert('That screen is no longer waiting — the code may have expired.');
+                return;
+            }
+            const where = (info.context && info.context.from) || 'somewhere';
+            const label = await promptInput(
+                'Let this screen in?',
+                `A screen is asking to join from ${where}. What should it be called?`,
+                { placeholder: 'Kitchen panel', okText: 'Let it in' });
+            if (label === null) return;   // cancelled: nothing is trusted
+            try {
+                const r = await fetch(`${apiBase}api/account/devices/pair-approve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json',
+                               'X-Member-Token': memberToken() },
+                    body: JSON.stringify({ code: clean, label: label || 'Wall panel' })
+                });
+                const d = await r.json();
+                showGlobalAlert(r.ok ? `${d.label} is in.`
+                                     : (d.detail || 'Could not pair that screen.'));
+            } catch (e) {
+                showGlobalAlert('Could not reach Chauffeur.');
+            }
         }
 
         // One id per installed app, minted on first use and never rotated.

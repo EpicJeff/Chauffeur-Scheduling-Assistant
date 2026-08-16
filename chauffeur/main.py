@@ -4983,55 +4983,101 @@ def revoke_trusted_device(device_id: str, x_member_token: Optional[str] = Header
     return {"status": "revoked", "device_id": device_id}
 
 
-class EnrolCodeRequest(BaseModel):
-    label: Optional[str] = None
+class PairRequest(BaseModel):
+    device_id: str
 
 
-@app.post("/api/account/devices/enrol-code")
-def create_enrol_code(req: EnrolCodeRequest, x_member_token: Optional[str] = Header(None)):
-    """A short pairing code a parent reads out to the panel (auth arc S6).
+@app.post("/api/account/devices/pair-request")
+def request_device_pairing(req: PairRequest, request: Request = None):
+    """A screen asks to be let in and shows a code (auth arc S6).
 
-    The TV-pairing shape, and it is the right one for a screen bolted to a
-    wall: it has no keyboard worth using, nobody signs in on it, and typing an
-    email and password on a touch panel in a hallway is the kind of thing that
-    gets done once and then worked around forever.
+    THE DEVICE INITIATES. An earlier draft had a parent mint the code and
+    somebody type it into the panel, which is backwards: it sent the secret TO
+    the untrusted screen and made a person stand at a hallway touchscreen
+    typing six digits. Every pairing flow anybody has actually used works this
+    way round — the device displays, the human carries the code to a surface
+    where they are already signed in — and the panel never takes input at all.
 
-    Six digits, ten minutes, single use — short because somebody is reading it
-    off a laptop across the room, and short-lived because that is what makes
-    six digits enough."""
-    parent = require_parent_token(x_member_token)
+    Open to anyone, necessarily: a screen with no credential is exactly who
+    calls this. The code alone grants nothing; a parent still has to approve
+    it, and they are shown what is asking. Rate-limited per address so it
+    cannot be used to spray codes at a household."""
+    _pin_rate_check('pair', request)
+    _pin_rate_record('pair', False, request)   # every request counts
     import secrets
     code = f"{secrets.randbelow(1000000):06d}"
-    storage.create_auth_link(parent['id'], f"enrol:{code}:{req.label or 'Wall panel'}",
-                             ttl_hours=1 / 6)
-    return {"code": code, "expires_in_minutes": 10}
+    headers = request.headers if request else {}
+    where = 'the internet' if _auth_via_tunnel(headers) else 'this network'
+    row = storage.request_pairing(req.device_id, code, ttl_minutes=15, context={
+        'user_agent': (headers.get('user-agent') or '')[:200], 'from': where})
+
+    # Tell the parents, with the code in the push and a deep link that opens
+    # the app already holding it. Without this, pairing means walking to a
+    # laptop and finding a settings page — and the person at the panel is
+    # usually the one who cannot do that. The push carries the code because a
+    # notification you have to act on twice is one people put off.
+    for parent in storage.get_all_members():
+        if parent.get('role') != 'parent':
+            continue
+        try:
+            _notify_member_lanes(
+                parent, "🖥️ A screen wants to join",
+                f"Code {code} · asking from {where}. Tap to let it in.",
+                path=f"/app?pair={code}")
+        except Exception as e:
+            # A push that fails must never stop the screen from showing its
+            # code — the wall is the fallback and it always works.
+            logger.error(f"Pairing push failed: {e}")
+
+    return {"code": code, "expires_at": row['expires_at']}
 
 
-class EnrolRequest(BaseModel):
+def _auth_via_tunnel(headers) -> bool:
+    from services import auth as _auth
+    return _auth.arrived_via_tunnel(headers)
+
+
+@app.get("/api/account/devices/pair-status")
+def device_pairing_status(device_id: str):
+    """Polled by the waiting screen. Keyed on the device's own id, which it
+    minted and nobody else knows, so a bystander cannot watch somebody else's
+    pairing complete and steal the token."""
+    row = storage.get_pairing_by_device(device_id)
+    if not row or not row.get('approved_at'):
+        return {"approved": False}
+    storage.clear_pairing(device_id)
+    return {"approved": True, "device_token": row['device_token'],
+            "label": row.get('label')}
+
+
+class ApprovePairRequest(BaseModel):
     code: str
-    device_id: str
     label: Optional[str] = None
 
 
-@app.post("/api/account/devices/enrol")
-def enrol_device(req: EnrolRequest, request: Request = None):
-    """The panel spends the code and receives its own token.
+@app.get("/api/account/devices/pair-pending/{code}")
+def peek_pairing(code: str, x_member_token: Optional[str] = Header(None)):
+    """What is asking, before a parent says yes. Shown so approval is a
+    decision about a specific screen rather than a blind six digits."""
+    require_parent_token(x_member_token)
+    row = storage.get_pairing_by_code(code)
+    if not row:
+        raise HTTPException(status_code=404, detail="No screen is waiting with that code")
+    return {"device_id": row['device_id'], "requested_at": row['requested_at'],
+            "context": row.get('context') or {}}
 
-    Rate-limited on the calling address like every other guess in this app: a
-    six-digit code is only safe because it is short-lived AND cannot be
-    hammered."""
-    _pin_rate_check('enrol', request)
-    match = None
-    for link in storage.get_auth_links_by_prefix(f"enrol:{req.code}:"):
-        match = link
-        break
-    _pin_rate_record('enrol', bool(match), request)
-    if not match:
-        raise HTTPException(status_code=403, detail="That code is wrong or has expired")
-    storage.consume_auth_link(match['token'])
-    label = req.label or match['kind'].split(':', 2)[2] or 'Wall panel'
-    token = storage.enrol_device_token(req.device_id, label, by_member=match['member_id'])
-    return {"status": "ok", "device_token": token, "label": label}
+
+@app.post("/api/account/devices/pair-approve")
+def approve_device_pairing(req: ApprovePairRequest,
+                           x_member_token: Optional[str] = Header(None)):
+    """A parent, already signed in, lets the screen in."""
+    parent = require_parent_token(x_member_token)
+    row = storage.approve_pairing(req.code, req.label or 'Wall panel',
+                                  by_member=parent['id'])
+    if not row:
+        raise HTTPException(status_code=404,
+                            detail="That code is wrong, already used, or expired")
+    return {"status": "ok", "label": row['label']}
 
 
 @app.get("/api/account/setup")

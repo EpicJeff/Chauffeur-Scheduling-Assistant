@@ -94,7 +94,15 @@ RULES = [
     # one parent holds a password.
     ('GET', '/api/account/setup', ANYONE),
     ('POST', '/api/account/claim', ANYONE),
-    # The device list is where a lost tablet gets revoked, so it is admin.
+    # Pairing (S6). The two the DEVICE calls are open by necessity — a screen
+    # with no credential is exactly who calls them — and neither grants
+    # anything on its own: the request only produces a code somebody still has
+    # to approve, and the status poll is keyed on a device id the screen
+    # minted and nobody else knows. Approval itself is parent-only, below.
+    ('POST', '/api/account/devices/pair-request', ANYONE),
+    ('GET', '/api/account/devices/pair-status', ANYONE),
+    # The device list is where a lost tablet gets revoked, so it is admin —
+    # as is saying yes to a screen.
     (ANY, '/api/account/devices', PARENTS),
     (ANY, '/api/account/devices/*', PARENTS),
     ('POST', '/api/account/set-password', ANYONE),
@@ -132,10 +140,12 @@ RULES = [
     (ANY, '/api/ha/*', PARENTS),
     (ANY, '/api/telemetry/*', PARENTS),
     (ANY, '/api/push_subscriptions/*', PARENTS),
-    (ANY, '/config', PARENTS),
-    (ANY, '/dashboard', PARENTS),
-    (ANY, '/dashboard_v2', PARENTS),
-    (ANY, '/settings', PARENTS),
+    # NOTE: the admin PAGES are public shells; their DATA is parent-gated
+    # above and below. See the shell-vs-data note in the wall section.
+    (ANY, '/config', ANYONE),
+    (ANY, '/dashboard', ANYONE),
+    (ANY, '/dashboard_v2', ANYONE),
+    (ANY, '/settings', ANYONE),
 
     # FastAPI's generated docs. Found UNCLASSIFIED by the S1 test, which is
     # the first thing it caught and on its own worth the file: `/docs` is a
@@ -154,9 +164,19 @@ RULES = [
     (ANY, '/api/announce/*', ROBOTS),
 
     # --- the wall: pages and payloads a panel legitimately draws ------------
-    (ANY, '/', WALL),
-    (ANY, '/home', WALL),
-    (ANY, '/board/{slug}', WALL),
+    #
+    # SHELL vs DATA, and it is a rule rather than a convenience: **every HTML
+    # page is public; the family's information lives behind /api.** Forced by
+    # the fact that the ways IN are drawn by the shells themselves — the
+    # sign-in overlay lives in the admin pages, and the pairing screen lives
+    # in nav. Gate the page and a refused browser gets a bare 403 with no way
+    # to fix it: a wall panel could never show the code that would let it in,
+    # and a parent could never reach the box that would sign them in. The
+    # templates carry no household data of their own; every one of them
+    # fetches what it draws.
+    (ANY, '/', ANYONE),
+    (ANY, '/home', ANYONE),
+    (ANY, '/board/{slug}', ANYONE),
     (ANY, '/api/home_board/*', WALL),
     (ANY, '/api/panel/*', WALL),
     (ANY, '/api/schedule/*', WALL),
@@ -169,20 +189,20 @@ RULES = [
     # Kiosk-capable destinations: a parent opens these in a browser and a panel
     # draws the same page with ?panel=true. Both, therefore, or one of the two
     # is a lie (see property 3 above).
-    (ANY, '/chores', WALL),
-    (ANY, '/routines', WALL),
-    (ANY, '/shopping', WALL),
-    (ANY, '/calendar', WALL),
-    (ANY, '/errands', WALL),
-    (ANY, '/occasions', WALL),
-    (ANY, '/moments', WALL),
-    (ANY, '/moment', WALL),
-    (ANY, '/map', WALL),
-    (ANY, '/music', WALL),
-    (ANY, '/trips', WALL),
-    (ANY, '/trip', WALL),
-    (ANY, '/intake', WALL),
-    (ANY, '/app', WALL),
+    (ANY, '/chores', ANYONE),
+    (ANY, '/routines', ANYONE),
+    (ANY, '/shopping', ANYONE),
+    (ANY, '/calendar', ANYONE),
+    (ANY, '/errands', ANYONE),
+    (ANY, '/occasions', ANYONE),
+    (ANY, '/moments', ANYONE),
+    (ANY, '/moment', ANYONE),
+    (ANY, '/map', ANYONE),
+    (ANY, '/music', ANYONE),
+    (ANY, '/trips', ANYONE),
+    (ANY, '/trip', ANYONE),
+    (ANY, '/intake', ANYONE),
+    (ANY, '/app', ANYONE),
     # Interactive board actions — a wall may claim a chore and check a routine;
     # that is the whole point of `interactive` tiles.
     (ANY, '/api/chores/*', WALL),

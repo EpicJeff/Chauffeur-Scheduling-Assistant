@@ -99,9 +99,12 @@ def scenario_d_an_unclassified_route_is_recorded_not_denied():
 
 
 def scenario_e_a_tier_is_a_set_not_a_rank():
-    """The kiosk pages are read by a parent AND by a panel; /api/chat is
-    Argyle's and not a member's. Ranking these on one axis forces a lie."""
-    chores = auth.resolve('GET', '/chores')
+    """The chores DATA is read by a parent AND by a panel; /api/chat is
+    Argyle's and not a member's. Ranking these on one axis forces a lie.
+
+    Asserted against `/api/chores` rather than the `/chores` page, because the
+    page is a public shell — see scenario_v for why that is deliberate."""
+    chores = auth.resolve('GET', '/api/chores')
     check(auth.DEVICE in chores and auth.PARENT in chores,
           f"a wall panel lost the chores board: {chores}")
     chat = auth.resolve('POST', '/api/chat/message')
@@ -210,6 +213,32 @@ def scenario_i_impersonation_is_refused_only_when_enforcing():
             auth.enforcing = orig
         auth.reset_audit()
     _with_fake_storage(body)
+
+
+SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
+
+
+
+def scenario_v_shells_are_public_and_the_data_is_not():
+    """The rule that makes every way IN reachable.
+
+    The sign-in overlay lives inside the admin pages and the pairing screen
+    lives inside nav, so gating the PAGE means a refused browser gets a bare
+    403 with no way to fix it: a wall panel could never show the code that
+    would let it in, and a parent could never reach the box that would sign
+    them in. Shells are public; the household's information is not."""
+    for page in ('/app', '/home', '/chores', '/config', '/dashboard',
+                 '/board/{slug}'):
+        check(auth.resolve('GET', page) == auth.ANYONE,
+              f"{page} is a shell and must stay reachable, or nobody can sign in")
+    # ...and the data behind them is emphatically not public.
+    for api, needs in (('/api/settings', auth.PARENT),
+                       ('/api/messages/list', auth.MEMBER),
+                       ('/api/download_db', auth.PARENT)):
+        tiers = auth.resolve('GET', api) or frozenset()
+        check(tiers and needs in tiers,
+              f"{api} lost its gate when the shells opened: {tiers}")
+        check(tiers != auth.ANYONE, f"{api} went public")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
