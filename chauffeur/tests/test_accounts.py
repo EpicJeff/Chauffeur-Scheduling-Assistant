@@ -218,6 +218,31 @@ def scenario_l_rate_limiting_survives_a_restart_and_backs_off():
     storage.rate_clear(key)
 
 
+def scenario_l2_one_kids_typos_cannot_lock_out_the_household():
+    """The PWA is installed against the public hostname, so every phone in the
+    house arrives with the SAME CF-Connecting-IP even from the kitchen. At the
+    per-member threshold, one kid fumbling a PIN would have locked out both
+    parents and the wall panel — a self-inflicted outage presenting as a
+    mystery. The IP counter is a coarse net for enumeration, not for typos."""
+    member_key, ip_key = 'member:kid', 'ip:203.0.113.7'
+    storage.rate_clear(member_key)
+    storage.rate_clear(ip_key)
+    for _ in range(5):                       # one kid, five wrong PINs
+        storage.rate_record(member_key, False)
+        storage.rate_record(ip_key, False)
+    check(storage.rate_locked(member_key),
+          "the member who was guessing wrong was not slowed down at all")
+    check(not storage.rate_locked(ip_key),
+          "ONE member's typos locked out every device on the home address")
+    # But a script walking the family still trips it.
+    for _ in range(45):
+        storage.rate_record(ip_key, False)
+    check(storage.rate_locked(ip_key),
+          "sustained guessing from one address was never throttled")
+    storage.rate_clear(member_key)
+    storage.rate_clear(ip_key)
+
+
 def scenario_m_success_clears_the_lockout():
     """A family member who finally remembers their PIN is not punished for the
     four tries it took."""

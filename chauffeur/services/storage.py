@@ -1429,9 +1429,31 @@ def verify_member_pin(member_id: str, pin: str) -> bool:
 # release — and a lockout that a rebuild clears is one an attacker waits out.
 # Keyed by an opaque string so the same machinery counts a member and an IP.
 
-_RATE_MAX_FAILS = 5
 _RATE_BASE_SECONDS = 30
 _RATE_MAX_SECONDS = 3600
+
+# The two counters do DIFFERENT JOBS and must not share a threshold.
+#
+# Per member, 5 is right: it is protection against somebody guessing one
+# person's PIN, and five wrong tries is already an unusual number of typos.
+#
+# Per IP it would be a household-wide outage. `CF-Connecting-IP` is the
+# CLIENT's public address, and the PWA is installed against the cloudflared
+# hostname — so every phone in the house arrives from the same home IP even
+# when everyone is sitting in the kitchen. At a threshold of five, one kid
+# fumbling their PIN would lock out both parents and the wall panel,
+# escalating to an hour if it happened again. That is a self-inflicted denial
+# of service on the family, and it would have presented as a mystery outage.
+#
+# So the IP counter is a COARSE NET for enumeration — somebody walking the
+# whole family, or scripting one account — and is set far above anything a
+# household of fumbling humans produces in a day.
+_RATE_MAX_FAILS = 5
+_RATE_IP_MAX_FAILS = 50
+
+
+def _rate_threshold(key: str) -> int:
+    return _RATE_IP_MAX_FAILS if key.startswith('ip:') else _RATE_MAX_FAILS
 
 
 def rate_locked(key: str) -> bool:
@@ -1454,7 +1476,7 @@ def rate_record(key: str, ok: bool) -> None:
         entry = rows[0] if rows else {'key': key, 'fails': 0, 'trips': 0,
                                       'locked_until': 0}
         entry['fails'] = entry.get('fails', 0) + 1
-        if entry['fails'] >= _RATE_MAX_FAILS:
+        if entry['fails'] >= _rate_threshold(key):
             entry['fails'] = 0
             entry['trips'] = entry.get('trips', 0) + 1
             backoff = min(_RATE_BASE_SECONDS * (2 ** (entry['trips'] - 1)),
