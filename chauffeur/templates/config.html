@@ -8,12 +8,12 @@
     {# The only page that never included this. It therefore had no Home
        Assistant theming either — an omission, not a decision. #}
     {% include 'ha_theme.html' %}
-    <script defer src="static/vendor/alpine-collapse.min.js"></script>
-    <script src="static/vendor/alpine.min.js" defer></script>
+    <script defer src="{{ 'static/vendor/alpine-collapse.min.js'|ver }}"></script>
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
     <!-- Mapbox GL: station-picker map (Car alerts). No map load is billed
          until the picker actually instantiates a map. -->
-    <link href="static/vendor/mapbox-gl.css" rel="stylesheet">
-    <script src="static/vendor/mapbox-gl.js"></script>
+    <link href="{{ 'static/vendor/mapbox-gl.css'|ver }}" rel="stylesheet">
+    <script src="{{ 'static/vendor/mapbox-gl.js'|ver }}"></script>
     <style>
         [x-cloak] {
             display: none !important;
@@ -25,7 +25,7 @@
             font-family: 'Inter', sans-serif;
         }
     </style>
-    <link rel="stylesheet" href="static/tailwind.css">
+    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
 </head>
 
 <body class="bg-gray-900 text-white h-screen flex flex-col overflow-hidden" x-data="configApp()" x-init="init()">

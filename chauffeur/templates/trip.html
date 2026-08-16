@@ -53,10 +53,10 @@
         }
     </style>
     {% if allow_map_loads %}
-    <link href="static/vendor/mapbox-gl.css" rel="stylesheet">
-    <script src="static/vendor/mapbox-gl.js"></script>
+    <link href="{{ 'static/vendor/mapbox-gl.css'|ver }}" rel="stylesheet">
+    <script src="{{ 'static/vendor/mapbox-gl.js'|ver }}"></script>
     {% endif %}
-    <link rel="stylesheet" href="static/tailwind.css">
+    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
 </head>
 <body class="p-0 m-0 min-h-screen flex flex-col relative">
 

@@ -6,13 +6,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Errands & Todos</title>
-    <link href="static/vendor/fonts/inter/inter.css" rel="stylesheet">
+    <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
     <!-- The two lists on this page are the SAME drawing the board's
          `task_list` and `errand_list` cards render, so the page renders them
          with Alpine too. Everything else here — the add rows, both editor
          modals, the location autocomplete — is still the plain script it
          always was, and is page-only on purpose. -->
-    <script src="static/vendor/alpine.min.js" defer></script>
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
     {% include 'ha_theme.html' %}
     <style>
         body {
@@ -26,7 +26,7 @@
            by components/errand_lists.html now, in Tailwind, because a wall
            panel renders the same macro and page-local CSS does not travel. */
     </style>
-    <link rel="stylesheet" href="static/tailwind.css">
+    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
 </head>
 
 <body class="flex flex-col h-screen overflow-hidden">

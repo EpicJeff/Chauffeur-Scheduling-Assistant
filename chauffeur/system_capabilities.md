@@ -2415,3 +2415,13 @@ S6's pairing overlay (`components/panel_enrol.html`, drawn by nav.html on **ever
 - **The component carries both halves now**: an inline `style="display:none"` (the one that holds when there is neither a stylesheet rule nor Alpine — `x-show` removes the property outright when it shows, so they do not fight) and its own `[x-cloak]` rule for anything else cloaked under nav.
 - **Test**: `test_template_js.scenario_a_cloaked_element_is_hidden_by_something_the_page_actually_has` — any ASSEMBLED page containing `x-cloak` must also contain a rule that hides it. Verified against the shipped markup: it names all nine affected files.
 - **KNOWN GAP, deliberately left**: on a page with no Alpine the overlay cannot DRAW either, so a kiosk refused on `/trip?kiosk=true` has no way to show its pairing code. Nothing is lost today (`chfRequestPairing` only fires on a 401/403 and enforcement is off), but **S8 must not flip `auth_enforce` until those pages either run Alpine or send a refused screen somewhere that does.**
+
+## The panel was running last week's JavaScript (v2.256.2)
+
+Reported from the wall the moment v2.256.0 deployed: `MusicLogic.deviceId is not a function`, three times over, on `/music?panel=true&kiosk=true`. The function was in the shipped file. **Nothing under `/static` carried a version**, so the panel kept the `music_logic.js` it had cached and the freshly-rendered page called into it — this week's markup against last week's module, with the fix already on the box.
+
+That failure is silent on the server (HTTP 200, correct bytes on disk), total on the client, and it can happen to any asset here. It is also the one that OUTLIVES a deploy, which makes it worse than the three blank-page bugs before it: rebuilding the add-on does not clear it.
+
+- **`|ver`** (a Jinja filter, `main._versioned`) stamps `?v=<mtime><size>` on every `<script>` and `<link>` under `/static` — 50 references across 19 templates. Keyed on the FILE rather than the release on purpose: stamping with the version would re-pull mapbox-gl, Alpine and the fonts onto every panel at every bump, and this project bumps on every change. mtime+size changes exactly when the file does. A missing file renders unstamped rather than raising — it is a 404 either way, and a cache key must not take a page down.
+- Images are deliberately NOT stamped: they are stable, and re-downloading them buys nothing.
+- **Test**: `test_template_js.scenario_every_script_and_stylesheet_carries_a_version` — every `src`/`href` naming a `.js` or `.css` under `/static` must go through `|ver`, and `main.py` must register the filter (templates calling an unregistered filter is itself a whole-page Jinja error).

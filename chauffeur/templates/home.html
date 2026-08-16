@@ -14,24 +14,24 @@
        path carries /api/hassio_ingress/<token>/ in front, and climbing from
        the root would leave the add-on. #}
     {% set _up = '../' if '/board/' in request.url.path else '' %}
-    <link href="{{ _up }}static/vendor/fonts/inter/inter.css" rel="stylesheet">
+    <link href="{{ _up }}{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
     {% include 'ha_theme.html' %}
-    <script src="{{ _up }}static/vendor/alpine.min.js" defer></script>
+    <script src="{{ _up }}{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
     <!-- The environment a real Home Assistant card wakes up in. Loaded on
          every board because a card tile can be added without a reload; it
          defines nothing until a tile asks it to mount something. -->
-    <script src="{{ _up }}static/ha_card_host.js" defer></script>
+    <script src="{{ _up }}{{ 'static/ha_card_host.js'|ver }}" defer></script>
     <!-- Home Assistant's form layer, which is what a card's own visual
          editor is built out of. Loaded here rather than on demand
          because a custom element has to be defined before the editor
          that renders it is created, and that ordering is not something
          to leave to a race. -->
-    <script src="{{ _up }}static/ha_form.js" defer></script>
+    <script src="{{ _up }}{{ 'static/ha_form.js'|ver }}" defer></script>
     <!-- Music Assistant's logic layer, shared with the PWA's music widget:
          which speakers exist, how to reach one, and the artwork proxying that
          is the part nobody should re-derive. Deferred like the rest — the
          board's music card is Alpine, so nothing reads it during parse. -->
-    <script src="{{ _up }}static/music_logic.js" defer></script>
+    <script src="{{ _up }}{{ 'static/music_logic.js'|ver }}" defer></script>
     <style>
         /* Tokens, the background layers and .panel-card/.panel-label all come
            from panel_skin.html now, so every page shares them. What stays here
@@ -667,7 +667,7 @@
             #tile-grid { grid-template-columns: repeat(var(--c-lg, 4), minmax(0, 1fr)); }
         }
     </style>
-    <link rel="stylesheet" href="{{ _up }}static/tailwind.css">
+    <link rel="stylesheet" href="{{ _up }}{{ 'static/tailwind.css'|ver }}">
 </head>
 
 <!-- Which board this page IS, when the address does not say.

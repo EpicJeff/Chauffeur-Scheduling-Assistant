@@ -6,9 +6,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shopping &amp; Meals</title>
-    <link href="static/vendor/fonts/inter/inter.css" rel="stylesheet">
+    <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
     {% include 'ha_theme.html' %}
-    <script src="static/vendor/alpine.min.js" defer></script>
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
     <style>
         body { background-color: #111827; color: #e5e7eb; }
         [x-cloak] { display: none !important; }
@@ -28,7 +28,7 @@
            legibility rather than trusting the image. */
         .board-shadow { text-shadow: 0 1px 3px rgba(0, 0, 0, .95), 0 0 12px rgba(0, 0, 0, .7); }
     </style>
-    <link rel="stylesheet" href="static/tailwind.css">
+    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
 </head>
 
 <body class="flex flex-col h-screen overflow-hidden">

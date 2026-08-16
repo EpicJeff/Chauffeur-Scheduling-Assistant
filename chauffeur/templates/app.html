@@ -13,7 +13,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Chauffeur">
     <meta name="theme-color" content="#171717">
-    <link rel="stylesheet" href="static/theme.css">
+    <link rel="stylesheet" href="{{ 'static/theme.css'|ver }}">
     <script>
         // Resolve the theme BEFORE first paint, or the app flashes dark on
         // the way to light. Three states: 'auto' follows the OS, 'light' and
@@ -102,11 +102,11 @@
             min-height: 44px;
         }
     </style>
-    <link rel="stylesheet" href="static/tailwind-app.css">
+    <link rel="stylesheet" href="{{ 'static/tailwind-app.css'|ver }}">
     <!-- Shared with the board's music card. NOT deferred: the music widget's
          own script runs inline as the page parses and reads this at its top
          level, and a deferred module would arrive after it. -->
-    <script src="static/music_logic.js"></script>
+    <script src="{{ 'static/music_logic.js'|ver }}"></script>
 </head>
 
 <body class="bg-gray-950 text-gray-100 font-sans h-dvh flex flex-col overflow-hidden">

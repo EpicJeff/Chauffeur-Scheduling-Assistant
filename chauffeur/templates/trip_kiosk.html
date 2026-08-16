@@ -7,8 +7,8 @@
     <title>Trip - Chauffeur</title>
     {% include 'ha_theme.html' %}
     {% include 'components/trip_logic.html' %}
-    <link href="static/vendor/mapbox-gl.css" rel="stylesheet">
-    <script src="static/vendor/mapbox-gl.js"></script>
+    <link href="{{ 'static/vendor/mapbox-gl.css'|ver }}" rel="stylesheet">
+    <script src="{{ 'static/vendor/mapbox-gl.js'|ver }}"></script>
     <style>
         .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -20,7 +20,7 @@
         /* Mapbox popups keep their own light chrome regardless of theme. */
         .mapboxgl-popup-content { color: #111; }
     </style>
-    <link rel="stylesheet" href="static/tailwind.css">
+    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
 </head>
 
 <body class="bg-gray-900 text-white min-h-screen flex flex-col">

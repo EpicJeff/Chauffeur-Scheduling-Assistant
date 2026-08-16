@@ -1014,6 +1014,35 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 
+# --- asset versioning -------------------------------------------------------
+# A wall panel that has been up for a week runs whatever JavaScript it cached
+# on the day it booted, and nothing in /static gave a browser any way to know
+# otherwise. Not hypothetical: a shipped change to `music_logic.js` reached the
+# household as `MusicLogic.deviceId is not a function` — this week's page
+# calling into last week's module, on a panel, with the fix already deployed.
+# That failure is silent on the server and total on the client, and it can
+# happen to any asset here.
+#
+# Keyed on the FILE rather than the release. Stamping everything with the
+# version would re-download mapbox-gl, Alpine and the fonts on every panel at
+# every bump — and this project bumps on every change — for an edit to one
+# card. mtime+size changes exactly when the file does.
+def _versioned(path: str) -> str:
+    """`static/x.js` → `static/x.js?v=…`, for use as the `ver` filter.
+
+    A missing file returns the path untouched: it is a 404 either way, and a
+    cache key is not worth taking a page down over.
+    """
+    try:
+        st = os.stat(os.path.join(BASE_DIR, path))
+    except OSError:
+        return path
+    return f"{path}?v={int(st.st_mtime):x}{st.st_size:x}"
+
+
+templates.env.filters['ver'] = _versioned
+
+
 def _shelf_order(request: Request) -> list:
     """Which buttons the panel shelf shows, in order, resolved SERVER-SIDE.
 

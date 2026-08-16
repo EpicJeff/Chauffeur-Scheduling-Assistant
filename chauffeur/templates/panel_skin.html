@@ -48,7 +48,7 @@
    because that is the only place the problem exists. #}
 {% if request.query_params.get('panel') == 'true'
       or request.query_params.get('kiosk') == 'true' %}
-<link rel="stylesheet" href="static/vendor/fonts/emoji/emoji.css">
+<link rel="stylesheet" href="{{ 'static/vendor/fonts/emoji/emoji.css'|ver }}">
 {% endif %}
 <style>
     /* The emoji families, back on the end of the stack a page took them off.

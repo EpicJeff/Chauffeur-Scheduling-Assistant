@@ -175,6 +175,39 @@ def scenario_a_cloaked_element_is_hidden_by_something_the_page_actually_has():
           + "\n  ".join(broken))
 
 
+def scenario_every_script_and_stylesheet_carries_a_version():
+    """The fourth blank-page failure, and the one that outlives a deploy.
+
+    A wall panel that has been up for a week runs the JavaScript it cached the
+    day it booted. Nothing under /static carried a version, so a shipped change
+    to `music_logic.js` reached the household as `MusicLogic.deviceId is not a
+    function` — this week's page calling into last week's module, with the fix
+    already on the box and nothing on the server to show for it.
+
+    `|ver` stamps mtime+size, so an asset re-downloads exactly when it changes
+    and a release does not re-pull mapbox and the fonts onto every panel.
+    """
+    import re as _re
+    # The WHOLE attribute value, so the `|ver` that follows the extension is
+    # inside what gets inspected rather than trimmed off by the pattern.
+    ref = _re.compile(r'(?:src|href)="([^"]*static/[^"]*\.(?:js|css)[^"]*)"')
+    bare = []
+    for path in sorted(glob.glob(os.path.join(TPL, '**', '*.html'), recursive=True)):
+        src = open(path, encoding='utf-8').read()
+        for url in ref.findall(src):
+            if '|ver }}' not in url:
+                bare.append(f"{os.path.relpath(path, TPL)}: {url}")
+    check(not bare,
+          "static assets served with no version — a panel keeps the cached "
+          "copy across a deploy and the page calls into code that is no "
+          "longer there:\n  " + "\n  ".join(bare))
+    # The filter has to exist, or every one of those references renders as a
+    # Jinja error and takes the whole page with it.
+    src = open(os.path.join(os.path.dirname(TPL), 'main.py'), encoding='utf-8').read()
+    check("templates.env.filters['ver']" in src,
+          "templates call |ver but nothing registers the filter")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
