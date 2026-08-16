@@ -389,8 +389,14 @@ def run_day_of_traffic_sweep(now_ts: float = None) -> dict:
     settings = storage.get_settings() or {}
     if settings.get('traffic_live_enabled') is False:
         return {'skipped': 'disabled'}
+    # Absent means 6, but an explicit 0 means MIDNIGHT — the same absent-vs-
+    # zero discipline the panel's idle return already keeps. `or 6` ate the
+    # zero, so a household that set the morning buy to midnight silently got
+    # six o'clock, and the sweep test only passed because the suite happened
+    # to run after 6am.
+    raw = settings.get('traffic_morning_hour')
     try:
-        morning_hour = int(settings.get('traffic_morning_hour') or 6)
+        morning_hour = 6 if raw is None else int(raw)
     except (TypeError, ValueError):
         morning_hour = 6
     today = _dt.date.fromtimestamp(now_ts).isoformat()

@@ -1954,7 +1954,7 @@ def _refuse(date_str: str, dish_ids: list) -> dict:
 
 
 def approve_week(start_date: str = None, days: int = 7, list_id: str = None,
-                 added_by: str = None) -> dict:
+                 added_by: str = None, today: datetime.date = None) -> dict:
     """"How does this look?" — yes. Pin every day and buy for all of them.
 
     This is the whole point of the arc: the family's planning session collapses
@@ -1978,7 +1978,14 @@ def approve_week(start_date: str = None, days: int = 7, list_id: str = None,
         res = dishes_to_shopping(day['dishes'], lst_id, added_by=added_by,
                                  skip_dish_ids=day.get('leftover_dish_ids'),
                                  date_str=day['date'],
-                                 buy_on=buy_on_for(day['date']))
+                                 # `today` threaded through so a test can pin
+                                 # the run. `buy_on_for` and `plan_window`
+                                 # already took it; this call was the one hole,
+                                 # which made the end-to-end scenario silently
+                                 # date-dependent — it passed until the day
+                                 # rolled past its fixture and then failed for
+                                 # a reason that had nothing to do with meals.
+                                 buy_on=buy_on_for(day['date'], today=today))
         added.extend(res['added'])
         # The day rides along on every skip: "already on the list" is the
         # normal case across a week (chicken on Monday and Thursday buys once)

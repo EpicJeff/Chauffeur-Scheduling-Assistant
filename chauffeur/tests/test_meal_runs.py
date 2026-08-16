@@ -238,7 +238,9 @@ def scenario_approving_the_span_buys_for_the_run_that_covers_it():
     for the run that has to buy it."""
     chicken, _stirfry = _claim_pantry()
     lst = storage.ensure_default_shopping_list()['id']
-    res = meals.approve_week('2026-08-15', 3, lst)
+    # `today` pinned: without it this scenario read the real clock and started
+    # failing the morning the date rolled past the fixture.
+    res = meals.approve_week('2026-08-15', 3, lst, today=MONDAY)
     check(res['day_count'] == 3, f"the span was not pinned, got {res}")
     rows = storage.get_shopping_items(lst, include_checked=False)
     check(rows, "approving the span bought nothing at all")

@@ -2328,3 +2328,9 @@ The dashboard and config page had never had one. Defensible while they sat behin
 - **`/api/members/{id}/pin/clear` is parent-gated at last** — clear-then-authenticate was a two-call path to anybody's account, because `member_auth` mints freely once `pin_hash` is gone.
 - **Rate limiting moved into storage and grew teeth.** It was a module-level dict, and this project rebuilds the add-on on every release, so patience beat the lockout; it now persists, counts **per IP as well as per member** (an attacker walking the family had a fresh budget for each person), and **doubles its backoff** to an hour rather than resetting to a flat 30 seconds. The IP is read from `CF-Connecting-IP` only — `X-Forwarded-For` is client-supplied, and a rate limit keyed on something the attacker can rotate is decoration.
 - Tests: `test_accounts.py` scenarios j–n.
+
+## A morning hour of zero meant six o'clock (v2.250.2)
+
+`run_day_of_traffic_sweep` read `int(settings.get('traffic_morning_hour') or 6)`, and `0 or 6` is `6` — so a household that set the day-of traffic buy to **midnight silently got 6am**. Absent now means 6 and an explicit 0 means midnight, the same absent-vs-zero discipline `panel_idle_return_seconds` already keeps.
+
+Found by a test failing on the clock rather than on a change: `test_day_of_traffic`'s sweep scenario sets the hour to 0 precisely so the morning branch is always due, and it had only ever passed because the suite ran after 6am. Also fixed alongside it: `meals.approve_week` now accepts `today` and threads it into `buy_on_for` — `buy_on_for` and `plan_window` already took the seam and this one call site did not, which made the end-to-end span scenario silently date-dependent.

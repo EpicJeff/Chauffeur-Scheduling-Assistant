@@ -173,6 +173,10 @@ def scenario_the_sweep_buys_each_leg_at_most_twice_a_day():
                       bool(depart_at_ts)))
         return 28
 
+    # Midnight, so the morning branch is due whatever hour the suite runs at.
+    # This ALSO pins the absent-vs-zero rule in run_day_of_traffic_sweep: the
+    # old `or 6` ate the zero, so a household that set midnight silently got
+    # six o'clock — and this scenario only passed when the suite ran after 6am.
     storage.get_settings = lambda: {'traffic_morning_hour': 0}
     maps.fetch_traffic_minutes = fake_fetch
     try:
