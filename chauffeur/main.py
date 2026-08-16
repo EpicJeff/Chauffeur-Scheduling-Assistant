@@ -4789,6 +4789,22 @@ def clear_pin(member_id: str):
     storage.delete_member_tokens(member_id)
     return {"status": "cleared"}
 
+def _acting_id(request, claimed: Optional[str]) -> Optional[str]:
+    """Who is acting, preferring the token over the client's claim (S2).
+
+    Wrapped here rather than repeated at each call site so that when the claim
+    fallback finally dies in S8, it dies in one place. Raises only on the
+    unambiguous case — a valid token naming a DIFFERENT member — and only once
+    enforcement is on."""
+    from services import auth as _auth
+    acting = _auth.acting_member(getattr(request, 'headers', {}) or {},
+                                 getattr(request, 'query_params', {}) or {},
+                                 claimed)
+    if _auth.impersonation_refused(acting):
+        raise HTTPException(status_code=403, detail="Signed in as somebody else")
+    return acting.get('id') or claimed
+
+
 def require_parent_token(token: Optional[str]):
     """Guard for privileged actions (chore verification, rewards admin...).
     Returns the parent member or raises."""
@@ -9235,7 +9251,13 @@ def _run_argyle_mention(channel: dict, sender: dict, body: str):
 
 
 @app.post("/api/channels/{channel_id}/messages")
-def send_message(channel_id: str, req: SendMessageRequest, background_tasks: BackgroundTasks):
+def send_message(channel_id: str, req: SendMessageRequest, background_tasks: BackgroundTasks,
+                 request: Request = None):
+    # Auth arc S2: the sender is whoever the TOKEN says, not whoever the body
+    # claims. Until every surface sends its token the claim is still honoured
+    # and counted (see services/auth.acting_member) — but a token naming a
+    # different member is impersonation and is refused once enforcing.
+    req.sender_member_id = _acting_id(request, req.sender_member_id)
     channel = storage.get_channel(channel_id)
     if not channel:
         raise HTTPException(status_code=404, detail="Channel not found")
@@ -9304,13 +9326,14 @@ class ReactRequest(BaseModel):
     emoji: str
 
 @app.post("/api/messages/{message_id}/react")
-def react_to_message(message_id: str, req: ReactRequest):
+def react_to_message(message_id: str, req: ReactRequest, request: Request = None):
     """Toggle a reaction. Deliberately NEVER pushes — the parent at the game
     is fire-and-forget; reactions accumulate silently and show at a break
     (Presence design). Open threads refresh via the SSE ring only."""
     emoji = (req.emoji or '').strip()
     if not emoji or len(emoji) > 8:
         raise HTTPException(status_code=400, detail="Invalid reaction")
+    req.member_id = _acting_id(request, req.member_id)   # S2
     if not storage.get_member(req.member_id):
         raise HTTPException(status_code=404, detail="Member not found")
     msg = storage.toggle_message_reaction(message_id, req.member_id, emoji)
@@ -9339,13 +9362,14 @@ def _may_delete_message(msg: dict, member: dict, channel: dict) -> bool:
     return member.get('role') == 'parent' and channel.get('kind') in ('event', 'group')
 
 @app.delete("/api/messages/{message_id}")
-def delete_message(message_id: str, req: MessageDeleteRequest):
+def delete_message(message_id: str, req: MessageDeleteRequest, request: Request = None):
     """Delete a message and any media it owns. No tombstone — this exists so a
     misfired photo can be UNDONE, and "X deleted a photo" just advertises the
     thing you were trying to take back. Best-effort by nature: a push already
     on a lock screen cannot be recalled, and a kiosk mid-overlay keeps the
     bytes it already loaded. Everything else self-heals (open threads over
     SSE, the hearth rail on its 60 s poll)."""
+    req.member_id = _acting_id(request, req.member_id)
     member = storage.get_member(req.member_id)
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
@@ -9361,7 +9385,7 @@ def delete_message(message_id: str, req: MessageDeleteRequest):
     return {"status": "ok", "id": message_id, "channel_id": msg['channel_id']}
 
 @app.patch("/api/messages/{message_id}")
-def edit_message(message_id: str, req: MessageEditRequest):
+def edit_message(message_id: str, req: MessageEditRequest, request: Request = None):
     """Edit your own message's text. SENDER ONLY, deliberately narrower than
     delete: a parent removing something from a shared channel is moderation,
     but a parent rewriting a kid's words puts words in their mouth. Captions
@@ -9370,6 +9394,7 @@ def edit_message(message_id: str, req: MessageEditRequest):
     member = storage.get_member(req.member_id)
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
+    req.member_id = _acting_id(request, req.member_id)   # S2
     msg = storage.get_chat_message(message_id)
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")

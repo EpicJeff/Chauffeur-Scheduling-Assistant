@@ -129,6 +129,89 @@ def scenario_f_the_tunnel_check_fails_toward_asking():
           f"the local-origin grace stopped applying: {who}")
 
 
+# --- S2: identity comes from the token, not the body ------------------------
+
+class _FakeStorage:
+    """Two members and a token for one of them."""
+    MEMBERS = {'kid': {'id': 'kid', 'name': 'Lily', 'role': 'child'},
+               'mum': {'id': 'mum', 'name': 'Vovo', 'role': 'parent'}}
+    TOKENS = {'tok-kid': 'kid', 'tok-mum': 'mum'}
+
+    @classmethod
+    def get_member(cls, mid):
+        return cls.MEMBERS.get(mid)
+
+    @classmethod
+    def get_member_by_token(cls, token):
+        return cls.MEMBERS.get(cls.TOKENS.get(token or ''))
+
+
+def _with_fake_storage(fn):
+    import sys
+    real = sys.modules.get('services.storage')
+    import services
+    sys.modules['services.storage'] = _FakeStorage
+    setattr(services, 'storage', _FakeStorage)
+    try:
+        return fn()
+    finally:
+        if real is not None:
+            sys.modules['services.storage'] = real
+            setattr(services, 'storage', real)
+
+
+def scenario_g_the_token_beats_the_body():
+    """The impersonation hole: a child could post as a parent by typing the
+    parent's id into the request. The token settles it."""
+    def body():
+        acting = auth.acting_member({'x-member-token': 'tok-kid'}, {}, 'mum')
+        check(acting['id'] == 'kid',
+              f"the body's claim outranked the token: {acting}")
+        check(acting['mismatch'],
+              "acting as somebody else was not flagged as a mismatch")
+        # Same person, no drama.
+        agree = auth.acting_member({'x-member-token': 'tok-kid'}, {}, 'kid')
+        check(agree['id'] == 'kid' and not agree['mismatch'],
+              f"a member acting as themselves was flagged: {agree}")
+    _with_fake_storage(body)
+
+
+def scenario_h_no_token_still_works_but_is_counted():
+    """The installed base on the day S2 ships sends no token anywhere. Refusing
+    would log the family out of their own house to fix a bug they did not
+    have; the fallback is honoured and COUNTED, and the count is what says
+    when S8 may flip."""
+    def body():
+        auth.reset_audit()
+        acting = auth.acting_member({}, {}, 'kid')
+        check(acting['id'] == 'kid' and acting['source'] == 'claimed',
+              f"the no-token fallback stopped working: {acting}")
+        counts = auth.audit_report()['identity']
+        check(counts['claimed'] == 1,
+              f"the claim was not counted as migration debt: {counts}")
+        auth.reset_audit()
+    _with_fake_storage(body)
+
+
+def scenario_i_impersonation_is_refused_only_when_enforcing():
+    """Dark-ship discipline, same as the route guard: record now, refuse when
+    the evidence says it is safe."""
+    def body():
+        acting = auth.acting_member({'x-member-token': 'tok-kid'}, {}, 'mum')
+        orig = auth.enforcing
+        auth.enforcing = lambda: False
+        try:
+            check(not auth.impersonation_refused(acting),
+                  "S2 refused an act while shipping dark")
+            auth.enforcing = lambda: True
+            check(auth.impersonation_refused(acting),
+                  "enforcement did not stop an impersonation")
+        finally:
+            auth.enforcing = orig
+        auth.reset_audit()
+    _with_fake_storage(body)
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

@@ -3283,6 +3283,42 @@
             return localStorage.getItem('chauffeur_member_token') || '';
         }
 
+        // Auth arc S2: the token rides on EVERY same-origin request, not the
+        // five privileged ones that asked for it by hand.
+        //
+        // This is the enabling half of making the token the identity. The
+        // server can only prefer the token over the client's claimed member id
+        // where a token actually arrives, and until now it arrived on chore
+        // verification, rejection and little else — so every other endpoint had
+        // no choice but to believe the body.
+        //
+        // Wrapping fetch rather than editing ~200 call sites is deliberate: a
+        // migration that depends on finding every call site is a migration that
+        // silently misses some, and the ones it misses are exactly the ones
+        // still trusting the client.
+        //
+        // Same-origin only. Absolute URLs to other hosts (artwork proxies, map
+        // tiles) must never carry a family credential off this origin.
+        (function attachMemberToken() {
+            const _fetch = window.fetch.bind(window);
+            window.fetch = function (input, init) {
+                try {
+                    const url = typeof input === 'string' ? input : (input && input.url) || '';
+                    const foreign = /^[a-z]+:\/\//i.test(url)
+                        && !url.startsWith(window.location.origin);
+                    const token = memberToken();
+                    if (token && !foreign) {
+                        init = init || {};
+                        const h = new Headers(init.headers
+                            || (typeof input === 'object' && input.headers) || {});
+                        if (!h.has('X-Member-Token')) h.set('X-Member-Token', token);
+                        init.headers = h;
+                    }
+                } catch (e) { /* never let auth plumbing break a fetch */ }
+                return _fetch(input, init);
+            };
+        })();
+
         async function fetchChores() {
             if (!selectedMemberId) return;
             try {

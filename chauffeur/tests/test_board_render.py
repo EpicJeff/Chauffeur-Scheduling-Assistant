@@ -53,15 +53,25 @@ UNDERWAY_END = (_NOW + _D.timedelta(minutes=7)).isoformat()
 # The upcoming case: 2 hr 26 min until it starts, 1 hr 46 min until you have to
 # be out of the door. The exact numbers from the request.
 #
-# The extra 30 seconds are load-bearing: `_NOW` is stamped at import, but the
-# countdown is computed by jsdom at render time — after this file is written,
-# node is spawned and the page boots. On a whole-minute offset any of that
-# drift crosses a boundary and the pill reads 1 hr 45 min, so the assertion
-# failed at random. Landing mid-minute makes the floor stable for any setup
-# under half a minute, and keeps the exact wording pinned.
-SOON_START = (_NOW + _D.timedelta(minutes=146, seconds=30)).isoformat()
-SOON_END = (_NOW + _D.timedelta(minutes=206, seconds=30)).isoformat()
-SOON_LEAVE = (_NOW + _D.timedelta(minutes=106, seconds=30)).isoformat()
+# The extra 30 seconds are load-bearing: the countdown is computed by jsdom at
+# render time — after the board is written, node is spawned and the page boots.
+# On a whole-minute offset any of that drift crosses a boundary and the pill
+# reads 1 hr 45 min, so the assertion failed at random. Landing mid-minute
+# makes the floor stable and keeps the exact wording pinned.
+#
+# The anchor is stamped when the BOARD IS WRITTEN, not at import. An earlier
+# fix used module-level `_NOW`, which is correct only when this file runs
+# alone: in the full parallel sweep, minutes pass between importing the module
+# and reaching this scenario (the file takes ~76s across 12 workers), so the
+# half-minute of slack had been spent long before node started and the pill
+# lost its minute again. Stamping at write time leaves only the node spawn
+# inside the window, which is what the 30 seconds were sized for. A test that
+# depends on how loaded the machine is is not flaky, it is under-specified.
+def _soon(now=None):
+    now = now or _D.datetime.now()
+    return {'start': (now + _D.timedelta(minutes=146, seconds=30)).isoformat(),
+            'end': (now + _D.timedelta(minutes=206, seconds=30)).isoformat(),
+            'leave': (now + _D.timedelta(minutes=106, seconds=30)).isoformat()}
 
 
 def _builtin(t):
@@ -588,12 +598,14 @@ def _board_json():
 
 
 # The same board, with a hero that has not started yet and knows its departure.
-LEAVING = {'remaining': 1, 'later': [], 'all_done': False, 'unbuilt': False,
+def LEAVING():
+    soon = _soon()
+    return {'remaining': 1, 'later': [], 'all_done': False, 'unbuilt': False,
            'kids': [],
            'next': {'id': 'e1', 'kind': 'event', 'title': 'Pre Jazz/Ballet',
                     'location': 'Starpath Dance Academy', 'at': '5:00 PM',
-                    'start': SOON_START, 'end': SOON_END,
-                    'leave_at': SOON_LEAVE, 'leave_label': '4:20 PM',
+                    'start': soon['start'], 'end': soon['end'],
+                    'leave_at': soon['leave'], 'leave_label': '4:20 PM',
                     'travel_mins': 26, 'from_home': True,
                     'driver': 'Vovo', 'color': '#8b5cf6', 'driver_id': 'drv2',
                     'done': False, 'live': False, 'underway': False,
@@ -617,7 +629,7 @@ def _run_leaving():
         f.write(_render_home())
     data = os.path.join(SCRATCH, 'board_leaving.json')
     with open(data, 'w', encoding='utf-8') as f:
-        json.dump(_board(hero=LEAVING), f)
+        json.dump(_board(hero=LEAVING()), f)
     proc = subprocess.run([node, probe, page, data], capture_output=True,
                           text=True, cwd=SCRATCH, timeout=120)
     check(proc.returncode == 0, f"the board threw:\n{proc.stderr[:1500]}")

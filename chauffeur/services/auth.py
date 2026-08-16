@@ -281,6 +281,64 @@ def identify(headers, query) -> dict:
     return {'tier': None, 'member': None}
 
 
+def acting_member(headers, query, claimed_id: Optional[str] = None) -> dict:
+    """Who is really making this request (auth arc S2).
+
+    The hole this closes: identity in this app has been CLIENT-ASSERTED. The
+    PWA sends `sender_member_id` in the body and the server believes it, so
+    any caller could post a message as any member — a child as a parent, an
+    outsider as anyone. The token that would have settled it existed all along
+    and was read by five routes.
+
+    Precedence, and the reasoning for each step:
+
+      * **A valid token wins, always.** It is the only thing here that was
+        issued by us.
+      * **Token present but naming somebody else** is impersonation with no
+        legitimate caller behind it, so it is recorded and — once enforcing —
+        refused. There is no surface that signs in as one member and acts as
+        another; if one appears, it needs its own tier, not a loophole.
+      * **No token falls back to the claim**, recorded. This is the whole
+        installed base on the day S2 ships: the PWA sends its token on a
+        handful of privileged calls and nothing else. Refusing here would log
+        the family out of their own house to fix a bug they did not have.
+    """
+    from services import storage
+
+    token = headers.get('x-member-token') or query.get('member_token')
+    member = None
+    if token:
+        try:
+            member = storage.get_member_by_token(token)
+        except Exception:
+            member = None
+
+    if member:
+        if claimed_id and claimed_id != member.get('id'):
+            record_identity('mismatch', claimed_id, member.get('id'))
+            return {'member': member, 'id': member.get('id'), 'source': 'token',
+                    'mismatch': True, 'claimed': claimed_id}
+        return {'member': member, 'id': member.get('id'), 'source': 'token',
+                'mismatch': False}
+
+    if claimed_id:
+        record_identity('claimed', claimed_id, None)
+        try:
+            member = storage.get_member(claimed_id)
+        except Exception:
+            member = None
+        return {'member': member, 'id': claimed_id, 'source': 'claimed',
+                'mismatch': False}
+
+    return {'member': None, 'id': None, 'source': 'none', 'mismatch': False}
+
+
+def impersonation_refused(acting: dict) -> bool:
+    """Should this act be stopped? Only a token that names someone else, and
+    only once enforcing — same dark-ship discipline as the route guard."""
+    return bool(acting.get('mismatch')) and enforcing()
+
+
 # --- the audit record -------------------------------------------------------
 # Deliberately in memory and deliberately small. Its whole job is to answer one
 # question once — "what would break if we flipped this on?" — and then be
@@ -289,6 +347,19 @@ def identify(headers, query) -> dict:
 
 _AUDIT = {}          # (method, path_template) -> {'n', 'tiers', 'saw', 'last'}
 _AUDIT_CAP = 500     # a runaway route cannot eat the add-on's memory
+_IDENTITY = {'claimed': 0, 'mismatch': 0, 'examples': []}
+
+
+def record_identity(kind: str, claimed, resolved) -> None:
+    """How often identity still comes from the client rather than the token.
+
+    `claimed` counts are the migration's progress bar — they should fall to
+    zero as surfaces start sending their token, and S8 must not flip while
+    they are high. `mismatch` counts are different in kind: every one of them
+    is a caller acting as somebody they are not."""
+    _IDENTITY[kind] = _IDENTITY.get(kind, 0) + 1
+    if kind == 'mismatch' and len(_IDENTITY['examples']) < 20:
+        _IDENTITY['examples'].append({'claimed': claimed, 'token_says': resolved})
 
 
 def record(method: str, path_template: str, allowed, saw) -> None:
@@ -312,11 +383,14 @@ def audit_report() -> dict:
              'last': e['last']}
             for (m, p), e in _AUDIT.items()]
     rows.sort(key=lambda r: -r['count'])
-    return {'would_deny': rows, 'routes': len(rows), 'capped': len(_AUDIT) >= _AUDIT_CAP}
+    return {'would_deny': rows, 'routes': len(rows),
+            'capped': len(_AUDIT) >= _AUDIT_CAP,
+            'identity': dict(_IDENTITY)}
 
 
 def reset_audit() -> None:
     _AUDIT.clear()
+    _IDENTITY.update(claimed=0, mismatch=0, examples=[])
 
 
 # --- the guard --------------------------------------------------------------
