@@ -106,9 +106,18 @@
         contextWarning() {
             if (typeof window === 'undefined') return '';
             if (window.isSecureContext !== false) return '';
-            return 'this page is not served over HTTPS, so the browser will '
-                 + 'not give it the Opus decoder — reach Chauffeur through '
-                 + 'Home Assistant, or over https, and this screen can play';
+            // NAMES THE ORIGIN, and says nothing about how the page was
+            // reached. The first draft advised "reach Chauffeur through Home
+            // Assistant" and the household read it while doing exactly that:
+            // ingress inherits Home Assistant's own scheme, so an HA served
+            // over http hands out insecure pages no matter which door you use.
+            // Advice that describes a route rather than a requirement sends
+            // somebody to check the place they are already standing.
+            return `this page is on http (${location.host}), which the browser `
+                 + 'treats as insecure and so withholds the Opus decoder — '
+                 + 'Music Assistant then hangs up. It needs an https address; '
+                 + 'through ingress that means Home Assistant\'s own URL has '
+                 + 'to be https';
         },
 
         /** What a parent named THIS device, or null. `named` is false for the
@@ -394,6 +403,15 @@
             function scheduleReconnect() {
                 if (self.reconnectTimer) return;
                 if (self.retries >= 6) {
+                    // A handshake that never completes will not start
+                    // completing on the seventh try, so this says what would
+                    // have to change rather than inviting another tap.
+                    if (self.blockedHost) {
+                        notice(`${identity.name} gave up: ${self.blockedHost} `
+                            + `will not carry a WebSocket. Chauffeur needs one `
+                            + `to send audio to this screen.`);
+                        return;
+                    }
                     const why = self.closeReason();
                     const ctx = MusicLogic.contextWarning();
                     notice(`${identity.name} keeps losing its connection`
@@ -452,10 +470,22 @@
                     // rename. Set before connecting so a failure still leaves
                     // something to diagnose with.
                     self.playerId = pid;
-                    const wsUrl = new URL(base(opts) + 'api/sendspin/ws', location.href)
-                        .href.replace(/^http/, 'ws');
+                    const wsTarget = new URL(base(opts) + 'api/sendspin/ws',
+                                             location.href);
+                    // Named separately because a failure has to be able to say
+                    // WHICH host would not carry the connection — on a wall
+                    // panel that host is the entire difference between "the
+                    // LAN address works and the tunnel does not" and a mystery.
+                    const wsHost = wsTarget.host;
+                    const wsUrl = wsTarget.href.replace(/^http/, 'ws');
                     const socket = new WebSocket(wsUrl);
                     socket.binaryType = 'arraybuffer';
+                    // Did the HANDSHAKE ever complete? The whole difference
+                    // between "Music Assistant said no" and "nothing in front
+                    // of Chauffeur would carry a WebSocket at all", and until
+                    // this flag existed both looked identical from the card.
+                    let opened = false;
+                    socket.addEventListener('open', () => { opened = true; });
                     socket.addEventListener('close', (e) => {
                         // Recorded whether or not we were up, and whether or
                         // not anybody is told: the interesting close is the
@@ -474,13 +504,34 @@
                         }
                         if (!self.active) {
                             // NEVER CAME UP, and this used to return in
-                            // silence. The relay closes with its own words
-                            // when it cannot find or reach Music Assistant,
-                            // and throwing them away here is why the phone
-                            // showed sendspin-js's "Adopted WebSocket closed
-                            // before opening" — a sentence that names the
-                            // symptom and none of the causes.
-                            if (e.reason) notice(`${identity.name}: ${e.reason}`);
+                            // silence — which is why both surfaces showed
+                            // sendspin-js's "Adopted WebSocket closed before
+                            // opening", a sentence that names the symptom and
+                            // none of the causes. There are two, and they need
+                            // different sentences because they need different
+                            // people to fix them.
+                            if (e.reason) {
+                                // The relay accepted us and then said why:
+                                // Music Assistant could not be found or
+                                // reached. A Chauffeur-side answer.
+                                notice(`${identity.name}: ${e.reason}`);
+                            } else if (!opened) {
+                                // The handshake never completed, so nothing in
+                                // Chauffeur ever ran. Something BETWEEN the
+                                // browser and the add-on refused to upgrade
+                                // the connection — a tunnel or reverse proxy
+                                // that carries ordinary requests perfectly
+                                // well and drops WebSockets, which is the
+                                // default on more of them than it should be.
+                                self.blockedHost = wsHost;
+                                notice(`${identity.name} could not open its `
+                                    + `audio connection to ${wsHost} — the `
+                                    + `WebSocket was refused before it opened. `
+                                    + `Whatever sits in front of Chauffeur `
+                                    + `(a tunnel, a reverse proxy) has to pass `
+                                    + `WebSocket upgrades for a screen or a `
+                                    + `phone to play music.`);
+                            }
                             return;
                         }
                         self.active = false;

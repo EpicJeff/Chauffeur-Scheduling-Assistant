@@ -373,6 +373,13 @@ def scenario_a_refusal_is_repeated_rather_than_swallowed():
           "a socket refused before it opened still closes in silence")
     check('contextWarning' in logic and 'isSecureContext' in logic,
           "nothing names the insecure page that costs the player its decoder")
+    # A handshake that never completed and one Music Assistant refused look
+    # identical from the card, and they need different people to fix them.
+    check("addEventListener('open'" in logic,
+          "nothing records whether the WebSocket handshake ever completed")
+    check('blockedHost' in logic and 'WebSocket upgrades' in logic,
+          "a proxy or tunnel that will not carry a WebSocket is reported as a "
+          "player that merely failed, which sends somebody to the wrong box")
     src = open(os.path.join(ROOT, 'main.py'), encoding='utf-8').read()
     relay = src[src.index('async def sendspin_relay('):]
     relay = relay[:relay.index('# --- Passenger day view API ---')]
