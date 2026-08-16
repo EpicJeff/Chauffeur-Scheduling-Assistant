@@ -309,7 +309,40 @@
 </nav>
 
 {% include 'components/hero_card.html' %}
+{% include 'components/panel_enrol.html' %}
 <script>
+    // Auth arc S6: a panel is a PLACE, not a person. It holds a device token
+    // rather than a member session, because it has to come up after a power
+    // cut at 6am with nobody in the room. Installed at the top of nav so it is
+    // in place before any board fetch, on every page a panel can draw.
+    (function attachDeviceToken() {
+        // Guarded: nav's script is also executed outside a browser (the nav
+        // runtime test runs it under node), and auth plumbing must never be
+        // the reason a page fails to boot.
+        if (typeof window === 'undefined' || typeof window.fetch !== 'function'
+            || typeof localStorage === 'undefined') return;
+        const _fetch = window.fetch.bind(window);
+        window.fetch = function (input, init) {
+            try {
+                const url = typeof input === 'string' ? input : (input && input.url) || '';
+                const foreign = /^[a-z]+:\/\//i.test(url) && !url.startsWith(window.location.origin);
+                if (!foreign) {
+                    const dt = localStorage.getItem('chauffeur_device_token');
+                    const did = localStorage.getItem('chauffeur_device_id');
+                    if (dt || did) {
+                        init = init || {};
+                        const h = new Headers(init.headers
+                            || (typeof input === 'object' && input.headers) || {});
+                        if (dt && !h.has('X-Device-Token')) h.set('X-Device-Token', dt);
+                        if (did && !h.has('X-Device-Id')) h.set('X-Device-Id', did);
+                        init.headers = h;
+                    }
+                }
+            } catch (e) { /* auth plumbing must never break a fetch */ }
+            return _fetch(input, init);
+        };
+    })();
+
     document.addEventListener('DOMContentLoaded', () => {
         const urlParams = new URLSearchParams(window.location.search);
         const isKiosk = urlParams.get('kiosk') === 'true';

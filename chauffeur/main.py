@@ -4983,6 +4983,57 @@ def revoke_trusted_device(device_id: str, x_member_token: Optional[str] = Header
     return {"status": "revoked", "device_id": device_id}
 
 
+class EnrolCodeRequest(BaseModel):
+    label: Optional[str] = None
+
+
+@app.post("/api/account/devices/enrol-code")
+def create_enrol_code(req: EnrolCodeRequest, x_member_token: Optional[str] = Header(None)):
+    """A short pairing code a parent reads out to the panel (auth arc S6).
+
+    The TV-pairing shape, and it is the right one for a screen bolted to a
+    wall: it has no keyboard worth using, nobody signs in on it, and typing an
+    email and password on a touch panel in a hallway is the kind of thing that
+    gets done once and then worked around forever.
+
+    Six digits, ten minutes, single use — short because somebody is reading it
+    off a laptop across the room, and short-lived because that is what makes
+    six digits enough."""
+    parent = require_parent_token(x_member_token)
+    import secrets
+    code = f"{secrets.randbelow(1000000):06d}"
+    storage.create_auth_link(parent['id'], f"enrol:{code}:{req.label or 'Wall panel'}",
+                             ttl_hours=1 / 6)
+    return {"code": code, "expires_in_minutes": 10}
+
+
+class EnrolRequest(BaseModel):
+    code: str
+    device_id: str
+    label: Optional[str] = None
+
+
+@app.post("/api/account/devices/enrol")
+def enrol_device(req: EnrolRequest, request: Request = None):
+    """The panel spends the code and receives its own token.
+
+    Rate-limited on the calling address like every other guess in this app: a
+    six-digit code is only safe because it is short-lived AND cannot be
+    hammered."""
+    _pin_rate_check('enrol', request)
+    match = None
+    for link in storage.get_auth_links_by_prefix(f"enrol:{req.code}:"):
+        match = link
+        break
+    _pin_rate_record('enrol', bool(match), request)
+    if not match:
+        raise HTTPException(status_code=403, detail="That code is wrong or has expired")
+    storage.consume_auth_link(match['token'])
+    label = req.label or match['kind'].split(':', 2)[2] or 'Wall panel'
+    token = storage.enrol_device_token(req.device_id, label, by_member=match['member_id'])
+    return {"status": "ok", "device_token": token, "label": label}
+
+
 @app.get("/api/account/setup")
 def account_setup_state(request: Request = None):
     """Does this household need its first account, and may THIS caller create

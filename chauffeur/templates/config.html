@@ -1089,6 +1089,23 @@
                                 on it with their password. After that, everyone in the family &mdash;
                                 including kids with no account &mdash; can get back in by tapping their
                                 face and typing a PIN. Revoke one you no longer have.</p>
+                            <div class="flex items-center gap-2 flex-wrap py-2">
+                                <button type="button" @click="makeEnrolCode()" :disabled="enrolBusy"
+                                    class="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 px-4 py-2 rounded font-semibold text-sm">
+                                    ➕ Add a wall panel
+                                </button>
+                                <template x-if="enrolCode">
+                                    <div class="flex items-center gap-3">
+                                        <span class="font-mono text-3xl tracking-[0.3em] text-sky-300"
+                                              x-text="enrolCode"></span>
+                                        <span class="text-xs text-gray-400">
+                                            On the panel, open
+                                            <code class="text-gray-300">?panel=true&amp;enrol=1</code>
+                                            and type this. Expires in 10 minutes.
+                                        </span>
+                                    </div>
+                                </template>
+                            </div>
                             <template x-for="d in trustedDevices" :key="d.device_id">
                                 <div class="flex items-center gap-3 py-2 border-b border-gray-800">
                                     <div class="flex-1 min-w-0">
@@ -4203,6 +4220,7 @@
                 // Invites (auth arc S3)
                 inviteBusy: false, inviteLink: '', inviteSent: false,
                 trustedDevices: [],                          // auth arc S5
+                enrolCode: '', enrolBusy: false,              // auth arc S6
                 // Status Days (Presence & Status arc P1)
                 statusProtocols: [],
                 // Stages (load arc A4)
@@ -5810,6 +5828,23 @@
                     if (!res.ok) showGlobalAlert('Could not set PIN.');
                     await this.loadMembers();
                 },
+                // Pairing a wall panel (auth arc S6)
+                async makeEnrolCode() {
+                    this.enrolBusy = true;
+                    try {
+                        const r = await fetch('api/account/devices/enrol-code', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ label: 'Wall panel' }) });
+                        const d = await r.json();
+                        if (!r.ok) { showGlobalAlert(d.detail || 'Could not make a code.'); return; }
+                        this.enrolCode = d.code;
+                        // Gone after ten minutes on screen too, so a code left
+                        // on a laptop does not read as still good.
+                        setTimeout(() => { this.enrolCode = ''; this.loadDevices(); }, 600000);
+                    } catch (e) { showGlobalAlert('Could not reach the server.'); }
+                    finally { this.enrolBusy = false; }
+                },
+
                 // Trusted devices (auth arc S5)
                 async loadDevices() {
                     try {

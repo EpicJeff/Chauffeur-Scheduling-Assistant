@@ -320,6 +320,75 @@ def scenario_q_growing_up_says_what_is_new():
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
+
+
+# --- S6: a panel is a place, not a person -----------------------------------
+
+def scenario_r_a_device_token_must_be_issued_not_merely_sent():
+    """S1 returned the device tier to anybody who sent the header at all,
+    which would have made the header its own password — the exact shape of
+    hole this arc exists to close. It was dark, so never reachable, but it had
+    to be right BEFORE the flip rather than at it."""
+    from services import auth
+    who = auth.identify({'x-device-token': 'i-just-made-this-up'}, {})
+    check(who['tier'] != auth.DEVICE,
+          "an invented device token was accepted as an enrolled panel")
+
+    storage.untrust_device('panel-1')
+    token = storage.enrol_device_token('panel-1', 'Kitchen panel', by_member='mum')
+    who = auth.identify({'x-device-token': token, 'cf-connecting-ip': '203.0.113.7'}, {})
+    check(who['tier'] == auth.DEVICE,
+          f"a real panel token was not honoured: {who}")
+    check(who.get('device', {}).get('label') == 'Kitchen panel',
+          "the panel's identity did not come back with it")
+
+
+def scenario_s_a_panel_gets_the_room_not_the_admin_keys():
+    """It gets the powers of the room it is bolted to, never the powers of
+    whoever last walked past it."""
+    from services import auth
+    board = auth.resolve('GET', '/api/home_board/build')
+    check(auth.DEVICE in board, "a panel could not draw its own board")
+    for admin in ('/api/settings', '/api/download_db', '/config'):
+        tiers = auth.resolve('GET', admin) or frozenset()
+        check(auth.DEVICE not in tiers,
+              f"a wall panel could reach {admin}")
+
+
+def scenario_t_a_pairing_code_is_short_lived_and_single_use():
+    """Six digits is only safe because it expires and cannot be reused."""
+    m = _member('Pairing')
+    code = '424242'
+    storage.create_auth_link(m, f"enrol:{code}:Kitchen panel", ttl_hours=1 / 6)
+    found = storage.get_auth_links_by_prefix(f"enrol:{code}:")
+    check(found, "a fresh pairing code could not be found")
+    storage.consume_auth_link(found[0]['token'])
+    check(not storage.get_auth_links_by_prefix(f"enrol:{code}:"),
+          "a spent pairing code was still live")
+    # And an expired one is never offered.
+    storage.create_auth_link(m, "enrol:999999:Old", ttl_hours=0)
+    check(not storage.get_auth_links_by_prefix("enrol:999999:"),
+          "an expired pairing code was still live")
+
+
+def scenario_u_a_service_token_must_match_the_configured_one():
+    """Same lesson as the device token: presence is not proof."""
+    from services import auth
+    real_settings = storage.get_settings
+    storage.get_settings = lambda: {'service_token': 'the-real-one'}
+    try:
+        check(auth.identify({'x-service-token': 'guessed',
+                             'cf-connecting-ip': '203.0.113.7'}, {})['tier'] != auth.SERVICE,
+              "a guessed service token was accepted")
+        check(auth.identify({'x-service-token': 'the-real-one',
+                             'cf-connecting-ip': '203.0.113.7'}, {})['tier'] == auth.SERVICE,
+              "the configured service token was rejected")
+    finally:
+        storage.get_settings = real_settings
+
+
+SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
+
 if __name__ == "__main__":
     for fn in SCENARIOS:
         fn()

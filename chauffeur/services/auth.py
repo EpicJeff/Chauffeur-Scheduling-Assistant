@@ -33,6 +33,7 @@ Identity is resolved but NOT yet enforced or derived from — S2 makes the token
 the identity everywhere and stops trusting the client-asserted member id the
 PWA sends today.
 """
+import hmac
 import time
 from typing import Optional
 
@@ -328,13 +329,28 @@ def identify(headers, query) -> dict:
     token."""
     from services import storage
 
+    # VALIDATED, not merely present (fixed in S6). S1 returned the device tier
+    # for anybody who sent the header at all, which would have made the header
+    # its own password — the exact shape of hole this arc exists to close. It
+    # was dark, so it was never reachable, but it must be right before the flip
+    # rather than at it.
     device = headers.get('x-device-token') or query.get('device_token')
     if device:
-        return {'tier': DEVICE, 'device_token': device, 'member': None}
+        try:
+            row = storage.get_device_by_token(device)
+        except Exception:
+            row = None
+        if row:
+            return {'tier': DEVICE, 'device': row, 'member': None}
 
     service = headers.get('x-service-token') or query.get('service_token')
     if service:
-        return {'tier': SERVICE, 'member': None}
+        try:
+            expected = (storage.get_settings() or {}).get('service_token')
+        except Exception:
+            expected = None
+        if expected and hmac.compare_digest(str(service), str(expected)):
+            return {'tier': SERVICE, 'member': None}
 
     token = headers.get('x-member-token') or query.get('member_token')
     if token:

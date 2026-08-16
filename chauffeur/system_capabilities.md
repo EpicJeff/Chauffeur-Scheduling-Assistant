@@ -2345,3 +2345,15 @@ Four digits is a perfectly good "let me back in on the kitchen tablet" and a hop
 - **Parent hand path**: Config → People → Trusted devices, showing who vouched for each one and when it was last used ("the one nobody has touched since March" is how a person actually identifies a tablet they no longer own), with Revoke.
 - **Stage-driven accounts** (A4's capability table, so no surface has to know a birthday): `own_account` is False for Sprout and Explorer — a five-year-old has no inbox and requiring one to appear on the family's schedule would be absurd — and True for Navigator and Copilot. Offered, never forced: a Navigator with no email keeps the PIN and loses nothing. The Navigator GRANTS line now says an account is what is new, because growing up is granted rather than silently switched.
 - Tests: `test_accounts.py` scenarios o–q.
+
+## A panel is a place, not a person (v2.252.0 — auth arc S6)
+
+A wall panel must come up after a power cut at 6am with nobody in the room, so it can never hold a member's session. It holds a **device token** instead: board reads and the interactive board actions a wall legitimately performs (claim a chore, check a routine, play music), and never admin. It gets the powers of the room it is bolted to, not the powers of whoever last walked past it.
+
+- **Pairing by code, the TV shape.** A parent presses *Add a wall panel* in Config → People → Trusted devices and gets six digits, good for ten minutes, single use. On the panel, `?panel=true&enrol=1` shows a big-digit screen; type the code once and never again. A panel has no keyboard worth using and nobody signs in on it — asking somebody to type an email and password on a hallway touchscreen is the kind of thing that gets done once and then worked around forever. The enrol call is rate-limited like every other guess, which is what makes six digits safe.
+- **TWO REAL HOLES IN S1 CLOSED HERE**, both the same mistake — treating a header's PRESENCE as proof:
+  - `identify()` returned the `device` tier to anyone who sent `X-Device-Token` at all, which would have made the header its own password.
+  - It did the same for `X-Service-Token`.
+  Both now verify against what was actually issued (`storage.get_device_by_token`, and `hmac.compare_digest` against the configured service token). Neither was reachable while the guard was dark, but they had to be right *before* the flip rather than at it. Pinned by `scenario_r` and `scenario_u`.
+- **`nav.html` carries the device fetch wrapper** so it is in place before any board fetch on every page a panel can draw — guarded for the non-browser case, because nav's script is also executed under node by `test_nav_runtime` and auth plumbing must never be why a page fails to boot.
+- Tests: `test_accounts.py` scenarios r–u, including one asserting a panel cannot reach `/api/settings`, `/api/download_db` or `/config`.

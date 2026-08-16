@@ -1456,6 +1456,32 @@ def trust_device(device_id: str, label: str = None, by_member: str = None,
     return row
 
 
+def enrol_device_token(device_id: str, label: str, by_member: str = None) -> str:
+    """Give a device its own credential (auth arc S6).
+
+    A wall panel is a PLACE, not a person: it must come up after a power cut
+    at 6am with nobody in the room, so it cannot hold a member's session. It
+    holds this instead — a long-lived token that grants board reads and the
+    interactive board actions a wall legitimately performs, and never admin.
+    It gets the powers of the room it is bolted to, not the powers of whoever
+    last walked past it."""
+    import secrets
+    token = secrets.token_urlsafe(32)
+    trust_device(device_id, label=label, by_member=by_member, kind='panel')
+    with db_lock:
+        trusted_devices_table.update({'device_token': token, 'kind': 'panel'},
+                                     Query().device_id == device_id)
+    return token
+
+
+def get_device_by_token(token: str) -> Optional[dict]:
+    if not token:
+        return None
+    with db_lock:
+        rows = trusted_devices_table.search(Query().device_token == token)
+    return rows[0] if rows else None
+
+
 def get_trusted_device(device_id: str) -> Optional[dict]:
     if not device_id:
         return None
@@ -1650,6 +1676,18 @@ def consume_auth_link(token: str) -> Optional[dict]:
     with db_lock:
         auth_links_table.update({'used_at': time.time()}, Query().token == token)
     return link
+
+
+def get_auth_links_by_prefix(prefix: str) -> List[dict]:
+    """Live links whose kind starts with a prefix — how a pairing code is
+    looked up without the code itself becoming a row id."""
+    import time
+    now = time.time()
+    with db_lock:
+        rows = auth_links_table.all()
+    return [r for r in rows
+            if str(r.get('kind') or '').startswith(prefix)
+            and not r.get('used_at') and r.get('expires_at', 0) > now]
 
 
 def invalidate_auth_links(member_id: str, kind: str = None) -> None:
