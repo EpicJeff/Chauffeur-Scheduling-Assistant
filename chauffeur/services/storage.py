@@ -399,6 +399,11 @@ with db_lock:
     chat_messages_table = db.table('chat_messages')
     channel_reads_table = db.table('channel_reads')
     member_tokens_table = db.table('member_tokens')
+    # Auth arc S3: single-use, expiring links for invite / verify / reset. A
+    # table rather than a column on the member, because a person can have an
+    # invite and a reset outstanding at once and a column would silently
+    # overwrite one with the other.
+    auth_links_table = db.table('auth_links')
     chores_table = db.table('chores')
     points_ledger_table = db.table('points_ledger')
     routines_table = db.table('routines')
@@ -1416,6 +1421,113 @@ def verify_member_pin(member_id: str, pin: str) -> bool:
         return False
     return hmac.compare_digest(member['pin_hash'],
                                _hash_pin(pin or '', member['pin_salt']))
+
+# --- Passwords (auth arc S3) ---
+# Same PBKDF2 shape as the PIN above and deliberately so: one hashing story in
+# the codebase, no new dependency in the add-on image. The iteration count is
+# higher because a password is the credential that faces the public internet
+# while a PIN, after S5, only ever re-opens an already-trusted device.
+
+_PW_ITERATIONS = 260_000
+
+
+def _hash_password(password: str, salt: str) -> str:
+    import hashlib
+    return hashlib.pbkdf2_hmac('sha256', (password or '').encode('utf-8'),
+                               bytes.fromhex(salt), _PW_ITERATIONS).hex()
+
+
+def set_member_password(member_id: str, password: str) -> bool:
+    import os as _os
+    salt = _os.urandom(16).hex()
+    with db_lock:
+        return bool(members_table.update(
+            {'password_hash': _hash_password(password, salt),
+             'password_salt': salt}, Query().id == member_id))
+
+
+def verify_member_password(member_id: str, password: str) -> bool:
+    import hmac
+    member = get_member(member_id)
+    if not member or not member.get('password_hash') or not member.get('password_salt'):
+        return False
+    return hmac.compare_digest(
+        member['password_hash'], _hash_password(password or '', member['password_salt']))
+
+
+def clear_member_password(member_id: str) -> bool:
+    with db_lock:
+        return bool(members_table.update(
+            {'password_hash': None, 'password_salt': None}, Query().id == member_id))
+
+
+def get_member_by_email(email: str) -> Optional[dict]:
+    """Case-insensitive, because nobody remembers how they capitalised it."""
+    wanted = (email or '').strip().lower()
+    if not wanted:
+        return None
+    for m in get_all_members(include_system=True):
+        if (m.get('email') or '').strip().lower() == wanted:
+            return m
+    return None
+
+
+# --- Invite / verify / reset links (auth arc S3) ---
+
+def create_auth_link(member_id: str, kind: str, ttl_hours: int = 168) -> str:
+    """A single-use link. Seven days by default: long enough that a
+    grandparent who opens mail on Sunday still gets in, short enough that a
+    forwarded invite does not stay live for a year."""
+    import secrets
+    import time
+    token = secrets.token_urlsafe(32)
+    with db_lock:
+        auth_links_table.insert({
+            'token': token, 'member_id': member_id, 'kind': kind,
+            'created_at': time.time(),
+            'expires_at': time.time() + ttl_hours * 3600,
+            'used_at': None})
+    return token
+
+
+def peek_auth_link(token: str) -> Optional[dict]:
+    """Look without spending — so the set-password PAGE can say whether the
+    link is still good before the person types anything into it."""
+    import time
+    if not token:
+        return None
+    with db_lock:
+        rows = auth_links_table.search(Query().token == token)
+    if not rows:
+        return None
+    link = rows[0]
+    if link.get('used_at') or link.get('expires_at', 0) < time.time():
+        return None
+    return link
+
+
+def consume_auth_link(token: str) -> Optional[dict]:
+    """Spend it. Single use is the whole point: a reset link sitting in a
+    mailbox forever is a spare key under the mat."""
+    import time
+    link = peek_auth_link(token)
+    if not link:
+        return None
+    with db_lock:
+        auth_links_table.update({'used_at': time.time()}, Query().token == token)
+    return link
+
+
+def invalidate_auth_links(member_id: str, kind: str = None) -> None:
+    """Used when a password is set: every other outstanding link for that
+    person dies with it."""
+    import time
+    q = Query().member_id == member_id
+    if kind:
+        q = q & (Query().kind == kind)
+    with db_lock:
+        auth_links_table.update({'used_at': time.time()}, q)
+
 
 def create_member_token(member_id: str) -> str:
     import uuid as _uuid

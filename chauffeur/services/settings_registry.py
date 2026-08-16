@@ -300,6 +300,30 @@ ENTRIES: List[dict] = [
        page='intake', anchor='settings'),
     _e('ingest_email_password', 'intake', 'App password',
        'An app password, never the account password.', page='intake', anchor='settings'),
+    # Outbound mail (auth arc S3). Lives on the People surface, beside the
+    # invite button that uses it — a family configures a sender because they
+    # are trying to invite somebody, not because they set out to configure
+    # mail. Its own credentials, with a toggle to mirror intake's.
+    _e('smtp_use_intake', 'integrations', 'Send from the intake mailbox',
+       'Reuse the intake mailbox to send invites instead of its own account. '
+       'Off by default: the intake mailbox reads everything that arrives, so '
+       'bounces and out-of-office replies to invites would become proposals.',
+       page='config', anchor='people'),
+    _e('smtp_host', 'integrations', 'SMTP host',
+       'The outgoing mail server for invites and password resets.',
+       page='config', anchor='people'),
+    _e('smtp_port', 'integrations', 'SMTP port',
+       'Usually 587 (STARTTLS) or 465 (SSL).', page='config', anchor='people'),
+    _e('smtp_user', 'integrations', 'SMTP account',
+       'The account that authenticates to the mail server.',
+       page='config', anchor='people'),
+    _e('smtp_password', 'integrations', 'SMTP password',
+       'An app password, never the account password.',
+       page='config', anchor='people'),
+    _e('smtp_from', 'integrations', 'Send invites as',
+       'The From address on invites. Most providers reject a From the '
+       'account does not own, so keep it the same or a verified alias.',
+       page='config', anchor='people'),
     _e('ingest_sender_defaults', 'intake', 'Sender routing',
        'Which calendar a given sender usually belongs to.', page='intake', anchor='settings'),
     _e('ingest_sender_blocklist', 'intake', 'Blocked senders',

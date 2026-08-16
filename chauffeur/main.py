@@ -1303,6 +1303,19 @@ def driver_app(request: Request):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
+@app.get("/account/set-password")
+def account_set_password_page(request: Request):
+    """Where an invite or reset link lands (auth arc S3).
+
+    A page of its own rather than a mode of the app shell: the person opening
+    it has no session, often no idea what Chauffeur is, and is arriving from a
+    mail client on a phone. Everything the shell does — identity, boards,
+    service worker — is noise at that moment."""
+    response = templates.TemplateResponse(request=request, name="set_password.html")
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/config")
 def config(request: Request):
     # Mapbox context for the gas-station picker map (same quota gate the trip
@@ -4164,9 +4177,17 @@ def act_on_action_proposal(proposal_id: str, req: ActionProposalAct, background_
 # --- Family Members API (overlay over drivers/passengers) ---
 
 def _public_member(m: dict) -> dict:
-    """Strip PIN secrets; expose has_pin instead."""
-    out = {k: v for k, v in m.items() if k not in ('pin_hash', 'pin_salt', 'pin')}
+    """Strip credential secrets; expose has_pin / has_password instead.
+
+    The password fields (auth arc S3) MUST be listed here. A member dict is
+    returned by a dozen endpoints and rendered on kiosks; a hash that leaks
+    once is offline-crackable forever, and the fact that this function already
+    existed for the PIN is exactly why the new credential had to join it
+    rather than trust every call site to remember."""
+    secret = ('pin_hash', 'pin_salt', 'pin', 'password_hash', 'password_salt', 'password')
+    out = {k: v for k, v in m.items() if k not in secret}
     out['has_pin'] = bool(m.get('pin_hash'))
+    out['has_password'] = bool(m.get('password_hash'))
     return out
 
 # --- Protected commitments (load arc A6) ---
@@ -4756,6 +4777,167 @@ def member_auth(member_id: str, req: MemberAuthRequest):
             raise HTTPException(status_code=403, detail="Wrong PIN")
     token = storage.create_member_token(member_id)
     return {"token": token, "member": _public_member(member)}
+
+# --- Accounts: invite, verify, password (auth arc S3) ---
+# Adding a person IS creating a user. The credential that faces the public
+# internet is a password; the PIN stays for re-opening an already-trusted
+# device (S5), and for children who have no inbox at all.
+
+_MIN_PASSWORD = 10
+
+
+def _password_problem(password: str) -> Optional[str]:
+    """Length only, deliberately. Composition rules (a symbol, a digit, a
+    capital) push people toward Passw0rd! and away from four random words,
+    which is the opposite of what they are for."""
+    if not password or len(password) < _MIN_PASSWORD:
+        return f"Password must be at least {_MIN_PASSWORD} characters"
+    if len(password) > 200:
+        return "Password is too long"
+    return None
+
+
+def _account_link(token: str) -> str:
+    base = (storage.get_settings().get('public_base_url') or '').rstrip('/')
+    return f"{base}/account/set-password?token={token}"
+
+
+class InviteRequest(BaseModel):
+    email: Optional[str] = None
+
+
+@app.post("/api/members/{member_id}/invite")
+def invite_member(member_id: str, req: InviteRequest, request: Request = None,
+                  x_member_token: Optional[str] = Header(None)):
+    """Send (or re-send) an invite. Parent-only: handing somebody an account
+    on the family's data is administration.
+
+    Returns the link EVERY time, not only on failure. Mail is best-effort and
+    a parent standing next to a grandparent should be able to read the link
+    out loud rather than wait on a mail server they do not control.
+
+    **The bootstrap.** This endpoint mints a link that SETS SOMEBODY'S
+    PASSWORD, so it can never be open — an outsider could issue themselves a
+    parent's account. But it is also the endpoint that creates the very first
+    account, at a moment when no parent has a password and the admin page
+    holds no token, so it cannot require one either. The way out is the
+    boundary the tunnel check already draws: **from the LAN it is allowed, from
+    the public internet it is parent-only.** That is the same dated grace
+    Argyle gets (Decision 6) and it ends the same way — once S4 gives the admin
+    page a real parent login, this falls back to parent-only everywhere."""
+    from services import auth as _auth
+    if _auth.arrived_via_tunnel(request.headers if request else {}):
+        require_parent_token(x_member_token)
+    member = storage.get_member(member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    from services import mailer
+    email = (req.email or member.get('email') or '').strip()
+    if not mailer.valid_email(email):
+        raise HTTPException(status_code=400, detail="A valid email is required to invite")
+    existing = storage.get_member_by_email(email)
+    if existing and existing.get('id') != member_id:
+        raise HTTPException(status_code=409,
+                            detail=f"{existing.get('name')} already uses that address")
+    storage.update_member(member_id, {'email': email})
+
+    token = storage.create_auth_link(member_id, 'invite', ttl_hours=168)
+    link = _account_link(token)
+    result = mailer.send(email, "Your Chauffeur account",
+                         mailer.invite_body(member.get('name') or 'there',
+                                            "the family", link))
+    return {"status": "ok", "sent": result['sent'], "reason": result['reason'],
+            "link": link, "email": email}
+
+
+class AcceptRequest(BaseModel):
+    token: str
+    password: str
+
+
+@app.get("/api/account/link/{token}")
+def peek_account_link(token: str):
+    """Is this link still good, and whose is it? Lets the set-password page
+    say 'this link has expired' before somebody types a password into a form
+    that was never going to work."""
+    link = storage.peek_auth_link(token)
+    if not link:
+        return {"valid": False}
+    member = storage.get_member(link['member_id']) or {}
+    return {"valid": True, "kind": link.get('kind'),
+            "name": member.get('name'), "email": member.get('email')}
+
+
+@app.post("/api/account/set-password")
+def set_password_from_link(req: AcceptRequest):
+    """Spend an invite or reset link and set the password.
+
+    Verification and password-setting are ONE step, not two: following a
+    link that only we could have mailed to that address IS the proof the
+    address belongs to them. A separate 'confirm your email' click would be
+    ceremony that proves nothing extra."""
+    problem = _password_problem(req.password)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    link = storage.consume_auth_link(req.token)
+    if not link:
+        raise HTTPException(status_code=400, detail="That link has expired or was already used")
+    member_id = link['member_id']
+    if not storage.get_member(member_id):
+        raise HTTPException(status_code=404, detail="Member not found")
+    storage.set_member_password(member_id, req.password)
+    storage.update_member(member_id, {'email_verified': True})
+    # Any other outstanding link dies with it — an old invite still lying in a
+    # mailbox must not survive a password change.
+    storage.invalidate_auth_links(member_id)
+    # Setting a password signs you in; making somebody log in again
+    # immediately, having just proved themselves, is ceremony.
+    token = storage.create_member_token(member_id)
+    return {"status": "ok", "token": token,
+            "member": _public_member(storage.get_member(member_id))}
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/account/login")
+def account_login(req: LoginRequest):
+    """Email + password. The generic failure is deliberate: distinguishing
+    'no such account' from 'wrong password' tells an attacker which family
+    members exist."""
+    member = storage.get_member_by_email(req.email)
+    generic = HTTPException(status_code=403, detail="Email or password is wrong")
+    if not member:
+        raise generic
+    _pin_rate_check(member['id'])
+    ok = storage.verify_member_password(member['id'], req.password)
+    _pin_rate_record(member['id'], ok)
+    if not ok:
+        raise generic
+    return {"status": "ok", "token": storage.create_member_token(member['id']),
+            "member": _public_member(member)}
+
+
+class ForgotRequest(BaseModel):
+    email: str
+
+
+@app.post("/api/account/forgot")
+def account_forgot(req: ForgotRequest):
+    """Always answers the same. Whether an address is on the family's account
+    is not something a stranger gets to test."""
+    from services import mailer
+    member = storage.get_member_by_email(req.email)
+    if member and member.get('password_hash'):
+        token = storage.create_auth_link(member['id'], 'reset', ttl_hours=2)
+        mailer.send(member['email'], "Reset your Chauffeur password",
+                    mailer.reset_body(member.get('name') or 'there',
+                                      _account_link(token)))
+    return {"status": "ok"}
+
 
 class SetPinRequest(BaseModel):
     pin: str

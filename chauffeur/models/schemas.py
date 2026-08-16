@@ -130,6 +130,20 @@ class FamilyMember(BaseModel):
     # participation, no admin. child: family + kid lens + points economy.
     # helper: external (hired driver/nanny) — driving surfaces only.
     role: str = 'adult'
+    # --- The account (auth arc S3) ---
+    # Adding a person IS creating a user: an email gets them an invite link,
+    # they verify and set a password. Optional on purpose — a seven-year-old
+    # has no inbox, and requiring one to appear on the family's schedule would
+    # be absurd. Members without an email are parent-created and parent-
+    # managed, and their credential stays the PIN above. Which one a child
+    # gets follows their STAGE, not their age in isolation.
+    email: Optional[str] = None
+    password_hash: Optional[str] = None
+    password_salt: Optional[str] = None
+    # Set when an invite or reset link is actually followed — so "invited" and
+    # "using the app" are distinguishable, which is what a parent chasing a
+    # grandparent needs to know.
+    email_verified: bool = False
     # COVERING IS NOT CARRYING (load arc). `household` contributions count as
     # the household's load; `assist` ones do not. A teenager who drives, a
     # hired nanny, a grandparent who cooks Sunday dinner all COVER work
@@ -961,6 +975,17 @@ class Settings(BaseModel):
     ingest_email_host: str = "imap.gmail.com"
     ingest_email_user: str = ""
     ingest_email_password: str = ""
+    # --- Outbound mail: invites, verification, resets (auth arc S3) ---
+    # A SEPARATE sender by default, with `smtp_use_intake` offered as a
+    # mirror rather than assumed. The intake mailbox analyses everything that
+    # arrives in it, so invites sent from that address would feed their own
+    # bounces and out-of-office replies back into the proposal queue.
+    smtp_use_intake: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
     # Optional ROUTING hints, not a gate: every message in the intake mailbox
     # is analyzed (the mailbox itself is the filter — the family curates what
     # gets forwarded there). Each entry {pattern, calendar_id} prefills a

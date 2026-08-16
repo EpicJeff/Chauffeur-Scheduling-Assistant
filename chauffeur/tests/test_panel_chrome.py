@@ -73,7 +73,12 @@ def scenario_the_skin_reaches_every_page():
     pages = [p for p in glob.glob(os.path.join(TPL, '*.html'))
              if os.path.basename(p) not in
              ('nav.html', 'ha_theme.html', 'panel_skin.html', 'app.html',
-              'moment.html', 'trip_kiosk.html')]
+              'moment.html', 'trip_kiosk.html',
+              # Never drawn on a panel: the invite/reset landing page (auth
+              # arc S3) is a standalone page opened from a mail client, with
+              # no shell, no nav and no session. A panel skin on it would be
+              # styling for a context it can never appear in.
+              'set_password.html')]
     for path in pages:
         body = open(path, encoding='utf-8').read()
         check("{% include 'ha_theme.html' %}" in body,
@@ -296,7 +301,12 @@ def scenario_every_page_says_its_name_in_the_same_place():
              if os.path.basename(p) not in
              ('nav.html', 'ha_theme.html', 'panel_skin.html', 'app.html',
               'moment.html', 'trip_kiosk.html', 'home.html',
-              'config.html', 'settings.html')]
+              'config.html', 'settings.html',
+              # Not a destination: the invite/reset landing page (auth arc S3)
+              # is opened from a mail client by somebody with no session, and
+              # carries no shelf, no nav and no identity on purpose. It cannot
+              # line its title up with pages it is never seen beside.
+              'set_password.html')]
     for path in pages:
         body = open(path, encoding='utf-8').read()
         name = os.path.basename(path)

@@ -74,6 +74,21 @@ RULES = [
     # The picker list. S3 deletes its pre-auth role by replacing the picker
     # with a sign-in page; until then it must answer or nobody can log in.
     ('GET', '/api/members', ANYONE),
+    # Accounts (S3). All public by necessity — every one of these is reached
+    # by somebody who has no credential yet, which is the entire point of
+    # them. Their protection is the token in the link, not a tier:
+    #   * `/account/set-password` + `/api/account/link` carry a single-use,
+    #     expiring token that only we could have mailed to that address.
+    #   * `/api/account/login` is the front door.
+    #   * `/api/account/forgot` answers identically whether or not the address
+    #     exists, so it leaks nothing to probe.
+    # `/api/members/{id}/invite` is NOT here — issuing an account is
+    # administration and stays parent-only under the members rules below.
+    (ANY, '/account/set-password', ANYONE),
+    ('GET', '/api/account/link/{token}', ANYONE),
+    ('POST', '/api/account/set-password', ANYONE),
+    ('POST', '/api/account/login', ANYONE),
+    ('POST', '/api/account/forgot', ANYONE),
 
     # --- parent-only: administration and anything that hands over the house --
     # These are the routes where "open" was worth a whole compromise.

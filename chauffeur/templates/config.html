@@ -1075,6 +1075,77 @@
                         identity (avatar, color, role, PIN, Home Assistant mappings) plus their
                         <b>Driving</b> and <b>Passenger</b> profiles, which are the records the solver uses.
                         Use <b>Merge</b> if the same person appears twice, <b>Split</b> to undo a bad merge.</p>
+
+                    <!-- Accounts & invites (auth arc S3). Placed HERE, beside
+                         the people it issues accounts for, rather than in the
+                         integrations dump: a family configures a mail sender
+                         because they are trying to invite somebody, never as
+                         an end in itself. -->
+                    <details id="people" class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700">
+                        <summary class="cursor-pointer px-4 py-3 font-semibold text-blue-200">
+                            ✉️ Invite email &mdash; how invites and password resets are sent
+                        </summary>
+                        <div class="px-4 pb-4 space-y-3 text-sm">
+                            <p class="text-gray-400">Adding someone with an email address lets you send
+                                them an invite: they follow a link, set a password, and hold their own
+                                account. Without a sender configured this still works &mdash; the invite
+                                gives you a link to hand over yourself.</p>
+
+                            <label class="flex items-start gap-2">
+                                <input type="checkbox" x-model="settings.smtp_use_intake" class="mt-1">
+                                <span>
+                                    <b>Send from the intake mailbox</b>
+                                    <span class="block text-gray-400 text-xs">Reuses the address intake polls,
+                                        so there is no second account to set up. Off by default on purpose:
+                                        that mailbox reads everything that arrives, so bounces and
+                                        out-of-office replies to your invites would come back as event
+                                        proposals.</span>
+                                </span>
+                            </label>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3"
+                                 :class="settings.smtp_use_intake ? 'opacity-40 pointer-events-none' : ''">
+                                <label class="block">
+                                    <span class="text-xs uppercase tracking-wide text-gray-400">SMTP host</span>
+                                    <input type="text" x-model="settings.smtp_host" placeholder="smtp.gmail.com"
+                                           :disabled="settings.smtp_use_intake"
+                                           class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2">
+                                </label>
+                                <label class="block">
+                                    <span class="text-xs uppercase tracking-wide text-gray-400">SMTP port</span>
+                                    <input type="number" x-model.number="settings.smtp_port" placeholder="587"
+                                           :disabled="settings.smtp_use_intake"
+                                           class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2">
+                                </label>
+                                <label class="block">
+                                    <span class="text-xs uppercase tracking-wide text-gray-400">SMTP account</span>
+                                    <input type="text" x-model="settings.smtp_user" autocomplete="off"
+                                           :disabled="settings.smtp_use_intake"
+                                           class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2">
+                                </label>
+                                <label class="block">
+                                    <span class="text-xs uppercase tracking-wide text-gray-400">SMTP password</span>
+                                    <input type="password" x-model="settings.smtp_password" autocomplete="new-password"
+                                           placeholder="app password" :disabled="settings.smtp_use_intake"
+                                           class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2">
+                                </label>
+                                <label class="block md:col-span-2">
+                                    <span class="text-xs uppercase tracking-wide text-gray-400">Send invites as</span>
+                                    <input type="text" x-model="settings.smtp_from" placeholder="family@example.com"
+                                           :disabled="settings.smtp_use_intake"
+                                           class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2">
+                                    <!-- Said here rather than discovered as a silent bounce. -->
+                                    <span class="block mt-1 text-xs text-amber-300"
+                                          x-show="!settings.smtp_use_intake && settings.smtp_from && settings.smtp_user
+                                                  && settings.smtp_from.trim().toLowerCase() !== settings.smtp_user.trim().toLowerCase()">
+                                        Most providers reject a From address the account does not own, and the
+                                        rejection comes back as a bounce rather than an error here. Keep it the
+                                        same as the account, or a verified alias.
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+                    </details>
                     <div class="mb-6 flex items-center gap-2 text-sm" x-show="haStatus">
                         <span class="px-3 py-1 rounded-full font-bold text-xs uppercase tracking-wide"
                             :class="haStatus && haStatus.available ? 'bg-green-900/50 text-green-300 border border-green-800' : 'bg-red-900/50 text-red-300 border border-red-800'"
@@ -1374,6 +1445,40 @@
                                                     <option value="push">Web push only</option>
                                                     <option value="ha">HA companion only</option>
                                                 </select>
+                                            </div>
+                                        </div>
+                                        <!-- The account (auth arc S3). An email is optional and
+                                             absence is a real answer: a seven-year-old has no inbox,
+                                             stays parent-managed on a PIN, and should not be nagged
+                                             about it. -->
+                                        <div>
+                                            <label class="block text-gray-400 mb-1 text-sm">✉️ Email
+                                                <span class="text-gray-600">(gives them their own account — leave empty for young kids, who stay on a PIN)</span></label>
+                                            <div class="flex items-center gap-2 flex-wrap">
+                                                <input type="email" x-model="memberEdit.email" placeholder="name@example.com"
+                                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white flex-1 min-w-[220px]">
+                                                <button type="button" @click="sendInvite(memberEdit)"
+                                                    :disabled="!memberEdit.email || inviteBusy"
+                                                    class="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 px-4 py-3 rounded font-semibold text-sm">
+                                                    <span x-text="memberEdit.has_password ? 'Re-send invite' : 'Send invite'"></span>
+                                                </button>
+                                                <span class="text-xs px-2 py-1 rounded-full"
+                                                      :class="memberEdit.has_password ? 'bg-green-900/50 text-green-300' : 'bg-gray-700 text-gray-400'"
+                                                      x-text="memberEdit.has_password ? 'account active' : 'no account yet'"></span>
+                                            </div>
+                                            <!-- The link is shown EVERY time, not only when mail fails:
+                                                 a parent standing next to a grandparent should be able to
+                                                 read it out rather than wait on a mail server. -->
+                                            <div x-show="inviteLink" class="mt-2 p-3 bg-gray-900 rounded border border-gray-700">
+                                                <p class="text-xs text-gray-400 mb-1"
+                                                   x-text="inviteSent ? 'Sent. You can also hand over this link:' : 'No mail sender configured — hand over this link:'"></p>
+                                                <div class="flex items-center gap-2">
+                                                    <input type="text" :value="inviteLink" readonly
+                                                        class="bg-gray-800 border border-gray-600 rounded p-2 text-xs text-gray-300 flex-1 font-mono">
+                                                    <button type="button" @click="copyInvite()"
+                                                        class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-xs">Copy</button>
+                                                </div>
+                                                <p class="text-xs text-gray-500 mt-1">Works once, expires in seven days.</p>
                                             </div>
                                         </div>
                                         <div>
@@ -4063,6 +4168,8 @@
                 // calendar_ids seeded so the panel renders before a member is opened
                 memberEdit: { calendar_ids: [] },
                 newMemberCalendarInput: '',
+                // Invites (auth arc S3)
+                inviteBusy: false, inviteLink: '', inviteSent: false,
                 // Status Days (Presence & Status arc P1)
                 statusProtocols: [],
                 // Stages (load arc A4)
@@ -5607,6 +5714,8 @@
                         quiet_start: member.quiet_start || '',
                         quiet_end: member.quiet_end || '',
                         notify_lanes: member.notify_lanes || 'all',
+                        email: member.email || '',                    // auth arc S3
+                        has_password: !!member.has_password,          // read-only status
                         media_player_entity: member.media_player_entity || '',
                         school_hours_start: member.school_hours_start || '',
                         school_hours_end: member.school_hours_end || '',
@@ -5668,6 +5777,45 @@
                     if (!res.ok) showGlobalAlert('Could not set PIN.');
                     await this.loadMembers();
                 },
+                // Invites (auth arc S3). The token is sent when this browser
+                // happens to have one; from the LAN the server allows the
+                // bootstrap without it, because the first invite is issued at
+                // a moment when no parent has a password yet.
+                async sendInvite(member) {
+                    this.inviteBusy = true; this.inviteLink = ''; this.inviteSent = false;
+                    try {
+                        const res = await fetch(`api/members/${member.id}/invite`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-Member-Token': localStorage.getItem('chauffeur_member_token') || ''
+                            },
+                            body: JSON.stringify({ email: member.email })
+                        });
+                        const data = await res.json();
+                        if (!res.ok) {
+                            showGlobalAlert(data.detail || 'Could not send that invite.');
+                            return;
+                        }
+                        this.inviteLink = data.link;
+                        this.inviteSent = !!data.sent;
+                        if (!data.sent && data.reason && data.reason !== 'no mail sender configured') {
+                            showGlobalAlert(`Mail did not send (${data.reason}). The link below still works.`);
+                        }
+                    } catch (e) {
+                        showGlobalAlert('Could not reach the server.');
+                    } finally { this.inviteBusy = false; }
+                },
+
+                async copyInvite() {
+                    try {
+                        await navigator.clipboard.writeText(this.inviteLink);
+                        showGlobalAlert('Link copied.');
+                    } catch (e) {
+                        showGlobalAlert('Copy failed — select the link and copy it by hand.');
+                    }
+                },
+
                 async saveMember(member) {
                     const updates = { ...this.memberEdit };
                     updates.avatar = updates.avatar ? updates.avatar.trim() : null;
@@ -5681,6 +5829,8 @@
                     updates.quiet_start = updates.quiet_start || null;
                     updates.quiet_end = updates.quiet_end || null;
                     updates.notify_lanes = updates.notify_lanes || 'all';
+                    updates.email = (updates.email || '').trim() || null;   // auth arc S3
+                    delete updates.has_password;   // status, never an input
                     updates.aftercare_days = updates.aftercare_days || [];
                     updates.aftercare_until = updates.aftercare_until || null;
                     updates.aftercare_place = (updates.aftercare_place || '').trim() || null;
