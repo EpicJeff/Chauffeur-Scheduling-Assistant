@@ -1,0 +1,193 @@
+{# The admin surface's identity (auth arc S4).
+
+   The dashboard and config page have never had one. That was defensible when
+   they sat behind HA ingress; it stopped being defensible the day the app was
+   published to the internet, and it is why /pin/clear could not be gated
+   earlier — there was no token for the page to present.
+
+   Three states, and the first-run one is the reason this is a component
+   rather than a login box:
+
+     * **claimed + signed in** — invisible, just a fetch wrapper attaching the
+       token to every admin call.
+     * **claimed + not signed in** — email and password.
+     * **not claimed** — first run. Only offered when the request came through
+       HA ingress, because that is proof Home Assistant already authenticated
+       whoever is looking. Set a password for yourself and you are in; no mail
+       round trip to yourself.
+
+   Included by both admin pages so the two cannot drift apart. #}
+
+<div x-data="adminGate()" x-init="init()">
+
+  {# The token rides every same-origin request from this page, same wrapper as
+     the PWA. Installed unconditionally: it must be in place BEFORE any panel
+     fetches, not after somebody signs in. #}
+  <script>
+    (function attachAdminToken() {
+      const _fetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        try {
+          const url = typeof input === 'string' ? input : (input && input.url) || '';
+          const foreign = /^[a-z]+:\/\//i.test(url) && !url.startsWith(window.location.origin);
+          const token = localStorage.getItem('chauffeur_member_token') || '';
+          if (token && !foreign) {
+            init = init || {};
+            const h = new Headers(init.headers || (typeof input === 'object' && input.headers) || {});
+            if (!h.has('X-Member-Token')) h.set('X-Member-Token', token);
+            init.headers = h;
+          }
+        } catch (e) { /* auth plumbing must never break a fetch */ }
+        return _fetch(input, init);
+      };
+    })();
+  </script>
+
+  <template x-if="state === 'first-run'">
+    <div class="fixed inset-0 z-[9000] bg-gray-950/95 flex items-center justify-center p-6">
+      <div class="w-full max-w-md bg-gray-900 rounded-2xl border border-gray-700 p-6 space-y-4">
+        <div>
+          <h2 class="text-2xl font-bold text-blue-300">Set up your account</h2>
+          <p class="text-sm text-gray-400 mt-1">
+            You opened this from Home Assistant, so we know it's you. Pick your
+            name and set a password — that's the account you'll use on your
+            phone, and the one that lets you invite everybody else.
+          </p>
+        </div>
+
+        <label class="block">
+          <span class="text-xs uppercase tracking-wide text-gray-400">You are</span>
+          <select x-model="claimId" class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white">
+            <option value="">— choose —</option>
+            <template x-for="p in parents" :key="p.id">
+              <option :value="p.id" x-text="p.name"></option>
+            </template>
+          </select>
+          <span class="block text-xs text-gray-500 mt-1" x-show="!parents.length">
+            No parents exist yet. Add one in Config → People first, then reload.
+          </span>
+        </label>
+
+        <label class="block">
+          <span class="text-xs uppercase tracking-wide text-gray-400">Email</span>
+          <input type="email" x-model="claimEmail" placeholder="you@example.com"
+                 class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white">
+          <span class="block text-xs text-gray-500 mt-1">Used to sign in, and to reset your password if you forget it.</span>
+        </label>
+
+        <label class="block">
+          <span class="text-xs uppercase tracking-wide text-gray-400">Password</span>
+          <input type="password" x-model="password" autocomplete="new-password"
+                 class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white">
+          <span class="block text-xs text-gray-500 mt-1">At least 10 characters. A few words you'll remember beats a short one you won't.</span>
+        </label>
+
+        <p x-show="error" x-text="error" class="text-sm text-red-400"></p>
+
+        <button @click="claim()" :disabled="busy || !claimId || !password"
+                class="w-full bg-blue-700 hover:bg-blue-600 disabled:opacity-40 rounded-lg px-4 py-3 font-semibold">
+          <span x-text="busy ? 'Setting up…' : 'Set up my account'"></span>
+        </button>
+      </div>
+    </div>
+  </template>
+
+  <template x-if="state === 'sign-in'">
+    <div class="fixed inset-0 z-[9000] bg-gray-950/95 flex items-center justify-center p-6">
+      <form @submit.prevent="signIn()" class="w-full max-w-sm bg-gray-900 rounded-2xl border border-gray-700 p-6 space-y-4">
+        <h2 class="text-2xl font-bold text-blue-300">Sign in</h2>
+        <p class="text-sm text-gray-400">This page manages the whole household, so it asks who you are.</p>
+        <label class="block">
+          <span class="text-xs uppercase tracking-wide text-gray-400">Email</span>
+          <input type="email" x-model="email" autocomplete="username"
+                 class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white" required>
+        </label>
+        <label class="block">
+          <span class="text-xs uppercase tracking-wide text-gray-400">Password</span>
+          <input type="password" x-model="password" autocomplete="current-password"
+                 class="mt-1 w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white" required>
+        </label>
+        <p x-show="error" x-text="error" class="text-sm text-red-400"></p>
+        <button type="submit" :disabled="busy"
+                class="w-full bg-blue-700 hover:bg-blue-600 disabled:opacity-40 rounded-lg px-4 py-3 font-semibold">
+          <span x-text="busy ? 'Signing in…' : 'Sign in'"></span>
+        </button>
+        <button type="button" @click="forgot()" class="w-full text-xs text-gray-400 hover:text-gray-200">
+          Forgot your password?
+        </button>
+      </form>
+    </div>
+  </template>
+
+</div>
+
+<script>
+function adminGate() {
+  return {
+    state: 'checking', parents: [], claimId: '', claimEmail: '',
+    email: '', password: '', error: '', busy: false,
+
+    async init() {
+      try {
+        const r = await fetch('api/account/setup');
+        const d = await r.json();
+        this.parents = (d.parents || []);
+        if (!d.claimed && d.may_claim) { this.state = 'first-run'; return; }
+        // A token in hand is treated as good; if it has gone stale the first
+        // gated call answers 403 and the page asks again. Verifying up front
+        // would put a round trip in front of every load for the common case.
+        this.state = localStorage.getItem('chauffeur_member_token') ? 'in' : 'sign-in';
+      } catch (e) {
+        // Never trap somebody out of their own admin page because a status
+        // call failed — enforcement lives on the server, not on this overlay.
+        this.state = 'in';
+      }
+    },
+
+    async claim() {
+      this.busy = true; this.error = '';
+      try {
+        const r = await fetch('api/account/claim', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ member_id: this.claimId, email: this.claimEmail,
+                                 password: this.password }) });
+        const d = await r.json();
+        if (!r.ok) { this.error = d.detail || 'That did not work.'; return; }
+        this.store(d);
+      } catch (e) { this.error = 'Could not reach the server.'; }
+      finally { this.busy = false; }
+    },
+
+    async signIn() {
+      this.busy = true; this.error = '';
+      try {
+        const r = await fetch('api/account/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: this.email, password: this.password }) });
+        const d = await r.json();
+        if (!r.ok) { this.error = d.detail || 'Email or password is wrong.'; return; }
+        this.store(d);
+      } catch (e) { this.error = 'Could not reach the server.'; }
+      finally { this.busy = false; }
+    },
+
+    async forgot() {
+      if (!this.email) { this.error = 'Type your email first.'; return; }
+      await fetch('api/account/forgot', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: this.email }) });
+      // Same words whether or not the address exists — the server answers the
+      // same way on purpose, and the UI must not undo that by saying more.
+      this.error = 'If that address has an account, a reset link is on its way.';
+    },
+
+    store(d) {
+      localStorage.setItem('chauffeur_member_token', d.token);
+      localStorage.setItem('chauffeur_member_token_for', d.member.id);
+      localStorage.setItem('chauffeur_member_id', d.member.id);
+      this.state = 'in';
+      location.reload();   // let the page load its data as somebody
+    }
+  };
+}
+</script>

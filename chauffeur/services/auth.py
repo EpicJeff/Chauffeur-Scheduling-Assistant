@@ -86,6 +86,13 @@ RULES = [
     # administration and stays parent-only under the members rules below.
     (ANY, '/account/set-password', ANYONE),
     ('GET', '/api/account/link/{token}', ANYONE),
+    # First-run: both are guarded by the INGRESS check inside the handler,
+    # not by a tier — the whole point is that they answer to somebody who has
+    # no account yet. `/setup` reports only whether a household is claimed and
+    # which parents exist by name, and `/claim` closes permanently the moment
+    # one parent holds a password.
+    ('GET', '/api/account/setup', ANYONE),
+    ('POST', '/api/account/claim', ANYONE),
     ('POST', '/api/account/set-password', ANYONE),
     ('POST', '/api/account/login', ANYONE),
     ('POST', '/api/account/forgot', ANYONE),
@@ -259,6 +266,54 @@ def arrived_via_tunnel(headers) -> bool:
     return bool(headers.get('cf-connecting-ip')
                 or headers.get('x-forwarded-for')
                 or headers.get('cf-ray'))
+
+
+def caller_ip(headers) -> Optional[str]:
+    """The caller's address, for rate limiting.
+
+    `CF-Connecting-IP` is the only one worth believing: cloudflared sets it
+    and an outside caller cannot overwrite it. `X-Forwarded-For` is
+    client-supplied and would let an attacker rotate the header to get a fresh
+    budget per guess, so it is deliberately NOT consulted — a rate limit keyed
+    on something the attacker controls is decoration."""
+    return (headers.get('cf-connecting-ip') or '').strip() or None
+
+
+def arrived_via_ingress(headers) -> bool:
+    """Did this request come through Home Assistant's ingress?
+
+    This is the strongest identity claim available before anybody has an
+    account, and it is what the first-run bootstrap stands on: supervisor does
+    not serve ingress to an anonymous browser, so **arriving here means HA
+    already authenticated the person.** That is a verified claim, unlike "it
+    came from the LAN", which is every guest phone and smart plug on the wifi.
+
+    THE SAFETY RULE, and it is the whole reason this is not a one-line header
+    check: these headers are trivially forged by anyone who can reach the app.
+    Through the cloudflared tunnel a stranger could simply send
+    `X-Hass-Is-Admin: true` and claim to be the owner. So the headers are only
+    believed when the request did NOT arrive through the tunnel — supervisor
+    is on the other side of that boundary, and nothing outside can put itself
+    there. Header trust without the origin check would be a hole far worse
+    than the one this arc is closing.
+    """
+    if arrived_via_tunnel(headers):
+        return False
+    return bool(headers.get('x-ingress-path')
+                or headers.get('x-hass-user-id'))
+
+
+def ingress_is_admin(headers) -> bool:
+    """An HA ADMIN specifically. Supervisor forwards `X-Hass-Is-Admin` with
+    ingress requests; a household where everyone has an HA login should not
+    have every one of them able to claim the first parent account."""
+    if not arrived_via_ingress(headers):
+        return False
+    flag = str(headers.get('x-hass-is-admin') or '').strip().lower()
+    # Absent is treated as allowed: older supervisors do not send the flag at
+    # all, and refusing there would make first-run impossible on those. The
+    # ingress boundary is still doing the real work.
+    return flag in ('', '1', 'true', 'yes')
 
 
 def identify(headers, query) -> dict:

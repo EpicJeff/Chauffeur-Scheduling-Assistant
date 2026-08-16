@@ -150,6 +150,97 @@ def scenario_i_a_from_address_the_account_does_not_own_is_flagged():
         "a matching From address was flagged anyway")
 
 
+# --- S4: the admin surface gets an identity ---------------------------------
+
+def scenario_j_ingress_headers_are_only_believed_off_the_tunnel():
+    """The trap this avoids is worse than the hole being closed: `X-Hass-Is-
+    Admin` is trivially forged, so believing it on a tunnelled request would
+    hand the household to anyone who read the source."""
+    from services import auth
+    ingress = {'x-ingress-path': '/api/hassio_ingress/abc', 'x-hass-is-admin': 'true'}
+    check(auth.arrived_via_ingress(ingress),
+          "a genuine ingress request was not recognised")
+    check(auth.ingress_is_admin(ingress), "an HA admin was not recognised")
+
+    forged = dict(ingress)
+    forged['cf-connecting-ip'] = '203.0.113.7'      # came through cloudflared
+    check(not auth.arrived_via_ingress(forged),
+          "FORGED ingress headers were believed on a tunnelled request")
+    check(not auth.ingress_is_admin(forged),
+          "a stranger could claim to be the HA admin from the internet")
+
+    check(not auth.ingress_is_admin({'x-ingress-path': '/x', 'x-hass-is-admin': 'false'}),
+          "a non-admin HA user was treated as an admin")
+
+
+def scenario_k_the_first_run_grace_closes_by_itself():
+    """No dated switch anybody has to remember: the moment a parent holds a
+    password, the household has an owner and the bootstrap is shut."""
+    import main
+    # Earlier scenarios in this file set passwords on parents, so start from a
+    # household that genuinely has no owner rather than assuming one.
+    for existing in storage.get_all_members():
+        if existing.get('password_hash'):
+            storage.clear_member_password(existing['id'])
+    m = _member('Owner', role='parent')
+    check(not main._any_parent_has_password(),
+          "a parent with no password counted as a claimed household")
+    storage.set_member_password(m, 'correct horse battery')
+    check(main._any_parent_has_password(),
+          "the household did not read as claimed once a parent had a password")
+
+
+def scenario_l_rate_limiting_survives_a_restart_and_backs_off():
+    """It used to be a module dict, and this project rebuilds the add-on on
+    every release — so patience beat the lockout."""
+    key = 'test:rate'
+    storage.rate_clear(key)
+    for _ in range(4):
+        storage.rate_record(key, False)
+    check(not storage.rate_locked(key), "locked out before the threshold")
+    storage.rate_record(key, False)          # the fifth
+    check(storage.rate_locked(key), "the threshold did not lock anything")
+
+    # It is in the database, not in a process — which is the whole fix.
+    with storage.db_lock:
+        rows = storage.rate_limits_table.search(storage.Query().key == key)
+    check(rows and rows[0]['locked_until'] > 0,
+          "the lockout was not persisted, so a rebuild would clear it")
+
+    # And the backoff grows rather than staying at a flat 30 seconds.
+    first = rows[0]['locked_until']
+    storage.rate_clear(key)
+    for _ in range(10):
+        storage.rate_record(key, False)      # two trips
+    with storage.db_lock:
+        rows = storage.rate_limits_table.search(storage.Query().key == key)
+    check(rows[0]['trips'] == 2, f"the trip counter did not grow: {rows[0]}")
+    storage.rate_clear(key)
+
+
+def scenario_m_success_clears_the_lockout():
+    """A family member who finally remembers their PIN is not punished for the
+    four tries it took."""
+    key = 'test:rate2'
+    storage.rate_clear(key)
+    for _ in range(3):
+        storage.rate_record(key, False)
+    storage.rate_record(key, True)
+    with storage.db_lock:
+        rows = storage.rate_limits_table.search(storage.Query().key == key)
+    check(not rows, "a successful attempt did not clear the failure count")
+
+
+def scenario_n_the_ip_counter_ignores_headers_the_caller_controls():
+    """A rate limit keyed on something the attacker can rotate is decoration:
+    X-Forwarded-For is client-supplied, CF-Connecting-IP is not."""
+    from services import auth
+    check(auth.caller_ip({'cf-connecting-ip': '203.0.113.7'}) == '203.0.113.7',
+          "the trustworthy address header was ignored")
+    check(auth.caller_ip({'x-forwarded-for': '203.0.113.7'}) is None,
+          "a client-supplied address header was used for rate limiting")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

@@ -404,6 +404,8 @@ with db_lock:
     # invite and a reset outstanding at once and a column would silently
     # overwrite one with the other.
     auth_links_table = db.table('auth_links')
+    # Lockout counters that outlive a rebuild (auth arc S4).
+    rate_limits_table = db.table('rate_limits')
     chores_table = db.table('chores')
     points_ledger_table = db.table('points_ledger')
     routines_table = db.table('routines')
@@ -1421,6 +1423,53 @@ def verify_member_pin(member_id: str, pin: str) -> bool:
         return False
     return hmac.compare_digest(member['pin_hash'],
                                _hash_pin(pin or '', member['pin_salt']))
+
+# --- Rate limiting that survives a restart (auth arc S4) ---
+# It used to be a module-level dict, which this project resets on every
+# release — and a lockout that a rebuild clears is one an attacker waits out.
+# Keyed by an opaque string so the same machinery counts a member and an IP.
+
+_RATE_MAX_FAILS = 5
+_RATE_BASE_SECONDS = 30
+_RATE_MAX_SECONDS = 3600
+
+
+def rate_locked(key: str) -> bool:
+    import time
+    with db_lock:
+        rows = rate_limits_table.search(Query().key == key)
+    return bool(rows) and rows[0].get('locked_until', 0) > time.time()
+
+
+def rate_record(key: str, ok: bool) -> None:
+    """Success clears the slate; failure counts, and the lockout DOUBLES each
+    time it trips — a fat-fingered PIN costs seconds, a script costs hours."""
+    import time
+    with db_lock:
+        rows = rate_limits_table.search(Query().key == key)
+        if ok:
+            if rows:
+                rate_limits_table.remove(Query().key == key)
+            return
+        entry = rows[0] if rows else {'key': key, 'fails': 0, 'trips': 0,
+                                      'locked_until': 0}
+        entry['fails'] = entry.get('fails', 0) + 1
+        if entry['fails'] >= _RATE_MAX_FAILS:
+            entry['fails'] = 0
+            entry['trips'] = entry.get('trips', 0) + 1
+            backoff = min(_RATE_BASE_SECONDS * (2 ** (entry['trips'] - 1)),
+                          _RATE_MAX_SECONDS)
+            entry['locked_until'] = time.time() + backoff
+        if rows:
+            rate_limits_table.update(entry, Query().key == key)
+        else:
+            rate_limits_table.insert(entry)
+
+
+def rate_clear(key: str) -> None:
+    with db_lock:
+        rate_limits_table.remove(Query().key == key)
+
 
 # --- Passwords (auth arc S3) ---
 # Same PBKDF2 shape as the PIN above and deliberately so: one hashing story in

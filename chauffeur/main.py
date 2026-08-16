@@ -4737,23 +4737,35 @@ def resolve_member(driver_id: Optional[str] = None, passenger_id: Optional[str] 
 
 # --- Member PIN auth (identity switching + privileged actions) ---
 
-_PIN_ATTEMPTS = {}  # member_id -> {'fails': int, 'locked_until': ts}
+def _pin_rate_check(member_id: str, request: Request = None):
+    """Throttle guessing, on the identity AND on the caller (auth arc S4).
 
-def _pin_rate_check(member_id: str):
-    entry = _PIN_ATTEMPTS.get(member_id)
-    if entry and time.time() < entry.get('locked_until', 0):
-        raise HTTPException(status_code=429,
-                            detail="Too many attempts — try again in a moment")
+    Three things changed here, and each was a real weakness on a public
+    origin:
 
-def _pin_rate_record(member_id: str, ok: bool):
-    if ok:
-        _PIN_ATTEMPTS.pop(member_id, None)
-        return
-    entry = _PIN_ATTEMPTS.setdefault(member_id, {'fails': 0, 'locked_until': 0})
-    entry['fails'] += 1
-    if entry['fails'] >= 5:
-        entry['fails'] = 0
-        entry['locked_until'] = time.time() + 30
+      * **It was in memory.** Every add-on rebuild — which this project does
+        on every release — reset the counter, so patience beat the lockout.
+        It is in storage now.
+      * **It was per member only.** An attacker walking the whole family used
+        a fresh budget for each person; the per-IP counter costs them the
+        whole household at once.
+      * **It backed off by a flat 30 seconds.** Now it doubles, so a real
+        typo costs seconds and a script costs hours.
+    """
+    from services import auth as _auth
+    ip = _auth.caller_ip(request.headers if request else {})
+    for key in (f"member:{member_id}", f"ip:{ip}" if ip else None):
+        if key and storage.rate_locked(key):
+            raise HTTPException(status_code=429,
+                                detail="Too many attempts — try again in a moment")
+
+
+def _pin_rate_record(member_id: str, ok: bool, request: Request = None):
+    from services import auth as _auth
+    ip = _auth.caller_ip(request.headers if request else {})
+    for key in (f"member:{member_id}", f"ip:{ip}" if ip else None):
+        if key:
+            storage.rate_record(key, ok)
 
 def _valid_pin_format(pin: str) -> bool:
     return isinstance(pin, str) and pin.isdigit() and 4 <= len(pin) <= 8
@@ -4762,7 +4774,7 @@ class MemberAuthRequest(BaseModel):
     pin: Optional[str] = None
 
 @app.post("/api/members/{member_id}/auth")
-def member_auth(member_id: str, req: MemberAuthRequest):
+def member_auth(member_id: str, req: MemberAuthRequest, request: Request = None):
     """Verify PIN (when set) and mint a per-device token. Members without a
     PIN authenticate freely — same household trust as before, hardened only
     where someone chose to be hardened."""
@@ -4770,9 +4782,9 @@ def member_auth(member_id: str, req: MemberAuthRequest):
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
     if member.get('pin_hash'):
-        _pin_rate_check(member_id)
+        _pin_rate_check(member_id, request)
         ok = storage.verify_member_pin(member_id, req.pin or '')
-        _pin_rate_record(member_id, ok)
+        _pin_rate_record(member_id, ok, request)
         if not ok:
             raise HTTPException(status_code=403, detail="Wrong PIN")
     token = storage.create_member_token(member_id)
@@ -4795,6 +4807,17 @@ def _password_problem(password: str) -> Optional[str]:
     if len(password) > 200:
         return "Password is too long"
     return None
+
+
+def _any_parent_has_password() -> bool:
+    """Has the household been set up yet?
+
+    This is what closes the first-run grace, and it closes it BY ITSELF —
+    there is no dated switch anybody has to remember to turn off. The moment
+    one parent holds a password, the house has an owner and the bootstrap
+    stops being available to anyone."""
+    return any(m.get('role') == 'parent' and m.get('password_hash')
+               for m in storage.get_all_members())
 
 
 def _account_link(token: str) -> str:
@@ -4820,13 +4843,20 @@ def invite_member(member_id: str, req: InviteRequest, request: Request = None,
     PASSWORD, so it can never be open — an outsider could issue themselves a
     parent's account. But it is also the endpoint that creates the very first
     account, at a moment when no parent has a password and the admin page
-    holds no token, so it cannot require one either. The way out is the
-    boundary the tunnel check already draws: **from the LAN it is allowed, from
-    the public internet it is parent-only.** That is the same dated grace
-    Argyle gets (Decision 6) and it ends the same way — once S4 gives the admin
-    page a real parent login, this falls back to parent-only everywhere."""
+    holds no token, so it cannot require one either.
+
+    The way out is **Home Assistant's ingress** (S4): supervisor does not
+    serve ingress to an anonymous browser, so a request arriving that way has
+    already been authenticated by HA. Opening Chauffeur from the HA sidebar is
+    therefore proof enough to claim the first account. An earlier draft used
+    "came from the LAN" and that was weaker for no benefit — a LAN is every
+    guest phone on the wifi, and it also forced the owner to be at home.
+
+    Once any parent HAS a password the grace stops applying, so this becomes
+    parent-only everywhere without a dated switch to remember."""
     from services import auth as _auth
-    if _auth.arrived_via_tunnel(request.headers if request else {}):
+    headers = request.headers if request else {}
+    if not (_auth.ingress_is_admin(headers) and not _any_parent_has_password()):
         require_parent_token(x_member_token)
     member = storage.get_member(member_id)
     if not member:
@@ -4898,13 +4928,74 @@ def set_password_from_link(req: AcceptRequest):
             "member": _public_member(storage.get_member(member_id))}
 
 
+@app.get("/api/account/setup")
+def account_setup_state(request: Request = None):
+    """Does this household need its first account, and may THIS caller create
+    it? Lets the admin page show a first-run panel instead of a login form
+    nobody can yet satisfy."""
+    headers = request.headers if request else {}
+    from services import auth as _auth
+    claimed = _any_parent_has_password()
+    return {"claimed": claimed,
+            "may_claim": bool(_auth.ingress_is_admin(headers)) and not claimed,
+            "via_ingress": bool(_auth.arrived_via_ingress(headers)),
+            "parents": [{"id": m['id'], "name": m.get('name'),
+                         "has_password": bool(m.get('password_hash')),
+                         "email": m.get('email')}
+                        for m in storage.get_all_members()
+                        if m.get('role') == 'parent']}
+
+
+class ClaimRequest(BaseModel):
+    member_id: str
+    email: Optional[str] = None
+    password: str
+
+
+@app.post("/api/account/claim")
+def account_claim(req: ClaimRequest, request: Request = None):
+    """First run: set your own password directly, no mail round trip.
+
+    Guarded twice, and both guards matter. **Ingress** proves Home Assistant
+    already authenticated the caller — a header check alone would be forgeable
+    from the tunnel, which is why `arrived_via_ingress` refuses to believe the
+    headers on a forwarded request. **`_any_parent_has_password`** makes this a
+    genuine first run rather than a permanent side door: once the house has an
+    owner, this endpoint is closed to everyone, for good."""
+    from services import auth as _auth
+    if not _auth.ingress_is_admin(request.headers if request else {}):
+        raise HTTPException(status_code=403,
+                            detail="Open Chauffeur from Home Assistant to set up the first account")
+    if _any_parent_has_password():
+        raise HTTPException(status_code=409,
+                            detail="This household already has an account — sign in, or use a reset link")
+    problem = _password_problem(req.password)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    member = storage.get_member(req.member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if member.get('role') != 'parent':
+        raise HTTPException(status_code=400, detail="The first account must be a parent")
+    updates = {'email_verified': True}
+    if req.email:
+        from services import mailer
+        if not mailer.valid_email(req.email):
+            raise HTTPException(status_code=400, detail="That email does not look right")
+        updates['email'] = req.email.strip()
+    storage.update_member(req.member_id, updates)
+    storage.set_member_password(req.member_id, req.password)
+    return {"status": "ok", "token": storage.create_member_token(req.member_id),
+            "member": _public_member(storage.get_member(req.member_id))}
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str
 
 
 @app.post("/api/account/login")
-def account_login(req: LoginRequest):
+def account_login(req: LoginRequest, request: Request = None):
     """Email + password. The generic failure is deliberate: distinguishing
     'no such account' from 'wrong password' tells an attacker which family
     members exist."""
@@ -4912,9 +5003,9 @@ def account_login(req: LoginRequest):
     generic = HTTPException(status_code=403, detail="Email or password is wrong")
     if not member:
         raise generic
-    _pin_rate_check(member['id'])
+    _pin_rate_check(member['id'], request)
     ok = storage.verify_member_password(member['id'], req.password)
-    _pin_rate_record(member['id'], ok)
+    _pin_rate_record(member['id'], ok, request)
     if not ok:
         raise generic
     return {"status": "ok", "token": storage.create_member_token(member['id']),
@@ -4944,7 +5035,7 @@ class SetPinRequest(BaseModel):
     current_pin: Optional[str] = None
 
 @app.post("/api/members/{member_id}/pin")
-def set_pin(member_id: str, req: SetPinRequest):
+def set_pin(member_id: str, req: SetPinRequest, request: Request = None):
     """Set/change own PIN. First set is open (self-serve on first login);
     changing requires the current PIN. Parent resets go via /pin/clear."""
     member = storage.get_member(member_id)
@@ -4953,18 +5044,25 @@ def set_pin(member_id: str, req: SetPinRequest):
     if not _valid_pin_format(req.pin):
         raise HTTPException(status_code=400, detail="PIN must be 4-8 digits")
     if member.get('pin_hash'):
-        _pin_rate_check(member_id)
+        _pin_rate_check(member_id, request)
         ok = storage.verify_member_pin(member_id, req.current_pin or '')
-        _pin_rate_record(member_id, ok)
+        _pin_rate_record(member_id, ok, request)
         if not ok:
             raise HTTPException(status_code=403, detail="Current PIN is wrong")
     storage.set_member_pin(member_id, req.pin)
     return {"status": "ok"}
 
 @app.post("/api/members/{member_id}/pin/clear")
-def clear_pin(member_id: str):
-    """Parent reset from the (dashboard-trusted) config page: clears the PIN
-    and revokes that member's device tokens."""
+def clear_pin(member_id: str, x_member_token: Optional[str] = Header(None)):
+    """Parent reset: clears the PIN and revokes that member's device tokens.
+
+    NOW PARENT-GATED (auth arc S4). It used to say "(dashboard-trusted)",
+    which was true when the dashboard sat behind HA ingress and stopped being
+    true the day the app was published to the internet — clearing a PIN then
+    re-authenticating was a two-call path to anybody's account, since
+    `member_auth` mints freely once `pin_hash` is gone. Gating it had to wait
+    for the admin page to have an identity to present, which is this slice."""
+    require_parent_token(x_member_token)
     if not storage.get_member(member_id):
         raise HTTPException(status_code=404, detail="Member not found")
     storage.clear_member_pin(member_id)

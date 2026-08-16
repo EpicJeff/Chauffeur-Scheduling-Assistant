@@ -191,6 +191,49 @@ hostname keep working during a **grace window controlled by a setting**, so
 nothing breaks the day this ships. The grace is a dated migration step, not a
 permanent tier — a permanently trusted LAN is a second open door.
 
+### Decision 7 — the bootstrap stands on HA ingress, not on the LAN
+
+Corrected 2026-08-15 during S4. S3 shipped with "allowed from the LAN,
+parent-only from the internet", which was weaker than it looked: a LAN is
+every guest phone and smart plug on the wifi, and it also forced the owner to
+be at home to set the house up.
+
+**Home Assistant's ingress is a real identity claim.** Supervisor does not
+serve ingress to an anonymous browser, so a request arriving that way has
+already been authenticated by HA — opening Chauffeur from the sidebar is
+proof enough to claim the first parent account.
+
+**The safety rule that makes this sound, and it is not optional**: the ingress
+headers (`X-Ingress-Path`, `X-Hass-User-ID`, `X-Hass-Is-Admin`) are trivially
+forged by anyone who can reach the app, so through the tunnel a stranger could
+simply claim to be the owner. `arrived_via_ingress()` therefore refuses to
+believe those headers on any request that arrived through cloudflared.
+Supervisor is on the other side of that boundary and nothing outside can put
+itself there. Header trust without the origin check would be a worse hole than
+the one this arc closes.
+
+**And the grace closes by itself.** `_any_parent_has_password()` gates it, so
+the moment one parent holds a password the household has an owner and the
+bootstrap shuts permanently — no dated switch for anybody to remember.
+
+### Decision 8 — sessions: 90 days, PIN as the fast re-auth
+
+Settled with the household 2026-08-15. Sign-in-once depends on a long-lived
+token, and the trade is real in both directions: short expiry means
+grandparents re-typing passwords they have forgotten, long expiry means a
+stolen phone stays signed in until somebody revokes it. So: **90 days**, with
+the PIN re-opening a trusted device (Decision 4c) so the common case is four
+digits rather than a password, plus **"sign out everywhere"** on each member
+card for the stolen-phone case. Built in S8 with the rest of the token work.
+
+### Decision 9 — S8 refuses to flip while anyone would be locked out
+
+A switch that can lock a family out of their own house is not a bare
+checkbox. Enforcement will not turn on while any active member holds neither
+a password nor a PIN, and it names them instead. The audit report
+(`/api/admin/auth_audit`) is the other half of the same idea: flip on
+evidence, not on a hunch.
+
 ## Settled by the household 2026-08-15
 
 - **Accounts, not a picker** (Decision 4). The member-name leak that the
