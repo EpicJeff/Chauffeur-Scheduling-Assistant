@@ -999,7 +999,23 @@ async def _auth_guard(conn: HTTPConnection):
         # bug as the one above — right before S8 flips enforcement on, not at
         # it, which is this arc's own discipline.
         raise WebSocketException(code=1008, reason=needs)
-    raise HTTPException(status_code=verdict['status'], detail=needs)
+    # WHICH tiers would have satisfied this, as a header a surface can act on.
+    #
+    # A bare 403 is not enough to act on and the panel proved it: nav's fetch
+    # wrapper offered the pairing screen on ANY 403, and most 403s in this app
+    # are domain rules rather than authentication — "this chore isn't available
+    # to you", "not your routine", "only children redeem rewards". A child
+    # tapping a sibling's chore on the kitchen wall would be answered with a
+    # full-screen six-digit pairing code, for a refusal pairing cannot fix:
+    # a trusted device is the DEVICE tier, and no amount of it makes that chore
+    # theirs or makes the screen a parent.
+    #
+    # So the guard signs its own refusals, and the value says what would have
+    # worked. Only a refusal naming DEVICE is one a screen can do anything
+    # about; a surface that sees `member` or `parent` should be asking somebody
+    # to sign in, not asking to be let in as furniture.
+    raise HTTPException(status_code=verdict['status'], detail=needs,
+                        headers={'X-Auth-Refusal': ','.join(verdict['needs'])})
 
 
 app = FastAPI(title="Family Driver Graph Scheduler", lifespan=lifespan,

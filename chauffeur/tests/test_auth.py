@@ -13,6 +13,8 @@ asking for credentials.
 
 Run from chauffeur/:  python tests/test_auth.py
 """
+import os
+
 from harness import check  # noqa: F401  (isolates CHAUFFEUR_DATA_DIR)
 
 from services import auth
@@ -239,6 +241,75 @@ def scenario_v_shells_are_public_and_the_data_is_not():
         check(tiers and needs in tiers,
               f"{api} lost its gate when the shells opened: {tiers}")
         check(tiers != auth.ANYONE, f"{api} went public")
+
+
+def scenario_only_a_refusal_pairing_could_fix_offers_pairing():
+    """A bare 403 is not a reason to ask a screen to pair, and the panel proved
+    it. nav's fetch wrapper offered the pairing overlay on ANY 401/403 — but
+    most 403s in this app are domain rules, not authentication:
+
+        "This chore isn't available to you"   "Not your routine"
+        "Only children redeem rewards"        "Parent authorization required"
+
+    All reachable from an interactive board. A child tapping a sibling's chore
+    on the kitchen wall was answered with a full-screen six-digit pairing code,
+    for a refusal pairing could not fix: a trusted device is the DEVICE tier,
+    and no amount of it makes that chore theirs or the screen a parent.
+
+    So the guard signs its own refusals with the tiers that WOULD have worked,
+    and only `device` in that list is something a panel can act on.
+    """
+    import asyncio
+    import main
+    from starlette.requests import Request
+
+    async def _guard(path, method='GET'):
+        # Off the tunnel, so `identify` cannot hand out Argyle's local grace
+        # and the caller is genuinely anonymous — same setup as scenario_c.
+        req = Request({'type': 'http', 'method': method, 'path': path,
+                       'headers': [(b'cf-connecting-ip', b'203.0.113.7')],
+                       'query_string': b'', 'scheme': 'http',
+                       'server': ('testserver', 80), 'root_path': ''})
+        try:
+            await main._auth_guard(req)
+            return None
+        except Exception as exc:                       # HTTPException
+            return exc
+
+    orig = auth.enforcing
+    auth.enforcing = lambda: True
+    try:
+        # A board read: a panel IS allowed to draw this, so being trusted is
+        # exactly what it lacks. Pairing is the right offer.
+        exc = asyncio.run(_guard('/api/home_board/tiles'))
+        check(exc is not None, "enforcing did not refuse an anonymous board read")
+        header = (getattr(exc, 'headers', None) or {}).get('X-Auth-Refusal', '')
+        check(auth.DEVICE in header.split(','),
+              f"a refusal a panel could fix by pairing does not say so: {header}")
+        # Administration: a paired screen is still not a parent, so offering
+        # pairing here would send somebody through a setup that cannot help.
+        exc = asyncio.run(_guard('/api/settings'))
+        check(exc is not None, "enforcing did not refuse anonymous settings")
+        header = (getattr(exc, 'headers', None) or {}).get('X-Auth-Refusal', '')
+        check(auth.DEVICE not in header.split(','),
+              f"a parent-only refusal invites a screen to pair: {header}")
+    finally:
+        auth.enforcing = orig
+        auth.reset_audit()
+
+    # The wrapper must key on the header, not on the status alone...
+    nav = open(os.path.join(os.path.dirname(main.__file__),
+                            'templates', 'nav.html'), encoding='utf-8').read()
+    frag = nav[nav.index('attachDeviceToken'):]
+    frag = frag[:frag.index('DOMContentLoaded')]
+    check('X-Auth-Refusal' in frag,
+          "the pairing prompt still fires on any 403, so a domain rule like "
+          "\"not your routine\" shows a wall panel a setup screen")
+    # ...and the tier name is a literal on the JS side, so it has to be pinned
+    # to the constant, the same way the music card's sentinel is.
+    check(f"includes('{auth.DEVICE}')" in frag,
+          f"nav does not test for the {auth.DEVICE!r} tier by name — if the "
+          f"constant moves, the panel silently stops asking to pair")
 
 
 def scenario_the_guard_runs_on_a_websocket_too():

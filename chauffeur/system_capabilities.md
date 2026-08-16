@@ -2465,3 +2465,15 @@ A guard asking for `Request` matched neither branch on a websocket, so it was ca
 - Tests: `test_auth.scenario_the_guard_runs_on_a_websocket_too` pins both the parameter FastAPI will fill and the guard awaited on a real websocket scope.
 
 **The lesson, for the next global dependency**: anything applied to `FastAPI(dependencies=[...])` runs on every protocol the app speaks, and the type it asks for decides whether it can. A test that exercises only HTTP will pass while an entire transport is broken.
+
+## Only a refusal pairing could fix offers pairing (v2.257.0)
+
+Asked from the household, and the right question: *should* a panel be showing pairing requests yet? No — the guard is dark, `check_request` returns None for everything, and an unpaired screen works exactly as it always did. Not seeing one is correct.
+
+But nav's fetch wrapper fired `chfRequestPairing()` on **any** 401/403, and the guard is not the only thing here that returns one. Of the 22 `403` raises in `main.py`, most are domain rules rather than authentication — `"This chore isn't available to you"`, `"{name} isn't on this chore"`, `"Not your routine"`, `"Only children redeem rewards"`, `"You can only check off your own tasks"`, `"Parent authorization required"` — and every one is reachable from an interactive board. A child tapping a sibling's chore on the kitchen wall would be answered with a full-screen six-digit pairing code.
+
+Wrong in kind, not just startling: **pairing could not have fixed any of them.** A trusted device is the `DEVICE` tier; no amount of it makes that chore theirs, or makes the screen a parent. The wall was offering a remedy for a refusal that remedy does not address — and after S8 flips enforcement, real refusals and domain 403s fly around together, so the panel has to tell them apart.
+
+- **The guard signs its own refusals**: `X-Auth-Refusal: <tiers that would have satisfied the rule>`, from `verdict['needs']`. Set by `_auth_guard` and nowhere else, so a domain 403 raised deep in a handler cannot be mistaken for an authorization one.
+- **The wrapper keys on `device` being in that list.** A board read refused for want of trust says `device,member,parent` → pairing is the right offer. `/api/settings` says `parent` → no pairing, because a paired screen is still not a parent; a surface seeing `member`/`parent` should be asking somebody to sign in, which is a different screen.
+- Tests: `test_auth.scenario_only_a_refusal_pairing_could_fix_offers_pairing` drives the real guard under enforcement for both cases and pins the `'device'` literal in nav.html to `auth.DEVICE`, the same way the music card's sentinel is pinned.

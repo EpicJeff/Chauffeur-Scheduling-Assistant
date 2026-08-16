@@ -342,8 +342,26 @@
             return _fetch(input, init).then(res => {
                 // A screen that is refused asks to be let in — reactively, so
                 // nothing is demanded of a panel that is working fine today.
+                //
+                // But only for a refusal BEING A TRUSTED SCREEN WOULD FIX, and
+                // a bare 403 does not say that. Most 403s here are domain
+                // rules — "this chore isn't available to you", "not your
+                // routine", "only children redeem rewards" — and this used to
+                // answer every one of them with a full-screen six-digit
+                // pairing code. A child tapping a sibling's chore on the
+                // kitchen wall got a setup screen, for something pairing could
+                // never have fixed: a device token is the DEVICE tier, and no
+                // amount of it makes that chore theirs.
+                //
+                // `X-Auth-Refusal` is set by the auth guard alone and lists
+                // the tiers that would have satisfied the rule. `device` in
+                // that list is the only case a panel can act on. Anything
+                // needing `member` or `parent` wants somebody to sign in,
+                // which is a different screen and not this one's business.
                 try {
-                    if (res && (res.status === 401 || res.status === 403)
+                    const refusal = res && (res.status === 401 || res.status === 403)
+                        ? (res.headers.get('X-Auth-Refusal') || '') : '';
+                    if (refusal.split(',').includes('device')
                         && typeof window.chfRequestPairing === 'function') {
                         window.chfRequestPairing();
                     }
