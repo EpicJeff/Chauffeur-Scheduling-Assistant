@@ -13,7 +13,7 @@ from homeassistant.helpers import intent
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_BASE_URL
+from .const import CONF_BASE_URL, CONF_SERVICE_TOKEN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,6 +47,11 @@ class ChauffeurConversationEntity(conversation.ConversationEntity):
         self._base_url: str = entry.options.get(
             CONF_BASE_URL, entry.data[CONF_BASE_URL]
         )
+        # Auth arc S7. Empty is a normal state during migration: the household
+        # still has the local-origin grace on, and Chauffeur answers anyway.
+        self._service_token: str = entry.options.get(
+            CONF_SERVICE_TOKEN, entry.data.get(CONF_SERVICE_TOKEN, "")
+        )
         self._attr_unique_id = entry.entry_id
 
     @property
@@ -66,6 +71,11 @@ class ChauffeurConversationEntity(conversation.ConversationEntity):
             resp = await session.post(
                 f"{self._base_url}/api/v2/converse",
                 json=payload,
+                headers=(
+                    {"X-Service-Token": self._service_token}
+                    if self._service_token
+                    else {}
+                ),
                 timeout=REQUEST_TIMEOUT,
             )
             resp.raise_for_status()

@@ -1140,6 +1140,58 @@
                         </div>
                     </details>
 
+                    <!-- Argyle's credential (auth arc S7). Beside the other
+                         grants of access, because that is what it is. -->
+                    <details class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700">
+                        <summary class="cursor-pointer px-4 py-3 font-semibold text-blue-200">
+                            🤖 Argyle &mdash; the Home Assistant integration
+                        </summary>
+                        <div class="px-4 pb-4 space-y-3 text-sm">
+                            <p class="text-gray-400">The Chauffeur integration in Home Assistant is what
+                                lets you talk to Argyle. Give it a token here, paste that into the
+                                integration's settings, and then turn off the local-network trust below.</p>
+
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <button type="button" @click="rotateServiceToken()" :disabled="serviceBusy"
+                                    class="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 px-4 py-2 rounded font-semibold text-sm">
+                                    <span x-text="settings.service_token ? 'Generate a new token' : 'Generate a token'"></span>
+                                </button>
+                                <span class="text-xs px-2 py-1 rounded-full"
+                                      :class="settings.service_token ? 'bg-green-900/50 text-green-300' : 'bg-gray-700 text-gray-400'"
+                                      x-text="settings.service_token ? 'token set' : 'no token yet'"></span>
+                            </div>
+                            <p x-show="settings.service_token && !serviceToken" class="text-xs text-gray-500">
+                                A token is set. It is not shown again &mdash; generate a new one if you need it,
+                                which replaces the old one immediately.
+                            </p>
+
+                            <!-- Shown in full, once, because it has to be pasted
+                                 into HA. A secret you can never see is a secret
+                                 somebody writes on a sticky note. -->
+                            <div x-show="serviceToken" class="p-3 bg-gray-900 rounded border border-gray-700">
+                                <p class="text-xs text-gray-400 mb-1">Paste this into Home Assistant →
+                                    Settings → Devices &amp; services → Chauffeur → Configure:</p>
+                                <div class="flex items-center gap-2">
+                                    <input type="text" :value="serviceToken" readonly
+                                        class="bg-gray-800 border border-gray-600 rounded p-2 text-xs text-gray-300 flex-1 font-mono">
+                                    <button type="button" @click="copyServiceToken()"
+                                        class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-xs">Copy</button>
+                                </div>
+                            </div>
+
+                            <label class="flex items-start gap-2 pt-2 border-t border-gray-800">
+                                <input type="checkbox" x-model="settings.service_local_grace" class="mt-1">
+                                <span>
+                                    <b>Trust anything from my own network</b>
+                                    <span class="block text-gray-400 text-xs">On while you set this up, so Argyle
+                                        never goes quiet mid-change. Turn it off once the integration has its
+                                        token &mdash; leaving it on means your network is permanently trusted,
+                                        guest phones and smart plugs included.</span>
+                                </span>
+                            </label>
+                        </div>
+                    </details>
+
                     <!-- Accounts & invites (auth arc S3). Placed HERE, beside
                          the people it issues accounts for, rather than in the
                          integrations dump: a family configures a mail sender
@@ -4236,6 +4288,7 @@
                 inviteBusy: false, inviteLink: '', inviteSent: false,
                 trustedDevices: [],                          // auth arc S5
                 pairCode: '', pairLabel: '', pairFound: null,  // auth arc S6
+                serviceToken: '', serviceBusy: false,          // auth arc S7
                 pairBusy: false,
                 // Status Days (Presence & Status arc P1)
                 statusProtocols: [],
@@ -5844,6 +5897,32 @@
                     if (!res.ok) showGlobalAlert('Could not set PIN.');
                     await this.loadMembers();
                 },
+                // Argyle's credential (auth arc S7)
+                async rotateServiceToken() {
+                    if (this.settings.service_token && !await promptConfirm(
+                        'Replace Argyle's token',
+                        'The current token stops working straight away, and Argyle stays quiet until you paste the new one into Home Assistant. Carry on?',
+                        'Replace')) return;
+                    this.serviceBusy = true;
+                    try {
+                        const r = await fetch('api/account/service-token', { method: 'POST' });
+                        const d = await r.json();
+                        if (!r.ok) { showGlobalAlert(d.detail || 'Could not generate a token.'); return; }
+                        this.serviceToken = d.service_token;
+                        this.settings.service_token = d.service_token;
+                    } catch (e) { showGlobalAlert('Could not reach the server.'); }
+                    finally { this.serviceBusy = false; }
+                },
+
+                async copyServiceToken() {
+                    try {
+                        await navigator.clipboard.writeText(this.serviceToken);
+                        showGlobalAlert('Token copied.');
+                    } catch (e) {
+                        showGlobalAlert('Copy failed — select the token and copy it by hand.');
+                    }
+                },
+
                 // Pairing a screen (auth arc S6). The DEVICE shows the
                 // code; this is where a signed-in parent says yes.
                 async lookupPairing() {

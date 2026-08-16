@@ -102,9 +102,10 @@ RULES = [
     ('POST', '/api/account/devices/pair-request', ANYONE),
     ('GET', '/api/account/devices/pair-status', ANYONE),
     # The device list is where a lost tablet gets revoked, so it is admin —
-    # as is saying yes to a screen.
+    # as is saying yes to a screen, and minting Argyle's credential.
     (ANY, '/api/account/devices', PARENTS),
     (ANY, '/api/account/devices/*', PARENTS),
+    ('POST', '/api/account/service-token', PARENTS),
     ('POST', '/api/account/set-password', ANYONE),
     ('POST', '/api/account/login', ANYONE),
     ('POST', '/api/account/forgot', ANYONE),
@@ -383,9 +384,17 @@ def identify(headers, query) -> dict:
             return {'tier': tier, 'member': member}
 
     # The local-origin grace for Argyle (Decision 6). Dated, not permanent:
-    # S7 gives the component a real service token and a setting ends this.
+    # S7 gave the component a real service token, and `service_local_grace`
+    # ends this once it has actually been updated and reconfigured. Ending it
+    # is a deliberate act rather than a side effect of deploying, because the
+    # alternative is an Argyle that goes quiet with no obvious cause.
     if not arrived_via_tunnel(headers):
-        return {'tier': SERVICE, 'member': None, 'via': 'local-grace'}
+        try:
+            grace = (storage.get_settings() or {}).get('service_local_grace', True)
+        except Exception:
+            grace = True
+        if grace:
+            return {'tier': SERVICE, 'member': None, 'via': 'local-grace'}
 
     return {'tier': None, 'member': None}
 

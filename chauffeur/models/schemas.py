@@ -980,6 +980,15 @@ class Settings(BaseModel):
     # mirror rather than assumed. The intake mailbox analyses everything that
     # arrives in it, so invites sent from that address would feed their own
     # bounces and out-of-office replies back into the proposal queue.
+    # --- Argyle's credential (auth arc S7) ---
+    # The HA custom component calls http://local-chauffeur:8000, so it has
+    # always arrived on the internal hostname with nothing to present. This is
+    # what it presents instead. `service_local_grace` keeps the old
+    # local-origin trust alive until the component has actually been updated
+    # and reconfigured — ending it is a deliberate act, not a side effect of
+    # deploying, because the alternative is a silent Argyle.
+    service_token: str = ""
+    service_local_grace: bool = True
     smtp_use_intake: bool = False
     smtp_host: str = ""
     smtp_port: int = 587

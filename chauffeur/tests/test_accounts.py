@@ -428,6 +428,53 @@ def scenario_u_a_service_token_must_match_the_configured_one():
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
+
+
+# --- S7: Argyle gets a credential -------------------------------------------
+
+def scenario_v_the_local_grace_is_a_switch_not_a_law():
+    """The grace is what keeps Argyle alive through the migration, and turning
+    it off has to be a deliberate act — a household that flips it before the
+    integration has its token would just find Argyle gone quiet."""
+    from services import auth
+    real = storage.get_settings
+    try:
+        storage.get_settings = lambda: {'service_local_grace': True}
+        who = auth.identify({}, {})
+        check(who['tier'] == auth.SERVICE and who.get('via') == 'local-grace',
+              f"the grace stopped applying while switched on: {who}")
+
+        storage.get_settings = lambda: {'service_local_grace': False}
+        who = auth.identify({}, {})
+        check(who['tier'] is None,
+              f"a local request was still trusted after the grace ended: {who}")
+
+        # ...and with the grace off, the TOKEN is the way in.
+        storage.get_settings = lambda: {'service_local_grace': False,
+                                        'service_token': 'argyle-token'}
+        who = auth.identify({'x-service-token': 'argyle-token'}, {})
+        check(who['tier'] == auth.SERVICE,
+              "Argyle could not get in with its own token")
+    finally:
+        storage.get_settings = real
+
+
+def scenario_w_absent_grace_defaults_to_on():
+    """Every install that predates S7 has no such key. Absent must mean ON, or
+    deploying this release would silence Argyle in every household at once."""
+    from services import auth
+    real = storage.get_settings
+    try:
+        storage.get_settings = lambda: {}          # a pre-S7 settings row
+        who = auth.identify({}, {})
+        check(who['tier'] == auth.SERVICE,
+              "upgrading silently cut Argyle off before anybody had a token")
+    finally:
+        storage.get_settings = real
+
+
+SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
+
 if __name__ == "__main__":
     for fn in SCENARIOS:
         fn()

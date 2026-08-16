@@ -4961,6 +4961,25 @@ def set_password_from_link(req: AcceptRequest, request: Request = None):
             "member": _public_member(storage.get_member(member_id))}
 
 
+@app.post("/api/account/service-token")
+def rotate_service_token(x_member_token: Optional[str] = Header(None)):
+    """Mint (or replace) Argyle's credential (auth arc S7).
+
+    Returned in full exactly once, here, because it has to be pasted into the
+    Home Assistant integration — a secret you can only ever see once is a
+    secret somebody writes on a sticky note. Rotating invalidates the old one
+    immediately, which is the point of having a rotate button at all."""
+    require_parent_token(x_member_token)
+    import secrets
+    token = secrets.token_urlsafe(32)
+    # MERGE. `storage.update_settings` truncates and re-inserts the whole row,
+    # so handing it one key would wipe every other setting the household has —
+    # the same trap the /api/settings docstring already warns about.
+    current = storage.get_settings() or {}
+    storage.update_settings({**current, 'service_token': token})
+    return {"status": "ok", "service_token": token}
+
+
 @app.get("/api/account/devices")
 def list_trusted_devices(x_member_token: Optional[str] = Header(None)):
     """Which devices a PIN may re-open. Parent-only: it is the list you revoke

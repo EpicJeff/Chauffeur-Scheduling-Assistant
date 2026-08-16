@@ -300,6 +300,18 @@ ENTRIES: List[dict] = [
        page='intake', anchor='settings'),
     _e('ingest_email_password', 'intake', 'App password',
        'An app password, never the account password.', page='intake', anchor='settings'),
+    # Argyle's credential (auth arc S7). On the People surface with the other
+    # things that grant access, rather than in the integrations pile: what a
+    # family is doing here is deciding who may reach their house.
+    _e('service_token', 'integrations', 'Argyle service token',
+       'The credential the Home Assistant integration presents. Paste it into '
+       'the Chauffeur integration in HA after generating it.',
+       page='config', anchor='people'),
+    _e('service_local_grace', 'integrations', 'Trust local requests',
+       'While on, anything reaching Chauffeur from your own network without a '
+       'token is treated as Argyle. Turn it off once the Home Assistant '
+       'integration has its token — leaving it on means a permanently trusted '
+       'network.', page='config', anchor='people'),
     # Outbound mail (auth arc S3). Lives on the People surface, beside the
     # invite button that uses it — a family configures a sender because they
     # are trying to invite somebody, not because they set out to configure

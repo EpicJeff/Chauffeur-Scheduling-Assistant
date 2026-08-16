@@ -4,9 +4,10 @@
       "user": {
         "title": "Connect to Chauffeur",
         "data": {
-          "base_url": "Chauffeur add-on base URL"
+          "base_url": "Chauffeur add-on base URL",
+          "service_token": "Service token (optional)"
         },
-        "description": "Internal URL of the Chauffeur add-on, including scheme and port, e.g. http://local-chauffeur:8000. Use the hostname shown on the add-on's info page."
+        "description": "Internal URL of the Chauffeur add-on, including scheme and port, e.g. http://local-chauffeur:8000. Use the hostname shown on the add-on's info page.\n\nThe service token comes from Chauffeur: Config → People → Argyle. Leave it empty only while Chauffeur is still trusting your local network."
       }
     },
     "error": {
@@ -18,9 +19,10 @@
       "init": {
         "title": "Chauffeur connection",
         "data": {
-          "base_url": "Chauffeur add-on base URL"
+          "base_url": "Chauffeur add-on base URL",
+          "service_token": "Service token"
         },
-        "description": "Internal URL of the Chauffeur add-on, including scheme and port, e.g. http://local-chauffeur:8000."
+        "description": "Internal URL of the Chauffeur add-on, including scheme and port, e.g. http://local-chauffeur:8000.\n\nThe service token comes from Chauffeur: Config → People → Argyle."
       }
     },
     "error": {
