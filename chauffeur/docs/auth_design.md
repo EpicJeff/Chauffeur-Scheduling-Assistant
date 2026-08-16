@@ -130,13 +130,38 @@ the slice that gives the dashboard an identity. Gating it before then would
 silently remove the parent's PIN reset —
 [config.html](../templates/config.html) calls it with no token today.
 
-### Decision 4d — email plumbing, and the fallback when there is none
+### Decision 4d — email plumbing: its own sender, reuse optional
 
-Outbound mail does not exist yet; inbound does. Intake already stores
+Outbound mail does not exist yet; inbound does. Intake stores
 `ingest_email_host` / `ingest_email_user` / `ingest_email_password` for a
 dedicated Gmail polled over IMAP, and **a Gmail app password authenticates
-SMTP just as well** — so invites, verifications and resets go out from the
-family's own address with no new credential and no third-party mail service.
+SMTP just as well** — so reusing it is possible and costs no new credential.
+
+**But the sender is its own setting** (decided by the household 2026-08-15),
+with an explicit "use the intake mailbox" toggle that greys the fields and
+mirrors the values. Reuse is offered, never forced.
+
+The reason is stronger than preference, and it is a real defect avoided:
+**the intake mailbox analyses every message that arrives in it** — that is
+the design, the mailbox IS the filter. Invites sent from that address would
+bring their own delivery noise home: bounces, out-of-office autoreplies, and
+"did you actually send me this?" replies would all land in the mailbox and be
+extracted into event proposals. A grandparent's vacation autoresponder would
+become a proposal on the family's queue. Separating the sender keeps the
+proposal queue fed only by what the family deliberately forwards.
+
+Settings, registered per the config decentralisation rule (registry entry
+first, on the feature's own surface, never appended to config.html), owned by
+the surface where invites are sent rather than by a settings dump:
+`smtp_host` / `smtp_port` / `smtp_user` / `smtp_password` / `smtp_from`, plus
+`smtp_use_intake` as the mirror toggle. Secrets show as set/not-set, as the
+registry already requires.
+
+One constraint to surface in the UI rather than discover in a bounce: most
+providers refuse to send from a `From` address the authenticated account does
+not own. So `smtp_from` is validated against `smtp_user` (equal, or a
+configured alias) with a plain warning rather than a silent failure.
+
 Links are built from the `public_base_url` setting the cloudflared hostname
 already populates.
 
@@ -188,8 +213,9 @@ and per-IP as well as per-identity, before anything faces the internet.
   ids. Impersonation closes here.
 - **S3 — accounts.** `email` / `password_hash` / verification state on
   `FamilyMember`; invite, verify, set-password and reset flows with signed
-  expiring tokens; SMTP send over the existing intake credentials, with the
-  copyable-link fallback; the sign-in page that replaces the picker.
+  expiring tokens; its own SMTP sender settings with the reuse-intake toggle,
+  and the copyable-link fallback when no mail is configured; the sign-in page
+  that replaces the picker.
 - **S4 — the parent login on the admin surface.** Dashboard/config sessions,
   parent passwords mandatory, `pin/clear` gated, rate limiting persisted and
   per-IP.
