@@ -1574,8 +1574,8 @@
                                             <div class="flex items-center gap-2 flex-wrap">
                                                 <input type="email" x-model="memberEdit.email" placeholder="name@example.com"
                                                     class="bg-gray-900 border border-gray-600 rounded p-3 text-white flex-1 min-w-[220px]">
-                                                <button type="button" @click="sendInvite(memberEdit)"
-                                                    :disabled="!memberEdit.email || inviteBusy"
+                                                <button type="button" @click="sendInvite()"
+                                                    :disabled="!memberEdit.email || !editMemberId || inviteBusy"
                                                     class="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 px-4 py-3 rounded font-semibold text-sm">
                                                     <span x-text="memberEdit.has_password ? 'Re-send invite' : 'Send invite'"></span>
                                                 </button>
@@ -6019,16 +6019,36 @@
                 // happens to have one; from the LAN the server allows the
                 // bootstrap without it, because the first invite is issued at
                 // a moment when no parent has a password yet.
-                async sendInvite(member) {
+                //
+                // NO ARGUMENT, and that is the fix rather than a tidy-up. This
+                // took a member object and read `.id` off it, and the caller
+                // handed it `memberEdit` — which `startEditMember` builds field
+                // by field and does NOT copy an id into, because the id has a
+                // home of its own in `editMemberId`. So every invite this app
+                // has ever sent went to `api/members/undefined/invite` and came
+                // back "Member not found". Reading both halves from the
+                // component's own state is the only version where they cannot
+                // disagree: the panel is open for exactly one member.
+                async sendInvite() {
+                    const memberId = this.editMemberId;
+                    const email = (this.memberEdit.email || '').trim();
+                    if (!memberId || !email) {
+                        showGlobalAlert('Open a member and give them an email address first.');
+                        return;
+                    }
                     this.inviteBusy = true; this.inviteLink = ''; this.inviteSent = false;
                     try {
-                        const res = await fetch(`api/members/${member.id}/invite`, {
+                        const res = await fetch(`api/members/${memberId}/invite`, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
                                 'X-Member-Token': localStorage.getItem('chauffeur_member_token') || ''
                             },
-                            body: JSON.stringify({ email: member.email })
+                            // The email as TYPED, not as last saved: the server
+                            // persists whatever it is given, and somebody who
+                            // just entered an address and pressed Invite means
+                            // that one.
+                            body: JSON.stringify({ email })
                         });
                         const data = await res.json();
                         if (!res.ok) {

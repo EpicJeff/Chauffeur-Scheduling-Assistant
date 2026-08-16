@@ -175,6 +175,103 @@ def scenario_a_cloaked_element_is_hidden_by_something_the_page_actually_has():
           + "\n  ".join(broken))
 
 
+def scenario_an_id_in_a_url_comes_from_something_that_has_one():
+    """The fifth blank-page-family bug, and this one shipped a dead button.
+
+    `sendInvite(member)` read `member.id` and was handed `memberEdit` — an
+    object `startEditMember` builds field by field, deliberately WITHOUT an id,
+    because the id has a home of its own in `editMemberId`. So every invite the
+    app ever sent went to `api/members/undefined/invite` and came back "Member
+    not found". Valid JavaScript, valid Alpine, 404 from a real route.
+
+    The generic form: a fetch URL interpolating `<name>.id` where `<name>` is
+    an Alpine state object this template never puts an `id` on. `x-for` scope
+    names and function parameters are excluded — those come from somewhere this
+    check cannot see, and flagging them would make the test noise.
+    """
+    import re as _re
+    import tpl_source
+
+    # `name(params) {` — filtered against the keywords that also match.
+    FN = _re.compile(r'\b([A-Za-z_$][\w$]*)\s*\(([^)\n]*)\)\s*\{')
+    KEYWORDS = {'if', 'for', 'while', 'switch', 'catch', 'function', 'return'}
+
+    broken = []
+    for path in sorted(glob.glob(os.path.join(TPL, '*.html'))):
+        name = os.path.basename(path)
+        try:
+            full = tpl_source.read(name)
+        except Exception:
+            full = open(path, encoding='utf-8').read()
+
+        # Which functions address a request with `<param>.id`, and via which
+        # parameter position.
+        addressed = {}
+        for m in FN.finditer(full):
+            fn, sig = m.group(1), m.group(2)
+            if fn in KEYWORDS or not sig.strip():
+                continue
+            params = [p.strip().split('=')[0].strip() for p in sig.split(',')]
+            body = _block_from(full, full.index('{', m.end() - 1))
+            for i, param in enumerate(params):
+                if not param or not _re.match(r'^[A-Za-z_$][\w$]*$', param):
+                    continue
+                if _re.search(r'`[^`]*\$\{\s*' + _re.escape(param)
+                              + r'\.id\s*\}[^`]*`', body):
+                    addressed.setdefault(fn, set()).add(i)
+
+        # Which of those are called from the MARKUP with a bare state object.
+        for fn, positions in addressed.items():
+            for call in _re.finditer(r'"\s*' + _re.escape(fn) + r'\(([^)"]*)\)',
+                                     full):
+                args = [a.strip() for a in call.group(1).split(',')]
+                for pos in positions:
+                    if pos >= len(args):
+                        continue
+                    arg = args[pos]
+                    if not _re.match(r'^[A-Za-z_$][\w$]*$', arg or ''):
+                        continue
+                    literal = _state_literal(full, arg)
+                    if not literal:
+                        continue          # not component state; out of scope
+                    if _re.search(r'[\{,]\s*id\s*:', literal):
+                        continue          # the literal declares an id
+                    if _re.search(_re.escape(arg) + r'\.id\s*=', full):
+                        continue          # something assigns one later
+                    if _re.search(_re.escape(arg) + r'\s*=\s*\{[^}]*\bid\b',
+                                  full, _re.S):
+                        continue          # rebuilt wholesale with an id
+                    broken.append(
+                        f"{name}: {fn}() addresses a request with `.id` and the "
+                        f"markup hands it `{arg}`, which never has one")
+    check(not broken,
+          "a request addressed with an id that does not exist — the route is "
+          "real, the object is real, and the call 404s:\n  "
+          + "\n  ".join(sorted(set(broken))))
+
+
+def _block_from(src, start):
+    """The brace-matched block beginning at `start`. These bodies are long and
+    nested, so counting braces beats any regex."""
+    depth = 0
+    for i in range(start, len(src)):
+        if src[i] == '{':
+            depth += 1
+        elif src[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return src[start:i + 1]
+    return src[start:]
+
+
+def _state_literal(src, name):
+    """The object literal `name:` is initialised to as component state, or ''.
+    Anything else — a loop variable, a local — returns '' and is left alone."""
+    import re as _re
+    m = _re.search(r'(?:^|[\s{,])' + _re.escape(name) + r'\s*:\s*\{', src, _re.M)
+    return _block_from(src, src.index('{', m.start())) if m else ''
+
+
 def scenario_every_script_and_stylesheet_carries_a_version():
     """The fourth blank-page failure, and the one that outlives a deploy.
 
