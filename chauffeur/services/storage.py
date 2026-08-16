@@ -406,6 +406,8 @@ with db_lock:
     auth_links_table = db.table('auth_links')
     # Lockout counters that outlive a rebuild (auth arc S4).
     rate_limits_table = db.table('rate_limits')
+    # Devices a PIN may re-open (auth arc S5); panels join them in S6.
+    trusted_devices_table = db.table('trusted_devices')
     chores_table = db.table('chores')
     points_ledger_table = db.table('points_ledger')
     routines_table = db.table('routines')
@@ -1423,6 +1425,67 @@ def verify_member_pin(member_id: str, pin: str) -> bool:
         return False
     return hmac.compare_digest(member['pin_hash'],
                                _hash_pin(pin or '', member['pin_salt']))
+
+# --- Trusted devices (auth arc S5) ---
+# What makes it safe to KEEP the PIN rather than delete it. A PIN is four
+# digits: fine as "let me back in on the kitchen tablet", hopeless as the only
+# thing between the public internet and a child's account. So a PIN opens a
+# device that has already been trusted, and nothing else.
+#
+# A device earns trust by somebody signing in on it with a password, or by a
+# parent naming it. S6 reuses this table for wall panels, which are the same
+# idea carried further: a place rather than a person.
+
+
+def trust_device(device_id: str, label: str = None, by_member: str = None,
+                 kind: str = 'personal') -> dict:
+    import time
+    now = time.time()
+    row = {'device_id': device_id, 'label': label or 'A device',
+           'kind': kind, 'trusted_by': by_member,
+           'created_at': now, 'last_seen': now}
+    with db_lock:
+        existing = trusted_devices_table.search(Query().device_id == device_id)
+        if existing:
+            keep = {'last_seen': now}
+            if label:
+                keep['label'] = label
+            trusted_devices_table.update(keep, Query().device_id == device_id)
+            return {**existing[0], **keep}
+        trusted_devices_table.insert(row)
+    return row
+
+
+def get_trusted_device(device_id: str) -> Optional[dict]:
+    if not device_id:
+        return None
+    with db_lock:
+        rows = trusted_devices_table.search(Query().device_id == device_id)
+    return rows[0] if rows else None
+
+
+def get_trusted_devices() -> List[dict]:
+    with db_lock:
+        return sorted(trusted_devices_table.all(),
+                      key=lambda r: -(r.get('last_seen') or 0))
+
+
+def untrust_device(device_id: str) -> None:
+    with db_lock:
+        trusted_devices_table.remove(Query().device_id == device_id)
+
+
+def touch_device(device_id: str) -> None:
+    """Last seen, so a stale tablet is recognisable on the list a parent
+    revokes from — 'the one nobody has used since March' is how a person
+    actually identifies a device they no longer own."""
+    import time
+    if not device_id:
+        return
+    with db_lock:
+        trusted_devices_table.update({'last_seen': time.time()},
+                                     Query().device_id == device_id)
+
 
 # --- Rate limiting that survives a restart (auth arc S4) ---
 # It used to be a module-level dict, which this project resets on every

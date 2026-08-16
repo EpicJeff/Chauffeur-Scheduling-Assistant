@@ -1077,6 +1077,37 @@
                         <b>Driving</b> and <b>Passenger</b> profiles, which are the records the solver uses.
                         Use <b>Merge</b> if the same person appears twice, <b>Split</b> to undo a bad merge.</p>
 
+                    <!-- Trusted devices (auth arc S5). The list you revoke a
+                         lost tablet from, next to the people it signs in. -->
+                    <details class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700"
+                             @toggle="if ($event.target.open) loadDevices()">
+                        <summary class="cursor-pointer px-4 py-3 font-semibold text-blue-200">
+                            📱 Trusted devices &mdash; where a PIN is enough
+                        </summary>
+                        <div class="px-4 pb-4 space-y-2 text-sm">
+                            <p class="text-gray-400">A device becomes trusted when somebody signs in
+                                on it with their password. After that, everyone in the family &mdash;
+                                including kids with no account &mdash; can get back in by tapping their
+                                face and typing a PIN. Revoke one you no longer have.</p>
+                            <template x-for="d in trustedDevices" :key="d.device_id">
+                                <div class="flex items-center gap-3 py-2 border-b border-gray-800">
+                                    <div class="flex-1 min-w-0">
+                                        <div x-text="d.label || 'A device'" class="font-semibold"></div>
+                                        <div class="text-xs text-gray-500">
+                                            <span x-text="d.trusted_by_name ? ('signed in by ' + d.trusted_by_name) : 'trusted'"></span>
+                                            <span x-show="d.last_seen"> · last used
+                                                <span x-text="new Date(d.last_seen * 1000).toLocaleDateString()"></span></span>
+                                        </div>
+                                    </div>
+                                    <button type="button" @click="revokeDevice(d)"
+                                        class="bg-red-900/60 hover:bg-red-800 px-3 py-1 rounded text-xs">Revoke</button>
+                                </div>
+                            </template>
+                            <p x-show="!trustedDevices.length" class="text-gray-500 text-xs">
+                                No devices trusted yet. Sign in with a password on one to start.</p>
+                        </div>
+                    </details>
+
                     <!-- Accounts & invites (auth arc S3). Placed HERE, beside
                          the people it issues accounts for, rather than in the
                          integrations dump: a family configures a mail sender
@@ -4171,6 +4202,7 @@
                 newMemberCalendarInput: '',
                 // Invites (auth arc S3)
                 inviteBusy: false, inviteLink: '', inviteSent: false,
+                trustedDevices: [],                          // auth arc S5
                 // Status Days (Presence & Status arc P1)
                 statusProtocols: [],
                 // Stages (load arc A4)
@@ -5778,6 +5810,23 @@
                     if (!res.ok) showGlobalAlert('Could not set PIN.');
                     await this.loadMembers();
                 },
+                // Trusted devices (auth arc S5)
+                async loadDevices() {
+                    try {
+                        const r = await fetch('api/account/devices');
+                        this.trustedDevices = r.ok ? await r.json() : [];
+                    } catch (e) { this.trustedDevices = []; }
+                },
+
+                async revokeDevice(d) {
+                    if (!await promptConfirm('Revoke device',
+                        `Revoke ${d.label || 'this device'}? Anyone using it will have to sign in with a password again before a PIN works there.`,
+                        'Revoke')) return;
+                    await fetch(`api/account/devices/${encodeURIComponent(d.device_id)}`,
+                                { method: 'DELETE' });
+                    this.loadDevices();
+                },
+
                 // Invites (auth arc S3). The token is sent when this browser
                 // happens to have one; from the LAN the server allows the
                 // bootstrap without it, because the first invite is issued at

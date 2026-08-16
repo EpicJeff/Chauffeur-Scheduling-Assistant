@@ -4775,18 +4775,50 @@ class MemberAuthRequest(BaseModel):
 
 @app.post("/api/members/{member_id}/auth")
 def member_auth(member_id: str, req: MemberAuthRequest, request: Request = None):
-    """Verify PIN (when set) and mint a per-device token. Members without a
-    PIN authenticate freely — same household trust as before, hardened only
-    where someone chose to be hardened."""
+    """Tap a face, type a PIN, get a token — **on a device already trusted**
+    (auth arc S5).
+
+    The PIN is not deleted, it is demoted to the thing it is actually good at:
+    re-opening a device somebody has already vouched for. Four digits is a
+    perfectly good "let me back in on the kitchen tablet" and a hopeless
+    "anybody on the internet who knows the family's names". A device earns
+    trust when somebody signs in on it with a password, or when a parent names
+    it; the pattern every banking app uses, and the reason kids keep the fast
+    path they actually live in.
+
+    Off a trusted device the answer names the way in rather than just refusing
+    — a locked door with no sign on it is how people conclude the app is
+    broken."""
     member = storage.get_member(member_id)
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
+
+    from services import auth as _auth
+    headers = request.headers if request else {}
+    device_id = (headers.get('x-device-id')
+                 or (request.query_params.get('device_id') if request else None))
+    trusted = bool(storage.get_trusted_device(device_id)) if device_id else False
+    # Ingress and the LAN are trusted ground on their own: the wall panel and
+    # the kitchen tablet live there, and supervisor has already authenticated
+    # anybody arriving through ingress.
+    local = not _auth.arrived_via_tunnel(headers)
+
+    if not (trusted or local):
+        if _auth.enforcing():
+            raise HTTPException(
+                status_code=403,
+                detail="Sign in with your email and password on this device first. "
+                       "After that your PIN will open it.")
+        _auth.record_identity('untrusted-pin', member_id, None)
+
     if member.get('pin_hash'):
         _pin_rate_check(member_id, request)
         ok = storage.verify_member_pin(member_id, req.pin or '')
         _pin_rate_record(member_id, ok, request)
         if not ok:
             raise HTTPException(status_code=403, detail="Wrong PIN")
+    if device_id:
+        storage.touch_device(device_id)
     token = storage.create_member_token(member_id)
     return {"token": token, "member": _public_member(member)}
 
@@ -4900,7 +4932,7 @@ def peek_account_link(token: str):
 
 
 @app.post("/api/account/set-password")
-def set_password_from_link(req: AcceptRequest):
+def set_password_from_link(req: AcceptRequest, request: Request = None):
     """Spend an invite or reset link and set the password.
 
     Verification and password-setting are ONE step, not two: following a
@@ -4924,8 +4956,31 @@ def set_password_from_link(req: AcceptRequest):
     # Setting a password signs you in; making somebody log in again
     # immediately, having just proved themselves, is ceremony.
     token = storage.create_member_token(member_id)
+    _trust_this_device(request, member_id, storage.get_member(member_id).get('name'))
     return {"status": "ok", "token": token,
             "member": _public_member(storage.get_member(member_id))}
+
+
+@app.get("/api/account/devices")
+def list_trusted_devices(x_member_token: Optional[str] = Header(None)):
+    """Which devices a PIN may re-open. Parent-only: it is the list you revoke
+    a lost tablet from."""
+    require_parent_token(x_member_token)
+    names = {m['id']: m.get('name') for m in storage.get_all_members()}
+    return [{**d, 'trusted_by_name': names.get(d.get('trusted_by'))}
+            for d in storage.get_trusted_devices()]
+
+
+@app.delete("/api/account/devices/{device_id}")
+def revoke_trusted_device(device_id: str, x_member_token: Optional[str] = Header(None)):
+    """Untrust a device AND cut the sessions on it.
+
+    Revoking trust without revoking the tokens would be theatre: the phone in
+    somebody else's hand is already signed in, and losing the right to use a
+    PIN tomorrow does not help today."""
+    require_parent_token(x_member_token)
+    storage.untrust_device(device_id)
+    return {"status": "revoked", "device_id": device_id}
 
 
 @app.get("/api/account/setup")
@@ -4985,6 +5040,7 @@ def account_claim(req: ClaimRequest, request: Request = None):
         updates['email'] = req.email.strip()
     storage.update_member(req.member_id, updates)
     storage.set_member_password(req.member_id, req.password)
+    _trust_this_device(request, req.member_id, member.get('name'))
     return {"status": "ok", "token": storage.create_member_token(req.member_id),
             "member": _public_member(storage.get_member(req.member_id))}
 
@@ -5008,8 +5064,25 @@ def account_login(req: LoginRequest, request: Request = None):
     _pin_rate_record(member['id'], ok, request)
     if not ok:
         raise generic
+    _trust_this_device(request, member['id'], member.get('name'))
     return {"status": "ok", "token": storage.create_member_token(member['id']),
             "member": _public_member(member)}
+
+
+def _trust_this_device(request, member_id: str, label: str = None) -> None:
+    """A password sign-in vouches for the device it happened on (auth arc S5).
+
+    This is what keeps the PIN useful: proving yourself properly once makes
+    this tablet a place where four digits are enough afterwards — for you and
+    for the kids who have no password at all. Silent by design; a prompt
+    asking whether to trust the device you are holding is a question nobody
+    can answer better than the act of signing in already did."""
+    headers = getattr(request, 'headers', {}) or {}
+    device_id = headers.get('x-device-id')
+    if not device_id:
+        return
+    storage.trust_device(device_id, label=label or headers.get('x-device-label'),
+                         by_member=member_id, kind='personal')
 
 
 class ForgotRequest(BaseModel):

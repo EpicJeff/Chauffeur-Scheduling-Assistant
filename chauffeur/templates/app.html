@@ -3283,6 +3283,20 @@
             return localStorage.getItem('chauffeur_member_token') || '';
         }
 
+        // One id per installed app, minted on first use and never rotated.
+        // Not a secret and not a credential: it names the device so the
+        // server can ask "has anybody vouched for this one?" — which is what
+        // lets a seven-year-old keep tapping a face and four digits.
+        function deviceId() {
+            let id = localStorage.getItem('chauffeur_device_id');
+            if (!id) {
+                id = (crypto.randomUUID ? crypto.randomUUID()
+                      : String(Date.now()) + Math.random().toString(16).slice(2));
+                localStorage.setItem('chauffeur_device_id', id);
+            }
+            return id;
+        }
+
         // Auth arc S2: the token rides on EVERY same-origin request, not the
         // five privileged ones that asked for it by hand.
         //
@@ -3306,12 +3320,19 @@
                     const url = typeof input === 'string' ? input : (input && input.url) || '';
                     const foreign = /^[a-z]+:\/\//i.test(url)
                         && !url.startsWith(window.location.origin);
-                    const token = memberToken();
-                    if (token && !foreign) {
+                    if (!foreign) {
+                        const token = memberToken();
                         init = init || {};
                         const h = new Headers(init.headers
                             || (typeof input === 'object' && input.headers) || {});
-                        if (!h.has('X-Member-Token')) h.set('X-Member-Token', token);
+                        if (token && !h.has('X-Member-Token')) h.set('X-Member-Token', token);
+                        // Auth arc S5: a stable id for THIS install, so a PIN
+                        // can re-open a device somebody already signed in on.
+                        // Generated once and kept; it identifies the device,
+                        // never the person, and carries no credential of its
+                        // own — the server only cares whether it is on the
+                        // trusted list.
+                        if (!h.has('X-Device-Id')) h.set('X-Device-Id', deviceId());
                         init.headers = h;
                     }
                 } catch (e) { /* never let auth plumbing break a fetch */ }

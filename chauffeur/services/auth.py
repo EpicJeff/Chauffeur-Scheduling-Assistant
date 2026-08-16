@@ -93,6 +93,9 @@ RULES = [
     # one parent holds a password.
     ('GET', '/api/account/setup', ANYONE),
     ('POST', '/api/account/claim', ANYONE),
+    # The device list is where a lost tablet gets revoked, so it is admin.
+    (ANY, '/api/account/devices', PARENTS),
+    (ANY, '/api/account/devices/*', PARENTS),
     ('POST', '/api/account/set-password', ANYONE),
     ('POST', '/api/account/login', ANYONE),
     ('POST', '/api/account/forgot', ANYONE),

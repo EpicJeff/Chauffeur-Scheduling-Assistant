@@ -268,6 +268,58 @@ def scenario_n_the_ip_counter_ignores_headers_the_caller_controls():
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
+
+
+# --- S5: the PIN is demoted, not deleted ------------------------------------
+
+def scenario_o_a_pin_opens_a_trusted_device_and_nothing_else():
+    """Four digits is a fine 'let me back in on the kitchen tablet' and a
+    hopeless 'anybody on the internet who knows the family's names'."""
+    storage.untrust_device('tablet-1')
+    check(storage.get_trusted_device('tablet-1') is None,
+          "an unknown device started out trusted")
+    storage.trust_device('tablet-1', label='Kitchen tablet', by_member='mum')
+    d = storage.get_trusted_device('tablet-1')
+    check(d and d['label'] == 'Kitchen tablet',
+          f"signing in did not vouch for the device: {d}")
+    # Trusting twice is a re-visit, not a duplicate row.
+    storage.trust_device('tablet-1', by_member='mum')
+    check(len([x for x in storage.get_trusted_devices()
+               if x['device_id'] == 'tablet-1']) == 1,
+          "the same device was trusted twice over")
+    storage.untrust_device('tablet-1')
+    check(storage.get_trusted_device('tablet-1') is None,
+          "revoking a device did not actually revoke it")
+
+
+def scenario_p_young_children_are_never_asked_for_an_email():
+    """A five-year-old has no inbox, and requiring one to appear on the
+    family's schedule would be absurd. The stage says so, so no surface has to
+    know a birthday."""
+    from services import stages
+    for stage in ('sprout', 'explorer'):
+        check(stages.CAPABILITIES[stage]['own_account'] is False,
+              f"{stage} was offered an account of their own")
+    for stage in ('navigator', 'copilot'):
+        check(stages.CAPABILITIES[stage]['own_account'] is True,
+              f"{stage} could not hold an account")
+    # And it is OFFERED, never forced: a Navigator with no email keeps the PIN
+    # and loses nothing, which is why nothing here refuses a member.
+    check('own_account' in stages.CAPABILITIES['navigator'],
+          "the capability is how a surface asks; it must exist by name")
+
+
+def scenario_q_growing_up_says_what_is_new():
+    """Growing up is GRANTED (A4), so a new capability has to be something the
+    family is told about rather than something that silently appears."""
+    from services import stages
+    grants = ' '.join(stages.GRANTS['navigator']).lower()
+    check('account' in grants,
+          f"moving up to Navigator gained an account without saying so: {grants}")
+
+
+SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
+
 if __name__ == "__main__":
     for fn in SCENARIOS:
         fn()

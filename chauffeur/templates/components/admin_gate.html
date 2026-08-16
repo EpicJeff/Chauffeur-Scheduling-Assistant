@@ -30,11 +30,20 @@
         try {
           const url = typeof input === 'string' ? input : (input && input.url) || '';
           const foreign = /^[a-z]+:\/\//i.test(url) && !url.startsWith(window.location.origin);
-          const token = localStorage.getItem('chauffeur_member_token') || '';
-          if (token && !foreign) {
+          if (!foreign) {
+            const token = localStorage.getItem('chauffeur_member_token') || '';
+            let did = localStorage.getItem('chauffeur_device_id');
+            if (!did) {
+              // Auth arc S5: names the device, never the person, and carries
+              // no credential — the server only asks whether it is trusted.
+              did = (crypto.randomUUID ? crypto.randomUUID()
+                     : String(Date.now()) + Math.random().toString(16).slice(2));
+              localStorage.setItem('chauffeur_device_id', did);
+            }
             init = init || {};
             const h = new Headers(init.headers || (typeof input === 'object' && input.headers) || {});
-            if (!h.has('X-Member-Token')) h.set('X-Member-Token', token);
+            if (token && !h.has('X-Member-Token')) h.set('X-Member-Token', token);
+            if (!h.has('X-Device-Id')) h.set('X-Device-Id', did);
             init.headers = h;
           }
         } catch (e) { /* auth plumbing must never break a fetch */ }

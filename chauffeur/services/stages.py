@@ -56,11 +56,18 @@ CAPABILITIES = {
         'glyph_scale': 'xl', 'density': 'roomy', 'horizon_days': 0,
         'show_points': True, 'show_streaks': False, 'can_request': False,
         'assignable_tasks': False, 'can_drive': False, 'private_location': False,
+        # No inbox, no password (auth arc S5). A five-year-old signs in by
+        # tapping their face on the kitchen tablet, and asking for an email
+        # address to put them on the family's schedule would be absurd. Their
+        # credential is a PIN a parent sets, and it only opens a device
+        # somebody already trusted.
+        'own_account': False,
     },
     'explorer': {
         'glyph_scale': 'lg', 'density': 'roomy', 'horizon_days': 6,
         'show_points': True, 'show_streaks': True, 'can_request': True,
         'assignable_tasks': False, 'can_drive': False, 'private_location': False,
+        'own_account': False,
     },
     'navigator': {
         'glyph_scale': 'sm', 'density': 'tight', 'horizon_days': 13,
@@ -69,11 +76,15 @@ CAPABILITIES = {
         # because at twelve they start to read as babyish.
         'show_points': False, 'show_streaks': False, 'can_request': True,
         'assignable_tasks': True, 'can_drive': False, 'private_location': True,
+        # A phone of their own, so an account of their own — offered, never
+        # forced: a Navigator with no email keeps the PIN and loses nothing.
+        'own_account': True,
     },
     'copilot': {
         'glyph_scale': 'none', 'density': 'tight', 'horizon_days': 13,
         'show_points': False, 'show_streaks': False, 'can_request': True,
         'assignable_tasks': True, 'can_drive': True, 'private_location': True,
+        'own_account': True,
     },
 }
 
@@ -83,7 +94,8 @@ GRANTS = {
     'explorer': ["their own streaks", "a week of the schedule instead of just today",
                  "asking a parent for something"],
     'navigator': ["two weeks of the schedule", "being given real household jobs",
-                  "keeping their whereabouts to the family rather than the kiosk"],
+                  "keeping their whereabouts to the family rather than the kiosk",
+                  "an account of their own, if they have an email address"],
     'copilot': ["driving, once you set them up as a driver",
                 "their own errands and commitments"],
 }
