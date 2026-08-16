@@ -241,6 +241,64 @@ def scenario_v_shells_are_public_and_the_data_is_not():
         check(tiers != auth.ANYONE, f"{api} went public")
 
 
+def scenario_the_guard_runs_on_a_websocket_too():
+    """A global dependency runs on WEBSOCKET routes as well, and FastAPI only
+    fills a `Request` parameter when the connection really is one:
+
+        if dependant.request_param_name and isinstance(request, Request):
+        elif dependant.websocket_param_name and isinstance(request, WebSocket):
+
+    Neither branch matched a guard that asked for a `Request`, so it was called
+    with no arguments — `TypeError: _auth_guard() missing 1 required positional
+    argument` — and EVERY WebSocket handshake in the app 500'd from S1 onward.
+    There is one WebSocket route here, so the entire visible symptom was that
+    no screen and no phone could ever become a Music Assistant player, and a
+    day went into blaming a tunnel that was carrying the upgrade perfectly.
+
+    `HTTPConnection` is the common base of both and is filled unconditionally.
+    Pinned two ways: the parameter FastAPI will fill, and the guard actually
+    awaited on a websocket scope.
+    """
+    import asyncio
+    import main
+    from fastapi.dependencies.utils import get_dependant
+    from starlette.requests import Request
+    from starlette.websockets import WebSocket
+
+    dep = get_dependant(path='/api/sendspin/ws', call=main._auth_guard)
+    check(dep.http_connection_param_name,
+          "the guard does not take an HTTPConnection, so FastAPI has nothing "
+          "to fill on a websocket route and every handshake raises TypeError")
+    check(not dep.request_param_name,
+          "the guard asks for a Request — filled on http routes and silently "
+          "absent on websocket ones, which is the bug itself")
+
+    async def _recv():
+        return {'type': 'websocket.connect'}
+
+    async def _send(_message):
+        return None
+
+    base = {'headers': [], 'query_string': b'', 'scheme': 'ws',
+            'server': ('testserver', 80), 'root_path': ''}
+    ws = WebSocket({**base, 'type': 'websocket',
+                    'path': '/api/sendspin/ws'}, _recv, _send)
+    asyncio.run(main._auth_guard(ws))          # must not raise
+    req = Request({**base, 'type': 'http', 'scheme': 'http',
+                   'method': 'GET', 'path': '/api/home_board'})
+    asyncio.run(main._auth_guard(req))         # and neither must the http one
+
+    # Refusing a handshake needs a close code, not a status code. Dark today,
+    # but S8 flips it and this arc's own rule is that the hole is closed
+    # BEFORE the flip rather than at it.
+    src = open(main.__file__, encoding='utf-8').read()
+    guard = src[src.index('async def _auth_guard('):]
+    guard = guard[:guard.index('\napp = FastAPI(')]
+    check('WebSocketException' in guard,
+          "a refused websocket would raise HTTPException, which is the same "
+          "class of failure as the one this scenario exists for")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

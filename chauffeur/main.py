@@ -2,7 +2,11 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, BackgroundTasks, Response, HTTPException, WebSocket, WebSocketDisconnect, Header, UploadFile, File, Form, Body, Depends
+from fastapi import FastAPI, BackgroundTasks, Response, HTTPException, WebSocket, WebSocketDisconnect, WebSocketException, Header, UploadFile, File, Form, Body, Depends
+# The common base of Request and WebSocket. The global auth guard takes one of
+# these rather than a Request — see `_auth_guard`, where taking a Request meant
+# every WebSocket handshake in the app raised TypeError before reaching it.
+from starlette.requests import HTTPConnection
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -950,7 +954,7 @@ async def lifespan(app: FastAPI):
     ingest_task.cancel()
     migration_task.cancel()
 
-async def _auth_guard(request: Request):
+async def _auth_guard(conn: HTTPConnection):
     """Default-deny guard, applied to every route (auth arc S1).
 
     A GLOBAL dependency rather than middleware, for one reason that matters:
@@ -961,15 +965,41 @@ async def _auth_guard(request: Request):
 
     Ships dark: `services.auth.check_request` returns None for everything
     while `auth_enforce` is off, having recorded what it would have refused.
+
+    **`HTTPConnection`, not `Request`, and that is not a style choice.** A
+    global dependency runs on WEBSOCKET routes too, and FastAPI only fills a
+    `Request` parameter when the connection actually is one:
+
+        if dependant.request_param_name and isinstance(request, Request):
+        elif dependant.websocket_param_name and isinstance(request, WebSocket):
+
+    On a websocket neither branch matched this function's `request` param, so
+    it was called with no arguments at all — `TypeError: _auth_guard() missing
+    1 required positional argument` — and every WebSocket handshake in the app
+    500'd from S1 (v2.247.0) onward. There is exactly one WebSocket route here,
+    `/api/sendspin/ws`, so the whole visible symptom was that no screen and no
+    phone could ever become a Music Assistant player. It cost a day of blaming
+    a Cloudflare tunnel that was carrying the upgrade perfectly well.
+    `HTTPConnection` is the common base of both and is filled unconditionally.
     """
     from services import auth as _auth
-    route = request.scope.get('route')
-    path = getattr(route, 'path', None) or request.url.path
-    verdict = _auth.check_request(request.method, path,
-                                  request.headers, request.query_params)
-    if verdict:
-        raise HTTPException(status_code=verdict['status'],
-                            detail=f"Requires {' or '.join(verdict['needs'])}")
+    route = conn.scope.get('route')
+    path = getattr(route, 'path', None) or conn.url.path
+    # A websocket has no method. 'WEBSOCKET' rather than a fake 'GET' so the
+    # audit says what it saw, and so a method-specific rule can never silently
+    # capture a handshake.
+    method = conn.scope.get('method') or 'WEBSOCKET'
+    verdict = _auth.check_request(method, path, conn.headers, conn.query_params)
+    if not verdict:
+        return
+    needs = f"Requires {' or '.join(verdict['needs'])}"
+    if conn.scope.get('type') == 'websocket':
+        # A handshake has no status codes to refuse with; refusing one means
+        # closing it. Raising HTTPException here would be the same class of
+        # bug as the one above — right before S8 flips enforcement on, not at
+        # it, which is this arc's own discipline.
+        raise WebSocketException(code=1008, reason=needs)
+    raise HTTPException(status_code=verdict['status'], detail=needs)
 
 
 app = FastAPI(title="Family Driver Graph Scheduler", lifespan=lifespan,

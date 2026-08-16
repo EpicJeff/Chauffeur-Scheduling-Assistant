@@ -2445,3 +2445,23 @@ The screen player failed on BOTH routes into this house, for unrelated causes, a
   - **`contextWarning()` names the ORIGIN, not the route.** Its first draft advised "reach Chauffeur through Home Assistant" and the household read it while doing exactly that — **ingress inherits HA's own scheme**, so an HA served over http hands out insecure pages through every door. Advice that describes a route rather than a requirement sends somebody to check the place they are already standing.
 - Both are said ONCE, from the shape of the failure, and neither blocks the attempt: a setup that negotiates the FLAC/PCM fallback happily must not be refused to prevent a failure it does not have.
 - Tests: `test_music_card.scenario_a_refusal_is_repeated_rather_than_swallowed`.
+
+## The guard could not be handed a WebSocket (v2.256.5)
+
+`TypeError: _auth_guard() missing 1 required positional argument: 'request'`, from the add-on log, and it is the whole thing. Not the tunnel, which was carrying the upgrade perfectly.
+
+A global FastAPI dependency runs on WEBSOCKET routes too, and FastAPI fills a `Request` parameter only when the connection actually is one:
+
+```python
+if dependant.request_param_name and isinstance(request, Request):
+elif dependant.websocket_param_name and isinstance(request, WebSocket):
+```
+
+A guard asking for `Request` matched neither branch on a websocket, so it was called with no arguments at all and the handshake 500'd. **Every WebSocket connection in the app has failed since S1 (v2.247.0).** There is exactly one WebSocket route — `/api/sendspin/ws` — so the entire visible symptom was that no screen and no phone could ever be a Music Assistant player, on any door into the house.
+
+- **`HTTPConnection`**, the common base of both, is filled unconditionally (`dependant.http_connection_param_name`). The guard takes one of those. A websocket has no method, so the table sees `'WEBSOCKET'` — the audit then says what it saw, and a method-specific rule can never silently capture a handshake.
+- **Refusing a handshake needs a close code, not a status code**: the guard raises `WebSocketException(1008)` on a websocket scope. Dark today, but S8 flips it, and this arc's own discipline is that the hole closes before the flip rather than at it.
+- **`contextWarning` is now gated on the socket having actually OPENED.** sendspin-js's `connect()` resolves without waiting for the socket, so a handshake the server had already 500'd still set `active` — and the insecure-page warning then blamed a codec for a failure that never reached one. It sent a whole diagnosis to the wrong box. A page can be insecure and that be beside the point; only a connection that opened has an opinion worth printing about what closed it.
+- Tests: `test_auth.scenario_the_guard_runs_on_a_websocket_too` pins both the parameter FastAPI will fill and the guard awaited on a real websocket scope.
+
+**The lesson, for the next global dependency**: anything applied to `FastAPI(dependencies=[...])` runs on every protocol the app speaks, and the type it asks for decides whether it can. A test that exercises only HTTP will pass while an entire transport is broken.

@@ -543,7 +543,7 @@
                         const ctx = MusicLogic.contextWarning();
                         if (e.reason) {
                             notice(`${identity.name} disconnected: ${e.reason}`);
-                        } else if (ctx && !self.warnedContext
+                        } else if (opened && ctx && !self.warnedContext
                                    && self.lastClose.heldSeconds < 20) {
                             // Connected, negotiated, gone inside a second, no
                             // reason given: that is Music Assistant hanging up
@@ -553,6 +553,17 @@
                             // is still worth attempting, but silently retrying
                             // something that cannot succeed is what made this
                             // a mystery.
+                            //
+                            // GATED ON `opened`, and that gate is the whole
+                            // lesson of the day it shipped. sendspin-js's
+                            // `connect()` resolves without waiting for the
+                            // socket, so a handshake the SERVER had already
+                            // 500'd still set `active` — and this branch then
+                            // blamed an insecure page for a failure that never
+                            // reached the codec. A page can be insecure and
+                            // that can be beside the point; only a connection
+                            // that actually opened has an opinion worth
+                            // printing about what closed it.
                             self.warnedContext = true;
                             notice(`${identity.name} keeps dropping — ${ctx}.`);
                         }
