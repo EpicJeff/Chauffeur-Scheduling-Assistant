@@ -668,6 +668,65 @@ def scenario_a_vendored_grid_is_themed_for_the_panel_too():
           "the calendar's own toolbar buttons are unthemed on a panel")
 
 
+def scenario_nobody_falls_between_the_two_lists_on_the_identity_screen():
+    """Reported from the household: three people missing from Select Family
+    Member, with no relation to who had an email or an account.
+
+    The screen draws the DRIVERS, then the members who are not one of them.
+    `driversData` drops `is_disabled` rows, and the second list said
+    `!m.driver_id` — so a member linked to a disabled driver had no driver card
+    AND was excluded from the member list for having a `driver_id`. They were
+    on neither list and could not sign in as themselves at all.
+
+    `is_disabled` is a SCHEDULING fact — out of the solver, off the rota — and
+    it had quietly become an identity one. The test is therefore "is this
+    person already drawn above?", never "do they have a driver_id".
+
+    The same mistake sat in the restore path, so even a member who could find
+    themselves was bounced back to this screen on the next load.
+    """
+    app = tpl_source.read('app.html')
+    check('drawnDriverIds' in app,
+          "the identity screen still splits on driver_id, so a member whose "
+          "driver is disabled appears on neither list")
+    fn = app[app.index('function showDriverSelection()'):]
+    fn = fn[:fn.index('let isNotifOpen')]
+    check('!drawnDriverIds.has(m.driver_id)' in fn,
+          "the passenger list does not pick up members whose driver row is "
+          "gone or disabled")
+    restore = app[app.index('const restoredPassenger'):]
+    restore = restore[:restore.index(';')]
+    check('driversData.some' in restore,
+          "the restore path still calls a disabled driver's member a driver, "
+          "so they are sent back to the picker on every load")
+
+
+def scenario_the_agent_button_is_not_offered_before_anybody_has_said_who_they_are():
+    """Argyle answers AS somebody. A chat button floating over the identity
+    picker is a button that cannot work, and it was there because the rule
+    lived inline in `applyViewVisibility` — which that screen never calls.
+
+    One rule, one function, asked of the SCREEN rather than of
+    `selectedMemberId`: that id survives in localStorage and can still name
+    somebody the app just failed to restore, which is precisely the state that
+    lands on the picker.
+    """
+    app = tpl_source.read('app.html')
+    check('function updateAgentFab()' in app,
+          "the FAB's visibility is decided inline, so any screen that does "
+          "not run that code keeps whatever the last one left")
+    fn = app[app.index('function updateAgentFab()'):]
+    fn = fn[:fn.index('function updateTabBar')]
+    check("classList.contains('hidden')" in fn,
+          "the FAB rule trusts selectedMemberId, which outlives a failed "
+          "restore — the exact case that shows the picker")
+    picker = app[app.index('function showDriverSelection()'):]
+    picker = picker[:picker.index('driver-name')]
+    check('updateAgentFab()' in picker,
+          "the identity screen never asks for a FAB decision, so the chat "
+          "button floats over Select Family Member")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

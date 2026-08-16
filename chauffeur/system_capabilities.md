@@ -2512,3 +2512,16 @@ The set-password page is where an invite lands: a standalone page, no shell, ope
 - **Show/hide on the password**, which is not decoration: a phone keyboard, a password being invented on the spot, and two fields that must agree. Being able to look is what prevents the third attempt.
 - **The strength meter fills on LENGTH**, the one rule the server actually enforces — not on a score for symbols, which pushes people toward `Passw0rd!` and away from four words they will remember. The submit button disables below the minimum instead of letting somebody press it and be refused by an endpoint. `_MIN_PASSWORD` is pinned across the Python/template boundary by a test: the number the form states, the number it enforces, and the number the server enforces cannot drift apart.
 - Tests: `test_accounts.scenario_the_set_password_page_is_the_first_thing_the_app_ever_shows`.
+
+## Three people were not on the identity screen (v2.258.1)
+
+Reported straight after an invite was accepted: the new account holder was missing from **Select Family Member**, and so were two others — none of it correlated with who had an email, because accounts had nothing to do with it.
+
+The screen draws two lists: the drivers, then "the members who are not one of them". The second was `membersData.filter(m => !m.driver_id)`, and `driversData` drops `is_disabled` rows. **A member linked to a disabled driver was on neither list** — no driver card, and excluded from the member list for having a `driver_id`. They could not sign in as themselves anywhere in the app.
+
+`is_disabled` is a SCHEDULING fact — out of the solver, off the rota — and it had quietly become an identity one. Disabling somebody as a driver deleted them as a person.
+
+- **The test is now "is this person already drawn above?"** (`!drawnDriverIds.has(m.driver_id)`), never "do they have a driver_id". A member whose driver row is disabled or deleted is still a member of this family.
+- **The same mistake sat in the restore path.** `restoredPassenger` used the identical `!m.driver_id`, so even a member who could find themselves on the picker was refused on the next load and bounced back to a screen they were not listed on. Both halves of one person disappearing, from one wrong predicate written twice.
+- **The Argyle FAB is gone from the identity screen** (household nitpick, and correct): Argyle answers AS somebody, so a chat button before anybody has said who they are cannot work. The rule was inline in `applyViewVisibility`, which that screen never calls, so the button simply stayed wherever the last screen left it. It is `updateAgentFab()` now — one rule, called by both — and it asks the SCREEN rather than `selectedMemberId`, which survives in localStorage and can still name somebody the app just failed to restore, which is exactly the state that lands on the picker.
+- Tests: `test_panel_chrome`, two scenarios, both verified to fail against the previous commit.

@@ -573,12 +573,7 @@
                 document.getElementById('btn-prev-day').disabled = false;
                 document.getElementById('btn-next-day').disabled = false;
             }
-            // Argyle has messaging tools now (v2.25.0) so the FAB is back on
-            // the Messages channel list; it still hides inside an OPEN thread,
-            // where it overlays the composer's Send button.
-            const threadOpen = (document.getElementById('thread-view') || {}).style?.display === 'flex';
-            const agentFab = document.getElementById('kiosk-chat-fab');
-            if (agentFab) agentFab.style.display = (isMessages && threadOpen) ? 'none' : '';
+            updateAgentFab();
             // Always shown for parents on Family view — with no pending
             // proposals it collapses to the one-row 📸 capture strip.
             const showProposals = currentView === 'family' && currentMemberRole() === 'parent';
@@ -591,6 +586,30 @@
                 musicWidgetStarted = true;
                 startMusicWidget();
             }
+        }
+
+        // The Argyle FAB has ONE rule and it lives here, because the button is
+        // drawn over every screen and the screens do not know about each
+        // other. It used to be decided inline in `applyViewVisibility`, which
+        // the identity picker never calls — so the chat button floated over
+        // "Select Family Member", where it cannot work: Argyle answers AS
+        // somebody, and at that moment nobody has said who they are.
+        function updateAgentFab() {
+            const fab = document.getElementById('kiosk-chat-fab');
+            if (!fab) return;
+            // Asked of the SCREEN rather than of `selectedMemberId`, which
+            // survives in localStorage and can still name somebody the app
+            // just failed to restore — the exact state that lands on this
+            // picker. What is on the glass is the only thing that cannot lie.
+            const picker = document.getElementById('screen-select-driver');
+            const picking = picker && !picker.classList.contains('hidden');
+            // Argyle has messaging tools (v2.25.0) so the FAB belongs on the
+            // Messages channel list; it still hides inside an OPEN thread,
+            // where it overlays the composer's Send button.
+            const threadOpen =
+                (document.getElementById('thread-view') || {}).style?.display === 'flex';
+            const inThread = currentView === 'messages' && threadOpen;
+            fab.style.display = (picking || inThread) ? 'none' : '';
         }
 
         function updateTabBar() {
@@ -1932,8 +1951,14 @@
             await loadClockFormat();
             await fetchDrivers();
             await fetchMembers();
+            // The same test the picker uses, and for the same reason: a member
+            // whose driver row is disabled is not a driver, but `!m.driver_id`
+            // called them one and refused to restore them — so they were
+            // bounced to the identity screen on every single load, where they
+            // also were not listed. Both halves of one person disappearing.
             const restoredPassenger = !selectedDriverId && selectedMemberId
-                && membersData.find(m => m.id === selectedMemberId && !m.driver_id);
+                && membersData.find(m => m.id === selectedMemberId
+                    && !(m.driver_id && driversData.some(d => d.id === m.driver_id)));
             if (selectedDriverId && driversData.find(d => d.id === selectedDriverId)) {
                 await selectDriver(selectedDriverId);
             } else if (restoredPassenger) {
@@ -3957,14 +3982,33 @@
             document.getElementById('btn-push').classList.add('hidden');
             document.getElementById('screen-select-driver').classList.remove('hidden');
 
+            // This screen is reached without going through applyViewVisibility,
+            // so it asks for the FAB decision itself rather than leaving the
+            // button wherever the last screen left it.
+            updateAgentFab();
+
             document.getElementById('driver-name').textContent = "Select Family Member";
             document.getElementById('date-subtitle').textContent = "Chauffeur App";
             document.getElementById('driver-avatar').textContent = "?";
             document.getElementById('driver-avatar').style.borderColor = "#374151";
             document.getElementById('driver-avatar').style.color = "#6B7280";
 
+            // Nobody hidden. This screen draws two lists — the drivers, then
+            // the members who are not one of them — and a member fell down the
+            // gap between: `driversData` DROPS disabled drivers, so a member
+            // linked to one had no driver card AND was excluded from the
+            // passenger list for having a `driver_id`. They simply were not on
+            // the screen, and could not sign in as themselves anywhere.
+            //
+            // `is_disabled` is a SCHEDULING fact — out of the solver, off the
+            // rota — and it had quietly become an identity one. So the test is
+            // "is this person already drawn above?", not "do they have a
+            // driver_id": a member whose driver is disabled or deleted is
+            // still a member of this family.
             const list = document.getElementById('driver-list');
-            const passengerMembers = membersData.filter(m => !m.driver_id);
+            const drawnDriverIds = new Set(driversData.map(d => d.id));
+            const passengerMembers = membersData.filter(
+                m => !m.driver_id || !drawnDriverIds.has(m.driver_id));
             if (driversData.length === 0 && passengerMembers.length === 0) {
                 list.innerHTML = "<p class='text-center text-gray-500'>No family members configured.</p>";
                 return;
