@@ -989,6 +989,14 @@ class Settings(BaseModel):
     # deploying, because the alternative is a silent Argyle.
     service_token: str = ""
     service_local_grace: bool = True
+    # --- The flip itself (auth arc S8) ---
+    # Off means AUDIT MODE: the guard records what it would refuse and refuses
+    # nothing. On means every route's tier is enforced. Decision 9 guards the
+    # write, not the read: the settings POST refuses to turn this on while any
+    # active member holds neither a password nor a PIN, and names them — a
+    # switch that can lock a family out of their own house is not a bare
+    # checkbox. Flip on evidence: the audit report is drawn beside the control.
+    auth_enforce: bool = False
     smtp_use_intake: bool = False
     smtp_host: str = ""
     smtp_port: int = 587

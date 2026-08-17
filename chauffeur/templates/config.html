@@ -1087,6 +1087,71 @@
                         <b>Driving</b> and <b>Passenger</b> profiles, which are the records the solver uses.
                         Use <b>Merge</b> if the same person appears twice, <b>Split</b> to undo a bad merge.</p>
 
+                    <!-- The flip (auth arc S8). The switch that ends audit
+                         mode, drawn BESIDE its evidence: the arc's rule is
+                         flip on evidence, and evidence remembered from
+                         another page is a hunch. -->
+                    <details class="mb-6 bg-gray-900/50 rounded-xl border border-red-900/60"
+                             @toggle="if ($event.target.open) loadAuthAudit()">
+                        <summary class="cursor-pointer px-4 py-3 font-semibold text-red-200">
+                            🔒 Enforcement &mdash; the flip out of audit mode
+                        </summary>
+                        <div class="px-4 pb-4 space-y-3 text-sm">
+                            <p class="text-gray-400">Off, Chauffeur lets everything through and records
+                                what it <i>would</i> have refused. On, every request must prove who it
+                                is: members sign in, screens pair, Argyle presents its token. Read the
+                                record below first &mdash; a quiet report after a few days of normal
+                                life is the evidence this switch wants.</p>
+                            <label class="flex items-start gap-2">
+                                <input type="checkbox" x-model="authSettings.auth_enforce"
+                                       @change="toggleEnforce()" class="mt-1">
+                                <span>
+                                    <b>Enforce sign-in</b>
+                                    <span class="block text-gray-400 text-xs">Refuses to turn on while
+                                        any member has neither a password nor a PIN, and names them
+                                        instead — nobody gets locked out of their own house.</span>
+                                </span>
+                            </label>
+                            <p x-show="enforceError" x-text="enforceError"
+                               class="text-xs text-amber-300 whitespace-pre-wrap"></p>
+                            <div class="pt-2 border-t border-gray-800 space-y-2">
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <p class="font-semibold text-gray-300 flex-1">What would have been
+                                        refused</p>
+                                    <button type="button" @click="loadAuthAudit()"
+                                        class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs">Refresh</button>
+                                    <button type="button" @click="resetAuthAudit()"
+                                        class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs">Start a fresh window</button>
+                                </div>
+                                <template x-if="authAudit">
+                                    <div class="space-y-1">
+                                        <p class="text-xs text-gray-500">Since the add-on last started:
+                                            <span x-text="authAudit.would_deny.length"></span> route(s)
+                                            would have refused somebody · identity still claimed by the
+                                            client <span x-text="authAudit.identity.claimed"></span>×
+                                            · impersonation attempts
+                                            <span x-text="authAudit.identity.mismatch"></span>
+                                        </p>
+                                        <p x-show="!authAudit.would_deny.length"
+                                           class="text-xs text-green-300">Nothing would have been
+                                            refused. If the family has lived normally for a few days on
+                                            this add-on run &mdash; wall panels, phones, Argyle by
+                                            voice &mdash; that quiet is the evidence.</p>
+                                        <template x-for="(r, i) in authAudit.would_deny" :key="i">
+                                            <div class="text-xs font-mono text-gray-400 py-1 border-b border-gray-800/60">
+                                                <span class="text-amber-300" x-text="r.count + '×'"></span>
+                                                <span x-text="r.method + ' ' + r.path"></span>
+                                                <span class="text-gray-500">— needs
+                                                    <span x-text="(r.needs || []).join(' or ') || 'a table entry'"></span>,
+                                                    saw <span x-text="(r.saw || []).join(', ')"></span></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </details>
+
                     <!-- Trusted devices (auth arc S5). The list you revoke a
                          lost tablet from, next to the people it signs in. -->
                     <details class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700"
@@ -4319,8 +4384,10 @@
                 authSettings: {
                     smtp_use_intake: false, smtp_host: '', smtp_port: 587,
                     smtp_user: '', smtp_password: '', smtp_from: '',
-                    service_local_grace: true, service_token: ''
+                    service_local_grace: true, service_token: '',
+                    auth_enforce: false
                 },
+                authAudit: null, enforceError: '',            // auth arc S8
                 pairBusy: false,
                 // Status Days (Presence & Status arc P1)
                 statusProtocols: [],
@@ -5957,8 +6024,57 @@
                         // that predates S7 has no key and must not read as
                         // "Argyle is cut off".
                         service_local_grace: data.service_local_grace !== false,
-                        service_token: data.service_token || ''
+                        service_token: data.service_token || '',
+                        // Absent means OFF, matching the server: audit mode is
+                        // the default and the only safe reading of a missing key.
+                        auth_enforce: data.auth_enforce === true
                     };
+                },
+
+                // The flip and its evidence (auth arc S8)
+                async loadAuthAudit() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/admin/auth_audit`);
+                        if (r.ok) this.authAudit = await r.json();
+                    } catch (e) { /* the report is a nicety, never a blocker */ }
+                },
+                async resetAuthAudit() {
+                    if (!await promptConfirm('Start a fresh window',
+                        'Clear the record and start counting again from now?', 'Clear')) return;
+                    await fetch(`${this.apiBase}api/admin/auth_audit/reset`, { method: 'POST' });
+                    await this.loadAuthAudit();
+                },
+                async toggleEnforce() {
+                    this.enforceError = '';
+                    const on = this.authSettings.auth_enforce === true;
+                    if (on && !await promptConfirm('Enforce sign-in',
+                        'Every request will need to prove who it is. Wall panels must be paired, admin pages signed in, and Argyle must hold its token. If something was missed, this switch turns straight back off. Flip it?',
+                        'Enforce')) {
+                        this.authSettings.auth_enforce = false;
+                        return;
+                    }
+                    try {
+                        const r = await fetch(`${this.apiBase}api/settings`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            // auth_enforce is deliberately POSTed alone: the
+                            // Decision 9 refusal must never take unrelated
+                            // setting edits down with it.
+                            body: JSON.stringify({ auth_enforce: on })
+                        });
+                        if (!r.ok) {
+                            const d = await r.json().catch(() => ({}));
+                            this.enforceError = d.detail || 'Could not change enforcement.';
+                            this.authSettings.auth_enforce = !on;
+                            return;
+                        }
+                        showGlobalAlert(on
+                            ? 'Enforcement is ON. Walk the house: every panel should still draw, and any that need letting in will show a pairing code.'
+                            : 'Back in audit mode — nothing is refused.');
+                    } catch (e) {
+                        this.enforceError = 'Could not reach the server.';
+                        this.authSettings.auth_enforce = !on;
+                    }
                 },
 
                 async saveAuthSettings() {

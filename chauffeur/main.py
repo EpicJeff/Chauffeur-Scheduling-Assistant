@@ -11273,6 +11273,27 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
         from services import ma_api
         ma_api.reset()
         _MA_WS_CACHE['url'] = None
+    # Decision 9 (auth arc S8): the flip REFUSES while anybody would be locked
+    # out, and names them. Password OR PIN, active non-system members — a
+    # member with neither has no way back into the app the moment the guard
+    # starts refusing, and a switch that can lock a family out of their own
+    # house is not a bare checkbox. Checked on the transition only, so turning
+    # enforcement OFF (the emergency lever) can never be blocked by the same
+    # rule.
+    if incoming.get('auth_enforce') and not current.get('auth_enforce'):
+        locked_out = sorted(
+            (m.get('name') or m.get('id') or '?')
+            for m in storage.get_all_members()
+            if not m.get('password_hash') and not m.get('pin_hash'))
+        if locked_out:
+            raise HTTPException(
+                status_code=400,
+                detail="Not flipping enforcement on: "
+                       + ", ".join(locked_out)
+                       + (" has" if len(locked_out) == 1 else " have")
+                       + " neither a password nor a PIN and would be locked "
+                       "out. Give each of them one (Set PIN on their card, or "
+                       "send an invite), then try again.")
     current.update(incoming)
     storage.update_settings(current)
     # Panel-shaped settings (layout, theme, screensaver…) edited on one device

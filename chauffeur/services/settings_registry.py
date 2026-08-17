@@ -300,6 +300,15 @@ ENTRIES: List[dict] = [
        page='intake', anchor='settings'),
     _e('ingest_email_password', 'intake', 'App password',
        'An app password, never the account password.', page='intake', anchor='settings'),
+    # The flip (auth arc S8). On the People surface with everything else that
+    # decides who may reach the house, and DELIBERATELY next to the audit
+    # report — the arc's rule is flip on evidence, so the evidence is drawn
+    # beside the switch rather than remembered from another page.
+    _e('auth_enforce', 'integrations', 'Enforce sign-in',
+       'Off, Chauffeur only records what it would have refused (audit mode). '
+       'On, every request must prove who it is: members sign in, screens '
+       'pair, Argyle presents its token. Refuses to turn on while anyone '
+       'would be locked out.', page='config', anchor='people'),
     # Argyle's credential (auth arc S7). On the People surface with the other
     # things that grant access, rather than in the integrations pile: what a
     # family is doing here is deciding who may reach their house.

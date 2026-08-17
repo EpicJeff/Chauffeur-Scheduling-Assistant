@@ -783,6 +783,48 @@ def scenario_x3_sign_out_everywhere_takes_the_vouched_phones_too():
           "another member's phone was un-trusted as collateral")
 
 
+def scenario_y_the_flip_refuses_while_anyone_would_be_locked_out():
+    """Decision 9: a switch that can lock a family out of their own house is
+    not a bare checkbox. The settings POST refuses the false→true transition
+    while any active member holds neither a password nor a PIN — and NAMES
+    them, because "no" without a fix list is a dead end. Turning enforcement
+    OFF is the emergency lever and must never be blocked by the same rule."""
+    import main as _main
+    from fastapi import BackgroundTasks, HTTPException
+    from models.schemas import Settings
+
+    # The harness stubs `storage.get_settings` to a constant (harness.py:19),
+    # so the settings round-trip is emulated with a dict the handler really
+    # reads and writes — the guard logic is the subject here, not SQLite.
+    real_get, real_update = storage.get_settings, storage.update_settings
+    stored = {}
+    storage.get_settings = lambda: dict(stored)
+    storage.update_settings = lambda d: (stored.clear(), stored.update(d))
+    _member('Lockable')
+    try:
+        try:
+            _main.update_settings(Settings(auth_enforce=True), BackgroundTasks())
+            check(False, "the flip went through while somebody had no way in")
+        except HTTPException as e:
+            check(e.status_code == 400 and 'Lockable' in str(e.detail),
+                  f"the refusal must name who would be locked out: {e.detail}")
+        check(not stored.get('auth_enforce'),
+              "a refused flip still wrote auth_enforce")
+        # Give every active member a way in; the same flip then goes through.
+        for m in storage.get_all_members():
+            if not m.get('password_hash') and not m.get('pin_hash'):
+                storage.set_member_pin(m['id'], '1234')
+        _main.update_settings(Settings(auth_enforce=True), BackgroundTasks())
+        check(stored.get('auth_enforce') is True,
+              "the flip did not stick once everybody had a credential")
+        _main.update_settings(Settings(auth_enforce=False), BackgroundTasks())
+        check(stored.get('auth_enforce') is False,
+              "enforcement could not be turned back OFF — the emergency lever "
+              "must never be guarded")
+    finally:
+        storage.get_settings, storage.update_settings = real_get, real_update
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

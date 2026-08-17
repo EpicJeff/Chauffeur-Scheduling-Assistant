@@ -573,14 +573,15 @@ def reset_audit() -> None:
 # --- the guard --------------------------------------------------------------
 
 def enforcing() -> bool:
-    """Is the guard refusing anything yet? Through S7, no.
+    """Is the guard refusing anything yet?
 
-    `auth_enforce` is deliberately NOT in `Settings` or the settings registry
-    yet. A registry entry obliges a hand path on a real surface (the registry's
-    own `audit_ui` test enforces that, correctly), and the surface that should
-    own this switch is the one S8 builds. Until then it is a stored key with no
-    model field: absent reads as False, which is audit mode, which is the only
-    behaviour S1 ships. S8 promotes it to a declared setting with its control.
+    `auth_enforce` is a declared `Settings` field and a registry entry as of
+    S8, with its control on Config → People (the Enforcement panel), drawn
+    next to the audit report because the arc's rule is flip on evidence. The
+    settings POST guards the transition (Decision 9): it refuses to turn this
+    on while any active member holds neither a password nor a PIN, and names
+    them. Absent reads as False, which is audit mode — the only safe reading
+    of a missing key, and what every install predating the arc has.
     """
     try:
         from services import storage
