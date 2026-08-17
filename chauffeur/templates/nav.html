@@ -393,7 +393,12 @@
         const urlParams = new URLSearchParams(window.location.search);
         const isKiosk = urlParams.get('kiosk') === 'true';
         const isPanel = urlParams.get('panel') === 'true';
-        const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+        // ha_theme.html works the climb out once, board level included. nav is
+        // included by every page — one segment on /home, TWO on /board/{slug} —
+        // so it is exactly the file that cannot guess its own depth: guessing
+        // is what sent `api/panel/profile` and `api/stream` to /board/... on
+        // every custom board.
+        const apiBase = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
         // Declared HERE, not next to panelProfile() below, and that placement is
         // load-bearing. `function` declarations hoist; `let` does not — it sits
         // in the temporal dead zone until its own line runs. With this

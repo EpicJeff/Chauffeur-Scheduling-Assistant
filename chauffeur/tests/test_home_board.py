@@ -958,14 +958,63 @@ def scenario_a_map_card_can_show_the_fleet_without_the_family():
               f"people were switched off and somebody still appeared: {names}")
         check(fleet['mapped'] == 1, f"the van kept its pin: {fleet}")
 
-        # Nothing switched on has anything to say -> no card at all (rule 1).
+        # A card set to show the cars KEEPS DRAWING when no car is reporting.
+        # Reported from the wall: ticking "don't show people" made the whole
+        # card vanish, which reads as the setting having broken something.
+        # The people half always behaved this way (an untracked member is a
+        # row with no pin, so the card stayed and the overlay explained); the
+        # asymmetry was the bug.
+        storage.get_all_cars = lambda *a, **kw: []
+        lonely = home_board._tile_map(now, runs=[], config={'people': False})
+        check(lonely is not None,
+              "a cars-only card vanished because no car was reporting — a "
+              "card you deliberately configured must not disappear as you "
+              "configure it")
+        check(lonely['mapped'] == 0 and 'vehicle' in lonely['empty_text'],
+              f"and it says what IT is missing, not 'nobody is sharing a "
+              f"location' over a card that was never about people: {lonely}")
+
+        # Nothing switched on at all IS still rule 1 — that card was asked to
+        # show nothing, which is the one honest reason to draw nothing.
         empty = home_board._tile_map(now, runs=[],
                                      config={'people': False, 'cars': False})
         check(empty is None,
-              f"a map with everything switched off should draw nothing: {empty}")
+              f"a map with every source switched off should draw nothing: {empty}")
+        # And a blank install still draws no map: people are on by default
+        # and every member makes a row, so no rows means no family yet.
+        storage.get_all_members = lambda *a, **kw: []
+        check(home_board._tile_map(now, runs=[], config={}) is None,
+              "a household with no members at all was offered a map of nobody")
     finally:
         (storage.get_all_members, ha_api.get_state,
          storage.get_all_cars) = orig_m, orig_s, orig_c
+
+
+def scenario_the_editor_can_always_reach_a_card_that_draws_nothing():
+    """Reported from a wall, and the sharper half of rule 1's cost: a card
+    that hides itself when it has nothing to say ALSO hides itself from the
+    person trying to configure it. Ticking "don't show people" on a map card
+    emptied it, the card vanished, and the settings vanished with it — the
+    only way back was editing the board's stored config by hand.
+
+    Rule 1 is about the WALL, where reserved blank space is what is being
+    avoided. In the editor a hole you cannot click is worse than a box that
+    says it is empty."""
+    orig = (storage.get_all_members, storage.get_all_cars)
+    try:
+        storage.get_all_members = lambda *a, **kw: []
+        storage.get_all_cars = lambda *a, **kw: []
+        inst = {'id': 'map', 'type': 'map', 'config': {}}
+        now = datetime.datetime.now()
+        check(home_board._build_tile(inst, now, runs=[]) is None,
+              "the wall should still leave out a card with nothing to say")
+        drawn = home_board._build_tile(inst, now, runs=[], editing=True)
+        check(drawn is not None and drawn['id'] == 'map',
+              f"the EDITOR must keep it, or it cannot be un-emptied: {drawn}")
+        check((drawn.get('data') or {}).get('empty'),
+              f"and it draws as an honest empty box, not a blank: {drawn}")
+    finally:
+        storage.get_all_members, storage.get_all_cars = orig
 
 
 def scenario_a_board_two_segments_deep_can_still_load_its_map():

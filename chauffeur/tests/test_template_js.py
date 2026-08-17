@@ -299,12 +299,28 @@ def scenario_a_shared_component_never_works_out_its_own_path_depth():
     check('board' in theme[theme.index('window.chfBase'):][:600],
           "window.chfBase stopped counting the /board/{slug} level, which is "
           "the entire reason it exists")
+    # The set is computed from what is actually INCLUDED, not from what lives
+    # in components/. That distinction is not pedantry: `nav.html` sits at the
+    # top level, is included by every page in the app, and was therefore the
+    # one file this rule most needed to cover — it kept `api/panel/profile`
+    # and `api/stream` pointed at /board/... for a whole release after the
+    # components were converted, because the first version of this test
+    # globbed a directory instead of asking who gets included.
+    included = set(_re.findall(r"\{%[-\s]*include\s+'([^']+)'", ''.join(
+        open(p, encoding='utf-8').read()
+        for p in glob.glob(os.path.join(TPL, '**', '*.html'), recursive=True))))
+    check(any(f == 'nav.html' for f in included),
+          "nav.html is no longer included anywhere — if the layout changed, "
+          "this test's reach changed with it and needs rechecking")
     offenders = []
-    for path in sorted(glob.glob(os.path.join(TPL, 'components', '*.html'))):
+    for rel in sorted(included):
+        path = os.path.join(TPL, rel.replace('/', os.sep))
+        if rel == 'ha_theme.html' or not os.path.exists(path):
+            continue          # the one file that DEFINES the climb
         if NAIVE.search(open(path, encoding='utf-8').read()):
-            offenders.append(os.path.basename(path))
+            offenders.append(rel)
     check(not offenders,
-          "shared components computing their own path depth — they are "
+          "included templates computing their own path depth — they are "
           "included at several depths AND on /board/{slug}, so they must "
           "read window.chfBase instead:\n  " + "\n  ".join(offenders))
 

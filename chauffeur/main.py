@@ -1275,8 +1275,12 @@ def home_board_preview(req: BoardPreviewRequest):
     back, and it does, because the draft is the only thing that changed.
     """
     from services import home_board
+    # `editing=True`: the preview draws every card the board holds, including
+    # the ones with nothing to say. Reported from a wall — a map card set to
+    # hide people vanished, and vanishing took the settings with it, so the
+    # only way back was editing the board's stored config by hand.
     return home_board.build(
-        requested=json.dumps(req.widgets), page=req.page,
+        requested=json.dumps(req.widgets), page=req.page, editing=True,
         kid_digest_fn=lambda: _build_kid_digests(_kid_digest_default_date()))
 
 

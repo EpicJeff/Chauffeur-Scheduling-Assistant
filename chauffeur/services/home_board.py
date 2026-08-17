@@ -2552,14 +2552,36 @@ def _tile_map(now, runs=None, config=None, **_):
                              'driving': None})
         except Exception as e:
             print(f"[home_board] map buses failed: {e}")
-        if not rows:
-            return None       # nothing switched on has anything to show
+        show_buses = _cfg_bool(config, 'buses', False)
+        # A card configured to show NOTHING draws nothing — that is still
+        # rule 1. But a card configured to show the cars draws even when no
+        # car is reporting, because it vanishing as you tick the box is the
+        # editor telling you the setting broke something. The people half
+        # already worked this way (an untracked member is a row without a
+        # pin, so the card stayed and the overlay explained), and the
+        # asymmetry was the bug: same emptiness, two different behaviours.
+        if not (show_people or show_cars or show_buses):
+            return None
+        # A blank install still draws nothing: people are ON by default and
+        # every member produces a row (tracked or not), so no rows here means
+        # no family yet rather than a quiet afternoon. That is the original
+        # "no family members at all" case and it must survive — a fresh board
+        # should not offer a map of nobody.
+        if not rows and show_people:
+            return None
         return {'people': rows,
                 # Read by the markup (whether the canvas takes pointer events),
                 # by the renderer (Leaflet's own handlers and the marker
                 # popups) and by the door logic — a map you can drag cannot
                 # also be a link, or the first pan navigates away.
                 'interactive': _cfg_bool(config, 'interactive', False),
+                # What to say when there is nothing to draw. Server-side
+                # because only this end knows WHICH of the three sources the
+                # household asked for — "nobody is sharing a location" over a
+                # card set to show only the cars is an answer to a question
+                # nobody asked.
+                'empty_text': ("Nobody is sharing a location yet." if show_people
+                               else "No vehicle is sharing a location yet."),
                 'mapped': sum(1 for r in rows if r.get('latitude') is not None
                               and r.get('longitude') is not None)}
     except Exception as e:
@@ -3159,6 +3181,12 @@ def _build_card(card, now, **kw):
     if not builder:
         return None
     config = card['config']
+    # `editing` is for the ASSEMBLY around the builders, not for the builders
+    # themselves — a card's content does not change because somebody is
+    # arranging the board. Stripped here rather than trusted to every
+    # builder's `**_`: one signature without it would raise, and this
+    # function turns an exception into a silently missing card.
+    kw = {k: v for k, v in kw.items() if k != 'editing'}
     try:
         payload = builder(now, config=config, **kw)
     except Exception as e:
@@ -3219,8 +3247,25 @@ def _build_tile(inst, now, **kw):
             # and all, so a `calendar` card would otherwise answer to the same
             # id as the `calendar` tile beside it — one map rendered into the
             # other's canvas.
-            built = _build_card(dict(card, id=f"{inst['id']}-{card['id']}"),
-                                now, **kw)
+            cid = f"{inst['id']}-{card['id']}"
+            built = _build_card(dict(card, id=cid), now, **kw)
+            if not built and kw.get('editing'):
+                # Same reasoning as the built-in tile below: a card inside a
+                # custom tile that draws nothing is a card nobody can select
+                # to fix.
+                cmeta = next((w for w in WIDGETS if w['key'] == card['type']), None)
+                if cmeta:
+                    built = {'id': cid, 'type': card['type'],
+                             'icon': _icon_of(card['config'], cmeta),
+                             'label': (_cfg_str(card['config'], 'title')
+                                       or cmeta.get('heading') or cmeta['label']),
+                             'title': _cfg_str(card['config'], 'title'),
+                             'cols': _cfg_int(card['config'], 'cols', 12, 1, 12),
+                             'rows': _cfg_int(card['config'], 'rows', 0, 0, 40),
+                             'bare': _cfg_bool(card['config'], 'bare', False),
+                             'config': card['config'],
+                             'data': {'empty': REQUIRED_EMPTY.get(
+                                 card['type'], "Nothing to show yet.")}}
             if built:
                 cards.append(built)
         tile = {'id': inst['id'], 'type': inst['type'],
@@ -3241,6 +3286,23 @@ def _build_tile(inst, now, **kw):
     # A built-in tile: one card, and the chrome is the tile's.
     built = _build_card({'id': inst['id'], 'type': inst['type'],
                          'config': config}, now, **kw)
+    if not built and kw.get('editing'):
+        # WHILE EDITING, everything the board holds draws — reported from a
+        # wall, and it is the sharper half of rule 1's cost: a card that
+        # hides itself when it has nothing to say also hides itself from the
+        # person trying to configure it, so a setting that emptied a card
+        # could not be undone from the board it emptied. Rule 1 is about the
+        # WALL, where reserved blank space is the thing being avoided; in the
+        # editor a hole you cannot click is worse than a box that says it is
+        # empty.
+        built = {'id': inst['id'], 'type': inst['type'],
+                 'icon': _icon_of(config, meta),
+                 'label': (_cfg_str(config, 'title')
+                           or meta.get('heading') or meta['label']),
+                 'title': _cfg_str(config, 'title'),
+                 'cols': 12, 'rows': 0, 'config': config,
+                 'data': {'empty': REQUIRED_EMPTY.get(inst['type'],
+                                                      "Nothing to show yet.")}}
     if not built and inst.get('require'):
         # The board is ABOUT this. Rule 1's "hide what is not set up" is right
         # on a mixed board and wrong here — an Errands board with no errands
@@ -4350,8 +4412,14 @@ def profile(tabs: Optional[str] = None, widgets: Optional[str] = None,
 
 
 def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
-          now: datetime.datetime = None, page: Optional[str] = None) -> dict:
-    """The whole board in one payload."""
+          now: datetime.datetime = None, page: Optional[str] = None,
+          editing: bool = False) -> dict:
+    """The whole board in one payload.
+
+    `editing` is the editor's preview: every configured tile and card draws,
+    even the ones with nothing to say, because a card that hides itself also
+    hides itself from the person trying to fix it. Never set on the wall,
+    where rule 1 — do not reserve blank space — is still right."""
     now = now or datetime.datetime.now()
     settings = storage.get_settings() or {}
     page_obj = find_page(page, settings)
@@ -4362,8 +4430,12 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     # The PAGE rides in the key too: two pages can hold identical tiles and
     # still differ in the grid they are drawn on, and one cache entry serving
     # both would draw the kitchen board at the hallway's row height.
+    # `editing` rides the key: the same board built for the editor holds the
+    # empty cards the wall leaves out, and one cache entry serving both would
+    # put placeholder boxes on the kitchen wall.
     cache_key = json.dumps([page_obj['slug'], page_obj['columns'],
-                            page_obj['row_height'], instances], sort_keys=True)
+                            page_obj['row_height'], editing, instances],
+                           sort_keys=True)
     held = _CACHE.get(cache_key)
     if held and time.time() - held['at'] < TTL_SECONDS:
         return held['data']
@@ -4402,7 +4474,7 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
         # drawn, and a built-in tile whose only card said nothing is not a
         # tile. Reserved empty space is still the thing being avoided.
         tile = _build_tile(inst, now, runs=runs, sched=sched, settings=settings,
-                           kid_digest_fn=kid_digest_fn)
+                           kid_digest_fn=kid_digest_fn, editing=editing)
         if tile:
             tiles.append(tile)
 

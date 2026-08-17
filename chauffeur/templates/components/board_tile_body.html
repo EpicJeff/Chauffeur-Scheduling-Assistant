@@ -690,7 +690,7 @@
                                 <span class="text-sm panel-dim"
                                       x-text="mapFailed[t.id]
                                         ? 'The map could not load.'
-                                        : 'Nobody is sharing a location yet.'"></span>
+                                        : (t.data.empty_text || 'Nobody is sharing a location yet.')"></span>
                             </div>
                         </div>
                     </template>
