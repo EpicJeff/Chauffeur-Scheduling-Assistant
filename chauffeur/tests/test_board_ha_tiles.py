@@ -241,7 +241,14 @@ def scenario_the_entity_list_stays_out_of_the_catalog():
     cat = home_board.catalog()
     check('ha_entities' not in cat.get('sources', {}),
           "HA entities are back in the catalog payload")
-    check(set(cat['sources']) == {'members', 'drivers', 'lists', 'trips'},
+    # The exact set is a TRIPWIRE: a new source should be a decision, not a
+    # drift. `cars` and `bus_riders` joined it deliberately in v2.273.5, so
+    # the map card's vehicles and buses could be picked the same way its
+    # people already were. Every entry here must stay HOUSEHOLD-sized —
+    # people, cars, lists — which is the property that keeps this payload
+    # small, rather than the length of the list itself.
+    check(set(cat['sources']) == {'members', 'drivers', 'lists', 'trips',
+                                  'cars', 'bus_riders'},
           f"the catalog's sources grew: {sorted(cat['sources'])}")
 
 

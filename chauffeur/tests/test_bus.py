@@ -596,36 +596,36 @@ def scenario_if_there_is_an_entity_to_draw_the_map_draws_it():
               "a child with no bus entity anywhere got a pin from nowhere")
 
 
-def scenario_the_bus_tracker_can_be_found_without_being_named():
-    """"Or can we find one automatically" — yes. Home Assistant already
-    knows: something in the state machine is called a bus and carries
-    coordinates. Ranked rather than first-match, because a house holds
-    several: this child's name beats a bare bus, a vehicle beats a zone, and
-    a STOP is a place rather than a vehicle so it never wins."""
-    bus._discovered_tracker_cache.clear()
-    states = [
-        {'entity_id': 'zone.bus_stop_maple', 'attributes': {
-            'friendly_name': 'Bus stop', 'latitude': 1.0, 'longitude': 1.0}},
-        {'entity_id': 'device_tracker.school_bus', 'attributes': {
-            'friendly_name': 'School bus', 'latitude': 2.0, 'longitude': 2.0}},
-        {'entity_id': 'device_tracker.addison_bus', 'attributes': {
-            'friendly_name': "Addison's bus", 'latitude': 3.0, 'longitude': 3.0}},
-        {'entity_id': 'device_tracker.mum_phone', 'attributes': {
-            'friendly_name': 'Mum', 'latitude': 4.0, 'longitude': 4.0}},
-    ]
+def scenario_nobody_gets_a_bus_they_were_not_given():
+    """Reported from the wall with a screenshot: **"Grandma's bus"**.
+
+    A version of this searched Home Assistant for any coordinate-carrying
+    entity whose name mentioned a bus, so a household need not type
+    anything. With nothing else to go on, the best generic match is the SAME
+    entity for everybody — so every member without their own tracker was
+    handed one, and the map labelled it with whoever it had iterated to. A
+    guess that lands on the wrong person is worse than a blank card.
+
+    Two rules hold it shut: only a child can have a school bus, and a
+    position comes from an entity somebody actually named."""
+    grandma = {'id': 'g1', 'name': 'Grandma Jean', 'role': 'adult'}
     kid = {'id': 'k1', 'name': 'Addison Smith', 'role': 'child'}
-    with mock.patch('services.ha_api.get_states', return_value=states):
-        found = bus.discover_bus_tracker(kid)
-    check(found == 'device_tracker.addison_bus',
-          f"the child's own bus should outrank a generic one: {found}")
-    # A house with no bus-shaped entity invents nothing.
-    with mock.patch('services.ha_api.get_states', return_value=[states[-1]]):
-        check(bus.discover_bus_tracker(kid) is None,
-              "an unrelated tracker was mistaken for a bus")
-    # And the stop never stands in for the vehicle.
-    with mock.patch('services.ha_api.get_states', return_value=[states[0]]):
-        check(bus.discover_bus_tracker(kid) is None,
-              "a bus STOP zone was drawn as the bus itself")
+    buses = [{'entity_id': 'device_tracker.school_bus', 'attributes': {
+        'friendly_name': 'School bus', 'latitude': 2.0, 'longitude': 2.0}}]
+    with mock.patch('services.ha_api.get_states', return_value=buses), \
+         mock.patch('services.ha_api.get_state', return_value=None):
+        check(bus.bus_map_position(grandma) is None,
+              "an adult was handed a school bus that names somebody else")
+        check(bus.bus_map_position(kid) is None,
+              "a child with no tracker entity was handed a generic bus — a "
+              "pin on the wrong vehicle is worse than no pin")
+    # Named explicitly, an adult still draws: the rule is about GUESSING.
+    coords = {'state': 'not_home',
+              'attributes': {'latitude': 9.0, 'longitude': 9.0}}
+    with mock.patch('services.ha_api.get_state',
+                    side_effect=lambda eid: coords if eid == 'device_tracker.van' else None):
+        check(bus.bus_map_position({**grandma, 'bus_tracker_entity': 'device_tracker.van'})
+              == (9.0, 9.0), "an explicitly named entity did not draw")
 
 
 def scenario_the_bus_says_which_gate_it_failed():
@@ -635,14 +635,13 @@ def scenario_the_bus_says_which_gate_it_failed():
     it carries coordinates, how long ago it reported, the in-service entity
     and its state — and the card option that is off by default."""
     bus._active_entity_cache.clear()
-    bus._discovered_tracker_cache.clear()
     with mock.patch('services.ha_api.get_state', return_value=None), \
          mock.patch('services.ha_api.get_states', return_value=[]):
         d = bus.bus_diagnosis({**KID, 'bus_tracker_entity': 'device_tracker.nope'})
     check(d['tracker_entity'] == 'device_tracker.nope'
           and d['tracker_exists'] is False and d['tracker_has_coords'] is False,
           f"the diagnosis must name what it looked for and what it found: {d}")
-    check(d['map_position'] is None and d['discovered_tracker'] is None,
+    check(d['map_position'] is None,
           f"and report the map's one gate — nothing to draw: {d}")
     check('Show school buses' in d['note'],
           "the diagnosis must mention the card option that is off by "
@@ -652,7 +651,7 @@ def scenario_the_bus_says_which_gate_it_failed():
 SCENARIOS = [
     scenario_a_live_tracker_is_a_running_bus_when_nothing_says_otherwise,
     scenario_if_there_is_an_entity_to_draw_the_map_draws_it,
-    scenario_the_bus_tracker_can_be_found_without_being_named,
+    scenario_nobody_gets_a_bus_they_were_not_given,
     scenario_the_bus_says_which_gate_it_failed,
     scenario_static_morning_launch,
     scenario_car_ride_wins_the_morning,

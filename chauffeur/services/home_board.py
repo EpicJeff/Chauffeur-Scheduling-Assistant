@@ -625,18 +625,30 @@ WIDGETS = [
          # and the members filter could not express it. "Everyone" and
          # "nobody" are different answers and an empty multi-select already
          # means the first one, so the second needs its own switch.
+         # THREE SOURCES, each with the same pair of controls: a switch and a
+         # picker. Asked for in exactly those words — "choose which vehicles
+         # and buses show the same way you can choose which people show" —
+         # after a map that guessed put a school bus on a grandmother.
+         # Empty picker means all of that kind; it never means none, which is
+         # what the switch beside it is for.
          _opt('people', 'Show people', 'bool', True,
               help='Off, the map shows only the vehicles below — a fleet '
                    'board rather than a family one.'),
-         _opt('members', 'People', 'select', [], source='members', multi=True,
+         _opt('members', 'Which people', 'select', [], source='members', multi=True,
               help='Leave empty for everyone. Ignored when people are off.'),
          _opt('cars', 'Show cars', 'bool', True),
+         _opt('car_ids', 'Which cars', 'select', [], source='cars', multi=True,
+              help='Leave empty for every car that has a tracker.'),
          # OFF by default, unlike cars: a bus is only real for the twenty
          # minutes it is running, and a household with no bus kids would get
          # a permanently absent row it never asked about.
          _opt('buses', 'Show school buses', 'bool', False,
-              help='While a tracked bus is actually running, it appears with '
-                   'the stop it is heading for.'),
+              help='The bus each child rides, with the stop it is heading '
+                   'for. Needs a tracker entity on the child in '
+                   'Config → People.'),
+         _opt('bus_ids', 'Whose buses', 'select', [], source='bus_riders',
+              multi=True,
+              help='Leave empty for every child who has a bus tracker.'),
      ]},
     # ── Music.
     #
@@ -2482,8 +2494,11 @@ def _tile_map(now, runs=None, config=None, **_):
         # as unknown.
         try:
             from services import cars as cars_svc
+            wanted_cars = set(_cfg_ids(config, 'car_ids'))
             for c in (storage.get_all_cars() if show_cars else []):
                 if c.get('is_disabled') or not c.get('ha_device_tracker'):
+                    continue
+                if wanted_cars and str(c.get('id')) not in wanted_cars:
                     continue
                 loc = cars_svc.car_location(c) or {}
                 levels = cars_svc.car_levels(c) or {}
@@ -2516,19 +2531,32 @@ def _tile_map(now, runs=None, config=None, **_):
             # per child the wall would stack two identical pins and label them
             # separately — "Addison's bus" hiding "Cole's bus" underneath.
             buses, stops = {}, {}
+            wanted_buses = set(_cfg_ids(config, 'bus_ids'))
             for m in (storage.get_all_members() if _cfg_bool(config, 'buses', False) else []):
-                # ONE GATE: is there an entity to draw? (Household's rule,
-                # and it replaced four.) A morning stop time is a scheduling
-                # fact that said nothing about a live vehicle and made every
-                # PM-only rider invisible; an in-service sensor from an
-                # integration this house does not run answered False forever.
-                # `bus_map_position` takes either entity box and, failing
-                # both, finds the tracker in Home Assistant itself.
+                # A bus belongs to a CHILD's morning. Dropping this check is
+                # how a grandmother got a school bus, and no amount of
+                # cleverness downstream recovers from asking the wrong
+                # question here.
+                if m.get('role') != 'child':
+                    continue
+                if wanted_buses and m.get('id') not in wanted_buses:
+                    continue
+                # THE ONE GATE: is there an entity to draw? A morning stop
+                # time is a scheduling fact that said nothing about a live
+                # vehicle and made every PM-only rider invisible; an
+                # in-service sensor from an integration this house does not
+                # run answered False forever. `bus_map_position` reads either
+                # of the two entity boxes.
                 pos = bus_svc.bus_map_position(m)
                 if not pos:
                     continue
                 first = ((m.get('name') or '').split() or [''])[0]
-                key = bus_svc.bus_key(m)
+                # Keyed on the position ACTUALLY DRAWN. `bus_key` resolves the
+                # tracker its own way, so when the two disagreed — a tracker
+                # typed into the other box — siblings on one bus stopped
+                # merging and the pins were labelled by whichever child the
+                # key happened to land on.
+                key = bus_svc.bus_key(m, pos=pos)
                 entry = buses.setdefault(key, {'pos': pos, 'names': [],
                                                'where': bus_svc.bus_where(m)})
                 if first and first not in entry['names']:
@@ -4627,12 +4655,29 @@ def option_sources() -> dict:
     worse outcome than a picker with nothing in it, and the tile whose source
     is empty is the only one that should be affected.
     """
-    out = {'members': [], 'drivers': [], 'lists': [], 'trips': []}
+    out = {'members': [], 'drivers': [], 'lists': [], 'trips': [],
+           'cars': [], 'bus_riders': []}
     try:
         out['members'] = [{'value': m['id'], 'label': m.get('name') or 'Someone'}
                           for m in (storage.get_all_members() or [])]
     except Exception as e:
         print(f"[home_board] member options failed: {e}")
+    try:
+        out['cars'] = [{'value': str(c['id']), 'label': c.get('name') or 'Car'}
+                       for c in (storage.get_all_cars() or [])
+                       if not c.get('is_disabled')]
+    except Exception as e:
+        print(f"[home_board] car options failed: {e}")
+    try:
+        # WHOSE bus, rather than which entity: a household thinks "show the
+        # bus my kids are on", and the entity behind it is this app's problem.
+        # Children only — a bus belongs to a child's morning, and offering
+        # every adult here is how a grandmother ended up with a school bus.
+        out['bus_riders'] = [{'value': m['id'], 'label': m.get('name') or 'Someone'}
+                             for m in (storage.get_all_members() or [])
+                             if m.get('role') == 'child']
+    except Exception as e:
+        print(f"[home_board] bus rider options failed: {e}")
     try:
         out['drivers'] = [{'value': d['id'], 'label': d.get('name') or 'Driver'}
                           for d in (storage.get_all_drivers() or [])]
