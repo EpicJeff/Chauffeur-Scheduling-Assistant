@@ -148,6 +148,15 @@ RULES = [
     (ANY, '/api/calendars/*', PARENTS),
     (ANY, '/api/walmart/*', PARENTS),
     (ANY, '/api/ha_sensors/*', PARENTS),
+    # The music card's HA lanes, carved out ABOVE the admin prefix below
+    # (first hit wins): the board's music card lists players and sends
+    # transport commands from a wall, and the artwork proxy is drawn as a bare
+    # <img> by panels and the PWA alike — an image request can carry no header,
+    # so the token rides the query string (identify() reads it there).
+    # Everything else under /api/ha stays administration.
+    ('GET', '/api/ha/media_players', WALL),
+    ('POST', '/api/ha/media_players/{entity_id}/command', WALL),
+    ('GET', '/api/ha/image64/{encoded}', WALL),
     (ANY, '/api/ha/*', PARENTS),
     (ANY, '/api/telemetry/*', PARENTS),
     (ANY, '/api/push_subscriptions/*', PARENTS),
@@ -170,7 +179,14 @@ RULES = [
     (ANY, '/openapi.json', PARENTS),
 
     # --- Argyle ------------------------------------------------------------
-    (ANY, '/api/chat/*', ROBOTS),
+    # NOT robots-only, and the live audit is what said so: the Argyle bar is
+    # drawn on member surfaces (the PWA's FAB) and on wall panels, and each of
+    # those callers POSTs /api/chat as itself. Anonymous is the only refusal.
+    (ANY, '/api/chat/*', WALL_OR_SERVICE),
+    # The bar's read side is an EventSource, which can set no headers — the
+    # token rides the query string. /api/v2/converse below stays robots-only:
+    # it is the HA Assist webhook, and no browser surface posts it.
+    ('GET', '/api/v2/chat/stream', WALL_OR_SERVICE),
     (ANY, '/api/v2/*', ROBOTS),
     (ANY, '/api/announce/*', ROBOTS),
 
@@ -196,6 +212,13 @@ RULES = [
     (ANY, '/api/moments/*', WALL),
     (ANY, '/api/media/*', WALL),
     (ANY, '/api/music/*', WALL),
+    # The panel screen player: the app's one WebSocket. A browser's WebSocket
+    # API can set no headers, so the token rides the query string — identify()
+    # reads query params for exactly this class of caller.
+    (ANY, '/api/sendspin/ws', WALL),
+    # Trip backgrounds are CSS/<img> urls drawn by the trip pages AND the trip
+    # kiosk; no header is possible there either, so the token rides the query.
+    ('GET', '/api/unsplash/background', WALL),
     (ANY, '/api/announce', WALL),
     # Kiosk-capable destinations: a parent opens these in a browser and a panel
     # draws the same page with ?panel=true. Both, therefore, or one of the two

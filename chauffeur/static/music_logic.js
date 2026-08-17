@@ -51,6 +51,24 @@
         return res.json();
     }
 
+    // Auth arc S8: the two channels a fetch wrapper can never reach — the
+    // artwork proxy is drawn as a bare <img src>, and a browser WebSocket can
+    // set no headers. For those the token rides the QUERY STRING, which
+    // identify() reads for exactly this class of caller. Member first: a
+    // signed-in person outranks the furniture, and the server prefers the
+    // device tier when both arrive.
+    function authUrl(url) {
+        try {
+            if (typeof localStorage === 'undefined') return url;
+            const t = localStorage.getItem('chauffeur_member_token');
+            const d = localStorage.getItem('chauffeur_device_token');
+            const q = t ? 'member_token=' + encodeURIComponent(t)
+                        : (d ? 'device_token=' + encodeURIComponent(d) : '');
+            if (!q) return url;
+            return url + (url.indexOf('?') >= 0 ? '&' : '?') + q;
+        } catch (e) { return url; }
+    }
+
     const TYPE_ICON = {
         track: '🎵', album: '💿', artist: '🎤', playlist: '📻', radio: '📡',
     };
@@ -137,7 +155,7 @@
             if (!url || typeof url !== 'string') return null;
             if (url.startsWith('https://')) return url;
             const b64 = btoa(url).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-            return base(opts) + 'api/ha/image64/' + b64;
+            return authUrl(base(opts) + 'api/ha/image64/' + b64);
         },
 
         /** The cover's RAW URL — what a snapshot stores. Never proxied here:
@@ -470,7 +488,7 @@
                     // rename. Set before connecting so a failure still leaves
                     // something to diagnose with.
                     self.playerId = pid;
-                    const wsTarget = new URL(base(opts) + 'api/sendspin/ws',
+                    const wsTarget = new URL(authUrl(base(opts) + 'api/sendspin/ws'),
                                              location.href);
                     // Named separately because a failure has to be able to say
                     // WHICH host would not carry the connection — on a wall

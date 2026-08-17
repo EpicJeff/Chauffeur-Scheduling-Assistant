@@ -1250,7 +1250,12 @@ function closeChatHelpModal() {
     // Initialize Chat Stream SSE Listener
     function initChatStream() {
         const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-        const source = new EventSource(`${apiBase}api/v2/chat/stream`);
+        // EventSource can set no headers; the token rides the query string
+        // (nav's chfAuthUrl) so the Argyle bar's read side survives the flip.
+        const streamUrl = window.chfAuthUrl
+            ? window.chfAuthUrl(`${apiBase}api/v2/chat/stream`)
+            : `${apiBase}api/v2/chat/stream`;
+        const source = new EventSource(streamUrl);
         source.onmessage = function(event) {
             try {
                 const data = JSON.parse(event.data);

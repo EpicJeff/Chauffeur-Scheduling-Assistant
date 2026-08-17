@@ -1180,7 +1180,7 @@
                             Check on Google
                         </a>
                     </div>
-                    <div class="mt-4 h-32 w-full rounded-xl bg-cover bg-center border border-white/10" style="background-image: url('api/unsplash/background?query=${encodeURIComponent(acc.name).replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + acc.wikidata_id : ''}')"></div>
+                    <div class="mt-4 h-32 w-full rounded-xl bg-cover bg-center border border-white/10" style="background-image: url('${window.chfAuthUrl(`api/unsplash/background?query=${encodeURIComponent(acc.name).replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + acc.wikidata_id : ''}`)}')"></div>
                 `;
                 list.appendChild(div);
             });
@@ -1402,7 +1402,7 @@
             const linkUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent((acc.name || '') + ' ' + (acc.location || ''));
             document.getElementById('acc-detail-link').href = linkUrl;
             
-            const imgUrl = `api/unsplash/background?query=${encodeURIComponent(acc.name || '').replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + acc.wikidata_id : ''}`;
+            const imgUrl = window.chfAuthUrl(`api/unsplash/background?query=${encodeURIComponent(acc.name || '').replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + acc.wikidata_id : ''}`);
             document.getElementById('acc-detail-header').style.backgroundImage = `url('${imgUrl}')`;
             
             document.getElementById('acc-detail-checkin').innerText = formatAccommodationDate(acc.check_in_date);
@@ -1593,7 +1593,7 @@
             const searchQuery = tripData.metadata.background_url || coreTitle || loc.split(',')[0] || 'nature';
             const bgUrl = searchQuery.startsWith('http')
                 ? searchQuery
-                : `api/unsplash/background?query=${encodeURIComponent(searchQuery)}`;
+                : window.chfAuthUrl(`api/unsplash/background?query=${encodeURIComponent(searchQuery)}`);
             document.getElementById('bg-img').src = bgUrl;
             // On a panel the trip's picture IS the page background, drawn by
             // the same fixed layer every other page uses so it gets the scrim,
@@ -2962,7 +2962,7 @@
                         if (searchQuery.startsWith('http')) {
                             banner.src = searchQuery;
                         } else {
-                            banner.src = `api/unsplash/background?query=${encodeURIComponent(searchQuery)}`;
+                            banner.src = window.chfAuthUrl(`api/unsplash/background?query=${encodeURIComponent(searchQuery)}`);
                         }
                     }
                     

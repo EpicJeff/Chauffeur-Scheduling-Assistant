@@ -188,7 +188,7 @@
             // same fixed layer every other page uses so it gets the scrim, the
             // crossfade and the theme for free.
             const bgUrl = query.startsWith('http')
-                ? query : `api/unsplash/background?query=${encodeURIComponent(query)}`;
+                ? query : window.chfAuthUrl(`api/unsplash/background?query=${encodeURIComponent(query)}`);
             const panelBg = document.getElementById('panel-bg-image');
             if (panelBg) panelBg.style.backgroundImage = `url("${bgUrl}")`;
 
@@ -311,7 +311,7 @@
             accs.forEach(acc => {
                 const slide = document.createElement('div');
                 slide.className = 'snap-start shrink-0 w-[280px] bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden flex flex-col cursor-pointer hover:border-gray-500';
-                const img = `api/unsplash/background?query=${encodeURIComponent(acc.name || '').replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + encodeURIComponent(acc.wikidata_id) : ''}`;
+                const img = window.chfAuthUrl(`api/unsplash/background?query=${encodeURIComponent(acc.name || '').replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + encodeURIComponent(acc.wikidata_id) : ''}`);
                 slide.innerHTML = `
                     <div class="h-24 bg-cover bg-center bg-gray-700" style="background-image:url('${img}')"></div>
                     <div class="p-3 flex flex-col gap-1.5">
@@ -431,7 +431,7 @@
         function openAccDetails(idx) {
             const acc = (tripData.metadata.accommodations || [])[idx];
             if (!acc) return;
-            const img = `api/unsplash/background?query=${encodeURIComponent(acc.name || '').replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + encodeURIComponent(acc.wikidata_id) : ''}`;
+            const img = window.chfAuthUrl(`api/unsplash/background?query=${encodeURIComponent(acc.name || '').replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + encodeURIComponent(acc.wikidata_id) : ''}`);
             const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([acc.name, acc.location].filter(Boolean).join(' '))}`;
             showDetails({
                 image: img,

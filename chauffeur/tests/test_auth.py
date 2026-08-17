@@ -101,21 +101,52 @@ def scenario_d_an_unclassified_route_is_recorded_not_denied():
 
 
 def scenario_e_a_tier_is_a_set_not_a_rank():
-    """The chores DATA is read by a parent AND by a panel; /api/chat is
-    Argyle's and not a member's. Ranking these on one axis forces a lie.
+    """The chores DATA is read by a parent AND by a panel; /api/v2/converse is
+    the HA Assist webhook and no member's. Ranking these on one axis forces a
+    lie. (S8 note: /api/chat itself moved OUT of this example — the Argyle bar
+    on the PWA and the wall posts it as a member or a device, so robots-only
+    there was the table being wrong, found by reading the callers.)
 
     Asserted against `/api/chores` rather than the `/chores` page, because the
     page is a public shell — see scenario_v for why that is deliberate."""
     chores = auth.resolve('GET', '/api/chores')
     check(auth.DEVICE in chores and auth.PARENT in chores,
           f"a wall panel lost the chores board: {chores}")
-    chat = auth.resolve('POST', '/api/chat/message')
+    chat = auth.resolve('POST', '/api/v2/converse')
     check(auth.SERVICE in chat and auth.MEMBER not in chat,
-          f"/api/chat is Argyle's lane, not a member's: {chat}")
+          f"/api/v2/converse is Assist's webhook, not a member's: {chat}")
     # Ordering is load-bearing: the specific rule must beat the prefix it
     # carves out of, or pin/clear silently inherits the members' tier.
     check(auth.resolve('POST', '/api/members/{member_id}/pin/clear') == auth.PARENTS,
           "pin/clear fell through to a weaker rule — check RULES order")
+
+
+def scenario_e2_the_lanes_real_callers_actually_use():
+    """S8's route-table fixes, each one found by reading the live callers
+    rather than imagining them. A wall panel draws the music card (players,
+    transport commands, artwork), holds the app's one WebSocket, paints trip
+    backgrounds, and talks to Argyle — every one of those was classified for a
+    caller that never makes the request, and would have died at the flip."""
+    for m, p in (('GET', '/api/ha/media_players'),
+                 ('POST', '/api/ha/media_players/{entity_id}/command'),
+                 ('GET', '/api/ha/image64/{encoded}'),
+                 ('WEBSOCKET', '/api/sendspin/ws'),
+                 ('GET', '/api/unsplash/background'),
+                 ('POST', '/api/chat'),
+                 ('GET', '/api/v2/chat/stream')):
+        tiers = auth.resolve(m, p) or frozenset()
+        check(auth.DEVICE in tiers,
+              f"{m} {p} refuses the wall panel that actually calls it: {tiers}")
+    # The PWA's own Argyle bar posts as a member.
+    check(auth.MEMBER in (auth.resolve('POST', '/api/chat') or frozenset()),
+          "a signed-in member lost the Argyle bar")
+    # ...and the carve-outs must not have opened the prefixes they sit above.
+    check(auth.resolve('GET', '/api/ha/anything_else') == auth.PARENTS,
+          "the music lanes opened the rest of /api/ha")
+    check(auth.resolve('GET', '/api/unsplash/refresh') == auth.SIGNED_IN,
+          "the background lane opened the rest of /api/unsplash")
+    check(auth.resolve('POST', '/api/v2/converse') == auth.ROBOTS,
+          "the chat stream lane opened the Assist webhook")
 
 
 def scenario_f_the_tunnel_check_fails_toward_asking():

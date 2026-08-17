@@ -2187,7 +2187,10 @@
         function connectMessagesStream() {
             if (!selectedMemberId) return;
             if (messagesStream) { try { messagesStream.close(); } catch (e) { } }
-            messagesStream = new EventSource(`${apiBase}api/messages/stream?member_id=${selectedMemberId}`);
+            // Token on the query string — EventSource can set no headers, and
+            // /api/messages/stream is a member route at the S8 flip.
+            messagesStream = new EventSource(window.chfAuthUrl(
+                `${apiBase}api/messages/stream?member_id=${selectedMemberId}`));
             messagesStream.onmessage = (e) => {
                 try {
                     const data = JSON.parse(e.data);
@@ -3416,6 +3419,20 @@
                 return _fetch(input, init);
             };
         })();
+
+        // Auth arc S8: the channels the wrapper above can never reach.
+        // EventSource and <img>/CSS urls set no headers, so for those the
+        // token rides the QUERY STRING — identify() reads member_token there
+        // for exactly this class of caller. (The PWA is a person's surface, so
+        // member token only; nav.html carries the device-aware twin.)
+        window.chfAuthUrl = function (url) {
+            try {
+                const t = memberToken();
+                if (!t) return url;
+                return url + (url.indexOf('?') >= 0 ? '&' : '?')
+                    + 'member_token=' + encodeURIComponent(t);
+            } catch (e) { return url; }
+        };
 
         async function fetchChores() {
             if (!selectedMemberId) return;
@@ -5723,7 +5740,7 @@
         let evtSource = null;
         function connectStream() {
             if (evtSource) { try { evtSource.close(); } catch (e) { } }
-            evtSource = new EventSource("/api/stream");
+            evtSource = new EventSource(window.chfAuthUrl("/api/stream"));
             evtSource.onmessage = function (event) {
                 if (event.data === "update") {
                     if (selectedDriverId) {

@@ -168,7 +168,7 @@
                 location: t.location || null,
                 image: isUrl ? t.background_url : null,
                 art: isUrl ? t.background_url
-                           : 'api/unsplash/background?query=' + encodeURIComponent(phrase),
+                           : window.chfAuthUrl('api/unsplash/background?query=' + encodeURIComponent(phrase)),
                 draft: !!t.is_draft,
                 poi_count: t.poi_count || 0,
                 start: iso(start), end: iso(end),

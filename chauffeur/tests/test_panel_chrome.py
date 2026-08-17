@@ -616,9 +616,11 @@ def scenario_the_server_can_tap_the_panel_on_the_shoulder():
       hello:<boot_id> on connect (a changed id after reconnect = restart ->
       reload), `profile` on panel_* settings saves (-> reload), and `update`
       re-announced as a chf-server-update DOM event each page consumes."""
-    check("EventSource(apiBase + 'api/stream')" in NAV
+    check("EventSource(window.chfAuthUrl(apiBase + 'api/stream'))" in NAV
           and "hello:" in NAV and "chf-server-update" in NAV,
-          "nav.html no longer subscribes the panel to the server stream")
+          "nav.html no longer subscribes the panel to the server stream "
+          "(S8: the URL rides through chfAuthUrl — EventSource can set no "
+          "headers, so the token lives on the query string)")
     check("window.location.reload()" in NAV,
           "a restart or profile change must reload the panel outright")
     src = open(os.path.join(os.path.dirname(TPL), 'main.py'), encoding='utf-8').read()

@@ -371,6 +371,24 @@
         };
     })();
 
+    // Auth arc S8: the channels a fetch wrapper can never reach. EventSource,
+    // WebSocket and <img>/CSS urls set no headers, so for those the token
+    // rides the QUERY STRING — identify() reads member_token/device_token
+    // there for exactly this class of caller. Member first: a signed-in
+    // person outranks the furniture, and identify() prefers the device when
+    // both arrive, which would lock a member stream on a shared tablet.
+    window.chfAuthUrl = function (url) {
+        try {
+            if (typeof localStorage === 'undefined') return url;
+            const t = localStorage.getItem('chauffeur_member_token');
+            const d = localStorage.getItem('chauffeur_device_token');
+            const q = t ? 'member_token=' + encodeURIComponent(t)
+                        : (d ? 'device_token=' + encodeURIComponent(d) : '');
+            if (!q) return url;
+            return url + (url.indexOf('?') >= 0 ? '&' : '?') + q;
+        } catch (e) { return url; }
+    };
+
     document.addEventListener('DOMContentLoaded', () => {
         const urlParams = new URLSearchParams(window.location.search);
         const isKiosk = urlParams.get('kiosk') === 'true';
@@ -686,7 +704,9 @@
             let chfBootId = null, chfEs = null, chfUpdateDebounce = null;
             const chfConnectStream = () => {
                 if (chfEs) { try { chfEs.close(); } catch (e) { } }
-                chfEs = new EventSource(apiBase + 'api/stream');
+                // The token rides the query string: EventSource can set no
+                // headers, and at the S8 flip an anonymous stream dies.
+                chfEs = new EventSource(window.chfAuthUrl(apiBase + 'api/stream'));
                 chfEs.onmessage = (m) => {
                     const d = m.data || '';
                     if (d.startsWith('hello:')) {

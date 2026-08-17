@@ -1655,7 +1655,9 @@
                     // adding while another shops. The SSE clock is bumped by
                     // every item write (REST and agent), so both views converge.
                     try {
-                        const es = new EventSource(this.apiBase + 'api/stream');
+                        const es = new EventSource(window.chfAuthUrl
+                            ? window.chfAuthUrl(this.apiBase + 'api/stream')
+                            : this.apiBase + 'api/stream');
                         es.onmessage = () => this.loadItems(true);
                     } catch (e) { /* stream is a nicety, not a requirement */ }
                     if (this.isKiosk) {

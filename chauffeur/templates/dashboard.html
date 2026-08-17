@@ -2308,7 +2308,9 @@
         }
         function connectStream() {
             if (evtSource) { try { evtSource.close(); } catch (e) { } }
-            evtSource = new EventSource("api/stream");
+            // EventSource can set no headers; nav's chfAuthUrl puts the token
+            // on the query string so the stream survives the S8 flip.
+            evtSource = new EventSource(window.chfAuthUrl ? window.chfAuthUrl("api/stream") : "api/stream");
             evtSource.onmessage = function (event) {
                 if (event.data === "update") handleServerUpdate();
             };

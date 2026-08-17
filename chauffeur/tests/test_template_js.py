@@ -272,6 +272,45 @@ def _state_literal(src, name):
     return _block_from(src, src.index('{', m.start())) if m else ''
 
 
+def scenario_a_stream_carries_the_token_on_its_query_string():
+    """Auth arc S8. The fetch wrappers attach the token as a header — but
+    EventSource can set no headers at all, so an SSE connection opened with a
+    bare URL is ANONYMOUS, forever, no matter who is signed in on the page.
+    Dark today; at the flip every such stream dies with a 401 and the page
+    quietly stops updating, which is the worst kind of breakage: everything
+    still draws, nothing moves.
+
+    So every `new EventSource(` in every template must run its URL through
+    `chfAuthUrl` (nav.html and app.html each carry one), which puts
+    member_token/device_token on the query string — the one place identify()
+    can read it for this class of caller. Checked loosely (the helper within
+    shouting distance of the constructor) so a URL built a line earlier still
+    counts.
+    """
+    import re as _re
+    broken = []
+    for path in sorted(glob.glob(os.path.join(TPL, '**', '*.html'), recursive=True)):
+        name = os.path.relpath(path, TPL)
+        src = open(path, encoding='utf-8').read()
+        for m in _re.finditer(r'new EventSource\(', src):
+            span = src[max(0, m.start() - 500):m.end() + 200]
+            if 'chfAuthUrl' not in span:
+                broken.append(f"{name} at offset {m.start()}")
+    check(not broken,
+          "EventSource opened without chfAuthUrl — the stream is anonymous "
+          "and dies at the S8 flip:\n  " + "\n  ".join(broken))
+    # The two headerless channels in music_logic.js, pinned the same way: the
+    # artwork proxy is an <img src> and the screen player is a WebSocket.
+    ml = open(os.path.join(os.path.dirname(TPL), 'static', 'music_logic.js'),
+              encoding='utf-8').read()
+    check("authUrl(base(opts) + 'api/ha/image64/'" in ml,
+          "the artwork proxy url no longer carries the token — panel covers "
+          "404 at the flip")
+    check("authUrl(base(opts) + 'api/sendspin/ws')" in ml,
+          "the screen-player WebSocket no longer carries the token — no panel "
+          "can be a Music Assistant player after the flip")
+
+
 def scenario_every_script_and_stylesheet_carries_a_version():
     """The fourth blank-page failure, and the one that outlives a deploy.
 
