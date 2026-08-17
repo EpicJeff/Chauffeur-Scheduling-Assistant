@@ -917,6 +917,15 @@ def scenario_z2_the_install_nudge_speaks_only_to_a_browser_tab():
     check('beforeinstallprompt' in app_src,
           "Android lost the real Install button (and with it the only "
           "already-installed signal that platform offers)")
+    # Offered from BOTH init paths. v2.266.0 only offered after a restored
+    # sign-in, so the natural test — a phone browser tab with no stored
+    # identity, landing on the picker — showed nothing at all.
+    check(app_src.count('maybeOfferInstall()') >= 3,
+          "the no-restore path (the picker) lost its install offer — a "
+          "browser tab that is not signed in is exactly who needs teaching")
+    check("get('install') === '1'" in app_src,
+          "the ?install=1 verification lever is gone — there is no way to "
+          "prove on a device that the sheet renders")
     sp = open(os.path.join(base, 'templates', 'set_password.html'),
               encoding='utf-8').read()
     check('../app?from=invite' in sp,

@@ -2036,12 +2036,22 @@
             const restoredPassenger = !selectedDriverId && selectedMemberId
                 && membersData.find(m => m.id === selectedMemberId
                     && !(m.driver_id && driversData.some(d => d.id === m.driver_id)));
+            // Read BEFORE the restore branch: the no-restore path below
+            // returns early, and v2.266.0 parsed these after it — so the
+            // nudge never ran for exactly the natural test, a browser tab
+            // with no stored sign-in landing on the picker.
+            const earlyParams = new URLSearchParams(window.location.search);
+            installFromInvite = earlyParams.get('from') === 'invite';
+            installForced = earlyParams.get('install') === '1';
             if (selectedDriverId && driversData.find(d => d.id === selectedDriverId)) {
                 await selectDriver(selectedDriverId);
             } else if (restoredPassenger) {
                 await selectPassengerMember(selectedMemberId);
             } else {
-                showDriverSelection();
+                // Awaited so the sheet decision comes AFTER the front-door
+                // decision — it skips the login screen but rides the picker.
+                await showDriverSelection();
+                maybeOfferInstall();
                 return;
             }
             const params = new URLSearchParams(window.location.search);
@@ -2052,9 +2062,9 @@
             if (params.get('pair')) offerPairing(params.get('pair'));
             // The invite's hand-off (?from=invite): finishing an account
             // drops the new member into this browser tab, and the one step
-            // left is the home screen. Checked here, after restore, so the
-            // sheet appears over their first signed-in view.
-            installFromInvite = params.get('from') === 'invite';
+            // left is the home screen. Offered here, after restore, so the
+            // sheet appears over their first signed-in view. (The flags were
+            // read before the restore branch — see earlyParams above.)
             maybeOfferInstall();
             const openChannelParam = params.get('open_channel');
             if (openChannelParam && selectedMemberId) {
@@ -4199,23 +4209,47 @@
             };
         }
 
+        // Forced by ?install=1 — the on-device verification lever. Only the
+        // standalone guard survives forcing: a sheet telling an installed
+        // app to install itself would be wrong even in a test.
+        let installForced = false;
+
         function maybeOfferInstall() {
+            const _no = (why) => { console.debug('[install-nudge] hidden:', why); };
             const c = installContext();
-            if (c.standalone || c.haApp || c.ingress) return;
-            if (!c.ios && !c.android) return;      // desktop: nothing to teach
-            if (localStorage.getItem('chauffeur_install_done')) return;
-            if (c.android && !installPromptEvent) return;
-            if (!installFromInvite) {
-                // The general case is gentle: only for somebody already
-                // signed in, snoozed 30 days on "Not now" — a browser tab is
-                // a legitimate way to use the app. The invite arrival is the
-                // feature and bypasses the snooze: it IS the flow's last step.
-                if (!memberToken()) return;
-                const snoozed = Number(localStorage.getItem('chauffeur_install_snoozed') || 0);
-                if (Date.now() - snoozed < 30 * 86400 * 1000) return;
+            if (c.standalone) return _no('already running standalone');
+            if (!installForced) {
+                if (c.haApp) return _no('HA companion webview');
+                if (c.ingress) return _no('ingress path — an install here would rot');
+                if (localStorage.getItem('chauffeur_install_done')) return _no('already installed');
+                // A captured prompt outranks platform sniffing: desktop
+                // Chrome/Edge install PWAs too, and the event only exists
+                // where install is actually possible. Without one, iOS is
+                // the only platform whose manual steps are worth teaching.
+                if (!c.ios && !installPromptEvent) return _no('no install path on this browser');
+                if (!installFromInvite) {
+                    // The general case is gentle — a browser tab is a
+                    // legitimate way to use the app. It rides over the app
+                    // AND the picker (the v2.266.0 signed-in requirement
+                    // meant the natural test, opening the URL in a phone
+                    // browser, showed nothing), but never over the login
+                    // screen, and "Not now" snoozes it 30 days. The invite
+                    // arrival bypasses the snooze: it IS the flow's last step.
+                    const login = document.getElementById('screen-login');
+                    if (login && !login.classList.contains('hidden')) {
+                        return _no('login screen has the floor');
+                    }
+                    const snoozed = Number(localStorage.getItem('chauffeur_install_snoozed') || 0);
+                    if (Date.now() - snoozed < 30 * 86400 * 1000) return _no('snoozed');
+                }
             }
-            document.getElementById('install-ios').classList.toggle('hidden', !c.ios);
-            document.getElementById('install-android').classList.toggle('hidden', !c.android);
+            // The Install button wherever a real prompt exists; the numbered
+            // Share steps on iOS (or as the forced fallback, so ?install=1
+            // always draws SOMETHING to verify the sheet renders).
+            const button = !!installPromptEvent;
+            const steps = !button && (c.ios || installForced);
+            document.getElementById('install-ios').classList.toggle('hidden', !steps);
+            document.getElementById('install-android').classList.toggle('hidden', !button);
             document.getElementById('install-nudge').classList.remove('hidden');
         }
 

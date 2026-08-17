@@ -2608,6 +2608,16 @@ An invite necessarily lands in a **browser tab** — a mail link cannot open an 
 - **Platform mechanics**: Android stashes `beforeinstallprompt` and shows a real Install button — that event fires only when installable AND not yet installed, so it is the capability check and the don't-nag signal in one. iOS has no API: numbered Share → Add to Home Screen steps, with the share glyph drawn inline. Desktop gets nothing.
 - **The guards are the feature**, each pinned by `test_accounts.scenario_z2`: never when already running standalone (`display-mode: standalone` + `navigator.standalone`), never in the HA companion webview (it cannot Add-to-Home-Screen), never via an ingress path (installing one bakes supervisor's rotating token into the icon — the same link rot v2.257.2 fixed in mailed invites), and `appinstalled`/an accepted prompt retires it permanently.
 
+## The nudge that never showed (v2.267.0)
+
+Reported from the box: no sheet. Three causes, one real and two design calls that read as broken:
+
+- **The real one: only the signed-in path ever offered it.** init()'s no-restore branch returned before the offer ran — and the natural test is exactly that branch: a phone browser tab with NO stored sign-in (iOS 17+ gives Safari tabs and the home-screen app separate storage, so even an installed household lands here), shown the picker and nothing else. The flags are now read before the restore branch and the no-restore path offers after `showDriverSelection()` settles — so the sheet rides the picker, but still never the login screen (that screen has the floor).
+- **Desktop was mute even where install exists.** Chrome/Edge on desktop fire `beforeinstallprompt` too; a captured prompt now outranks platform sniffing and shows the Install button anywhere it exists. Without one, iOS remains the only platform whose manual steps are worth teaching (Android/desktop without a prompt means the browser cannot install — instructions would dead-end).
+- **No way to verify on a device.** `?install=1` now forces the sheet past every guard except standalone (an installed app must never be told to install itself, even in a test), falling back to the iOS steps so something always draws; every silent decline logs its reason via `console.debug('[install-nudge] …')`.
+
+Both new behaviours pinned in `test_accounts.scenario_z2` (the picker path's offer, the verification lever).
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.
