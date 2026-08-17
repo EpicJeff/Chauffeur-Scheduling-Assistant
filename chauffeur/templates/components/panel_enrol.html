@@ -30,12 +30,11 @@
    two do not fight. The rule below is here for the same component's sake and
    for anything else drawn under nav that cloaks itself.
 
-   KNOWN GAP, and it is the honest consequence: on a page with no Alpine this
-   overlay can never DRAW either, so a kiosk refused on /trip?kiosk=true has
-   no way to show its pairing code. Nothing is lost today — `chfRequestPairing`
-   only fires on a 401/403 and the guard is still dark — but S8 must not flip
-   enforcement until those pages either run Alpine or send a refused screen
-   somewhere that does. #}
+   THE GAP IS CLOSED (S8, v2.264.0): every page that includes nav now loads
+   Alpine, so this overlay can draw wherever it can be triggered — including
+   /trip?kiosk=true, whose refused screen previously had no way to show its
+   code. Pinned by test_template_js: a template whose assembled page carries
+   an x-data component must also load alpine.min.js. #}
 <style>[x-cloak] { display: none !important; }</style>
 
 <div id="panel-enrol" x-data="panelEnrol()" x-init="init()" x-show="open" x-cloak

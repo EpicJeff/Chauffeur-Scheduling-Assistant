@@ -15,6 +15,11 @@
         }
     </style>
     <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
+    <!-- Alpine powers the shared overlays this page includes but does not
+         write: the pairing screen nav brings in, and the S4 sign-in gate —
+         which was INERT here from the day it shipped, because this page never
+         loaded Alpine (found in S8, the same gap as the trip pages). -->
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
 </head>
 
 <body class="p-0 m-0">

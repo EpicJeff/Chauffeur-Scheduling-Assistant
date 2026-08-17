@@ -21,6 +21,10 @@
         .mapboxgl-popup-content { color: #111; }
     </style>
     <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
+    <!-- Alpine powers the pairing overlay nav brings in (auth arc S8): this
+         page runs no Alpine of its own, so without this tag a refused kiosk
+         here could never draw its pairing code. -->
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
 </head>
 
 <body class="bg-gray-900 text-white min-h-screen flex flex-col">

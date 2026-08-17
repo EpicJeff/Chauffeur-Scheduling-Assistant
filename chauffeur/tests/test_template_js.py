@@ -272,6 +272,36 @@ def _state_literal(src, name):
     return _block_from(src, src.index('{', m.start())) if m else ''
 
 
+def scenario_a_page_carrying_alpine_components_loads_alpine():
+    """The sixth member of the blank-page family, S8's edition.
+
+    Every page includes nav, nav includes the pairing overlay, and the
+    overlay is an Alpine component — but seven pages loaded no Alpine, so on
+    them `chfRequestPairing` was never defined and a refused kiosk could
+    never draw its pairing code. Worse: the S4 sign-in gate on the dashboard
+    was INERT from the day it shipped for the same reason, so at the flip the
+    dashboard would have 401'd forever with no way to sign in.
+
+    The rule, checked on the ASSEMBLED page because the component and the
+    script tag live in different files: markup that binds `x-data` needs
+    Alpine loaded, full stop.
+    """
+    import tpl_source
+    broken = []
+    for path in sorted(glob.glob(os.path.join(TPL, '*.html'))):
+        name = os.path.basename(path)
+        try:
+            full = tpl_source.read(name)
+        except Exception:
+            full = open(path, encoding='utf-8').read()
+        if 'x-data=' in full and 'alpine.min.js' not in full:
+            broken.append(name)
+    check(not broken,
+          "pages carrying Alpine components with no Alpine to run them — "
+          "every such component renders as nothing (a refused screen cannot "
+          "even show its pairing code):\n  " + "\n  ".join(broken))
+
+
 def scenario_a_stream_carries_the_token_on_its_query_string():
     """Auth arc S8. The fetch wrappers attach the token as a header — but
     EventSource can set no headers at all, so an SSE connection opened with a
