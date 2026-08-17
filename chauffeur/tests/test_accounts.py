@@ -825,6 +825,69 @@ def scenario_y_the_flip_refuses_while_anyone_would_be_locked_out():
         storage.get_settings, storage.update_settings = real_get, real_update
 
 
+def scenario_z_the_family_listing_answers_only_on_trusted_ground():
+    """Decision 4's leak, closed (S8). `/api/members` and `/api/drivers`
+    answered ANYONE because the picker needed them before authentication —
+    which published every name, email and role to whoever loaded the page.
+    The picker only exists on trusted ground now (a vouched device, the LAN,
+    ingress); off it the front door is the login page, which needs no list.
+    Any resolved tier still answers — a signed-in member reads the family
+    from anywhere. Dark until the flip, recorded meanwhile."""
+    import main as _main
+    from services import auth as _auth
+    from fastapi import HTTPException
+
+    class _Req:
+        def __init__(self, headers=None, query=None):
+            self.headers = headers or {}
+            self.query_params = query or {}
+
+    tunnel = {'cf-connecting-ip': '203.0.113.7'}
+    orig = _auth.enforcing
+    _auth.enforcing = lambda: True
+    try:
+        for fn, what in ((_main.get_members, 'members'),
+                         (_main.get_drivers, 'drivers')):
+            try:
+                fn(_Req(tunnel))
+                check(False, f"the family's {what} were served to the open internet")
+            except HTTPException as e:
+                check(e.status_code == 401,
+                      f"expected 401 on anonymous {what}, got {e.status_code}")
+        # The LAN answers — the kitchen tablet's picker must keep working.
+        check(isinstance(_main.get_members(_Req({})), list),
+              "the LAN lost the picker's member list")
+        # A vouched device answers from anywhere (the point of vouching).
+        storage.trust_device('z-tablet', 'Test tablet', kind='personal')
+        check(isinstance(_main.get_members(
+                  _Req({**tunnel, 'x-device-id': 'z-tablet'})), list),
+              "a vouched device off the LAN lost the picker")
+        # A signed-in member reads the family from anywhere.
+        tok = storage.create_member_token(_member('Zed'))
+        check(isinstance(_main.get_members(
+                  _Req({**tunnel, 'x-member-token': tok})), list),
+              "a signed-in member lost the members list")
+    finally:
+        _auth.enforcing = orig
+    # Dark: recorded, never refused — the arc's own discipline.
+    check(isinstance(_main.get_members(_Req(tunnel)), list),
+          "audit mode refused the members list")
+    check(_auth.audit_report()['identity'].get('untrusted-members', 0) >= 1,
+          "an untrusted listing read was not recorded while dark")
+    # The ground probe is how the PWA picks its front door.
+    check(_main.account_ground(_Req(tunnel))['trusted'] is False,
+          "the open internet read as trusted ground")
+    check(_main.account_ground(_Req({}))['trusted'] is True,
+          "the LAN stopped being trusted ground")
+    # And the table: the listing GETs answer pre-auth (the handler gates
+    # them); every write on those prefixes is still administration.
+    check(_auth.resolve('GET', '/api/drivers') == _auth.ANYONE
+          and _auth.resolve('GET', '/api/account/ground') == _auth.ANYONE,
+          "a picker data source lost its table entry")
+    check(_auth.resolve('POST', '/api/drivers') == _auth.PARENTS,
+          "the drivers GET carve-out opened driver WRITES")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

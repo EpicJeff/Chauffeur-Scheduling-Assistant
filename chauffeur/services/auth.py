@@ -72,9 +72,18 @@ RULES = [
     # the single most attackable route in the app and S4 gives it persistent,
     # per-IP rate limiting to match.
     ('POST', '/api/members/{member_id}/auth', ANYONE),
-    # The picker list. S3 deletes its pre-auth role by replacing the picker
-    # with a sign-in page; until then it must answer or nobody can log in.
+    # The picker's data (S8, Decision 4 built at last). ANYONE in the TABLE,
+    # gated in the HANDLER: `_gate_family_listing` answers a caller with any
+    # tier, or anonymous on trusted ground (vouched device / LAN / ingress) —
+    # which is the only place the faces picker exists any more. Off trusted
+    # ground the front door is the login page, which needs no list. The tier
+    # table cannot express "trusted ground", so the handler owns the rest.
     ('GET', '/api/members', ANYONE),
+    ('GET', '/api/drivers', ANYONE),
+    # "Where am I standing?" — one boolean about the caller's own ground,
+    # which is how the PWA picks its front door. Open like this-device: the
+    # answer contains nothing the request did not arrive with.
+    ('GET', '/api/account/ground', ANYONE),
     # Accounts (S3). All public by necessity — every one of these is reached
     # by somebody who has no credential yet, which is the entire point of
     # them. Their protection is the token in the link, not a tier:

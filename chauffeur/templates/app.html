@@ -182,6 +182,37 @@
         </div>
     </div>
 
+    <!-- Login Screen (auth arc S8, Decision 4 — settled 2026-08-15, built
+         here). The faces picker publishes the family's names, so it only
+         exists on trusted ground (a vouched device, the LAN, ingress).
+         Everywhere else, identity starts with an email and a password; the
+         sign-in itself vouches the device, after which the PIN opens it
+         (Decision 4c) and the picker appears like at home. -->
+    <div id="screen-login" class="flex-1 flex flex-col p-6 overflow-y-auto hidden">
+        <div class="max-w-sm w-full mx-auto mt-8">
+            <h2 class="text-2xl font-black mb-2 text-center text-gray-100 drop-shadow-sm">Sign in</h2>
+            <p class="text-sm text-gray-400 text-center mb-6">This device isn't one the family has
+                vouched for yet, so it starts with your email and password. After that, your PIN
+                will open it.</p>
+            <form onsubmit="return loginSubmit(event)" class="flex flex-col gap-3">
+                <input id="login-email" type="email" autocomplete="email" required
+                    placeholder="you@example.com"
+                    class="bg-gray-900 border border-gray-700 rounded-xl p-4 text-gray-100 placeholder-gray-600">
+                <input id="login-password" type="password" autocomplete="current-password" required
+                    placeholder="Password"
+                    class="bg-gray-900 border border-gray-700 rounded-xl p-4 text-gray-100 placeholder-gray-600">
+                <p id="login-error" class="text-sm text-red-400 hidden"></p>
+                <button id="login-submit" type="submit"
+                    class="bg-blue-600 active:bg-blue-500 rounded-xl p-4 font-bold text-white shadow-lg">Sign
+                    in</button>
+            </form>
+            <button onclick="loginForgot()" class="w-full text-center text-sm text-gray-500 mt-4 underline">
+                Forgot your password?</button>
+            <p class="text-xs text-gray-600 text-center mt-6">No account yet? Ask a parent to send
+                you an invite — the link signs you in and sets your password in one step.</p>
+        </div>
+    </div>
+
     <!-- Main Schedule Screen -->
     <div id="screen-schedule" class="flex-1 flex flex-col hidden overflow-hidden relative">
 
@@ -602,7 +633,12 @@
             // just failed to restore — the exact state that lands on this
             // picker. What is on the glass is the only thing that cannot lie.
             const picker = document.getElementById('screen-select-driver');
-            const picking = picker && !picker.classList.contains('hidden');
+            const login = document.getElementById('screen-login');
+            // The login screen is the picker's untrusted-ground twin (S8):
+            // both are "nobody has said who they are yet", where a chat
+            // button that answers AS somebody cannot work.
+            const picking = (picker && !picker.classList.contains('hidden'))
+                || (login && !login.classList.contains('hidden'));
             // Argyle has messaging tools (v2.25.0) so the FAB belongs on the
             // Messages channel list; it still hides inside an OPEN thread,
             // where it overlays the composer's Send button.
@@ -1949,6 +1985,9 @@
             // routine row and ride card reads, and a late answer would render
             // the day once in the wrong format and then flip it.
             await loadClockFormat();
+            // Fired early so the answer is already cached when the picker (or
+            // its untrusted-ground twin, the login screen) needs it.
+            checkGround();
             await fetchDrivers();
             await fetchMembers();
             // The same test the picker uses, and for the same reason: a member
@@ -3993,7 +4032,104 @@
             }
         }
 
-        function showDriverSelection() {
+        // The front door decision (auth arc S8, Decision 4). Asked of the
+        // server because trust is a server-side fact: a vouched device, the
+        // LAN, or ingress. Fails OPEN deliberately — the gate on the family
+        // listing is server-side either way, and failing closed would lock
+        // the kitchen tablet over a network hiccup.
+        let groundTrusted = null;
+        async function checkGround() {
+            if (groundTrusted !== null) return groundTrusted;
+            try {
+                const res = await fetch(`${apiBase}api/account/ground`);
+                groundTrusted = res.ok ? (await res.json()).trusted === true : true;
+            } catch (e) { groundTrusted = true; }
+            return groundTrusted;
+        }
+
+        function showLoginScreen() {
+            document.getElementById('screen-schedule').classList.add('hidden');
+            document.getElementById('screen-select-driver').classList.add('hidden');
+            document.getElementById('btn-switch-driver').classList.add('hidden');
+            document.getElementById('btn-push').classList.add('hidden');
+            document.getElementById('screen-login').classList.remove('hidden');
+            updateAgentFab();
+            document.getElementById('driver-name').textContent = "Sign in";
+            document.getElementById('date-subtitle').textContent = "Chauffeur App";
+            document.getElementById('driver-avatar').textContent = "?";
+            document.getElementById('driver-avatar').style.borderColor = "#374151";
+            document.getElementById('driver-avatar').style.color = "#6B7280";
+        }
+
+        async function loginSubmit(ev) {
+            ev.preventDefault();
+            const err = document.getElementById('login-error');
+            err.classList.add('hidden');
+            const btn = document.getElementById('login-submit');
+            btn.disabled = true;
+            try {
+                const res = await fetch(`${apiBase}api/account/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: document.getElementById('login-email').value.trim(),
+                        password: document.getElementById('login-password').value
+                    })
+                });
+                const d = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    err.textContent = res.status === 429
+                        ? 'Too many tries — wait a little and try again.'
+                        : "That email and password don't match.";
+                    err.classList.remove('hidden');
+                    return false;
+                }
+                // The same handoff the set-password page performs: token,
+                // member, and the driver identity when there is one — the
+                // fetch wrapper sent X-Device-Id, so the sign-in has already
+                // vouched this device and the PIN can open it next time.
+                localStorage.setItem('chauffeur_member_token', d.token);
+                localStorage.setItem('chauffeur_member_token_for', d.member.id);
+                localStorage.setItem('chauffeur_member_id', d.member.id);
+                if (d.member.driver_id) {
+                    localStorage.setItem('chauffeur_driver_id', d.member.driver_id);
+                }
+                location.reload();
+            } catch (e) {
+                err.textContent = 'Could not reach the server.';
+                err.classList.remove('hidden');
+            } finally { btn.disabled = false; }
+            return false;
+        }
+
+        async function loginForgot() {
+            const email = document.getElementById('login-email').value.trim();
+            if (!email) {
+                showGlobalAlert('Type your email above first, then tap forgot.');
+                return;
+            }
+            try {
+                await fetch(`${apiBase}api/account/forgot`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+            } catch (e) { /* the answer is the same either way, on purpose */ }
+            showGlobalAlert("If that address is on the family's account, a reset link is on its way.");
+        }
+
+        async function showDriverSelection() {
+            // Untrusted ground gets the login page, not the family's faces
+            // (S8, Decision 4). A stored session still restores normally —
+            // this branch is only for "nobody has said who they are yet",
+            // plus the stale case where a dead token bought an empty picker.
+            const trusted = await checkGround();
+            if (!trusted && (!memberToken()
+                || (driversData.length === 0 && membersData.length === 0))) {
+                showLoginScreen();
+                return;
+            }
+            document.getElementById('screen-login').classList.add('hidden');
             document.getElementById('screen-schedule').classList.add('hidden');
             document.getElementById('btn-switch-driver').classList.add('hidden');
             document.getElementById('btn-push').classList.add('hidden');

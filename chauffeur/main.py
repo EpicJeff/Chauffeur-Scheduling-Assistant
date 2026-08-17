@@ -3217,7 +3217,12 @@ def delete_trip_accommodation_api(event_id: str, acc_id: str):
 
 # --- Drivers API ---
 @app.get("/api/drivers")
-def get_drivers():
+def get_drivers(request: Request = None):
+    # Read by every PWA member on boot AND by the pre-auth picker on trusted
+    # ground, so it takes the same gate as /api/members — driver rows are the
+    # same family names. Writes stay parent-only under the /api/drivers/*
+    # rule; this specific GET sits above it in the table.
+    _gate_family_listing(request, 'drivers')
     return storage.get_all_drivers()
 
 @app.post("/api/drivers")
@@ -4708,7 +4713,8 @@ def list_assist_history(contact_id: str = None, limit: int = 200):
     return rows
 
 @app.get("/api/members")
-def get_members():
+def get_members(request: Request = None):
+    _gate_family_listing(request, 'members')
     members = storage.get_all_members()
     drivers = {d.get('id'): d for d in storage.get_all_drivers()}
     passengers = {p.get('id'): p for p in storage.get_all_passengers()}
@@ -4848,6 +4854,51 @@ def _valid_pin_format(pin: str) -> bool:
 class MemberAuthRequest(BaseModel):
     pin: Optional[str] = None
 
+def _trusted_ground(request) -> bool:
+    """Is this request standing somewhere the household has vouched for?
+
+    Trusted ground is: a device somebody signed in on with a password (or a
+    parent paired), the LAN, or HA ingress — the places the wall panel and the
+    kitchen tablet live, where supervisor or physical presence has already
+    said something about the caller. It is what the faces-and-PIN picker is
+    allowed to exist on (Decision 4c), and what `/api/members` answers to
+    before authentication (S8 closes the names leak everywhere else).
+
+    Ingress is checked EXPLICITLY: supervisor forwards ingress with
+    `X-Forwarded-For`, which `arrived_via_tunnel` reads as external — correct
+    for the tunnel check's fail-toward-asking rule, wrong as the last word on
+    ingress, which is a stronger identity claim than the LAN itself."""
+    from services import auth as _auth
+    headers = getattr(request, 'headers', {}) or {}
+    device_id = (headers.get('x-device-id')
+                 or (request.query_params.get('device_id')
+                     if request is not None else None))
+    if device_id and storage.get_trusted_device(device_id):
+        return True
+    return (not _auth.arrived_via_tunnel(headers)
+            or _auth.arrived_via_ingress(headers))
+
+
+def _gate_family_listing(request, what: str) -> None:
+    """The family-names leak, closed (S8, Decision 4). `/api/members` and
+    `/api/drivers` answered ANYONE because the picker needed them before
+    authentication — which published every name, email, avatar and role to
+    whoever loaded the page. The picker only EXISTS on trusted ground now, so
+    off it these answer only to a caller who has already proved something.
+    Dark until the flip, recorded meanwhile, same as every other refusal."""
+    from services import auth as _auth
+    headers = getattr(request, 'headers', {}) or {}
+    query = getattr(request, 'query_params', {}) or {}
+    who = _auth.identify(headers, query)
+    if who.get('tier') is not None or _trusted_ground(request):
+        return
+    if _auth.enforcing():
+        raise HTTPException(
+            status_code=401, detail="Sign in to see the family",
+            headers={'X-Auth-Refusal': 'member,parent'})
+    _auth.record_identity(f'untrusted-{what}', None, None)
+
+
 @app.post("/api/members/{member_id}/auth")
 def member_auth(member_id: str, req: MemberAuthRequest, request: Request = None):
     """Tap a face, type a PIN, get a token — **on a device already trusted**
@@ -4872,13 +4923,8 @@ def member_auth(member_id: str, req: MemberAuthRequest, request: Request = None)
     headers = request.headers if request else {}
     device_id = (headers.get('x-device-id')
                  or (request.query_params.get('device_id') if request else None))
-    trusted = bool(storage.get_trusted_device(device_id)) if device_id else False
-    # Ingress and the LAN are trusted ground on their own: the wall panel and
-    # the kitchen tablet live there, and supervisor has already authenticated
-    # anybody arriving through ingress.
-    local = not _auth.arrived_via_tunnel(headers)
 
-    if not (trusted or local):
+    if not _trusted_ground(request):
         if _auth.enforcing():
             raise HTTPException(
                 status_code=403,
@@ -5197,6 +5243,17 @@ def this_device(request: Request, x_device_id: Optional[str] = Header(None)):
             'label': label or None,
             'named': bool(label) and label.lower() not in _GENERIC_DEVICE_LABELS,
             'trusted': bool(row)}
+
+
+@app.get("/api/account/ground")
+def account_ground(request: Request = None):
+    """Is the caller standing on trusted ground? One boolean about the
+    caller's OWN standing and nothing about the household — open for the same
+    reason as this-device above: the answer contains nothing the request did
+    not arrive with. The PWA asks this to pick its front door (Decision 4,
+    settled and finally built in S8): the faces-and-PIN picker on trusted
+    ground, email+password everywhere else."""
+    return {"trusted": _trusted_ground(request)}
 
 
 @app.delete("/api/account/devices/{device_id}")
