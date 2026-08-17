@@ -4833,6 +4833,26 @@ def get_drive_status_rows(status: str) -> List[dict]:
     with db_lock:
         return [dict(d) for d in drive_status_table.search(Query().status == status)]
 
+# --- Day-of attendance overrides (the retro-split) ---
+# {event_id: {'action': 'split'|'stay', 'ts': ...}} in app_state. Instance-
+# scoped and deliberately short-lived: 48 hours covers today and tonight's
+# solves, and then the calendar is the truth again — a driver's Tuesday
+# declaration must never quietly reshape next Tuesday's recurrence.
+_ATTENDANCE_TTL_SECS = 48 * 3600
+
+def get_attendance_overrides() -> dict:
+    import time
+    rows = dict(get_app_state('attendance_overrides') or {})
+    cutoff = time.time() - _ATTENDANCE_TTL_SECS
+    return {k: v for k, v in rows.items()
+            if isinstance(v, dict) and (v.get('ts') or 0) >= cutoff}
+
+def set_attendance_override(event_id: str, action: str) -> None:
+    import time
+    rows = get_attendance_overrides()      # read-through prunes the stale
+    rows[str(event_id)] = {'action': action, 'ts': time.time()}
+    set_app_state('attendance_overrides', rows)
+
 # --- Pending Notifications ---
 def save_pending_notifications(notifications: List[dict]):
     with db_lock:

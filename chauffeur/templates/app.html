@@ -541,6 +541,17 @@
                     Cancel
                 </button>
             </div>
+            <!-- The retro-split: an OPTION, never a prompt. The household's
+                 rule for this feature — nobody pre-plans everything, so the
+                 sheet quietly offers real-time opt-in and asks nothing. -->
+            <button id="btn-not-staying" onclick="declareNotStaying()"
+                class="w-full py-3 mt-1 rounded-xl text-sm font-bold text-amber-300/80 active:text-amber-200 hidden">
+                ↩ Not staying? Set up the pick-up drive
+            </button>
+            <button id="btn-staying-after-all" onclick="declareStaying()"
+                class="w-full py-3 mt-1 rounded-xl text-sm font-bold text-amber-300/80 active:text-amber-200 hidden">
+                🪑 Staying after all — cancel the separate pick-up
+            </button>
         </div>
     </div>
 
@@ -4747,6 +4758,60 @@
             return m > 0 ? `${h}h ${m}m` : `${h}h`;
         }
 
+        // --- The retro-split (day-of attendance override) ----------------
+        // 'can_split': this is an inbound leg of an UNSPLIT event assigned
+        // to the selected driver — "not staying" mints the pick-up drive.
+        // 'can_stay': the event is already split — offer the undo.
+        // null: the option means nothing here, so it does not appear.
+        function retroSplitState() {
+            if (!routeContext || !routeContext.eventId || !scheduleData) return null;
+            const evId = String(routeContext.eventId);
+            const legId = String(routeContext.legId || '');
+            if (legId.startsWith('final_')) return null;
+            const base = evId.replace(/_(dropoff|pickup)$/, '');
+            const assignments = Object.assign({}, scheduleData.assignments || {},
+                                              scheduleData.ghost_assignments || {});
+            const d = assignments[evId] || assignments[base]
+                || assignments[base + '_dropoff'];
+            if (!selectedDriverId || d !== selectedDriverId) return null;
+            const split = base !== evId
+                || (scheduleData.events || []).some(e =>
+                    String(e.id) === base + '_dropoff' || String(e.id) === base + '_pickup');
+            return split ? 'can_stay' : 'can_split';
+        }
+
+        async function _postAttendance(action, message) {
+            const evId = String(routeContext.eventId).replace(/_(dropoff|pickup)$/, '');
+            try {
+                const res = await fetch(`${apiBase}api/events/${encodeURIComponent(evId)}/attendance`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action })
+                });
+                if (!res.ok) throw new Error();
+                closeActionSheet();
+                showGlobalAlert(message);
+                // The re-solve runs in the background; the server stream
+                // repaints the timeline when it lands. One optimistic fetch
+                // shortly after covers the common fast case.
+                setTimeout(() => fetchSchedule(true), 8000);
+            } catch (e) {
+                showGlobalAlert('Could not update the plan — try again.');
+            }
+        }
+
+        function declareNotStaying() {
+            _postAttendance('split',
+                '↩ Got it — setting up the pick-up drive. The schedule will '
+                + 'update in a moment.');
+        }
+
+        function declareStaying() {
+            _postAttendance('stay',
+                '🪑 Got it — you\'re staying, the separate pick-up drive is '
+                + 'coming off the schedule.');
+        }
+
         function openActionSheet(origin, destination, legTitle, eventId = null, legId = null) {
             routeContext = { origin, destination, legTitle, eventId, legId };
             document.getElementById('sheet-subtitle').textContent = legTitle;
@@ -4767,6 +4832,15 @@
                 if (sheetState1) sheetState1.classList.add('hidden');
                 if (sheetState2) sheetState2.classList.remove('hidden');
             }
+
+            // The retro-split option, shown only where it means something:
+            // an inbound leg of MY driven, unsplit event offers "not
+            // staying"; a slice of an already-split one offers the undo.
+            const retro = retroSplitState();
+            document.getElementById('btn-not-staying').classList.toggle(
+                'hidden', retro !== 'can_split');
+            document.getElementById('btn-staying-after-all').classList.toggle(
+                'hidden', retro !== 'can_stay');
 
             const sheet = document.getElementById('action-sheet');
             const content = document.getElementById('action-sheet-content');

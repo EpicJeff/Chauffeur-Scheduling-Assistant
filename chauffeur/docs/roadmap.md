@@ -774,21 +774,18 @@ not a hardcoded host).
 
 ## Open design questions
 
-- **The driver who doesn't stay at an unsplit event** (raised 2026-08-17,
-  with the ride-status slice). The model assumes an assigned driver stays
-  for the event's duration unless the event is split into dropoff/pickup
-  slices — but a driver can drop off and leave WITHOUT the event being
-  split, and then the kid has no idea where their ride is or when it
-  returns. Not modeled anywhere: there is no leg for the return, so no
-  Start tap, no ETA, no arrived? push. The situation for the kid is real
-  either way. Candidate shapes, none decided: (a) day-of retro-split — when
-  a driver's arrival check-in completes the inbound leg, ask "staying?"
-  and mint the pickup slice on a no; (b) an explicit stays/leaves flag on
-  the assignment feeding the solver; (c) background location (the native
-  track), which dissolves the question without modeling intent — the
-  return ETA is just computed from where the driver actually is. (c) is
-  the strongest single argument for the native app; (a) is the cheapest
-  web-only bridge and builds on machinery the ride-status slice shipped.
+- ~~**The driver who doesn't stay at an unsplit event**~~ (raised
+  2026-08-17; **ANSWERED same day, v2.270.0 — the retro-split**). Shape (a)
+  won, refined by the household into an OPTION rather than a prompt: two
+  quiet buttons on the drive action sheet write a day-of, instance-scoped
+  attendance override (48h TTL, top precedence in the solve), pin both
+  slices to the declaring driver, and carry drive history across the leg
+  rename. The declared window becomes genuinely free in the solve, so the
+  errand machinery covers "I'm running an errand" with no new concept.
+  Still true and still open: (c) background location (the native track)
+  dissolves the question without any declaration at all — the return ETA
+  computed from where the driver actually is — and remains the strongest
+  single argument for that track.
 - Parent-voice chore verification via the agent: what stands in for the PIN?
 - Should helpers see event threads for events they drive (currently: no,
   DMs with parents only + kid contact relays through the family channel)?

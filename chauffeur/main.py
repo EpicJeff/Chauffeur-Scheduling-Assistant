@@ -9889,6 +9889,100 @@ def delete_status_day_endpoint(day_id: str, background_tasks: BackgroundTasks):
     background_tasks.add_task(status_protocols.announce_cleared, row)
     return {"status": "success"}
 
+def _attendance_decision(override_action, planned_stay, planned_split,
+                         duration_seconds) -> bool:
+    """Does this event split into dropoff/pickup slices?
+
+    Precedence, and the reasoning: a DAY-OF override from the person in the
+    car outranks everything planned, because they know their afternoon
+    better than a rule written last month; then the planned signals
+    (#stay/#wait hashtags and stay rules beat split ones, as they always
+    have); then the default — two hours is longer than anyone waits in a
+    parking lot. The override is the retro-split lever on the drive sheet:
+    the household's own framing is that the systems exist but nobody
+    pre-plans everything, so the app provides real-time opt-in instead."""
+    if override_action == 'split':
+        return True
+    if override_action == 'stay':
+        return False
+    if planned_stay:
+        return False
+    if planned_split:
+        return True
+    return duration_seconds >= 7200
+
+
+def _mirror_drive_rows(event_id: str, to_split: bool) -> int:
+    """Carry drive history across a retro-split (or its undo).
+
+    The re-solve renames every leg: `init_swim` becomes `init_swim_dropoff`
+    and back. Status rows key on leg ids, so without this the drive the
+    driver JUST finished draws as never-driven the moment the schedule
+    rebuilds — and the arrival machinery loses its ETA mid-flight. Rows are
+    copied (with their fields), never moved: the old schedule may still be
+    on screens for one more poll."""
+    moved = 0
+    ev = str(event_id)
+    src, dst = (ev, f"{ev}_dropoff") if to_split else (f"{ev}_dropoff", ev)
+    for status in ('in_progress', 'completed'):
+        for row in storage.get_drive_status_rows(status):
+            leg = str(row.get('leg_id') or '')
+            if _leg_event_id(leg) != src:
+                continue
+            fields = {k: v for k, v in row.items()
+                      if k not in ('leg_id', 'status')}
+            storage.mark_drive_status(leg.replace(src, dst, 1),
+                                      row['status'], **fields)
+            moved += 1
+    return moved
+
+
+class AttendanceAction(BaseModel):
+    action: str          # 'split' (not staying) | 'stay' (staying after all)
+
+
+@app.post("/api/events/{event_id}/attendance")
+def set_event_attendance(event_id: str, req: AttendanceAction,
+                         background_tasks: BackgroundTasks):
+    """The retro-split: a driver declares day-of whether they are staying.
+
+    'split' mints the pickup drive the moment somebody admits they are not
+    staying — and PINS both slices to the driver already on the event, so a
+    mid-day re-solve cannot hand the afternoon to somebody else as a side
+    effect of one honest declaration. 'stay' undoes it (and only unpins the
+    slices — a manual override somebody placed on the base event is not
+    this endpoint's to remove). Both directions carry the drive history
+    across the rename, and both are instance-scoped and expire on their
+    own: tomorrow's solve reads tomorrow's calendar, not today's mood."""
+    if req.action not in ('split', 'stay'):
+        raise HTTPException(status_code=400, detail="action must be 'split' or 'stay'")
+    base = re.sub(r'_(dropoff|pickup)$', '', str(event_id))
+    sched = storage.get_cached_schedule() or {}
+    events = {str(e.get('id')): e for e in (sched.get('events') or [])}
+    ev = events.get(base)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not on the schedule")
+    storage.set_attendance_override(base, req.action)
+    assignments = dict(sched.get('assignments') or {})
+    assignments.update(sched.get('ghost_assignments') or {})
+    d_id = assignments.get(base) or assignments.get(f"{base}_dropoff")
+    if req.action == 'split':
+        if d_id and not str(d_id).startswith('ghost_'):
+            for slice_id in (f"{base}_dropoff", f"{base}_pickup"):
+                storage.add_override({'id': _uuid.uuid4().hex,
+                                      'event_id': slice_id, 'driver_id': d_id,
+                                      'event_title': ev.get('title'),
+                                      'source': 'retro_split',
+                                      'created_at': time.time()})
+        _mirror_drive_rows(base, to_split=True)
+    else:
+        for slice_id in (f"{base}_dropoff", f"{base}_pickup"):
+            storage.delete_override_by_event(slice_id)
+        _mirror_drive_rows(base, to_split=False)
+    background_tasks.add_task(trigger_background_refresh)
+    return {"status": "ok", "action": req.action, "event_id": base}
+
+
 # --- Family map API ---
 
 def _leg_event_id(leg_id):
@@ -13111,6 +13205,12 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     for _ev_id, _pids in conflict_drops.items():
         logger.info(f"Double-booking resolved: dropped passenger(s) {_pids} from {_ev_id}")
 
+    # Day-of attendance overrides (the retro-split): a driver declaring "I'm
+    # not staying" from the drive sheet outranks every planned signal below,
+    # because the person in the car knows their afternoon better than a rule
+    # written last month. Instance-scoped and short-lived — real-time opt-in
+    # for the household that did not pre-plan, which is every household.
+    attendance_overrides = storage.get_attendance_overrides()
     for e in events:
         if not e.location or not e.location.strip():
             no_location_events.append(e.id)
@@ -13118,18 +13218,17 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             duration_seconds = (e.end - e.start).total_seconds()
             has_stay_hashtag = fuzzy_has_hashtag(e.title, '#stay') or fuzzy_has_hashtag(getattr(e, 'description', ''), '#stay') or fuzzy_has_hashtag(e.title, '#wait') or fuzzy_has_hashtag(getattr(e, 'description', ''), '#wait')
             has_split_hashtag = fuzzy_has_hashtag(e.title, '#dropoff') or fuzzy_has_hashtag(getattr(e, 'description', ''), '#dropoff') or fuzzy_has_hashtag(e.title, '#pickup') or fuzzy_has_hashtag(getattr(e, 'description', ''), '#pickup')
-            
+
             has_stay_rule = any(((r.constraint_type == 'attendance' and (r.attendance_action == 'stay' or r.attendance_action is None)) or r.constraint_type == 'no_split') and matcher.does_event_match_rule(e, r, passengers) for r in rules)
             has_split_rule = any(r.constraint_type == 'attendance' and r.attendance_action == 'dropoff_pickup' and matcher.does_event_match_rule(e, r, passengers) for r in rules)
-            
+
             should_split = False
             if e.event_type != 'background_trip':
-                if has_stay_hashtag or has_stay_rule:
-                    should_split = False
-                elif has_split_hashtag or has_split_rule:
-                    should_split = True
-                elif duration_seconds >= 7200:
-                    should_split = True
+                should_split = _attendance_decision(
+                    (attendance_overrides.get(str(e.id)) or {}).get('action'),
+                    has_stay_hashtag or has_stay_rule,
+                    has_split_hashtag or has_split_rule,
+                    duration_seconds)
 
             if getattr(e, 'needs_triage', False):
                 continue
