@@ -563,6 +563,71 @@ def scenario_a_live_tracker_is_a_running_bus_when_nothing_says_otherwise():
               "an entity that exists is authoritative")
 
 
+def scenario_if_there_is_an_entity_to_draw_the_map_draws_it():
+    """The household's rule, and it replaced four gates.
+
+    A correct tracker and a correct stop zone drew nothing, twice, because
+    the pin also required: a morning stop time (a scheduling fact that says
+    nothing about a live vehicle, and which made every PM-only rider
+    invisible), an in-service sensor shaped like an integration this house
+    does not run, and the tracker being in the ONE of two adjacent boxes the
+    map happened to read."""
+    kid = {'id': 'k1', 'name': 'Addison Smith', 'role': 'child'}
+    coords = {'state': 'not_home',
+              'attributes': {'latitude': 35.7, 'longitude': -78.7}}
+
+    def only(entity_id):
+        return mock.patch('services.ha_api.get_state',
+                          side_effect=lambda eid: coords if eid == entity_id else None)
+
+    # No stop time, no in-service sensor, nothing but the tracker.
+    with only('device_tracker.route12'):
+        check(bus.bus_map_position({**kid, 'bus_tracker_entity': 'device_tracker.route12'})
+              == (35.7, -78.7), "an explicit tracker did not draw")
+        # ...and the SAME entity typed into the neighbouring box still draws.
+        check(bus.bus_map_position({**kid, 'bus_location_entity': 'device_tracker.route12'})
+              == (35.7, -78.7),
+              "the tracker typed into the where-the-bus-is box drew nothing — "
+              "two adjacent fields, one of them silently the wrong one")
+    # Nothing anywhere is still None rather than an invented pin.
+    with mock.patch('services.ha_api.get_state', return_value=None), \
+         mock.patch('services.ha_api.get_states', return_value=[]):
+        check(bus.bus_map_position(dict(kid)) is None,
+              "a child with no bus entity anywhere got a pin from nowhere")
+
+
+def scenario_the_bus_tracker_can_be_found_without_being_named():
+    """"Or can we find one automatically" — yes. Home Assistant already
+    knows: something in the state machine is called a bus and carries
+    coordinates. Ranked rather than first-match, because a house holds
+    several: this child's name beats a bare bus, a vehicle beats a zone, and
+    a STOP is a place rather than a vehicle so it never wins."""
+    bus._discovered_tracker_cache.clear()
+    states = [
+        {'entity_id': 'zone.bus_stop_maple', 'attributes': {
+            'friendly_name': 'Bus stop', 'latitude': 1.0, 'longitude': 1.0}},
+        {'entity_id': 'device_tracker.school_bus', 'attributes': {
+            'friendly_name': 'School bus', 'latitude': 2.0, 'longitude': 2.0}},
+        {'entity_id': 'device_tracker.addison_bus', 'attributes': {
+            'friendly_name': "Addison's bus", 'latitude': 3.0, 'longitude': 3.0}},
+        {'entity_id': 'device_tracker.mum_phone', 'attributes': {
+            'friendly_name': 'Mum', 'latitude': 4.0, 'longitude': 4.0}},
+    ]
+    kid = {'id': 'k1', 'name': 'Addison Smith', 'role': 'child'}
+    with mock.patch('services.ha_api.get_states', return_value=states):
+        found = bus.discover_bus_tracker(kid)
+    check(found == 'device_tracker.addison_bus',
+          f"the child's own bus should outrank a generic one: {found}")
+    # A house with no bus-shaped entity invents nothing.
+    with mock.patch('services.ha_api.get_states', return_value=[states[-1]]):
+        check(bus.discover_bus_tracker(kid) is None,
+              "an unrelated tracker was mistaken for a bus")
+    # And the stop never stands in for the vehicle.
+    with mock.patch('services.ha_api.get_states', return_value=[states[0]]):
+        check(bus.discover_bus_tracker(kid) is None,
+              "a bus STOP zone was drawn as the bus itself")
+
+
 def scenario_the_bus_says_which_gate_it_failed():
     """Every gate here fails silently and they all look identical from a
     wall. The diagnosis is the difference between reading that and guessing:
@@ -570,13 +635,15 @@ def scenario_the_bus_says_which_gate_it_failed():
     it carries coordinates, how long ago it reported, the in-service entity
     and its state — and the card option that is off by default."""
     bus._active_entity_cache.clear()
-    with mock.patch('services.ha_api.get_state', return_value=None):
+    bus._discovered_tracker_cache.clear()
+    with mock.patch('services.ha_api.get_state', return_value=None), \
+         mock.patch('services.ha_api.get_states', return_value=[]):
         d = bus.bus_diagnosis({**KID, 'bus_tracker_entity': 'device_tracker.nope'})
     check(d['tracker_entity'] == 'device_tracker.nope'
           and d['tracker_exists'] is False and d['tracker_has_coords'] is False,
           f"the diagnosis must name what it looked for and what it found: {d}")
-    check(d['active'] is False and d['active_entity'] is None,
-          f"and say the bus is not reading as out: {d}")
+    check(d['map_position'] is None and d['discovered_tracker'] is None,
+          f"and report the map's one gate — nothing to draw: {d}")
     check('Show school buses' in d['note'],
           "the diagnosis must mention the card option that is off by "
           "default — it is the likeliest miss and no entity reveals it")
@@ -584,6 +651,8 @@ def scenario_the_bus_says_which_gate_it_failed():
 
 SCENARIOS = [
     scenario_a_live_tracker_is_a_running_bus_when_nothing_says_otherwise,
+    scenario_if_there_is_an_entity_to_draw_the_map_draws_it,
+    scenario_the_bus_tracker_can_be_found_without_being_named,
     scenario_the_bus_says_which_gate_it_failed,
     scenario_static_morning_launch,
     scenario_car_ride_wins_the_morning,

@@ -2499,12 +2499,16 @@ def _tile_map(now, runs=None, config=None, **_):
                              'driving': None})
         except Exception as e:
             print(f"[home_board] map cars failed: {e}")
-        # Buses, and ONLY while one is actually running. A car sits in the
-        # drive all day and "where is the car" is a real question at any hour;
-        # a bus is somebody else's vehicle that matters for twenty minutes,
-        # and a stale pin on a kitchen wall at 3pm is a claim about a bus that
-        # is not there. The stop rides along as its own pin, because "how far
-        # is it from the stop" is the actual question being asked.
+        # Buses. This USED to draw only while an in-service sensor said the
+        # bus was running — sound reasoning (a stale pin at 3pm is a claim
+        # about a bus that is not there) that in practice drew nothing at
+        # all, because the sensor it depended on is HCTB-shaped and most
+        # households do not have one. Reported from a wall with a correct
+        # tracker and a correct stop and no pin, twice. The rule is now the
+        # household's: if there is an entity to draw, draw it — the same
+        # answer Home Assistant's own map gives, which is what anybody
+        # comparing the two screens expects. The stop rides along as its own
+        # pin, because "how far is it from the stop" is the actual question.
         try:
             from services import bus as bus_svc
             # Grouped by VEHICLE, not by child. Siblings on one bus each have
@@ -2513,11 +2517,14 @@ def _tile_map(now, runs=None, config=None, **_):
             # separately — "Addison's bus" hiding "Cole's bus" underneath.
             buses, stops = {}, {}
             for m in (storage.get_all_members() if _cfg_bool(config, 'buses', False) else []):
-                if m.get('role') != 'child' or not m.get('bus_am_stop_time'):
-                    continue
-                if not bus_svc.bus_active(m):
-                    continue
-                pos = bus_svc.bus_position(m)
+                # ONE GATE: is there an entity to draw? (Household's rule,
+                # and it replaced four.) A morning stop time is a scheduling
+                # fact that said nothing about a live vehicle and made every
+                # PM-only rider invisible; an in-service sensor from an
+                # integration this house does not run answered False forever.
+                # `bus_map_position` takes either entity box and, failing
+                # both, finds the tracker in Home Assistant itself.
+                pos = bus_svc.bus_map_position(m)
                 if not pos:
                     continue
                 first = ((m.get('name') or '').split() or [''])[0]

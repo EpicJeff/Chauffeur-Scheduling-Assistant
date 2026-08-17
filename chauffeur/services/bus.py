@@ -49,6 +49,16 @@ say nothing at 8pm on a Sunday, so without a static time there is no evening
 digest line, no leave-by over the summer, and — because lateness is
 live-minus-static — no way to know the bus is late at all. Everything else
 about HCTB is discovered from the child's first name.
+
+**THAT IS ABOUT WHAT THIS MODULE SAYS, NOT ABOUT THE MAP** (v2.273.4,
+corrected on the household's report). Both reasons above are about SENTENCES
+— the digest line, leave-by, be-ready-at — and neither reaches a pin. Drawing
+a vehicle needs no baseline, because a pin is live by definition; and it needs
+no separate opt-in, because an entity carrying the bus's coordinates already
+is one. `bus_map_position` is the map's single gate: if there is an entity to
+draw, draw it. Requiring the morning time there also made every PM-only rider
+permanently invisible, which `pm_line` — accepting either time since it was
+written — never did.
 """
 import datetime
 
@@ -220,6 +230,99 @@ def bus_active(member):
         return False
 
 
+_discovered_tracker_cache = {}
+
+
+def discover_bus_tracker(member):
+    """Find this child's bus on the map without being told which entity.
+
+    The old ladder only ever tried ONE composed name
+    (`device_tracker.{first}_bus_location`), which is HCTB's shape and
+    nobody else's — so every other integration needed the entity typed in by
+    hand, and typing it into the wrong one of two adjacent boxes produced
+    silence. Home Assistant already knows: something in the state machine is
+    called a bus and carries coordinates.
+
+    Ranked rather than first-match, because a house can hold several: an
+    entity naming this child AND a bus beats a bare bus, and a device_tracker
+    beats a zone (a zone called "bus stop" is a place, not a vehicle — and it
+    is drawn separately). Anything scoring nothing is not returned, so this
+    never invents a pin out of an unrelated tracker."""
+    from services import ha_api
+    first = ((member.get('name') or '').split() or [''])[0].lower()
+    best, best_score = None, 0
+    try:
+        for st in ha_api.get_states() or []:
+            eid = str(st.get('entity_id') or '')
+            domain = eid.split('.')[0]
+            if domain not in ('device_tracker', 'person', 'sensor', 'zone'):
+                continue
+            attrs = st.get('attributes') or {}
+            if attrs.get('latitude') is None or attrs.get('longitude') is None:
+                continue
+            hay = f"{eid} {attrs.get('friendly_name') or ''}".lower()
+            if 'bus' not in hay:
+                continue
+            # A stop is a place; the vehicle is what this is looking for.
+            if 'stop' in hay:
+                continue
+            score = 1
+            if first and first in hay:
+                score += 2
+            if domain == 'device_tracker':
+                score += 1
+            if score > best_score:
+                best, best_score = eid, score
+    except Exception:
+        return None
+    return best
+
+
+def bus_map_position(member):
+    """Where to draw this child's bus, or None. **The map's only gate.**
+
+    Household's rule, and it replaced four: if there is an entity to draw,
+    draw it. Not a morning stop time (a scheduling fact that said nothing
+    about a live vehicle, and made every PM-only rider invisible), not an
+    in-service sensor from an integration this house does not run, not any
+    other opt-in — the entity existing IS the opt-in, and ticking "Show
+    school buses" on the card is the second one.
+
+    EITHER BOX COUNTS. Two fields sit next to each other in Config → People:
+    "Bus tracker" takes a device_tracker, "Where-the-bus-is sensor" takes an
+    address sensor. Only the first fed the map, so a household typing their
+    tracker into the second got a correct entity, a correct zone and no pin,
+    with nothing anywhere saying which box was wrong. Anything carrying
+    latitude/longitude is a position, whichever field it arrived in.
+
+    AND FAILING BOTH, it is discovered — see above. Explicit always wins;
+    discovery is what makes the feature work for a household that has not
+    yet been told there are boxes to fill in."""
+    for field in ('bus_tracker_entity', 'bus_location_entity'):
+        ent = (member.get(field) or '').strip()
+        if ent:
+            pos = _coords_of(ent)
+            if pos:
+                return pos
+    # HCTB's composed name, then a real search of the state machine. Cached
+    # per member: the search walks every entity and the board polls.
+    pos = _coords_of(_entity(member, 'bus_tracker_entity',
+                             'device_tracker.{prefix}_bus_location'))
+    if pos:
+        return pos
+    mid = member.get('id')
+    found = _discovered_tracker_cache.get(mid)
+    if found:
+        pos = _coords_of(found)
+        if pos:
+            return pos
+    found = discover_bus_tracker(member)
+    if found:
+        _discovered_tracker_cache[mid] = found
+        return _coords_of(found)
+    return None
+
+
 def bus_diagnosis(member) -> dict:
     """Why this child's bus is or is not on the map — every gate, named.
 
@@ -239,6 +342,12 @@ def bus_diagnosis(member) -> dict:
     return {
         'member': member.get('name'), 'member_id': member.get('id'),
         'is_child': member.get('role') == 'child',
+        # THE MAP'S ONE GATE. The AM time is reported beside it because it
+        # gates the scheduling lines (digest, leave-by, be-ready-at), which
+        # is a different question with a different answer — it has not
+        # gated the pin since v2.273.4.
+        'map_position': bus_map_position(member),
+        'discovered_tracker': discover_bus_tracker(member),
         'am_stop_time': member.get('bus_am_stop_time') or None,
         'tracker_entity': tracker,
         'tracker_exists': bool(ha_api.get_state(tracker)),

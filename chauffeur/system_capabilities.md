@@ -2692,6 +2692,17 @@ The console from a real custom board, which was worth more than the screenshot: 
 - **The rule, now enforced rather than written down**: a template under `components/` may not work out its own path depth. It is included by pages at one segment AND by `/board/{slug}` at two, so it cannot know; page templates still may, since they are only ever served at their own depth. `test_template_js.scenario_a_shared_component_never_works_out_its_own_path_depth` fails on any component that computes it, and on a `chfBase` that stops counting the board level. v2.207.0 fixed this once in home.html's head and wrote the rule in a comment; the rule could not hold while the formula lived in fifty-one copies.
 - Converted: `control_center` (×4 — the Argyle bar and its chat stream), `family_calendar` (×3, including the FullCalendar loader, which 404'd on every board), `moments_hearth` (×2), `family_map_core`, `music_widget`, `panel_enrol` (the pairing overlay — a refused board could not have paired), `schedule_timeline`, `status_tiers_editor`. Plus `panel_skin.html`'s emoji stylesheet, the Jinja-side twin: on a board every emoji fell back to whatever the panel's OS had, which on a Raspberry Pi is tofu boxes.
 
+### If there is an entity to draw, draw it (v2.273.4 — the bus map's one gate)
+
+The household's rule, after a correct tracker and a correct stop zone drew nothing twice. The pin had FOUR gates and every one of them failed silently:
+
+- **`bus_am_stop_time`** — a morning scheduling time gating an afternoon vehicle. Asked from the household ("that makes no sense") and they were right: the module docstring justifies that field as the opt-in and the static baseline, and both reasons are about what this module SAYS — the digest line, leave-by, be-ready-at. Neither reaches a pin, which is live by definition and needs no baseline. It also made every PM-only rider permanently invisible, which `pm_line` — accepting either time since it was written — never did.
+- **`bus_active`** — see v2.273.3; an in-service sensor most households do not publish.
+- **The wrong one of two adjacent boxes.** Config → People has "Bus tracker" (a device_tracker) beside "Where-the-bus-is sensor" (an address sensor). Only the first fed the map, so a tracker typed into the second produced a correct entity, a correct zone, and no pin, with nothing anywhere naming the mistake. **Either box now counts** — anything carrying latitude/longitude is a position, whichever field it arrived in.
+- **Being told at all.** `discover_bus_tracker` searches Home Assistant's own state machine for a coordinate-carrying entity whose id or name mentions a bus, ranked rather than first-match: this child's name beats a generic bus, a `device_tracker` beats a zone, and anything mentioning a *stop* is excluded because a stop is a place (and is drawn separately). Nothing bus-shaped means no pin — it never invents one from an unrelated tracker.
+
+`bus_map_position()` is the whole gate now, and the map draws what Home Assistant's own map draws, which is what anybody comparing the two screens expects. Tests: `test_bus` — either box draws, discovery ranks correctly and refuses to invent, and a house with nothing still gets None.
+
 ### A correct bus tracker that could never draw (v2.273.3)
 
 Reported: bus tracker and stop zone entities set from a working HA map, and no pin. The entities were right; the gate above them was not.
