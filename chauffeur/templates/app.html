@@ -726,22 +726,45 @@
             return !selectedDriverId && !!selectedMemberId;
         }
 
+        // The keeping-up adult (household's report, 2026-08-17): an adult
+        // or parent with NO driver profile and NO passenger identity — the
+        // grandparent two states away, the adult who doesn't drive. They are
+        // not scheduled, so My Day is an empty page and chores are somebody
+        // else's; they are here to keep up, which is exactly the Family tab
+        // the passenger shell was hiding from them.
+        function isKeepingUpAdult() {
+            if (selectedDriverId || !selectedMemberId) return false;
+            const m = membersData.find(x => x.id === selectedMemberId) || {};
+            const role = m.role || 'adult';
+            if (role === 'child' || role === 'helper') return false;
+            return !m.driver_id && !m.passenger_id;
+        }
+
         function applyRoleTabs() {
             const passenger = isPassengerMode();
             const helper = currentMemberRole() === 'helper';
-            document.getElementById('tab-myday').style.display = (passenger && !helper) ? 'flex' : 'none';
+            const keepingUp = isKeepingUpAdult();
+            document.getElementById('tab-myday').style.display = (passenger && !helper && !keepingUp) ? 'flex' : 'none';
             document.getElementById('tab-drives').style.display = passenger ? 'none' : 'flex';
-            document.getElementById('tab-family').style.display = (passenger || helper) ? 'none' : 'flex';
+            document.getElementById('tab-family').style.display = ((passenger && !keepingUp) || helper) ? 'none' : 'flex';
+            // A keeping-up PARENT keeps chores (they verify and pay out);
+            // a keeping-up adult is a spectator there and loses the tab.
+            const keepingUpSpectator = keepingUp && currentMemberRole() !== 'parent';
             // Helpers (external drivers) get their driving world + parent DMs
             // only: no family agenda, map, or music.
             document.getElementById('tab-map').style.display = helper ? 'none' : 'flex';
             document.getElementById('tab-music').style.display = helper ? 'none' : 'flex';
-            document.getElementById('tab-chores').style.display = helper ? 'none' : 'flex';
+            document.getElementById('tab-chores').style.display = (helper || keepingUpSpectator) ? 'none' : 'flex';
             const hiddenNow = helper
                 ? ['family', 'map', 'music', 'myday', 'chores']
-                : (passenger ? ['drives', 'family'] : ['myday']);
+                : keepingUp
+                    ? ['drives', 'myday'].concat(keepingUpSpectator ? ['chores'] : [])
+                    : (passenger ? ['drives', 'family'] : ['myday']);
             if (hiddenNow.includes(currentView)) {
-                currentView = passenger && !helper ? 'myday' : 'drives';
+                // The keeping-up adult LANDS on Family — it is what they
+                // opened the app for.
+                currentView = keepingUp ? 'family'
+                    : (passenger && !helper ? 'myday' : 'drives');
                 localStorage.setItem('chauffeur_view', currentView);
             }
             updateTabBar();
@@ -5130,7 +5153,11 @@
 
             // An errand is the household's own job, and a kid handing the family's
             // drives to the neighbours is not a decision they get to make.
-            const canHand = !ev.isErrand && ['parent', 'adult'].includes(currentMemberRole());
+            // Driver identity required too (household rule, 2026-08-17):
+            // in the Family view, non-drivers SEE events and drivers ACT on
+            // them — only Open in Maps and Moments are everyone's.
+            const canHand = !ev.isErrand && !!selectedDriverId
+                && ['parent', 'adult'].includes(currentMemberRole());
             btn.style.display = canHand ? 'flex' : 'none';
             if (!canHand) return;
             document.getElementById('em-assist-btn-label').textContent =
@@ -5290,7 +5317,9 @@
 
             const completeBtn = document.getElementById('em-complete-btn');
             if (completeBtn) {
-                if (ev.isErrand) {
+                // Same drivers-act rule: completing an errand is claiming
+                // the work happened, which is the runner's to say.
+                if (ev.isErrand && selectedDriverId) {
                     completeBtn.style.display = 'flex';
                     completeBtn.onclick = () => {
                         completeBtn.disabled = true;
@@ -5678,7 +5707,11 @@
         function buildTimeline() {
             const container = document.getElementById('days-container');
             const dId = selectedDriverId;
-            if (!scheduleData || !dId) return;
+            // The family agenda needs no driver identity — for the
+            // keeping-up adult this view IS the app, and the old guard
+            // returned a blank page to exactly the person the tab is for.
+            // Only the driver-scoped timeline still requires a driver.
+            if (!scheduleData || (!dId && currentView !== 'family')) return;
 
             const savedPaneScrolls = {};
             const existingPanes = container.querySelectorAll('[id^="pane-"]');

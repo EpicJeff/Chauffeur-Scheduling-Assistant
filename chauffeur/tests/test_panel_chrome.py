@@ -670,6 +670,46 @@ def scenario_a_vendored_grid_is_themed_for_the_panel_too():
           "the calendar's own toolbar buttons are unthemed on a panel")
 
 
+def scenario_the_keeping_up_adult_gets_the_family_shell():
+    """Reported from the household (2026-08-17): an adult with no driving
+    profile and no passenger identity opened the PWA and got an empty My Day
+    and no Family tab — the passenger shell hid the one view that is their
+    whole reason for opening the app. They are there to keep up: Family,
+    Chat, Map, Music.
+
+    Three pins, each half of a real failure: the shape is DETECTED
+    (isKeepingUpAdult), the landing view is Family (not a blank My Day),
+    and buildTimeline's driver guard lets the family agenda through — the
+    old guard returned a blank page to exactly the person the tab is for."""
+    app = tpl_source.read('app.html')
+    check('function isKeepingUpAdult' in app,
+          "the keeping-up-adult shape is no longer detected — non-driving, "
+          "non-passenger adults fall back into the passenger shell")
+    fn = app[app.index('function applyRoleTabs()'):]
+    fn = fn[:fn.index('function applyKidShell')]
+    check('isKeepingUpAdult()' in fn and "'family'" in fn,
+          "applyRoleTabs no longer routes the keeping-up adult to Family")
+    bt = app[app.index('function buildTimeline()'):]
+    bt = bt[:bt.index('savedPaneScrolls')]
+    check("currentView !== 'family'" in bt,
+          "buildTimeline requires a driver id again — the keeping-up "
+          "adult's Family tab renders as a blank page")
+    # And the second half of the household's rule: non-drivers SEE events,
+    # drivers ACT on them. Open in Maps and Moments stay everyone's; the
+    # hand-to-outside and errand-complete actions need a driver identity
+    # (the claim buttons always did).
+    assist = app[app.index('function populateEventAssist'):]
+    assist = assist[:assist.index('ASSIST_NOBODY')]
+    check('selectedDriverId' in assist,
+          "the hand-to-outside button lost its driver gate — spectators "
+          "can reassign the family's drives")
+    em = app[app.index('function openEventModal'):]
+    em = em[:em.index('function closeEventModal')]
+    check('ev.isErrand && selectedDriverId' in em,
+          "errand-complete lost its driver gate — spectators can claim "
+          "the family's work happened")
+
+
 def scenario_nobody_falls_between_the_two_lists_on_the_identity_screen():
     """Reported from the household: three people missing from Select Family
     Member, with no relation to who had an email or an account.
