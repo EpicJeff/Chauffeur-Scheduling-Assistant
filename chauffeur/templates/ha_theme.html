@@ -1,4 +1,29 @@
 <script>
+    // --- How deep this page is, computed ONCE for everything on it.
+    //
+    // Every component that fetches wrote its own copy of
+    // `pathname.endsWith('/') ? '../' : ''`, which is right for the
+    // one-segment routes (/home, /chores, /map) and WRONG for `/board/{slug}`,
+    // which is two. The result was a custom board where the emoji font, the
+    // panel profile, the SSE streams, the moments hearth, the chat stream and
+    // Leaflet itself all 404'd as `/board/api/...` and `/board/static/...`,
+    // each one failing quietly in its own way. v2.207.0 fixed the same trap in
+    // this page's <head> and wrote the rule down; the rule could not hold
+    // while the formula existed in fifty-one places.
+    //
+    // So it exists HERE, in the first script of every page's <head>, and the
+    // components read it. ONE extra level counted against the route rather
+    // than by counting real path segments — ingress serves everything under
+    // /api/hassio_ingress/<token>/ and must never be climbed out of.
+    window.chfBase = (function () {
+        try {
+            const p = window.location.pathname;
+            let base = p.endsWith('/') ? '../' : '';
+            if (/\/board\/[^/]+\/?$/.test(p)) base += '../';
+            return base;
+        } catch (e) { return ''; }
+    })();
+
     // --- Panel mode (?panel=true), resolved BEFORE anything reads the URL.
     //
     // A wall panel is a kiosk that you touch. Rather than teach ten pages a

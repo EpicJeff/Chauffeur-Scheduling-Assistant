@@ -1188,8 +1188,19 @@
                                      specific screen rather than a blind six digits. -->
                                 <p x-show="pairFound" class="text-xs text-green-300">
                                     A screen is waiting
-                                    <span x-show="pairFound && pairFound.context && pairFound.context.from"
-                                          x-text="'(from ' + pairFound.context.from + ')'"></span>.
+                                    <!-- Guarded INSIDE x-text, because x-show
+                                         does not stop x-text from evaluating —
+                                         it only toggles display. With
+                                         pairFound null (which is its resting
+                                         state, i.e. always until somebody
+                                         types a code) this threw on every
+                                         render of the People tab, and one
+                                         Alpine expression error takes the
+                                         whole component's bindings with it.
+                                         The same trap this file already
+                                         documents on the HA status line. -->
+                                    <span x-text="(pairFound && pairFound.context && pairFound.context.from)
+                                            ? '(from ' + pairFound.context.from + ')' : ''"></span>.
                                 </p>
                                 <p x-show="pairCode.length === 6 && !pairFound && !pairBusy"
                                    class="text-xs text-amber-300">

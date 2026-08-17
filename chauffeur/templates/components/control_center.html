@@ -589,8 +589,9 @@ function closeChatHelpModal() {
             // Through apiBase like every other call in this file. Bare, it
             // resolved correctly from a one-segment page and nowhere else —
             // the control centre is included on `/board/{slug}` too, where a
-            // relative `api/…` lands a directory short.
-            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+            // relative `api/…` lands a directory short. ha_theme.html works the
+            // climb out once as window.chfBase; every site here reads that.
+            const apiBase = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
             const res = await fetch(`${apiBase}api/telemetry`);
             const events = await res.json();
             const list = document.getElementById('notif-list');
@@ -628,7 +629,7 @@ function closeChatHelpModal() {
 
     async function fetchMapsStatsDashboard() {
         try {
-            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+            const apiBase = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
             const res = await fetch(`${apiBase}api/maps/stats`);
             if (!res.ok) return;
             let resData = await res.json();
@@ -884,7 +885,7 @@ function closeChatHelpModal() {
 
         let keepLoading = false;
         try {
-            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+            const apiBase = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
             const pageContext = {
                 pathname: window.location.pathname,
                 search: window.location.search,
@@ -1249,7 +1250,7 @@ function closeChatHelpModal() {
 
     // Initialize Chat Stream SSE Listener
     function initChatStream() {
-        const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+        const apiBase = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
         // EventSource can set no headers; the token rides the query string
         // (nav's chfAuthUrl) so the Argyle bar's read side survives the flip.
         const streamUrl = window.chfAuthUrl

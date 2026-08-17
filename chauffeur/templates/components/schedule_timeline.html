@@ -103,7 +103,8 @@
         }
         async function setOptionalDecisionFromChip(evId, decision) {
             closeOptionalDecision();
-            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+            // ha_theme.html works the path climb out once, board level included.
+            const apiBase = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
             try {
                 const res = await fetch(`${apiBase}api/events/${encodeURIComponent(evId)}/optional_decision`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },

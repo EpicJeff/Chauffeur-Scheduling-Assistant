@@ -59,7 +59,8 @@
     <script>
         function statusTiersEditor() {
             return {
-                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                // ha_theme.html works the path climb out once, board included.
+                apiBase: (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : ''),
                 kind: '{{ tier_kind | default("chore") }}',
                 tiers: [],
                 async init() {

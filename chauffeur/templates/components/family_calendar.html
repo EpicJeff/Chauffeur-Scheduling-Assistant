@@ -468,12 +468,8 @@ function loadFullCalendar() {
         // Relative, like every other asset here: under Home Assistant ingress
         // the page lives below /api/hassio_ingress/<token>/ and a rooted path
         // climbs out of the add-on.
-        // The same climb as home.html's apiBase: /board/{slug} is two
-        // segments deep, and counting against the one-segment case keeps
-        // an ingress prefix un-climbed.
-        const p = window.location.pathname;
-        let up = p.endsWith('/') ? '../' : '';
-        if (/\/board\/[^/]+\/?$/.test(p)) up += '../';
+        // The climb itself is ha_theme.html's window.chfBase, worked out once.
+        let up = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
         s.src = up + 'static/vendor/fullcalendar.global.min.js';
         s.onload = () => resolve();
         s.onerror = () => reject(new Error('FullCalendar failed to load'));
@@ -1302,7 +1298,7 @@ async function mountFamilyCalendar(options = {}) {
         toolbar: true,
         legend: false,
         details: false,
-        base: (window.location.pathname.endsWith('/') ? '../' : ''),
+        base: (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : ''),
         only: null,
         agendaDays: 7,
         carryParams: '',
@@ -1368,7 +1364,7 @@ async function mountFamilyCalendar(options = {}) {
  */
 async function buildCalendarEvents(startStr, endStr, opts = {}) {
     const {
-        base = (window.location.pathname.endsWith('/') ? '../' : ''),
+        base = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : ''),
         carryParams = '',
         aliases = new Map(),
         hidden = new Set(),

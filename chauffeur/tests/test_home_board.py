@@ -976,19 +976,27 @@ def scenario_a_board_two_segments_deep_can_still_load_its_map():
     overlay then explained the wrong thing entirely.
 
     v2.207.0 fixed exactly this for home.html's own head and wrote down the
-    rule; this component predated it. Pinned as the SHAPE of the climb, so a
-    future edit cannot quietly drop the board level again."""
+    rule; this component predated it. The climb itself is one value now —
+    ha_theme.html's window.chfBase, in every page's head — so this pins both
+    halves: the component reads it, and it still counts the board level."""
     import os
-    src = open(os.path.join(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))), 'templates', 'components',
-        'family_map_core.html'), encoding='utf-8').read()
+    tpl = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'templates')
+    src = open(os.path.join(tpl, 'components', 'family_map_core.html'),
+               encoding='utf-8').read()
     frag = src[src.index('const apiBase'):src.index('function esc')]
+    check('window.chfBase' in frag,
+          "the map component's apiBase stopped reading the shared "
+          "window.chfBase — a locally guessed climb is what 404'd before")
+    theme = open(os.path.join(tpl, 'ha_theme.html'), encoding='utf-8').read()
+    shared = theme[theme.index('window.chfBase ='):]
+    shared = shared[:shared.index('</script>')]
     # 'board' unescaped rather than the literal path: the test is asserting
     # that the climb KNOWS about the board route, and the regex that does it
     # spells its slashes `\/`.
-    check('board' in frag and "+= '../'" in frag,
-          "the map component's apiBase no longer climbs out of /board/{slug} "
-          "— its Leaflet and its fetches 404 on every custom board")
+    check('board' in shared and "+= '../'" in shared,
+          "window.chfBase no longer climbs out of /board/{slug} — Leaflet and "
+          "every component's fetches 404 on every custom board")
 
 
 def scenario_the_drives_tile_hands_over_a_schedule_not_a_drawing():

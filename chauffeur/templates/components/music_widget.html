@@ -295,7 +295,8 @@
         if (typeof showGlobalAlert === 'function') showGlobalAlert(msg);
     }
 
-    const _mwApiBase = window.location.pathname.endsWith('/') ? '../' : '';
+    // ha_theme.html works the path climb out once, board level included.
+    const _mwApiBase = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
     // Everything that is not this widget's own drawing now lives in
     // static/music_logic.js, shared with the board's music card. These stay as
     // named wrappers so the 600 lines around them read exactly as before.

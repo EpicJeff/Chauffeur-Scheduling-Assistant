@@ -18,7 +18,8 @@
 <script>
     (function () {
         if (new URLSearchParams(window.location.search).get('kiosk') !== 'true') return;
-        const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+        // ha_theme.html works the path climb out once, board level included.
+        const apiBase = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
         const SEEN_KEY = 'chauffeur_moments_seen_ts';
 
         function esc(s) {
@@ -147,7 +148,7 @@
         };
 
         function galleryHref() {
-            const pageBase = window.location.pathname.endsWith('/') ? '../' : '';
+            const pageBase = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
             // nav.html's param propagation runs at DOMContentLoaded and can't
             // see this link (rendered on poll), so carry the params here.
             return `${pageBase}moments${window.location.search}`;

@@ -115,7 +115,8 @@ function panelEnrol() {
       return id;
     },
 
-    base() { return window.location.pathname.endsWith('/') ? '../' : ''; },
+    // ha_theme.html works the path climb out once, board level included.
+    base() { return (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : ''); },
 
     async ask() {
       try {

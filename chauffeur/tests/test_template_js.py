@@ -272,6 +272,91 @@ def _state_literal(src, name):
     return _block_from(src, src.index('{', m.start())) if m else ''
 
 
+def scenario_a_shared_component_never_works_out_its_own_path_depth():
+    """`/board/{slug}` is TWO path segments and every other page route is one.
+
+    Fifty-one places in this repo computed their own base with
+    `pathname.endsWith('/') ? '../' : ''`, which is right for /home and
+    /chores and wrong for every custom board — so on a board the emoji font,
+    the panel profile, both SSE streams, the moments hearth and Leaflet
+    itself all asked for `/board/api/...` and `/board/static/...` and 404'd,
+    each failing quietly in its own way. v2.207.0 fixed this once in
+    home.html's head and wrote down the rule; the rule could not hold while
+    the formula lived in fifty-one copies.
+
+    So: `ha_theme.html` computes `window.chfBase` in the first script of
+    every page's head, and SHARED COMPONENTS read it. Page templates may
+    still work out their own — they know their own depth, and are only ever
+    served at it — but a component is included by pages at several depths
+    and by the board, so it cannot know.
+    """
+    import re as _re
+    NAIVE = _re.compile(r"endsWith\('/'\)\s*\?\s*'\.\./'\s*:\s*''")
+    theme = open(os.path.join(TPL, 'ha_theme.html'), encoding='utf-8').read()
+    check('window.chfBase' in theme,
+          "ha_theme.html no longer defines window.chfBase — every shared "
+          "component that reads it now computes an empty base")
+    check('board' in theme[theme.index('window.chfBase'):][:600],
+          "window.chfBase stopped counting the /board/{slug} level, which is "
+          "the entire reason it exists")
+    offenders = []
+    for path in sorted(glob.glob(os.path.join(TPL, 'components', '*.html'))):
+        if NAIVE.search(open(path, encoding='utf-8').read()):
+            offenders.append(os.path.basename(path))
+    check(not offenders,
+          "shared components computing their own path depth — they are "
+          "included at several depths AND on /board/{slug}, so they must "
+          "read window.chfBase instead:\n  " + "\n  ".join(offenders))
+
+
+def scenario_x_show_does_not_guard_x_text_on_the_same_element():
+    """The blank-page family's newest member, and its third sighting.
+
+    `x-show` only toggles DISPLAY — the sibling `x-text` still evaluates, on
+    every render, whether or not the element is visible. So this:
+
+        <span x-show="pairFound && pairFound.context"
+              x-text="'(from ' + pairFound.context.from + ')'">
+
+    throws `Cannot read properties of null` continuously while `pairFound` is
+    null, which is its resting state — and ONE Alpine expression error takes
+    the whole component's bindings down with it, which is how a config tab
+    renders as nothing. config.html already documents this trap on its HA
+    status line; it was reintroduced on the pairing box regardless, which is
+    what makes it a test rather than a fix.
+
+    The rule: if an element's `x-show` has to test a root for existence
+    before dereferencing it, its own `x-text` must carry the same guard.
+    """
+    import re as _re
+    TAG = _re.compile(r'<[a-zA-Z][^>]*x-(?:show|text)=[^>]*>', _re.S)
+    broken = []
+    for path in sorted(glob.glob(os.path.join(TPL, '**', '*.html'), recursive=True)):
+        name = os.path.relpath(path, TPL)
+        src = open(path, encoding='utf-8').read()
+        for tag in TAG.findall(src):
+            show = _re.search(r'x-show="([^"]*)"', tag)
+            text = _re.search(r'x-text="([^"]*)"', tag)
+            if not show or not text:
+                continue
+            show_expr, text_expr = show.group(1), text.group(1)
+            # Only the shape that actually bites: x-show guarding a root
+            # (`foo && foo.bar`) whose sub-property x-text then reads.
+            for root in set(_re.findall(r'([A-Za-z_$][\w$]*)\s*&&', show_expr)):
+                if not _re.search(_re.escape(root) + r'\s*\.\s*\w+\s*\.', text_expr):
+                    continue          # not dereferencing two levels deep
+                # A guard of its own — a ternary or its own && chain — is
+                # exactly the fix, so an expression carrying one is fine.
+                if '?' in text_expr or '&&' in text_expr:
+                    continue
+                broken.append(f"{name}: x-show guards `{root}` but x-text "
+                              f"dereferences it unguarded — {text_expr[:60]}")
+    check(not broken,
+          "x-show does not stop x-text evaluating, so these throw whenever "
+          "the guarded value is null — and one Alpine error blanks the whole "
+          "component:\n  " + "\n  ".join(broken))
+
+
 def scenario_a_page_carrying_alpine_components_loads_alpine():
     """The sixth member of the blank-page family, S8's edition.
 
