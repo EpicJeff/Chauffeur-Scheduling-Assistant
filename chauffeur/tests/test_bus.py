@@ -515,7 +515,76 @@ def scenario_the_bus_is_out_sensor_is_found_not_assumed():
         check(bus.bus_active(dict(KID)) is False, "no entity did not resolve to False")
 
 
+def scenario_a_live_tracker_is_a_running_bus_when_nothing_says_otherwise():
+    """Reported from the household: correct tracker, correct stop zone, and
+    no pin ever. Every discovery candidate above is shaped like HCTB's, so a
+    house tracking its bus by any other integration got `active_entity` None
+    and `bus_active` False forever — the exact silent-whole-feature-off
+    failure the candidate list's own comment warns about, one level up.
+
+    A device_tracker that reported ninety seconds ago IS a bus that is
+    running. The freshness window keeps the reason this was ever a gate: no
+    stale pin claiming a bus that went home hours ago."""
+    import datetime as _dt
+    bus._active_entity_cache.clear()
+    now = _dt.datetime.now(_dt.timezone.utc)
+    kid = {**KID, 'bus_tracker_entity': 'device_tracker.first_student_bus'}
+
+    def tracker(ago_secs, lat=35.7, lon=-78.7):
+        stamp = (now - _dt.timedelta(seconds=ago_secs)).isoformat()
+        def get(eid):
+            if eid == 'device_tracker.first_student_bus':
+                return {'state': 'not_home', 'last_updated': stamp,
+                        'attributes': {'latitude': lat, 'longitude': lon}}
+            return None            # nothing HCTB-shaped exists on this house
+        return mock.patch('services.ha_api.get_state', side_effect=get)
+
+    with tracker(90):
+        check(bus.bus_active(kid) is True,
+              "a tracker reporting 90 seconds ago did not read as a bus that "
+              "is out — the whole live layer stays off for any non-HCTB house")
+    with tracker(6 * 3600):
+        check(bus.bus_active(kid) is False,
+              "a six-hour-old fix read as a running bus — that is the stale "
+              "pin this gate exists to prevent")
+
+    # An in-service entity that EXISTS still wins outright, including off.
+    bus._active_entity_cache.clear()
+    def with_sensor(eid):
+        if eid == 'binary_sensor.addison_bus_ignition_on':
+            return {'state': 'off'}
+        if eid == 'device_tracker.first_student_bus':
+            return {'state': 'not_home', 'last_updated': now.isoformat(),
+                    'attributes': {'latitude': 35.7, 'longitude': -78.7}}
+        return None
+    with mock.patch('services.ha_api.get_state', side_effect=with_sensor):
+        check(bus.bus_active(kid) is False,
+              "a fresh tracker overrode an in-service sensor that says off — "
+              "an entity that exists is authoritative")
+
+
+def scenario_the_bus_says_which_gate_it_failed():
+    """Every gate here fails silently and they all look identical from a
+    wall. The diagnosis is the difference between reading that and guessing:
+    it names the tracker it looked for, whether that entity exists, whether
+    it carries coordinates, how long ago it reported, the in-service entity
+    and its state — and the card option that is off by default."""
+    bus._active_entity_cache.clear()
+    with mock.patch('services.ha_api.get_state', return_value=None):
+        d = bus.bus_diagnosis({**KID, 'bus_tracker_entity': 'device_tracker.nope'})
+    check(d['tracker_entity'] == 'device_tracker.nope'
+          and d['tracker_exists'] is False and d['tracker_has_coords'] is False,
+          f"the diagnosis must name what it looked for and what it found: {d}")
+    check(d['active'] is False and d['active_entity'] is None,
+          f"and say the bus is not reading as out: {d}")
+    check('Show school buses' in d['note'],
+          "the diagnosis must mention the card option that is off by "
+          "default — it is the likeliest miss and no entity reveals it")
+
+
 SCENARIOS = [
+    scenario_a_live_tracker_is_a_running_bus_when_nothing_says_otherwise,
+    scenario_the_bus_says_which_gate_it_failed,
     scenario_static_morning_launch,
     scenario_car_ride_wins_the_morning,
     scenario_live_estimate_only_today_and_active,

@@ -163,23 +163,97 @@ def active_entity(member):
     return None
 
 
+# How recently a tracker must have reported for its position to count as a
+# bus that is OUT, when nothing publishes an in-service flag. Generous enough
+# to cover a slow GPS update, far short of the hours that make a pin a lie.
+TRACKER_FRESH_SECS = 10 * 60
+
+
+def _reported_secs_ago(entity_id):
+    """How long since an entity last said anything, or None if unknowable."""
+    try:
+        from services import ha_api
+        st = ha_api.get_state(entity_id) or {}
+        lu = st.get('last_updated') or st.get('last_changed')
+        if not lu:
+            return None
+        ts = datetime.datetime.fromisoformat(
+            str(lu).replace('Z', '+00:00')).timestamp()
+        return max(0.0, datetime.datetime.now().timestamp() - ts)
+    except (TypeError, ValueError, Exception):
+        return None
+
+
 def bus_active(member):
-    """True while the tracker says the bus is actually out.
+    """True while the bus is actually out.
 
     An explicit `bus_active_entity` is authoritative on any platform; failing
     that the name is discovered, because districts and integration versions
     disagree about both the domain and the wording. Live estimates and every
     B3 event are only trusted while this holds.
-    """
+
+    AND WHEN NOTHING PUBLISHES ONE, the tracker answers for itself (added
+    after a household set a correct tracker and a correct stop zone and got
+    no pin, ever). Every discovery candidate above is shaped like HCTB's, so
+    a house tracking its bus by any other integration had `active_entity`
+    return None and this return False forever — silently disabling the whole
+    live layer, which is the failure the candidate list's own comment warns
+    about, one level up. A device_tracker that reported ninety seconds ago is
+    a bus that is running; the freshness window is what keeps the anti-stale
+    rule that made this a gate in the first place. An in-service entity that
+    EXISTS still wins, including when it says off."""
     try:
         from services import ha_api
         ent = active_entity(member)
-        if not ent:
+        if ent:
+            st = ha_api.get_state(ent)
+            return bool(st and str(st.get('state')).lower() in _ON_STATES)
+        tracker = _entity(member, 'bus_tracker_entity',
+                          'device_tracker.{prefix}_bus_location')
+        if not bus_position(member):
             return False
-        st = ha_api.get_state(ent)
-        return bool(st and str(st.get('state')).lower() in _ON_STATES)
+        ago = _reported_secs_ago(tracker)
+        # Unknowable timestamp: trust the coordinates rather than drop the
+        # feature — the same call `drive_arrival._fresh_position` makes.
+        return ago is None or ago <= TRACKER_FRESH_SECS
     except Exception:
         return False
+
+
+def bus_diagnosis(member) -> dict:
+    """Why this child's bus is or is not on the map — every gate, named.
+
+    Built because the silence here is indistinguishable from the feature
+    working: a bus that is never out and a bus we cannot see look identical
+    on a wall, so a household with correct entities and one unticked box has
+    nothing to read. This is that reading."""
+    from services import ha_api
+    tracker = _entity(member, 'bus_tracker_entity',
+                      'device_tracker.{prefix}_bus_location')
+    stop_ent = (member.get('bus_stop_entity') or '').strip() \
+        or (member.get('bus_near_zone') or '').strip()
+    act = active_entity(member)
+    pos = bus_position(member)
+    stop = stop_position(member) if stop_ent else None
+    ago = _reported_secs_ago(tracker)
+    return {
+        'member': member.get('name'), 'member_id': member.get('id'),
+        'is_child': member.get('role') == 'child',
+        'am_stop_time': member.get('bus_am_stop_time') or None,
+        'tracker_entity': tracker,
+        'tracker_exists': bool(ha_api.get_state(tracker)),
+        'tracker_has_coords': bool(pos),
+        'tracker_reported_secs_ago': round(ago) if ago is not None else None,
+        'stop_entity': stop_ent or None,
+        'stop_has_coords': bool(stop),
+        'active_entity': act,
+        'active_state': (ha_api.get_state(act) or {}).get('state') if act else None,
+        'active': bus_active(member),
+        # The one that is not about entities at all, and the likeliest miss:
+        # the map card ships with school buses switched OFF.
+        'note': "The map card also needs its 'Show school buses' option "
+                "switched on — it is off by default.",
+    }
 
 
 def _entity(member, field, default_suffix):

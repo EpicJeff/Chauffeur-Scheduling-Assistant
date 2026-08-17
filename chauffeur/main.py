@@ -14715,6 +14715,21 @@ def force_refresh_schedule(background_tasks: BackgroundTasks, start_date: str = 
 
 
 
+@app.get("/api/admin/bus_diagnose")
+def bus_diagnose():
+    """Why each child's bus is or is not on the map, gate by gate.
+
+    Every condition here fails SILENTLY and they all look identical from a
+    wall — a bus that is not running, a tracker with no coordinates, an
+    in-service entity that does not exist, an unset AM stop time and an
+    unticked card option all produce exactly no pin. This endpoint is the
+    difference between reading that and guessing at it."""
+    from services import bus as bus_svc
+    return {'children': [bus_svc.bus_diagnosis(m)
+                         for m in storage.get_all_members()
+                         if m.get('role') == 'child']}
+
+
 @app.get("/api/admin/auth_audit")
 def auth_audit():
     """What the auth guard WOULD have refused, worst first (auth arc S1).
