@@ -149,6 +149,19 @@ def scenario_e2_the_lanes_real_callers_actually_use():
           "the chat stream lane opened the Assist webhook")
 
 
+def scenario_e3_no_cors_wildcard_ever_again():
+    """S8 took CORS off `*`. The old config allowed credentials, which
+    Starlette honours by ECHOING any Origin — every website on earth could
+    script this API with the visitor's tokens attached. Every real caller is
+    same-origin or server-side, so there is no CORS middleware at all; a
+    future native wrapper gets a deliberate allowlist, not a wildcard."""
+    import main
+    for m in main.app.user_middleware:
+        check('CORSMiddleware' not in str(getattr(m, 'cls', '')),
+              "CORS middleware is back — if a native app needs it, allowlist "
+              "its origin explicitly, never '*' with credentials")
+
+
 def scenario_f_the_tunnel_check_fails_toward_asking():
     """Absence of forwarding headers means the LAN; anything that looks
     forwarded is treated as the internet, never the other way round."""

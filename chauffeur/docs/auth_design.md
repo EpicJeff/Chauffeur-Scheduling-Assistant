@@ -243,9 +243,11 @@ evidence, not on a hunch.
 - **Argyle gets a grace window, then a service token** (Decision 6) — nothing
   breaks in the sitting where enforcement flips.
 
-Still to fix, not a question: **rate limiting is in-memory**
-(`_PIN_ATTEMPTS`) and resets on every add-on restart. It must be persisted,
-and per-IP as well as per-identity, before anything faces the internet.
+~~Still to fix, not a question: rate limiting is in-memory.~~ **Done in S4**
+(v2.250.0): persisted in storage, per-IP as well as per-identity, doubling
+backoff. The IP is read from `CF-Connecting-IP` only — `X-Forwarded-For` is
+client-supplied, and a rate limit keyed on something the attacker can rotate
+is decoration.
 
 ## Slices
 
@@ -268,6 +270,13 @@ and per-IP as well as per-identity, before anything faces the internet.
 - **S7 — the service token** and the component update; grace window ends.
 - **S8 — flip enforcement**, tighten CORS off `*`, token expiry and
   revocation, and the security section in `system_capabilities.md`.
+  **BUILT DARK v2.260.0–v2.265.0** (route-table fixes from the live audit,
+  query-string tokens for headerless channels, 90-day expiry + sign-out-
+  everywhere, Decision 9 guard, the Enforcement control with the audit
+  beside it, login-replaces-picker on untrusted ground, Alpine on every
+  page so a refused screen can always draw its way in, CORS removed). The
+  flip itself is the household's act, on evidence — the checklist lives in
+  `system_capabilities.md` → "Flip-day checklist".
 
 Accounts grew this from six slices to eight, and S3 is the largest single
 piece of work in it. That is the honest cost of the decision, and it buys the

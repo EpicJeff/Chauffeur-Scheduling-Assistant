@@ -8,7 +8,6 @@ from fastapi import FastAPI, BackgroundTasks, Response, HTTPException, WebSocket
 # every WebSocket handshake in the app raised TypeError before reaching it.
 from starlette.requests import HTTPConnection
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
 from fastapi.encoders import jsonable_encoder
@@ -1032,13 +1031,16 @@ async def slow_request_logger(request, call_next):
         print(f"[SLOW REQUEST] {request.method} {request.url.path} took {dt:.2f}s")
     return response
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS: none, deliberately (auth arc S8). The old config was
+# `allow_origins=["*"]` with credentials — which Starlette honours by echoing
+# whatever Origin arrives, i.e. "any website may script this API with the
+# visitor's tokens attached". Nothing needs it: every browser surface is
+# served BY this app and fetches relative URLs (same-origin needs no CORS),
+# the HA component calls server-side where CORS does not apply, and HA card
+# assets are proxied through this origin precisely so the question never
+# comes up. A future native wrapper (Capacitor's capacitor://localhost) is a
+# genuine foreign origin and gets a deliberate allowlist HERE when it ships —
+# not a wildcard left open for years in case it someday does.
 
 @app.middleware("http")
 async def add_no_cache_headers(request: Request, call_next):

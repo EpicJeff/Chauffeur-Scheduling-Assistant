@@ -2595,3 +2595,30 @@ The pairing-overlay gap recorded at v2.256.1, closed. Seven templates — calend
 - All seven now load `static/vendor/alpine.min.js`, which activates exactly the two shared components: the pairing overlay everywhere, and the admin gate on the dashboard (bringing it to parity with config, which always had Alpine). Their own scripts stay plain JS.
 - **The generic rule is pinned**, not the seven names: `test_template_js.scenario_a_page_carrying_alpine_components_loads_alpine` fails any assembled page whose markup binds `x-data` without loading Alpine — the sixth member of the blank-page family, caught structurally.
 - `panel_enrol.html`'s KNOWN GAP comment is retired.
+
+## CORS off `*` (v2.265.0 — auth arc S8, part 6)
+
+The old middleware was `allow_origins=["*"]` **with credentials**, which Starlette honours by echoing whatever Origin arrives — any website could script this API with the visitor's tokens attached. Removed outright rather than narrowed: every browser surface is served by this app and fetches relative URLs (same-origin needs no CORS), the HA component calls server-side where CORS does not apply, and HA card assets are proxied through this origin precisely so the question never comes up. A future native wrapper (Capacitor's `capacitor://localhost`) is a genuine foreign origin and gets a deliberate allowlist when it ships. Pinned by `test_auth.scenario_e3`.
+
+## Security — how the house is locked (auth arc, standing reference)
+
+The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.
+
+**The model.** Five tiers resolved per request (`services/auth.py identify()`): `public`, `member` (member token), `parent` (member token + role), `device` (enrolled panel token), `service` (Argyle's token, or the dated local-origin grace while `service_local_grace` is on). Route → allowed-tiers lives in ONE ordered table (`RULES`); a test fails on any unclassified route. Tiers are SETS, not ranks. Shells are public, data is not: every HTML page answers so a refused browser can draw its way in (sign-in overlay, pairing code); every `/api` route is gated. Channels that cannot set headers — EventSource, WebSocket, `<img>`/CSS urls — carry the token on the query string via `chfAuthUrl`.
+
+**Credentials.** Passwords: PBKDF2-SHA256, 260k iterations, per-record salt; parents must hold one. PINs: 4–8 digits, hashed, only ever accepted on **trusted ground** — a device vouched by a password sign-in or a parent, the LAN, or HA ingress (`_trusted_ground`). Member sessions: 90 days (`MEMBER_TOKEN_TTL_SECONDS`), removed at expiry; "Sign out everywhere" on the member card kills sessions AND the member's personal device vouches. Panels hold long-lived device tokens (a place, not a person; never admin). Argyle holds a service token minted on Config → People. Rate limiting is persisted, per-member AND per-IP (`CF-Connecting-IP` only — `X-Forwarded-For` is attacker-controlled), with doubling backoff.
+
+**The front door.** Untrusted ground: email+password (the PWA login screen; signing in vouches the device). Trusted ground: the faces picker with PIN re-auth. `GET /api/members`/`/api/drivers` answer only resolved tiers or anonymous-on-trusted-ground — the family's names are not public data.
+
+**The flip.** `auth_enforce` (Config → People → Enforcement) with the audit report beside it. Decision 9: the write refuses while any active member holds neither password nor PIN, naming them. OFF is never guarded — it is the emergency lever.
+
+**Honest risks, recorded.** (1) Password reset by email makes the reset mailbox a household master key — it is a curated forwarding address, but treat it as a credential. (2) `arrived_via_ingress` is sound behind cloudflared specifically; behind a plain reverse proxy that strips nothing, ingress headers could be forged from outside. (3) Query-string tokens (SSE/WS/images) can land in server logs; acceptable self-hosted, worth remembering if logs ever leave the box. (4) `service_local_grace` left ON is a permanently trusted LAN — turn it off once the HA integration holds its token. (5) FastAPI `/docs`/`/redoc`/`/openapi.json` are parents-only, not disabled.
+
+### Flip-day checklist (the user's own act, on evidence — never in a build sitting)
+
+1. **Walk the house and pair every screen.** Pairing is only OFFERED on refusal, so before the flip, panels won't ask. Practical order: flip on (step 6), then walk to each wall panel/kiosk and reload it — each shows a six-digit code; approve it from the phone push or Config → People → Trusted devices. Alternatively pre-trust each screen by signing in with a password on it once.
+2. **Sign in on the admin surfaces** (dashboard and config now both gate properly) and on each family phone (tap-a-face on trusted ground already minted real tokens — most phones are fine).
+3. **Verify Argyle carries its token**: generate on Config → People → Argyle, paste into the HA integration, then use Argyle by voice and check `/api/admin/auth_audit` shows no anonymous `/api/chat` rows; then turn OFF `service_local_grace`.
+4. **Confirm every member holds a password or a PIN** — the flip refuses and names anyone who doesn't (Decision 9), so this step is enforced, not remembered.
+5. **Evidence window**: reset the audit ("Start a fresh window"), live normally for a few days — panels at 6am, phones, Argyle, the share sheet, the bus map — then read the report. Quiet is the evidence.
+6. **Flip** on Config → People → Enforcement. Then walk the house (step 1's codes appear now if any screen was missed). Anything unexpected: the same switch turns straight back off, refused by nothing.
