@@ -514,6 +514,20 @@
                     <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
                     Mark as Completed
                 </button>
+                <!-- The retro-split: an OPTION, never a prompt — in the order
+                     a driver would use them, above Cancel like every other
+                     action. Shown only where it means something (see
+                     retroSplitState). -->
+                <button onclick="declareNotStaying()"
+                    class="btn-not-staying w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-amber-600/50 hover:bg-amber-900/20 active:bg-amber-600 text-amber-400 font-bold text-lg shadow-lg transition-colors hidden">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"></polyline><path d="M20 20v-7a4 4 0 0 0-4-4H4"></path></svg>
+                    Not Staying — Schedule Pick-up
+                </button>
+                <button onclick="declareStaying()"
+                    class="btn-staying-after-all w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-amber-600/50 hover:bg-amber-900/20 active:bg-amber-600 text-amber-400 font-bold text-lg shadow-lg transition-colors hidden">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+                    Staying — Cancel Pick-up
+                </button>
                 <button onclick="closeActionSheet()"
                     class="w-full py-4 mt-2 rounded-xl bg-transparent text-gray-400 active:text-gray-100 font-bold text-lg">
                     Cancel
@@ -536,22 +550,23 @@
                     <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
                     Waze
                 </button>
+                <!-- Same two retro-split actions in mid-drive state, same
+                     position: after the actions, above Cancel. -->
+                <button onclick="declareNotStaying()"
+                    class="btn-not-staying w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-amber-600/50 hover:bg-amber-900/20 active:bg-amber-600 text-amber-400 font-bold text-lg shadow-lg transition-colors hidden">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"></polyline><path d="M20 20v-7a4 4 0 0 0-4-4H4"></path></svg>
+                    Not Staying — Schedule Pick-up
+                </button>
+                <button onclick="declareStaying()"
+                    class="btn-staying-after-all w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-amber-600/50 hover:bg-amber-900/20 active:bg-amber-600 text-amber-400 font-bold text-lg shadow-lg transition-colors hidden">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+                    Staying — Cancel Pick-up
+                </button>
                 <button onclick="closeActionSheet()"
                     class="w-full py-4 mt-2 rounded-xl bg-transparent text-gray-400 active:text-gray-100 font-bold text-lg">
                     Cancel
                 </button>
             </div>
-            <!-- The retro-split: an OPTION, never a prompt. The household's
-                 rule for this feature — nobody pre-plans everything, so the
-                 sheet quietly offers real-time opt-in and asks nothing. -->
-            <button id="btn-not-staying" onclick="declareNotStaying()"
-                class="w-full py-3 mt-1 rounded-xl text-sm font-bold text-amber-300/80 active:text-amber-200 hidden">
-                ↩ Not staying? Set up the pick-up drive
-            </button>
-            <button id="btn-staying-after-all" onclick="declareStaying()"
-                class="w-full py-3 mt-1 rounded-xl text-sm font-bold text-amber-300/80 active:text-amber-200 hidden">
-                🪑 Staying after all — cancel the separate pick-up
-            </button>
         </div>
     </div>
 
@@ -4836,11 +4851,12 @@
             // The retro-split option, shown only where it means something:
             // an inbound leg of MY driven, unsplit event offers "not
             // staying"; a slice of an already-split one offers the undo.
+            // One copy per sheet state (class, not id), same rules.
             const retro = retroSplitState();
-            document.getElementById('btn-not-staying').classList.toggle(
-                'hidden', retro !== 'can_split');
-            document.getElementById('btn-staying-after-all').classList.toggle(
-                'hidden', retro !== 'can_stay');
+            document.querySelectorAll('.btn-not-staying').forEach(b =>
+                b.classList.toggle('hidden', retro !== 'can_split'));
+            document.querySelectorAll('.btn-staying-after-all').forEach(b =>
+                b.classList.toggle('hidden', retro !== 'can_stay'));
 
             const sheet = document.getElementById('action-sheet');
             const content = document.getElementById('action-sheet-content');
