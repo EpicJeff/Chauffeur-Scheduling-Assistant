@@ -2600,6 +2600,14 @@ The pairing-overlay gap recorded at v2.256.1, closed. Seven templates — calend
 
 The old middleware was `allow_origins=["*"]` **with credentials**, which Starlette honours by echoing whatever Origin arrives — any website could script this API with the visitor's tokens attached. Removed outright rather than narrowed: every browser surface is served by this app and fetches relative URLs (same-origin needs no CORS), the HA component calls server-side where CORS does not apply, and HA card assets are proxied through this origin precisely so the question never comes up. A future native wrapper (Capacitor's `capacitor://localhost`) is a genuine foreign origin and gets a deliberate allowlist when it ships. Pinned by `test_auth.scenario_e3`.
 
+## The invite ends on the home screen (v2.266.0 — install nudge)
+
+An invite necessarily lands in a **browser tab** — a mail link cannot open an app that is not installed — so the onboarding flow ended one step short: account, PIN, and then a new member left living in Safari, where **iOS delivers no web push at all**, meaning no family notifications. The set-password page now hands off with `../app?from=invite`, and the app offers the last step.
+
+- **A bottom sheet, not an overlay, on purpose**: a browser tab is a legitimate way to use the app (a laptop check, a deliberate tab on the kitchen tablet), so the nudge must never take the page hostage. "Not now" snoozes it 30 days; the `?from=invite` arrival bypasses the snooze because there it IS the flow's last step, and the general case additionally requires a signed-in member so it never sits over the login screen or picker.
+- **Platform mechanics**: Android stashes `beforeinstallprompt` and shows a real Install button — that event fires only when installable AND not yet installed, so it is the capability check and the don't-nag signal in one. iOS has no API: numbered Share → Add to Home Screen steps, with the share glyph drawn inline. Desktop gets nothing.
+- **The guards are the feature**, each pinned by `test_accounts.scenario_z2`: never when already running standalone (`display-mode: standalone` + `navigator.standalone`), never in the HA companion webview (it cannot Add-to-Home-Screen), never via an ingress path (installing one bakes supervisor's rotating token into the icon — the same link rot v2.257.2 fixed in mailed invites), and `appinstalled`/an accepted prompt retires it permanently.
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.

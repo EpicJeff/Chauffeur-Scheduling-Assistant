@@ -408,6 +408,44 @@
         </div>
     </div>
 
+    <!-- Install nudge: the last step of invite onboarding. An invite
+         necessarily lands in a BROWSER TAB (a mail link cannot open an app
+         that is not installed), so the set-password page hands off with
+         ?from=invite and this sheet teaches the one move left: put it on the
+         home screen. A sheet rather than an overlay on purpose — a browser
+         tab is a legitimate way to use the app, and this must never take it
+         hostage. The real stakes on iPhone are notifications: iOS only
+         delivers web push to a home-screen app. -->
+    <div id="install-nudge" class="fixed inset-x-0 bottom-0 z-[55] hidden">
+        <div class="m-3 mb-4 p-5 rounded-3xl bg-gray-900 border border-gray-700 shadow-2xl max-w-sm mx-auto">
+            <div class="flex items-start gap-3">
+                <div class="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-xl shrink-0"
+                    aria-hidden="true">⚡</div>
+                <div class="flex-1">
+                    <p class="font-bold text-gray-100">Put Chauffeur on your home screen</p>
+                    <p id="install-nudge-why" class="text-sm text-gray-400 mt-1">It opens full screen
+                        like a real app — and on iPhone, family notifications only work from the home
+                        screen.</p>
+                </div>
+            </div>
+            <div id="install-ios" class="hidden text-sm text-gray-300 mt-3 space-y-1.5">
+                <p class="flex items-center gap-1.5">1.&nbsp;Tap the Share button
+                    <svg class="w-4 h-4 inline text-blue-400" fill="none" stroke="currentColor"
+                        stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4m0 0L8 6m4-4v13" />
+                    </svg> in the browser bar.</p>
+                <p>2.&nbsp;Choose <b class="text-gray-100">Add to Home Screen</b>.</p>
+            </div>
+            <div id="install-android" class="hidden mt-3">
+                <button onclick="installFromPrompt()"
+                    class="w-full bg-blue-600 active:bg-blue-500 rounded-xl p-3 font-bold text-white">Install</button>
+            </div>
+            <button onclick="dismissInstallNudge()"
+                class="w-full text-center text-sm text-gray-500 mt-3">Not now</button>
+        </div>
+    </div>
+
     <!-- New Chat picker: type-ahead over family members, selections become
          pills. 1 person -> DM, 2+ -> group channel. -->
     <div id="new-chat-modal" class="fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-6">
@@ -2012,6 +2050,12 @@
             // before the view routing below because it is a one-shot action
             // rather than a place to be.
             if (params.get('pair')) offerPairing(params.get('pair'));
+            // The invite's hand-off (?from=invite): finishing an account
+            // drops the new member into this browser tab, and the one step
+            // left is the home screen. Checked here, after restore, so the
+            // sheet appears over their first signed-in view.
+            installFromInvite = params.get('from') === 'invite';
+            maybeOfferInstall();
             const openChannelParam = params.get('open_channel');
             if (openChannelParam && selectedMemberId) {
                 setView('messages');
@@ -4116,6 +4160,80 @@
                 });
             } catch (e) { /* the answer is the same either way, on purpose */ }
             showGlobalAlert("If that address is on the family's account, a reset link is on its way.");
+        }
+
+        // --- Install nudge: the invite's last step -----------------------
+        // Android's `beforeinstallprompt` fires only when the app is
+        // installable AND not already installed, so it is the capability
+        // check and the don't-nag signal in one; stash it and offer a real
+        // Install button. iOS has no API at all — instructions or nothing.
+        let installPromptEvent = null;
+        let installFromInvite = false;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            installPromptEvent = e;
+            maybeOfferInstall();       // Chrome may fire this after init ran
+        });
+        window.addEventListener('appinstalled', () => {
+            localStorage.setItem('chauffeur_install_done', '1');
+            document.getElementById('install-nudge').classList.add('hidden');
+        });
+
+        function installContext() {
+            const ua = navigator.userAgent;
+            return {
+                // A home-screen launch runs in the manifest's display mode;
+                // navigator.standalone is iOS Safari's older spelling.
+                standalone: (window.matchMedia
+                        && window.matchMedia('(display-mode: standalone)').matches)
+                    || window.navigator.standalone === true,
+                ios: /iPhone|iPad|iPod/.test(ua)
+                    || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1),
+                android: /Android/.test(ua),
+                // The HA companion webview cannot Add-to-Home-Screen, and an
+                // app installed from an ingress path would bake supervisor's
+                // rotating token into the icon — the same link rot v2.257.2
+                // fixed in mailed invites.
+                haApp: /Home Assistant/i.test(ua),
+                ingress: location.pathname.includes('hassio_ingress'),
+            };
+        }
+
+        function maybeOfferInstall() {
+            const c = installContext();
+            if (c.standalone || c.haApp || c.ingress) return;
+            if (!c.ios && !c.android) return;      // desktop: nothing to teach
+            if (localStorage.getItem('chauffeur_install_done')) return;
+            if (c.android && !installPromptEvent) return;
+            if (!installFromInvite) {
+                // The general case is gentle: only for somebody already
+                // signed in, snoozed 30 days on "Not now" — a browser tab is
+                // a legitimate way to use the app. The invite arrival is the
+                // feature and bypasses the snooze: it IS the flow's last step.
+                if (!memberToken()) return;
+                const snoozed = Number(localStorage.getItem('chauffeur_install_snoozed') || 0);
+                if (Date.now() - snoozed < 30 * 86400 * 1000) return;
+            }
+            document.getElementById('install-ios').classList.toggle('hidden', !c.ios);
+            document.getElementById('install-android').classList.toggle('hidden', !c.android);
+            document.getElementById('install-nudge').classList.remove('hidden');
+        }
+
+        function dismissInstallNudge() {
+            localStorage.setItem('chauffeur_install_snoozed', String(Date.now()));
+            document.getElementById('install-nudge').classList.add('hidden');
+        }
+
+        async function installFromPrompt() {
+            if (!installPromptEvent) return;
+            const ev = installPromptEvent;
+            installPromptEvent = null;     // the event is single-use
+            ev.prompt();
+            const choice = await ev.userChoice.catch(() => null);
+            if (choice && choice.outcome === 'accepted') {
+                localStorage.setItem('chauffeur_install_done', '1');
+            }
+            document.getElementById('install-nudge').classList.add('hidden');
         }
 
         async function showDriverSelection() {

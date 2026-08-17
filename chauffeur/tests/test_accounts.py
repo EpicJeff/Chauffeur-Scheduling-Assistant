@@ -888,6 +888,42 @@ def scenario_z_the_family_listing_answers_only_on_trusted_ground():
           "the drivers GET carve-out opened driver WRITES")
 
 
+def scenario_z2_the_install_nudge_speaks_only_to_a_browser_tab():
+    """The invite's last step: an invite necessarily lands in a browser tab,
+    so the set-password page hands off with ?from=invite and the app offers
+    Add-to-Home-Screen. The guards are the feature — shown to the wrong
+    surface it is worse than nothing, so each exclusion is pinned:
+    a home-screen launch must never be nagged to install itself, the HA
+    companion webview cannot Add-to-Home-Screen at all, and installing from
+    an ingress path would bake supervisor's rotating token into the icon
+    (the same link rot v2.257.2 fixed in mailed invites)."""
+    import os
+    import main as _main
+    base = os.path.dirname(_main.__file__)
+    app_src = open(os.path.join(base, 'templates', 'app.html'),
+                   encoding='utf-8').read()
+    frag = app_src[app_src.index('function installContext'):
+                   app_src.index('function dismissInstallNudge')]
+    for guard, why in (
+            ('display-mode: standalone',
+             'a home-screen launch would be nagged to install itself'),
+            ('navigator.standalone',
+             'older iOS only reports standalone through navigator.standalone'),
+            ('Home Assistant',
+             'the HA companion webview cannot Add-to-Home-Screen'),
+            ('hassio_ingress',
+             'an ingress install bakes a rotting supervisor token into the icon')):
+        check(guard in frag, f"the install nudge lost its {guard!r} guard — {why}")
+    check('beforeinstallprompt' in app_src,
+          "Android lost the real Install button (and with it the only "
+          "already-installed signal that platform offers)")
+    sp = open(os.path.join(base, 'templates', 'set_password.html'),
+              encoding='utf-8').read()
+    check('../app?from=invite' in sp,
+          "the set-password page no longer hands off with ?from=invite, so "
+          "the nudge stops being the invite flow's last step")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
