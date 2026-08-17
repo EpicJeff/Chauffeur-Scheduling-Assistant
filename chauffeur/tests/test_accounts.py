@@ -351,6 +351,16 @@ def scenario_the_set_password_page_is_the_first_thing_the_app_ever_shows():
     check(f'At least {main._MIN_PASSWORD} characters' in page,
           "the page states a different minimum than it enforces")
 
+    # Accepting an invite IS a password sign-in, and password sign-ins vouch
+    # the device they happen on (S5). This page has no nav wrapper, so it has
+    # to carry the header itself — without it, `_trust_this_device` silently
+    # no-ops and the phone the invite was accepted on never becomes trusted:
+    # the day the token dies, the member's PIN cannot reopen it and the
+    # rescue is a second invite.
+    check("'X-Device-Id'" in page and 'chauffeur_device_id' in page,
+          "the set-password page never names its device, so accepting an "
+          "invite signs somebody in without vouching the phone it happened on")
+
 
 def scenario_an_invite_link_carries_an_address_that_works():
     """`{"detail":"Not Found"}`, reported by the household from a link that had

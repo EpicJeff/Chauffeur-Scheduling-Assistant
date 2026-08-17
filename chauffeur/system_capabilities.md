@@ -2525,3 +2525,12 @@ The screen draws two lists: the drivers, then "the members who are not one of th
 - **The same mistake sat in the restore path.** `restoredPassenger` used the identical `!m.driver_id`, so even a member who could find themselves on the picker was refused on the next load and bounced back to a screen they were not listed on. Both halves of one person disappearing, from one wrong predicate written twice.
 - **The Argyle FAB is gone from the identity screen** (household nitpick, and correct): Argyle answers AS somebody, so a chat button before anybody has said who they are cannot work. The rule was inline in `applyViewVisibility`, which that screen never calls, so the button simply stayed wherever the last screen left it. It is `updateAgentFab()` now — one rule, called by both — and it asks the SCREEN rather than `selectedMemberId`, which survives in localStorage and can still name somebody the app just failed to restore, which is exactly the state that lands on the picker.
 - Tests: `test_panel_chrome`, two scenarios, both verified to fail against the previous commit.
+
+## Accepting an invite now vouches the phone it happened on (v2.258.2)
+
+Found while verifying the two lockout-recovery paths ahead of S8:
+
+- **Invite → password** is the complete remote rescue: the link page, the peek and the set-password POST are all `ANYONE`-tier on purpose, so they answer while locked out, from anywhere. Spending the link sets the password, verifies the email, kills every other outstanding link and signs the member in on the spot.
+- **A PIN only opens trusted ground** (a vouched device, or LAN/ingress) — the auth endpoint refuses an untrusted origin before reading the PIN at all. Parent hand path (clear → set, first-set open) unlocks home surfaces; the invite is the tool for the remote case. A session minted on trusted ground travels afterwards.
+
+The gap: `_trust_this_device` vouches the device on every password sign-in — login, claim, **and invite-accept** — by reading `X-Device-Id`. The standalone set-password page has no nav and no fetch wrapper, so it never sent the header and the vouch silently no-oped: the invite signed somebody in without trusting the phone it happened on, and the day that token died, their PIN could not reopen it. The page now mints/reads the shared `chauffeur_device_id` slot and sends it with the set-password POST. Test pins the header and the slot in the page source.
