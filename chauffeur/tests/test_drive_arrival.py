@@ -156,6 +156,164 @@ def scenario_the_push_loop_runs_the_sweep():
           "the sweep is no longer wired into the background loop")
 
 
+# --- The ride-status slice: ETA at start, the tap check, the nudge -----------
+# These use REAL drive-status storage (the harness isolates the data dir) and
+# patch only the schedule/geocode/member reads — the row lifecycle (eta parked,
+# nudge marker burned, merge-not-replace) is exactly what is under test.
+
+class _TapWorld:
+    def __init__(self):
+        self.sched = {'events': [{'id': 'guitar', 'title': 'Guitar',
+                                  'location': 'Music & Arts, Cary'}],
+                      'assignments': {'guitar': 'drv_jeff'},
+                      'ghost_assignments': {},
+                      'initial_edges': {'drv_jeff': {'guitar': {'travel_mins': 17}}},
+                      'final_edges': {'drv_jeff': {'guitar': {'travel_mins': 21}}},
+                      'car_assignments': {}}
+        self.members = [{'id': 'm_jeff', 'name': 'Jeff', 'driver_id': 'drv_jeff'}]
+        self.geocode = {'lat': SHOP[0], 'lon': SHOP[1], 'precision': 'exact'}
+        self.route = None            # what maps.get_route_geometry answers
+
+    def install(self):
+        with storage.db_lock:
+            storage.drive_status_table.truncate()
+        self.orig = (storage.get_cached_schedule, storage.get_all_members,
+                     storage.get_cached_geocode)
+        storage.get_cached_schedule = lambda: self.sched
+        storage.get_all_members = lambda: self.members
+        storage.get_cached_geocode = lambda addr: self.geocode
+        import services.maps as maps
+        self.orig_route = maps.get_route_geometry
+        maps.get_route_geometry = lambda *a, **k: self.route
+        return self
+
+    def restore(self):
+        (storage.get_cached_schedule, storage.get_all_members,
+         storage.get_cached_geocode) = self.orig
+        import services.maps as maps
+        maps.get_route_geometry = self.orig_route
+
+
+def _tap(mutate=None, fn=None):
+    w = _TapWorld()
+    if mutate:
+        mutate(w)
+    w.install()
+    try:
+        return w, fn(w)
+    finally:
+        w.restore()
+
+
+def scenario_eta_at_start_prices_from_the_solvers_own_edges():
+    """No fix, no problem: the solver already priced this exact drive."""
+    def body(w):
+        into = drive_arrival.eta_for_start('init_guitar', NOW)
+        home = drive_arrival.eta_for_start('final_guitar', NOW)
+        return into, home
+    _, (into, home) = _tap(fn=body)
+    check(into == NOW + 17 * 60, f"the initial edge's 17 minutes: {into}")
+    check(home == NOW + 21 * 60, f"a final_ leg uses the drive-home edge: {home}")
+
+
+def scenario_a_fix_at_start_upgrades_the_eta_to_a_routed_time():
+    """Started from the store, not the driveway: the fix beats the edge."""
+    def mutate(w):
+        w.route = {'duration_mins': 9.0}
+    _, eta = _tap(mutate, lambda w: drive_arrival.eta_for_start(
+        'init_guitar', NOW, lat=ELSEWHERE[0], lng=ELSEWHERE[1], accuracy=30))
+    check(eta == NOW + 9 * 60, f"routed from where the driver IS: {eta}")
+
+
+def scenario_tap_at_the_destination_checks_the_leg_off():
+    def body(w):
+        storage.mark_drive_status('init_guitar', 'in_progress', eta_ts=NOW - 300)
+        return drive_arrival.tap_check('init_guitar', lat=LOT[0], lng=LOT[1],
+                                       accuracy=25, now_ts=NOW)
+    _, res = _tap(fn=body)
+    check(res['arrived'] is True and res['title'] == 'Guitar',
+          f"the tap at the parking lot IS the confirmation: {res}")
+    row = storage.get_drive_status('init_guitar')
+    check(row['status'] == 'completed' and row.get('arrived_ts') == NOW,
+          f"and the leg is closed with a timestamp: {row}")
+    check(row.get('eta_ts') == NOW - 300,
+          "completing merges — the ETA the start wrote survives")
+
+
+def scenario_tap_far_away_parks_a_new_eta_and_shares_nothing():
+    def body(w):
+        storage.mark_drive_status('init_guitar', 'in_progress', eta_ts=NOW - 300)
+        return drive_arrival.tap_check('init_guitar', lat=ELSEWHERE[0],
+                                       lng=ELSEWHERE[1], accuracy=25, now_ts=NOW)
+    _, res = _tap(fn=body)
+    check(res['arrived'] is False and res['eta_mins'] >= 2,
+          f"13 km out is verifiably not arrived, with an honest estimate: {res}")
+    row = storage.get_drive_status('init_guitar')
+    check(row['status'] == 'in_progress' and row.get('pending_eta_ts'),
+          f"the new time is PARKED on the row: {row}")
+    check(row.get('eta_ts') == NOW - 300,
+          "…and the family's promised time is untouched until the driver "
+          "chooses to share — the app never narrates lateness uninvited")
+
+
+def scenario_tap_without_evidence_asks_the_human():
+    _, res = _tap(fn=lambda w: (
+        storage.mark_drive_status('init_guitar', 'in_progress'),
+        drive_arrival.tap_check('init_guitar', now_ts=NOW))[1])
+    check(res['arrived'] is None, f"no fix: the human decides — {res}")
+    _, res2 = _tap(lambda w: w.geocode.update(precision='city'),
+                   lambda w: (storage.mark_drive_status('init_guitar', 'in_progress'),
+                              drive_arrival.tap_check('init_guitar', lat=LOT[0],
+                                                      lng=LOT[1], accuracy=25,
+                                                      now_ts=NOW))[1])
+    check(res2['arrived'] is None,
+          '"arrived in Cary" proves nothing at tap time either')
+
+
+def scenario_the_sweep_beating_the_tap_reads_as_success():
+    _, res = _tap(fn=lambda w: (
+        storage.mark_drive_status('init_guitar', 'completed'),
+        drive_arrival.tap_check('init_guitar', lat=LOT[0], lng=LOT[1],
+                                accuracy=25, now_ts=NOW))[1])
+    check(res['arrived'] is True and res.get('already'),
+          f"a drive the sweep already closed is a success, not an error: {res}")
+
+
+def scenario_the_nudge_fires_once_after_grace_and_only_at_the_driver():
+    sent = []
+    def notify(member, title, body, path):
+        sent.append((member['id'], title, path))
+    def body(w):
+        storage.mark_drive_status('init_guitar', 'in_progress',
+                                  eta_ts=NOW - drive_arrival.NUDGE_GRACE_SECS - 10)
+        first = drive_arrival.run_nudges(NOW, notify)
+        second = drive_arrival.run_nudges(NOW, notify)
+        return first, second
+    _, (first, second) = _tap(fn=body)
+    check(first == ['init_guitar'] and second == [],
+          f"one nudge, ever: {first} then {second}")
+    check(sent == [('m_jeff', 'Arrived at Guitar?', '/app?arrival=init_guitar')],
+          f"addressed to the DRIVER, deep-linking the tap check: {sent}")
+
+
+def scenario_the_nudge_respects_grace_and_expires_silently():
+    sent = []
+    def body(w):
+        storage.mark_drive_status('init_guitar', 'in_progress', eta_ts=NOW - 60)
+        early = drive_arrival.run_nudges(NOW, lambda *a: sent.append(a))
+        storage.mark_drive_status('route_guitar', 'in_progress',
+                                  eta_ts=NOW - drive_arrival.NUDGE_EXPIRE_SECS - 60)
+        late = drive_arrival.run_nudges(NOW, lambda *a: sent.append(a))
+        return early, late
+    _, (early, late) = _tap(fn=body)
+    check(early == [] and late == [] and sent == [],
+          "an estimate deserves slack, and ancient legs are never pushed about")
+    row = storage.get_drive_status('route_guitar')
+    check(row.get('arrival_nudged_ts'),
+          "the expired leg's marker burns silently — a restart cannot "
+          "resurrect a push about yesterday's drive")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

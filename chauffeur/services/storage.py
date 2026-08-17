@@ -4807,10 +4807,31 @@ def set_app_state(key: str, value):
         app_state_table.upsert({'key': key, 'value': value}, Query().key == key)
 
 # Drive Status
-def mark_drive_status(leg_id: str, status: str):
+def mark_drive_status(leg_id: str, status: str, **fields):
+    """Upsert MERGES rather than replaces: completing a leg must not erase
+    the ETA the start wrote, because the arrival endpoints and their tests
+    still read it afterwards. Extra fields ride along on the same row
+    (started_at, eta_ts, pending_eta_ts, arrival_nudged_ts) — the leg is
+    the natural key for all of them and a second table would just be a
+    join nobody needs."""
     with db_lock:
         q = Query()
-        drive_status_table.upsert({'leg_id': leg_id, 'status': status}, q.leg_id == leg_id)
+        existing = drive_status_table.search(q.leg_id == leg_id)
+        row = dict(existing[0]) if existing else {'leg_id': leg_id}
+        row['status'] = status
+        row.update(fields)
+        drive_status_table.upsert(row, q.leg_id == leg_id)
+
+def get_drive_status(leg_id: str) -> Optional[dict]:
+    with db_lock:
+        rows = drive_status_table.search(Query().leg_id == leg_id)
+    return dict(rows[0]) if rows else None
+
+def get_drive_status_rows(status: str) -> List[dict]:
+    """Full rows, unlike the two id-list helpers below — the arrival nudge
+    needs eta_ts and its own sent-marker, not just the leg id."""
+    with db_lock:
+        return [dict(d) for d in drive_status_table.search(Query().status == status)]
 
 # --- Pending Notifications ---
 def save_pending_notifications(notifications: List[dict]):

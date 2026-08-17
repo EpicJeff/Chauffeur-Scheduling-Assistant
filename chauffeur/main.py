@@ -34,6 +34,13 @@ class PushSubscription(BaseModel):
 class DriveStatus(BaseModel):
     leg_id: str
     status: str
+    # A quick foreground fix taken at the Start Drive tap (the one reliable
+    # moment the driver is holding the phone, in the app). Optional and
+    # best-effort: absent, the ETA falls back to the schedule's own edge
+    # minutes. First feature for which the app reads location itself.
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    accuracy: Optional[float] = None
 
 import os
 from py_vapid import Vapid, utils
@@ -203,6 +210,19 @@ async def push_notification_loop():
                           f"({done_leg['distance_m']}m from {done_leg['dest']})")
             except Exception as ae:
                 print(f"Arrival auto-complete error: {ae}")
+
+            # --- Arrival check-in: the same closing-the-loop job for the
+            # UNTRACKED driver. Past the ETA the start computed, the driver
+            # gets one "arrived?" push; tapping opens the app, which answers
+            # with a location fix instead of a question. Runs after the
+            # passive sweep so a tracked driver's leg completes silently
+            # rather than being asked about. ---
+            try:
+                from services import drive_arrival
+                for leg in drive_arrival.run_nudges(now_ts, _notify_member_lanes):
+                    print(f"drive_arrival: nudged driver about {leg}")
+            except Exception as ne:
+                print(f"Arrival nudge error: {ne}")
 
             # --- Evening "tomorrow" digest (once per day after the set time) ---
             try:
@@ -9181,12 +9201,52 @@ def _kid_members_for_event(ev, ev_id, sched=None):
             out.append(m)
     return out
 
-def _notify_kids_ride_started(event_id, now=None):
+def _clock_label(ts: float) -> str:
+    """'3:58 pm' or '15:58' per the household's clock setting. Short on
+    purpose — it rides inside push bodies."""
+    import datetime as _dt
+    dt = _dt.datetime.fromtimestamp(float(ts))
+    if (storage.get_settings() or {}).get('time_format_24h'):
+        return dt.strftime('%H:%M')
+    return dt.strftime('%I:%M %p').lstrip('0').lower()
+
+
+def _ride_audience(ev, event_id, sched):
+    """(kids, parents, driver_member, who) for a ride's pushes. Parents are
+    told about the same rides their kids are — and never about their own
+    driving, which they presumably know about."""
+    kids = _kid_members_for_event(ev, event_id, sched)
+    assignments = dict(sched.get('assignments', {}))
+    assignments.update(sched.get('ghost_assignments', {}))
+    d_id = assignments.get(str(event_id))
+    drv = storage.get_member_by_driver_id(d_id) if d_id \
+        and not str(d_id).startswith('ghost_') else None
+    who = (drv or {}).get('name') or 'Your driver'
+    parents = [m for m in storage.get_all_members()
+               if m.get('role') == 'parent' and not m.get('system')
+               and m.get('id') != (drv or {}).get('id')] if kids else []
+    return kids, parents, drv, who
+
+
+def _leg_eta_label(leg_id) -> Optional[str]:
+    """The stored ETA as ' · arriving about 3:58 pm', or '' when the start
+    could not price the drive — a push that says nothing beats one that
+    guesses, the same no-guess silence rule the leave-by cards keep."""
+    if not leg_id:
+        return ''
+    row = storage.get_drive_status(leg_id) or {}
+    eta = row.get('eta_ts')
+    return f" · arriving about {_clock_label(eta)}" if eta else ''
+
+
+def _notify_kids_ride_started(event_id, now=None, leg_id=None):
     """K2: '🚗 Dad is on the way!' push to child passengers the moment their
     ride's first drive leg starts (PWA Start Drive button or the agent's
-    start_route tool). Once per event per day (app_state marker, so later
-    legs of the same drive stay quiet); kid quiet hours SKIP rather than
-    defer — a stale on-the-way push is worse than none."""
+    start_route tool) — now carrying the ETA computed at that tap, and
+    fanned out to the parents as well (their own marker, driver excluded).
+    Once per event per day (app_state markers, so later legs of the same
+    drive stay quiet); kid quiet hours SKIP rather than defer — a stale
+    on-the-way push is worse than none."""
     import datetime as _dt
     from services import family_digest
     try:
@@ -9198,7 +9258,7 @@ def _notify_kids_ride_started(event_id, now=None):
                    if str(e.get('id')) == str(event_id)), None)
         if not ev:
             return
-        kids = _kid_members_for_event(ev, event_id, sched)
+        kids, parents, drv, who = _ride_audience(ev, event_id, sched)
         if not kids:
             return
         key = f"{event_id}:{now.date().isoformat()}"
@@ -9209,17 +9269,46 @@ def _notify_kids_ride_started(event_id, now=None):
         seen = {k: v for k, v in seen.items() if v >= cutoff}
         seen[key] = now.timestamp()
         storage.set_app_state('ride_started_notified', seen)
-        assignments = dict(sched.get('assignments', {}))
-        assignments.update(sched.get('ghost_assignments', {}))
-        d_id = assignments.get(str(event_id))
-        drv = storage.get_member_by_driver_id(d_id) if d_id \
-            and not str(d_id).startswith('ghost_') else None
-        who = (drv or {}).get('name') or 'Your driver'
+        title = ev.get('title') or 'Your ride'
+        eta_bit = _leg_eta_label(leg_id)
         for kid in kids:
             _notify_member_lanes(kid, f"🚗 {who} is on the way!",
-                                 ev.get('title') or 'Your ride', '/app')
+                                 f"{title}{eta_bit}", '/app')
+        kid_names = ', '.join(k.get('name') or '?' for k in kids)
+        for parent in parents:
+            _notify_member_lanes(parent, f"🚗 {who} is driving to {title}",
+                                 f"{kid_names}{eta_bit}", '/app')
     except Exception as e:
         print(f"Kid on-the-way push failed: {e}")
+
+
+def _notify_ride_eta_update(event_id, leg_id, now=None):
+    """The driver tapped 'send a new time' (share_eta): same audience as
+    the on-the-way push, no dedup marker — this fires only on an explicit
+    human act, and twice means the driver meant it twice."""
+    import datetime as _dt
+    from services import family_digest
+    try:
+        now = now or _dt.datetime.now()
+        if family_digest.in_kid_quiet_hours(now, storage.get_settings() or {}):
+            return
+        sched = storage.get_cached_schedule() or {}
+        ev = next((e for e in sched.get('events', [])
+                   if str(e.get('id')) == str(event_id)), None)
+        if not ev:
+            return
+        kids, parents, drv, who = _ride_audience(ev, event_id, sched)
+        eta_bit = _leg_eta_label(leg_id)
+        if not eta_bit:
+            return
+        title = ev.get('title') or 'Your ride'
+        body = f"{title}{eta_bit}"
+        for kid in kids:
+            _notify_member_lanes(kid, f"🚗 New time from {who}", body, '/app')
+        for parent in parents:
+            _notify_member_lanes(parent, f"🚗 New time from {who}", body, '/app')
+    except Exception as e:
+        print(f"Ride eta update push failed: {e}")
 
 def _notify_kids_driver_changes(buffered, now=None):
     """K2: kid-worded pushes when a NEAR-TERM ride's driver changes ("Mom is
@@ -13869,13 +13958,61 @@ def debug_db():
 
 @app.post("/api/drive_status")
 def update_drive_status(status: DriveStatus, background_tasks: BackgroundTasks):
-    storage.mark_drive_status(status.leg_id, status.status)
     if status.status == 'in_progress':
+        # The ETA is computed AT the tap — the one reliable moment the
+        # driver is in the app — from the client's fix when one rode along,
+        # else the schedule's own edge minutes. Stored on the leg row so the
+        # on-the-way pushes carry a time and the check-in nudge knows when
+        # the drive should be over.
+        import time as _time
+        from services import drive_arrival as _da
+        now_ts = _time.time()
+        eta_ts = None
+        try:
+            eta_ts = _da.eta_for_start(status.leg_id, now_ts, lat=status.lat,
+                                       lng=status.lng, accuracy=status.accuracy)
+        except Exception as e:
+            print(f"drive eta at start failed: {e}")
+        storage.mark_drive_status(status.leg_id, 'in_progress',
+                                  started_at=now_ts, eta_ts=eta_ts)
         # K2: tell child passengers their ride is on the way (deduped to the
-        # first leg per event per day inside the helper).
+        # first leg per event per day inside the helper) — and the parents,
+        # who asked to know the state of things.
         background_tasks.add_task(_notify_kids_ride_started,
-                                  _leg_event_id(status.leg_id))
+                                  _leg_event_id(status.leg_id),
+                                  leg_id=status.leg_id)
+    else:
+        storage.mark_drive_status(status.leg_id, status.status)
     return {"status": "ok"}
+
+
+@app.post("/api/drive_status/arrival")
+def drive_arrival_check(status: DriveStatus):
+    """The arrival push was tapped (or next-open reconciliation asked). The
+    fix rides in; the answer is arrived / not-arrived-with-a-new-ETA /
+    can't-tell — the client turns the last two into a question for the
+    human. A new ETA is PARKED, never sent: sharing it is the driver's own
+    tap on /share_eta below, because the app must not narrate somebody's
+    lateness uninvited."""
+    from services import drive_arrival as _da
+    return _da.tap_check(status.leg_id, lat=status.lat, lng=status.lng,
+                         accuracy=status.accuracy)
+
+
+@app.post("/api/drive_status/share_eta")
+def drive_share_eta(status: DriveStatus, background_tasks: BackgroundTasks):
+    """The driver chose to send the family a new time. Promotes the parked
+    ETA to the leg's real one, re-arms the check-in nudge for it, and fans
+    out to the same audience the on-the-way push reached."""
+    row = storage.get_drive_status(status.leg_id) or {}
+    eta_ts = row.get('pending_eta_ts')
+    if not eta_ts:
+        raise HTTPException(status_code=404, detail="No new time to share")
+    storage.mark_drive_status(status.leg_id, 'in_progress', eta_ts=eta_ts,
+                              pending_eta_ts=None, arrival_nudged_ts=None)
+    background_tasks.add_task(_notify_ride_eta_update,
+                              _leg_event_id(status.leg_id), status.leg_id)
+    return {"status": "ok", "eta_ts": eta_ts}
 
 class PrepStatusRequest(BaseModel):
     event_id: str            # PARENT event instance id (leg suffixes stripped client-side)

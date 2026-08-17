@@ -34,6 +34,17 @@ ARRIVE_RADIUS_M = 175
 MAX_ACCURACY_M = 300
 STALE_FIX_SECS = 15 * 60
 
+# The TAP check is more generous than the passive sweep above: the driver
+# has explicitly said "I think I'm done" and a school car park is a long way
+# from the pin, so 300 m accepts the row where people actually stop. The
+# passive sweep keeps its tighter radius — it acts with nobody watching.
+TAP_RADIUS_M = 300
+# The check-in push waits this long past the ETA (an estimate deserves
+# slack), and gives up entirely after the expiry — a push about a drive
+# from hours ago is noise, and next-open reconciliation owns that case.
+NUDGE_GRACE_SECS = 3 * 60
+NUDGE_EXPIRE_SECS = 3 * 3600
+
 
 def _leg_event_id(leg_id: str) -> str:
     s = re.sub(r'^(init_|route_|final_)', '', str(leg_id))
@@ -113,6 +124,167 @@ def _driver_position(driver_id: str, ev_id: str, sched: dict,
         if car and car.get('ha_device_tracker'):
             return _fresh_position(cars_svc.car_location(car) or {}, now_ts)
     return None
+
+
+def _dest_geocode(leg_id: str, events: dict):
+    """(address, geocode_row) for a leg's destination, or (address, None)
+    when the pin is unusable — same precision rules as the passive sweep:
+    a city-precision pin is kilometres wide and proves nothing."""
+    dest = _dest_address(leg_id, events)
+    if not dest:
+        return None, None
+    g = storage.get_cached_geocode(dest)
+    if not g or g.get('precision') in ('failed', 'city'):
+        return dest, None
+    return dest, g
+
+
+def eta_for_start(leg_id: str, now_ts: float,
+                  lat=None, lng=None, accuracy=None) -> Optional[float]:
+    """Absolute ETA (epoch seconds) computed the moment a drive starts.
+
+    The schedule's own edge minutes are the default — the solver already
+    priced this exact drive and they cost nothing to reuse. A fresh client
+    fix upgrades that to a routed time from where the driver actually is,
+    which matters when they start the drive from the store rather than the
+    driveway. One Directions call at most, on an explicit human action —
+    never from a loop."""
+    sched = storage.get_cached_schedule() or {}
+    events = {e.get('id'): e for e in (sched.get('events') or [])}
+    ev_id = _leg_event_id(leg_id)
+    assignments = dict(sched.get('assignments') or {})
+    assignments.update(sched.get('ghost_assignments') or {})
+    d_id = assignments.get(ev_id)
+
+    mins = None
+    if lat is not None and lng is not None \
+            and (accuracy is None or float(accuracy) <= MAX_ACCURACY_M):
+        dest, g = _dest_geocode(leg_id, events)
+        if g:
+            from services import maps
+            # Coordinates rounded to ~10 m so a driver two feet from their
+            # last fix reuses the cached route instead of minting a new row.
+            route = maps.get_route_geometry(
+                'driver-position', dest,
+                origin_lat=round(float(lat), 4), origin_lng=round(float(lng), 4),
+                dest_lat=float(g['lat']), dest_lng=float(g['lon']))
+            if route and route.get('duration_mins'):
+                mins = float(route['duration_mins'])
+
+    if mins is None:
+        if str(leg_id).startswith('final_'):
+            edge = ((sched.get('final_edges') or {}).get(d_id) or {}).get(ev_id) or {}
+            try:
+                mins = float(edge.get('travel_mins') or 0) or None
+            except (TypeError, ValueError):
+                mins = None
+        elif d_id:
+            from services import leave_by
+            lead = leave_by.travel_into(sched, d_id, ev_id)
+            mins = float(lead['travel_mins']) if lead else None
+
+    return (now_ts + mins * 60) if mins else None
+
+
+def tap_check(leg_id: str, lat=None, lng=None, accuracy=None,
+              now_ts: float = None) -> dict:
+    """The driver tapped the arrival push (or the app asked on their
+    behalf). Three honest answers:
+
+      {'arrived': True}   — fix is at the destination; the leg completes.
+      {'arrived': False, 'eta_ts', 'eta_mins'}  — verifiably NOT there; a
+          fresh ETA is computed and PARKED on the row (pending_eta_ts).
+          Sharing it with the family is the driver's separate, deliberate
+          act — the app never narrates somebody's lateness uninvited.
+      {'arrived': None}   — no usable fix or no usable pin; the caller
+          falls back to asking the human, which is where this started.
+
+    The already-completed case reports success, not error: the passive
+    sweep may have beaten the tap by a poll cycle, and telling the driver
+    'unknown leg' for a drive that finished correctly reads as breakage."""
+    now_ts = now_ts if now_ts is not None else datetime.datetime.now().timestamp()
+    row = storage.get_drive_status(leg_id) or {}
+    sched = storage.get_cached_schedule() or {}
+    events = {e.get('id'): e for e in (sched.get('events') or [])}
+    ev_id = _leg_event_id(leg_id)
+    ev = events.get(ev_id) or events.get(re.sub(r'_(dropoff|pickup)$', '', ev_id)) or {}
+    title = ev.get('title') or ('home' if str(leg_id).startswith('final_') else 'your stop')
+
+    if row.get('status') == 'completed':
+        return {'arrived': True, 'already': True, 'title': title}
+
+    fix_ok = (lat is not None and lng is not None
+              and (accuracy is None or float(accuracy) <= MAX_ACCURACY_M))
+    dest, g = _dest_geocode(leg_id, events)
+    if not fix_ok or not g:
+        return {'arrived': None, 'title': title}
+
+    dist = _haversine_m(float(lat), float(lng), float(g['lat']), float(g['lon']))
+    if dist <= max(TAP_RADIUS_M, float(accuracy or 0)):
+        storage.mark_drive_status(leg_id, 'completed', arrived_ts=now_ts)
+        return {'arrived': True, 'title': title, 'distance_m': round(dist)}
+
+    eta_ts = eta_for_start(leg_id, now_ts, lat=lat, lng=lng, accuracy=accuracy)
+    if eta_ts is None:
+        # Not there, but no route either (no key, quota, uncached pin):
+        # estimate from straight-line distance at town speeds rather than
+        # answering nothing — the label says "about" for a reason.
+        eta_ts = now_ts + max(2.0, (dist / 1000.0) / 0.6) * 60
+    storage.mark_drive_status(leg_id, 'in_progress', pending_eta_ts=eta_ts)
+    return {'arrived': False, 'title': title, 'eta_ts': eta_ts,
+            'eta_mins': max(1, round((eta_ts - now_ts) / 60)),
+            'distance_m': round(dist)}
+
+
+def run_nudges(now_ts: float, notify) -> List[str]:
+    """The check-in push: an in-progress leg past its ETA asks its DRIVER
+    'arrived?' — once. Tapping opens the app, which answers with a location
+    fix instead of a question (tap_check above). Drivers the passive sweep
+    can see (HA-tracked) rarely get this far: their legs complete
+    themselves. This is the lane for everybody else's phone.
+
+    `notify` is main's _notify_member_lanes, passed in so this module stays
+    importable without the app. Returns the nudged leg ids (for tests)."""
+    rows = [r for r in storage.get_drive_status_rows('in_progress')
+            if r.get('eta_ts') and not r.get('arrival_nudged_ts')]
+    if not rows:
+        return []
+    sched = storage.get_cached_schedule() or {}
+    events = {e.get('id'): e for e in (sched.get('events') or [])}
+    assignments = dict(sched.get('assignments') or {})
+    assignments.update(sched.get('ghost_assignments') or {})
+    member_by_driver = {m.get('driver_id'): m for m in storage.get_all_members()
+                        if m.get('driver_id')}
+    nudged = []
+    for row in rows:
+        try:
+            eta = float(row['eta_ts'])
+            if now_ts < eta + NUDGE_GRACE_SECS:
+                continue
+            leg_id = row['leg_id']
+            if now_ts > eta + NUDGE_EXPIRE_SECS:
+                # Too old to ask about; burn the marker silently so a
+                # restarted loop does not push about yesterday's drive.
+                storage.mark_drive_status(leg_id, 'in_progress',
+                                          arrival_nudged_ts=now_ts)
+                continue
+            ev_id = _leg_event_id(leg_id)
+            d_id = assignments.get(ev_id)
+            member = member_by_driver.get(d_id)
+            if not member or str(d_id).startswith('ghost_'):
+                continue
+            ev = events.get(ev_id) or {}
+            where = ('home' if str(leg_id).startswith('final_')
+                     else (ev.get('title') or 'your stop'))
+            storage.mark_drive_status(leg_id, 'in_progress',
+                                      arrival_nudged_ts=now_ts)
+            notify(member, f"Arrived at {where}?",
+                   "Tap to check the drive off — or send the family a new time.",
+                   f"/app?arrival={leg_id}")
+            nudged.append(leg_id)
+        except Exception as e:
+            print(f"drive_arrival nudge: {row.get('leg_id')}: {e}")
+    return nudged
 
 
 def check_arrivals(now_ts: float = None) -> List[dict]:

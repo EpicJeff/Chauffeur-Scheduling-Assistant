@@ -51,17 +51,82 @@ def scenario_on_the_way_once_per_day():
     import main
     with mock.patch.object(main, '_notify_member_lanes') as lanes:
         main._notify_kids_ride_started("swim", now=NOON)
-        check(lanes.call_count == 1, "one push to the bound kid")
-        kid, title, body = lanes.call_args.args[:3]
+        # The ride-status slice: the same start also tells the parents —
+        # minus the driver, who presumably knows they are driving.
+        check(lanes.call_count == 2, "one push to the bound kid, one to Mom")
+        kid, title, body = lanes.call_args_list[0].args[:3]
         check(kid["id"] == "kid1", "push goes to the child member")
         check(title == "🚗 Dad is on the way!" and body == "Swim Practice",
               f"driver-named reassurance, got {title} / {body}")
+        parent, ptitle, pbody = lanes.call_args_list[1].args[:3]
+        check(parent["id"] == "momm", "the other parent is told; Dad is not")
+        check(ptitle == "🚗 Dad is driving to Swim Practice" and pbody == "Addison",
+              f"parents get driver, destination and who is aboard: {ptitle} / {pbody}")
         main._notify_kids_ride_started("swim", now=NOON)
-        check(lanes.call_count == 1, "second leg start of the same event stays quiet")
+        check(lanes.call_count == 2, "second leg start of the same event stays quiet")
         main._notify_kids_ride_started("adult_ev", now=NOON)
-        check(lanes.call_count == 1, "events with no bound kids push nothing")
+        check(lanes.call_count == 2, "events with no bound kids push nothing")
         main._notify_kids_ride_started("ghost-event", now=NOON)
-        check(lanes.call_count == 1, "unknown event id is a silent no-op")
+        check(lanes.call_count == 2, "unknown event id is a silent no-op")
+
+
+def scenario_the_push_carries_the_eta_when_the_start_priced_one():
+    """The ride-status slice: 'on the way' grew a time. The ETA computed at
+    the Start Drive tap rides the leg row; when it exists the push says
+    'arriving about 3:58 pm', and when it does not the push stays exactly
+    what it was — a push that says nothing beats one that guesses."""
+    _reset()
+    import main
+    eta = datetime.datetime.combine(TODAY, datetime.time(15, 58)).timestamp()
+    storage.mark_drive_status('init_swim', 'in_progress', eta_ts=eta)
+    with mock.patch.object(main, '_notify_member_lanes') as lanes:
+        main._notify_kids_ride_started("swim", now=NOON, leg_id='init_swim')
+        _, title, body = lanes.call_args_list[0].args[:3]
+        check(body == "Swim Practice · arriving about 3:58 pm",
+              f"the kid push carries the promised time: {body}")
+        _, _, pbody = lanes.call_args_list[1].args[:3]
+        check(pbody == "Addison · arriving about 3:58 pm",
+              f"and so does the parent push: {pbody}")
+    # 24-hour households read a 24-hour clock.
+    storage.get_settings = lambda: {"calendar_ids": ["primary"],
+                                    "time_format_24h": True}
+    check(main._clock_label(eta) == "15:58",
+          "the clock label honours time_format_24h")
+    storage.get_settings = lambda: {"calendar_ids": ["primary"]}
+
+
+def scenario_a_new_time_is_shared_only_on_the_drivers_say_so():
+    """share_eta: the parked ETA becomes the real one, the check-in nudge
+    re-arms for it, and the same audience hears — but only because the
+    driver tapped. No pending time = 404, never a silent no-op push."""
+    _reset()
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+    from main import DriveStatus as DS
+    eta = datetime.datetime.combine(TODAY, datetime.time(16, 12)).timestamp()
+    storage.mark_drive_status('init_swim', 'in_progress',
+                              eta_ts=eta - 600, pending_eta_ts=eta,
+                              arrival_nudged_ts=123.0)
+    main.drive_share_eta(DS(leg_id='init_swim', status='in_progress'),
+                         BackgroundTasks())
+    row = storage.get_drive_status('init_swim')
+    check(row.get('eta_ts') == eta and not row.get('pending_eta_ts'),
+          f"the parked time became the leg's real ETA: {row}")
+    check(not row.get('arrival_nudged_ts'),
+          "the check-in nudge re-arms for the new time")
+    with mock.patch.object(main, '_notify_member_lanes') as lanes:
+        main._notify_ride_eta_update("swim", 'init_swim', now=NOON)
+        check(lanes.call_count == 2, "kid and the other parent both hear")
+        _, title, body = lanes.call_args_list[0].args[:3]
+        check(title == "🚗 New time from Dad"
+              and body == "Swim Practice · arriving about 4:12 pm",
+              f"the update names the driver and the new time: {title} / {body}")
+    try:
+        main.drive_share_eta(DS(leg_id='route_nothing', status='in_progress'),
+                             BackgroundTasks())
+        check(False, "sharing with no parked time should refuse")
+    except HTTPException as e:
+        check(e.status_code == 404, f"expected 404, got {e.status_code}")
 
 
 def scenario_quiet_hours_skip_not_defer():
@@ -72,7 +137,8 @@ def scenario_quiet_hours_skip_not_defer():
         check(lanes.call_count == 0, "22:00 is inside default kid quiet hours")
         # quiet skip must NOT consume the once-per-day marker
         main._notify_kids_ride_started("swim", now=NOON)
-        check(lanes.call_count == 1, "the same ride can still notify outside quiet hours")
+        check(lanes.call_count == 2,   # kid + the other parent
+              "the same ride can still notify outside quiet hours")
 
 
 def scenario_driver_change_gains_only_near_term():
@@ -105,6 +171,8 @@ SCENARIOS = [
     scenario_on_the_way_once_per_day,
     scenario_quiet_hours_skip_not_defer,
     scenario_driver_change_gains_only_near_term,
+    scenario_the_push_carries_the_eta_when_the_start_priced_one,
+    scenario_a_new_time_is_shared_only_on_the_drivers_say_so,
 ]
 
 if __name__ == "__main__":
