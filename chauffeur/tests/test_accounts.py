@@ -362,6 +362,48 @@ def scenario_the_set_password_page_is_the_first_thing_the_app_ever_shows():
           "invite signs somebody in without vouching the phone it happened on")
 
 
+def scenario_an_invite_finishes_the_account_it_started():
+    """An invite hands over an account. It should hand over a WORKING one, and
+    twice it did not — both times because the next surface assumed somebody had
+    arrived by a route they had not taken.
+
+      * **No PIN was ever offered.** The app offers one inside
+        `ensureMemberAuth`, which returns early when a token for that member is
+        already stored — precisely what this page writes. So an invited member
+        was never asked, and would meet S8's token expiry three months later
+        typing a password on a kitchen tablet: the friction S5 demoted the PIN
+        to prevent. Offered here instead, and skipping burns the same marker
+        `offerPinSetup` uses, so declining once is an answer.
+      * **A driver was sent to the picker.** The page wrote `member_id` but
+        never `driver_id`, and the app only auto-restores a NON-driver — so
+        anyone with a driver identity was asked who they were seconds after
+        proving it.
+    """
+    import main
+    import tpl_source
+    page = tpl_source.read('set_password.html')
+
+    check("state === 'pin'" in page and 'savePin()' in page and 'skipPin()' in page,
+          "the invite never offers a PIN, and the app cannot: its own offer "
+          "sits behind an early return this page's token satisfies")
+    check("has_pin ? 'done' : 'pin'" in page,
+          "a member a parent already gave a PIN is asked for another one")
+    check('chauffeur_pin_offered_' in page,
+          "skipping here does not burn the app's own offer marker, so the "
+          "question is asked again on the next screen")
+    # The format the server enforces, pinned across the boundary like the
+    # password minimum above it.
+    check(all(main._valid_pin_format(p) for p in ('1234', '12345678'))
+          and not main._valid_pin_format('123'),
+          "the server's PIN rule is not 4-8 digits any more")
+    check('4,8' in page,
+          "the form accepts a PIN length the server will reject")
+
+    check('chauffeur_driver_id' in page,
+          "an invited member who is a driver still lands on Select Family "
+          "Member, having just proved exactly who they are")
+
+
 def scenario_an_invite_link_carries_an_address_that_works():
     """`{"detail":"Not Found"}`, reported by the household from a link that had
     just been mailed. The route was fine; the ADDRESS in front of it was not.

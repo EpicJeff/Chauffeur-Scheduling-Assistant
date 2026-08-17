@@ -2534,3 +2534,18 @@ Found while verifying the two lockout-recovery paths ahead of S8:
 - **A PIN only opens trusted ground** (a vouched device, or LAN/ingress) — the auth endpoint refuses an untrusted origin before reading the PIN at all. Parent hand path (clear → set, first-set open) unlocks home surfaces; the invite is the tool for the remote case. A session minted on trusted ground travels afterwards.
 
 The gap: `_trust_this_device` vouches the device on every password sign-in — login, claim, **and invite-accept** — by reading `X-Device-Id`. The standalone set-password page has no nav and no fetch wrapper, so it never sent the header and the vouch silently no-oped: the invite signed somebody in without trusting the phone it happened on, and the day that token died, their PIN could not reopen it. The page now mints/reads the shared `chauffeur_device_id` slot and sends it with the set-password POST. Test pins the header and the slot in the page source.
+
+## An invite finishes the account it started (v2.259.0)
+
+Two gaps in the handoff, both from the next surface assuming somebody arrived by a route they had not taken.
+
+- **No PIN was ever offered to an invited member.** The app offers one inside `ensureMemberAuth`, which returns early when a token for that member is already stored — exactly what the set-password page writes. So the offer was unreachable by anyone who came in by invite. Not a lockout (Decision 9 takes password OR PIN), but it lands them at S8's 90-day token expiry typing a password on a kitchen tablet, which is the friction Decision 4c demoted the PIN to prevent. Offered on the set-password page now, as an optional step after the password: skipping burns the same `chauffeur_pin_offered_{id}` marker `offerPinSetup` uses, so declining once is an answer rather than a question re-asked on the next screen. A member a parent already gave a PIN skips the step. The 4–8 digit rule is pinned to `_valid_pin_format` by a test.
+- **An invited DRIVER was sent to the picker.** The page wrote `chauffeur_member_id` but never `chauffeur_driver_id`, and the app only auto-restores a non-driver — so anyone with a driver identity was asked who they were seconds after proving it. A disabled driver id is harmless here: the app finds no matching row and falls through to the member path (v2.258.1).
+
+### Open design question: the member picker should not be the front door
+
+Raised by the household, and it is **Decision 4, already settled and still undone**: "the member-name leak that the picker created is settled by deleting the picker as the front door." S3's slice list says "the sign-in page that replaces the picker" and S3 shipped everything except that. `/api/members` is still `ANYONE`-tier, carrying a comment that says so.
+
+The household's own framing is the right one: the picker is a sign-out/sign-in-as-someone-else flow nobody should be using, it invites impersonation wherever a member has no PIN, and it publishes the family's names to anyone who loads the page. Prettier is not a reason.
+
+The complication that stops it being a deletion: **Decision 4b** — Sprout and Explorer have `own_account: False` and no email by design, so an email+password front door has no room for them. The resolution that fits the machinery already built: a **login page for untrusted origins, the picker only on trusted ground**. A device somebody has vouched for already knows the household; that is where faces-and-a-PIN belongs, and it is exactly what Decision 4c says the PIN is for. `/api/members` then stops answering before authentication off trusted ground, which closes the leak. To be built in S8 alongside the flip.
