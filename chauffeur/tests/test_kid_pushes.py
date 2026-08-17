@@ -50,9 +50,9 @@ def scenario_on_the_way_once_per_day():
     _reset()
     import main
     with mock.patch.object(main, '_notify_member_lanes') as lanes:
-        main._notify_kids_ride_started("swim", now=NOON)
-        # The ride-status slice: the same start also tells the parents —
-        # minus the driver, who presumably knows they are driving.
+        # A pickup-waypoint leg (`init_*_1`) — the car is driving TOWARD
+        # the kid, so the kid hears, and so does the other parent.
+        main._notify_kids_ride_started("swim", now=NOON, leg_id='init_swim_1')
         check(lanes.call_count == 2, "one push to the bound kid, one to Mom")
         kid, title, body = lanes.call_args_list[0].args[:3]
         check(kid["id"] == "kid1", "push goes to the child member")
@@ -62,12 +62,51 @@ def scenario_on_the_way_once_per_day():
         check(parent["id"] == "momm", "the other parent is told; Dad is not")
         check(ptitle == "🚗 Dad is driving to Swim Practice" and pbody == "Addison",
               f"parents get driver, destination and who is aboard: {ptitle} / {pbody}")
-        main._notify_kids_ride_started("swim", now=NOON)
+        main._notify_kids_ride_started("swim", now=NOON, leg_id='init_swim_2')
         check(lanes.call_count == 2, "second leg start of the same event stays quiet")
-        main._notify_kids_ride_started("adult_ev", now=NOON)
+        main._notify_kids_ride_started("adult_ev", now=NOON, leg_id='init_adult_ev_1')
         check(lanes.call_count == 2, "events with no bound kids push nothing")
-        main._notify_kids_ride_started("ghost-event", now=NOON)
+        main._notify_kids_ride_started("ghost-event", now=NOON, leg_id='init_ghost-event_1')
         check(lanes.call_count == 2, "unknown event id is a silent no-op")
+
+
+def scenario_a_kid_in_the_car_is_not_pushed_at():
+    """The household's correction of v2.268.0: a plain home→event leg means
+    the kid is IN the car — 'Dad is on the way!' delivered to the back seat
+    teaches the family the push means nothing. The parent still hears (the
+    ride left = the status they asked for), and an unknowable leg counts as
+    carrying, never as toward."""
+    _reset()
+    import main
+    with mock.patch.object(main, '_notify_member_lanes') as lanes:
+        main._notify_kids_ride_started("swim", now=NOON, leg_id='init_swim')
+        check(lanes.call_count == 1, f"parent only, got {lanes.call_count}")
+        parent = lanes.call_args_list[0].args[0]
+        check(parent["id"] == "momm", "the one push goes to the other parent")
+    _reset()
+    with mock.patch.object(main, '_notify_member_lanes') as lanes:
+        main._notify_kids_ride_started("swim", now=NOON)   # legacy: no leg at all
+        check(lanes.call_count == 1
+              and lanes.call_args_list[0].args[0]["id"] == "momm",
+              "a leg the gate cannot read counts as carrying, not toward")
+
+
+def scenario_a_pickup_slice_reaches_the_waiting_kid():
+    """The push that matters most: driving to COLLECT the kid. A split
+    event's pickup slice may not exist as its own row in the events cache —
+    the lookup now falls back to the base event (as every leg helper
+    already does), and the title says which direction the car is going."""
+    _reset()
+    import main
+    with mock.patch.object(main, '_notify_member_lanes') as lanes:
+        main._notify_kids_ride_started("swim_pickup", now=NOON,
+                                       leg_id='init_swim_pickup')
+        check(lanes.call_count == 2, f"kid and Mom, got {lanes.call_count}")
+        kid, title, body = lanes.call_args_list[0].args[:3]
+        check(kid["id"] == "kid1" and title == "🚗 Dad is on the way!",
+              f"the waiting kid hears: {title}")
+        check(body == "Pick-up from Swim Practice",
+              f"and the title says the car is coming to GET them: {body}")
 
 
 def scenario_the_push_carries_the_eta_when_the_start_priced_one():
@@ -78,9 +117,9 @@ def scenario_the_push_carries_the_eta_when_the_start_priced_one():
     _reset()
     import main
     eta = datetime.datetime.combine(TODAY, datetime.time(15, 58)).timestamp()
-    storage.mark_drive_status('init_swim', 'in_progress', eta_ts=eta)
+    storage.mark_drive_status('init_swim_1', 'in_progress', eta_ts=eta)
     with mock.patch.object(main, '_notify_member_lanes') as lanes:
-        main._notify_kids_ride_started("swim", now=NOON, leg_id='init_swim')
+        main._notify_kids_ride_started("swim", now=NOON, leg_id='init_swim_1')
         _, title, body = lanes.call_args_list[0].args[:3]
         check(body == "Swim Practice · arriving about 3:58 pm",
               f"the kid push carries the promised time: {body}")
@@ -104,18 +143,18 @@ def scenario_a_new_time_is_shared_only_on_the_drivers_say_so():
     from fastapi import BackgroundTasks, HTTPException
     from main import DriveStatus as DS
     eta = datetime.datetime.combine(TODAY, datetime.time(16, 12)).timestamp()
-    storage.mark_drive_status('init_swim', 'in_progress',
+    storage.mark_drive_status('init_swim_1', 'in_progress',
                               eta_ts=eta - 600, pending_eta_ts=eta,
                               arrival_nudged_ts=123.0)
-    main.drive_share_eta(DS(leg_id='init_swim', status='in_progress'),
+    main.drive_share_eta(DS(leg_id='init_swim_1', status='in_progress'),
                          BackgroundTasks())
-    row = storage.get_drive_status('init_swim')
+    row = storage.get_drive_status('init_swim_1')
     check(row.get('eta_ts') == eta and not row.get('pending_eta_ts'),
           f"the parked time became the leg's real ETA: {row}")
     check(not row.get('arrival_nudged_ts'),
           "the check-in nudge re-arms for the new time")
     with mock.patch.object(main, '_notify_member_lanes') as lanes:
-        main._notify_ride_eta_update("swim", 'init_swim', now=NOON)
+        main._notify_ride_eta_update("swim", 'init_swim_1', now=NOON)
         check(lanes.call_count == 2, "kid and the other parent both hear")
         _, title, body = lanes.call_args_list[0].args[:3]
         check(title == "🚗 New time from Dad"
@@ -133,10 +172,10 @@ def scenario_quiet_hours_skip_not_defer():
     _reset()
     import main
     with mock.patch.object(main, '_notify_member_lanes') as lanes:
-        main._notify_kids_ride_started("swim", now=NIGHT)
+        main._notify_kids_ride_started("swim", now=NIGHT, leg_id='init_swim_1')
         check(lanes.call_count == 0, "22:00 is inside default kid quiet hours")
         # quiet skip must NOT consume the once-per-day marker
-        main._notify_kids_ride_started("swim", now=NOON)
+        main._notify_kids_ride_started("swim", now=NOON, leg_id='init_swim_1')
         check(lanes.call_count == 2,   # kid + the other parent
               "the same ride can still notify outside quiet hours")
 
@@ -169,6 +208,8 @@ def scenario_driver_change_gains_only_near_term():
 
 SCENARIOS = [
     scenario_on_the_way_once_per_day,
+    scenario_a_kid_in_the_car_is_not_pushed_at,
+    scenario_a_pickup_slice_reaches_the_waiting_kid,
     scenario_quiet_hours_skip_not_defer,
     scenario_driver_change_gains_only_near_term,
     scenario_the_push_carries_the_eta_when_the_start_priced_one,

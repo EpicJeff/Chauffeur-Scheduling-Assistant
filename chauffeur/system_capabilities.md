@@ -2631,6 +2631,16 @@ The diagnosis, from the household: drivers navigate in Apple/Google Maps, so the
 - Tests: `test_drive_arrival` +8 scenarios (edge pricing, fix upgrade, tap complete merges-not-replaces, parked ETA untouched until shared, evidence-free tap asks the human, sweep-beat-the-tap is success, nudge once/grace/silent expiry); `test_kid_pushes` +2 (ETA in both bodies, share flow + 404) and the parent fan-out assertions.
 - **The native-app story this sets up**: with a background geofence the whole loop — start, drive, arrive, complete — needs no second tap at all. That upgrade slots into `tap_check`/`check_arrivals` unchanged.
 
+## A kid in the back seat is not "on the way" (v2.269.0)
+
+The household's correction of v2.268.0, within a day of shipping it: driving to swim practice FROM HOME, the kids are in the car — "🚗 Dad is on the way!" delivered to the back seat is the push teaching the family the push means nothing. The on-the-way push matters exactly when the car is driving TOWARD the kid.
+
+- **`_leg_is_toward_kids(leg_id)`**: `init_*_1` (the drive TO a pickup waypoint — `_2` is the kid aboard, onward) or any leg whose event is a `_pickup` slice. Everything else — plain home→event, `final_` home, unknowable legs — counts as CARRYING: a wrong silence costs one push, a wrong push devalues them all. Kids hear only toward-legs; **parents hear either way** ("the ride left" is the status they asked for), same dedup markers. The same gate applies to the new-time push.
+- **Split-slice lookup fixed**: a `swim_pickup` slice may not exist as its own row in the events cache, and the exact-match lookup meant the pickup drive — the push that matters most — silently sent nothing. `_ride_event` falls back to the base event (as every leg helper already does) and titles it "Pick-up from Swim Practice", because "Swim Practice · arriving about 5:02" reads as the wrong direction to a kid waiting to come home. Assignments fall back variant→base the same way.
+- The agent's `start_route` now passes its leg so the gate can decide for voice-started drives too.
+- **Recorded, not solved** (roadmap → open design questions): the driver who drops off and leaves WITHOUT the event being split. No return leg exists, so no tap, no ETA, no push — and the kid's situation is real either way. Candidate shapes noted: day-of retro-split at the arrival check-in ("staying?"), a stays/leaves flag on the assignment, or background location (the native track), which dissolves the question without modeling intent and is the strongest single argument for that track.
+- Tests: `test_kid_pushes` — kid-in-the-car is parent-only (and a leg the gate cannot read counts as carrying), the pickup slice reaches the waiting kid through the base-event fallback with the direction in the title.
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.

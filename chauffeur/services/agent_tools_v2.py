@@ -3837,7 +3837,10 @@ def start_route(driver_id: str, event_name: str, target_date: str = "today") -> 
         # Start Drive button (lazy main import, same pattern as the chat
         # fan-out; absent/failing in tests -> skipped silently).
         import main as _main
-        _main._notify_kids_ride_started(ev["id"])
+        # The canonical first leg rides along so the toward-the-kid gate can
+        # decide who hears: a voice-started drive with the kid aboard tells
+        # only the other parent; a pickup slice tells the waiting kid too.
+        _main._notify_kids_ride_started(ev["id"], leg_id=f"init_{ev['id']}")
     except Exception:
         pass
     return {"status": "success",

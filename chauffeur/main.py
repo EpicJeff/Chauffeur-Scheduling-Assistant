@@ -43,6 +43,7 @@ class DriveStatus(BaseModel):
     accuracy: Optional[float] = None
 
 import os
+import re
 from py_vapid import Vapid, utils
 from cryptography.hazmat.primitives import serialization
 
@@ -9211,6 +9212,53 @@ def _clock_label(ts: float) -> str:
     return dt.strftime('%I:%M %p').lstrip('0').lower()
 
 
+def _ride_event(sched, event_id):
+    """(event, display_title) for a ride push, following the split-event
+    fallback the leg machinery already uses everywhere else: a pickup or
+    dropoff SLICE may not exist as its own row in the events cache, and the
+    lookup missing meant the pickup drive — the one push that matters most —
+    silently sent nothing. A pickup slice resolved through its base event
+    says so in the title, because 'Swim Practice · arriving about 5:02'
+    reads as the wrong direction to a kid waiting to come home."""
+    evs = sched.get('events', [])
+    ev = next((e for e in evs if str(e.get('id')) == str(event_id)), None)
+    if ev:
+        return ev, (ev.get('title') or 'Your ride')
+    base = re.sub(r'_(dropoff|pickup)$', '', str(event_id))
+    if base != str(event_id):
+        ev = next((e for e in evs if str(e.get('id')) == base), None)
+        if ev:
+            title = ev.get('title') or 'Your ride'
+            if str(event_id).endswith('_pickup'):
+                title = f"Pick-up from {title}"
+            return ev, title
+    return None, None
+
+
+def _leg_is_toward_kids(leg_id) -> bool:
+    """Does this leg drive TOWARD the kids, or does it CARRY them?
+
+    'Dad is on the way!' is information exactly when the kid is somewhere
+    waiting for the car — and noise when they are sitting in it, which is
+    what a plain home→event leg means in this model (the pickup-waypoint
+    machinery exists precisely for the passenger who starts somewhere
+    else). Toward-the-kid legs are:
+
+      * `init_*_1` — the drive TO a pickup waypoint (`_2` is the kid
+        aboard, onward to the event);
+      * any leg whose event is a `_pickup` slice — driving to collect them.
+
+    Unknowable legs (None, or a route-leg id this cannot parse) count as
+    carrying: a wrong silence costs one push, a wrong push teaches the
+    family the push means nothing."""
+    if not leg_id:
+        return False
+    s = str(leg_id)
+    if re.match(r'^init_.*_1$', s):
+        return True
+    return _leg_event_id(s).endswith('_pickup')
+
+
 def _ride_audience(ev, event_id, sched):
     """(kids, parents, driver_member, who) for a ride's pushes. Parents are
     told about the same rides their kids are — and never about their own
@@ -9218,7 +9266,9 @@ def _ride_audience(ev, event_id, sched):
     kids = _kid_members_for_event(ev, event_id, sched)
     assignments = dict(sched.get('assignments', {}))
     assignments.update(sched.get('ghost_assignments', {}))
-    d_id = assignments.get(str(event_id))
+    # A split slice may be assigned under its own id or its base event's.
+    d_id = assignments.get(str(event_id)) \
+        or assignments.get(re.sub(r'_(dropoff|pickup)$', '', str(event_id)))
     drv = storage.get_member_by_driver_id(d_id) if d_id \
         and not str(d_id).startswith('ghost_') else None
     who = (drv or {}).get('name') or 'Your driver'
@@ -9254,8 +9304,7 @@ def _notify_kids_ride_started(event_id, now=None, leg_id=None):
         if family_digest.in_kid_quiet_hours(now, storage.get_settings() or {}):
             return
         sched = storage.get_cached_schedule() or {}
-        ev = next((e for e in sched.get('events', [])
-                   if str(e.get('id')) == str(event_id)), None)
+        ev, title = _ride_event(sched, event_id)
         if not ev:
             return
         kids, parents, drv, who = _ride_audience(ev, event_id, sched)
@@ -9269,11 +9318,16 @@ def _notify_kids_ride_started(event_id, now=None, leg_id=None):
         seen = {k: v for k, v in seen.items() if v >= cutoff}
         seen[key] = now.timestamp()
         storage.set_app_state('ride_started_notified', seen)
-        title = ev.get('title') or 'Your ride'
         eta_bit = _leg_eta_label(leg_id)
-        for kid in kids:
-            _notify_member_lanes(kid, f"🚗 {who} is on the way!",
-                                 f"{title}{eta_bit}", '/app')
+        # Kids hear ONLY when the car is coming toward them (a pickup
+        # waypoint, a pickup slice). A kid in the back seat being told their
+        # ride is on the way is the push teaching them to ignore pushes.
+        # Parents hear either way — 'the ride left' is the status they
+        # asked to be kept in.
+        if _leg_is_toward_kids(leg_id):
+            for kid in kids:
+                _notify_member_lanes(kid, f"🚗 {who} is on the way!",
+                                     f"{title}{eta_bit}", '/app')
         kid_names = ', '.join(k.get('name') or '?' for k in kids)
         for parent in parents:
             _notify_member_lanes(parent, f"🚗 {who} is driving to {title}",
@@ -9293,18 +9347,19 @@ def _notify_ride_eta_update(event_id, leg_id, now=None):
         if family_digest.in_kid_quiet_hours(now, storage.get_settings() or {}):
             return
         sched = storage.get_cached_schedule() or {}
-        ev = next((e for e in sched.get('events', [])
-                   if str(e.get('id')) == str(event_id)), None)
+        ev, title = _ride_event(sched, event_id)
         if not ev:
             return
         kids, parents, drv, who = _ride_audience(ev, event_id, sched)
         eta_bit = _leg_eta_label(leg_id)
         if not eta_bit:
             return
-        title = ev.get('title') or 'Your ride'
         body = f"{title}{eta_bit}"
-        for kid in kids:
-            _notify_member_lanes(kid, f"🚗 New time from {who}", body, '/app')
+        # Same audience rule as the on-the-way push: a new time matters to
+        # the kid only when the car is coming toward them.
+        if _leg_is_toward_kids(leg_id):
+            for kid in kids:
+                _notify_member_lanes(kid, f"🚗 New time from {who}", body, '/app')
         for parent in parents:
             _notify_member_lanes(parent, f"🚗 New time from {who}", body, '/app')
     except Exception as e:
