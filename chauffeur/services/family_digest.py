@@ -132,7 +132,7 @@ def build_weekly_digest(end_date: datetime.date = None, days: int = 7):
     start_date = end_date - datetime.timedelta(days=days - 1)
     start_ts = datetime.datetime.combine(start_date, datetime.time.min).timestamp()
     day_strs = [(start_date + datetime.timedelta(days=i)).isoformat() for i in range(days)]
-    members = {m['id']: m for m in storage.get_all_members()}
+    members = {m['id']: m for m in storage.get_all_members(include_archived=True)}
 
     def name_of(member_id):
         return (members.get(member_id) or {}).get('name') or member_id
@@ -361,7 +361,11 @@ def build_household_briefing(target_date: datetime.date = None) -> dict:
     assist_map = dict(cache.get("assist_assignments") or {})
     assist_names = {c['id']: (c.get('relation_label') or c.get('name'))
                     for c in (cache.get('assist_contacts') or [])}
-    members = storage.get_all_members()
+    # include_archived: the cached schedule was solved before anyone left, so a
+    # driver who is now archived still holds legs in it. Missing them here would
+    # not just lose a name — the leg would fall through to the "needs a driver"
+    # list and read as an open drive.
+    members = storage.get_all_members(include_archived=True)
     by_driver = {m.get('driver_id'): m for m in members if m.get('driver_id')}
 
     covered, open_lines = [], []

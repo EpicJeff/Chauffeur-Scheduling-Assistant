@@ -356,7 +356,7 @@ def _moment_row(m, members, event_title=None):
 def recent_moments(hours: float = 12, limit: int = 12):
     """The kiosk hearth feed: recent moments with sender + event context."""
     since = time.time() - hours * 3600
-    members = {m['id']: m for m in storage.get_all_members()}
+    members = {m['id']: m for m in storage.get_all_members(include_archived=True)}
     return [_moment_row(m, members)
             for m in storage.get_recent_event_moments(since, limit=limit)]
 
@@ -364,7 +364,7 @@ def recent_moments(hours: float = 12, limit: int = 12):
 def moment_events(offset: int = 0, limit: int = 24):
     """Gallery top level: one card per EVENT, newest first, PAGED — the whole
     history, so it must never be loaded in one shot."""
-    members = {m['id']: m for m in storage.get_all_members()}
+    members = {m['id']: m for m in storage.get_all_members(include_archived=True)}
     index = storage.get_event_moment_index()
     page = index[offset:offset + limit]
     items = []
@@ -392,7 +392,7 @@ def moment_events(offset: int = 0, limit: int = 24):
 
 def event_moments(channel_id: str, offset: int = 0, limit: int = 30):
     """Every moment for ONE event, newest first, paged."""
-    members = {m['id']: m for m in storage.get_all_members()}
+    members = {m['id']: m for m in storage.get_all_members(include_archived=True)}
     channel = storage.get_channel(channel_id) or {}
     title = channel.get('title') or 'Family moment'
     all_moments = storage.get_channel_moments(channel_id)

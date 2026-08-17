@@ -51,7 +51,7 @@ class _World:
                      storage.mark_drive_status, storage.get_all_cars)
         storage.get_in_progress_drives = lambda: list(self.legs)
         storage.get_cached_schedule = lambda: self.sched
-        storage.get_all_members = lambda: self.members
+        storage.get_all_members = lambda **k: self.members
         storage.get_cached_geocode = lambda addr: self.geocode
         storage.mark_drive_status = lambda leg, st: self.marked.append((leg, st))
         storage.get_all_cars = lambda: []
@@ -180,7 +180,7 @@ class _TapWorld:
         self.orig = (storage.get_cached_schedule, storage.get_all_members,
                      storage.get_cached_geocode)
         storage.get_cached_schedule = lambda: self.sched
-        storage.get_all_members = lambda: self.members
+        storage.get_all_members = lambda **k: self.members
         storage.get_cached_geocode = lambda addr: self.geocode
         import services.maps as maps
         self.orig_route = maps.get_route_geometry

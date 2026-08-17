@@ -534,7 +534,9 @@ def meal_fits_window(meal: dict, cook_window_mins: int, split: bool) -> tuple:
 def _eater_diet(plan: dict) -> tuple:
     """(hard_avoid, soft_dislike) tag sets across everyone eating this meal."""
     avoid, dislike = set(), set()
-    members = {m['id']: m for m in storage.get_all_members()}
+    # The plan named its eaters when it was saved; an eater archived since still
+    # has to bring their allergies, or the plate stops being safe for them.
+    members = {m['id']: m for m in storage.get_all_members(include_archived=True)}
     for p in plan.get('people') or []:
         m = members.get(p['member_id']) or {}
         avoid |= {str(t).strip().lower() for t in (m.get('dietary_avoid') or []) if str(t).strip()}

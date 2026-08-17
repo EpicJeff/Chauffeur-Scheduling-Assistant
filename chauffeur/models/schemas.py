@@ -130,6 +130,17 @@ class FamilyMember(BaseModel):
     # participation, no admin. child: family + kid lens + points economy.
     # helper: external (hired driver/nanny) — driving surfaces only.
     role: str = 'adult'
+    # active | disabled | archived. See storage.MEMBER_STATUSES for the full
+    # reasoning; the short version is that they are a ladder — `disabled`
+    # revokes ACCESS (no login, no PIN, sessions killed, vouched devices
+    # un-trusted) while the person stays visible everywhere, and `archived`
+    # additionally HIDES them from every list, picker and assignment target
+    # without deleting the record their old messages and chores point at.
+    # Absent means active, so every member predating this reads as normal.
+    # Deliberately NOT `is_disabled`: that name is taken on `Driver`, where it
+    # means off-the-rota, and v2.258.1 was the bug from those two ideas
+    # sharing a word.
+    status: str = 'active'
     # --- The account (auth arc S3) ---
     # Adding a person IS creating a user: an email gets them an invite link,
     # they verify and set a password. Optional on purpose — a seven-year-old

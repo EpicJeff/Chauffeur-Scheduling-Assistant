@@ -4300,7 +4300,7 @@ def _public_member(m: dict) -> dict:
 def list_commitments(member_id: Optional[str] = None):
     rows = storage.get_protected_commitments(member_id=member_id,
                                              include_inactive=True)
-    names = {m['id']: m.get('name') for m in storage.get_all_members()}
+    names = {m['id']: m.get('name') for m in storage.get_all_members(include_archived=True)}
     for r in rows:
         r['member_name'] = names.get(r.get('member_id'))
     return rows
@@ -4438,7 +4438,8 @@ def list_household_tasks(assigned_to: Optional[str] = None,
                                         include_done=include_done,
                                         unassigned_only=unassigned_only)
     today = _dt.date.today().isoformat()
-    members = {m['id']: m for m in storage.get_all_members(include_system=True)}
+    members = {m['id']: m for m in storage.get_all_members(include_system=True,
+                                                           include_archived=True)}
     # Outside hands hold tasks too (load arc A1 slice 2). Resolving the name
     # here is what stops an `assist:` holder rendering as "nobody yet", which
     # is the failure mode of a second id space nobody told the reader about.
@@ -4736,9 +4737,12 @@ def list_assist_history(contact_id: str = None, limit: int = 200):
     return rows
 
 @app.get("/api/members")
-def get_members(request: Request = None):
+def get_members(request: Request = None, include_archived: bool = False):
+    """The family roster. Archived people are OFF it by default — that is
+    what archiving means — and `include_archived=true` is how the People
+    config draws the road back."""
     _gate_family_listing(request, 'members')
-    members = storage.get_all_members()
+    members = storage.get_all_members(include_archived=include_archived)
     drivers = {d.get('id'): d for d in storage.get_all_drivers()}
     passengers = {p.get('id'): p for p in storage.get_all_passengers()}
     from services import stages
@@ -4793,14 +4797,81 @@ def update_member_endpoint(member_id: str, updates: dict):
             storage.update_driver_fields(m['driver_id'], {'color_code': updates['color_code']})
     return {"status": "updated"}
 
-@app.delete("/api/members/{member_id}")
-def delete_member_endpoint(member_id: str, force: bool = False):
+class MemberStatusRequest(BaseModel):
+    status: str          # active | disabled | archived
+
+
+@app.post("/api/members/{member_id}/status")
+def set_member_status_endpoint(member_id: str, req: MemberStatusRequest,
+                               x_member_token: Optional[str] = Header(None)):
+    """Turn an account off, hide a person, or bring either back.
+
+    Parent-gated for the obvious reason and one less obvious: this is the
+    lever that locks somebody out of the family's app, so it belongs with
+    pin/clear and sign-out-everywhere rather than with editing an avatar.
+
+    Losing access takes effect NOW, not at the next token expiry — every
+    session dies and the personal devices their own sign-ins vouched stop
+    being trusted ground, or their PIN would reopen the phone in their hand
+    thirty seconds later. That is the same two-halves lever v2.261.0 built
+    for the stolen phone; this is the same act aimed at a person instead of
+    a device, so it reuses it rather than reimplementing half of it."""
+    require_parent_token(x_member_token)
     member = storage.get_member(member_id)
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
-    if (member.get('driver_id') or member.get('passenger_id')) and not force:
-        raise HTTPException(status_code=409,
-                            detail="Member is linked to a driver/passenger; pass force=true to delete anyway")
+    if req.status not in storage.MEMBER_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of {', '.join(storage.MEMBER_STATUSES)}")
+    previous = storage.member_status(member)     # read BEFORE the write
+    storage.set_member_status(member_id, req.status)
+    out = {"status": "ok", "member_status": req.status, "was": previous}
+    if req.status != 'active':
+        out['sessions'] = storage.delete_member_tokens(member_id)
+        out['devices'] = storage.untrust_devices_vouched_by(member_id)
+    if req.status == 'archived':
+        # Off the rota as well as out of the lists: a solve that keeps
+        # handing Tuesday's pickup to somebody who has left the family is
+        # the archive not meaning anything.
+        _disable_member_profiles(member, True)
+    elif req.status == 'active' and previous == 'archived':
+        _disable_member_profiles(member, False)
+    return out
+
+
+def _disable_member_profiles(member: dict, off: bool) -> None:
+    """Take an archived person's driving profile off the rota (and put it
+    back on restore). The DRIVER's `is_disabled` is the right instrument —
+    it is exactly 'not in the solver' and nothing else — which is why the
+    member's own state is called something different."""
+    driver_id = member.get('driver_id')
+    if not driver_id:
+        return
+    try:
+        storage.set_driver_rota_state(driver_id, off)
+    except Exception as e:
+        print(f"archive: could not set driver rota state: {e}")
+
+
+@app.delete("/api/members/{member_id}")
+def delete_member_endpoint(member_id: str, force: bool = False):
+    """PERMANENT delete — for mistakes (the name typed wrong five minutes
+    ago), not for people who have left.
+
+    The 409-unless-force gate is gone (household's call, and correct): it
+    refused anyone holding a driver or passenger profile, which you walked
+    around by deleting the two profiles first and then deleting the person
+    anyway. Friction that protects nothing teaches nothing, and it silently
+    failed in the UI, which never passed `force`. `force` stays accepted so
+    older callers do not break; it no longer decides anything.
+
+    The safe path is `POST /status {archived}`, which is what the People
+    list's remove action does — hidden, reversible, and every message and
+    chore they ever touched keeps its author."""
+    member = storage.get_member(member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
     storage.delete_member(member_id)
     return {"status": "deleted"}
 
@@ -4941,6 +5012,10 @@ def member_auth(member_id: str, req: MemberAuthRequest, request: Request = None)
     member = storage.get_member(member_id)
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
+    # Before the PIN is even read: a disabled account has no fast path back
+    # in either, and the trusted device it would have opened is exactly what
+    # disabling un-trusted.
+    _refuse_if_no_access(member)
 
     from services import auth as _auth
     headers = request.headers if request else {}
@@ -4991,9 +5066,15 @@ def _any_parent_has_password() -> bool:
     This is what closes the first-run grace, and it closes it BY ITSELF —
     there is no dated switch anybody has to remember to turn off. The moment
     one parent holds a password, the house has an owner and the bootstrap
-    stops being available to anyone."""
+    stops being available to anyone.
+
+    ARCHIVED PARENTS COUNT, and that is a security property rather than a
+    nicety: this asks "has anybody ever claimed this house", and archiving
+    the parent who did must not answer "no". Excluding them would reopen
+    `/api/account/claim` to anybody arriving through ingress — the house
+    would become claimable again by hiding one person."""
     return any(m.get('role') == 'parent' and m.get('password_hash')
-               for m in storage.get_all_members())
+               for m in storage.get_all_members(include_archived=True))
 
 
 _PAGE_SEGMENTS = None
@@ -5191,6 +5272,10 @@ def set_password_from_link(req: AcceptRequest, request: Request = None):
     member_id = link['member_id']
     if not storage.get_member(member_id):
         raise HTTPException(status_code=404, detail="Member not found")
+    # An outstanding invite or reset link must not resurrect revoked access —
+    # the link was mailed before the account was disabled, and spending it
+    # would mint a fresh session for somebody who has been shut out.
+    _refuse_if_no_access(storage.get_member(member_id))
     storage.set_member_password(member_id, req.password)
     storage.update_member(member_id, {'email_verified': True})
     # Any other outstanding link dies with it — an old invite still lying in a
@@ -5228,7 +5313,7 @@ def list_trusted_devices(x_member_token: Optional[str] = Header(None)):
     """Which devices a PIN may re-open. Parent-only: it is the list you revoke
     a lost tablet from."""
     require_parent_token(x_member_token)
-    names = {m['id']: m.get('name') for m in storage.get_all_members()}
+    names = {m['id']: m.get('name') for m in storage.get_all_members(include_archived=True)}
     return [{**d, 'trusted_by_name': names.get(d.get('trusted_by'))}
             for d in storage.get_trusted_devices()]
 
@@ -5502,9 +5587,33 @@ def account_login(req: LoginRequest, request: Request = None):
     _pin_rate_record(member['id'], ok, request)
     if not ok:
         raise generic
+    # AFTER the password check, and the order is the whole point: refusing a
+    # disabled account before verifying would tell anyone who types an
+    # address that it exists and is switched off — the exact leak the generic
+    # failure above exists to prevent. Past this line the caller has proved
+    # the password, so they have earned a straight answer instead of being
+    # sent to reset a password that was never the problem.
+    _refuse_if_no_access(member)
     _trust_this_device(request, member['id'], member.get('name'))
     return {"status": "ok", "token": storage.create_member_token(member['id']),
             "member": _public_member(member)}
+
+
+_NO_ACCESS_DETAIL = ("This account has been turned off. Ask a parent in the "
+                     "family to switch it back on.")
+
+
+def _refuse_if_no_access(member: Optional[dict]) -> None:
+    """The one refusal every door shares (member status arc).
+
+    Named for what it protects rather than what it checks, because there are
+    five ways in and each one is a way to miss: password login, the PIN, an
+    outstanding invite/reset link, a still-valid token, and a password reset
+    request. A disabled member gets a sentence that says who can undo it —
+    a locked door with no sign on it is how people conclude the app is
+    broken (S5's rule, applied to a different lock)."""
+    if member is not None and not storage.member_has_access(member):
+        raise HTTPException(status_code=403, detail=_NO_ACCESS_DETAIL)
 
 
 def _trust_this_device(request, member_id: str, label: str = None) -> None:
@@ -5533,7 +5642,10 @@ def account_forgot(req: ForgotRequest, request: Request = None):
     is not something a stranger gets to test."""
     from services import mailer
     member = storage.get_member_by_email(req.email)
-    if member and member.get('password_hash'):
+    # Silent for a disabled account, not a refusal: this endpoint answers
+    # identically no matter what, so the shut-out case simply sends no mail
+    # rather than becoming the one probe that behaves differently.
+    if member and member.get('password_hash') and storage.member_has_access(member):
         token = storage.create_auth_link(member['id'], 'reset', ttl_hours=2)
         mailer.send(member['email'], "Reset your Chauffeur password",
                     mailer.reset_body(member.get('name') or 'there',
@@ -6580,7 +6692,7 @@ def _validate_chore_fields(req):
 @app.get("/api/chores")
 def list_chores():
     chores = storage.get_all_chores()
-    members = {m['id']: m for m in storage.get_all_members()}
+    members = {m['id']: m for m in storage.get_all_members(include_archived=True)}
     # Outside hands claim chores too — the same shape as an adult claiming one,
     # earning nothing. Resolving the name here is what stops a chore Maddie did
     # rendering with a blank claimant.
@@ -7250,7 +7362,7 @@ def remove_reward(reward_id: str):
 @app.get("/api/redemptions")
 def list_redemptions(member_id: Optional[str] = None, state: Optional[str] = None):
     rows = storage.get_redemptions(member_id, state)
-    names = {m['id']: m.get('name') for m in storage.get_all_members()}
+    names = {m['id']: m.get('name') for m in storage.get_all_members(include_archived=True)}
     for r in rows:
         r['member_name'] = names.get(r.get('member_id'))
     return rows

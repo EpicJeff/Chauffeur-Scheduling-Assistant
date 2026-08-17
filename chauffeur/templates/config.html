@@ -1354,10 +1354,28 @@
                         <button @click="loadHaOptions()"
                             class="text-blue-400 hover:text-blue-300 font-bold text-xs">Refresh</button>
                     </div>
+                    <!-- Removed people are hidden by default and findable on
+                         purpose: this checkbox is the only road back from
+                         "Remove from list", so it says how many are waiting
+                         rather than making somebody guess there are any. -->
+                    <label class="flex items-center gap-2 mb-3 text-sm text-gray-400 cursor-pointer"
+                           x-show="archivedMemberCount > 0 || showArchivedMembers">
+                        <input type="checkbox" x-model="showArchivedMembers" @change="loadMembers()">
+                        <span x-text="showArchivedMembers
+                            ? 'Showing removed people'
+                            : ('Show removed people (' + archivedMemberCount + ')')"></span>
+                    </label>
                     <div class="space-y-4">
                         <template x-for="member in members" :key="member.id">
-                            <div class="bg-gray-900 p-5 rounded-xl shadow-sm">
-                                <div class="flex flex-col md:flex-row justify-between md:items-center">
+                            <!-- An inactive person is dimmed and outlined rather
+                                 than hidden here: this list is where you undo it,
+                                 so they have to be legible AND obviously not
+                                 active. -->
+                            <div class="p-5 rounded-xl shadow-sm"
+                                 :class="memberStatus(member) === 'active' ? 'bg-gray-900'
+                                     : 'bg-gray-900/40 border border-dashed border-gray-700'">
+                                <div class="flex flex-col md:flex-row justify-between md:items-center"
+                                     :class="memberStatus(member) === 'active' ? '' : 'opacity-60'">
                                     <div class="flex items-center mb-4 md:mb-0">
                                         <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl mr-4 text-white border-4 bg-gray-800 overflow-hidden"
                                             :style="'border-color: ' + (member.color_code || '#3b82f6')">
@@ -1372,6 +1390,16 @@
                                         <div>
                                             <h3 class="text-xl font-bold text-white" x-text="member.name"></h3>
                                             <div class="text-sm flex gap-2 items-center mt-1 flex-wrap">
+                                                <!-- Status leads the badges: whether somebody
+                                                     can get in outranks what colour they are. -->
+                                                <template x-if="memberStatus(member) === 'disabled'">
+                                                    <span
+                                                        class="px-2 py-0.5 bg-red-900/50 text-red-300 rounded font-bold text-xs uppercase tracking-wide border border-red-700/50">No access</span>
+                                                </template>
+                                                <template x-if="memberStatus(member) === 'archived'">
+                                                    <span
+                                                        class="px-2 py-0.5 bg-gray-700/70 text-gray-300 rounded font-bold text-xs uppercase tracking-wide border border-gray-600">Removed</span>
+                                                </template>
                                                 <template x-if="member.driver_id">
                                                     <span
                                                         class="px-2 py-0.5 bg-green-900/50 text-green-300 rounded font-bold text-xs uppercase tracking-wide">Driver</span>
@@ -1423,9 +1451,33 @@
                                         <button x-show="member.driver_id && member.passenger_id"
                                             @click="splitMember(member)"
                                             class="text-amber-500 hover:text-amber-400 bg-amber-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Split</button>
-                                        <button x-show="!member.driver_id && !member.passenger_id"
+                                        <!-- The status ladder. "Delete" used to be
+                                             here and was HIDDEN for anyone holding a
+                                             driving or passenger profile — which is
+                                             why removing such a person appeared
+                                             impossible. Removing is now the safe,
+                                             reversible act; permanent deletion lives
+                                             one step further in, for mistakes. -->
+                                        <button x-show="memberStatus(member) === 'active'"
+                                            @click="setMemberStatus(member, 'disabled')"
+                                            class="text-orange-500 hover:text-orange-400 bg-orange-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Remove
+                                            access</button>
+                                        <button x-show="memberStatus(member) === 'disabled'"
+                                            @click="setMemberStatus(member, 'active')"
+                                            class="text-green-500 hover:text-green-400 bg-green-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Restore
+                                            access</button>
+                                        <button x-show="memberStatus(member) !== 'archived'"
+                                            @click="setMemberStatus(member, 'archived')"
+                                            class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Remove
+                                            from list</button>
+                                        <button x-show="memberStatus(member) === 'archived'"
+                                            @click="setMemberStatus(member, 'active')"
+                                            class="text-green-500 hover:text-green-400 bg-green-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Bring
+                                            back</button>
+                                        <button x-show="memberStatus(member) === 'archived'"
                                             @click="deleteMember(member)"
-                                            class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Delete</button>
+                                            class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm border border-red-900/60">Delete
+                                            permanently</button>
                                     </div>
                                 </div>
                                 <div x-show="editMemberId === member.id" x-cloak
@@ -4374,6 +4426,9 @@
                 newMemberCalendarInput: '',
                 // Invites (auth arc S3)
                 inviteBusy: false, inviteLink: '', inviteSent: false, inviteWarning: '',
+                // Removed people are hidden until asked for; the count is what
+                // makes the toggle offer itself in the first place.
+                showArchivedMembers: false, archivedMemberCount: 0,
                 trustedDevices: [],                          // auth arc S5
                 pairCode: '', pairLabel: '', pairFound: null,  // auth arc S6
                 serviceToken: '', serviceBusy: false,          // auth arc S7
@@ -5439,11 +5494,60 @@
                 },
 
                 // --- Family members ---
+                memberStatus(member) {
+                    // Absent means active — every member predating the status
+                    // field, which is all of them.
+                    const s = (member || {}).status;
+                    return ['active', 'disabled', 'archived'].includes(s) ? s : 'active';
+                },
+                async setMemberStatus(member, status) {
+                    const asks = {
+                        disabled: ['Remove access',
+                            `Sign ${member.name} out everywhere and stop them signing back in? They stay on the schedule and in the family's history — they just can't get into the app. You can undo this.`,
+                            'Remove access'],
+                        archived: ['Remove from the list',
+                            `Remove ${member.name} from the People list? They come off the rota and out of every picker, and lose access. Everything they've ever done keeps their name on it, and you can bring them back.`,
+                            'Remove'],
+                        active: ['Bring them back',
+                            `Restore ${member.name}? They get access again and reappear in the family's lists.`,
+                            'Restore'],
+                    }[status];
+                    if (asks && !await promptConfirm(asks[0], asks[1], asks[2])) return;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/members/${member.id}/status`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ status })
+                        });
+                        if (!res.ok) {
+                            const d = await res.json().catch(() => ({}));
+                            showGlobalAlert(d.detail || 'Could not change that.');
+                            return;
+                        }
+                        const d = await res.json().catch(() => ({}));
+                        if (status !== 'active' && (d.sessions || d.devices)) {
+                            showGlobalAlert(`Signed out: ${d.sessions || 0} session(s), ${d.devices || 0} device(s) un-trusted.`);
+                        }
+                        await this.loadMembers();
+                    } catch (e) {
+                        showGlobalAlert('Could not reach the server.');
+                    }
+                },
                 async loadMembers() {
                     try {
-                        const res = await fetch(`${this.apiBase}api/members`);
+                        const url = `${this.apiBase}api/members`
+                            + (this.showArchivedMembers ? '?include_archived=true' : '');
+                        const res = await fetch(url);
                         const data = await res.json();
                         this.members = Array.isArray(data) ? data : [];
+                        // How many are waiting behind the toggle. Asked for
+                        // separately so the checkbox can offer itself before
+                        // anybody knows there is anything to see.
+                        try {
+                            const all = await (await fetch(`${this.apiBase}api/members?include_archived=true`)).json();
+                            this.archivedMemberCount = (Array.isArray(all) ? all : [])
+                                .filter(m => m.status === 'archived').length;
+                        } catch (e) { /* the count is a nicety */ }
                         const memberCals = [];
                         this.members.forEach(m => {
                             if (Array.isArray(m.calendar_ids)) memberCals.push(...m.calendar_ids);
@@ -6305,8 +6409,18 @@
                     await this.loadMembers();
                 },
                 async deleteMember(member) {
-                    if (!await promptConfirm('Delete member', `Delete member "${member.name}"?`, 'Delete')) return;
-                    await fetch(`${this.apiBase}api/members/${member.id}`, { method: 'DELETE' });
+                    // The mistake lever — a name typed wrong, not a person who
+                    // left. Offered only on an already-removed member, so it
+                    // takes two deliberate acts to reach.
+                    if (!await promptConfirm('Delete permanently',
+                        `Permanently delete "${member.name}"? This cannot be undone, and anything they are still named on loses the name. To simply remove somebody from the family, use Remove from list instead.`,
+                        'Delete forever')) return;
+                    const res = await fetch(`${this.apiBase}api/members/${member.id}`, { method: 'DELETE' });
+                    if (!res.ok) {
+                        const d = await res.json().catch(() => ({}));
+                        showGlobalAlert(d.detail || 'Could not delete that member.');
+                        return;
+                    }
                     await this.loadMembers();
                 },
                 async loadHaOptions() {

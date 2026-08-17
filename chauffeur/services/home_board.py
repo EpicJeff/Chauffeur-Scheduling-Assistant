@@ -913,7 +913,7 @@ def _driver_index() -> dict:
         idx[d.get('id')] = {'name': d.get('name') or 'Driver',
                             'color': d.get('color_code') or '#3b82f6',
                             'avatar': None, 'image': None}
-    for m in storage.get_all_members():
+    for m in storage.get_all_members(include_archived=True):
         d_id = m.get('driver_id')
         if not d_id:
             continue
@@ -2119,7 +2119,7 @@ def _tile_tasks(now, config=None, **_):
         if not rows:
             return {'empty': "Nothing owed right now."}
         today = now.date().isoformat()
-        names = {m['id']: m.get('name') for m in storage.get_all_members()}
+        names = {m['id']: m.get('name') for m in storage.get_all_members(include_archived=True)}
         out = []
         for t in rows:
             # `unclaimed_only` and an owner filter are opposite questions, so

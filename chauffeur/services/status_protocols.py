@@ -63,7 +63,7 @@ def active_statuses(date_str: str):
     is_home_day); matched beats carry the family's per-day words and can
     override the need FOR THAT DAY. Returns [] on a normal day."""
     protocols = {p['id']: p for p in storage.get_all_status_protocols()}
-    members = {m['id']: m for m in storage.get_all_members()}
+    members = {m['id']: m for m in storage.get_all_members(include_archived=True)}
     try:
         dq = datetime.date.fromisoformat(date_str)
         q_start = (dq - datetime.timedelta(days=MAX_BEAT_REACH_DAYS)).isoformat()
@@ -399,7 +399,7 @@ def unavailable_driver_dates(start: str, end: str):
     because "keep the evening free" and "home but resting" are claims about
     the evening, and banning the school run too would overshoot the family's
     own words. Entries for these carry time_start/time_end."""
-    members = {m['id']: m for m in storage.get_all_members()}
+    members = {m['id']: m for m in storage.get_all_members(include_archived=True)}
     out = []
     try:
         d = datetime.date.fromisoformat(start)
@@ -499,7 +499,7 @@ def send_coverage_reports(now: datetime.datetime = None, lookahead_days: int = 4
     sent_marks = {k: v for k, v in sent_marks.items() if v >= cutoff}
 
     protocols = {p['id']: p for p in storage.get_all_status_protocols()}
-    members = {m['id']: m for m in storage.get_all_members()}
+    members = {m['id']: m for m in storage.get_all_members(include_archived=True)}
     assignments = dict(sched.get('assignments', {}))
     assignments.update(sched.get('ghost_assignments', {}))
     # Outside hands (load arc A1): a ride somebody outside the house is making

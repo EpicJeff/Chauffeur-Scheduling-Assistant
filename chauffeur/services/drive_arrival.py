@@ -253,7 +253,9 @@ def run_nudges(now_ts: float, notify) -> List[str]:
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     assignments = dict(sched.get('assignments') or {})
     assignments.update(sched.get('ghost_assignments') or {})
-    member_by_driver = {m.get('driver_id'): m for m in storage.get_all_members()
+    # include_archived: the leg is only nudged if its driver resolves here, so a
+    # driver archived mid-week would have their in-flight drives skipped outright.
+    member_by_driver = {m.get('driver_id'): m for m in storage.get_all_members(include_archived=True)
                         if m.get('driver_id')}
     nudged = []
     for row in rows:
@@ -299,7 +301,7 @@ def check_arrivals(now_ts: float = None) -> List[dict]:
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     assignments = dict(sched.get('assignments') or {})
     assignments.update(sched.get('ghost_assignments') or {})
-    member_by_driver = {m.get('driver_id'): m for m in storage.get_all_members()
+    member_by_driver = {m.get('driver_id'): m for m in storage.get_all_members(include_archived=True)
                         if m.get('driver_id')}
     completed = []
     for leg in legs:

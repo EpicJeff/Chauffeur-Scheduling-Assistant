@@ -1128,6 +1128,23 @@ def update_driver_fields(driver_id: str, updates: dict) -> bool:
     with db_lock:
         return bool(drivers_table.update(updates, Query().id == driver_id))
 
+def set_driver_rota_state(driver_id: str, disabled: bool) -> bool:
+    """On or off the rota, by string id, INVALIDATING the schedule caches.
+
+    Deliberately not `update_driver_fields`, which documents itself as
+    cosmetic-only and skips invalidation: `is_disabled` is the one field on a
+    driver the solver actually reads, so changing it without burning the
+    cached schedule leaves every surface quoting a rota the solver no longer
+    agrees with. Used when a member is archived (and restored)."""
+    with db_lock:
+        changed = bool(drivers_table.update({'is_disabled': bool(disabled)},
+                                            Query().id == driver_id))
+        if changed:
+            custom_schedules_table.truncate()
+            mark_all_daily_schedules_dirty()
+            cache_table.truncate()
+        return changed
+
 def delete_driver(doc_id: int):
     with db_lock:
         custom_schedules_table.truncate()
@@ -1267,8 +1284,9 @@ def delete_car(doc_id: int):
         cars_table.remove(doc_ids=[doc_id])
 
 # Family member CRUD (overlay entity; see FamilyMember in models/schemas.py)
-def get_all_members(include_system: bool = False) -> List[dict]:
-    """The human family. **Argyle is excluded by default.**
+def get_all_members(include_system: bool = False,
+                    include_archived: bool = False) -> List[dict]:
+    """The human family. **Argyle and archived people are excluded by default.**
 
     Argyle is a `system: True` member so that agent replies have a sender
     identity, and the original note said the flag "lets the UI exclude it from
@@ -1280,6 +1298,15 @@ def get_all_members(include_system: bool = False) -> List[dict]:
     So exclusion moved here, to the boundary. `include_system=True` is for the
     handful of places that resolve a message SENDER by id and would otherwise
     render Argyle's own messages as "Unknown".
+
+    ARCHIVED members ride the same boundary for the same reason. Archiving is
+    this app's "delete": the person leaves every list, picker, roster, digest
+    and assignment target, while every message they sent and every chore they
+    ever did keeps its author. That is only coherent because `get_member(id)`
+    still answers for them — the LIST forgets you, the RECORD does not — so
+    `include_archived=True` is for the rare roster that must show the departed
+    (the archived view in config, and any by-id resolution that starts from a
+    list rather than an id).
     """
     with db_lock:
         members = []
@@ -1288,8 +1315,48 @@ def get_all_members(include_system: bool = False) -> List[dict]:
             doc['doc_id'] = m.doc_id
             if not include_system and doc.get('system'):
                 continue
+            if not include_archived and doc.get('status') == 'archived':
+                continue
             members.append(doc)
         return members
+
+
+# --- Member status: active | disabled | archived ---
+# Two different facts, deliberately one field, because they are a LADDER:
+#   active    — normal.
+#   disabled  — ACCESS revoked. Cannot sign in with a password, cannot use a
+#               PIN, cannot spend an outstanding invite link; every session
+#               dies and every device their sign-ins vouched stops being
+#               trusted ground. They stay fully visible in the family: on the
+#               schedule, in history, on the map. This is "you can't get in",
+#               never "you don't exist".
+#   archived  — HIDDEN as well: out of every list, picker and assignment
+#               target, off the rota. Implies disabled (nobody archived keeps
+#               a way in). Reversible, because the record never left.
+#
+# NOT called `is_disabled`, which already exists on `Driver` and means
+# something else entirely — out of the solver, off the rota. v2.258.1 was a
+# bug caused by exactly that scheduling flag leaking into identity, so the two
+# concepts get two different field names and the UI does the disambiguating.
+MEMBER_STATUSES = ('active', 'disabled', 'archived')
+
+def member_status(member: dict) -> str:
+    """Absent means active — every member predating this field, which is all
+    of them, must read as normal rather than as locked out."""
+    s = (member or {}).get('status')
+    return s if s in MEMBER_STATUSES else 'active'
+
+def member_has_access(member: dict) -> bool:
+    return member_status(member) == 'active'
+
+def set_member_status(member_id: str, status: str) -> Optional[dict]:
+    if status not in MEMBER_STATUSES:
+        return None
+    with db_lock:
+        if not members_table.search(Query().id == member_id):
+            return None
+        members_table.update({'status': status}, Query().id == member_id)
+    return get_member(member_id)
 
 def get_member(member_id: str) -> Optional[dict]:
     with db_lock:
@@ -1803,7 +1870,14 @@ def get_member_by_token(token: str) -> Optional[dict]:
             # the table would come back to life if the TTL were ever raised.
             member_tokens_table.remove(doc_ids=[row.doc_id])
             return None
-    return get_member(row['member_id'])
+    member = get_member(row['member_id'])
+    # Belt and braces on the status ladder: disabling already deletes every
+    # session, so a live token for a disabled member should not exist — but
+    # "should not exist" is not a check, and this is the single chokepoint
+    # every authenticated request passes through.
+    if member is not None and not member_has_access(member):
+        return None
+    return member
 
 def delete_member_tokens(member_id: str) -> int:
     with db_lock:
@@ -3484,7 +3558,13 @@ def get_pool_status(reward: dict) -> dict:
     split (enriched with name/color for thermometer segments), and whether
     it is funded / who is still short of min_share."""
     contribs = get_pool_contributions(reward_id=reward['id'])
-    members = {m['id']: m for m in get_all_members()}
+    # ONE list, two different questions, and they want different answers.
+    # Naming a past contribution is history — a child who has since left the
+    # family still pledged those points and their segment must keep its name
+    # and colour. Being STILL SHORT is a live roster question, and listing a
+    # departed child as owing points toward a reward nobody will buy them is
+    # nonsense. So: index everybody, but chase only the present.
+    members = {m['id']: m for m in get_all_members(include_archived=True)}
     enriched = [{
         'member_id': c['member_id'],
         'member_name': (members.get(c['member_id']) or {}).get('name'),
@@ -3499,6 +3579,7 @@ def get_pool_status(reward: dict) -> dict:
         by_member = {c['member_id']: c['amount'] for c in enriched}
         short = [m.get('name') for m in members.values()
                  if m.get('role') == 'child'
+                 and member_status(m) != 'archived'
                  and by_member.get(m['id'], 0) < min_share]
     return {'pledged': pledged, 'cost': cost, 'remaining': max(0, cost - pledged),
             'funded': pledged >= cost, 'contributions': enriched,

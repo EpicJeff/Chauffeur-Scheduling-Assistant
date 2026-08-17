@@ -823,7 +823,7 @@ def get_household_tasks(assigned_to: str = None, unassigned_only: bool = False) 
         return {"status": "success",
                 "message": f"Nothing on {owner['name']}'s list." if owner
                            else "The household list is clear."}
-    names = {m['id']: m.get('name') for m in storage.get_all_members()}
+    names = {m['id']: m.get('name') for m in storage.get_all_members(include_archived=True)}
     today = datetime.date.today().isoformat()
     lines = []
     for t in rows[:15]:
@@ -1113,8 +1113,10 @@ def get_family_messages(limit: int = 10, requester_driver_id: str = None) -> Dic
     if not msgs:
         return {"status": "success", "message": "No family messages yet."}
     # include_system: Argyle sends messages, so its own name has to resolve.
+    # Same for people who have since been archived — they still wrote what they wrote.
     names = {m['id']: m.get('name', '?')
-             for m in storage.get_all_members(include_system=True)}
+             for m in storage.get_all_members(include_system=True,
+                                              include_archived=True)}
     lines = []
     for m in msgs:
         t = datetime.datetime.fromtimestamp(m.get('ts', 0)).strftime('%a %I:%M %p').lstrip('0')
@@ -1125,7 +1127,7 @@ def get_family_messages(limit: int = 10, requester_driver_id: str = None) -> Dic
 def list_chores() -> Dict[str, Any]:
     from services import storage
     chores = storage.get_all_chores()
-    names = {m['id']: m.get('name', '?') for m in storage.get_all_members()}
+    names = {m['id']: m.get('name', '?') for m in storage.get_all_members(include_archived=True)}
     open_c = [c for c in chores if c.get('state') == 'open']
     claimed = [c for c in chores if c.get('state') == 'claimed']
     done = [c for c in chores if c.get('state') == 'done']
