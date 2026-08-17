@@ -679,9 +679,18 @@
                                  indistinguishable from a map that failed to
                                  load, which is the same ambiguity the whole
                                  board is built to avoid. -->
-                            <div x-show="!t.data.mapped"
+                            <!-- Two different silences, and conflating them
+                                 cost a real debugging session: a card whose
+                                 rows carry no coordinates looks identical to
+                                 one whose Leaflet never loaded. The count is
+                                 the server's answer; `mapFailed` is the
+                                 renderer's. -->
+                            <div x-show="!t.data.mapped || mapFailed[t.id]"
                                 class="absolute inset-0 flex items-center justify-center text-center px-4">
-                                <span class="text-sm panel-dim">Nobody is sharing a location yet.</span>
+                                <span class="text-sm panel-dim"
+                                      x-text="mapFailed[t.id]
+                                        ? 'The map could not load.'
+                                        : 'Nobody is sharing a location yet.'"></span>
                             </div>
                         </div>
                     </template>

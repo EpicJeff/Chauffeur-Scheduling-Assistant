@@ -922,6 +922,75 @@ def scenario_the_map_tile_carries_pins_not_just_zone_words():
          storage.get_all_cars) = orig_m, orig_s, orig_c
 
 
+def scenario_a_map_card_can_show_the_fleet_without_the_family():
+    """Asked for from the household: a card showing just the cars, or just
+    the buses. The members multi-select could not express it — empty already
+    means EVERYONE, so "nobody" needed its own switch.
+
+    The trap this walks past: the has-anything check used to sit right after
+    the member loop, so a people-less card would have deleted itself before
+    the vehicles were added — the card somebody deliberately built,
+    vanishing on save."""
+    from services import ha_api
+    orig_m, orig_s, orig_c = (storage.get_all_members, ha_api.get_state,
+                              storage.get_all_cars)
+    try:
+        storage.get_all_members = lambda *a, **kw: [
+            {'id': 'm1', 'name': 'Sam', 'role': 'parent',
+             'ha_person_entity': 'person.sam'}]
+        storage.get_all_cars = lambda *a, **kw: [
+            {'id': 'c1', 'name': 'The van', 'ha_device_tracker': 'device_tracker.van'}]
+        ha_api.get_state = lambda ent: {
+            'state': 'not_home',
+            'attributes': {'latitude': 41.5, 'longitude': -81.6}}
+        now = datetime.datetime.now()
+
+        both = home_board._tile_map(now, runs=[], config={})
+        check(both and len(both['people']) == 2,
+              f"by default the map carries the family AND the fleet: {both}")
+
+        fleet = home_board._tile_map(now, runs=[], config={'people': False})
+        check(fleet is not None,
+              "a cars-only map deleted itself — the has-anything check must "
+              "wait until the vehicles are in")
+        names = [r['name'] for r in fleet['people']]
+        check(names == ['The van'],
+              f"people were switched off and somebody still appeared: {names}")
+        check(fleet['mapped'] == 1, f"the van kept its pin: {fleet}")
+
+        # Nothing switched on has anything to say -> no card at all (rule 1).
+        empty = home_board._tile_map(now, runs=[],
+                                     config={'people': False, 'cars': False})
+        check(empty is None,
+              f"a map with everything switched off should draw nothing: {empty}")
+    finally:
+        (storage.get_all_members, ha_api.get_state,
+         storage.get_all_cars) = orig_m, orig_s, orig_c
+
+
+def scenario_a_board_two_segments_deep_can_still_load_its_map():
+    """`/board/{slug}` is two path segments, so a bare `static/...` from a
+    component resolves to `/board/static/...` and 404s. That is what made a
+    map card work on /home and draw nothing on every custom board: Leaflet
+    itself never loaded, and the card's "nobody is sharing a location"
+    overlay then explained the wrong thing entirely.
+
+    v2.207.0 fixed exactly this for home.html's own head and wrote down the
+    rule; this component predated it. Pinned as the SHAPE of the climb, so a
+    future edit cannot quietly drop the board level again."""
+    import os
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'templates', 'components',
+        'family_map_core.html'), encoding='utf-8').read()
+    frag = src[src.index('const apiBase'):src.index('function esc')]
+    # 'board' unescaped rather than the literal path: the test is asserting
+    # that the climb KNOWS about the board route, and the regex that does it
+    # spells its slashes `\/`.
+    check('board' in frag and "+= '../'" in frag,
+          "the map component's apiBase no longer climbs out of /board/{slug} "
+          "— its Leaflet and its fetches 404 on every custom board")
+
+
 def scenario_the_drives_tile_hands_over_a_schedule_not_a_drawing():
     """The tile draws the Drives page's OWN timeline now — same renderer, from
     components/schedule_timeline.html — so what it sends is the schedule that

@@ -620,8 +620,16 @@ WIDGETS = [
               help='Pan, zoom and tap a pin for who it is, with a ⌖ to frame '
                    'everyone again. Off, the map is a picture and tapping '
                    'the tile opens the Map page.'),
+         # The three things on this map are switched independently, because a
+         # household asked for a card that shows the CARS and nothing else —
+         # and the members filter could not express it. "Everyone" and
+         # "nobody" are different answers and an empty multi-select already
+         # means the first one, so the second needs its own switch.
+         _opt('people', 'Show people', 'bool', True,
+              help='Off, the map shows only the vehicles below — a fleet '
+                   'board rather than a family one.'),
          _opt('members', 'People', 'select', [], source='members', multi=True,
-              help='Leave empty for everyone.'),
+              help='Leave empty for everyone. Ignored when people are off.'),
          _opt('cars', 'Show cars', 'bool', True),
          # OFF by default, unlike cars: a bus is only real for the twenty
          # minutes it is running, and a household with no bus kids would get
@@ -2426,9 +2434,10 @@ def _tile_map(now, runs=None, config=None, **_):
         driving = {r['driver_id']: r['title'] for r in (runs or []) if r.get('live')}
         wanted = set(_cfg_ids(config, 'members'))
         show_cars = _cfg_bool(config, 'cars', True)
+        show_people = _cfg_bool(config, 'people', True)
         rows = []
         from services import stages
-        for m in storage.get_all_members():
+        for m in (storage.get_all_members() if show_people else []):
             if m.get('role') == 'helper' or m.get('system'):
                 continue
             if wanted and m.get('id') not in wanted:
@@ -2461,9 +2470,10 @@ def _tile_map(now, runs=None, config=None, **_):
                          'latitude': lat, 'longitude': lon, 'is_car': False,
                          'private': private or None,
                          'driving': {'leg_title': leg} if leg else None})
-        if not rows:
-            return None                       # no family members at all
         # Anyone out ranks anyone home: "everybody is home" is the boring case.
+        # (The has-anything check waits until the vehicles are in — a card
+        # configured to show only the cars has no people by design, and
+        # bailing here would delete the very board somebody built.)
         rows.sort(key=lambda r: (not r['driving'], (r['state'] or '') == 'home',
                                  r['name'] or ''))
         # Cars ride along the bottom of the list and on the map as squares. A
@@ -2542,6 +2552,8 @@ def _tile_map(now, runs=None, config=None, **_):
                              'driving': None})
         except Exception as e:
             print(f"[home_board] map buses failed: {e}")
+        if not rows:
+            return None       # nothing switched on has anything to show
         return {'people': rows,
                 # Read by the markup (whether the canvas takes pointer events),
                 # by the renderer (Leaflet's own handlers and the marker

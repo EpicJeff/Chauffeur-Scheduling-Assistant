@@ -2314,6 +2314,10 @@
                 // empty until somebody types. Measured, the card would be one
                 // height at rest and another mid-search, and the tile would
                 // jump under the thumb that was using it.
+                // Which map cards could not draw, by card id. Read by the
+                // card's own overlay so "no pins" and "no map" stop looking
+                // identical.
+                mapFailed: {},
                 DRAWN_TILES: ['map', 'calendar', 'moments_gallery',
                               'trips_gallery', 'music',
                               'ha_image', 'ha_dashboard', 'ha_card', 'web'],
@@ -2890,7 +2894,17 @@
                     try {
                         await boardMaps[tile.id].ensure();
                         await boardMaps[tile.id].refresh(tile.data.people);
-                    } catch (e) { /* no Leaflet, no map: the chips still say who is where */ }
+                        if (this.mapFailed[tile.id]) delete this.mapFailed[tile.id];
+                    } catch (e) {
+                        // Still not fatal — the board keeps drawing and the
+                        // chips still say who is where — but it stops being
+                        // SILENT. This catch swallowed a 404 on Leaflet
+                        // itself for every board at /board/{slug}, and the
+                        // card's own "nobody is sharing a location" overlay
+                        // then explained the wrong thing.
+                        console.warn('[board] map ' + tile.id + ' failed to draw', e);
+                        this.mapFailed[tile.id] = true;
+                    }
                 },
 
                 // The ⌖ on an interactive map card. Named here rather than

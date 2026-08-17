@@ -45,8 +45,22 @@
 </style>
 <script>
     window.FamilyMap = window.FamilyMap || (function () {
-        // Computed independently of the including page's script order.
-        const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+        // Computed independently of the including page's script order — and
+        // it has to count the BOARD's extra segment, which is what this
+        // missed. `/board/{slug}` is two deep, so a bare `static/...` asked
+        // for `/board/static/vendor/leaflet/leaflet.js`, got a 404, and
+        // Leaflet never loaded: a map card worked on /home and drew nothing
+        // on any custom board. Same climb home.html does for its own head
+        // (v2.207.0's rule, which this component predated) — ONE extra level
+        // counted against the route rather than real path segments, because
+        // ingress puts /api/hassio_ingress/<token>/ in front of everything
+        // and must never be climbed out of.
+        const apiBase = (function () {
+            const p = window.location.pathname;
+            let base = p.endsWith('/') ? '../' : '';
+            if (/\/board\/[^/]+\/?$/.test(p)) base += '../';
+            return base;
+        })();
 
         function esc(s) {
             return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
