@@ -1428,6 +1428,12 @@
                                         <button x-show="!member.has_pin" @click="setMemberPin(member)"
                                             class="text-blue-400 hover:text-blue-300 bg-blue-500/10 px-3 py-3 rounded-lg transition-colors font-bold text-sm">Set
                                             PIN</button>
+                                        <!-- Decision 8: the stolen-phone lever. Kills every session
+                                             AND the personal devices this member vouched, so their
+                                             PIN cannot re-open the phone that prompted this. -->
+                                        <button @click="signOutEverywhere(member)"
+                                            class="text-amber-400 hover:text-amber-300 bg-amber-500/10 px-3 py-3 rounded-lg transition-colors font-bold text-sm">Sign
+                                            out everywhere</button>
                                         <div>
                                             <label class="block text-gray-400 mb-1 text-sm">Merge another member into
                                                 this one</label>
@@ -5910,6 +5916,19 @@
                     if (!await promptConfirm('Reset PIN', `Reset ${member.name}'s PIN? They can set a new one next time they sign in.`, 'Reset PIN')) return;
                     await fetch(`${this.apiBase}api/members/${member.id}/pin/clear`, { method: 'POST' });
                     await this.loadMembers();
+                },
+                async signOutEverywhere(member) {
+                    // Decision 8's stolen-phone lever: sessions AND the
+                    // personal devices this member vouched. Their PIN then
+                    // cannot re-open an off-LAN phone; home surfaces are
+                    // untouched (the LAN is trusted ground on its own).
+                    if (!await promptConfirm('Sign out everywhere',
+                        `Sign ${member.name} out of every device and un-trust the phones their sign-ins vouched for? They will need their password (or an invite link) to get back in away from home.`,
+                        'Sign out everywhere')) return;
+                    const res = await fetch(`${this.apiBase}api/members/${member.id}/signout`, { method: 'POST' });
+                    if (!res.ok) { showGlobalAlert('Could not sign them out.'); return; }
+                    const d = await res.json().catch(() => ({}));
+                    showGlobalAlert(`Signed out: ${d.sessions ?? 0} session(s) ended, ${d.devices ?? 0} device(s) un-trusted.`);
                 },
                 async setMemberPin(member) {
                     const pin = await promptInput(`Set PIN for ${member.name}`, '4-8 digits.',

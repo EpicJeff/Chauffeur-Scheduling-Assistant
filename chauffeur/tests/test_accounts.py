@@ -708,6 +708,81 @@ def scenario_w_absent_grace_defaults_to_on():
         storage.get_settings = real
 
 
+def scenario_x_a_session_dies_of_old_age():
+    """Decision 8: 90 days, enforced at the lookup so there is exactly one
+    place a token can be believed. Expired means REMOVED, not merely refused —
+    a dead row left behind would come back to life if the TTL were raised."""
+    m = _member('Ninety')
+    token = storage.create_member_token(m)
+    check(storage.get_member_by_token(token) is not None,
+          "a fresh session did not work")
+    # Backdate the row past the TTL; no sleeping in tests.
+    from tinydb import Query as _Q
+    with storage.db_lock:
+        storage.member_tokens_table.update(
+            {'created_at': time.time() - storage.MEMBER_TOKEN_TTL_SECONDS - 1},
+            _Q().token == token)
+    check(storage.get_member_by_token(token) is None,
+          "a 90-day-old session was still believed")
+    with storage.db_lock:
+        rows = storage.member_tokens_table.search(_Q().token == token)
+    check(not rows, "an expired session was refused but left in the table")
+
+
+def scenario_x2_a_token_with_no_birthday_is_grandfathered_not_executed():
+    """Rows from before tokens carried created_at must NOT expire at deploy
+    time — that would sign every phone in the household out at once. Absent
+    means 'from now', written back so the clock actually starts."""
+    m = _member('Elder')
+    token = storage.create_member_token(m)
+    from tinydb import Query as _Q
+    with storage.db_lock:
+        # TinyDB update() cannot remove a key; simulate a legacy row by
+        # writing a falsy birthday, which the lookup treats as absent.
+        storage.member_tokens_table.update({'created_at': None},
+                                           _Q().token == token)
+    check(storage.get_member_by_token(token) is not None,
+          "a legacy token was killed by the upgrade instead of grandfathered")
+    with storage.db_lock:
+        row = storage.member_tokens_table.search(_Q().token == token)[0]
+    check(row.get('created_at'),
+          "the grandfathered token never got a birthday, so it can never age")
+
+
+def scenario_x3_sign_out_everywhere_takes_the_vouched_phones_too():
+    """Decision 8's stolen-phone lever, both halves. Sessions alone would be
+    theatre: the stolen phone is trusted ground this member's own sign-in
+    vouched, so their PIN would re-open it minutes later. The member's
+    PERSONAL vouches die with the sessions; the wall panel (a place, and a
+    parent's deliberate act) is untouched, and so is another member's phone."""
+    thief_victim = _member('Vovo2')
+    other = _member('Bystander')
+    t1 = storage.create_member_token(thief_victim)
+    t2 = storage.create_member_token(thief_victim)
+    keep = storage.create_member_token(other)
+    storage.trust_device('stolen-phone', 'Vovo2 phone',
+                         by_member=thief_victim, kind='personal')
+    storage.trust_device('kitchen-panel', 'Kitchen',
+                         by_member=thief_victim, kind='panel')
+    storage.trust_device('bystander-phone', 'Bystander phone',
+                         by_member=other, kind='personal')
+    sessions = storage.delete_member_tokens(thief_victim)
+    devices = storage.untrust_devices_vouched_by(thief_victim)
+    check(sessions == 2 and devices == 1,
+          f"expected 2 sessions and 1 device gone, got {sessions} and {devices}")
+    check(storage.get_member_by_token(t1) is None
+          and storage.get_member_by_token(t2) is None,
+          "a signed-out session still worked")
+    check(storage.get_member_by_token(keep) is not None,
+          "another member's session was collateral damage")
+    check(storage.get_trusted_device('stolen-phone') is None,
+          "the stolen phone stayed trusted ground — the PIN re-opens it")
+    check(storage.get_trusted_device('kitchen-panel') is not None,
+          "the wall panel lost its enrolment over one member's stolen phone")
+    check(storage.get_trusted_device('bystander-phone') is not None,
+          "another member's phone was un-trusted as collateral")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

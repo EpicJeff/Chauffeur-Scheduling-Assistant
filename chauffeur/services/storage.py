@@ -1773,16 +1773,61 @@ def create_member_token(member_id: str) -> str:
             member_tokens_table.remove(doc_ids=[r.doc_id for r in rows[:len(rows) - 20]])
     return token
 
+# Decision 8 (auth arc S8): sessions live 90 days. Long enough that a
+# grandparent is not re-typing a password they have forgotten; short enough
+# that a lost phone's session dies on its own even when nobody thinks to
+# revoke it. The PIN re-opens a trusted device afterwards (Decision 4c), so
+# the common renewal is four digits rather than a password.
+MEMBER_TOKEN_TTL_SECONDS = 90 * 86400
+
 def get_member_by_token(token: str) -> Optional[dict]:
+    import time
     if not token:
         return None
     with db_lock:
         rows = member_tokens_table.search(Query().token == token)
-    return get_member(rows[0]['member_id']) if rows else None
+        if not rows:
+            return None
+        row = rows[0]
+        created = row.get('created_at')
+        if not created:
+            # A row from before tokens carried a birthday is grandfathered
+            # from NOW rather than guessed at: expiring the whole installed
+            # base at deploy time would sign every phone out at once, which
+            # is this arc's cardinal sin.
+            created = time.time()
+            member_tokens_table.update({'created_at': created},
+                                       doc_ids=[row.doc_id])
+        if time.time() - created > MEMBER_TOKEN_TTL_SECONDS:
+            # Expired means GONE, not merely refused — a dead token left in
+            # the table would come back to life if the TTL were ever raised.
+            member_tokens_table.remove(doc_ids=[row.doc_id])
+            return None
+    return get_member(row['member_id'])
 
-def delete_member_tokens(member_id: str):
+def delete_member_tokens(member_id: str) -> int:
     with db_lock:
-        member_tokens_table.remove(Query().member_id == member_id)
+        removed = member_tokens_table.remove(Query().member_id == member_id)
+    try:
+        return len(removed)
+    except TypeError:
+        return 0
+
+def untrust_devices_vouched_by(member_id: str) -> int:
+    """The other half of 'sign out everywhere' (Decision 8): the devices this
+    member's own password sign-ins vouched for stop being trusted ground, so
+    their PIN cannot quietly re-open the stolen phone that prompted this.
+    PERSONAL devices only — a wall panel is the room's credential, not this
+    person's, and a parent-named device was somebody's deliberate act."""
+    if not member_id:
+        return 0
+    with db_lock:
+        removed = trusted_devices_table.remove(
+            (Query().trusted_by == member_id) & (Query().kind == 'personal'))
+    try:
+        return len(removed)
+    except TypeError:
+        return 0
 
 # --- Chores + points ledger ---
 # Marketplace model: chores sit in a family pot, members claim them, parents

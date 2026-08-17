@@ -5500,6 +5500,28 @@ def clear_pin(member_id: str, x_member_token: Optional[str] = Header(None)):
     storage.delete_member_tokens(member_id)
     return {"status": "cleared"}
 
+
+@app.post("/api/members/{member_id}/signout")
+def signout_everywhere(member_id: str, x_member_token: Optional[str] = Header(None)):
+    """'Sign out everywhere' — the stolen-phone case (Decision 8, auth arc S8).
+
+    Two halves, both needed. Killing the sessions alone is theatre: the stolen
+    phone is a device this member's own sign-in vouched for, so their PIN
+    would quietly re-open it minutes later. So the member's tokens die AND the
+    personal devices they vouched stop being trusted ground — after which an
+    off-LAN device needs the password again, which a thief does not have.
+    Panels and parent-named devices are untouched: those are the room's
+    credential and another person's deliberate act, not this member's trail.
+
+    Parent-gated like pin/clear rather than self-serve: the person this exists
+    for has just lost the phone they would have pressed it on."""
+    require_parent_token(x_member_token)
+    if not storage.get_member(member_id):
+        raise HTTPException(status_code=404, detail="Member not found")
+    tokens = storage.delete_member_tokens(member_id)
+    devices = storage.untrust_devices_vouched_by(member_id)
+    return {"status": "ok", "sessions": tokens, "devices": devices}
+
 def _acting_id(request, claimed: Optional[str]) -> Optional[str]:
     """Who is acting, preferring the token over the client's claim (S2).
 
