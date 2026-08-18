@@ -868,9 +868,9 @@ def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, st
                     center_lat, center_lon = clat, clon
             except (ValueError, TypeError):
                 pass
-    address = address.strip(' ,;')
+    address = strip_url_noise(address).strip(' ,;')
     if not address:
-        return None
+        return None  # a location that was nothing but a link: not a place
         
     if mapbox_key and not disable_mapbox and check_usage_limits_and_spikes('geocode', 1):
         # Mapbox has a 256 char / 20 word limit. Truncate for Mapbox request.
@@ -988,6 +988,33 @@ def resolve_routable_location(location: str) -> str:
         print(f"Location resolve failed for '{loc}': {ex}")
         return loc
 
+_URL_IN_LOCATION = None
+
+
+def strip_url_noise(address: str) -> str:
+    """Drop link text from a location string.
+
+    Calendar feeds routinely put a ticket/coupon link where the address goes
+    (PlayMetrics: `LOCATION:https://tickets.nccourage.com/...`). A geocoder
+    does NOT reject a URL — Mapbox tokenizes it and matches the fragments, so
+    that string resolves to "Paces, Virginia", 130 miles from the family, and
+    the solver plans a real drive to it. Strip the URL and keep whatever
+    genuine address sat beside it; an all-link location becomes ''.
+    """
+    global _URL_IN_LOCATION
+    if not address:
+        return ''
+    if _URL_IN_LOCATION is None:
+        import re as _r
+        _URL_IN_LOCATION = (
+            _r.compile(r'\b(?:[a-z][a-z0-9+.-]*://|www\.|mailto:|tel:)\S+', _r.I),
+            _r.compile(r'\s+'),
+        )
+    url_re, ws_re = _URL_IN_LOCATION
+    cleaned = url_re.sub(' ', address)
+    return ws_re.sub(' ', cleaned).strip(' ,;|-–—')
+
+
 def extract_street_address(address: str) -> str:
     if not address or not address.strip(' ,;'):
         return ""
@@ -1079,6 +1106,11 @@ def _usable_cached(cached, want_address: str):
 
 def geocode_address(address: str) -> Optional[tuple[float, float]]:
     if not address or not address.strip():
+        return None
+
+    # Link-only locations are not places. Settle here rather than burning an
+    # API call, a cache row and the city/state fallback on a URL.
+    if not strip_url_noise(address):
         return None
 
     # Extract the core street address first to avoid wasting geocoding requests

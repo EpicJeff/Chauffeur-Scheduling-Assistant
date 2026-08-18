@@ -145,7 +145,9 @@
                                         :style="'background-color: ' + (calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF')">
                                     </div>
                                     <span x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId"
-                                        class="mr-2"></span>
+                                        class="mr-2" :class="unreadableCalendars[calId] ? 'line-through text-red-300' : ''"
+                                        :title="unreadableCalendars[calId] ? 'Chauffeur cannot read this calendar — it is being skipped' : ''"></span>
+                                    <span x-show="unreadableCalendars[calId]" class="mr-2 text-red-300" title="Unreadable">&#9888;</span>
                                     <button @click="setDefaultCalendar(calId)"
                                         :title="defaultCalendarId === calId ? 'Default calendar' : 'Make default calendar'"
                                         class="mr-1 focus:outline-none transition-colors"
@@ -170,6 +172,19 @@
                                 <div class="text-gray-500 italic text-sm">No calendars added yet.</div>
                             </template>
                         </div>
+                        <template x-if="Object.keys(unreadableCalendars).length">
+                            <div class="mt-3 rounded-lg border border-red-500/50 bg-red-900/20 p-3 text-sm text-red-200">
+                                <p class="font-bold mb-1">&#9888; Some calendars can&rsquo;t be read and are being skipped.</p>
+                                <p class="text-red-200/80 text-xs mb-2">The rest of the schedule still works. Fix or remove these
+                                    &mdash; if one is a feed URL (ends in <span class="font-mono">.ics</span>), remove it here and add it
+                                    under &ldquo;Subscribe to a calendar feed&rdquo; instead.</p>
+                                <ul class="list-disc list-inside font-mono text-xs break-all">
+                                    <template x-for="(since, cid) in unreadableCalendars" :key="cid">
+                                        <li x-text="cid"></li>
+                                    </template>
+                                </ul>
+                            </div>
+                        </template>
                         <p class="text-xs text-gray-500 mt-2">★ marks the default (family) calendar — used for intake
                             proposals when it isn't clear whose event it is, and for whole-family events.</p>
                     </div>
@@ -4328,6 +4343,7 @@
                 homeLocation: '',
                 locationSuggestions: [],
                 calendarIds: [],
+                unreadableCalendars: {},
                 defaultCalendarId: '',
                 driverLocationSuggestions: [],
                 ruleLocationSuggestions: [],
@@ -4844,6 +4860,17 @@
                     this.loadWeatherEntities();   // non-blocking; empty when HA is absent
 
                     await this.fetchCalendarMetadata(this.calendarIds);
+                    this.loadCalendarHealth();   // non-blocking
+                },
+                // Calendars the last fetch had to skip. Skipping is what keeps
+                // one bad id from killing the whole schedule; showing them is
+                // what keeps a skipped calendar from hiding somebody's events.
+                async loadCalendarHealth() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/calendar_health`);
+                        const data = res.ok ? await res.json() : {};
+                        this.unreadableCalendars = data.unreadable || {};
+                    } catch (e) { this.unreadableCalendars = {}; }
                 },
                 async loadWeatherEntities() {
                     try {
@@ -4875,8 +4902,23 @@
                     }
                     return line;
                 },
+                // An ICS/webcal URL is a subscription, not a Google calendar id.
+                // Dropped into the calendar-id box it becomes a permanent 404.
+                looksLikeFeedUrl(v) {
+                    const s = (v || '').trim().toLowerCase();
+                    return s.startsWith('http://') || s.startsWith('https://')
+                        || s.startsWith('webcal://') || s.endsWith('.ics');
+                },
+                feedUrlInCalendarBoxMsg(v) {
+                    return `"${v}" looks like a calendar feed URL, not a Google calendar ID. `
+                        + `Add it under "Subscribe to a calendar feed" below instead — `
+                        + `you'll pick which calendar its events land on.`;
+                },
                 async addCalendarId() {
                     const val = this.newCalendarIdInput.trim();
+                    if (this.looksLikeFeedUrl(val)) {
+                        return showGlobalAlert(this.feedUrlInCalendarBoxMsg(val));
+                    }
                     if (val && !this.calendarIds.includes(val)) {
                         this.calendarIds.push(val);
                         await this.fetchCalendarMetadata([val]);
@@ -6078,6 +6120,9 @@
                 },
                 async addMemberCalendarId() {
                     const val = (this.newMemberCalendarInput || '').trim();
+                    if (this.looksLikeFeedUrl(val)) {
+                        return showGlobalAlert(this.feedUrlInCalendarBoxMsg(val));
+                    }
                     if (val && !this.memberEdit.calendar_ids.includes(val)) {
                         this.memberEdit.calendar_ids.push(val);
                         await this.fetchCalendarMetadata([val]);

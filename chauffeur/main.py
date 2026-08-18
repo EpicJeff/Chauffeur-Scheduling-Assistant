@@ -3549,6 +3549,16 @@ def _public_ics_feed(f: dict) -> dict:
     """The event_map is internal bookkeeping (can be hundreds of entries)."""
     return {k: v for k, v in f.items() if k != 'event_map'}
 
+@app.get("/api/calendar_health")
+def calendar_health():
+    """Calendars the last fetch could not read and therefore SKIPPED.
+
+    Skipping is what keeps one bad id from taking the whole schedule down, but
+    a silently skipped calendar is a silently missing kid — so the config page
+    shows these, and they clear themselves the moment the id reads again."""
+    from services import calendar as _gcal
+    return {"unreadable": _gcal.get_unreadable_calendars()}
+
 @app.get("/api/ics_feeds")
 def list_ics_feeds():
     return [_public_ics_feed(f) for f in storage.get_ics_feeds()]
@@ -11657,6 +11667,20 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
     # intake mailbox credentials on every config-page save.
     incoming = settings.model_dump(exclude_unset=True)
     current = storage.get_settings() or {}
+    # An ICS feed URL is a subscription, not a Google calendar id. Pasted into
+    # the Calendar IDs box it becomes a permanent 404 that used to abort the
+    # whole event fetch and leave the household with no schedule at all
+    # (v2.273.6). Refuse it here and point at the field that actually wants it.
+    if 'calendar_ids' in incoming:
+        from services import calendar as _gcal
+        bad = [c for c in (incoming.get('calendar_ids') or [])
+               if _gcal.looks_like_feed_url(c)]
+        if bad:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"\"{bad[0]}\" is a calendar feed URL, not a Google calendar ID. "
+                        "Add it under \"Subscribe to a calendar feed\" instead, and pick "
+                        "which calendar its events should land on."))
     # A home address must never keep a stale/poisoned geocode: purge its
     # cache entries when the address changes, or when the stored entry
     # isn't street-level ('city'/'failed') — so re-saving settings is a

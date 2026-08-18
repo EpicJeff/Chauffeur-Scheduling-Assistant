@@ -54,7 +54,56 @@ def get_calendar_service():
     _local_storage.service = service
     return service
 
+# A calendar id Google will never serve us (deleted, never existed, or not
+# shared with the service account). Distinct from a transient failure: no
+# amount of retrying fixes it, so it must not be allowed to abort the fetch.
+UNREADABLE_STATUSES = (400, 401, 403, 404, 410)
+
+# cal_id -> first-seen ISO timestamp. In memory on purpose: it is a symptom
+# report, not a setting, and it should clear itself the moment the id starts
+# working (or the user removes it) rather than linger in the database.
+_unreadable_calendars = {}
+_unreadable_lock = threading.Lock()
+
+
+def _note_unreadable_calendar(cal_id: str):
+    with _unreadable_lock:
+        if cal_id not in _unreadable_calendars:
+            _unreadable_calendars[cal_id] = datetime.datetime.now().astimezone().isoformat()
+
+
+def _clear_unreadable_calendar(cal_id: str):
+    with _unreadable_lock:
+        _unreadable_calendars.pop(cal_id, None)
+
+
+def get_unreadable_calendars() -> dict:
+    """{cal_id: since_iso} for calendars skipped this run. The UI shows these
+    so a silently-skipped calendar never becomes a silently-missing kid."""
+    with _unreadable_lock:
+        return dict(_unreadable_calendars)
+
+
+def looks_like_feed_url(value: str) -> bool:
+    """An ICS/webcal URL is a *subscription*, not a Google calendar id. Pasted
+    into the calendar-id box it becomes a permanent 404 (see v2.273.6)."""
+    v = (value or '').strip().lower()
+    return v.startswith(('http://', 'https://', 'webcal://')) or v.endswith('.ics')
+
+
+def _is_unreadable(ex) -> bool:
+    """True for a permanent 'this calendar id is not ours to read' error."""
+    status = getattr(getattr(ex, 'resp', None), 'status', None)
+    if status is None:
+        status = getattr(ex, 'status_code', None)
+    return status in UNREADABLE_STATUSES
+
+
 def _fetch_single_calendar(cal_id, time_min, time_max):
+    """Returns (cal_id, events); events is None on failure. A *permanently*
+    unreadable id is additionally recorded in the quarantine map, which is how
+    fetch_upcoming_events tells it apart from a transient outage without
+    changing this function's long-standing 2-tuple contract."""
     service = get_calendar_service()
     try:
         events = []
@@ -72,9 +121,12 @@ def _fetch_single_calendar(cal_id, time_min, time_max):
             page_token = events_result.get('nextPageToken')
             if not page_token:
                 break
+        _clear_unreadable_calendar(cal_id)
         return cal_id, events
     except Exception as ex:
         print(f"Error fetching from calendar {cal_id}: {ex}")
+        if _is_unreadable(ex):
+            _note_unreadable_calendar(cal_id)
         return cal_id, None
 
 def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, end_date_str=None) -> list[Event]:
@@ -106,6 +158,16 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
         for future in concurrent.futures.as_completed(futures):
             cal_id, events = future.result()
             if events is None:
+                # A transient failure still aborts: a half-fetched day looks
+                # exactly like "every event on that calendar was cancelled",
+                # and that answer would be cached. But a permanently
+                # unreadable id (a mistyped address, an ICS URL pasted into
+                # the calendar box, a calendar someone stopped sharing) can
+                # never succeed, so aborting on it takes the WHOLE household
+                # down forever over one bad string. Skip it, remember it, and
+                # let the rest of the family have a schedule.
+                if cal_id in get_unreadable_calendars():
+                    continue
                 raise Exception(f"Failed to fetch events for calendar {cal_id}. Aborting to prevent cache poisoning.")
             for e in events:
                 # Handle all-day events vs timed events

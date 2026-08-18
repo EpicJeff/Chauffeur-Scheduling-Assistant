@@ -146,6 +146,7 @@ RULES = [
     (ANY, '/api/settings/*', PARENTS),
     (ANY, '/api/settings', PARENTS),
     (ANY, '/api/ics_feeds/*', PARENTS),
+    ('GET', '/api/calendar_health', PARENTS),   # which calendars are being skipped
     (ANY, '/api/drivers/*', PARENTS),
     (ANY, '/api/passengers/*', PARENTS),
     (ANY, '/api/rules/*', PARENTS),
