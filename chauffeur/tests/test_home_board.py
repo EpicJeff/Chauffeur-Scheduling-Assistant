@@ -1778,6 +1778,47 @@ def scenario_the_chores_kiosk_split_into_cards():
         storage.get_all_chores, storage.get_rewards, storage.get_pool_status = orig
 
 
+def scenario_every_tile_type_knows_where_its_tap_goes():
+    """A tap on a tile opens the page it summarises, and `link` finds that page
+    in PAGES. A type in NEITHER PAGES nor PAGELESS falls through to its own
+    name — so the week's dinners card sent the wall to /meals_week, a route
+    nothing serves, and the panel showed a 404 instead of the planner. Two more
+    were sitting on the same fault: household tasks (/tasks) and the avatar
+    editor (/avatar_editor, whose faces are buttons, so it is doorless).
+
+    The catalog is the list of everything a household can put on a board, so it
+    is the list this has to cover — a new tile type is exactly the moment this
+    is easy to forget."""
+    import ast
+    import re
+    tpl = tpl_source.read('home.html')
+
+    def _literal(name):
+        at = tpl.index(name + ': ')
+        body = tpl[at + len(name) + 2:]
+        return body[:body.index('}' if body[0] == '{' else ']') + 1]
+
+    pageless = set(ast.literal_eval(_literal('PAGELESS')))
+    # PAGES is a JS object literal, not Python — keys are bare and the comments
+    # inside it are not. Read the pairs rather than trying to eval it.
+    pages = dict(re.findall(r"(\w+):\s*'([a-z0-9_]+)'", _literal('PAGES')))
+
+    for spec in home_board.WIDGETS:
+        key = spec['key']
+        check(key in pages or key in pageless,
+              f"the {key} tile is in neither PAGES nor PAGELESS, so tapping "
+              f"it goes to /{key} — a page this app does not serve")
+
+    # And every door leads somewhere real. A typo here fails the same way the
+    # missing entry did, only quieter.
+    import main
+    routes = {r.path.lstrip('/') for r in main.app.routes
+              if 'GET' in getattr(r, 'methods', ())}
+    for key, page in pages.items():
+        check(page in routes,
+              f"the {key} tile opens /{page}, which is not a route")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

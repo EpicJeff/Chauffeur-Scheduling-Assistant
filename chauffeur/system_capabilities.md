@@ -2906,6 +2906,34 @@ board editor** -- the kids card fix threads config through by hand; a general
 through the contact-sheet gate; consumed-card configuration (above) wants a
 general answer.
 
+## Three tiles were doors onto nothing (v2.286.0)
+
+Tapping the week's dinners card on a board went to **/meals_week**, which no
+route serves — the wall showed a 404 instead of the meal planner.
+
+`opens(t)` / `link(t.type)` (home.html) decide where a tile's tap goes:
+`PAGELESS` lists the types that are not doors, `PAGES` maps every other type to
+the page it summarises. `link` falls back to **the type's own name** when a type
+is in neither — which is only ever a valid URL by coincidence. Three types had
+been added to the catalog without an entry in either list:
+
+- `meals_week` → **shopping** (the week is drawn by that page's planner);
+- `tasks` → **errands** (household tasks live there, beside the driving they
+  are not);
+- `avatar_editor` → **PAGELESS**. Every face on it is a button that opens the
+  editor, so it is doorless for the same reason the chores lanes are — an `<a>`
+  may only contain buttons while it has no href.
+
+Its two siblings from the same arc (`shopping_staples`, `shopping_list`) were
+already PAGELESS, which is why only the display-only third one 404'd.
+
+**The guardrail is coverage, not spelling.** `test_home_board.py`
+(`scenario_every_tile_type_knows_where_its_tap_goes`) walks `home_board.WIDGETS`
+— the catalog of everything a household can put on a board — and fails on any
+key that is in neither list, then checks every `PAGES` target is a registered
+GET route on the app. Adding a tile type is exactly the moment this is easy to
+forget, and the catalog is the list that grows when it happens.
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.

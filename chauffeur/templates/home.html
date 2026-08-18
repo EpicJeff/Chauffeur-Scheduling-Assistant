@@ -1892,7 +1892,14 @@
                     // The gallery cards summarise the same page their glance
                     // twin does. Only reached when the card is display-only —
                     // an interactive one is not a door (see INTERACTIVE_TILES).
-                    moments_gallery: 'moments', trips_gallery: 'trips'
+                    moments_gallery: 'moments', trips_gallery: 'trips',
+                    // A tile type absent from BOTH this map and PAGELESS falls
+                    // through to its own name, which is not a page — tapping
+                    // the week's dinners went to /meals_week and 404'd. The
+                    // week is drawn by the shopping page's planner, so that is
+                    // where the tap belongs; household tasks live on the
+                    // errands page beside the driving they are not.
+                    meals_week: 'shopping', tasks: 'errands'
                 },
 
                 link(key) {
@@ -4829,16 +4836,21 @@
                 // `music` is on this list for the opposite reason to the rest:
                 // not that its page would be hostile to a wall, but that its
                 // page IS this board (/music renders it in a browser too), so
-                // there is nowhere for a door to lead. Keep this literal free
-                // of comments — several tests read it as a fixed window of
-                // characters after the name.
+                // there is nowhere for a door to lead. `avatar_editor` is the
+                // dressing-up box: every face on it is a button that opens the
+                // editor, so it is doorless for the lanes' reason.
+                // A type belongs on THIS list or in PAGES — never neither.
+                // Absent from both, `link` falls back to the type's own name
+                // and the tap lands on a URL no route serves.  Keep this
+                // literal free of comments — several tests read it as a fixed
+                // window of characters after the name.
                 PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web',
                            'music',
                            'custom', 'clock', 'hero', 'heading',
                            'chores_lanes', 'chores_rewards',
                            'task_list', 'errand_list',
                            'shopping_staples', 'shopping_list',
-                           'routines_lanes'],
+                           'routines_lanes', 'avatar_editor'],
                 // Takes the TILE, not its type: interactivity is decided per
                 // instance. A card whose own content answers the tap — an
                 // event opening its details, a photo opening full screen, a
