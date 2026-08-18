@@ -9938,6 +9938,8 @@ def _build_kid_digests(target_date=None, routine_bus=True):
         kids[m['id']] = {
             'name': m.get('name'), 'color_code': m.get('color_code'),
             'avatar': m.get('avatar'), 'image': _effective_image(m),
+            # the standing character in the digest block (avatar arc)
+            'figure': _effective_figure(m),
             'lines': lines, 'count': len(lines),
             'tasks': task_lines,
             'routine_count': len(routine_items),

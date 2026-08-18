@@ -47,10 +47,26 @@
                             x-text="digestLabel()"></div>
                         <div class="grid gap-5" :style="'grid-template-columns: repeat(' + digestColumns() + ', minmax(0, 1fr))'">
                             <template x-for="k in digestCards()" :key="'kd-' + k.id">
-                                <div class="bg-gray-800/60 rounded-2xl border border-indigo-900/60 p-4">
+                                <div class="bg-gray-800/60 rounded-2xl border border-indigo-900/60 p-4 relative"
+                                    :class="digestShow('figure') && k.figure ? 'pl-24' : ''">
+                                    <!-- The standing character in their own block (avatar arc):
+                                         on the LEFT, like every other surface the figure
+                                         appears on. Tappable door to the dressing-up box. -->
+                                    <template x-if="digestShow('figure') && k.figure">
+                                        <button type="button"
+                                            class="absolute bottom-2 left-2"
+                                            :disabled="typeof openAvatarEditor === 'undefined'"
+                                            @click="typeof openAvatarEditor !== 'undefined'
+                                                    && openAvatarEditor({ id: k.id, name: k.name })">
+                                            <img :src="k.figure" class="h-28 drop-shadow-lg" :alt="k.name">
+                                        </button>
+                                    </template>
                                     <div x-show="digestShow('header')"
                                         class="flex items-center gap-3 pb-2 border-b border-gray-700 mb-3">
-                                        <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-sm shrink-0 overflow-hidden"
+                                        <!-- chip only when the figure is off: both at once said
+                                             the same thing twice (lane-header precedent) -->
+                                        <div x-show="!(digestShow('figure') && k.figure)"
+                                            class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-sm shrink-0 overflow-hidden"
                                             :style="'background-color:' + (k.color_code || '#3b82f6')">
                                             <template x-if="k.image"><img :src="k.image" class="w-full h-full object-cover"></template>
                                             <template x-if="!k.image"><span x-text="k.avatar || (k.name || '?').charAt(0)"></span></template>

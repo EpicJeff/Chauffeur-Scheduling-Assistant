@@ -2884,6 +2884,12 @@ never abut; leg separation is a drawn crease, never a transparent gap; the
 editor overlay is opaque via `background-color: Canvas`. Hair accessories
 anchor on the hair, not the eyebrows.
 
+**Digest figures (v2.284.0).** The kid-digest blocks (home-board `kids` card
+and the kiosk strip) carry the standing character on the LEFT -- the same side
+as every other figure surface -- as a tappable door, chip hidden while the
+figure shows (`show_figure` toggle, default on; figure rides the digest
+payload).
+
 **Still open:** wardrobe breadth is deliberately thin and grows as data
 through the contact-sheet gate.
 

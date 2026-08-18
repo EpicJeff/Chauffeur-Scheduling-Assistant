@@ -255,6 +255,7 @@ WIDGETS = [
          # day caption in particular: it is the one thing in the drawing that
          # is not about a specific child, and the first household to put this
          # card on a board went looking for the setting that removed it.
+         _opt('show_figure', 'The standing character', 'bool', True),
          _opt('show_day', 'Which day this is', 'bool', True,
               help='The strip flips between today and tomorrow at the '
                    'evening cutover, and says which.'),
@@ -1543,7 +1544,7 @@ def _tile_kids(now, kid_digest_fn=None, config=None, **_):
     # another card's content is how a board says the same thing twice.
     return {'label': digest.get('label'), 'kids': kids, 'lines': lines,
             'parts': {p: _cfg_bool(config, f'show_{p}', True)
-                      for p in ('day', 'header', 'streak', 'tasks', 'routines')}}
+                      for p in ('day', 'header', 'streak', 'tasks', 'routines', 'figure')}}
 
 
 def _tile_meals(now, config=None, **_):
