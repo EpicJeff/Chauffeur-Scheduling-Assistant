@@ -156,7 +156,14 @@
                 popups: true,
                 fit: true,           // frame everyone once, then leave the view alone
                 markerSize: 38,
-                maxZoom: 15
+                maxZoom: 15,
+                // Where to look when there is nothing to look AT: [lat, lon]
+                // (home, in practice) and the zoom to sit at. Without one the
+                // map stays on the whole-continent default, which is a picture
+                // of nowhere — so a caller that has no such place is better
+                // off saying so in words than drawing this.
+                fallbackCenter: null,
+                fallbackZoom: 14
             }, opts || {});
 
             const inst = {
@@ -241,6 +248,12 @@
                         inst.didFit = true;
                         const group = L.featureGroup(Object.values(inst.markers));
                         inst.map.fitBounds(group.getBounds().pad(0.3), { maxZoom: opts.maxZoom });
+                    } else if (opts.fit && !inst.didFit && opts.fallbackCenter) {
+                        // NOT `didFit`. This is a placeholder view, and the
+                        // moment a real pin arrives the map should frame it —
+                        // marking the fit as done here would leave a family
+                        // spread across the county parked over their own roof.
+                        inst.map.setView(opts.fallbackCenter, opts.fallbackZoom);
                     }
                 },
 
@@ -255,7 +268,17 @@
                 // map card can be interactive at all.
                 recenter() {
                     const marks = Object.values(inst.markers);
-                    if (!inst.map || !marks.length) return;
+                    if (!inst.map) return;
+                    // Nothing to frame, but there is still somewhere to BE:
+                    // the ⌖ on a map showing only home has to put a pan back
+                    // where it started, or the one map that cannot be
+                    // re-framed is the one nobody can read their way out of.
+                    if (!marks.length) {
+                        if (opts.fallbackCenter) {
+                            inst.map.setView(opts.fallbackCenter, opts.fallbackZoom);
+                        }
+                        return;
+                    }
                     inst.didFit = true;
                     inst.map.fitBounds(L.featureGroup(marks).getBounds().pad(0.3),
                                        { maxZoom: opts.maxZoom });

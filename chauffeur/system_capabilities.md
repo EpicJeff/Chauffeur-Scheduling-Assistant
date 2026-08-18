@@ -2934,6 +2934,48 @@ key that is in neither list, then checks every `PAGES` target is a registered
 GET route on the app. Adding a tile type is exactly the moment this is easy to
 forget, and the catalog is the list that grows when it happens.
 
+## A map card is always a map (v2.287.0)
+
+With nothing to plot, the map card drew a grey rectangle with a sentence in the
+middle of it — the characteristic wall-dashboard failure the whole board is
+built to avoid, and indistinguishable from a map that failed to load.
+
+- **`_tile_map` ships a `center`** — `_home_center()`: **`zone.home` first**
+  (HA knows the house exactly, costs one state read, and is the same circle
+  every `state: home` on the card is measured against), then the household's
+  geocoded home address, which is the case a house with no HA is in. Memoised
+  for an hour (`_HOME_CENTER`), **misses included**: the geocode fallback
+  re-asks the network whenever the cached entry is a failure, so a home address
+  that will never geocode would otherwise buy a lookup a minute forever.
+- **A view, never a marker.** A house pin nobody asked for would be a new
+  symbol on a map whose every other symbol is a person, a car or a bus.
+- **`family_map_core` gained `fallbackCenter` / `fallbackZoom`** (default 14).
+  Used only when the fit finds no markers, and it deliberately **does not set
+  `didFit`** — the moment a real pin arrives the map frames it, rather than
+  leaving a family spread across the county parked over their own roof. The ⌖
+  honours it too, so a map showing only home can still be un-panned.
+- **The sentence survives, resized.** With a map underneath it is a pill in the
+  corner (covering the neighbourhood the household asked to see with a
+  paragraph about why it is empty is the grey box in nicer clothes). With no
+  map at all — nobody sharing AND no home known, or Leaflet itself failing —
+  it takes the whole card exactly as before. `renderMapInto` now draws on
+  `mapped || center`, and rebuilds the instance when the centre changes, so a
+  geocode landing on a later build reaches a map that was created without one.
+
+**The bus stop no longer hangs off the bus.** In the same builder the stop pin
+sat under `if not pos: continue`, so no live vehicle meant no stop — and the
+one pin that is ALWAYS true (a zone a parent drew on a map; it does not move
+and needs no integration) went missing exactly when it was the only thing left
+to say, which is most mornings in a house without HCTB. The stop is now
+collected whether or not the vehicle reports.
+
+Tests: `test_home_board.py` — `scenario_the_map_shows_a_map_when_there_is_nothing_on_it`
+(zone.home, the geocode fallback, no-home-means-no-centre, and that home is not
+a pin) and `scenario_the_bus_stop_is_drawn_whether_or_not_the_bus_is`.
+
+**Not done:** `/map` itself has the same blank-world default and was left
+alone — the option is on the shared component and the page can take it.
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.

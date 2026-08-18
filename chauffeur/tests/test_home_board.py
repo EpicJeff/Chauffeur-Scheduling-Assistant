@@ -990,6 +990,117 @@ def scenario_a_map_card_can_show_the_fleet_without_the_family():
          storage.get_all_cars) = orig_m, orig_s, orig_c
 
 
+def scenario_the_map_shows_a_map_when_there_is_nothing_on_it():
+    """A card with no pins used to be a grey rectangle with a sentence on it —
+    which is the failure this whole board exists to avoid, and it is
+    indistinguishable from a map that failed to load. Home is a real place the
+    family recognises at a glance, so the payload carries a `center` and the
+    map draws itself there instead.
+
+    `zone.home` first: Home Assistant knows the house exactly and for free, and
+    it is the same circle every `state: home` on this map is measured against.
+    Without it, the household's geocoded home address — a house with no HA is
+    the case the fallback is FOR. And with neither, no center at all: an
+    invented one would be a map of somewhere the family has never been, which
+    is worse than the sentence."""
+    from services import ha_api
+    orig_m, orig_s, orig_c = (storage.get_all_members, ha_api.get_state,
+                              storage.get_all_cars)
+    orig_home = home_board._HOME_CENTER.copy()
+    try:
+        storage.get_all_members = lambda *a, **kw: [
+            {'id': 'm1', 'name': 'Sam', 'role': 'parent'}]   # untracked: no pin
+        storage.get_all_cars = lambda *a, **kw: []
+        now = datetime.datetime.now()
+
+        home_board._HOME_CENTER.update(at=0.0, coords=None)
+        ha_api.get_state = lambda ent: (
+            {'state': 'zoning', 'attributes': {'latitude': 35.9, 'longitude': -78.9}}
+            if ent == 'zone.home' else None)
+        tile = home_board._tile_map(now, runs=[], config={})
+        check(tile['mapped'] == 0, f"nobody was meant to have a pin: {tile}")
+        check(tile['center'] == {'latitude': 35.9, 'longitude': -78.9},
+              f"an empty map has nowhere to look, so it drew nothing: {tile}")
+        # It is a VIEW, never a marker. A house pin nobody asked for would be
+        # a new symbol on a map whose every other symbol is a person or a car.
+        check(not any('35.9' in str(r.get('latitude')) for r in tile['people']),
+              f"home was drawn as somebody's pin: {tile['people']}")
+
+        # No HA: the geocoded home address answers instead.
+        home_board._HOME_CENTER.update(at=0.0, coords=None)
+        ha_api.get_state = lambda ent: None
+        from services import bus as bus_svc
+        orig_hc = bus_svc._home_coords
+        try:
+            bus_svc._home_coords = lambda: (35.7, -78.8)
+            tile = home_board._tile_map(now, runs=[], config={})
+            check(tile['center'] == {'latitude': 35.7, 'longitude': -78.8},
+                  f"a house with no Home Assistant lost its map: {tile}")
+
+            # Nobody has said where home is. Then the sentence is the honest
+            # answer and the card says so rather than drawing a placeholder
+            # somewhere neither true nor recognisable.
+            home_board._HOME_CENTER.update(at=0.0, coords=None)
+            bus_svc._home_coords = lambda: None
+            tile = home_board._tile_map(now, runs=[], config={})
+            check(tile['center'] is None,
+                  f"a household with no home address got a map of somewhere: {tile}")
+        finally:
+            bus_svc._home_coords = orig_hc
+    finally:
+        (storage.get_all_members, ha_api.get_state,
+         storage.get_all_cars) = orig_m, orig_s, orig_c
+        home_board._HOME_CENTER.update(orig_home)
+
+
+def scenario_the_bus_stop_is_drawn_whether_or_not_the_bus_is():
+    """The stop used to hang off the vehicle: no live position, `continue`, no
+    stop. So the one pin that is ALWAYS true — a zone a parent drew on a map,
+    which does not move and needs no integration — went missing exactly when
+    it was the only thing left to draw, which is most mornings in a house
+    without HCTB."""
+    from services import ha_api, bus as bus_svc
+    orig_m, orig_s, orig_c = (storage.get_all_members, ha_api.get_state,
+                              storage.get_all_cars)
+    orig_pos, orig_stop = bus_svc.bus_map_position, bus_svc.stop_position
+    orig_key, orig_where = bus_svc.bus_key, bus_svc.bus_where
+    try:
+        storage.get_all_members = lambda *a, **kw: [
+            {'id': 'k1', 'name': 'Addison Lee', 'role': 'child'}]
+        storage.get_all_cars = lambda *a, **kw: []
+        ha_api.get_state = lambda ent: None
+        bus_svc.stop_position = lambda m: (35.0, -78.0)
+        now = datetime.datetime.now()
+        cfg = {'buses': True, 'people': False, 'cars': False}
+
+        bus_svc.bus_map_position = lambda m: None
+        tile = home_board._tile_map(now, runs=[], config=cfg)
+        ids = [r['member_id'] for r in tile['people']]
+        check(any(i.startswith('stop:') for i in ids),
+              f"no bus reporting and the stop went with it: {ids}")
+        check(not any(i.startswith('bus:') for i in ids),
+              f"a bus was drawn with no position to draw it at: {ids}")
+        stop = next(r for r in tile['people'] if r['member_id'].startswith('stop:'))
+        check(stop['name'] == "Addison's stop" and stop['avatar'] == '🚏',
+              f"the stop lost its label: {stop}")
+        check(tile['mapped'] == 1, f"the stop is a pin like any other: {tile}")
+
+        # And the bus still arrives beside it when there IS one.
+        bus_svc.bus_map_position = lambda m: (35.02, -78.01)
+        bus_svc.bus_key = lambda m, pos=None: 'k'
+        bus_svc.bus_where = lambda m: 'on Oak St'
+        tile = home_board._tile_map(now, runs=[], config=cfg)
+        ids = [r['member_id'] for r in tile['people']]
+        check(any(i.startswith('bus:') for i in ids)
+              and any(i.startswith('stop:') for i in ids),
+              f"the bus took the stop's place instead of joining it: {ids}")
+    finally:
+        (storage.get_all_members, ha_api.get_state,
+         storage.get_all_cars) = orig_m, orig_s, orig_c
+        bus_svc.bus_map_position, bus_svc.stop_position = orig_pos, orig_stop
+        bus_svc.bus_key, bus_svc.bus_where = orig_key, orig_where
+
+
 def scenario_the_editor_can_always_reach_a_card_that_draws_nothing():
     """Reported from a wall, and the sharper half of rule 1's cost: a card
     that hides itself when it has nothing to say ALSO hides itself from the

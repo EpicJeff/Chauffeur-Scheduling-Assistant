@@ -2871,7 +2871,14 @@
 
                 async renderMapInto(tile) {
                     const el = document.getElementById('board-map-' + tile.id);
-                    if (!el || !tile.data || !tile.data.mapped) return;
+                    // A card with no pins still draws, as long as it knows
+                    // where home is: an empty map of your own neighbourhood is
+                    // a map, and the grey box it replaces was indistinguishable
+                    // from one that failed to load. With no home either there
+                    // is nowhere to point Leaflet, and the overlay's sentence
+                    // is the only honest thing left to show.
+                    if (!el || !tile.data) return;
+                    if (!tile.data.mapped && !tile.data.center) return;
                     // A map bound to an element Alpine has since replaced is
                     // drawing into a node nobody can see.
                     const held = boardMaps[tile.id];
@@ -2883,12 +2890,25 @@
                     // panel is reloaded, which is exactly the class of bug the
                     // calendar card's `JSON.stringify(g)` remount fixed.
                     const live = !!tile.data.interactive;
-                    if (held && (held.el !== el || held.opts.interactive !== live)) {
+                    // Home arriving late (the geocode landing on a later
+                    // build) has to reach an instance that was created without
+                    // one, or a card that drew the whole continent at 7am
+                    // stays there until the panel reloads.
+                    const centre = tile.data.center
+                        ? [tile.data.center.latitude, tile.data.center.longitude]
+                        : null;
+                    const sameCentre = (a, b) => (!a && !b)
+                        || !!(a && b && a[0] === b[0] && a[1] === b[1]);
+                    if (held && (held.el !== el || held.opts.interactive !== live
+                                 || !sameCentre(held.opts.fallbackCenter, centre))) {
                         try { held.destroy(); } catch (e) { }
                         delete boardMaps[tile.id];
                     }
                     if (!boardMaps[tile.id]) {
                         boardMaps[tile.id] = FamilyMap.create(el, {
+                            // Where the map looks with nothing on it. Home,
+                            // at neighbourhood zoom — see `_home_center`.
+                            fallbackCenter: centre,
                             // Off, the tile is a door; see the markup. On, the
                             // pins are worth tapping — a popup says who the
                             // marker is and what they are doing, which is the

@@ -2473,6 +2473,48 @@ def _tile_trips_gallery(now, config=None, **_):
         return None
 
 
+# Where a map with nothing on it should look, and for how long that answer is
+# reusable. A house does not move, so this is memoised for an hour rather than
+# re-derived on every board build: the geocode fallback re-asks the network
+# whenever the cached entry is a FAILURE, and a home address that will never
+# geocode would otherwise buy a lookup a minute forever.
+_HOME_CENTER = {'at': 0.0, 'coords': None}
+_HOME_CENTER_TTL = 3600.0
+
+
+def _home_center():
+    """The household's home as (lat, lon), or None if nobody has said where.
+
+    `zone.home` first: Home Assistant already knows the house exactly, it costs
+    one state read, and it is the same circle every `state: home` on this map
+    is measured against — so the fallback view and the pins agree about where
+    home is. Without HA (or without that zone) the household's own home
+    address, geocoded through the cache that already backs every drive.
+    """
+    now = time.time()
+    if _HOME_CENTER['coords'] is not None and now - _HOME_CENTER['at'] < _HOME_CENTER_TTL:
+        return _HOME_CENTER['coords']
+    coords = None
+    try:
+        from services import ha_api
+        attrs = (ha_api.get_state('zone.home') or {}).get('attributes') or {}
+        if attrs.get('latitude') is not None and attrs.get('longitude') is not None:
+            coords = (float(attrs['latitude']), float(attrs['longitude']))
+    except Exception:
+        coords = None
+    if coords is None:
+        try:
+            from services import bus as bus_svc
+            coords = bus_svc._home_coords()
+        except Exception:
+            coords = None
+    # A miss is cached too — for the same TTL and for the same reason. An
+    # install with no home address set is the case that would otherwise pay
+    # for the lookup on every single build.
+    _HOME_CENTER.update(at=now, coords=coords)
+    return coords
+
+
 def _tile_map(now, runs=None, config=None, **_):
     """Where everyone is — as a MAP, with the list as the fallback.
 
@@ -2601,19 +2643,25 @@ def _tile_map(now, runs=None, config=None, **_):
                 # run answered False forever. `bus_map_position` reads either
                 # of the two entity boxes.
                 pos = bus_svc.bus_map_position(m)
-                if not pos:
-                    continue
                 first = ((m.get('name') or '').split() or [''])[0]
-                # Keyed on the position ACTUALLY DRAWN. `bus_key` resolves the
-                # tracker its own way, so when the two disagreed — a tracker
-                # typed into the other box — siblings on one bus stopped
-                # merging and the pins were labelled by whichever child the
-                # key happened to land on.
-                key = bus_svc.bus_key(m, pos=pos)
-                entry = buses.setdefault(key, {'pos': pos, 'names': [],
-                                               'where': bus_svc.bus_where(m)})
-                if first and first not in entry['names']:
-                    entry['names'].append(first)
+                if pos:
+                    # Keyed on the position ACTUALLY DRAWN. `bus_key` resolves
+                    # the tracker its own way, so when the two disagreed — a
+                    # tracker typed into the other box — siblings on one bus
+                    # stopped merging and the pins were labelled by whichever
+                    # child the key happened to land on.
+                    key = bus_svc.bus_key(m, pos=pos)
+                    entry = buses.setdefault(key, {'pos': pos, 'names': [],
+                                                   'where': bus_svc.bus_where(m)})
+                    if first and first not in entry['names']:
+                        entry['names'].append(first)
+                # The stop is drawn whether or not the bus is. It used to hang
+                # off the vehicle — no live position, `continue`, no stop —
+                # so the one pin that is ALWAYS true (a zone a parent drew on
+                # a map; it does not move and it does not need an integration)
+                # was missing exactly when it was the only thing left to say.
+                # Where the bus stops is most of what a family walking past
+                # the panel wants from this card at 7am.
                 stop = bus_svc.stop_position(m)
                 if stop:
                     # Stops group on POSITION: one bus can serve two stops
@@ -2657,6 +2705,15 @@ def _tile_map(now, runs=None, config=None, **_):
         # should not offer a map of nobody.
         if not rows and show_people:
             return None
+        # Nothing to plot is not nothing to SHOW. A card whose pins have all
+        # gone quiet used to draw a grey rectangle with a sentence on it,
+        # which is the one thing this board is built to avoid — and it is
+        # indistinguishable from a map that failed to load. Home is a real
+        # place the family recognises at a glance, so the map draws itself
+        # there and the sentence shrinks to a note in the corner. Absent when
+        # nobody has told us where home is; then the old overlay is still the
+        # honest answer.
+        home = _home_center()
         return {'people': rows,
                 # Read by the markup (whether the canvas takes pointer events),
                 # by the renderer (Leaflet's own handlers and the marker
@@ -2671,7 +2728,12 @@ def _tile_map(now, runs=None, config=None, **_):
                 'empty_text': ("Nobody is sharing a location yet." if show_people
                                else "No vehicle is sharing a location yet."),
                 'mapped': sum(1 for r in rows if r.get('latitude') is not None
-                              and r.get('longitude') is not None)}
+                              and r.get('longitude') is not None),
+                # The view of last resort, never a marker: a house pin nobody
+                # asked for would be a new thing on a map whose every other
+                # symbol is somebody's location.
+                'center': ({'latitude': home[0], 'longitude': home[1]}
+                           if home else None)}
     except Exception as e:
         print(f"[home_board] map failed: {e}")
         return None

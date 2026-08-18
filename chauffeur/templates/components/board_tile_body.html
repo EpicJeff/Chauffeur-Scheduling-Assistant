@@ -707,7 +707,8 @@
                             style="border: 1px solid var(--panel-line)">
                             <div :id="'board-map-' + t.id" class="board-map absolute inset-0 bg-gray-800"
                                 :style="t.data.interactive ? '' : 'pointer-events: none'"></div>
-                            <button type="button" x-show="t.data.interactive && t.data.mapped"
+                            <button type="button" x-show="t.data.interactive
+                                        && (t.data.mapped || t.data.center)"
                                 @click.prevent.stop="recenterMap(t.id)"
                                 title="Frame everyone again"
                                 class="absolute bottom-2 right-2 z-[500] w-9 h-9 rounded-full
@@ -724,7 +725,23 @@
                                  one whose Leaflet never loaded. The count is
                                  the server's answer; `mapFailed` is the
                                  renderer's. -->
-                            <div x-show="!t.data.mapped || mapFailed[t.id]"
+                            <!-- Two shapes, because there are two silences.
+                                 With a map underneath (drawn on home) the
+                                 sentence is a NOTE in the corner — covering
+                                 the neighbourhood the household asked to see
+                                 with a paragraph about why it is empty would
+                                 be the grey box again in nicer clothes. With
+                                 no map at all — nobody sharing AND no home to
+                                 fall back on, or Leaflet itself failing —
+                                 the words are all there is, and they take the
+                                 whole card as they always did. -->
+                            <div x-show="!t.data.mapped && t.data.center && !mapFailed[t.id]"
+                                class="absolute top-2 left-2 z-[500] max-w-[85%] rounded-full
+                                       px-3 py-1 panel-card shadow-lg">
+                                <span class="text-xs panel-dim"
+                                      x-text="t.data.empty_text || 'Nobody is sharing a location yet.'"></span>
+                            </div>
+                            <div x-show="(!t.data.mapped && !t.data.center) || mapFailed[t.id]"
                                 class="absolute inset-0 flex items-center justify-center text-center px-4">
                                 <span class="text-sm panel-dim"
                                       x-text="mapFailed[t.id]
