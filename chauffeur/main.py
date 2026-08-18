@@ -11837,6 +11837,26 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
     # intake mailbox credentials on every config-page save.
     incoming = settings.model_dump(exclude_unset=True)
     current = storage.get_settings() or {}
+    # AN EMPTY BOARD LIST NEVER REPLACES A REAL ONE.
+    #
+    # `panel_pages` is every board the household has, and once it is set it
+    # wins entirely (see the schema note on it). So an empty list arriving here
+    # does not mean "no boards" — it means the client had not loaded them yet,
+    # or a fetch failed and its draft still held the initialiser's `[]`. The
+    # cost of taking it literally is the whole of somebody's wall: the boards
+    # go, `normalize_pages` falls back to `_legacy_page`, and the household's
+    # customised home board silently reverts to its pre-pages self, rebuilt
+    # from `panel_widgets` with the household-wide row height and a 16px
+    # gutter. Reported from a real wall, and the numbers said exactly that.
+    #
+    # Nothing is lost by refusing: deleting your LAST board is not expressible
+    # in the editor — there is always a home board — so this state has no
+    # legitimate way to be reached, and a client that means to clear a board
+    # sends the board with no tiles in it, not the house with no boards.
+    if 'panel_pages' in incoming and not incoming['panel_pages']             and (current.get('panel_pages') or []):
+        print('[settings] refused an empty panel_pages over '
+              f"{len(current['panel_pages'])} stored board(s)")
+        incoming.pop('panel_pages')
     # An ICS feed URL is a subscription, not a Google calendar id. Pasted into
     # the Calendar IDs box it becomes a permanent 404 that used to abort the
     # whole event fetch and leave the household with no schedule at all

@@ -116,6 +116,65 @@ def scenario_pages_win_entirely_once_they_exist():
           f"the legacy tiles leaked into a page: {home['widgets']}")
 
 
+def scenario_an_empty_board_list_never_replaces_a_real_one():
+    """Reported off a real wall: a household's customised home board reverted
+    to a layout they had not used since before boards were a thing — same
+    tiles, wrong grid (their household-wide row height, and a 16px gutter
+    where they had chosen 20).
+
+    That combination has exactly one source. `panel_pages` had been wiped, so
+    `normalize_pages` fell through to `_legacy_page` and rebuilt the board from
+    the pre-pages settings keys. And the only thing that wipes it is a save
+    carrying the editor draft's INITIAL empty list — a client that saved
+    before `loadSetup` returned, or whose pages fetch failed and left the
+    placeholder standing.
+
+    So the server refuses it. Nothing legitimate is lost: deleting your LAST
+    board is not expressible in the editor (something must always be home), so
+    a client that means to empty a board sends a board with no tiles, never a
+    household with no boards. The client-side half is a belt to this braces —
+    both, because the wall this happened to is not the only install."""
+    import main
+    from services import storage
+    from models.schemas import Settings
+
+    mine = [{'slug': 'home', 'name': 'Home', 'widgets': ['drives'],
+             'columns': 64, 'row_height': 10, 'gap': 20, 'v': 5}]
+    orig_get, orig_save = storage.get_settings, storage.update_settings
+    written = {}
+    try:
+        storage.get_settings = lambda *a, **kw: {'panel_pages': list(mine),
+                                                 'panel_grid_row_height': 124}
+        storage.update_settings = lambda d, *a, **kw: written.update(d)
+
+        # The bad save: everything else it manages, and an empty board list.
+        main.update_settings(
+            Settings(panel_pages=[], panel_theme='dark'),
+            __import__('fastapi').BackgroundTasks())
+        check(written.get('panel_pages') == mine,
+              f"an empty board list was written over a real one: {written}")
+        check(written.get('panel_theme') == 'dark',
+              "refusing the board list threw away the rest of the save")
+
+        # And a save that really does carry boards still lands.
+        written.clear()
+        main.update_settings(
+            Settings(panel_pages=mine + [{'slug': 'hallway', 'name': 'Hallway'}]),
+            __import__('fastapi').BackgroundTasks())
+        check(len(written.get('panel_pages') or []) == 2,
+              f"a real board list stopped saving: {written.get('panel_pages')}")
+    finally:
+        storage.get_settings, storage.update_settings = orig_get, orig_save
+
+    # The client must not produce the payload in the first place. The draft
+    # ships with an empty list and only `loadSetup` makes it real.
+    home = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    check('setupLoaded: false' in home,
+          "the editor draft cannot tell a loaded board list from its placeholder")
+    check('this.setupLoaded' in home and '{ panel_pages: this._cleanPages() } : {}' in home,
+          "the board list is still sent unconditionally, placeholder and all")
+
+
 def scenario_a_new_board_is_empty_and_stays_empty():
     """The defaults exist so a household that has never configured anything
     gets a full board rather than a blank wall. A board somebody just MADE is a

@@ -2976,6 +2976,45 @@ a pin) and `scenario_the_bus_stop_is_drawn_whether_or_not_the_bus_is`.
 **Not done:** `/map` itself has the same blank-world default and was left
 alone — the option is on the shared component and the page can take it.
 
+## An empty board list never replaces a real one (v2.288.0)
+
+Reported off a real wall: a household's **customised home board reverted to a
+layout they had not used since before boards existed** — the same tiles, but on
+their household-wide row height and a 16px gutter where they had chosen 20.
+
+That combination has exactly one source. `panel_pages` had been wiped, so
+`normalize_pages` fell through to `_legacy_page`, which rebuilds the board from
+the pre-pages settings keys (`panel_widgets`, `panel_tile_spans`,
+`panel_grid_row_height`) and passes no `gap` at all — hence 16. The board was
+not *edited*; it was **reconstructed from a snapshot years stale**.
+
+And the only thing that wipes `panel_pages` is a save carrying the board
+editor's *initial* empty list: `draft.panel_pages` starts `[]`, `save()` sent
+`panel_pages: this._cleanPages()` unconditionally, and `update_settings` merges
+by `exclude_unset` — which cannot tell "the client explicitly sent none" from
+"the client meant none". A save fired before `loadSetup()` returned, or one
+whose `/api/home_board/pages` fetch failed, was enough to cost the household
+their entire wall.
+
+- **The server refuses it** (`main.update_settings`): an empty `panel_pages`
+  over a non-empty stored one is dropped from the merge and logged. This is the
+  load-bearing half — it protects installs whatever the client does.
+- **Nothing legitimate is lost by refusing.** Deleting your LAST board is not
+  expressible in the editor (something must always be home), so a client that
+  means to empty a board sends a board with no tiles, never a household with no
+  boards.
+- **The client no longer produces the payload**: `setupLoaded` flips only when
+  `loadSetup` returns, and `save()` omits the key entirely until then — omitted,
+  not emptied, because the server merges what it is sent.
+
+**Not recoverable for a board already hit.** The stored pages are gone; what
+comes back is the pre-pages snapshot, which is why the tiles look familiar and
+the grid does not.
+
+Tests: `test_board_pages.py — scenario_an_empty_board_list_never_replaces_a_real_one`
+(the refusal, that the rest of the save still lands, that a real list still
+saves, and both client guards).
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.

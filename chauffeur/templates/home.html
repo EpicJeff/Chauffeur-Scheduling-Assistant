@@ -1653,6 +1653,14 @@
                 // Laying the board out ON the board. Browser only.
                 arranging: false,
                 _beforeArrange: null,
+                // Has `loadSetup` actually returned? The draft below starts
+                // with an EMPTY board list, and an empty board list saved over
+                // a real one costs the household their whole wall (see the
+                // server's refusal in update_settings). So the list is not
+                // sent until it is a list, rather than the initialiser's
+                // placeholder — a failed pages fetch must not be able to
+                // express itself as "this family has no boards".
+                setupLoaded: false,
                 draft: {
                     panel_pages: [], panel_tabs: [], panel_idle_return_seconds: 180,
                     panel_allow_unsafe_controls: false,
@@ -2994,6 +3002,10 @@
                         ]);
                         this.catalog = c;
                         this.shipped = pg.shipped || [];
+                        // Every board this household has, now actually in hand.
+                        // `save()` refuses to send the board list until this
+                        // flips — see `setupLoaded`.
+                        this.setupLoaded = true;
                         this.draft = {
                             // THE SERVER'S pages, not a second migration written
                             // here. The old board becomes the first page in
@@ -6440,7 +6452,12 @@
                                 // exists to avoid. They stay in settings,
                                 // untouched, as the thing the first page was
                                 // built from.
-                                panel_pages: this._cleanPages(),
+                                // Omitted, not emptied, until the boards are
+                                // loaded: the server merges what it is sent,
+                                // so leaving the key out is how a save says
+                                // "I have nothing to tell you about boards".
+                                ...(this.setupLoaded
+                                    ? { panel_pages: this._cleanPages() } : {}),
                                 panel_tabs: this.draft.panel_tabs,
                                 panel_idle_return_seconds:
                                     Number(this.draft.panel_idle_return_seconds) || 0,
