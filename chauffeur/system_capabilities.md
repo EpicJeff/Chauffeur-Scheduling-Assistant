@@ -2798,11 +2798,37 @@ what a person may wear and the editor is only a convenient way to ask. A member
 with a PIN must prove it; a member with no PIN edits freely, matching the app's
 posture everywhere else.
 
-**Not built yet:** the editor card and its PIN-gated overlay, the showcase on
-hearth/chores/routines, `avatar_kind` (photo vs character -- a family that set
-photos must not have them silently replaced), and the unlock celebration. The
-new slots' accessory art (belts, bracelets, necklaces, bows) is placeholder
-geometry and wants a proper pass.
+**The chips (v2.277.0, A2).** Every avatar surface prefers `image` over emoji
+over initials, so the character reaches all of them by BEING the image:
+`avatar_render.effective_image(member)` decides once, server-side, applied at
+the seven serialization sites (zero template changes). `avatar_kind` on the
+member (`photo|character|emoji`; unset = photo if set, else character) governs
+chips only -- a family that set photos keeps them until a member is explicitly
+switched; saving from the editor flips only a photoless member. Day-one
+defaults are hash-seeded per member id (distinct, stable, pleasant-face pool,
+skin tone NEVER randomised -- it is identity). Renders are cached base64 SVG
+data-URLs keyed on the config JSON.
+
+**The editor (v2.276.0-v2.278.0, A3/A4).** `components/avatar_editor.html` is
+one overlay per page: rendered-thumbnail grids (never words -- users cannot be
+assumed to read), per-slot `focus` viewBoxes, every tile is YOU with one thing
+swapped, locked items visible behind a padlock + progress ring, glyph tabs,
+undo/redo/shuffle/save in a bottom bar with an inert preview band (reach on a
+wall panel). Client compositor consumes `GET /api/avatar/bundle` (~80KB gz) so
+code is duplicated but data never. Doors: tap your own face -- app.html header
+chip, chores/routines lane headers (shared components, so page + card mounts
+both get it), and the `avatar_editor` board card (a row of faces, placeable
+anywhere). `openAvatarEditor()` runs the PIN handshake (reusing
+`ensureMemberAuth` in the PWA, a `promptInput` pad on kiosks) BEFORE opening;
+the server re-validates regardless. Verified end-to-end live: tap face ->
+editor -> pick hair -> save -> persisted config, auto avatar_kind flip, chip
+updates.
+
+**Not built yet:** the full-body showcase on hearth/chores/routines (A5), the
+unlock celebration (A6), a hand path for a PHOTO member to switch
+`avatar_kind` (API-only today), and the kid-digest cards still serialize
+`image: None`. The new slots' accessory art (belts, bracelets, necklaces,
+bows) is placeholder geometry and wants a proper pass.
 
 ## Security — how the house is locked (auth arc, standing reference)
 
