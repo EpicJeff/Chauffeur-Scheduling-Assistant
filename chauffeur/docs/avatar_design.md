@@ -118,9 +118,62 @@ butts against it. A shallow waistband layer overlapping the seam hides any
 join. The registration contract is already written and every existing garment
 already obeys it.
 
-What we author for v0: hips, two leg shapes, two shoe shapes, and trouser /
-shorts / skirt variants as flat paths over the legs. That is the entire
-full-body art task.
+**Prototyped and confirmed 2026-08-18.** A working figure was built from the
+real source paths; the seam is invisible. Nine new paths were enough:
+
+| Path | Layer | Fill |
+|---|---|---|
+| `ARM_L`, `ARM_R` | skin | skin mask |
+| `SLEEVE_L`, `SLEEVE_R` | garment | clothe colour |
+| `TORSO_EXT` | garment | clothe colour |
+| `LOWER` (waist→hips→legs→ankles) | skin | skin mask |
+| `TROUSERS` | garment | clothe colour |
+| `SHOE_L`, `SHOE_R` | garment | clothe colour |
+
+### The geometry contract
+
+Anything new registers against these numbers, taken from the source:
+
+- Canvas `0 0 264 280` becomes `0 0 264 600`. Nothing above y=280 changes.
+- The shoulder edge is flat: **y=280, x 32..232**, centre x=132.
+- That edge splits three ways: `x 32..76` left arm, `x 76..188` torso,
+  `x 188..232` right arm.
+- Skin: base `#D0C6AC` with a masked colour rect over it (7 tones). New skin
+  paths use the same mask, so tone selection needs no new code.
+- Garments: base `#E6E6E6` with a masked colour rect (15-colour palette in
+  `clothes/Colors.tsx`).
+- Shading is `#000000` at `fill-opacity` 0.10–0.16. No strokes, no gradients.
+
+A new wardrobe item is therefore a spec, not a matter of taste: obey those
+five rules and register to that edge.
+
+### Two rules the prototype found the hard way
+
+1. **Avataaars' bust has no arms.** The dome is shoulders and upper arms
+   merged, because the circle crop hides everything below it. Arms are a
+   *required* new asset, not a nice-to-have — the first render made that
+   obvious instantly.
+2. **Every garment must overhang the limb it covers.** Trouser legs drawn
+   narrower than the skin legs leave a sliver of skin down the inner edge.
+   Garment silhouettes are cut slightly wider than the body beneath them.
+
+### On generation — a correction
+
+An earlier draft of this brief assumed we would generate wardrobe variants
+against a fixed rig. Having built it: for flat vector at this complexity,
+**hand-authoring is faster than repairing generated output.** A pair of
+trousers is about twelve path commands. Generation keeps a narrower role —
+raster patterns for graphic tees, and silhouette exploration — but it does not
+produce the paths.
+
+Remaining art cost is small and countable: roughly one path per lower garment
+and two per shoe, so a wardrobe of ten trousers and eight shoes is about 26
+paths. The one real tax is **sleeves, which want per-garment variants** (blazer
+cuff, hoodie, overall straps). v0 ships one generic sleeve and defers the rest.
+
+**The 40px crop is free.** The head render is simply the original
+`viewBox="0 0 264 280"` — unmodified Avataaars, which is what it was designed
+to be.
 
 ### Inventory we inherit free
 
