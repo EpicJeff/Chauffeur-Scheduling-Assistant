@@ -252,6 +252,36 @@ def scenario_copy_routine_between_kids():
 
 SCENARIOS.append(scenario_copy_routine_between_kids)
 
+def scenario_best_streak_is_lifetime():
+    """A run older than the current-streak window still counts, and the record
+    survives the routines that earned it. Tiers -- and avatar unlocks after
+    them -- read `best`, so it must never fall."""
+    _member("kid", "Kid", "child")
+    today = date.today()
+    _routine("r1", "kid", "Teeth")
+
+    # A 12-day run that ended 150 days ago: far outside the 90-day window the
+    # current-streak walk uses.
+    for off in range(150, 162):
+        storage.set_routine_check("r1", "kid", (today - timedelta(days=off)).isoformat(), True)
+    s = storage.compute_streak("kid")
+    check(s["current"] == 0, f"an old run is not a current streak, got {s['current']}")
+    check(s["best"] == 12, f"best spans all history, not the window, got {s['best']}")
+
+    # Deleting the routine deletes its checks -- the record still stands.
+    storage.delete_routine("r1")
+    _routine("r2", "kid", "Beds")
+    s = storage.compute_streak("kid")
+    check(s["best"] == 12, f"best survives losing the evidence, got {s['best']}")
+
+    # And with no routines at all, the badge still holds.
+    storage.delete_routine("r2")
+    check(storage.compute_streak("kid")["best"] == 12, "best survives having no routines")
+
+
+SCENARIOS.append(scenario_best_streak_is_lifetime)
+
+
 
 def scenario_routine_times_follow_the_households_clock():
     """`time_of_day` is stored as "HH:MM" and was printed straight to the

@@ -3334,14 +3334,37 @@ def set_routine_check(routine_id: str, member_id: str, date_str: str, checked: b
             routine_checks_table.remove(q)
         return True
 
+_MAX_STREAK_SCAN_DAYS = 3650  # a decade; a guard against a bad date_str, not a policy
+
+
+def _stored_best_streak(member_id: str) -> int:
+    """The persisted lifetime best. Tiers (and, later, avatar unlocks) hang off
+    this, so it lives on the member record rather than being re-derived."""
+    m = get_member(member_id)
+    try:
+        return int((m or {}).get('best_routine_streak') or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def compute_streak(member_id: str, window_days: int = 90) -> dict:
-    """{current, best, today_complete, today_total, today_done} over the
-    window. current counts back from today (today included only once
-    complete, otherwise from yesterday)."""
+    """{current, best, today_complete, today_total, today_done}.
+
+    `current` walks back from today over `window_days` (today counts only once
+    complete, otherwise the walk starts at yesterday).
+
+    `best` is a LIFETIME high-water mark, not a windowed one: it scans from the
+    first recorded check and is persisted on the member, so it survives the
+    window rolling past an old run, routines being edited or deleted, and
+    checks being pruned. Routine status tiers read this value -- a badge that
+    silently demotes itself is worse than no badge at all.
+    """
     from datetime import date, timedelta
+    floor = _stored_best_streak(member_id)
     routines = get_routines(member_id)
     if not routines:
-        return {'current': 0, 'best': 0, 'today_complete': False,
+        # No routines today doesn't undo the streak they already ran.
+        return {'current': 0, 'best': floor, 'today_complete': False,
                 'today_total': 0, 'today_done': 0}
     today = date.today()
     with db_lock:
@@ -3372,14 +3395,30 @@ def compute_streak(member_id: str, window_days: int = 90) -> dict:
         d = d - timedelta(days=1)
         steps += 1
 
+    # best: every day from the first recorded check forward, so an old run is
+    # never aged out. Earlier days are not walked -- there was nothing to
+    # complete then, and a day we skip could only ever have broken a run.
+    earliest = today
+    for ds in checks_by_day:
+        try:
+            earliest = min(earliest, date.fromisoformat(ds))
+        except (ValueError, TypeError):
+            continue  # one malformed row must not sink the whole tally
+    span = max(0, min((today - earliest).days, _MAX_STREAK_SCAN_DAYS))
     best = run = 0
-    for i in range(window_days, -1, -1):
+    for i in range(span, -1, -1):
         state = day_state(today - timedelta(days=i))
         if state == 'complete':
             run += 1
             best = max(best, run)
         elif state == 'incomplete':
             run = 0
+    best = max(best, current)
+    if best > floor:
+        update_member(member_id, {'best_routine_streak': best})
+    else:
+        best = floor  # the record outlives the evidence
+
     today_sched = {r['id'] for r in routines if _routine_scheduled_on(r, today)}
     today_done = len(today_sched & checks_by_day.get(today.isoformat(), set()))
     return {'current': current, 'best': best,

@@ -4,7 +4,8 @@ full achievements engine.
 Two independent single-metric ladders, so each board's badge reflects THAT
 board's performance honestly:
   - chore tiers   -> lifetime points earned (monotonic; redeeming never subtracts)
-  - routine tiers -> best routine streak    (monotonic; only rises)
+  - routine tiers -> best routine streak    (lifetime high-water mark, persisted
+                                             on the member; only rises)
 
 Each tier is {name, emoji, threshold}; the displayed status is the highest tier
 whose threshold the value meets. Families can override either ladder from the
