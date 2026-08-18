@@ -364,6 +364,7 @@ WIDGETS = [
          # toggle on the card, all on by default — so a card can be exactly
          # the slice of the kiosk a board wants ("Emma's chores": one
          # member, header off, title typed).
+         _opt('show_figure', 'The standing character', 'bool', True),
          _opt('show_header', 'Name & points', 'bool', True),
          _opt('show_goals', 'Family goals', 'bool', True),
          _opt('show_rewards', 'Rewards', 'bool', True),
@@ -392,6 +393,8 @@ WIDGETS = [
      'options': [
          _opt('members', 'People', 'select', [], source='members', multi=True,
               help='Leave empty for everyone.'),
+         _opt('figures', 'Standing characters', 'bool', True,
+              help='Off, the card is a compact row of faces.'),
      ]},
     {'key': 'routines_lanes', 'icon': '✅', 'label': 'Routine lanes',
      'heading': '',
@@ -403,6 +406,7 @@ WIDGETS = [
                    'lanes are a display.'),
          _opt('members', 'People', 'select', [], source='members', multi=True,
               help='Leave empty for everyone with a routine.'),
+         _opt('show_figure', 'The standing character', 'bool', True),
          _opt('show_header', 'Name & avatar', 'bool', True),
          _opt('show_status', 'The earned status', 'bool', True),
          _opt('show_streak', 'The streak count', 'bool', True),
@@ -1724,7 +1728,7 @@ def _tile_chores_lanes(now, config=None, **_):
         return {'interactive': _cfg_bool(config, 'interactive', True),
                 'members': _cfg_ids(config, 'members'),
                 'parts': {p: _cfg_bool(config, f'show_{p}', True)
-                          for p in ('header', 'goals', 'rewards',
+                          for p in ('figure', 'header', 'goals', 'rewards',
                                     'mine', 'available')}}
     except Exception as e:
         print(f"[home_board] chore lanes failed: {e}")
@@ -1796,8 +1800,11 @@ def _tile_avatar_editor(now, config=None, **_):
                          'color_code': m.get('color_code'),
                          'avatar': m.get('avatar'),
                          'image': _member_image(m),
+                         'figure': avatar_render.effective_figure(m),
                          'has_pin': bool(m.get('pin_hash'))})
-        return {'members': rows, 'interactive': True} if rows else None
+        # figures=True is the mantelpiece form: the family standing in a row.
+        return {'members': rows, 'interactive': True,
+                'figures': _cfg_bool(config, 'figures', True)} if rows else None
     except Exception as e:
         print(f"[home_board] avatar editor tile failed: {e}")
         return None
@@ -1813,7 +1820,7 @@ def _tile_routines_lanes(now, config=None, **_):
         return {'interactive': _cfg_bool(config, 'interactive', True),
                 'members': _cfg_ids(config, 'members'),
                 'parts': {p: _cfg_bool(config, f'show_{p}', True)
-                          for p in ('header', 'status', 'streak',
+                          for p in ('figure', 'header', 'status', 'streak',
                                     'progress', 'items')}}
     except Exception as e:
         print(f"[home_board] routine lanes failed: {e}")

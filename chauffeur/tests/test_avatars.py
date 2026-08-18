@@ -335,6 +335,20 @@ def scenario_editor_card_is_placeable():
         check(field in row, f'face rows carry {field}')
 
 
+def scenario_every_palette_slot_survives_a_save():
+    """The regression the family actually hit: bottoms_color chosen in the
+    editor, silently dropped by a hand-kept whitelist in set_avatar_config."""
+    from services import avatar_render as ar
+    _member("kid")
+    storage.sync_avatar_unlocks("kid")
+    wanted = {pal: sorted(table)[0] for pal, (table, _) in ar._PALETTES.items()}
+    res = storage.set_avatar_config("kid", dict(wanted))
+    saved = storage.get_avatar_config("kid")
+    for pal, val in wanted.items():
+        check(saved.get(pal) == val, f"{pal} survives a save, got {saved.get(pal)!r}")
+    check(not res['rejected'], f"no palette slot is rejected: {res['rejected']}")
+
+
 SCENARIOS = [
     scenario_identity_is_free,
     scenario_unlock_is_never_lost,
@@ -352,6 +366,7 @@ SCENARIOS = [
     scenario_public_member_serves_the_effective_image,
     scenario_editor_is_reachable_by_hand,
     scenario_editor_card_is_placeable,
+    scenario_every_palette_slot_survives_a_save,
 ]
 
 

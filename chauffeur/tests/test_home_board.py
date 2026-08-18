@@ -1750,7 +1750,7 @@ def scenario_the_chores_kiosk_split_into_cards():
               f"the lanes mount config is wrong: {lanes}")
         # The conversion paradigm: every part of the drawing is a toggle,
         # all on by default, so zero-config equals the kiosk page.
-        check(lanes['parts'] == {'header': True, 'goals': True,
+        check(lanes['parts'] == {'figure': True, 'header': True, 'goals': True,
                                  'rewards': True, 'mine': True,
                                  'available': True},
               f"the section toggles are wrong: {lanes['parts']}")

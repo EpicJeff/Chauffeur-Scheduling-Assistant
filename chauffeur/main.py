@@ -4299,6 +4299,12 @@ def _effective_image(m: dict):
     return avatar_render.effective_image(m)
 
 
+def _effective_figure(m: dict):
+    """Standing character for showcase surfaces (avatar arc A5)."""
+    from services import avatar_render
+    return avatar_render.effective_figure(m)
+
+
 def _public_member(m: dict) -> dict:
     """Strip credential secrets; expose has_pin / has_password instead.
 
@@ -6980,6 +6986,7 @@ def all_points():
     balances = storage.get_all_point_balances()
     for b in balances:
         b['status'] = status_tiers.compute_member_status(b['member_id'], 'chore')
+        b['figure'] = _effective_figure(storage.get_member(b['member_id']))
     return balances
 
 @app.get("/api/status-tiers")
@@ -7203,6 +7210,9 @@ def routines_streaks():
             'member_id': m['id'], 'name': m.get('name'),
             'color_code': m.get('color_code'), 'avatar': m.get('avatar'),
             'image': _effective_image(m),
+            # the standing character for the lane showcase (avatar arc A5) --
+            # never gated by avatar_kind; the wardrobe pays out at full size
+            'figure': _effective_figure(m),
             'streak': storage.compute_streak(m['id']),
             'status': status_tiers.compute_member_status(m['id'], 'routine'),
         })
@@ -9888,7 +9898,8 @@ def _build_kid_digests(target_date=None, routine_bus=True):
         streak = storage.compute_streak(m['id'])
         kids[m['id']] = {
             'name': m.get('name'), 'color_code': m.get('color_code'),
-            'avatar': m.get('avatar'), 'lines': lines, 'count': len(lines),
+            'avatar': m.get('avatar'), 'image': _effective_image(m),
+            'lines': lines, 'count': len(lines),
             'tasks': task_lines,
             'routine_count': len(routine_items),
             'streak': (streak or {}).get('current') or 0,

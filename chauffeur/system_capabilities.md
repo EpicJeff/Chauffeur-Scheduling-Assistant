@@ -2824,11 +2824,27 @@ the server re-validates regardless. Verified end-to-end live: tap face ->
 editor -> pick hair -> save -> persisted config, auto avatar_kind flip, chip
 updates.
 
-**Not built yet:** the full-body showcase on hearth/chores/routines (A5), the
-unlock celebration (A6), a hand path for a PHOTO member to switch
-`avatar_kind` (API-only today), and the kid-digest cards still serialize
-`image: None`. The new slots' accessory art (belts, bracelets, necklaces,
-bows) is placeholder geometry and wants a proper pass.
+**The showcase (v2.279.0, A5).** The standing character draws at full size
+where the economy pays out: the top of each child's lane on the chores and
+routines kiosks/cards (`figure` part, toggle default on, tappable -- the
+figure is the biggest door to the editor), and the `avatar_editor` board card
+in its default "mantelpiece" form (`figures` option) -- the family standing in
+a row, placeable on the home board. Figures ship in the lane payloads
+(`/api/routines/streaks`, `/api/points`) as cached full-crop data-URLs via
+`avatar_render.effective_figure`, which is deliberately NOT gated by
+`avatar_kind`: a photo cannot stand in a lane. Kid-digest cards now carry the
+chip image too. The moments hearth was left alone on purpose -- it is a
+floating photo rail, and standing figures do not belong inside it.
+
+**Fixed en route (v2.279.0):** `set_avatar_config` had a hand-kept palette
+whitelist that silently dropped `bottoms_color` / `shoes_color` /
+`accent_color` / `hat_color` on save (family-reported). The whitelist now
+derives from `avatar_render._PALETTES`, palette keys are excluded from the
+slot-rejection loop, and a test pins every palette slot surviving a save.
+
+**Not built yet:** the unlock celebration (A6), a hand path for a PHOTO member
+to switch `avatar_kind` (API-only today). The new slots' accessory art (belts,
+bracelets, necklaces, bows) is placeholder geometry and wants a proper pass.
 
 ## Security — how the house is locked (auth arc, standing reference)
 

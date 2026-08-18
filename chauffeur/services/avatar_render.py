@@ -384,7 +384,7 @@ def render_for_member(member_id: str, crop: str = 'head', **kw) -> str:
 # someone explicitly opts that member in -- silent replacement is the one
 # thing this function exists to prevent.
 
-_EFFECTIVE_CACHE: Dict[str, tuple] = {}
+_EFFECTIVE_CACHE: Dict[tuple, tuple] = {}   # (member_id, crop) -> (cfg_key, url)
 
 
 def head_data_url(config: Dict) -> str:
@@ -393,6 +393,33 @@ def head_data_url(config: Dict) -> str:
     import base64
     svg = render_svg(config, 'head', nonce='i')
     return 'data:image/svg+xml;base64,' + base64.b64encode(svg.encode('utf-8')).decode('ascii')
+
+
+def figure_data_url(config: Dict) -> str:
+    """The full-body crop as a data-URL. The showcase form."""
+    import base64
+    svg = render_svg(config, 'full', nonce='f')
+    return 'data:image/svg+xml;base64,' + base64.b64encode(svg.encode('utf-8')).decode('ascii')
+
+
+def effective_figure(member: Dict) -> Optional[str]:
+    """The standing character for the showcase surfaces (lanes, boards).
+
+    Deliberately NOT gated by avatar_kind: the character someone built always
+    draws at full size, even for a member whose CHIP is their photo -- a photo
+    cannot stand in a lane, and the whole economy pays out here."""
+    if not member or not available():
+        return None
+    from services import storage
+    mid = member.get('id')
+    cfg = storage.get_avatar_config(mid)
+    key = json.dumps(cfg, sort_keys=True)
+    hit = _EFFECTIVE_CACHE.get((mid, 'full'))
+    if hit and hit[0] == key:
+        return hit[1]
+    url = figure_data_url(cfg)
+    _EFFECTIVE_CACHE[(mid, 'full')] = (key, url)
+    return url
 
 
 def effective_image(member: Dict) -> Optional[str]:

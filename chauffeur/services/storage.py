@@ -3560,9 +3560,13 @@ def set_avatar_config(member_id: str, config: dict) -> dict:
     the authority on what someone may wear, and an editor is only ever a
     convenient way to ask."""
     from services import avatar_catalog as cat
+    from services import avatar_render
     owned = set(get_avatar_unlocks(member_id))
+    _pals = tuple(avatar_render._PALETTES) + ('build', 'height')
     clean, rejected = {}, []
     for slot_key, item_key in (config or {}).items():
+        if slot_key in _pals:
+            continue                       # palettes are handled below, not slots
         if not cat.get_slot(slot_key):
             rejected.append(slot_key)
             continue
@@ -3576,7 +3580,9 @@ def set_avatar_config(member_id: str, config: dict) -> dict:
             rejected.append(cat.item_id(slot_key, item_key))
             continue
         clean[slot_key] = item_key
-    for pal in ('skin', 'hair_color', 'clothe_color', 'build', 'height'):
+    # Every palette slot the renderer knows, not a hand-kept list -- the
+    # hand-kept version silently dropped bottoms_color the day it shipped.
+    for pal in _pals:
         if pal in (config or {}):
             clean[pal] = config[pal]
     update_member(member_id, {'avatar_config': clean})
