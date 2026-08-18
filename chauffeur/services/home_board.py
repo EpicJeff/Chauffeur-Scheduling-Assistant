@@ -3996,13 +3996,28 @@ def _legacy_page(settings: dict) -> dict:
     upgrading changes nothing anybody can see: same tiles, same sizes, same
     grid, same picture. A household that never opens the editor never learns
     that pages happened.
+
+    A household with NOTHING is a different question, and it used to get the
+    same answer: `DEFAULT_WIDGETS` — thirteen tiles, unsized, on a 12-column
+    grid of 240px rows. Every board this app ships is 64 columns of 10px rows
+    with spans somebody chose, so the one board a family met first was the only
+    one nobody had laid out. It gets `HOME_SEED` now.
+
+    The test is `panel_widgets`, not "are there pages": a stored board means a
+    household who arranged one before pages existed, and their board wins over
+    anything we ship. The seed is for the empty install and nowhere else.
     """
+    settings = settings or {}
+    if not settings.get('panel_widgets') and HOME_SEED:
+        item = json.loads(json.dumps(HOME_SEED))
+        item['slug'] = HOME_SLUG
+        return _page_from(item, settings, set())
     return _page_from({
         'slug': HOME_SLUG,
         'name': 'Home',
         'icon': '🏠',
-        'widgets': (settings or {}).get('panel_widgets') or list(DEFAULT_WIDGETS),
-        'spans': (settings or {}).get('panel_tile_spans') or {},
+        'widgets': settings.get('panel_widgets') or list(DEFAULT_WIDGETS),
+        'spans': settings.get('panel_tile_spans') or {},
         'columns': grid_columns(settings),
         'row_height': grid_row_height(settings),
         # No picture of its own: this is the PRE-pages board, and there was
@@ -4136,7 +4151,23 @@ def _load_builtin_pages() -> dict:
         return {}
 
 
-BUILTIN_PAGES = _load_builtin_pages()
+# The wall's own board, as a STARTING POINT — and deliberately not one of the
+# shipped boards above.
+#
+# The difference is the whole design. A shipped board is authored data that
+# WINS: `normalize_pages` drops any stored page under a shipped slug, so a
+# household changes one by duplicating it. Apply that to `home` and every
+# household's customised home board is silently discarded on the next read —
+# which is precisely the failure v2.288.0 exists to prevent, delivered by a
+# different door.
+#
+# So it is popped out of `BUILTIN_PAGES` before that dict is ever consulted.
+# `home` is not a shipped slug, the drop rule never sees it, `own_boards` and
+# the shelf are unchanged, and this is read in exactly one place: the fresh
+# install that has no board of any kind.
+_ALL_BUILTIN = _load_builtin_pages()
+HOME_SEED = _ALL_BUILTIN.pop(HOME_SLUG, None)
+BUILTIN_PAGES = _ALL_BUILTIN
 
 
 def builtin_page(slug: Optional[str] = None, settings: dict = None):

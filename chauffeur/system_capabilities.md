@@ -3108,6 +3108,45 @@ a slot) and `test_avatars.py — scenario_every_colour_can_be_reached_by_hand`,
 which asserts the strip is drawn, labelled and clearable rather than that a
 symbol exists.
 
+## The home board ships too (v2.290.0)
+
+A family's first sight of the app was the one board nobody had arranged:
+`DEFAULT_WIDGETS`, thirteen tiles, every one unsized, on a 12-column grid of
+240px rows — while all eleven boards the app ships are 64 columns of 10px rows
+with spans somebody chose. `home` is authored now, like the rest of them: 14
+tiles, real spans, and it lives in `builtin_boards.json` beside them.
+
+**It is a SEED, not a shipped board, and the distinction is the whole design.**
+A shipped board WINS — `normalize_pages` drops any stored page under a shipped
+slug, because those are authored data a household forks by duplicating. Make
+`home` one of those and every customised home board in every install is
+discarded on the next read: the v2.288.0 failure again, delivered through a
+different door. So it is **popped out of `BUILTIN_PAGES`** before that dict is
+ever consulted (`HOME_SEED = _ALL_BUILTIN.pop(HOME_SLUG)`). `home` is not a
+shipped slug, the drop rule never sees it, `own_boards` and the shelf are
+unchanged, and the seed is read in exactly one place.
+
+**The test for using it is `panel_widgets`, not "are there pages".** A stored
+`panel_widgets` means a household who arranged a board before pages existed,
+and their board wins over anything we ship — that is the migration promise this
+whole layer is built on. The seed is for the empty install and nowhere else.
+Three cases, all pinned by test:
+
+| the household has | they get |
+|---|---|
+| a stored `home` page | theirs, verbatim |
+| `panel_widgets` (pre-pages) | theirs, on their own grid |
+| nothing | the authored board at 64 / 10 / 20 |
+
+Authored the way every shipped board is — set up on a real instance, exported,
+written in — and scrubbed: no member ids, no HA entities, no list ids, no
+background. Two orphan spans (`shopping`, `errands`, naming tiles the board
+does not have) were dropped en route, and a test now refuses them.
+
+Tests: `test_board_pages.py — scenario_a_fresh_install_gets_a_board_somebody_laid_out`
+(the seed is not a shipped slug, every tile it names exists, no orphan spans,
+and both boards that must beat it do).
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.

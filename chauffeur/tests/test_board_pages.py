@@ -116,6 +116,64 @@ def scenario_pages_win_entirely_once_they_exist():
           f"the legacy tiles leaked into a page: {home['widgets']}")
 
 
+def scenario_a_fresh_install_gets_a_board_somebody_laid_out():
+    """A family's first sight of the app was the one board nobody had
+    arranged: `DEFAULT_WIDGETS`, thirteen tiles, every one unsized, on a
+    12-column grid of 240px rows — while all eleven boards the app ships are 64
+    columns of 10px rows with spans somebody chose. `home` is now authored like
+    the rest of them.
+
+    It is a SEED, not a shipped board, and the distinction is the whole design.
+    A shipped board WINS: `normalize_pages` drops any stored page under a
+    shipped slug, because those are authored data a household forks by
+    duplicating. Make `home` one of those and every customised home board in
+    every install is discarded on the next read — the v2.288.0 failure again
+    through a different door. So it is popped out of `BUILTIN_PAGES` before
+    that dict is ever consulted, and read in exactly one place."""
+    check(home_board.HOME_SLUG not in home_board.BUILTIN_PAGES,
+          "home is a shipped slug, so every customised home board is dropped")
+    check(home_board.HOME_SEED, "no home board ships at all")
+
+    # 1. Nothing at all: the authored board, on the grid it was authored on.
+    fresh = home_board.normalize_pages({})
+    check(len(fresh) == 1 and fresh[0]['slug'] == 'home', f"no home board: {fresh}")
+    check(len(fresh[0]['widgets']) > 5,
+          f"the seeded board is nearly empty: {fresh[0]['widgets']}")
+    check((fresh[0]['columns'], fresh[0]['row_height'], fresh[0]['gap'])
+          == (64, 10, 20),
+          f"the seed did not keep the grid it was authored on: {fresh[0]}")
+    # Every tile it names must be a real one, or a fresh install draws holes.
+    known = {w['key'] for w in home_board.WIDGETS}
+    for w in fresh[0]['widgets']:
+        check(w['type'] in known,
+              f"the shipped home board names a tile that does not exist: {w['type']}")
+    # And no span for a tile it does not have — an orphan span means nothing
+    # and misleads anyone reading the layout back.
+    live = {w['id'] for w in fresh[0]['widgets']}
+    check(set(fresh[0]['spans']) <= live,
+          f"orphan spans shipped: {set(fresh[0]['spans']) - live}")
+
+    # 2. A household who arranged a board BEFORE pages existed keeps it. The
+    #    test is `panel_widgets`, not "are there pages" — their board wins over
+    #    anything we ship, which is the migration promise this file is about.
+    theirs = home_board.normalize_pages(
+        {'panel_widgets': ['drives', 'calendar'], 'panel_grid_columns': 12,
+         'panel_grid_row_height': 124})
+    types = [w['type'] for w in theirs[0]['widgets']]
+    check('drives' in types and 'chores' not in types,
+          f"the seed overwrote a pre-pages board: {types}")
+    check(theirs[0]['row_height'] == 124 and theirs[0]['columns'] == 12,
+          f"the seed's grid overwrote theirs: {theirs[0]}")
+
+    # 3. A customised home PAGE is untouchable — the case that matters most.
+    mine = home_board.normalize_pages({'panel_pages': [
+        {'slug': 'home', 'name': 'Mine', 'widgets': ['map'],
+         'columns': 64, 'row_height': 10, 'gap': 20, 'v': 5}]})
+    check(mine[0]['name'] == 'Mine'
+          and [w['type'] for w in mine[0]['widgets']] == ['map'],
+          f"a customised home board was replaced by the shipped one: {mine[0]}")
+
+
 def scenario_an_empty_board_list_never_replaces_a_real_one():
     """Reported off a real wall: a household's customised home board reverted
     to a layout they had not used since before boards were a thing — same
