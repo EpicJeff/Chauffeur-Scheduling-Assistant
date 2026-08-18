@@ -2739,6 +2739,71 @@ Two reports, one cause. Ticking "don't show people" on a map card made the whole
 
 Third sighting, this time on Config → People: `x-show="pairFound && pairFound.context"` beside `x-text="'(from ' + pairFound.context.from + ')'"` threw `Cannot read properties of null` on every render while `pairFound` was null — its resting state — and **one Alpine expression error takes every binding in the component with it**. config.html already documents this exact trap on its HA status line and it was reintroduced anyway, which is what makes it a test rather than a fix: `test_template_js.scenario_x_show_does_not_guard_x_text_on_the_same_element` flags any element whose `x-show` guards a root that its own `x-text` then dereferences unguarded. Verified against the broken expression before shipping.
 
+## Avatars — a look you build, and a sink for routines (v2.273.8-v2.275.0)
+
+Chores earned points and points bought rewards; routines earned a streak and a
+badge and nothing at all. Avatars are the sink.
+
+**Two rules, both enforced by test, not by intention.**
+
+1. **Identity is free, flex is earned.** Hair, faces, facial hair, all eyewear,
+   and the cultural and medical pieces (hijab, turban, eyepatch) are unlocked
+   from first login. Only decoration costs anything. Gating a child's likeness
+   behind compliance is a grade, and `due dates never grades` is locked.
+2. **A thing unlocked is never lost.** `avatar_unlocks_table` is append-only;
+   grants are idempotent. No expiry, no seasons, no revocation.
+
+**The streak bug this exposed (v2.273.8).** `compute_streak` computed `best`
+over a rolling 90-day window while `status_tiers` documented it as monotonic --
+a routine tier badge silently demoted itself after 90 quiet days. `best` now
+scans from the first recorded check and persists as `best_routine_streak` on
+the member. Unlocks hang off persisted high-water marks only, never off a value
+re-derived from history that can be edited or pruned.
+
+**Eleven slots** (`services/avatar_catalog.py`), replacing Avataaars' single
+accessory enum: top, facial_hair, eyewear, clothes, graphic (inherited) plus
+bottoms, shoes, neck, wrist, waist, hair_accessory. Slots are expensive (a
+registration decision and a z-order position, paid once); items are cheap (a
+dozen path commands). Adding wardrobe is adding rows, never code.
+
+**Three monotonic counters** feed the tracks: cumulative routine completions
+(`count_routine_completions`), best routine streak, lifetime chore points.
+Grants fire on the routine check and on chore *verification* (where points are
+actually awarded), and the response carries `avatar_unlocked` so the UI can
+celebrate at the tap that earned it.
+
+**The art** is Avataaars (Pablo Stanley; free for personal and commercial use,
+MIT port), extracted into 96 plain SVG fragments we own by
+`tools/extract_avataaars.py`. Every id carries a `{{NS}}` token the renderer
+replaces per render -- two avatars on one board would otherwise collide on a
+shared `<mask>` id and one would draw wrong.
+
+**Full body** is ours. Avataaars is bust-only, but every garment terminates
+flush on a flat line at **y=280, x 32..232**, so the canvas extends to
+`0 0 264 600` and the lower body butts against it with nothing above changed.
+`tools/bake_garment_hems.py` renders each garment twice in different colours
+and samples row y=279: runs whose colour moved are the member's choice, runs
+that stayed are hardcoded art. That is how a blazer's lapels and undershirt
+carry down in the right colours -- `BlazerShirt` ignores `clothe_color`
+entirely, which a flat extension got wrong.
+
+**Two crops from one config** (`services/avatar_render.py`): `head` is the
+original 264x280 canvas for the 24-56px chips, `full` is 264x600 for the
+hearth, chores and routines boards.
+
+**API.** `GET /api/avatar/catalog` (items with `owned` + `threshold` +
+`progress`), `GET|POST /api/avatar/{member_id}`. Validation lives in
+`storage.set_avatar_config`, not the endpoint: the ledger is the authority on
+what a person may wear and the editor is only a convenient way to ask. A member
+with a PIN must prove it; a member with no PIN edits freely, matching the app's
+posture everywhere else.
+
+**Not built yet:** the editor card and its PIN-gated overlay, the showcase on
+hearth/chores/routines, `avatar_kind` (photo vs character -- a family that set
+photos must not have them silently replaced), and the unlock celebration. The
+new slots' accessory art (belts, bracelets, necklaces, bows) is placeholder
+geometry and wants a proper pass.
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.
