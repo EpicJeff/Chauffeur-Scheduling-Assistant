@@ -203,15 +203,19 @@ def scenario_the_low_tank_is_flagged_before_the_drive():
           f"and a tank under the household's threshold is flagged, got {d['car']}")
 
 
+def _add_drive(ev_id, title, offset):
+    sched = storage.get_cached_schedule()
+    sched["events"].append({"id": ev_id, "title": title,
+                            "start": (NOW + offset).isoformat(),
+                            "end": (NOW + offset + datetime.timedelta(hours=1)).isoformat(),
+                            "location": "Music & Arts", "calendar_ids": []})
+    sched["assignments"][ev_id] = "drv_jeff"
+    storage.set_cached_schedule(sched)
+
+
 def scenario_the_next_drive_is_the_one_after_this_one():
     _world()
-    sched = storage.get_cached_schedule()
-    sched["events"].append({"id": "guitar", "title": "Guitar",
-                            "start": (NOW + datetime.timedelta(hours=3)).isoformat(),
-                            "end": (NOW + datetime.timedelta(hours=4)).isoformat(),
-                            "location": "Music & Arts", "calendar_ids": []})
-    sched["assignments"]["guitar"] = "drv_jeff"
-    storage.set_cached_schedule(sched)
+    _add_drive("guitar", "Guitar", datetime.timedelta(hours=3))
     nxt = drive_sheet.sheet("init_swim_1", now=NOW)["next_drive"]
     check(nxt and nxt["title"] == "Guitar",
           f"the driver's following run is named, got {nxt}")
@@ -219,10 +223,47 @@ def scenario_the_next_drive_is_the_one_after_this_one():
           "display only — it never guesses a leg id to tap")
 
 
+def scenario_tomorrows_drive_is_not_whats_next():
+    """The schedule cache holds days either side. A sheet held at six in the
+    evening answering with tomorrow morning's school run reads as 'you are
+    not finished' to somebody who is."""
+    _world()
+    _add_drive("school", "School Run", datetime.timedelta(hours=17))
+    d = drive_sheet.sheet("init_swim_1", now=NOW)
+    check(d["next_drive"] is None,
+          f"tomorrow is not next, got {d['next_drive']}")
+    check(d["day_done"] is True,
+          "and the sheet can say the day is done instead of going quiet")
+
+
+def scenario_today_beats_tomorrow_when_there_is_both():
+    _world()
+    _add_drive("school", "School Run", datetime.timedelta(hours=17))
+    _add_drive("guitar", "Guitar", datetime.timedelta(hours=3))
+    d = drive_sheet.sheet("init_swim_1", now=NOW)
+    check(d["next_drive"]["title"] == "Guitar",
+          f"today's remaining drive wins, got {d['next_drive']}")
+    check(d["day_done"] is False, "and the day is plainly not over")
+
+
 def scenario_a_drive_with_nothing_after_it_says_so():
     _world()
-    check(drive_sheet.sheet("init_swim_1", now=NOW)["next_drive"] is None,
+    d = drive_sheet.sheet("init_swim_1", now=NOW)
+    check(d["next_drive"] is None,
           "the last drive of the day has no next line rather than a wrong one")
+    check(d["day_done"] is True, "it says the day is done instead")
+
+
+def scenario_an_unassigned_leg_claims_nothing_about_the_day():
+    """No driver resolves — so there is no 'last drive of the day' to claim
+    either. Silence, not a cheerful wrong answer."""
+    _world()
+    sched = storage.get_cached_schedule()
+    sched["assignments"] = {}
+    storage.set_cached_schedule(sched)
+    d = drive_sheet.sheet("init_swim_1", now=NOW)
+    check(d["next_drive"] is None and d["day_done"] is False,
+          f"nothing known means nothing said, got day_done={d['day_done']}")
 
 
 def scenario_an_unknown_leg_degrades_to_an_empty_sheet():
@@ -355,7 +396,10 @@ SCENARIOS = [
     scenario_roll_call_never_touches_the_drive,
     scenario_the_low_tank_is_flagged_before_the_drive,
     scenario_the_next_drive_is_the_one_after_this_one,
+    scenario_tomorrows_drive_is_not_whats_next,
+    scenario_today_beats_tomorrow_when_there_is_both,
     scenario_a_drive_with_nothing_after_it_says_so,
+    scenario_an_unassigned_leg_claims_nothing_about_the_day,
     scenario_an_unknown_leg_degrades_to_an_empty_sheet,
     scenario_a_ping_at_the_destination_completes_the_leg,
     scenario_a_ping_mid_drive_completes_nothing,
@@ -378,6 +422,8 @@ def scenario_the_hand_path_is_on_the_screen():
     for fn in ('cycleRollCall(', 'sendQuickMessage(', 'sendMyEta(', 'tapArrived(',
                'toggleDriveLive(', 'toggleDrivePrep('):
         check(fn in app, f"{fn} is wired to something tappable")
+    check('Last drive of the day' in app and 'day_done' in app,
+          "a finished day says so rather than showing tomorrow")
     check('Send my ETA' in app and 'Arrived' in app and "Everybody in?" in app,
           "the sheet says these things in words a driver reads at a glance")
     check('maybeResumeDriveSheet' in app and 'DRIVE_RESUME_KEY' in app,

@@ -133,14 +133,23 @@ def _car_for(ev_id, sched) -> Optional[dict]:
             'range': levels.get('range'), 'warn': warn}
 
 
-def _next_drive(leg_id, driver_id, sched, now=None) -> Optional[dict]:
-    """The drive AFTER this one: what a driver actually wants to know while
-    they are parked at the destination. Display only — it deliberately does
-    not return a leg id, because deriving one for an arbitrary next event
-    means guessing which edge shape the solver used, and a tap that opens the
-    wrong sheet is worse than a line of text that is simply true."""
+def _next_drive(leg_id, driver_id, sched, now=None) -> tuple:
+    """(the drive AFTER this one, whether the day is done) — what a driver
+    wants to know while they are parked at the destination.
+
+    **Today only.** The schedule cache holds days either side, and a sheet
+    held at six in the evening answering with tomorrow morning's school run
+    is worse than answering nothing: it reads as "you are not finished" to
+    somebody who is. The day is the CURRENT DRIVE's own date rather than the
+    wall clock's, so a drive that crosses midnight keeps talking about the
+    night it belongs to.
+
+    Display only — it deliberately does not return a leg id, because deriving
+    one for an arbitrary next event means guessing which edge shape the
+    solver used, and a tap that opens the wrong sheet is worse than a line of
+    text that is simply true."""
     if not driver_id:
-        return None
+        return None, False           # nothing known: the sheet says nothing
     now = now or datetime.datetime.now()
     from services import leave_by
     this_ev_id = _leg_event_id(leg_id)
@@ -158,15 +167,18 @@ def _next_drive(leg_id, driver_id, sched, now=None) -> Optional[dict]:
         mine.append((start, ev_id, ev))
     mine.sort(key=lambda t: t[0])
     this_start = next((s for s, i, _ in mine if i == this_ev_id), None)
+    today = (this_start or now).date()
     for start, ev_id, ev in mine:
         if ev_id == this_ev_id or start < (this_start or now):
             continue
+        if start.date() != today:
+            break                    # sorted: everything past here is later still
         run = leave_by.for_run(sched, driver_id, ev_id, start, live=True, now=now)
         return {'event_id': ev_id, 'title': ev.get('title') or 'your next drive',
                 'location': ev.get('location'),
                 'leave_label': (run or {}).get('leave_label'),
-                'start_label': leave_by.clock(start)}
-    return None
+                'start_label': leave_by.clock(start)}, False
+    return None, True                # this is the last drive of the day
 
 
 def _base_event_id(ev_id) -> str:
@@ -204,6 +216,7 @@ def sheet(leg_id: str, now=None) -> dict:
             print(f"drive sheet prep failed: {e}")
 
     waiting = drive_arrival.leg_is_toward_waiting(leg_id)
+    next_drive, day_done = _next_drive(leg_id, driver_id, sched, now)
     eta_ts = row.get('eta_ts')
     return {
         'leg_id': leg_id,
@@ -219,7 +232,8 @@ def sheet(leg_id: str, now=None) -> dict:
         'prep': {'items': prep_items,
                  'confirmed': _base_event_id(ev_id) in set(storage.get_confirmed_preps())},
         'car': _car_for(ev_id, sched),
-        'next_drive': _next_drive(leg_id, driver_id, sched, now),
+        'next_drive': next_drive,
+        'day_done': day_done,
         'messages': [{'key': m['key'], 'icon': m['icon'], 'label': m['label']}
                      for m in MESSAGES if waiting or not m['waiting_only']],
         'audience': [m.get('name') for m in _message_audience(leg_id, sched)],

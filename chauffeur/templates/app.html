@@ -5304,7 +5304,9 @@
                 audience.length ? audience.join(' & ') : 'the family';
             show('drive-messages', msgs.length > 0 && audience.length > 0);
 
-            // --- where you go after this one
+            // --- where you go after this one, TODAY. Tomorrow's school run
+            // on a sheet held at six in the evening reads as "you are not
+            // finished" to somebody who is — so the day ends by saying so.
             const nx = d.next_drive;
             const nextEl = document.getElementById('drive-next');
             if (nx) {
@@ -5313,8 +5315,10 @@
                 nextEl.innerHTML = `<span class="text-gray-500 font-bold uppercase text-xs tracking-wider">Next</span>
                     <span class="text-gray-200 font-bold ml-2">${mfEscape(nx.title)}</span>
                     <span class="text-blue-300 font-bold ml-1">· ${when}</span>`;
+            } else if (d.day_done) {
+                nextEl.innerHTML = `<span class="text-gray-400 font-bold">🎉 Last drive of the day</span>`;
             }
-            show('drive-next', !!nx);
+            show('drive-next', !!nx || !!d.day_done);
         }
 
         // Unanswered -> aboard -> not here -> unanswered. One target, because

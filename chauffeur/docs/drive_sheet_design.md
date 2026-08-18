@@ -46,7 +46,7 @@ resumed automatically when a leg of mine is already `in_progress`).
 | **Send my ETA** | Prices from the current fix and shares it |
 | **Arrived** | The same `tap_check` the arrival push runs |
 | Roll call (collapsed), prep (collapsed) | Still reachable, no longer the point |
-| **Next drive** — *"Next: Swim Practice · leave 5:40"* | The real question at a destination |
+| **Next drive today** — *"Next: Swim Practice · leave 5:40"*, or *"Last drive of the day"* | The real question at a destination |
 | Not Staying / Staying | Unchanged |
 | Location + awake banner, with a stop control | Never invisible tracking |
 
@@ -80,6 +80,13 @@ silence another's. Defaults: both on.
 carry no phone number, and adding one to make a button work is a data model
 change wearing a feature's clothes. The quick messages use the lanes the app
 already owns.
+
+**The next drive is today's, or none.** The schedule cache holds days either
+side, and the first cut answered with tomorrow morning's school run once the
+day was over. That is worse than answering nothing — it reads as "you are not
+finished" to somebody who is. The window is the current drive's own date (so a
+drive across midnight keeps talking about the night it belongs to), a finished
+day says so, and a leg whose driver cannot be resolved claims neither.
 
 **Nothing on this sheet requires reading while moving.** Every action is a
 single large target and every one is safe to leave untapped. That is why there
