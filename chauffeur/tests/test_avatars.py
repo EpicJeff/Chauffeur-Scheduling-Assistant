@@ -349,6 +349,53 @@ def scenario_every_palette_slot_survives_a_save():
     check(not res['rejected'], f"no palette slot is rejected: {res['rejected']}")
 
 
+def scenario_every_colour_can_be_reached_by_hand():
+    """The standing rule, and the sharper form of it: a hand path is asserted
+    by REACHABILITY, not by a symbol being present. Sixteen palettes exist;
+    each has to be somewhere a child can actually tap it.
+
+    They are not sixteen tabs. A colour moved onto the SLOT it colours as a
+    swatch strip over that slot's grid -- choosing the belt and then its colour
+    in one place is dressing, whereas "Belt" and "Belt colour" as two chips in
+    a row of ten is a menu. Only `skin` and `accent_color` keep tabs, because
+    neither belongs to a single slot."""
+    import os
+    from services import avatar_catalog as cat
+    from services import avatar_render as ar
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'templates')
+    comp = open(os.path.join(root, 'components', 'avatar_editor.html'),
+                encoding='utf-8').read()
+
+    # The strip is DRAWN, over the slot's own grid, one row per palette.
+    check('palettesFor(tab).length' in comp,
+          "the editor never draws a slot's own colours")
+    check('bundle.palettes[pal]' in comp and 'setColor(pal, name)' in comp,
+          "the swatch strip has no swatches, or they do not set anything")
+    check('paletteLabel(pal)' in comp,
+          "the strip is unlabelled — a row of bare swatches over a grid of "
+          "hats is a puzzle")
+    # Tapping the chosen swatch again clears it. That is the only road back to
+    # the art as drawn, and to an inherited colour.
+    check('if (this.cfg[pal] === name) delete this.cfg[pal]' in comp,
+          "a colour cannot be un-chosen, so 'as drawn' is a one-way door")
+
+    # And every palette is on a slot or in a group. Same claim the renderer
+    # test makes, made here against the thing that draws it.
+    on_slot = {k for s_ in cat.SLOTS for k in (s_.get('palettes') or [])}
+    as_tab = {t for g in cat.GROUPS for t in g['tabs']}
+    for key in ar._PALETTES:
+        check(key in on_slot or key in as_tab,
+              f"{key} cannot be reached by hand from the editor")
+
+    # A slot that names a palette must name a real one, or the strip is empty
+    # and the colour is unreachable while looking reachable.
+    for s_ in cat.SLOTS:
+        for key in (s_.get('palettes') or []):
+            check(key in ar._PALETTES,
+                  f"slot {s_['key']} points at palette {key}, which does not exist")
+
+
 def scenario_avatar_kind_has_a_hand_path():
     """The standing rule again: switching your chip between photo, character
     and emoji must be doable by hand, not just by API."""
@@ -393,6 +440,7 @@ SCENARIOS = [
     scenario_editor_card_is_placeable,
     scenario_every_palette_slot_survives_a_save,
     scenario_avatar_kind_has_a_hand_path,
+    scenario_every_colour_can_be_reached_by_hand,
 ]
 
 

@@ -45,7 +45,26 @@ CLOTHE_COLORS = {
     'White': '#FFFFFF',
 }
 HAT_COLORS = CLOTHE_COLORS
+# Eyes and brows are ink, not fabric: the clothing palette's pastels on a pupil
+# read as a costume lens rather than an eye colour. A short natural range, plus
+# the black the art has always been drawn in.
+EYE_COLORS = {
+    'Black': '#000000', 'Brown': '#4A312C', 'Hazel': '#8B6B3E',
+    'Amber': '#B4741A', 'Green': '#3E6B4A', 'Blue': '#3B6EA5',
+    'Gray': '#5C6670',
+}
+# Glasses frames. Metal and shell rather than t-shirt colours, for the same
+# reason -- and the pale one is here because Prescription01 IS pale-rimmed.
+EYEWEAR_COLORS = {
+    'Black': '#252C2F', 'Charcoal': '#2F383B', 'Slate': '#4A5A63',
+    'Tortoise': '#6B4423', 'Gold': '#B9912F', 'Silver': '#B8BFC4',
+    'Rose': '#C97B84', 'Sky': '#D6EAF2', 'White': '#F4F4F4',
+}
 
+# (table, default). A default of None means THE ART ALREADY HAS A COLOUR: the
+# renderer leaves the drawing alone until somebody chooses, so a pair of
+# Wayfarers is black because that is how it is drawn, not because a palette
+# happens to start there.
 _PALETTES = {'skin': (SKIN_COLORS, 'Light'), 'hair_color': (HAIR_COLORS, 'BrownDark'),
              'clothe_color': (CLOTHE_COLORS, 'Blue03'),
              'hat_color': (HAT_COLORS, 'Blue03'),
@@ -53,7 +72,58 @@ _PALETTES = {'skin': (SKIN_COLORS, 'Light'), 'hair_color': (HAIR_COLORS, 'BrownD
              # result was a onesie -- the lower half needs its own slots.
              'bottoms_color': (CLOTHE_COLORS, 'Heather'),
              'shoes_color': (CLOTHE_COLORS, 'Black'),
-             'accent_color': (CLOTHE_COLORS, 'Gray02')}
+             'accent_color': (CLOTHE_COLORS, 'Gray02'),
+             # --- one colour per thing (see _INHERITS below) -----------------
+             # A beard was painted in `clothe_color` for a year, because the
+             # source names its generic colour component `Colors` and the
+             # extractor mapped the tag rather than the place. Hair's palette,
+             # because a beard is hair.
+             'facial_hair_color': (HAIR_COLORS, 'BrownDark'),
+             'eyebrow_color': (HAIR_COLORS, None),
+             'eye_color': (EYE_COLORS, None),
+             'eyewear_color': (EYEWEAR_COLORS, None),
+             'graphic_color': (CLOTHE_COLORS, None),
+             # The four accessories shared one `accent_color`, so a watch could
+             # not be silver while the belt was brown. They each have their own
+             # now and each falls back to the accent, which keeps every saved
+             # look identical and keeps the accent meaningful as the one dial
+             # that moves all four.
+             'neck_color': (CLOTHE_COLORS, None),
+             'wrist_color': (CLOTHE_COLORS, None),
+             'waist_color': (CLOTHE_COLORS, None),
+             'hair_accessory_color': (CLOTHE_COLORS, None)}
+
+# Where a colour looks when nobody has chosen one. Walked in order, so an
+# unset beard takes the member's hair colour and only falls back to the hair
+# DEFAULT when they have not chosen that either.
+#
+# This is what makes the whole split free: every avatar saved before these
+# palettes existed renders exactly as it did, because every new key inherits
+# the old one it was carved out of. The single exception is the beard, which
+# was wrong.
+_INHERITS = {'facial_hair_color': 'hair_color',
+             'neck_color': 'accent_color', 'wrist_color': 'accent_color',
+             'waist_color': 'accent_color', 'hair_accessory_color': 'accent_color'}
+
+# Literal art, recoloured by substitution. A piece whose colour is baked into
+# its paths has no FILL token to aim at, so the renderer swaps the hex that IS
+# the piece's colour and leaves everything else standing.
+#
+# Per ITEM for glasses, because "the frame" is a different hex in every pair
+# and the LENS beside it must not move with it: Wayfarers' #000000 is the
+# tinted lens under a gloss gradient, and recolouring that would turn a pair of
+# sunglasses into a pair of goggles. `'*'` means every item in the slot.
+TINTS = {
+    'eyewear': ('eyewear_color', {
+        'Kurt': ('#2F383B',),
+        'Prescription01': ('#D6EAF2',),
+        'Prescription02': ('#252C2F',),
+        'Round': ('#252C2F',),
+        'Sunglasses': ('#252C2F',),
+        'Wayfarers': ('#252C2F',),
+    }),
+    'graphic': ('graphic_color', {'*': ('#FFFFFF',)}),
+}
 
 # --- the lower body, ours -----------------------------------------------
 # Absolute canvas coords. The shoulder edge (y=280, x 32..232) splits three
@@ -524,9 +594,73 @@ def available() -> bool:
     return bool(_load())
 
 
-def _color(kind: str, chosen) -> str:
+def _color(kind: str, chosen) -> Optional[str]:
+    """The hex behind a palette choice.
+
+    None when nothing is chosen and the palette has no default -- the art in
+    that slot is already coloured (a lens, a chest graphic, the ink an eye is
+    drawn in), so the honest answer is "leave it alone" rather than a colour
+    picked by whichever swatch happens to sort first."""
     table, default = _PALETTES[kind]
-    return table.get(chosen or '', table.get(default, '#000000'))
+    hit = table.get(chosen or '')
+    if hit:
+        return hit
+    if default is None:
+        return None
+    return table.get(default, '#000000')
+
+
+def _chosen(cfg: Dict, kind: str):
+    """The palette VALUE in force for a slot, following `_INHERITS`, or None.
+
+    A NAME rather than a hex, because the caller has to be able to tell "the
+    member picked nothing anywhere along this chain" from "they picked the
+    colour that happens to be the default" -- see `_expand`, where a source
+    piece's own defaultColor sits between the two and a red winter hat depends
+    on it.
+
+    Every inheritance pair shares a colour table (a beard and hair are both
+    HAIR_COLORS, the four accessories and the accent are all CLOTHE_COLORS), so
+    a name carried across a link always resolves."""
+    seen, at = set(), kind
+    while at not in seen:
+        seen.add(at)
+        if cfg.get(at):
+            return cfg[at]
+        nxt = _INHERITS.get(at)
+        if not nxt:
+            break
+        at = nxt
+    return None
+
+
+def _slot_color(cfg: Dict, kind: str) -> Optional[str]:
+    """The colour a slot actually paints in.
+
+    An unset beard takes the member's hair colour; an unset watch takes the
+    accent. Only when nothing along the chain is chosen does the palette's own
+    default (or None) answer -- which is what makes every avatar saved before
+    these palettes existed render exactly as it did."""
+    return _color(kind, _chosen(cfg, kind))
+
+
+def _tint(slot: str, key: str, cfg: Dict, svg: str) -> str:
+    """Recolour literal art, for a slot whose colour is baked into its paths.
+
+    A swap rather than a fill token because these pieces came out of the source
+    with the colour already in them and there is nothing to aim a mask at. Only
+    the hexes named in `TINTS` move: the lens, the gloss gradient and every
+    shadow stay exactly where the illustrator put them."""
+    spec = TINTS.get(slot)
+    if not spec or not svg:
+        return svg
+    palette, per_item = spec
+    col = _color(palette, cfg.get(palette))
+    if not col:
+        return svg                      # nothing chosen: the art as drawn
+    for hexcode in (per_item.get(key) or per_item.get('*') or ()):
+        svg = svg.replace(f"'{hexcode}'", f"'{col}'").replace(f'"{hexcode}"', f'"{col}"')
+    return svg
 
 
 def _fill_through(mask_id: str, color: str) -> str:
@@ -553,8 +687,16 @@ def _expand(fragment: str, ns: str, cfg: Dict, depth: int = 0) -> str:
     def sub(m):
         kind, name, a, b = m.groups()
         if kind == 'FILL':
-            chosen = cfg.get(name) or (b or None)
-            return _fill_through(a, _color(name, chosen))
+            # Precedence, and the order matters: the member's own choice, then
+            # whatever this palette inherits from (hair, for a beard), THEN the
+            # source piece's own defaultColor, then the palette's default.
+            #
+            # The third step is not decoration. Four hats ship with a colour of
+            # their own -- a winter hat is Red because it is a Santa hat -- and
+            # letting the palette default win over it turned every one of them
+            # the same blue.
+            chosen = _chosen(cfg, name) if name in _PALETTES else None
+            return _fill_through(a, _color(name, chosen or (b or None)) or '#000000')
         if depth > 3:            # a piece cannot contain itself forever
             return ''
         return _piece(name, cfg, ns, depth + 1)
@@ -569,7 +711,7 @@ def _piece(slot: str, cfg: Dict, ns: str, depth: int = 0) -> str:
     frag = (_load().get(slot) or {}).get(key)
     if frag is None:
         return ''
-    return _expand(frag, f'{ns}{slot}_', cfg, depth)
+    return _tint(slot, key, cfg, _expand(frag, f'{ns}{slot}_', cfg, depth))
 
 
 def _shade(path: str, opacity: str = '0.1') -> str:
@@ -694,18 +836,34 @@ def render_svg(config: Dict, crop: str = 'head', size: Optional[int] = None,
                       # source's chin casts on the neck
                       + _shade(SLEEVE_SHADOW, '0.1'))
 
-    accent = _color('accent_color', cfg.get('accent_color'))
+    # One colour per thing. These four shared `accent_color`, so a silver
+    # watch forced a silver belt; each has its own palette now and each falls
+    # back to the accent, which leaves every saved look untouched and keeps
+    # the accent meaningful as the one dial that moves all four at once.
     extras = ''
     if full:
         for slot, table in (('waist', WAIST), ('wrist', WRIST), ('neck', NECK)):
             item = table.get(cfg.get(slot) or '')
             if item:
-                extras += _paint(item, accent)
+                extras += _paint(item, _slot_color(cfg, f'{slot}_color'))
     hair_extra = HAIR_ACCESSORY.get(cfg.get('hair_accessory') or '')
 
+    # Eyes and brows paint in their OWN ink, inside the black face group.
+    # Nested rather than separate groups so the source's transform still
+    # applies once -- and the shapes that carry a literal fill (a sclera, a
+    # tear, the heart-eyes) keep it, because only the UNFILLED paths inherit.
+    # That is the whole reason this can be a group colour at all: what
+    # inherits is the pupil and the lash line, which is what an eye colour
+    # means, and never the white of the eye.
+    eye_ink = _color('eye_color', cfg.get('eye_color'))
+    brow_ink = _slot_color(cfg, 'eyebrow_color')
     face = (f'<g id="{ns}face" transform="translate(76,82)" fill="#000000">'
             f'{_piece("mouth", cfg, ns)}{_piece("nose", cfg, ns)}'
-            f'{_piece("eyes", cfg, ns)}{_piece("eyebrow", cfg, ns)}</g>')
+            + (f'<g fill="{eye_ink}">{_piece("eyes", cfg, ns)}</g>'
+               if eye_ink else _piece("eyes", cfg, ns))
+            + (f'<g fill="{brow_ink}">{_piece("eyebrow", cfg, ns)}</g>'
+               if brow_ink else _piece("eyebrow", cfg, ns))
+            + '</g>')
 
     # a full top is ours: painted whole, worn in both crops, and it brings
     # its own sleeves -- the generic ones would double-draw beneath it
@@ -717,7 +875,8 @@ def render_svg(config: Dict, crop: str = 'head', size: Optional[int] = None,
                             f'{_piece("graphic", cfg, ns)}</g>')
     else:
         clothes_svg = _piece('clothes', cfg, ns)
-    hair_extra_svg = _paint(hair_extra, accent) if hair_extra else ''
+    hair_extra_svg = (_paint(hair_extra, _slot_color(cfg, 'hair_accessory_color'))
+                      if hair_extra else '')
     dims = f'width="{size}" ' if size else ''
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" '
@@ -822,11 +981,17 @@ def bundle() -> Dict:
     return {
         'pieces': _load(),
         'hems': _hems(),
-        'palettes': {'skin': SKIN_COLORS, 'hair_color': HAIR_COLORS,
-                     'clothe_color': CLOTHE_COLORS, 'hat_color': HAT_COLORS,
-                     'bottoms_color': CLOTHE_COLORS, 'shoes_color': CLOTHE_COLORS,
-                     'accent_color': CLOTHE_COLORS},
+        # One entry per palette, straight off `_PALETTES` rather than a
+        # hand-kept copy: the hand-kept version is how `bottoms_color` reached
+        # the browser without a table the day it shipped, and a palette the
+        # editor cannot see is a colour nobody can choose.
+        'palettes': {k: v[0] for k, v in _PALETTES.items()},
+        # A default of null means the art is already coloured -- the browser
+        # leaves it alone, exactly as `_color` does.
         'defaults': {k: v[1] for k, v in _PALETTES.items()},
+        'inherits': _INHERITS,
+        'tints': {slot: {'palette': pal, 'items': items}
+                  for slot, (pal, items) in TINTS.items()},
         'rig': {'armL': _ARM_L, 'armR': _ARM_R, 'sleeveL': _SLEEVE_L,
                 'sleeveR': _SLEEVE_R, 'lower': _LOWER, 'body': _BODY_PATH,
                 'neckShadow': _NECK_SHADOW, 'shade': SHADE},

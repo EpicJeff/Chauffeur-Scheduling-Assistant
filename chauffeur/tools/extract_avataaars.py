@@ -52,6 +52,12 @@ CHILD_FILL = {
     'HairColor': 'hair_color', 'HatColor': 'hat_color',
     'Colors': 'clothe_color', 'Skin': 'skin',
 }
+
+# `Colors` is the source's ONE generic colour component, so the same tag means
+# the shirt under `clothes` and the beard under `top/facialHair`. Mapped by tag
+# alone, every beard came out the colour of the wearer's t-shirt. The colour a
+# piece takes is a property of WHERE it is, so the directory gets the last word.
+DIR_FILL = {'top/facialHair': {'Colors': 'facial_hair_color'}}
 CHILD_SLOT = {
     'FacialHair': 'facial_hair', 'Accessories': 'eyewear', 'Graphics': 'graphic',
 }
@@ -90,7 +96,7 @@ def _render_body(src: str, path: str) -> str:
     return src[j:k - 1].strip()
 
 
-def _convert(body: str, path: str) -> str:
+def _convert(body: str, path: str, source_dir: str = '') -> str:
     # --- id references, before generic attribute handling -------------------
     body = re.sub(r"xlinkHref=\{'#' \+ (\w+)\}", r'xlink:href="#{{NS}}\1"', body)
     body = re.sub(r"xlinkHref=\{`#\$\{(\w+)\}`\}", r'xlink:href="#{{NS}}\1"', body)
@@ -108,7 +114,7 @@ def _convert(body: str, path: str) -> str:
         mask = re.search(r'maskID=\{(\w+)\}', attrs)
         dflt = re.search(r"defaultColor='([^']*)'", attrs)
         return '{{FILL:%s:%s:%s}}' % (
-            CHILD_FILL[tag],
+            (DIR_FILL.get(source_dir) or {}).get(tag) or CHILD_FILL[tag],
             '{{NS}}' + mask.group(1) if mask else '',
             dflt.group(1) if dflt else '')
 
@@ -176,7 +182,7 @@ def _extract_graphics(path: str) -> dict:
             continue
         raw = _re.sub(r'\s*mask=\{`url\(#\$\{this\.props\.maskID\}\)`\}', '', raw)
         raw = _re.sub(r'\s*mask=\{`url\(#\$\{mask1\}\)`\}', '', raw)
-        out[name] = _convert(raw, f'Graphics/{name}')
+        out[name] = _convert(raw, f'Graphics/{name}', 'clothes/Graphics')
     return out
 
 
@@ -201,7 +207,7 @@ def extract(root: str) -> dict:
             if 'render' not in src:
                 continue
             try:
-                bucket[key] = _convert(_render_body(src, fn), f'{rel}/{fn}')
+                bucket[key] = _convert(_render_body(src, fn), f'{rel}/{fn}', rel)
             except ValueError as e:
                 print(f'  ! {e}', file=sys.stderr)
         print(f'  {slot:12s} {len(bucket):3d} pieces')

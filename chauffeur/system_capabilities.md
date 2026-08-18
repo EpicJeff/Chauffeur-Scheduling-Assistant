@@ -3036,6 +3036,78 @@ Tests: `test_board_pages.py — scenario_an_empty_board_list_never_replaces_a_re
 (the refusal, that the rest of the save still lands, that a real list still
 saves, and both client guards).
 
+## One colour per thing (v2.289.0)
+
+**The bug that started it: every beard was painted in the wearer's t-shirt
+colour.** Avataaars names its generic colour component `Colors`, so the same
+tag means the shirt under `clothes/` and the beard under `top/facialHair`.
+`tools/extract_avataaars.py` mapped the TAG rather than the directory it
+appeared in, and `{{FILL:clothe_color}}` came out of every facial-hair piece.
+Change your top, change your beard. Fixed at the root (`DIR_FILL` gives the
+directory the last word, so a regeneration stays right) and in the generated
+`pieces.json`.
+
+That exposed the general shape: pieces were sharing colours because slots had
+never been given their own. **Ten new palettes**, so every piece that can take
+a colour has one — `facial_hair_color`, `eyebrow_color`, `eye_color`,
+`eyewear_color`, `graphic_color`, `neck_color`, `wrist_color`, `waist_color`,
+`hair_accessory_color`, plus `hat_color`, which the renderer already had and
+the editor never offered.
+
+**Every saved look renders exactly as it did.** Two mechanisms:
+
+- **`_INHERITS`** — an unset beard takes the member's hair colour; the four
+  accessories (neck, wrist, belt, hair extra) each take `accent_color`. The
+  accent is not gone and must not be: it is what they inherit, so it stays the
+  one dial that moves all four at once. Every inheritance link shares a colour
+  table, asserted by test, or a name carried across it would resolve to
+  nothing.
+- **A default of `None`** in `_PALETTES` means THE ART IS ALREADY COLOURED.
+  `_color` answers None and the renderer leaves the drawing alone, so a pair of
+  Wayfarers is black because that is how it is drawn — not because a palette
+  happens to start there.
+
+**`_chosen` returns a NAME, not a hex**, and that is load-bearing. Four hats
+ship a `defaultColor` from the source (a winter hat is Red because it is a
+Santa hat) and it sits BETWEEN "the member chose one" and "the palette's
+default". Resolving straight to a hex turned every one of them the same blue.
+Precedence: member's choice → inherited → the piece's own shipped colour →
+the palette default.
+
+**`TINTS` recolours literal art.** Glasses and chest graphics have no fill
+token to aim at — the colour came out of the source baked into the paths — so
+the renderer swaps the one hex that IS the piece's colour. Named **per item**,
+because "the frame" is a different hex in every pair of glasses and the lens
+beside it must not move: Wayfarers' `#000000` is the tinted lens under a gloss
+gradient, and recolouring that turns sunglasses into goggles. A test asserts
+every hex a tint promises is actually in that item's art.
+
+**Eyes and brows are a group fill, not a swap.** What inherits it is the pupil
+and the lash line; the sclera, a tear and the heart-eyes carry literal fills
+and stay put. That is the only reason an eye colour can be a group colour at
+all. Palettes are ink rather than fabric (`EYE_COLORS`, `EYEWEAR_COLORS`) — the
+clothing pastels on a pupil read as a costume lens.
+
+**No mouth colour.** A mouth is lips, teeth and a tongue; one swatch over all
+three paints the smile shut. The day somebody wants lipstick it is a `TINTS`
+entry naming the lip hex.
+
+**The UI did not grow sixteen tabs.** A colour is not a sibling of the thing it
+colours, so each moved onto its slot as a **swatch strip over that slot's own
+grid** (`SLOTS[*].palettes`; `top` carries two, since hair and hats share a
+slot). Only `skin` and `accent_color` keep tabs, because neither belongs to one
+slot — the hair/top/bottoms/shoes colour tabs are gone as TABS, not as
+colours. Tapping the chosen swatch again clears it, which is the only road back
+to "as drawn" and to an inherited colour; `shuffle` leaves a default-less
+palette alone a third of the time for the same reason.
+
+Tests: `test_avatar_render.py` (+6 — the beard, the shipped hat colour, the
+accessory split, the per-item tint with the lens held still, the eye/brow ink
+with the sclera held still, and that every palette reaches the browser and owns
+a slot) and `test_avatars.py — scenario_every_colour_can_be_reached_by_hand`,
+which asserts the strip is drawn, labelled and clearable rather than that a
+symbol exists.
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.

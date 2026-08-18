@@ -44,50 +44,93 @@ FEET = '0 470 264 140'
 ARMS = '0 330 264 140'
 WAISTLINE = '0 300 264 130'
 
+# `palettes` is the colour (or colours) that belong to THIS slot, and the
+# editor draws them as a swatch strip above the slot's own grid. It exists
+# because a colour is not a sibling of the thing it colours: "Belt" and "Belt
+# colour" as two chips in a row of ten is a menu, whereas choosing the belt and
+# then its colour in one place is dressing.
+#
+# It is also what makes one-colour-per-thing affordable. Every piece that can
+# take a colour has its own now -- a beard is not a t-shirt, a watch is not a
+# belt -- and as separate TABS that would have been sixteen chips across four
+# groups. `top` carries two, because hair and hats share the slot.
 SLOTS = [
-    {'key': 'bottoms',        'label': 'Bottoms',    'z': 10, 'required': True,  'focus': HIPS},
-    {'key': 'shoes',          'label': 'Shoes',      'z': 20, 'required': True,  'focus': FEET},
-    {'key': 'clothes',        'label': 'Top',        'z': 30, 'required': True,  'focus': TORSO},
+    {'key': 'bottoms',        'label': 'Bottoms',    'z': 10, 'required': True,  'focus': HIPS,
+     'palettes': ['bottoms_color']},
+    {'key': 'shoes',          'label': 'Shoes',      'z': 20, 'required': True,  'focus': FEET,
+     'palettes': ['shoes_color']},
+    {'key': 'clothes',        'label': 'Top',        'z': 30, 'required': True,  'focus': TORSO,
+     'palettes': ['clothe_color']},
     {'key': 'graphic',        'label': 'Graphic',    'z': 35, 'required': False, 'focus': TORSO,
-     'only_with': ('clothes', 'GraphicShirt')},
-    {'key': 'waist',          'label': 'Belt',       'z': 40, 'required': False, 'focus': WAISTLINE},
-    {'key': 'wrist',          'label': 'Wrist',      'z': 45, 'required': False, 'focus': ARMS},
-    {'key': 'neck',           'label': 'Neck',       'z': 50, 'required': False, 'focus': TORSO},
-    {'key': 'facial_hair',    'label': 'Facial hair','z': 55, 'required': False, 'focus': HEAD},
-    {'key': 'top',            'label': 'Hair & hats','z': 60, 'required': True,  'focus': HEAD},
-    {'key': 'hair_accessory', 'label': 'Hair extra', 'z': 65, 'required': False, 'focus': HEAD},
-    {'key': 'eyewear',        'label': 'Glasses',    'z': 70, 'required': False, 'focus': HEAD},
+     'only_with': ('clothes', 'GraphicShirt'), 'palettes': ['graphic_color']},
+    {'key': 'waist',          'label': 'Belt',       'z': 40, 'required': False, 'focus': WAISTLINE,
+     'palettes': ['waist_color']},
+    {'key': 'wrist',          'label': 'Wrist',      'z': 45, 'required': False, 'focus': ARMS,
+     'palettes': ['wrist_color']},
+    {'key': 'neck',           'label': 'Neck',       'z': 50, 'required': False, 'focus': TORSO,
+     'palettes': ['neck_color']},
+    {'key': 'facial_hair',    'label': 'Facial hair','z': 55, 'required': False, 'focus': HEAD,
+     'palettes': ['facial_hair_color']},
+    {'key': 'top',            'label': 'Hair & hats','z': 60, 'required': True,  'focus': HEAD,
+     'palettes': ['hair_color', 'hat_color']},
+    {'key': 'hair_accessory', 'label': 'Hair extra', 'z': 65, 'required': False, 'focus': HEAD,
+     'palettes': ['hair_accessory_color']},
+    {'key': 'eyewear',        'label': 'Glasses',    'z': 70, 'required': False, 'focus': HEAD,
+     'palettes': ['eyewear_color']},
     # Face parts are not unlockable -- they are identity, always free, and they
     # live in the catalog only so the editor can offer them.
-    {'key': 'eyes',           'label': 'Eyes',       'z': 52, 'required': True,  'focus': HEAD},
-    {'key': 'eyebrow',        'label': 'Eyebrows',   'z': 53, 'required': True,  'focus': HEAD},
+    {'key': 'eyes',           'label': 'Eyes',       'z': 52, 'required': True,  'focus': HEAD,
+     'palettes': ['eye_color']},
+    {'key': 'eyebrow',        'label': 'Eyebrows',   'z': 53, 'required': True,  'focus': HEAD,
+     'palettes': ['eyebrow_color']},
+    # No mouth colour. A mouth is not one shape in one colour -- lips, teeth and
+    # a tongue are three, and a single swatch over all of them paints the smile
+    # shut. The day somebody wants lipstick it is a `TINTS` entry naming the lip
+    # hex, not a group fill.
     {'key': 'mouth',          'label': 'Mouth',      'z': 51, 'required': True,  'focus': HEAD},
     {'key': 'nose',           'label': 'Nose',       'z': 54, 'required': True,  'focus': HEAD},
 ]
 
-# Palette slots: colour swatches rather than avatar thumbnails. They sit inside
-# the group they belong to, because "hair colour" is only meaningful next to
-# hair.
+# Every palette there is, with the word for it. Two jobs: it labels the swatch
+# strip a slot draws (see `palettes` above), and the ones named in a GROUP's
+# tabs get a tab of their own -- which is only the two belonging to no single
+# slot. Skin is the whole figure; the accent is what the four accessories
+# inherit when they have no colour of their own, so it stays the one dial that
+# moves all of them at once.
 PALETTES = [
-    {'key': 'skin',          'label': 'Skin'},
-    {'key': 'hair_color',    'label': 'Hair colour'},
-    {'key': 'clothe_color',  'label': 'Top colour'},
-    {'key': 'bottoms_color', 'label': 'Bottoms colour'},
-    {'key': 'shoes_color',   'label': 'Shoe colour'},
-    {'key': 'accent_color',  'label': 'Accent'},
+    {'key': 'skin',                 'label': 'Skin'},
+    {'key': 'accent_color',         'label': 'Accent'},
+    {'key': 'hair_color',           'label': 'Hair colour'},
+    {'key': 'hat_color',            'label': 'Hat colour'},
+    {'key': 'facial_hair_color',    'label': 'Beard colour'},
+    {'key': 'eyebrow_color',        'label': 'Eyebrow colour'},
+    {'key': 'eye_color',            'label': 'Eye colour'},
+    {'key': 'eyewear_color',        'label': 'Frame colour'},
+    {'key': 'clothe_color',         'label': 'Top colour'},
+    {'key': 'graphic_color',        'label': 'Graphic colour'},
+    {'key': 'bottoms_color',        'label': 'Bottoms colour'},
+    {'key': 'shoes_color',          'label': 'Shoe colour'},
+    {'key': 'neck_color',           'label': 'Neck colour'},
+    {'key': 'wrist_color',          'label': 'Wrist colour'},
+    {'key': 'waist_color',          'label': 'Belt colour'},
+    {'key': 'hair_accessory_color', 'label': 'Hair extra colour'},
 ]
 
 # Two tiers, because eleven slots in one strip is unusable and the reference
 # layouts all solve it this way. Glyphs lead: the word is for whoever can read
 # it, the picture is for everyone else (same compromise as kid_glyphs.html).
+# The colour tabs that used to sit beside their slot are GONE from these lists
+# -- the tabs, not the colours. Each moved onto the slot it belongs to as a
+# swatch strip, which is what made room for one colour per thing without the
+# chip rows growing to sixteen. `skin` and `accent_color` keep their tabs
+# because neither belongs to a single slot.
 GROUPS = [
     {'key': 'me',      'label': 'Me',      'glyph': '🧑',
      'tabs': ['skin', 'eyes', 'eyebrow', 'mouth', 'nose']},
     {'key': 'hair',    'label': 'Hair',    'glyph': '💇',
-     'tabs': ['top', 'hair_color', 'facial_hair', 'hair_accessory']},
+     'tabs': ['top', 'facial_hair', 'hair_accessory']},
     {'key': 'clothes', 'label': 'Clothes', 'glyph': '👕',
-     'tabs': ['clothes', 'clothe_color', 'graphic', 'bottoms', 'bottoms_color',
-              'shoes', 'shoes_color']},
+     'tabs': ['clothes', 'graphic', 'bottoms', 'shoes']},
     {'key': 'extras',  'label': 'Extras',  'glyph': '🕶️',
      'tabs': ['eyewear', 'neck', 'wrist', 'waist', 'accent_color']},
 ]

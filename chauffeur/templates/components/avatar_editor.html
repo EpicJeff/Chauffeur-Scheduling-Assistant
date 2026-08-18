@@ -206,6 +206,23 @@ function avatarEditor(config) {
         isPalette(tab) {
             return !!(this.bundle.palettes || {})[tab];
         },
+        // The colours that belong to the slot being looked at, drawn as a strip
+        // above its grid. A colour is not a sibling of the thing it colours.
+        palettesFor(slot) {
+            return (this.slotMeta(slot).palettes || [])
+                .filter(k => (this.bundle.palettes || {})[k]);
+        },
+        paletteLabel(key) {
+            const p = (this.bundle.palette_slots || []).find(x => x.key === key);
+            return p ? p.label : key;
+        },
+        // Which swatch reads as chosen. A palette with no default has none
+        // until somebody picks one -- that is the art as drawn, and it is a
+        // real state rather than a missing one.
+        colorPicked(pal) {
+            return this.chosenColor(this.cfg, pal)
+                || this.bundle.defaults[pal] || null;
+        },
         slotMeta(key) {
             return (this.bundle.slots || []).find(s => s.key === key) || {};
         },
@@ -254,7 +271,12 @@ function avatarEditor(config) {
         },
         setColor(pal, name) {
             this.push();
-            this.cfg[pal] = name;
+            // Tapping the chosen swatch again clears it -- the same idiom the
+            // item grid already uses, and the only way back to "as drawn" for
+            // the palettes that have no default, or to the inherited colour
+            // (hair, the accent) for the ones that do.
+            if (this.cfg[pal] === name) delete this.cfg[pal];
+            else this.cfg[pal] = name;
             this.cfg = Object.assign({}, this.cfg);
         },
         undo() {
@@ -278,7 +300,16 @@ function avatarEditor(config) {
             }
             for (const p of (this.bundle.palette_slots || [])) {
                 const names = Object.keys(this.bundle.palettes[p.key] || {});
-                if (names.length) next[p.key] = names[Math.floor(Math.random() * names.length)];
+                if (!names.length) continue;
+                // A palette with no default colours art that is already
+                // coloured, so a third of the time the dice leave it alone --
+                // otherwise every roll produced tinted lenses and coloured
+                // eyebrows, and "as drawn" became unreachable by shuffling.
+                if (!this.bundle.defaults[p.key] && Math.random() < 0.34) {
+                    delete next[p.key];
+                    continue;
+                }
+                next[p.key] = names[Math.floor(Math.random() * names.length)];
             }
             this.cfg = next;
         },
@@ -308,9 +339,49 @@ function avatarEditor(config) {
         // --- the compositor ------------------------------------------------
         // Mirrors services/avatar_render.render_svg. Only this loop is
         // duplicated; every path and colour it uses came from the bundle.
+        // Mirror of avatar_render._color: null when nothing is chosen and the
+        // palette has no default, because that art is already coloured and the
+        // honest answer is to leave it alone.
         color(kind, chosen) {
             const table = this.bundle.palettes[kind] || {};
-            return table[chosen] || table[this.bundle.defaults[kind]] || '#000';
+            if (table[chosen]) return table[chosen];
+            const dflt = this.bundle.defaults[kind];
+            return dflt ? (table[dflt] || '#000') : null;
+        },
+        // Mirror of _slot_color: an unset beard takes the hair colour, an unset
+        // watch takes the accent, and only then does the palette's own default
+        // (or null) answer. This is what keeps every look saved before these
+        // palettes existed rendering exactly as it did.
+        // The palette VALUE in force, following inheritance -- a name, not a
+        // hex, so a caller can tell "nothing chosen anywhere" from "chose the
+        // default". A source piece's own defaultColor sits between those two.
+        chosenColor(cfg, kind) {
+            const inh = this.bundle.inherits || {};
+            const seen = new Set();
+            let at = kind;
+            while (!seen.has(at)) {
+                seen.add(at);
+                if (cfg[at]) return cfg[at];
+                if (!inh[at]) break;
+                at = inh[at];
+            }
+            return null;
+        },
+        slotColor(cfg, kind) {
+            return this.color(kind, this.chosenColor(cfg, kind));
+        },
+        // Mirror of _tint: swap the one hex that IS a piece's colour, leaving
+        // the lens, the gloss gradient and every shadow where they were.
+        tint(slot, key, cfg, svg) {
+            const spec = (this.bundle.tints || {})[slot];
+            if (!spec || !svg) return svg;
+            const col = this.color(spec.palette, cfg[spec.palette]);
+            if (!col) return svg;
+            for (const hex of (spec.items[key] || spec.items['*'] || [])) {
+                svg = svg.split(`'${hex}'`).join(`'${col}'`)
+                         .split(`"${hex}"`).join(`"${col}"`);
+            }
+            return svg;
         },
         fillThrough(maskId, col) {
             const rect = '<rect x="0" y="0" width="264" height="280"/>';
@@ -322,7 +393,8 @@ function avatarEditor(config) {
             let out = frag.split('{{NS}}').join(ns);
             return out.replace(/\{\{(FILL|SLOT):([a-z_]+):?([^:}]*):?([^}]*)\}\}/g,
                 (m, kind, name, a, b) => {
-                    if (kind === 'FILL') return this.fillThrough(a, this.color(name, cfg[name] || b || null));
+                    if (kind === 'FILL') return this.fillThrough(a,
+                        this.color(name, this.chosenColor(cfg, name) || b || null) || '#000');
                     if ((depth || 0) > 3) return '';
                     return this.piece(name, cfg, ns, (depth || 0) + 1);
                 });
@@ -332,7 +404,8 @@ function avatarEditor(config) {
             if (!key) return '';
             const frag = (this.bundle.pieces[slot] || {})[key];
             if (frag === undefined) return '';
-            return this.expand(frag, `${ns}${slot}_`, cfg, depth);
+            return this.tint(slot, key, cfg,
+                             this.expand(frag, `${ns}${slot}_`, cfg, depth));
         },
         conflicts(cfg) {
             const out = [];
@@ -349,7 +422,6 @@ function avatarEditor(config) {
             const R = this.bundle.rig, T = this.bundle.tables, M = this.bundle.hems_meta;
             const skin = this.color('skin', cfg.skin);
             const clothe = this.color('clothe_color', cfg.clothe_color);
-            const accent = this.color('accent_color', cfg.accent_color);
             const full = o.crop !== 'head';
             const shade = (d, op) => `<path d="${d}" fill="${R.shade}" fill-opacity="${op || '0.1'}"/>`;
             // Multi-part assets: mirror of the server's _paint().
@@ -415,14 +487,18 @@ function avatarEditor(config) {
             if (full) {
                 for (const [slot, table] of [['waist', T.waist], ['wrist', T.wrist], ['neck', T.neck]]) {
                     const item = table[cfg[slot]];
-                    if (item) extras += paint(item, accent);
+                    if (item) extras += paint(item, this.slotColor(cfg, slot + '_color'));
                 }
             }
             const hx = T.hair_accessory[cfg.hair_accessory];
-            const hxSvg = hx ? paint(hx, accent) : '';
+            const hxSvg = hx ? paint(hx, this.slotColor(cfg, 'hair_accessory_color')) : '';
+            const eyeInk = this.color('eye_color', cfg.eye_color);
+            const browInk = this.slotColor(cfg, 'eyebrow_color');
+            const eyes = this.piece('eyes', cfg, ns), brows = this.piece('eyebrow', cfg, ns);
             const face = `<g transform="translate(76,82)" fill="#000000">`
                 + this.piece('mouth', cfg, ns) + this.piece('nose', cfg, ns)
-                + this.piece('eyes', cfg, ns) + this.piece('eyebrow', cfg, ns) + '</g>';
+                + (eyeInk ? `<g fill="${eyeInk}">${eyes}</g>` : eyes)
+                + (browInk ? `<g fill="${browInk}">${brows}</g>` : brows) + '</g>';
 
             const vb = o.viewBox || (full ? '0 0 264 600' : '0 0 264 280');
             return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" `
@@ -549,6 +625,32 @@ function avatarEditor(config) {
                                 :class="(cfg[tab] || bundle.defaults[tab]) === name
                                         ? 'border-blue-400 scale-95' : 'border-white/15'"
                                 :aria-label="name"></button>
+                    </template>
+                </div>
+            </template>
+
+            <!-- The slot's OWN colours, over its grid. One row per palette
+                 (hair and hats share a slot, so `top` has two), labelled,
+                 because a strip of unexplained swatches above a grid of hats
+                 is a puzzle. Tapping the chosen one again clears it: back to
+                 the art as drawn, or to the colour this one inherits. -->
+            <template x-if="tab && !isPalette(tab) && palettesFor(tab).length">
+                <div class="mb-3 space-y-2">
+                    <template x-for="pal in palettesFor(tab)" :key="pal">
+                        <div>
+                            <div class="text-[11px] uppercase tracking-wide text-gray-400 mb-1"
+                                 x-text="paletteLabel(pal)"></div>
+                            <div class="flex flex-wrap gap-1.5">
+                                <template x-for="(hex, name) in bundle.palettes[pal]" :key="name">
+                                    <button type="button" @click="setColor(pal, name)"
+                                            class="w-9 h-9 rounded-lg border-2 transition"
+                                            :style="`background:${hex}`"
+                                            :class="colorPicked(pal) === name
+                                                    ? 'border-blue-400 scale-95' : 'border-white/15'"
+                                            :aria-label="name"></button>
+                                </template>
+                            </div>
+                        </div>
                     </template>
                 </div>
             </template>
