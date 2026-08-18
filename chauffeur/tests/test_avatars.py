@@ -316,6 +316,29 @@ def scenario_editor_is_reachable_by_hand():
     check('openAvatarEditor' in read('app.html'), 'the app header chip is a door')
 
 
+def scenario_the_header_chip_draws_the_face_for_a_driver_too():
+    """The bug this pins: the PWA header painted `name.charAt(0)` out of
+    `driversData` — which carries no image — so a DRIVER's header showed an
+    initial whatever they chose, and no reload could fix it. Photo avatars
+    and the character arc taught the member path to draw a face and never
+    came back for this one. Both paths now paint the same way, from the
+    member record, which is the only record that knows about avatars."""
+    import os
+    app = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'templates', 'app.html'), encoding='utf-8').read()
+    check('function paintIdentityChip' in app,
+          'one painter, so a fix here cannot miss a path again')
+    check("driver-avatar').textContent = d.name.charAt(0)" not in app,
+          'the driver path no longer hard-codes an initial')
+    check('paintIdentityChip(membersData.find(m => m.driver_id === id)' in app,
+          'it resolves the member behind the driver profile')
+    check("el.classList.remove('overflow-hidden')" in app,
+          'going back to a letter drops the photo crop with the photo')
+    check("await fetchMembers();" in app and 'paintIdentityChip(me)' in app,
+          'and a saved avatar repaints the header without a reload')
+
+
+
 def scenario_editor_card_is_placeable():
     """The board card exists in the catalog, builds a payload, and hides
     honestly when the art is not built."""
@@ -437,6 +460,7 @@ SCENARIOS = [
     scenario_save_flips_kind_only_without_photo,
     scenario_public_member_serves_the_effective_image,
     scenario_editor_is_reachable_by_hand,
+    scenario_the_header_chip_draws_the_face_for_a_driver_too,
     scenario_editor_card_is_placeable,
     scenario_every_palette_slot_survives_a_save,
     scenario_avatar_kind_has_a_hand_path,

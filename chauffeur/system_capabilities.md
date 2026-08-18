@@ -2653,6 +2653,17 @@ Closes the open design question v2.269.0 recorded, on the household's own framin
 - **The UI is two real buttons on the drive action sheet** ("Not Staying — Schedule Pick-up" / "Staying — Cancel Pick-up", amber-bordered in the house button style with flat stroke icons — corner-return and undo arrows, no emoji), placed in the order a driver would use them: Start Drive, Mark as Completed, then these, with Cancel separate at the bottom; the mid-drive maps state carries the same pair in the same position (v2.270.1, per the household's review — the first cut was bare text sitting below Cancel, and consistency is king). Drawn only where they mean something: an inbound leg of the SELECTED driver's own event — unsplit offers the split, already-split offers the undo, `final_` legs and other people's drives offer nothing. Reachable from any leg pill, including completed ones, which covers the realized-at-3pm-from-the-couch case. The declared window also becomes genuinely free in the solve, which is exactly where the errand scheduler already looks — "I'm running an errand" needed no new concept.
 - Tests: `tests/test_attendance_override.py` (6 scenarios: precedence both directions, self-expiry, pins + history mirroring, undo removes only its own pins, ghost never pinned, 404/400).
 
+## The header chip drew an initial for every driver (v2.293.0)
+
+Reported from the household: "I changed to use my initial/photo instead of the avatar and then changed it back — everywhere else went back to the avatar, but the PWA header is stuck on my initial." It was, and no reload would have fixed it.
+
+`selectDriver` has painted `d.name.charAt(0)` out of `driversData` since the first PWA commit. `driversData` carries no image, and the header is painted once per app open — so a **driver** identity showed an initial regardless of `avatar_kind`. Photo avatars (v2.48.0) taught `selectPassengerMember` to draw a face and never came back for the other path; the character arc inherited the same gap.
+
+- **One painter**: `paintIdentityChip(member, fallbackName, fallbackColor)` draws name + chip from the MEMBER record (`image` is already the household's answer — photo, else character, else null for emoji/initial kinds, decided once in `_public_member`). Both identity paths call it; the driver path resolves `membersData.find(m => m.driver_id === id)` and falls back to the driver's own name/colour when no member record exists.
+- **Going back to a letter drops the crop**: the photo branch adds `overflow-hidden`, and the text branch now removes it.
+- **A saved avatar repaints the header**, not only the chips elsewhere — the `avatar-saved` listener awaits `fetchMembers()` then repaints, so the one chip the editor was opened FROM is no longer the last to know.
+- Tests: `test_avatars` +1 (one painter exists, the initial is not hard-coded, the driver path resolves a member, the crop is dropped, the save repaints).
+
 ## The drive sheet (v2.291.0 — `docs/drive_sheet_design.md`, `services/drive_sheet.py`)
 
 The screen a driver holds *while* they drive, replacing the old action sheet's two buttons. The v2.268.0 diagnosis stands (drivers navigate in Apple/Google Maps, so the app is closed for most of the drive) — this is the other half: when the app IS open, it should be worth having open, and it should keep the phone from locking so it stays that way.

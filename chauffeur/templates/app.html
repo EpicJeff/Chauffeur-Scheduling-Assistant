@@ -662,8 +662,13 @@
 
         // A saved avatar changes the chip everywhere; refetch members so the
         // header (and anything else drawn from the roster) picks it up.
-        window.addEventListener('avatar-saved', () => {
-            if (typeof fetchMembers === 'function') fetchMembers();
+        window.addEventListener('avatar-saved', async () => {
+            if (typeof fetchMembers !== 'function') return;
+            await fetchMembers();
+            // The header is painted once per app open, so without this the
+            // one chip the editor was opened FROM is the last to know.
+            const me = membersData.find(x => x.id === selectedMemberId);
+            if (me) paintIdentityChip(me);
         });
         let currentDates = [];
         let activeDateIndex = 0;
@@ -891,6 +896,37 @@
             return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
         }
 
+        // The header chip, painted from the MEMBER record — which is the
+        // only record that knows about avatars at all.
+        //
+        // This was the bug behind "my header is stuck on my initial": the
+        // driver path has painted `name.charAt(0)` since the first PWA
+        // commit, out of `driversData`, which carries no image. Photo avatars
+        // (v2.48.0) and the character arc taught the member path to draw a
+        // face and never came back for this one — so a driver's header showed
+        // an initial no matter what they chose, and no reload could fix it.
+        // `image` is already the household's answer (photo, else character,
+        // else null for the emoji/initial kinds), decided once in
+        // _public_member so ten templates need no opinion.
+        function paintIdentityChip(m, fallbackName, fallbackColor) {
+            const el = document.getElementById('driver-avatar');
+            if (!el) return;
+            const name = (m && m.name) || fallbackName || '?';
+            document.getElementById('driver-name').textContent = name;
+            if (m && m.image) {
+                el.classList.add('overflow-hidden');
+                el.innerHTML = `<img src="${m.image}" class="w-full h-full object-cover rounded-full">`;
+            } else {
+                // Back to a letter: drop the crop with the photo, or the
+                // circle keeps clipping text it no longer needs to.
+                el.classList.remove('overflow-hidden');
+                el.textContent = (m && m.avatar) || name.charAt(0).toUpperCase();
+            }
+            const color = (m && m.color_code) || fallbackColor || '#3b82f6';
+            el.style.borderColor = color;
+            el.style.color = color;
+        }
+
         async function selectPassengerMember(memberId) {
             const m = membersData.find(x => x.id === memberId);
             if (!m) return;
@@ -906,16 +942,7 @@
                 mwOnMemberChanged();
             }
 
-            document.getElementById('driver-name').textContent = m.name;
-            const _avEl = document.getElementById('driver-avatar');
-            if (m.image) {
-                _avEl.classList.add('overflow-hidden');
-                _avEl.innerHTML = `<img src="${m.image}" class="w-full h-full object-cover rounded-full">`;
-            } else {
-                _avEl.textContent = m.avatar || (m.name || '?').charAt(0).toUpperCase();
-            }
-            _avEl.style.borderColor = m.color_code || '#3b82f6';
-            _avEl.style.color = m.color_code || '#3b82f6';
+            paintIdentityChip(m);
 
             document.getElementById('screen-select-driver').classList.add('hidden');
             document.getElementById('screen-schedule').classList.remove('hidden');
@@ -4715,12 +4742,8 @@
             }
 
             const d = driversData.find(d => d.id === id);
-            if (d) {
-                document.getElementById('driver-name').textContent = d.name;
-                document.getElementById('driver-avatar').textContent = d.name.charAt(0).toUpperCase();
-                document.getElementById('driver-avatar').style.borderColor = d.color_code;
-                document.getElementById('driver-avatar').style.color = d.color_code;
-            }
+            if (d) paintIdentityChip(membersData.find(m => m.driver_id === id),
+                                     d.name, d.color_code);
 
             document.getElementById('screen-select-driver').classList.add('hidden');
             document.getElementById('screen-schedule').classList.remove('hidden');
