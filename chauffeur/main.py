@@ -6943,6 +6943,9 @@ def verify_chore_endpoint(chore_id: str, background_tasks: BackgroundTasks,
         raise HTTPException(status_code=409, detail="Chore is not awaiting verification")
     background_tasks.add_task(_notify_chore_event, 'verified', result['chore'],
                               parent, str(result['awarded'] or ''))
+    claimant = (result.get('chore') or {}).get('claimed_by')
+    if claimant:
+        result['avatar_unlocked'] = storage.sync_avatar_unlocks(claimant)
     return result
 
 class ChoreRejectRequest(BaseModel):
@@ -7322,7 +7325,83 @@ def check_routine(routine_id: str, req: RoutineCheckRequest):
     if not storage.set_routine_check(routine_id, req.member_id, date_str, req.checked):
         raise HTTPException(status_code=403, detail="Not your routine")
     return {'status': 'ok', 'streak': storage.compute_streak(req.member_id),
-            'tier_status': status_tiers.compute_member_status(req.member_id, 'routine')}
+            'tier_status': status_tiers.compute_member_status(req.member_id, 'routine'),
+            # Newly earned wardrobe, so the UI can celebrate it at the tap that
+            # earned it. Empty list on an untick -- the ledger never gives back.
+            'avatar_unlocked': storage.sync_avatar_unlocks(req.member_id)}
+
+# --- Avatars API ---
+# The ledger is the authority on what a person may wear. These endpoints are a
+# convenient way to ask it; storage.set_avatar_config re-validates everything
+# regardless of what the editor believed.
+
+def _require_avatar_owner(member_id: str, token: Optional[str]):
+    """Gate an avatar edit the way the app already gates a person's own things.
+
+    A member with a PIN must prove it -- a member token IS that proof, since
+    the PIN endpoint only issues one after verify_member_pin. A member with NO
+    PIN edits freely: the app has never challenged them anywhere else, and
+    cosmetics are not the place to invent a stricter rule. Parents may dress
+    anyone."""
+    member = storage.get_member(member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="No such member")
+    if not member.get('pin_hash'):
+        return member
+    holder = storage.get_member_by_token(token or '')
+    if holder and (holder.get('id') == member_id or holder.get('role') == 'parent'):
+        return member
+    raise HTTPException(status_code=403, detail="Enter your PIN to change your look")
+
+
+@app.get("/api/avatar/catalog")
+def avatar_catalog_endpoint(member_id: Optional[str] = None):
+    """Slots in paint order and every item in them. With member_id, each item
+    carries `owned` so the editor can grey out what is locked, and `threshold`
+    so it can say what would unlock it."""
+    from services import avatar_catalog as cat
+    owned = set(storage.get_avatar_unlocks(member_id)) if member_id else set()
+    counters, items = {}, []
+    for it in cat.ITEMS:
+        iid = cat.item_id(it['slot'], it['key'])
+        row = {'id': iid, 'slot': it['slot'], 'key': it['key'],
+               'label': it['label'], 'tier': it['tier'],
+               'owned': it['tier'] == 'free' or iid in owned}
+        if it['tier'] == 'unlock':
+            row['track'] = it['track']
+            row['threshold'] = it['threshold']
+            if member_id:
+                if it['track'] not in counters:
+                    counters[it['track']] = storage.avatar_counter(member_id, it['track'])
+                row['progress'] = counters[it['track']]
+        items.append(row)
+    return {'slots': cat.get_slots(), 'items': items,
+            'headwear': list(cat.HEADWEAR), 'counters': counters}
+
+
+@app.get("/api/avatar/{member_id}")
+def get_avatar_endpoint(member_id: str):
+    """Sync on read, so somebody who earned a piece while the app was closed --
+    or who predates the feature entirely -- is never shown as behind."""
+    from services import avatar_catalog as cat
+    storage.sync_avatar_unlocks(member_id)
+    config = storage.get_avatar_config(member_id)
+    return {'member_id': member_id, 'config': config,
+            'unlocks': storage.get_avatar_unlocks(member_id),
+            'conflicts': cat.conflicts(config)}
+
+
+class AvatarConfigRequest(BaseModel):
+    config: dict
+
+
+@app.post("/api/avatar/{member_id}")
+def set_avatar_endpoint(member_id: str, req: AvatarConfigRequest,
+                        x_member_token: Optional[str] = Header(None)):
+    _require_avatar_owner(member_id, x_member_token)
+    storage.sync_avatar_unlocks(member_id)
+    return {'status': 'ok', **storage.set_avatar_config(member_id, req.config or {})}
+
 
 # --- Rewards + redemptions API ---
 

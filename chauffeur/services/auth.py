@@ -251,6 +251,11 @@ RULES = [
     # that is the whole point of `interactive` tiles.
     (ANY, '/api/chores/*', WALL),
     (ANY, '/api/routines/*', WALL),
+    # Avatars: a panel may READ a look (boards draw them) but the write is
+    # gated a second time inside the endpoint, per-member, by PIN or token.
+    # The ledger, not this table, decides what a person may actually wear.
+    ('GET', '/api/avatar/*', WALL),
+    (ANY, '/api/avatar/*', SIGNED_IN),
     (ANY, '/api/points/*', WALL),
     (ANY, '/api/rewards/*', WALL),
     (ANY, '/api/redemptions/*', WALL),

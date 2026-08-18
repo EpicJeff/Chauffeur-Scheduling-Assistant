@@ -453,6 +453,11 @@ with db_lock:
     # Assistant's lead has declined per-user libraries outright — MA 2.7 user
     # profiles scope providers and speakers, favourites stay one shared pile.
     # So the member-shaped shelf lives here, keyed by member_id + uri.
+    # Avatar unlocks: APPEND-ONLY. A row exists or the piece is locked.
+    # Never a derived set -- a cosmetic that revokes itself is the worst
+    # thing a cosmetic system can do, and the streak bug proved we can
+    # lose a value that only ever looked monotonic.
+    avatar_unlocks_table = db.table('avatar_unlocks')
     music_favorites_table = db.table('music_favorites')
     music_recent_table = db.table('music_recent')
 
@@ -3424,6 +3429,132 @@ def compute_streak(member_id: str, window_days: int = 90) -> dict:
     return {'current': current, 'best': best,
             'today_complete': bool(today_sched) and today_done == len(today_sched),
             'today_total': len(today_sched), 'today_done': today_done}
+
+# --- Avatars (unlock ledger + config) ---
+# The ledger is append-only and the counters it reads are all monotonic
+# high-water marks. See services/avatar_catalog.py for the two rules.
+
+def count_routine_completions(member_id: str) -> int:
+    """Total routine completions ever, as a persisted high-water mark.
+
+    set_routine_check upserts one row per (routine, day), so this cannot be
+    farmed by re-ticking. Unticking removes the row, which is why the total is
+    stored rather than counted fresh -- undoing today must not take back a
+    piece of clothing earned last month."""
+    m = get_member(member_id)
+    try:
+        floor = int((m or {}).get('routine_completions_total') or 0)
+    except (TypeError, ValueError):
+        floor = 0
+    with db_lock:
+        live = len(routine_checks_table.search(Query().member_id == member_id))
+    if live > floor:
+        update_member(member_id, {'routine_completions_total': live})
+        return live
+    return floor
+
+
+def avatar_counter(member_id: str, track: str) -> int:
+    """The value an unlock track is measured against."""
+    from services import avatar_catalog as cat
+    if track == cat.TRACK_STREAK:
+        return compute_streak(member_id).get('best', 0)
+    if track == cat.TRACK_POINTS:
+        return get_points_earned(member_id)
+    return count_routine_completions(member_id)
+
+
+def get_avatar_unlocks(member_id: str) -> List[str]:
+    """Every item_id this member owns. Order is not meaningful."""
+    with db_lock:
+        rows = avatar_unlocks_table.search(Query().member_id == member_id)
+    return sorted({r.get('item_id') for r in rows if r.get('item_id')})
+
+
+def grant_avatar_unlock(member_id: str, item_id: str, source: str = 'grant') -> bool:
+    """Append one row. Idempotent -- returns True only the first time, so
+    callers can use the return value to decide whether to celebrate."""
+    import time
+    with db_lock:
+        q = (Query().member_id == member_id) & (Query().item_id == item_id)
+        if avatar_unlocks_table.search(q):
+            return False
+        avatar_unlocks_table.insert({'member_id': member_id, 'item_id': item_id,
+                                     'source': source, 'unlocked_at': time.time()})
+        return True
+
+
+def sync_avatar_unlocks(member_id: str) -> List[str]:
+    """Grant everything this member has earned but does not yet own, and
+    return only what was newly granted so the caller can celebrate it.
+
+    Doubles as the backfill: free pieces and already-passed thresholds are
+    granted on the first call, so nobody who was here before the feature
+    starts behind. Safe to call on every routine tick."""
+    from services import avatar_catalog as cat
+    owned = set(get_avatar_unlocks(member_id))
+    fresh = []
+    for item in cat.free_items():
+        iid = cat.item_id(item['slot'], item['key'])
+        if iid not in owned and grant_avatar_unlock(member_id, iid, 'default'):
+            fresh.append(iid)
+    cache = {}
+    for item in cat.unlockable_items():
+        iid = cat.item_id(item['slot'], item['key'])
+        if iid in owned:
+            continue
+        track = item['track']
+        if track not in cache:
+            cache[track] = avatar_counter(member_id, track)
+        if cache[track] >= item['threshold'] and grant_avatar_unlock(member_id, iid, track):
+            fresh.append(iid)
+    return fresh
+
+
+def get_avatar_config(member_id: str) -> dict:
+    """The member's saved look, with required slots defaulted so the renderer
+    always has something to draw."""
+    from services import avatar_catalog as cat
+    m = get_member(member_id) or {}
+    cfg = dict(m.get('avatar_config') or {})
+    for slot in cat.get_slots():
+        if slot.get('required') and not cfg.get(slot['key']):
+            choices = [i for i in cat.items_for_slot(slot['key']) if i['tier'] == 'free']
+            if choices:
+                cfg[slot['key']] = choices[0]['key']
+    return cfg
+
+
+def set_avatar_config(member_id: str, config: dict) -> dict:
+    """Save a look, dropping anything the member has not unlocked or that does
+    not exist. Returns {'config': saved, 'rejected': [...]}.
+
+    Validation is here rather than in the endpoint on purpose: the ledger is
+    the authority on what someone may wear, and an editor is only ever a
+    convenient way to ask."""
+    from services import avatar_catalog as cat
+    owned = set(get_avatar_unlocks(member_id))
+    clean, rejected = {}, []
+    for slot_key, item_key in (config or {}).items():
+        if not cat.get_slot(slot_key):
+            rejected.append(slot_key)
+            continue
+        if item_key in (None, '', 'Blank'):
+            clean[slot_key] = item_key or None
+            continue
+        if not cat.get_item(slot_key, item_key):
+            rejected.append(cat.item_id(slot_key, item_key))
+            continue
+        if cat.item_id(slot_key, item_key) not in owned:
+            rejected.append(cat.item_id(slot_key, item_key))
+            continue
+        clean[slot_key] = item_key
+    for pal in ('skin', 'hair_color', 'clothe_color', 'build', 'height'):
+        if pal in (config or {}):
+            clean[pal] = config[pal]
+    update_member(member_id, {'avatar_config': clean})
+    return {'config': clean, 'rejected': rejected}
+
 
 # --- Prep kits ---
 # Packing lists matched to events by title keywords. Setup is meant to be
