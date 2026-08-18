@@ -504,14 +504,45 @@
         </div>
     </div>
 
-    <!-- Action Sheet Modal -->
+    <!-- The Drive Sheet (docs/drive_sheet_design.md) -->
+    <!-- One sheet, two states. State 1 is the car park before pulling out:
+         who is aboard, what is packed, Start. State 2 is the drive itself:
+         where, when, what to say to whoever is waiting, and the tap that
+         ends it. Everything on it is a single large target and nothing on
+         it has to be READ to drive correctly — no map, no turn list, no
+         confirm dialog with two similar buttons.
+         It still opens with neither state when there is no leg (the plain
+         "map me there" tap from an event modal), which is why the drive
+         blocks below all hide themselves. -->
     <div id="action-sheet"
         class="fixed inset-0 z-50 hidden flex-col justify-end bg-black/60 backdrop-blur-sm transition-opacity opacity-0">
         <div id="action-sheet-content"
-            class="bg-gray-900 rounded-t-2xl p-6 w-full transform translate-y-full transition-transform duration-300 shadow-sheet">
+            class="bg-gray-900 rounded-t-2xl p-6 w-full transform translate-y-full transition-transform duration-300 shadow-sheet max-h-[92vh] overflow-y-auto no-scrollbar">
             <div class="w-12 h-1.5 bg-gray-700 rounded-full mx-auto mb-6"></div>
             <h3 class="text-xl font-bold mb-4 text-gray-100" id="sheet-title">Open in Maps</h3>
             <p class="text-sm text-gray-400 mb-6 font-medium" id="sheet-subtitle"></p>
+
+            <!-- Where this drive is going, and when it gets there. -->
+            <div id="drive-brief" class="hidden mb-5">
+                <div id="drive-dest" class="text-gray-300 text-sm flex items-start gap-2 mb-2"></div>
+                <div id="drive-eta" class="hidden text-lg font-bold text-blue-300 mb-2"></div>
+                <div id="drive-car" class="hidden"></div>
+            </div>
+
+            <!-- Roll call: the head count, as taps. Never a gate. -->
+            <div id="drive-roll" class="hidden mb-5">
+                <div class="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">
+                    Everybody in? <span class="text-gray-600 normal-case font-medium tracking-normal">— tap who's aboard</span>
+                </div>
+                <div id="drive-roll-chips" class="flex flex-wrap gap-2"></div>
+            </div>
+
+            <!-- The loading checklist, at the car, before pulling out. -->
+            <div id="drive-prep" class="hidden mb-5">
+                <div class="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Packed?</div>
+                <div id="drive-prep-items" class="flex flex-wrap gap-2"></div>
+            </div>
+
             <div id="sheet-state-1" class="flex flex-col gap-3">
                 <button onclick="startDrive()" id="btn-start-drive"
                     class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold text-lg shadow-lg transition-colors">
@@ -545,21 +576,49 @@
             </div>
 
             <div id="sheet-state-2" class="flex flex-col gap-3 hidden">
-                <button onclick="openMaps('google')"
-                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold text-lg shadow-lg">
-                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-                    Google Maps
+                <!-- Navigation stays first: it is what the driver reaches for
+                     the second the car moves. Three across rather than three
+                     stacked, because the sheet now has more to say and the
+                     targets are still thumb-sized. -->
+                <div class="grid grid-cols-3 gap-2">
+                    <button onclick="openMaps('google')"
+                        class="flex flex-col items-center justify-center gap-1 py-4 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold shadow-lg">
+                        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                        <span class="text-xs">Google</span>
+                    </button>
+                    <button onclick="openMaps('apple')"
+                        class="flex flex-col items-center justify-center gap-1 py-4 rounded-xl bg-gray-700 active:bg-gray-600 text-gray-100 font-bold shadow-lg">
+                        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                        <span class="text-xs">Apple</span>
+                    </button>
+                    <button onclick="openMaps('waze')"
+                        class="flex flex-col items-center justify-center gap-1 py-4 rounded-xl bg-cyan-600 active:bg-cyan-700 text-white font-bold shadow-lg">
+                        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
+                        <span class="text-xs">Waze</span>
+                    </button>
+                </div>
+
+                <!-- What a driver needs to say, without typing. Only drawn
+                     when somebody is actually waiting on this drive. -->
+                <div id="drive-messages" class="hidden">
+                    <div class="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2 mt-2">
+                        Tell <span id="drive-audience">them</span>
+                    </div>
+                    <div id="drive-message-buttons" class="grid grid-cols-2 gap-2"></div>
+                </div>
+
+                <button onclick="sendMyEta()" id="btn-send-eta"
+                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-blue-500/50 hover:bg-blue-900/20 active:bg-blue-600 text-blue-300 font-bold text-lg shadow-lg transition-colors">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                    Send my ETA
                 </button>
-                <button onclick="openMaps('apple')"
-                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-gray-700 active:bg-gray-600 text-gray-100 font-bold text-lg shadow-lg">
-                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
-                    Apple Maps
+
+                <button onclick="tapArrived()" id="btn-arrived"
+                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-green-600 active:bg-green-700 text-white font-bold text-lg shadow-lg transition-colors">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+                    Arrived
                 </button>
-                <button onclick="openMaps('waze')"
-                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-cyan-600 active:bg-cyan-700 text-white font-bold text-lg shadow-lg">
-                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
-                    Waze
-                </button>
+
                 <!-- Same two retro-split actions in mid-drive state, same
                      position: after the actions, above Cancel. -->
                 <button onclick="declareNotStaying()"
@@ -576,6 +635,19 @@
                     class="w-full py-4 mt-2 rounded-xl bg-transparent text-gray-400 active:text-gray-100 font-bold text-lg">
                     Cancel
                 </button>
+            </div>
+
+            <!-- Where you go after this one: the real question at a
+                 destination. Display only — see _next_drive. -->
+            <div id="drive-next" class="hidden mt-4 pt-4 border-t border-gray-800 text-sm text-gray-400"></div>
+
+            <!-- Never invisible tracking: the sheet says what it is doing
+                 and how to stop it, on the screen doing it. -->
+            <div id="drive-live" class="hidden mt-4 pt-4 border-t border-gray-800 flex items-center gap-3">
+                <span id="drive-live-dot" class="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse shrink-0"></span>
+                <div class="flex-1 text-xs text-gray-400 leading-tight" id="drive-live-text"></div>
+                <button onclick="toggleDriveLive()" id="btn-drive-live"
+                    class="text-xs font-bold px-3 py-2 rounded-lg border border-gray-600 text-gray-300 active:bg-gray-700 shrink-0">Stop</button>
             </div>
         </div>
     </div>
@@ -2177,6 +2249,7 @@
             // MINE still in_progress hours past its event gets one
             // question, now that the app is open anyway. After the
             // schedule paint settles, so it reads cached data too.
+            setTimeout(maybeResumeDriveSheet, 2000);
             setTimeout(reconcileStaleDrives, 2500);
         }
 
@@ -4382,6 +4455,8 @@
         // The arrived? push deep-links here (/app?arrival=<leg_id>). The
         // tap IS the confirmation: answer with a location fix first, and
         // only ask the human when the fix cannot settle it.
+        // Returns true when the leg ended, so a caller holding a sheet open
+        // over it can close (the arrival push's own call ignores it).
         async function handleArrivalCheck(legId) {
             history.replaceState({}, '', location.pathname);
             const fix = await getPositionFix(6000);
@@ -4398,7 +4473,7 @@
             if (d && d.arrived === true) {
                 showGlobalAlert(`✅ Drive checked off — you're at ${d.title}.`);
                 fetchSchedule(true);
-                return;
+                return true;
             }
             // Not verifiably there (or no fix): the human decides. "Not at
             // the destination" does not mean "late" — the driver who
@@ -4420,6 +4495,7 @@
                 });
                 showGlobalAlert('✅ Drive checked off.');
                 fetchSchedule(true);
+                return true;
             } else if (pick === 'share') {
                 const res = await fetch(`${apiBase}api/drive_status/share_eta`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4447,6 +4523,9 @@
                 const evId = String(legId).replace(/^(init_|route_|final_)/, '')
                                           .replace(/_[123]$/, '');
                 if (assignments[evId] !== selectedDriverId) continue;
+                // Never ask about the drive whose sheet is open in front of
+                // them; that sheet has an Arrived button on it.
+                if (driveSheetLegOpen() === legId) continue;
                 const ev = events.find(e => String(e.id) === evId);
                 if (!ev || !ev.start) continue;
                 const anchor = new Date(ev.end || ev.start).getTime();
@@ -4884,13 +4963,19 @@
         function openActionSheet(origin, destination, legTitle, eventId = null, legId = null) {
             routeContext = { origin, destination, legTitle, eventId, legId };
             document.getElementById('sheet-subtitle').textContent = legTitle;
+            resetDriveSheet();
 
             const btnMarkCompleted = document.getElementById('btn-mark-completed');
             const btnSeparator = document.getElementById('mark-completed-separator');
             const sheetState1 = document.getElementById('sheet-state-1');
             const sheetState2 = document.getElementById('sheet-state-2');
 
-            if (eventId && legId) {
+            // A leg somebody already STARTED opens on the drive, not on a
+            // Start button it does not need — the bug every driver hit who
+            // reopened the app halfway to the pool.
+            const alreadyDriving = legId && scheduleData
+                && (scheduleData.in_progress_drives || []).includes(legId);
+            if (eventId && legId && !alreadyDriving) {
                 if (btnMarkCompleted) btnMarkCompleted.style.display = 'flex';
                 if (btnSeparator) btnSeparator.style.display = 'block';
                 if (sheetState1) sheetState1.classList.remove('hidden');
@@ -4912,8 +4997,15 @@
             document.querySelectorAll('.btn-staying-after-all').forEach(b =>
                 b.classList.toggle('hidden', retro !== 'can_stay'));
 
+            if (legId) {
+                loadDriveSheet(legId);
+                rememberDriveSheet();
+                if (alreadyDriving) startDriveLive();
+            }
+
             const sheet = document.getElementById('action-sheet');
             const content = document.getElementById('action-sheet-content');
+            sheet.scrollTop = 0;
             sheet.classList.remove('hidden');
             sheet.style.display = 'flex';
 
@@ -4927,6 +5019,8 @@
         function closeActionSheet() {
             const sheet = document.getElementById('action-sheet');
             const content = document.getElementById('action-sheet-content');
+            stopDriveLive(true);
+            forgetDriveSheet();
 
             sheet.classList.add('opacity-0');
             content.classList.add('translate-y-full');
@@ -4935,6 +5029,7 @@
                 sheet.classList.add('hidden');
                 sheet.style.display = 'none';
                 routeContext = null;
+                driveSheetData = null;
                 
                 const btn = document.getElementById('btn-mark-completed');
                 if (btn) {
@@ -5010,9 +5105,11 @@
                     }
                 }
 
-                // Switch to map options
-                document.getElementById('sheet-state-1').classList.add('hidden');
-                document.getElementById('sheet-state-2').classList.remove('hidden');
+                // Over to the en-route half: navigation, the things worth
+                // saying from the car, and the screen/position lane. The
+                // sheet is re-read because the server has just priced an ETA.
+                enterEnRouteState();
+                loadDriveSheet(routeContext.legId);
 
                 btn.disabled = false;
                 btn.innerHTML = `<svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Start Drive`;
@@ -5067,6 +5164,404 @@
             } finally {
                 btn.disabled = false;
             }
+        }
+
+        // --- The Drive Sheet (docs/drive_sheet_design.md) ---
+        // The screen a driver holds while they drive. Everything it shows is
+        // assembled by /api/drive_sheet in one call — this half only draws it
+        // and turns taps into posts.
+        //
+        // Two of its jobs are not decoration:
+        //   * the SCREEN WAKE LOCK, so the phone does not lock mid-drive;
+        //   * the POSITION PING, which is the only fix a household without
+        //     the HA companion app ever produces — and therefore the only
+        //     way their legs complete themselves on arrival.
+        // Both belong to the en-route state and both stop the moment the
+        // sheet closes. Whether they run at all is a preference of THIS
+        // phone (localStorage), never a household setting: one parent
+        // declining to share position must not silence the other's.
+        let driveSheetData = null;
+        let driveLiveTimer = null;
+        let driveWakeLock = null;
+        let drivePrepChecked = new Set();   // the loading tally, per open
+        const DRIVE_LIVE_KEY = 'chauffeur_drive_live';
+        const DRIVE_RESUME_KEY = 'chauffeur_drive_resume';
+        const DRIVE_PING_MS = 45000;
+
+        function driveLiveEnabled() {
+            return localStorage.getItem(DRIVE_LIVE_KEY) !== 'off';
+        }
+
+        function driveSheetLegOpen() {
+            return (routeContext && routeContext.legId) || null;
+        }
+
+        function resetDriveSheet() {
+            driveSheetData = null;
+            drivePrepChecked = new Set();
+            ['drive-brief', 'drive-roll', 'drive-prep', 'drive-next',
+             'drive-messages'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.add('hidden');
+            });
+            const hasLeg = !!driveSheetLegOpen();
+            ['btn-send-eta', 'btn-arrived'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.toggle('hidden', !hasLeg);
+            });
+        }
+
+        async function loadDriveSheet(legId) {
+            try {
+                const res = await fetch(`${apiBase}api/drive_sheet/${encodeURIComponent(legId)}`);
+                const data = await res.json();
+                // A slow sheet must never paint over a different drive the
+                // driver has since opened.
+                if (driveSheetLegOpen() !== legId) return;
+                driveSheetData = data;
+            } catch (e) {
+                console.warn('Drive sheet failed to load', e);
+                return;
+            }
+            renderDriveSheet();
+        }
+
+        function renderDriveSheet() {
+            const d = driveSheetData;
+            if (!d) return;
+            const show = (id, on) => {
+                const el = document.getElementById(id);
+                if (el) el.classList.toggle('hidden', !on);
+            };
+
+            // --- where, and when
+            const dest = d.destination || {};
+            const destEl = document.getElementById('drive-dest');
+            destEl.innerHTML = dest.address
+                ? `<svg class="w-4 h-4 shrink-0 mt-0.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg><span class="break-words">${mfEscape(dest.address)}</span>`
+                : '';
+            const etaEl = document.getElementById('drive-eta');
+            if (d.eta_label) etaEl.textContent = `Arriving about ${d.eta_label}`;
+            show('drive-eta', !!d.eta_label);
+
+            // The car, and the one thing about it worth saying before a
+            // drive: that it will not make the trip on what is in it.
+            const carEl = document.getElementById('drive-car');
+            if (d.car) {
+                const c = d.car;
+                const warn = c.warn
+                    ? `<span class="ml-2 px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/50 text-xs font-black">⚠ ${mfEscape(c.warn)}</span>`
+                    : '';
+                const range = (c.range && !c.warn)
+                    ? `<span class="ml-2 text-xs text-gray-500">${Math.round(c.range)} mi range</span>` : '';
+                carEl.innerHTML = `<span class="inline-flex items-center px-2.5 py-1 rounded-full bg-gray-800 border border-gray-700 text-sm text-gray-300 font-bold">${mfEscape(c.icon || '🚗')} ${mfEscape(c.name || 'Your car')}</span>${warn}${range}`;
+            }
+            show('drive-car', !!d.car);
+            show('drive-brief', !!(dest.address || d.eta_label || d.car));
+
+            // --- the head count
+            const pax = d.passengers || [];
+            const chips = document.getElementById('drive-roll-chips');
+            chips.innerHTML = pax.map(p => {
+                const m = (membersData || []).find(x => x.id === p.member_id) || {};
+                const face = m.image
+                    ? `<img src="${m.image}" class="w-7 h-7 rounded-full object-cover">`
+                    : `<span class="w-7 h-7 rounded-full bg-gray-700 flex items-center justify-center text-sm">${mfEscape(m.avatar || (p.name || '?').charAt(0))}</span>`;
+                const cls = p.aboard === true
+                    ? 'bg-green-600/20 border-green-500/60 text-green-200'
+                    : (p.aboard === false
+                        ? 'bg-amber-600/20 border-amber-500/60 text-amber-200'
+                        : 'bg-gray-800 border-gray-700 text-gray-300');
+                const mark = p.aboard === true ? '✓' : (p.aboard === false ? '✕' : '');
+                return `<button onclick="cycleRollCall('${p.member_id}')"
+                    class="flex items-center gap-2 pl-1.5 pr-3 py-1.5 rounded-full border-2 font-bold ${cls}">
+                    ${face}<span>${mfEscape(p.name || '?')}</span>
+                    <span class="text-lg leading-none">${mark}</span></button>`;
+            }).join('');
+            show('drive-roll', pax.length > 0);
+
+            // --- the loading checklist
+            const items = (d.prep || {}).items || [];
+            if ((d.prep || {}).confirmed) items.forEach(i => drivePrepChecked.add(i));
+            const prepEl = document.getElementById('drive-prep-items');
+            prepEl.innerHTML = items.map(i => {
+                const on = drivePrepChecked.has(i);
+                const cls = on ? 'bg-green-600/20 border-green-500/60 text-green-200'
+                               : 'bg-amber-500/10 border-amber-500/40 text-amber-200';
+                return `<button onclick="toggleDrivePrep('${mfEscape(i).replace(/'/g, "\\'")}')"
+                    class="px-3 py-2 rounded-xl border-2 font-bold text-sm ${cls}">${on ? '✓ ' : ''}${mfEscape(i)}</button>`;
+            }).join('');
+            show('drive-prep', items.length > 0);
+
+            // --- what to say, to whoever is waiting
+            const msgs = d.messages || [];
+            const audience = d.audience || [];
+            const msgWrap = document.getElementById('drive-message-buttons');
+            msgWrap.innerHTML = msgs.map(m => `<button onclick="sendQuickMessage('${m.key}')"
+                class="flex items-center justify-center gap-2 py-3.5 px-2 rounded-xl bg-gray-800 border border-gray-700 active:bg-gray-700 text-gray-200 font-bold text-sm">
+                <span>${m.icon}</span>${mfEscape(m.label)}</button>`).join('');
+            document.getElementById('drive-audience').textContent =
+                audience.length ? audience.join(' & ') : 'the family';
+            show('drive-messages', msgs.length > 0 && audience.length > 0);
+
+            // --- where you go after this one
+            const nx = d.next_drive;
+            const nextEl = document.getElementById('drive-next');
+            if (nx) {
+                const when = nx.leave_label ? `leave ${mfEscape(nx.leave_label)}`
+                                            : `starts ${mfEscape(nx.start_label || '')}`;
+                nextEl.innerHTML = `<span class="text-gray-500 font-bold uppercase text-xs tracking-wider">Next</span>
+                    <span class="text-gray-200 font-bold ml-2">${mfEscape(nx.title)}</span>
+                    <span class="text-blue-300 font-bold ml-1">· ${when}</span>`;
+            }
+            show('drive-next', !!nx);
+        }
+
+        // Unanswered -> aboard -> not here -> unanswered. One target, because
+        // the hand doing this is also holding a door open.
+        async function cycleRollCall(memberId) {
+            const d = driveSheetData;
+            const legId = driveSheetLegOpen();
+            if (!d || !legId) return;
+            const p = (d.passengers || []).find(x => x.member_id === memberId);
+            if (!p) return;
+            const next = p.aboard === true ? false : (p.aboard === false ? null : true);
+            p.aboard = next;
+            renderDriveSheet();
+            try {
+                await fetch(`${apiBase}api/drive_status/roll_call`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ leg_id: legId, member_id: memberId, aboard: next })
+                });
+            } catch (e) {
+                console.warn('Roll call save failed', e);
+            }
+            if (next === false && (d.messages || []).some(m => m.key === 'come_out')) {
+                showGlobalAlert(`${p.name} isn't in — "Come on out" will tell them.`);
+            }
+        }
+
+        // A tally for the person loading the car. Ticking the last item is
+        // also the household's "packed" confirmation, so the same tap that
+        // finishes the job answers the question the rest of the app asks.
+        async function toggleDrivePrep(item) {
+            if (drivePrepChecked.has(item)) drivePrepChecked.delete(item);
+            else drivePrepChecked.add(item);
+            renderDriveSheet();
+            const items = ((driveSheetData || {}).prep || {}).items || [];
+            const evId = (driveSheetData || {}).event_id;
+            if (!evId || !items.length) return;
+            const all = items.every(i => drivePrepChecked.has(i));
+            if (all === !!((driveSheetData.prep || {}).confirmed)) return;
+            driveSheetData.prep.confirmed = all;
+            try {
+                await fetch(`${apiBase}api/prep_status`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        event_id: String(evId).replace(/_(dropoff|pickup)$/, ''),
+                        confirmed: all, member_id: selectedMemberId })
+                });
+                if (all) showGlobalAlert('✓ Packed');
+            } catch (e) {
+                console.warn('Prep confirm failed', e);
+            }
+        }
+
+        async function sendQuickMessage(key) {
+            const legId = driveSheetLegOpen();
+            if (!legId) return;
+            const btns = document.querySelectorAll('#drive-message-buttons button');
+            btns.forEach(b => b.disabled = true);
+            try {
+                const res = await fetch(`${apiBase}api/drive_status/message`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Member-Token': memberToken() },
+                    body: JSON.stringify({ leg_id: legId, key: key,
+                                           member_id: selectedMemberId })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.detail || 'failed');
+                showGlobalAlert(`📣 Sent — "${d.body}"`);
+            } catch (e) {
+                showGlobalAlert("Couldn't send that just now.");
+            } finally {
+                btns.forEach(b => b.disabled = false);
+            }
+        }
+
+        // One ETA path for the whole app: priced from where the driver is
+        // RIGHT NOW and shared through the same door as the parked-ETA
+        // share. Honest early or late — and still never automatic.
+        async function sendMyEta() {
+            const legId = driveSheetLegOpen();
+            if (!legId) return;
+            const btn = document.getElementById('btn-send-eta');
+            const orig = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<svg class="w-6 h-6 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4"/></svg> Working it out...';
+            try {
+                const fix = await getPositionFix(6000);
+                const res = await fetch(`${apiBase}api/drive_status/send_eta`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ leg_id: legId, status: 'in_progress',
+                                           ...(fix || {}) })
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.detail || 'failed');
+                showGlobalAlert(`📣 Sent — arriving about ${d.eta_label}`);
+                if (driveSheetData) {
+                    driveSheetData.eta_ts = d.eta_ts;
+                    driveSheetData.eta_label = d.eta_label;
+                    renderDriveSheet();
+                }
+            } catch (e) {
+                showGlobalAlert("Couldn't work out a time for this drive.");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = orig;
+            }
+        }
+
+        // The same check the arrival push runs: answer with a fix, ask the
+        // human only when the fix cannot settle it.
+        async function tapArrived() {
+            const legId = driveSheetLegOpen();
+            if (!legId) return;
+            const btn = document.getElementById('btn-arrived');
+            btn.disabled = true;
+            const done = await handleArrivalCheck(legId);
+            btn.disabled = false;
+            if (done) closeActionSheet();
+        }
+
+        // --- keeping the screen on, and the family informed of where the car is
+        async function acquireWakeLock() {
+            if (!('wakeLock' in navigator) || driveWakeLock) return;
+            try {
+                driveWakeLock = await navigator.wakeLock.request('screen');
+                driveWakeLock.addEventListener('release', () => { driveWakeLock = null; });
+            } catch (e) {
+                // Refused (battery saver, not a standalone PWA on iOS): the
+                // sheet still works, the screen just dims like any page.
+                driveWakeLock = null;
+            }
+        }
+
+        function releaseWakeLock() {
+            try { if (driveWakeLock) driveWakeLock.release(); } catch (e) { }
+            driveWakeLock = null;
+        }
+
+        async function pingDriveLocation() {
+            const legId = driveSheetLegOpen();
+            if (!legId || !driveLiveEnabled()) return;
+            const fix = await getPositionFix(8000);
+            if (!fix) return;
+            try {
+                const res = await fetch(`${apiBase}api/drive_status/ping`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Member-Token': memberToken() },
+                    body: JSON.stringify({ leg_id: legId, member_id: selectedMemberId, ...fix })
+                });
+                const d = await res.json();
+                // Arrival closed the leg on its own: say so and get off the
+                // screen, which is the whole point of the position lane.
+                if (d && d.completed) {
+                    showGlobalAlert(`✅ You're there — drive checked off.`);
+                    fetchSchedule(true);
+                    closeActionSheet();
+                }
+            } catch (e) {
+                // A drive goes through dead zones; a missed ping is nothing.
+            }
+        }
+
+        function startDriveLive() {
+            stopDriveLive();
+            const banner = document.getElementById('drive-live');
+            if (banner) banner.classList.remove('hidden');
+            renderDriveLiveBanner();
+            if (!driveLiveEnabled()) return;
+            acquireWakeLock();
+            pingDriveLocation();
+            driveLiveTimer = setInterval(pingDriveLocation, DRIVE_PING_MS);
+        }
+
+        function stopDriveLive(hideBanner) {
+            if (driveLiveTimer) clearInterval(driveLiveTimer);
+            driveLiveTimer = null;
+            releaseWakeLock();
+            if (hideBanner) {
+                const banner = document.getElementById('drive-live');
+                if (banner) banner.classList.add('hidden');
+            }
+        }
+
+        function renderDriveLiveBanner() {
+            const on = driveLiveEnabled();
+            const dot = document.getElementById('drive-live-dot');
+            const text = document.getElementById('drive-live-text');
+            const btn = document.getElementById('btn-drive-live');
+            if (!dot || !text || !btn) return;
+            dot.className = on
+                ? 'w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse shrink-0'
+                : 'w-2.5 h-2.5 rounded-full bg-gray-600 shrink-0';
+            text.textContent = on
+                ? 'Sharing where you are while this drive runs, and keeping the screen on.'
+                : 'Not sharing your location. The drive still has to be checked off by hand.';
+            btn.textContent = on ? 'Stop' : 'Start';
+        }
+
+        function toggleDriveLive() {
+            const on = driveLiveEnabled();
+            localStorage.setItem(DRIVE_LIVE_KEY, on ? 'off' : 'on');
+            if (on) {
+                stopDriveLive();
+                renderDriveLiveBanner();
+                showGlobalAlert('📍 Location sharing off on this phone.');
+            } else {
+                startDriveLive();
+                showGlobalAlert('📍 Location sharing on while you drive.');
+            }
+        }
+
+        // A wake lock dies whenever the page is hidden — a glance at the map
+        // app and back would otherwise leave the screen free to lock again.
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible') return;
+            if (driveLiveTimer && driveLiveEnabled()) acquireWakeLock();
+        });
+
+        // The en-route half of the sheet: after Start, and whenever a leg is
+        // opened that somebody already started.
+        function enterEnRouteState() {
+            document.getElementById('sheet-state-1').classList.add('hidden');
+            document.getElementById('sheet-state-2').classList.remove('hidden');
+            startDriveLive();
+        }
+
+        // A drive outlives the app: iOS will happily kill a backgrounded PWA
+        // mid-route. The sheet remembers which leg it was on so reopening
+        // lands back on the drive rather than on a timeline.
+        function rememberDriveSheet() {
+            if (!routeContext || !routeContext.legId) return;
+            try {
+                localStorage.setItem(DRIVE_RESUME_KEY, JSON.stringify(routeContext));
+            } catch (e) { }
+        }
+
+        function forgetDriveSheet() {
+            try { localStorage.removeItem(DRIVE_RESUME_KEY); } catch (e) { }
+        }
+
+        function maybeResumeDriveSheet() {
+            let saved = null;
+            try { saved = JSON.parse(localStorage.getItem(DRIVE_RESUME_KEY) || 'null'); }
+            catch (e) { saved = null; }
+            if (!saved || !saved.legId || routeContext) return;
+            const live = scheduleData
+                && (scheduleData.in_progress_drives || []).includes(saved.legId);
+            if (!live) { forgetDriveSheet(); return; }
+            openActionSheet(saved.origin, saved.destination, saved.legTitle,
+                            saved.eventId, saved.legId);
         }
 
         const CLAIM_ICON = `<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"></path></svg>`;

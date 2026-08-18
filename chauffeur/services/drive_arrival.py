@@ -51,6 +51,34 @@ def _leg_event_id(leg_id: str) -> str:
     return re.sub(r'_[123]$', '', s)
 
 
+def leg_is_toward_waiting(leg_id) -> bool:
+    """Does this leg drive TOWARD somebody waiting, or does it CARRY them?
+
+    'Dad is on the way!' is information exactly when a passenger is somewhere
+    waiting for the car — and noise when they are sitting in it, which is what
+    a plain home->event leg means in this model (the pickup-waypoint machinery
+    exists precisely for the passenger who starts somewhere else). Legs that
+    drive toward the waiting:
+
+      * `init_*_1` — the drive TO a pickup waypoint (`_2` is them aboard,
+        onward to the event);
+      * any leg whose event is a `_pickup` slice — driving to collect them.
+
+    Unknowable legs (None, or a route-leg id this cannot parse) count as
+    carrying: a wrong silence costs one push, a wrong push teaches the family
+    that the push means nothing.
+
+    Lives here rather than in main because the drive sheet asks the same
+    question to decide whether 'I'm outside' is a thing worth offering.
+    """
+    if not leg_id:
+        return False
+    s = str(leg_id)
+    if re.match(r'^init_.*_1$', s):
+        return True
+    return _leg_event_id(s).endswith('_pickup')
+
+
 def _haversine_m(lat1, lon1, lat2, lon2):
     r = 6371000.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
@@ -100,9 +128,25 @@ def _fresh_position(pos: dict, now_ts: float) -> Optional[tuple]:
 
 def _driver_position(driver_id: str, ev_id: str, sched: dict,
                      member_by_driver: dict, now_ts: float) -> Optional[tuple]:
-    """The driver's phone first (it is in their pocket at the destination),
-    the assigned car's tracker second (it is at least in the parking lot)."""
+    """The drive sheet's own fix first — it comes from the phone that is
+    driving this leg right now, and it is the only source a household with no
+    Home Assistant companion app has at all. Then the HA person entity (it is
+    in their pocket at the destination), then the assigned car's tracker (it
+    is at least in the parking lot). Every source goes through the same
+    freshness and precision gate, so a stale app fix loses to a live HA one."""
     m = member_by_driver.get(driver_id)
+    if m:
+        app_pos = storage.get_member_position(m.get('id')) or {}
+        if app_pos.get('ts'):
+            pos = _fresh_position({
+                'latitude': app_pos.get('latitude'),
+                'longitude': app_pos.get('longitude'),
+                'gps_accuracy': app_pos.get('gps_accuracy'),
+                'last_updated': datetime.datetime.fromtimestamp(
+                    float(app_pos['ts']), datetime.timezone.utc).isoformat(),
+            }, now_ts)
+            if pos:
+                return pos
     if m and m.get('ha_person_entity'):
         from services import ha_api
         s = ha_api.get_state(m['ha_person_entity'])
@@ -287,6 +331,39 @@ def run_nudges(now_ts: float, notify) -> List[str]:
         except Exception as e:
             print(f"drive_arrival nudge: {row.get('leg_id')}: {e}")
     return nudged
+
+
+def check_leg_at(leg_id: str, lat, lng, accuracy=None,
+                 now_ts: float = None) -> Optional[dict]:
+    """Complete ONE started leg if this fix proves the driver is there.
+
+    The passive sweep's rules exactly — the tighter radius, the cached
+    street-level pin, a started leg only — because this runs unattended from
+    a position ping rather than from somebody's tap. No routing call, no
+    parked ETA, no question: it either closes the leg or says nothing.
+    """
+    now_ts = now_ts if now_ts is not None else datetime.datetime.now().timestamp()
+    if lat is None or lng is None:
+        return None
+    try:
+        acc = float(accuracy) if accuracy is not None else 0.0
+    except (TypeError, ValueError):
+        acc = 0.0
+    if acc > MAX_ACCURACY_M:
+        return None
+    row = storage.get_drive_status(leg_id) or {}
+    if row.get('status') != 'in_progress':
+        return None
+    sched = storage.get_cached_schedule() or {}
+    events = {e.get('id'): e for e in (sched.get('events') or [])}
+    dest, g = _dest_geocode(leg_id, events)
+    if not g:
+        return None
+    dist = _haversine_m(float(lat), float(lng), float(g['lat']), float(g['lon']))
+    if dist > max(ARRIVE_RADIUS_M, acc):
+        return None
+    storage.mark_drive_status(leg_id, 'completed', arrived_ts=now_ts)
+    return {'leg_id': leg_id, 'dest': dest, 'distance_m': round(dist)}
 
 
 def check_arrivals(now_ts: float = None) -> List[dict]:

@@ -9497,12 +9497,10 @@ def _kid_members_for_event(ev, ev_id, sched=None):
 
 def _clock_label(ts: float) -> str:
     """'3:58 pm' or '15:58' per the household's clock setting. Short on
-    purpose — it rides inside push bodies."""
-    import datetime as _dt
-    dt = _dt.datetime.fromtimestamp(float(ts))
-    if (storage.get_settings() or {}).get('time_format_24h'):
-        return dt.strftime('%H:%M')
-    return dt.strftime('%I:%M %p').lstrip('0').lower()
+    purpose — it rides inside push bodies. Shared with the drive sheet, so it
+    lives beside the other way this app says a time out loud."""
+    from services import leave_by as _lb
+    return _lb.clock_label(ts)
 
 
 def _ride_event(sched, event_id):
@@ -9529,27 +9527,11 @@ def _ride_event(sched, event_id):
 
 
 def _leg_is_toward_kids(leg_id) -> bool:
-    """Does this leg drive TOWARD the kids, or does it CARRY them?
-
-    'Dad is on the way!' is information exactly when the kid is somewhere
-    waiting for the car — and noise when they are sitting in it, which is
-    what a plain home→event leg means in this model (the pickup-waypoint
-    machinery exists precisely for the passenger who starts somewhere
-    else). Toward-the-kid legs are:
-
-      * `init_*_1` — the drive TO a pickup waypoint (`_2` is the kid
-        aboard, onward to the event);
-      * any leg whose event is a `_pickup` slice — driving to collect them.
-
-    Unknowable legs (None, or a route-leg id this cannot parse) count as
-    carrying: a wrong silence costs one push, a wrong push teaches the
-    family the push means nothing."""
-    if not leg_id:
-        return False
-    s = str(leg_id)
-    if re.match(r'^init_.*_1$', s):
-        return True
-    return _leg_event_id(s).endswith('_pickup')
+    """Does this leg drive TOWARD the kids, or does it CARRY them? The rule
+    and its reasoning live in services/drive_arrival, because the drive sheet
+    asks the same question to decide whether 'I'm outside' means anything."""
+    from services import drive_arrival as _da
+    return _da.leg_is_toward_waiting(leg_id)
 
 
 def _ride_audience(ev, event_id, sched):
@@ -10348,15 +10330,30 @@ def family_locations(viewer: Optional[str] = None):
             continue
         ent = m.get('ha_person_entity')
         if ent:
-            s = ha_api.get_state(ent)
-            if s:
-                attrs = s.get('attributes') or {}
+            st = ha_api.get_state(ent)
+            if st:
+                attrs = st.get('attributes') or {}
                 entry.update(
-                    state=s.get('state'),
+                    state=st.get('state'),
                     latitude=attrs.get('latitude'),
                     longitude=attrs.get('longitude'),
                     gps_accuracy=attrs.get('gps_accuracy'),
-                    last_updated=s.get('last_updated'),
+                    last_updated=st.get('last_updated'),
+                )
+        # No HA tracker, or one that has never reported a coordinate: the
+        # drive sheet's own fix puts the driver on the map anyway. Second
+        # source, never a replacement — the companion app reports all day and
+        # this only reports while somebody is driving.
+        if entry.get('latitude') is None:
+            app_pos = storage.get_member_position(m['id']) or {}
+            if app_pos.get('latitude') is not None:
+                entry.update(
+                    state=entry.get('state') or 'driving',
+                    latitude=app_pos.get('latitude'),
+                    longitude=app_pos.get('longitude'),
+                    gps_accuracy=app_pos.get('gps_accuracy'),
+                    last_updated=datetime.fromtimestamp(
+                        float(app_pos.get('ts') or 0), timezone.utc).isoformat(),
                 )
         out.append(entry)
 
@@ -14497,6 +14494,97 @@ def drive_share_eta(status: DriveStatus, background_tasks: BackgroundTasks):
     background_tasks.add_task(_notify_ride_eta_update,
                               _leg_event_id(status.leg_id), status.leg_id)
     return {"status": "ok", "eta_ts": eta_ts}
+
+# --- The drive sheet (docs/drive_sheet_design.md) ---
+# The screen a driver holds while they are driving. Everything it draws is
+# assembled here rather than re-derived on the phone, and its position pings
+# are how a household with no Home Assistant companion app gets arrival
+# auto-complete and a moving dot on the family map at all.
+
+@app.get("/api/drive_sheet/{leg_id}")
+def get_drive_sheet(leg_id: str):
+    from services import drive_sheet
+    return drive_sheet.sheet(leg_id)
+
+
+class DriveRollCall(BaseModel):
+    leg_id: str
+    member_id: str
+    aboard: Optional[bool] = None   # None un-taps back to unanswered
+
+
+@app.post("/api/drive_status/roll_call")
+def drive_roll_call(req: DriveRollCall):
+    """Who is actually in the car. Records only — it gates nothing, and a
+    half-filled roll call is the normal case."""
+    roll = storage.set_roll_call(req.leg_id, req.member_id, req.aboard)
+    return {"status": "ok", "roll_call": roll}
+
+
+class DriveMessage(BaseModel):
+    leg_id: str
+    key: str
+    member_id: Optional[str] = None
+
+
+@app.post("/api/drive_status/message")
+def drive_quick_message(req: DriveMessage, request: Request = None):
+    """One canned line to whoever is waiting on this drive. Canned because
+    the sender is holding a steering wheel."""
+    from services import drive_sheet
+    sender_id = _acting_id(request, req.member_id)
+    sender = storage.get_member(sender_id) if sender_id else None
+    if not sender:
+        raise HTTPException(status_code=400, detail="No sender for this message")
+    out = drive_sheet.send_quick_message(req.leg_id, req.key, sender)
+    if out.get('status') != 'ok':
+        raise HTTPException(status_code=400, detail=out.get('message'))
+    return out
+
+
+@app.post("/api/drive_status/send_eta")
+def drive_send_eta(status: DriveStatus, background_tasks: BackgroundTasks):
+    """The driver chose to tell the family when they will be there.
+
+    Prices from the fix that rides in — the whole point is that it is the
+    CURRENT truth, not the one computed when the drive started — then shares
+    it through the same door as the parked-ETA share, so there is exactly one
+    way an ETA reaches the family. Honest whether they are early or late; the
+    app still never narrates lateness on its own."""
+    from services import drive_arrival as _da
+    import time as _time
+    eta_ts = _da.eta_for_start(status.leg_id, _time.time(), lat=status.lat,
+                               lng=status.lng, accuracy=status.accuracy)
+    if not eta_ts:
+        raise HTTPException(status_code=409,
+                            detail="Couldn't work out a time for this drive")
+    storage.mark_drive_status(status.leg_id, 'in_progress', eta_ts=eta_ts,
+                              pending_eta_ts=None, arrival_nudged_ts=None)
+    background_tasks.add_task(_notify_ride_eta_update,
+                              _leg_event_id(status.leg_id), status.leg_id)
+    return {"status": "ok", "eta_ts": eta_ts, "eta_label": _clock_label(eta_ts)}
+
+
+class DrivePing(BaseModel):
+    leg_id: Optional[str] = None
+    member_id: Optional[str] = None
+    lat: float
+    lng: float
+    accuracy: Optional[float] = None
+
+
+@app.post("/api/drive_status/ping")
+def drive_ping(req: DrivePing, request: Request = None):
+    """A position from the phone that is driving, while the sheet is open.
+
+    Stored on the member and used immediately to ask whether this leg is
+    finished. No routing call — a ping either completes the leg or says
+    nothing, so the cadence costs nothing but a write."""
+    from services import drive_sheet
+    member_id = _acting_id(request, req.member_id)
+    return drive_sheet.record_ping(member_id, req.leg_id, req.lat, req.lng,
+                                   req.accuracy)
+
 
 class PrepStatusRequest(BaseModel):
     event_id: str            # PARENT event instance id (leg suffixes stripped client-side)

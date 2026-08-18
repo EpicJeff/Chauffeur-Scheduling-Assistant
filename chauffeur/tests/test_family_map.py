@@ -104,8 +104,31 @@ def scenario_ha_unreachable_degrades():
           "HA down -> nulls, no exception")
 
 
+def scenario_the_drive_sheets_own_fix_puts_a_driver_on_the_map():
+    """A household with no Home Assistant companion app was simply absent
+    from their own map. The drive sheet reports a position while somebody is
+    driving, and that is enough to draw them — second source, never a
+    replacement: a member WITH a live HA tracker keeps it."""
+    import main
+    reset_db()
+    _member("m1", "Jeff", driver_id="jeff", can_drive=True)      # no HA entity
+    _member("m2", "Amy", ha_person_entity="person.jeff")         # HA-tracked
+    storage.set_member_position("m1", 40.5, -75.9, 18, time.time())
+    storage.set_member_position("m2", 1.0, 1.0, 18, time.time())
+
+    with mock.patch.object(ha_api, 'get_state', side_effect=lambda e: FAKE_STATES.get(e)):
+        by_id = {l['member_id']: l for l in main.family_locations()}
+
+    check(by_id["m1"]["latitude"] == 40.5 and by_id["m1"]["longitude"] == -75.9,
+          f"the app's own fix draws the untracked driver, got {by_id['m1']}")
+    check(by_id["m1"]["last_updated"], "and carries a timestamp like any other")
+    check(by_id["m2"]["latitude"] == 40.1,
+          "a live HA tracker still wins for the member who has one")
+
+
 SCENARIOS = [
     scenario_locations_assembly,
+    scenario_the_drive_sheets_own_fix_puts_a_driver_on_the_map,
     scenario_leg_id_collapse,
     scenario_ha_unreachable_degrades,
 ]

@@ -385,6 +385,7 @@ with db_lock:
     telemetry_table = db.table('telemetry')
     push_subscriptions_table = db.table('push_subscriptions')
     drive_status_table = db.table('drive_status')
+    member_positions_table = db.table('member_positions')
     live_traffic_table = db.table('live_traffic_cache')
     pending_notifications_table = db.table('pending_notifications')
     event_configs_table = db.table('event_configs')
@@ -5199,6 +5200,59 @@ def get_completed_drives():
 def get_in_progress_drives():
     with db_lock:
         return [doc['leg_id'] for doc in drive_status_table.search(Query().status == 'in_progress')]
+
+# --- Roll call (who is actually in the car) ---
+# Kept on the drive_status row rather than a table of its own: the leg is the
+# natural key, mark_drive_status already merges extra fields, and a roll call
+# outlives nothing that the leg does not outlive. Absent member = never
+# tapped, which is the normal case and means nothing bad.
+def set_roll_call(leg_id: str, member_id: str, aboard) -> dict:
+    """`aboard` True / False / None (untaps back to unanswered)."""
+    with db_lock:
+        q = Query()
+        existing = drive_status_table.search(q.leg_id == leg_id)
+        row = dict(existing[0]) if existing else {'leg_id': leg_id,
+                                                  'status': 'pending'}
+        roll = dict(row.get('roll_call') or {})
+        if aboard is None:
+            roll.pop(str(member_id), None)
+        else:
+            roll[str(member_id)] = bool(aboard)
+        row['roll_call'] = roll
+        drive_status_table.upsert(row, q.leg_id == leg_id)
+        return roll
+
+def get_roll_call(leg_id: str) -> dict:
+    with db_lock:
+        rows = drive_status_table.search(Query().leg_id == leg_id)
+    return dict((rows[0].get('roll_call') or {})) if rows else {}
+
+# --- Member positions reported BY THE APP ---
+# The Home Assistant companion app is the better tracker and stays the first
+# source everywhere. This is the lane for the phone that does not have it: the
+# drive sheet posts a fix while a drive is running, which is the only window
+# where the app has any business knowing where somebody is. One row per
+# member, overwritten — a location history is not something this app keeps.
+def set_member_position(member_id: str, lat: float, lng: float,
+                        accuracy=None, ts: float = None, source: str = 'app'):
+    import time as _time
+    with db_lock:
+        member_positions_table.upsert(
+            {'member_id': str(member_id), 'latitude': float(lat),
+             'longitude': float(lng),
+             'gps_accuracy': float(accuracy) if accuracy is not None else None,
+             'ts': float(ts if ts is not None else _time.time()),
+             'source': source},
+            Query().member_id == str(member_id))
+
+def get_member_position(member_id: str) -> Optional[dict]:
+    with db_lock:
+        rows = member_positions_table.search(Query().member_id == str(member_id))
+    return dict(rows[0]) if rows else None
+
+def clear_member_position(member_id: str):
+    with db_lock:
+        member_positions_table.remove(Query().member_id == str(member_id))
 
 # --- Errands ---
 def get_all_errands() -> List[dict]:

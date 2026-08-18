@@ -93,6 +93,18 @@ def clock(dt: datetime.datetime) -> str:
     return dt.strftime('%I:%M %p').lstrip('0')
 
 
+def clock_label(ts: float) -> str:
+    """An epoch stamp as the household's own clock reads it — '3:58 pm', or
+    '15:58' with the 24-hour setting on. `clock()` above says a datetime the
+    same way but always in 12-hour; this is the one that rides inside push
+    bodies and the drive sheet, where the setting has to be honoured."""
+    from services import storage
+    dt = datetime.datetime.fromtimestamp(float(ts))
+    if (storage.get_settings() or {}).get('time_format_24h'):
+        return dt.strftime('%H:%M')
+    return dt.strftime('%I:%M %p').lstrip('0').lower()
+
+
 def for_run(sched: dict, driver_id: str, event_id: str,
             start: datetime.datetime, from_home_only: bool = False,
             live: bool = False, now: datetime.datetime = None) -> Optional[dict]:

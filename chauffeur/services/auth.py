@@ -293,6 +293,7 @@ RULES = [
     (ANY, '/api/calendar/*', SIGNED_IN),
     (ANY, '/api/school/*', SIGNED_IN),
     (ANY, '/api/drive_status/*', SIGNED_IN),
+    (ANY, '/api/drive_sheet/*', SIGNED_IN),
     (ANY, '/api/family/*', SIGNED_IN),
     (ANY, '/api/unsplash/*', SIGNED_IN),
     (ANY, '/api/push_subscribe/*', SIGNED_IN),
