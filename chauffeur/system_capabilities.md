@@ -2864,9 +2864,17 @@ opts into figures via `GET /api/members?figures=1` -- off by default so kiosk
 polls don't pay ~15KB/member for names. Celebration copy reads "Tap your
 avatar to wear it".
 
-**Still open:** the new slots' accessory art (belts, bracelets, necklaces,
-bows) is placeholder geometry and wants a proper pass; wardrobe breadth is
-deliberately thin (~30 unlockables) and grows as data.
+**Production art pass (v2.282.0).** Wardrobe assets are MULTI-PART
+(`{'d','f','o'}` lists; fills c1/sh/sh2/hi/literal) -- a watch is a strap AND a
+case AND a dial. Depth in the source's own vocabulary: far-arm tint, contact
+shadow under the feet, sleeve/waistband/hem/cuff shade lines, white soles,
+metal buckles, beaded bracelets, a real scarf. `tools/avatar_contact_sheet.py`
+is the standing review gate: every item worn, six variant columns, lane-scale
+strip -- no new art ships without a pass through it (it caught scarf-as-bib,
+scarf-as-horns, and all three neck anchors sitting 30 units low).
+
+**Still open:** wardrobe breadth is deliberately thin (~30 unlockables) and
+grows as data through the contact-sheet gate.
 
 ## Security — how the house is locked (auth arc, standing reference)
 

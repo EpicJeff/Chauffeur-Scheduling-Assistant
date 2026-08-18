@@ -121,12 +121,13 @@ def scenario_soft_top_follows_the_member():
 
 
 def scenario_conflicts_are_dropped_at_render():
+    bow_path = ar.HAIR_ACCESSORY['Bow'][0]['d']   # multi-part: check the base part
     svg = ar.render_svg(dict(BASE, top='WinterHat1', hair_accessory='Bow'),
                         'full', nonce='d')
-    check(ar.HAIR_ACCESSORY['Bow'] not in svg, "a bow is not drawn on a woolly hat")
+    check(bow_path not in svg, "a bow is not drawn on a woolly hat")
     ok = ar.render_svg(dict(BASE, top='LongHairBob', hair_accessory='Bow'),
                        'full', nonce='e')
-    check(ar.HAIR_ACCESSORY['Bow'] in ok, "a bow is drawn on hair")
+    check(bow_path in ok, "a bow is drawn on hair")
 
 
 def scenario_unknown_items_are_survivable():
@@ -145,6 +146,26 @@ def scenario_skin_reaches_everywhere():
         check(svg.count(hexv) >= 3, f"skin {tone} reaches head, arms and legs")
 
 
+def scenario_parts_are_well_formed():
+    """Multi-part wardrobe guardrails: every part carries a path and a legal
+    fill, because these tables will be hand-extended forever."""
+    legal = {'c1', 'sh', 'sh2', 'hi'}
+    tables = {'bottoms': ar.BOTTOMS, 'shoes': ar.SHOES, 'neck': ar.NECK,
+              'wrist': ar.WRIST, 'waist': ar.WAIST,
+              'hair_accessory': ar.HAIR_ACCESSORY}
+    for slot, table in tables.items():
+        for key, parts in table.items():
+            check(isinstance(parts, list) and parts, f"{slot}:{key} is a parts list")
+            base = parts[0].get('f', 'c1')
+            check(base == 'c1' or base.startswith('#'),
+                  f"{slot}:{key} leads with a base fill (c1 or literal), got {base!r}")
+            for p in parts:
+                check(p.get('d', '').startswith('M'), f"{slot}:{key} part has a path")
+                f = p.get('f', 'c1')
+                check(f in legal or f.startswith('#'),
+                      f"{slot}:{key} has a legal fill, got {f!r}")
+
+
 SCENARIOS = [
     scenario_assets_are_built,
     scenario_every_piece_draws,
@@ -156,6 +177,7 @@ SCENARIOS = [
     scenario_conflicts_are_dropped_at_render,
     scenario_unknown_items_are_survivable,
     scenario_skin_reaches_everywhere,
+    scenario_parts_are_well_formed,
 ]
 
 if __name__ == "__main__":

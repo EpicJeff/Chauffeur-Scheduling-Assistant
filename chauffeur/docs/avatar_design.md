@@ -420,6 +420,36 @@ celebrate — reuse `status_celebration.html`.
 Parents get a hand path to **grant** items (config page). No revoke path, by
 design.
 
+## Production art: the rules the contact sheet taught (2026-08-18)
+
+`tools/avatar_contact_sheet.py` is the review gate for wardrobe art: every
+authored item, worn, across six variant columns (skins, white-on-white,
+black-on-black, hoodie, blazer) plus a lane-scale strip. No new asset ships
+without a pass through it. The sheet caught, in one afternoon: its own mask-id
+collisions, a scarf drawn as a bib, a scarf drawn as horns, and every neck
+anchor sitting 30 units below the collar seam (found by debug-colouring the
+parts -- when a shape reads wrong, paint its parts red/green/blue and look).
+
+**Multi-part format.** An item is a list of `{'d', 'f', 'o'?}` parts painted in
+order; fills are `c1` (slot colour), `sh`/`sh2` (the source's 10%/16% black),
+`hi` (white highlight, own opacity), or a `#hex` literal. A watch is a strap
+AND a case AND a dial; one path with one fill was the quality ceiling.
+
+**Depth rules** (user direction: flat colour reads as unpolished):
+- Shade and highlight in the source's own vocabulary -- low-opacity black and
+  white over flat fills. Never a gradient, never a stroke.
+- The FAR LIMB (viewer-right arm) is one shade darker, whole silhouette,
+  painted over its sleeve -- the single cheapest depth cue in every polished
+  flat reference.
+- A soft contact shadow under the feet grounds the standing figure.
+- Sleeves cast on arms; waistbands, hems and cuffs each carry a shade line;
+  soles are their own colour.
+
+**Anchor lines** (learned empirically; the geometry contract's companion):
+- collar seam y~225; a scarf's top edge hugs y~196 nearly FLAT (a dipped top
+  edge reads as horns around a bare throat); necklaces hang from y~232
+- wrists y~392-406; waistband y~364-380; feet stand on y~576
+
 ## Tests
 
 - Ledger is append-only; an unlock survives losing routines, deleting checks,

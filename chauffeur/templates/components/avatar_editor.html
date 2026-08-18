@@ -352,19 +352,29 @@ function avatarEditor(config) {
             const accent = this.color('accent_color', cfg.accent_color);
             const full = o.crop !== 'head';
             const shade = (d, op) => `<path d="${d}" fill="${R.shade}" fill-opacity="${op || '0.1'}"/>`;
+            // Multi-part assets: mirror of the server's _paint().
+            const paint = (parts, c1) => (parts || []).map(pp => {
+                let fill = pp.f || 'c1', op = pp.o;
+                if (fill === 'c1') fill = c1;
+                else if (fill === 'sh') { op = op == null ? 0.1 : op; fill = R.shade; }
+                else if (fill === 'sh2') { op = op == null ? 0.16 : op; fill = R.shade; }
+                else if (fill === 'hi') { op = op == null ? 0.5 : op; fill = '#FFFFFF'; }
+                return `<path d="${pp.d}" fill="${fill}"${op == null ? '' : ` fill-opacity="${op}"`}/>`;
+            }).join('');
+            const D = this.bundle.rig_depth || {};
 
             let lower = '';
             if (full) {
-                const bot = T.bottoms[cfg.bottoms], det = T.bottomsDetail[cfg.bottoms],
-                      sh = T.shoes[cfg.shoes],
+                const bot = T.bottoms[cfg.bottoms], sh = T.shoes[cfg.shoes],
                       botCol = this.color('bottoms_color', cfg.bottoms_color);
-                lower = `<path d="${R.armL}" fill="${skin}"/><path d="${R.armR}" fill="${skin}"/>`
+                lower = (D.ground ? shade(D.ground, '0.14') : '')
+                      + `<path d="${R.armL}" fill="${skin}"/><path d="${R.armR}" fill="${skin}"/>`
                       + `<path d="${R.lower}" fill="${skin}"/>`
+                      + paint(D.parts, skin)
                       + (bot ? `<path d="M78,336 L186,336 C187,352 187,360 186,372 L78,372 `
                              + `C77,360 77,352 78,336 Z" fill="${botCol}"/>`
-                             + `<path d="${bot}" fill="${botCol}"/>` : '')
-                      + (det ? shade(det, '0.16') : '')
-                      + (sh ? `<path d="${sh}" fill="${this.color('shoes_color', cfg.shoes_color)}"/>` : '');
+                             + paint(bot, botCol) : '')
+                      + (sh ? paint(sh, this.color('shoes_color', cfg.shoes_color)) : '');
             }
 
             const bodyMask = `${ns}bodymask`;
@@ -393,17 +403,20 @@ function avatarEditor(config) {
                 }
                 const l = (runs && runs.length && runs[0].fill) || clothe;
                 const r2 = (runs && runs.length && runs[runs.length - 1].fill) || clothe;
-                torso += `<path d="${R.sleeveL}" fill="${l}"/><path d="${R.sleeveR}" fill="${r2}"/>`;
+                torso += `<path d="${R.sleeveL}" fill="${l}"/><path d="${R.sleeveR}" fill="${r2}"/>`
+                       + (D.sleeveShadow ? shade(D.sleeveShadow, '0.1') : '')
+                       + (D.farArm ? shade(D.farArm, '0.07') : '');
             }
 
             let extras = '';
             if (full) {
                 for (const [slot, table] of [['waist', T.waist], ['wrist', T.wrist], ['neck', T.neck]]) {
-                    const d = table[cfg[slot]];
-                    if (d) extras += `<path d="${d}" fill="${accent}"/>`;
+                    const item = table[cfg[slot]];
+                    if (item) extras += paint(item, accent);
                 }
             }
             const hx = T.hair_accessory[cfg.hair_accessory];
+            const hxSvg = hx ? paint(hx, accent) : '';
             const face = `<g transform="translate(76,82)" fill="#000000">`
                 + this.piece('mouth', cfg, ns) + this.piece('nose', cfg, ns)
                 + this.piece('eyes', cfg, ns) + this.piece('eyebrow', cfg, ns) + '</g>';
@@ -416,7 +429,7 @@ function avatarEditor(config) {
                 + `<g fill="none" fill-rule="evenodd" stroke="none">`
                 + lower + head + torso + this.piece('clothes', cfg, ns) + extras + face
                 + this.piece('top', cfg, ns)
-                + (hx ? `<path d="${hx}" fill="${accent}"/>` : '')
+                + hxSvg
                 + `</g></svg>`;
         },
 

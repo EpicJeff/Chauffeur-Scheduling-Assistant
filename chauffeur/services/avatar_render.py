@@ -97,75 +97,256 @@ _NECK_SHADOW = ("M156,79 L156,102 C156,132.927946 130.927946,158 100,158 "
                 "C44,124.927946 69.072054,150 100,150 C130.927946,150 "
                 "156,124.927946 156,94 L156,79 Z")
 
-# Bottoms. Cut slightly WIDER than the leg beneath, or a sliver of skin shows
-# down the inner edge -- see docs/avatar_design.md.
+# --- the wardrobe we author: MULTI-PART assets ---------------------------
+# Production quality forced a format change: a watch is a strap AND a face, a
+# sneaker is a shoe AND a sole, and one path with one fill can never say that.
+# An item is a LIST of parts painted in order:
+#   {'d': path, 'f': fill, 'o': opacity?}
+#   fill 'c1'  -> the slot's own colour (bottoms_color / shoes_color / accent)
+#        'sh'  -> #000 at 10% (the source's soft shading)
+#        'sh2' -> #000 at 16% (the source's hard shading)
+#        'hi'  -> #FFF highlight (carries its own 'o')
+#        '#hex'-> literal art, never recoloured
+# Depth comes from the source's own vocabulary -- flat fills shaded with
+# low-opacity black, highlighted with low-opacity white. Never a gradient,
+# never a stroke.
+
 BOTTOMS = {
-    'Trousers': ("M78,366 L186,366 C190,392 191,402 190,414 "
-                 "C187,462 184,508 183,552 L138,552 L138,436 L126,436 L126,552 "
-                 "L81,552 C80,508 77,462 74,414 C73,402 74,392 78,366 Z"),
-    'Joggers': ("M78,366 L186,366 C190,392 191,402 190,414 "
-                "C187,462 185,505 186,540 C186,548 180,552 172,552 L138,552 "
-                "L138,436 L126,436 L126,552 L92,552 C84,552 78,548 78,540 "
-                "C79,505 77,462 74,414 C73,402 74,392 78,366 Z"),
-    'Shorts': ("M78,366 L186,366 C190,392 191,402 190,414 C188,438 186,458 185,472 "
+    'Trousers': [
+        {'d': ("M78,366 L186,366 C190,392 191,402 190,414 "
+               "C187,462 184,508 183,552 L138,552 L138,436 L126,436 L126,552 "
+               "L81,552 C80,508 77,462 74,414 C73,402 74,392 78,366 Z"), 'f': 'c1'},
+        {'d': "M78,366 L186,366 C187,371 188,375 188,379 L76,379 C76,375 77,371 78,366 Z", 'f': 'sh'},
+        {'d': ("M114,379 L126,379 L126,552 L112,552 C113,500 114,440 114,379 Z "
+               "M138,379 L150,379 L150,436 L138,436 Z"), 'f': 'sh', 'o': 0.06},
+        {'d': "M81,544 L126,544 L126,552 L81,552 Z M138,544 L183,544 L183,552 L138,552 Z", 'f': 'sh'},
+    ],
+    'Joggers': [
+        {'d': ("M78,366 L186,366 C190,392 191,402 190,414 "
+               "C187,462 185,505 186,540 C186,548 180,552 172,552 L138,552 "
+               "L138,436 L126,436 L126,552 L92,552 C84,552 78,548 78,540 "
+               "C79,505 77,462 74,414 C73,402 74,392 78,366 Z"), 'f': 'c1'},
+        {'d': ("M79,534 L126,534 L126,552 L92,552 C84,552 79,548 79,540 Z "
+               "M138,534 L185,534 C185,548 180,552 172,552 L138,552 Z"), 'f': 'hi', 'o': 0.8},
+        {'d': ("M79,534 L126,534 L126,539 L79,539 Z M138,534 L185,534 L185,539 L138,539 Z"),
+         'f': 'sh'},
+        {'d': "M124,372 L127,372 L126,396 L123,396 Z M137,372 L140,372 L141,396 L138,396 Z",
+         'f': 'hi', 'o': 0.9},
+        {'d': "M78,366 L186,366 C186.6,370 187,373 187.4,376 L76.6,376 C77,373 77.4,370 78,366 Z", 'f': 'sh'},
+    ],
+    'Shorts': [
+        {'d': ("M78,366 L186,366 C190,392 191,402 190,414 C188,438 186,458 185,472 "
                "L138,472 L138,440 L126,440 L126,472 L79,472 "
-               "C78,458 76,438 74,414 C73,402 74,392 78,366 Z"),
-    'Skirt': ("M80,366 L184,366 C190,398 196,436 200,472 L64,472 "
-              "C68,436 74,398 80,366 Z"),
-    'CargoPants': ("M76,366 L188,366 C192,392 193,402 192,414 "
-                   "C189,462 186,508 185,552 L138,552 L138,436 L126,436 L126,552 "
-                   "L79,552 C78,508 75,462 72,414 C71,402 72,392 76,366 Z"),
-    'Dungarees': ("M78,366 L186,366 C190,392 191,402 190,414 "
-                  "C187,462 184,508 183,552 L138,552 L138,436 L126,436 L126,552 "
-                  "L81,552 C80,508 77,462 74,414 C73,402 74,392 78,366 Z "
-                  "M96,280 L110,280 L110,372 L96,372 Z M154,280 L168,280 L168,372 L154,372 Z"),
-}
-# Cargo pockets and a dungaree bib, as the standard 10% shade.
-BOTTOMS_DETAIL = {
-    'CargoPants': "M80,452 L110,452 L112,492 L82,492 Z M154,452 L184,452 L182,492 L152,492 Z",
-    'Joggers': "M78,540 L126,540 L126,552 L78,552 Z M138,540 L186,540 L186,552 L138,552 Z",
+               "C78,458 76,438 74,414 C73,402 74,392 78,366 Z"), 'f': 'c1'},
+        {'d': "M79,462 L126,462 L126,472 L79,472 Z M138,462 L185,462 L185,472 L138,472 Z", 'f': 'sh'},
+        {'d': "M78,366 L186,366 C186.6,370 187,373 187.4,376 L76.6,376 C77,373 77.4,370 78,366 Z", 'f': 'sh'},
+    ],
+    'Skirt': [
+        {'d': ("M80,366 L184,366 C190,398 196,436 200,472 L64,472 "
+               "C68,436 74,398 80,366 Z"), 'f': 'c1'},
+        {'d': "M104,380 L112,380 L106,472 L96,472 Z M152,380 L160,380 L168,472 L158,472 Z", 'f': 'sh'},
+        {'d': "M65,464 L199,464 L200,472 L64,472 Z", 'f': 'sh'},
+        {'d': "M80,366 L184,366 C184.8,370 185.6,374 186.4,378 L77.6,378 C78.4,374 79.2,370 80,366 Z", 'f': 'sh'},
+    ],
+    'CargoPants': [
+        {'d': ("M76,366 L188,366 C192,392 193,402 192,414 "
+               "C189,462 186,508 185,552 L138,552 L138,436 L126,436 L126,552 "
+               "L79,552 C78,508 75,462 72,414 C71,402 72,392 76,366 Z"), 'f': 'c1'},
+        {'d': "M82,452 L112,452 L114,492 L84,492 Z M152,452 L182,452 L180,492 L150,492 Z", 'f': 'sh'},
+        {'d': "M82,452 L112,452 L112.5,462 L82.5,462 Z M152,452 L182,452 L181.5,462 L151.5,462 Z", 'f': 'sh2'},
+        {'d': "M76,366 L188,366 C188.6,370 189,373 189.4,376 L74.6,376 C75,373 75.4,370 76,366 Z", 'f': 'sh'},
+    ],
+    'Dungarees': [
+        {'d': ("M78,366 L186,366 C190,392 191,402 190,414 "
+               "C187,462 184,508 183,552 L138,552 L138,436 L126,436 L126,552 "
+               "L81,552 C80,508 77,462 74,414 C73,402 74,392 78,366 Z "
+               "M96,280 L110,280 L110,372 L96,372 Z M154,280 L168,280 L168,372 L154,372 Z"), 'f': 'c1'},
+        {'d': "M118,380 L146,380 L144,404 L120,404 Z", 'f': 'sh'},
+        {'d': "M96,280 L100,280 L100,372 L96,372 Z M154,280 L158,280 L158,372 L154,372 Z", 'f': 'sh'},
+        {'d': ("M103,364 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 "
+               "M161,364 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"), 'f': 'hi', 'o': 0.9},
+    ],
 }
 
 SHOES = {
-    'Sneakers': ("M79,536 C79,564 84,576 100,576 L112,576 C122,576 127,570 127,560 "
-                 "L127,536 Z M137,536 L137,560 C137,570 142,576 152,576 L164,576 "
-                 "C180,576 185,564 185,536 Z"),
-    'Boots': ("M77,520 C77,562 82,578 100,578 L114,578 C124,578 129,572 129,562 "
-              "L129,520 Z M135,520 L135,562 C135,572 140,578 150,578 L164,578 "
-              "C182,578 187,562 187,520 Z"),
-    'HighTops': ("M78,506 C78,562 83,577 100,577 L113,577 C123,577 128,571 128,561 "
-                 "L128,506 Z M136,506 L136,561 C136,571 141,577 151,577 L164,577 "
-                 "C181,577 186,562 186,506 Z"),
-    'WellyBoots': ("M76,500 C76,564 81,580 100,580 L115,580 C125,580 130,573 130,563 "
-                   "L130,500 Z M134,500 L134,563 C134,573 139,580 149,580 L164,580 "
-                   "C183,580 188,564 188,500 Z"),
-    'Sandals': ("M82,556 L126,556 C128,556 129,558 129,562 C129,570 124,574 114,574 "
-                "L94,574 C84,574 80,568 80,562 C80,558 80,556 82,556 Z "
-                "M138,556 L182,556 C184,556 184,558 184,562 C184,568 180,574 170,574 "
-                "L150,574 C140,574 135,570 135,562 C135,558 136,556 138,556 Z"),
+    'Sneakers': [
+        {'d': ("M79,536 C79,564 84,576 100,576 L112,576 C122,576 127,570 127,560 "
+               "L127,536 Z M137,536 L137,560 C137,570 142,576 152,576 L164,576 "
+               "C180,576 185,564 185,536 Z"), 'f': 'c1'},
+        {'d': ("M80,566 C82,573 87,576 100,576 L112,576 C120,576 125,573 126,568 "
+               "L126,562 L80,562 Z M138,562 L138,568 C139,573 144,576 152,576 "
+               "L164,576 C177,576 182,573 184,566 L184,562 L138,562 Z"), 'f': '#FFFFFF'},
+        {'d': "M80,558 L126,558 L126,562 L80,562 Z M138,558 L184,558 L184,562 L138,562 Z", 'f': 'sh'},
+        {'d': "M79,540 L127,540 L127,545 L79,545 Z M137,540 L185,540 L185,545 L137,545 Z", 'f': 'sh', 'o': 0.06},
+    ],
+    'Boots': [
+        {'d': ("M77,520 C77,562 82,578 100,578 L114,578 C124,578 129,572 129,562 "
+               "L129,520 Z M135,520 L135,562 C135,572 140,578 150,578 L164,578 "
+               "C182,578 187,562 187,520 Z"), 'f': 'c1'},
+        {'d': ("M78,564 C80,574 86,578 100,578 L114,578 C122,578 127,574 128,566 "
+               "L128,562 L78,562 Z M136,562 L136,566 C137,574 142,578 150,578 "
+               "L164,578 C178,578 184,574 186,564 L186,562 L136,562 Z"), 'f': '#262E33'},
+        {'d': "M77,534 L129,534 L129,542 L77,542 Z M135,534 L187,534 L187,542 L135,542 Z", 'f': 'sh2'},
+        {'d': "M117,534 L125,534 L125,542 L117,542 Z M147,534 L155,534 L155,542 L147,542 Z", 'f': '#E6E6E6'},
+    ],
+    'HighTops': [
+        {'d': ("M78,506 C78,562 83,577 100,577 L113,577 C123,577 128,571 128,561 "
+               "L128,506 Z M136,506 L136,561 C136,571 141,577 151,577 L164,577 "
+               "C181,577 186,562 186,506 Z"), 'f': 'c1'},
+        {'d': ("M79,564 C81,573 87,577 100,577 L113,577 C121,577 126,574 127,567 "
+               "L127,561 L79,561 Z M137,561 L137,567 C138,574 143,577 151,577 "
+               "L164,577 C177,577 183,573 185,564 L185,561 L137,561 Z"), 'f': '#FFFFFF'},
+        {'d': ("M84,516 L122,516 L122,521 L84,521 Z M84,528 L122,528 L122,533 L84,533 Z "
+               "M142,516 L180,516 L180,521 L142,521 Z M142,528 L180,528 L180,533 L142,533 Z"),
+         'f': 'hi', 'o': 0.9},
+        {'d': "M78,556 L128,556 L128,561 L78,561 Z M136,556 L186,556 L186,561 L136,561 Z", 'f': 'sh'},
+    ],
+    'WellyBoots': [
+        {'d': ("M76,500 C76,564 81,580 100,580 L115,580 C125,580 130,573 130,563 "
+               "L130,500 Z M134,500 L134,563 C134,573 139,580 149,580 L164,580 "
+               "C183,580 188,564 188,500 Z"), 'f': 'c1'},
+        {'d': "M76,500 L130,500 L130,510 L76,510 Z M134,500 L188,500 L188,510 L134,510 Z",
+         'f': 'hi', 'o': 0.35},
+        {'d': ("M77,566 C79,576 85,580 100,580 L115,580 C123,580 128,576 129,568 "
+               "L129,564 L77,564 Z M135,564 L135,568 C136,576 141,580 149,580 "
+               "L164,580 C179,580 185,576 187,566 L187,564 L135,564 Z"), 'f': 'sh2'},
+    ],
+    'Sandals': [
+        {'d': ("M80,562 L128,562 C128,570 123,575 113,575 L94,575 C85,575 80,570 80,564 Z "
+               "M136,562 L184,562 C184,570 179,575 169,575 L150,575 C141,575 136,570 136,564 Z"),
+         'f': '#D0C6AC'},
+        {'d': ("M82,554 L126,554 L126,562 L82,562 Z M138,554 L182,554 L182,562 L138,562 Z "
+               "M98,546 L110,546 L110,562 L98,562 Z M156,546 L168,546 L168,562 L156,562 Z"),
+         'f': 'c1'},
+        {'d': ("M80,570 L128,570 C127,573 125,575 121,575 L88,575 C84,575 81,573 80,570 Z "
+               "M136,570 L184,570 C183,573 181,575 177,575 L144,575 C140,575 137,573 136,570 Z"),
+         'f': 'sh'},
+    ],
 }
 
 NECK = {
-    'Chain': "M110,268 C110,290 122,300 132,300 C142,300 154,290 154,268 L148,268 C148,286 140,294 132,294 C124,294 116,286 116,268 Z",
-    'Pendant': "M112,268 C112,292 124,304 132,304 C140,304 152,292 152,268 L146,268 C146,288 139,298 132,298 C125,298 118,288 118,268 Z M126,300 L138,300 L132,316 Z",
-    'Scarf': "M100,262 C100,286 112,296 132,296 C152,296 164,286 164,262 L164,282 C164,300 150,308 132,308 C114,308 100,300 100,282 Z",
+    'Chain': [
+        # hangs FROM the collar seam (y~225), not mid-chest -- the debug pass
+        # that placed the scarf found every neck anchor 30 units low
+        {'d': ("M112,232 C112,254 121,264 132,264 C143,264 152,254 152,232 L147,232 "
+               "C147,251 141,259 132,259 C123,259 117,251 117,232 Z"), 'f': 'c1'},
+        {'d': "M130,261 m-2.5,0 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0", 'f': 'hi', 'o': 0.7},
+    ],
+    'Pendant': [
+        {'d': ("M113,232 C113,256 122,267 132,267 C142,267 151,256 151,232 L146,232 "
+               "C146,253 140,262 132,262 C124,262 118,253 118,232 Z"), 'f': '#929598'},
+        {'d': "M132,264 L140,274 L132,286 L124,274 Z", 'f': 'c1'},
+        {'d': "M132,264 L136,269 L132,275 L128,269 Z", 'f': 'hi', 'o': 0.45},
+    ],
+    'Scarf': [
+        # a scarf wraps the NECK: a solid collar band whose top edge hugs the
+        # jaw almost flat -- an earlier draft dipped the top edge to the
+        # sternum and the result read as horns around a bare throat
+        {'d': ("M98,196 C104,204 116,209 132,209 C148,209 160,204 166,196 "
+               "L166,222 C166,240 151,250 132,250 C113,250 98,240 98,222 Z"), 'f': 'c1'},
+        {'d': "M116,244 L146,244 L143,290 L120,290 Z", 'f': 'c1'},
+        {'d': ("M120,282 L143,282 L143,290 L120,290 Z "
+               "M128,244 L132,244 L131,282 L127,282 Z"), 'f': 'sh2'},
+        {'d': ("M98,214 C102,230 114,240 132,240 C150,240 162,230 166,214 L166,222 "
+               "C162,238 149,246 132,246 C115,246 102,238 98,222 Z"), 'f': 'sh'},
+    ],
 }
 WRIST = {
-    'Bracelet': "M38,392 C38,404 46,410 58,410 C70,410 77,404 77,392 L77,402 C77,414 70,420 58,420 C46,420 38,414 38,402 Z M187,392 C187,404 194,410 206,410 C218,410 226,404 226,392 L226,402 C226,414 218,420 206,420 C194,420 187,414 187,402 Z",
-    'Watch': "M40,388 L76,388 L76,404 L40,404 Z M188,388 L224,388 L224,404 L188,404 Z",
-    'Sweatband': "M36,376 L78,376 L78,398 L36,398 Z M186,376 L228,376 L228,398 L186,398 Z",
+    'Bracelet': [
+        {'d': ("M40,396 C40,406 47,412 58,412 C69,412 76,406 76,396 L76,404 "
+               "C76,412 69,418 58,418 C47,418 40,412 40,404 Z "
+               "M188,396 C188,406 195,412 206,412 C217,412 224,406 224,396 L224,404 "
+               "C224,412 217,418 206,418 C195,418 188,412 188,404 Z"), 'f': 'c1'},
+        {'d': ("M47,408 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
+               "M58,410 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
+               "M69,408 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
+               "M195,408 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
+               "M206,410 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
+               "M217,408 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"), 'f': 'hi', 'o': 0.6},
+    ],
+    'Watch': [
+        {'d': "M42,392 L74,392 L74,406 L42,406 Z M190,392 L224,392 L224,406 L190,406 Z", 'f': 'c1'},
+        {'d': ("M58,399 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0 "
+               "M207,399 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0"), 'f': '#929598'},
+        {'d': ("M58,399 m-6.5,0 a6.5,6.5 0 1,0 13,0 a6.5,6.5 0 1,0 -13,0 "
+               "M207,399 m-6.5,0 a6.5,6.5 0 1,0 13,0 a6.5,6.5 0 1,0 -13,0"), 'f': '#FFFFFF'},
+        {'d': ("M57.4,394.5 L58.6,394.5 L58.6,399.6 L57.4,399.6 Z "
+               "M58,398.9 L61.5,401 L60.9,402 L57.4,399.9 Z "
+               "M206.4,394.5 L207.6,394.5 L207.6,399.6 L206.4,399.6 Z "
+               "M207,398.9 L210.5,401 L209.9,402 L206.4,399.9 Z"), 'f': '#262E33'},
+    ],
+    'Sweatband': [
+        {'d': "M38,388 L78,388 L78,406 L38,406 Z M186,388 L226,388 L226,406 L186,406 Z", 'f': 'c1'},
+        {'d': "M38,395 L78,395 L78,399 L38,399 Z M186,395 L226,395 L226,399 L186,399 Z",
+         'f': 'hi', 'o': 0.85},
+        {'d': "M38,402 L78,402 L78,406 L38,406 Z M186,402 L226,402 L226,406 L186,406 Z", 'f': 'sh'},
+    ],
 }
 WAIST = {
-    'Belt': "M76,366 L188,366 L188,382 L76,382 Z",
-    'ChunkyBelt': "M74,364 L190,364 L190,388 L74,388 Z",
+    'Belt': [
+        {'d': "M76,364 L188,364 L188,380 L76,380 Z", 'f': 'c1'},
+        {'d': "M123,360 L141,360 L141,384 L123,384 Z", 'f': '#E6E6E6'},
+        {'d': "M127,364 L137,364 L137,380 L127,380 Z", 'f': 'sh2'},
+        {'d': "M76,376 L188,376 L188,380 L76,380 Z", 'f': 'sh'},
+    ],
+    'ChunkyBelt': [
+        {'d': "M74,360 L190,360 L190,386 L74,386 Z", 'f': 'c1'},
+        {'d': "M118,354 L146,354 L146,392 L118,392 Z", 'f': '#E6E6E6'},
+        {'d': "M124,360 L140,360 L140,386 L124,386 Z", 'f': 'c1'},
+        {'d': "M130,368 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0", 'f': '#E6E6E6'},
+        {'d': "M74,380 L190,380 L190,386 L74,386 Z", 'f': 'sh'},
+    ],
 }
 HAIR_ACCESSORY = {
-    'Headband': "M74,104 C74,80 96,62 132,62 C168,62 190,80 190,104 L190,118 C190,94 168,78 132,78 C96,78 74,94 74,118 Z",
-    'Bow': "M150,66 C168,52 186,52 190,66 C194,80 178,88 158,82 Z M150,66 C150,58 158,54 164,58 C170,62 168,72 160,74 Z",
-    'Clips': "M86,96 L104,86 L108,94 L90,104 Z M156,86 L174,96 L170,104 L152,94 Z",
+    'Headband': [
+        {'d': ("M74,104 C74,80 96,62 132,62 C168,62 190,80 190,104 L190,118 "
+               "C190,94 168,78 132,78 C96,78 74,94 74,118 Z"), 'f': 'c1'},
+        {'d': ("M74,112 C74,90 98,74 132,74 C166,74 190,90 190,112 L190,118 "
+               "C190,94 168,78 132,78 C96,78 74,94 74,118 Z"), 'f': 'sh'},
+    ],
+    'Bow': [
+        {'d': ("M158,70 C146,60 132,62 130,72 C128,82 140,90 154,86 Z "
+               "M158,70 C170,58 186,60 188,70 C190,80 178,88 164,84 Z"), 'f': 'c1'},
+        {'d': "M152,68 C158,64 164,64 168,68 C172,74 168,82 160,82 C154,82 150,76 152,68 Z", 'f': 'sh2'},
+        {'d': "M156,82 L164,84 L158,104 L151,101 Z M164,84 L172,84 L172,102 L165,102 Z", 'f': 'c1'},
+        {'d': "M151,98 L158,101 L158,104 L151,101 Z M165,99 L172,99 L172,102 L165,102 Z", 'f': 'sh'},
+    ],
+    'Clips': [
+        {'d': ("M84,94 L106,82 C108,81 110,82 110,84 C110,85 109,86 108,87 L88,99 "
+               "C86,100 84,99 84,97 Z "
+               "M154,82 L176,94 C178,95 178,97 176,98 C175,99 173,99 172,98 L152,87 "
+               "C150,86 150,84 152,83 Z"), 'f': 'c1'},
+        {'d': ("M99,86 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
+               "M91,91 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
+               "M161,86 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
+               "M169,91 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"), 'f': 'hi', 'o': 0.7},
+    ],
 }
 
+# Depth on the rig itself (user feedback 2026-08-18: dead-flat reads as
+# unpolished). The source shades with low-opacity black; these follow it.
+#   - a soft contact shadow grounds the standing figure
+#   - inner-edge shadows round the arms and legs into tubes
+GROUND_SHADOW = "M132,574 m-58,0 a58,9 0 1,0 116,0 a58,9 0 1,0 -116,0"
+RIG_DEPTH = [
+    # inner edge of each arm
+    {'d': ("M70,286 C71,318 71,352 71,386 C71,404 66,416 58,421 "
+           "C68,420 77,412 77,394 C77,356 77,318 76,286 Z"), 'f': 'sh', 'o': 0.08},
+    {'d': ("M188,286 C187,318 187,352 187,386 C187,404 192,416 200,421 "
+           "C190,420 187,412 187,394 C187,356 187,318 188,286 Z"), 'f': 'sh', 'o': 0.08},
+    # inner edge of each leg, below wherever the bottoms end
+    {'d': "M124,436 L131,436 L131,568 L124,568 Z", 'f': 'sh', 'o': 0.07},
+    {'d': "M133,436 L140,436 L140,568 L133,568 Z", 'f': 'sh', 'o': 0.07},
+]
+# Sleeve cuff shadows: the arm continues out of the sleeve, so the sleeve
+# casts on it exactly the way the source's chin casts on the neck.
+SLEEVE_SHADOW = ("M34,352 C47,357 64,357 77,352 L77,360 C64,365 47,365 34,360 Z "
+                 "M187,352 C200,357 217,357 230,352 L230,360 C217,365 200,365 187,360 Z")
 
+# The far-limb cue every polished flat set uses (reference pass 2026-08-18):
+# the viewer-right arm sits a shade darker, whole silhouette, painted OVER
+# its sleeve so garment and skin darken together.
+FAR_ARM_TINT = _ARM_R
 _HEMS: Optional[Dict] = None
 _HEMS_PATH = os.path.join(os.path.dirname(_PIECES_PATH), 'hems.json')
 
@@ -255,6 +436,28 @@ def _shade(path: str, opacity: str = '0.1') -> str:
     return f'<path d="{path}" fill="{SHADE}" fill-opacity="{opacity}"/>'
 
 
+def _paint(parts, c1: str) -> str:
+    """Paint a multi-part asset. `c1` is the slot's own colour; 'sh'/'sh2' are
+    the source's two shading strengths; 'hi' is a white highlight carrying its
+    own opacity; anything else is literal art."""
+    out = []
+    for p in (parts or []):
+        f = p.get('f', 'c1')
+        if f == 'c1':
+            fill, op = c1, p.get('o')
+        elif f == 'sh':
+            fill, op = SHADE, p.get('o', 0.1)
+        elif f == 'sh2':
+            fill, op = SHADE, p.get('o', 0.16)
+        elif f == 'hi':
+            fill, op = '#FFFFFF', p.get('o', 0.5)
+        else:
+            fill, op = f, p.get('o')
+        o = f' fill-opacity="{op}"' if op is not None else ''
+        out.append(f'<path d="{p["d"]}" fill="{fill}"{o}/>')
+    return ''.join(out)
+
+
 def render_svg(config: Dict, crop: str = 'head', size: Optional[int] = None,
                nonce: str = 'a') -> str:
     """One member's look. `nonce` must differ between two avatars on the same
@@ -286,22 +489,22 @@ def render_svg(config: Dict, crop: str = 'head', size: Optional[int] = None,
     lower = ''
     if full:
         bottoms = BOTTOMS.get(cfg.get('bottoms') or '')
-        detail = BOTTOMS_DETAIL.get(cfg.get('bottoms') or '')
         shoes = SHOES.get(cfg.get('shoes') or '')
+        bot_col = _color('bottoms_color', cfg.get('bottoms_color'))
         parts = [
+            # the contact shadow grounds the figure before anything stands on it
+            _shade(GROUND_SHADOW, '0.14'),
             f'<path d="{_ARM_L}" fill="{skin}"/><path d="{_ARM_R}" fill="{skin}"/>',
             f'<path d="{_LOWER}" fill="{skin}"/>',
+            _paint(RIG_DEPTH, skin),
             # A waistband that rises ABOVE the tops' hems. Without it a blazer
             # (which hems at the hip, correctly) left a band of bare midriff
             # between itself and the trousers. Real clothes overlap.
             (f'<path d="M78,336 L186,336 C187,352 187,360 186,372 L78,372 '
-             f'C77,360 77,352 78,336 Z" '
-             f'fill="{_color("bottoms_color", cfg.get("bottoms_color"))}"/>'
-             f'<path d="{bottoms}" '
-             f'fill="{_color("bottoms_color", cfg.get("bottoms_color"))}"/>')
+             f'C77,360 77,352 78,336 Z" fill="{bot_col}"/>'
+             + _paint(bottoms, bot_col))
             if bottoms else '',
-            _shade(detail, '0.16') if detail else '',
-            f'<path d="{shoes}" fill="{_color("shoes_color", cfg.get("shoes_color"))}"/>'
+            _paint(shoes, _color('shoes_color', cfg.get('shoes_color')))
             if shoes else '',
         ]
         lower = ''.join(p for p in parts if p)
@@ -337,22 +540,27 @@ def render_svg(config: Dict, crop: str = 'head', size: Optional[int] = None,
         left = (runs[0].get('fill') or clothe) if runs else clothe
         right = (runs[-1].get('fill') or clothe) if runs else clothe
         torso_ext += (f'<path d="{_SLEEVE_L}" fill="{left}"/>'
-                      f'<path d="{_SLEEVE_R}" fill="{right}"/>')
+                      f'<path d="{_SLEEVE_R}" fill="{right}"/>'
+                      # the sleeve casts on the arm below it, the same way the
+                      # source's chin casts on the neck -- and the far arm sits
+                      # a shade darker, whole silhouette, sleeve included
+                      + _shade(SLEEVE_SHADOW, '0.1')
+                      + _shade(FAR_ARM_TINT, '0.07'))
 
     accent = _color('accent_color', cfg.get('accent_color'))
     extras = ''
     if full:
         for slot, table in (('waist', WAIST), ('wrist', WRIST), ('neck', NECK)):
-            d = table.get(cfg.get(slot) or '')
-            if d:
-                extras += f'<path d="{d}" fill="{accent}"/>'
+            item = table.get(cfg.get(slot) or '')
+            if item:
+                extras += _paint(item, accent)
     hair_extra = HAIR_ACCESSORY.get(cfg.get('hair_accessory') or '')
 
     face = (f'<g id="{ns}face" transform="translate(76,82)" fill="#000000">'
             f'{_piece("mouth", cfg, ns)}{_piece("nose", cfg, ns)}'
             f'{_piece("eyes", cfg, ns)}{_piece("eyebrow", cfg, ns)}</g>')
 
-    hair_extra_svg = (f'<path d="{hair_extra}" fill="{accent}"/>' if hair_extra else '')
+    hair_extra_svg = _paint(hair_extra, accent) if hair_extra else ''
     dims = f'width="{size}" ' if size else ''
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" '
@@ -465,9 +673,11 @@ def bundle() -> Dict:
         'rig': {'armL': _ARM_L, 'armR': _ARM_R, 'sleeveL': _SLEEVE_L,
                 'sleeveR': _SLEEVE_R, 'lower': _LOWER, 'body': _BODY_PATH,
                 'neckShadow': _NECK_SHADOW, 'shade': SHADE},
-        'tables': {'bottoms': BOTTOMS, 'bottomsDetail': BOTTOMS_DETAIL,
-                   'shoes': SHOES, 'neck': NECK, 'wrist': WRIST,
-                   'waist': WAIST, 'hair_accessory': HAIR_ACCESSORY},
+        'tables': {'bottoms': BOTTOMS, 'shoes': SHOES, 'neck': NECK,
+                   'wrist': WRIST, 'waist': WAIST,
+                   'hair_accessory': HAIR_ACCESSORY},
+        'rig_depth': {'ground': GROUND_SHADOW, 'parts': RIG_DEPTH,
+                      'sleeveShadow': SLEEVE_SHADOW, 'farArm': FAR_ARM_TINT},
         'hems_meta': {'structured': sorted(STRUCTURED),
                       'hemStructured': HEM_STRUCTURED, 'hemSoft': HEM_SOFT},
         'slots': cat.get_slots(), 'groups': cat.GROUPS,
