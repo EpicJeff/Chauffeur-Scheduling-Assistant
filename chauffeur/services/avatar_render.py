@@ -373,6 +373,51 @@ def render_for_member(member_id: str, crop: str = 'head', **kw) -> str:
     return render_svg(storage.get_avatar_config(member_id), crop, **kw)
 
 
+# --- the effective chip image -------------------------------------------
+# Every avatar surface in the app prefers `image` (a data-URL) over emoji over
+# initials. So a character reaches all of them the same way a photo does: by
+# BEING the image. The decision of what a member's chip shows lives here, once,
+# server-side -- not in ten templates.
+#
+# avatar_kind: 'photo' | 'character' | 'emoji'. Unset means: photo if they
+# have one, character otherwise. A family that set photos keeps them until
+# someone explicitly opts that member in -- silent replacement is the one
+# thing this function exists to prevent.
+
+_EFFECTIVE_CACHE: Dict[str, tuple] = {}
+
+
+def head_data_url(config: Dict) -> str:
+    """The head crop as a data-URL an <img> can eat. Each <img> is its own
+    document, so a fixed nonce cannot collide with anything."""
+    import base64
+    svg = render_svg(config, 'head', nonce='i')
+    return 'data:image/svg+xml;base64,' + base64.b64encode(svg.encode('utf-8')).decode('ascii')
+
+
+def effective_image(member: Dict) -> Optional[str]:
+    """What this member's avatar chip should draw, or None for emoji/initials."""
+    if not member:
+        return None
+    kind = member.get('avatar_kind') or ('photo' if member.get('image') else 'character')
+    if kind == 'photo':
+        return member.get('image')
+    if kind == 'emoji':
+        return None
+    if not available():                     # art not built: degrade to photo
+        return member.get('image')
+    from services import storage
+    mid = member.get('id')
+    cfg = storage.get_avatar_config(mid)
+    key = json.dumps(cfg, sort_keys=True)
+    hit = _EFFECTIVE_CACHE.get(mid)
+    if hit and hit[0] == key:
+        return hit[1]
+    url = head_data_url(cfg)
+    _EFFECTIVE_CACHE[mid] = (key, url)
+    return url
+
+
 def bundle() -> Dict:
     """Everything a browser needs to composite locally.
 

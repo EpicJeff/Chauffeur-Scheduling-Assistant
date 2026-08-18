@@ -38,6 +38,13 @@ web page:
    displaying is not a display.
 """
 
+def _member_image(m):
+    """The chip image for a member dict: their photo, or their character
+    (avatar arc A2). One decision, made in avatar_render, not per tile."""
+    from services import avatar_render
+    return avatar_render.effective_image(m)
+
+
 import datetime
 import json
 import os
@@ -939,7 +946,7 @@ def _driver_index() -> dict:
             continue
         idx[d_id] = {'name': m.get('name') or idx.get(d_id, {}).get('name') or 'Driver',
                      'color': m.get('color_code') or '#3b82f6',
-                     'avatar': m.get('avatar'), 'image': m.get('image')}
+                     'avatar': m.get('avatar'), 'image': _member_image(m)}
     return idx
 
 
@@ -1750,7 +1757,7 @@ def _tile_routines(now, config=None, **_):
             if wanted and m['id'] not in wanted:
                 continue
             rows.append({'name': m.get('name'), 'color_code': m.get('color_code'),
-                         'avatar': m.get('avatar'), 'image': m.get('image'),
+                         'avatar': m.get('avatar'), 'image': _member_image(m),
                          'streak': storage.compute_streak(m['id'])})
         rows = [r for r in rows if r.get('streak')]
         if not rows:
@@ -2477,7 +2484,7 @@ def _tile_map(now, runs=None, config=None, **_):
             # between "not tracked" and "not home".
             rows.append({'member_id': m.get('id'), 'name': m.get('name'),
                          'color_code': m.get('color_code'),
-                         'avatar': m.get('avatar'), 'image': m.get('image'),
+                         'avatar': m.get('avatar'), 'image': _member_image(m),
                          'state': state or None,
                          'latitude': lat, 'longitude': lon, 'is_car': False,
                          'private': private or None,
@@ -2725,7 +2732,7 @@ def _tile_music(now, config=None, **_):
         try:
             members = [{'id': m['id'], 'name': m.get('name'),
                         'color_code': m.get('color_code'),
-                        'avatar': m.get('avatar'), 'image': m.get('image')}
+                        'avatar': m.get('avatar'), 'image': _member_image(m)}
                        for m in storage.get_all_members()]
         except Exception:
             members = []

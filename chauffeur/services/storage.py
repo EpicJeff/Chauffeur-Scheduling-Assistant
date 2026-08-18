@@ -2133,6 +2133,7 @@ def get_points_ledger(member_id: str, limit: int = 25) -> List[dict]:
 
 def get_all_point_balances() -> List[dict]:
     """[{member_id, name, color_code, avatar, balance}] for child members."""
+    from services import avatar_render
     balances = []
     for m in get_all_members():
         if m.get('role') != 'child':
@@ -2140,7 +2141,8 @@ def get_all_point_balances() -> List[dict]:
         balances.append({
             'member_id': m['id'], 'name': m.get('name'),
             'color_code': m.get('color_code'), 'avatar': m.get('avatar'),
-            'image': m.get('image'),
+            # the chip decision lives in avatar_render (photo vs character)
+            'image': avatar_render.effective_image(m),
             'balance': get_points_balance(m['id']),
         })
     balances.sort(key=lambda b: -b['balance'])
@@ -3512,16 +3514,41 @@ def sync_avatar_unlocks(member_id: str) -> List[str]:
 
 
 def get_avatar_config(member_id: str) -> dict:
-    """The member's saved look, with required slots defaulted so the renderer
-    always has something to draw."""
+    """The member's saved look, with missing required slots filled
+    DETERMINISTICALLY from the member id.
+
+    Day one, before anyone opens the editor, every member gets a distinct,
+    decent-looking character rather than one shared bald default -- building a
+    look is then an upgrade, not a chore. Hash-seeded so the same member always
+    gets the same face. Skin tone is deliberately NOT randomised: it is
+    identity, not decoration, and a wrong guess is worse than the renderer's
+    neutral default. It stays whatever the member (or their parent) picks."""
+    import hashlib
     from services import avatar_catalog as cat
     m = get_member(member_id) or {}
     cfg = dict(m.get('avatar_config') or {})
+    from services import avatar_render
+    seed = int.from_bytes(hashlib.md5((member_id or '').encode()).digest()[:8], 'big')
+    # Faces draw only from the head of each list (Default, Happy, ...): the
+    # catalog orders expressions pleasant-first, and nobody's day-one default
+    # should be the ScreamOpen or Vomit mouth they never chose.
+    _FACE_POOL = {'eyes': 3, 'eyebrow': 2, 'mouth': 3, 'nose': 1}
     for slot in cat.get_slots():
-        if slot.get('required') and not cfg.get(slot['key']):
-            choices = [i for i in cat.items_for_slot(slot['key']) if i['tier'] == 'free']
+        key = slot['key']
+        if slot.get('required') and not cfg.get(key):
+            choices = [i for i in cat.items_for_slot(key) if i['tier'] == 'free']
+            choices = choices[:_FACE_POOL.get(key) or len(choices)]
             if choices:
-                cfg[slot['key']] = choices[0]['key']
+                cfg[key] = choices[seed % len(choices)]['key']
+                seed //= max(len(choices), 2)
+    _PALS = {'hair_color': avatar_render.HAIR_COLORS,
+             'clothe_color': avatar_render.CLOTHE_COLORS,
+             'bottoms_color': avatar_render.CLOTHE_COLORS}
+    for pal, table in _PALS.items():
+        if not cfg.get(pal):
+            names = sorted(table)
+            cfg[pal] = names[seed % len(names)]
+            seed //= max(len(names), 2)
     return cfg
 
 

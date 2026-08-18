@@ -3,6 +3,7 @@
 Run from chauffeur/:  python tests/test_avatars.py
 """
 import atexit
+import json
 import os
 import shutil
 import sys
@@ -211,6 +212,81 @@ def scenario_tracks_are_monotonic():
           "re-ticking the same days is not farmable")
 
 
+# --- A2: the chip decision -----------------------------------------------
+
+def scenario_photo_is_never_silently_replaced():
+    """A family that set photos keeps them. The character only becomes the
+    chip when the member has no photo, or when somebody explicitly flips."""
+    from services import avatar_render as ar
+    _member("kid")
+    storage.update_member("kid", {"image": "data:image/jpeg;base64,AAA"})
+    m = storage.get_member("kid")
+    check(ar.effective_image(m) == "data:image/jpeg;base64,AAA",
+          "photo wins while avatar_kind is unset")
+    storage.update_member("kid", {"avatar_kind": "character"})
+    out = ar.effective_image(storage.get_member("kid"))
+    check(out and out.startswith("data:image/svg+xml"),
+          "explicit opt-in draws the character over a photo")
+    storage.update_member("kid", {"avatar_kind": "photo"})
+    check(ar.effective_image(storage.get_member("kid")) == "data:image/jpeg;base64,AAA",
+          "flipping back restores the photo")
+    storage.update_member("kid", {"avatar_kind": "emoji"})
+    check(ar.effective_image(storage.get_member("kid")) is None,
+          "emoji kind clears the image so emoji/initials draw")
+
+
+def scenario_photoless_member_gets_a_character():
+    from services import avatar_render as ar
+    _member("kid")
+    out = ar.effective_image(storage.get_member("kid"))
+    check(out and out.startswith("data:image/svg+xml"),
+          "no photo -> the character is the chip, day one")
+    check(out == ar.effective_image(storage.get_member("kid")),
+          "and it is stable across calls (cached)")
+
+
+def scenario_day_one_faces_are_distinct_and_pleasant():
+    """Deterministic per member, different between members, and never an
+    expression nobody chose (the mouth pool stops at the pleasant ones)."""
+    _member("kid_a"); _member("kid_b"); _member("kid_c")
+    cfgs = {mid: storage.get_avatar_config(mid) for mid in ("kid_a", "kid_b", "kid_c")}
+    for mid, cfg in cfgs.items():
+        check(cfg == storage.get_avatar_config(mid), f"{mid} default is stable")
+        check(cfg.get("mouth") in ("Default", "Smile", "Twinkle"),
+              f"{mid} day-one mouth is pleasant, got {cfg.get('mouth')}")
+        check(cfg.get("skin") is None or cfg.get("skin") == "Light",
+              "skin tone is never randomised -- it is identity")
+    looks = [json.dumps(c, sort_keys=True) for c in cfgs.values()]
+    check(len(set(looks)) > 1, "different members get different day-one looks")
+
+
+def scenario_save_flips_kind_only_without_photo():
+    import main
+    _member("kid")                                   # no photo
+    _member("papa", "Papa", "parent")
+    storage.update_member("papa", {"image": "data:image/jpeg;base64,BBB"})
+    main.set_avatar_endpoint("kid", main.AvatarConfigRequest(config={"top": "LongHairBob"}))
+    check((storage.get_member("kid") or {}).get("avatar_kind") == "character",
+          "photoless member becomes character on first save")
+    main.set_avatar_endpoint("papa", main.AvatarConfigRequest(config={"top": "NoHair"}))
+    check((storage.get_member("papa") or {}).get("avatar_kind") is None,
+          "a member WITH a photo is not flipped by saving")
+    main.set_avatar_endpoint("papa", main.AvatarConfigRequest(
+        config={}, avatar_kind="character"))
+    check((storage.get_member("papa") or {}).get("avatar_kind") == "character",
+          "explicit request flips them")
+
+
+def scenario_public_member_serves_the_effective_image():
+    import main
+    _member("kid")
+    pub = main._public_member(storage.get_member("kid"))
+    check((pub.get("image") or "").startswith("data:image/svg+xml"),
+          "_public_member serves the character for a photoless member")
+    check("pin_hash" not in pub and "password_hash" not in pub,
+          "secrets still stripped")
+
+
 SCENARIOS = [
     scenario_identity_is_free,
     scenario_unlock_is_never_lost,
@@ -221,6 +297,11 @@ SCENARIOS = [
     scenario_conflicts_are_reported_not_enforced,
     scenario_slots_are_well_formed,
     scenario_tracks_are_monotonic,
+    scenario_photo_is_never_silently_replaced,
+    scenario_photoless_member_gets_a_character,
+    scenario_day_one_faces_are_distinct_and_pleasant,
+    scenario_save_flips_kind_only_without_photo,
+    scenario_public_member_serves_the_effective_image,
 ]
 
 

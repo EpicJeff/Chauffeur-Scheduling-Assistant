@@ -4293,6 +4293,12 @@ def act_on_action_proposal(proposal_id: str, req: ActionProposalAct, background_
 
 # --- Family Members API (overlay over drivers/passengers) ---
 
+def _effective_image(m: dict):
+    """Chip image for a member: photo, or their character (avatar arc A2)."""
+    from services import avatar_render
+    return avatar_render.effective_image(m)
+
+
 def _public_member(m: dict) -> dict:
     """Strip credential secrets; expose has_pin / has_password instead.
 
@@ -4305,6 +4311,11 @@ def _public_member(m: dict) -> dict:
     out = {k: v for k, v in m.items() if k not in secret}
     out['has_pin'] = bool(m.get('pin_hash'))
     out['has_password'] = bool(m.get('password_hash'))
+    # The chip image every template renders. A photo stays a photo; a member
+    # without one gets their character (avatar arc A2). Decided server-side so
+    # ten templates don't each need an opinion.
+    from services import avatar_render
+    out['image'] = avatar_render.effective_image(m)
     return out
 
 # --- Protected commitments (load arc A6) ---
@@ -7191,7 +7202,7 @@ def routines_streaks():
         out.append({
             'member_id': m['id'], 'name': m.get('name'),
             'color_code': m.get('color_code'), 'avatar': m.get('avatar'),
-            'image': m.get('image'),
+            'image': _effective_image(m),
             'streak': storage.compute_streak(m['id']),
             'status': status_tiers.compute_member_status(m['id'], 'routine'),
         })
@@ -7409,14 +7420,26 @@ def get_avatar_endpoint(member_id: str):
 
 class AvatarConfigRequest(BaseModel):
     config: dict
+    avatar_kind: Optional[str] = None   # 'photo' | 'character' | 'emoji'
 
 
 @app.post("/api/avatar/{member_id}")
 def set_avatar_endpoint(member_id: str, req: AvatarConfigRequest,
                         x_member_token: Optional[str] = Header(None)):
-    _require_avatar_owner(member_id, x_member_token)
+    member = _require_avatar_owner(member_id, x_member_token)
     storage.sync_avatar_unlocks(member_id)
-    return {'status': 'ok', **storage.set_avatar_config(member_id, req.config or {})}
+    result = storage.set_avatar_config(member_id, req.config or {})
+    # What the chips show. An explicit choice is honoured; otherwise saving a
+    # character makes it the chip ONLY for a member with no photo -- a family
+    # that set photos keeps them until this member is explicitly switched.
+    # (avatar_kind never gates the full-body showcase surfaces: the character
+    # someone built always draws there.)
+    if req.avatar_kind in ('photo', 'character', 'emoji'):
+        storage.update_member(member_id, {'avatar_kind': req.avatar_kind})
+    elif not member.get('image') and not member.get('avatar_kind'):
+        storage.update_member(member_id, {'avatar_kind': 'character'})
+    kind = (storage.get_member(member_id) or {}).get('avatar_kind')
+    return {'status': 'ok', 'avatar_kind': kind, **result}
 
 
 # --- Rewards + redemptions API ---
@@ -7816,7 +7839,7 @@ def member_day(member_id: str, date: Optional[str] = None):
             driver_members[driver_id] = {
                 'member_id': m['id'], 'name': m.get('name'),
                 'color_code': m.get('color_code'), 'avatar': m.get('avatar'),
-                'image': m.get('image'),
+                'image': _effective_image(m),
                 'role': m.get('role', 'adult'),
             } if m else None
         return driver_members[driver_id]
@@ -10253,7 +10276,7 @@ def family_locations(viewer: Optional[str] = None):
             'name': m.get('name'),
             'color_code': m.get('color_code'),
             'avatar': m.get('avatar'),
-            'image': m.get('image'),
+            'image': _effective_image(m),
             'is_child': m.get('is_child', False),
             'state': None,
             'latitude': None,
