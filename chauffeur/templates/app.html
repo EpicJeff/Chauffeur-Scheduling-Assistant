@@ -103,6 +103,10 @@
         }
     </style>
     <link rel="stylesheet" href="{{ 'static/tailwind-app.css'|ver }}">
+    <!-- Alpine, for the avatar editor overlay (avatar arc A3). app.html is
+         otherwise vanilla JS on purpose; Alpine here only animates that one
+         component, and `defer` keeps it out of the critical path. -->
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
     <!-- Shared with the board's music card. NOT deferred: the music widget's
          own script runs inline as the page parses and reads this at its top
          level, and a deferred module would arrive after it. -->
@@ -112,14 +116,20 @@
 <body class="bg-gray-950 text-gray-100 font-sans h-dvh flex flex-col overflow-hidden">
     {% include 'components/kid_glyphs.html' %}
     {% include 'components/emoji_picker.html' %}
+    {% include 'components/avatar_editor.html' %}
 
     <!-- Header -->
     <header
         class="bg-gray-900 border-b border-gray-800 p-4 flex items-center justify-between shrink-0 shadow-md relative z-20">
         <div class="flex items-center gap-3">
-            <div id="driver-avatar"
-                class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shadow-sm border-2 border-gray-700 bg-gray-800 text-gray-500">
-                ?</div>
+            <!-- Tap your own face to open the dressing-up box (avatar arc A3). -->
+            <button type="button" class="relative shrink-0"
+                onclick="if (selectedMemberId && typeof openAvatarEditor === 'function') openAvatarEditor(selectedMemberId)">
+                <div id="driver-avatar"
+                    class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shadow-sm border-2 border-gray-700 bg-gray-800 text-gray-500">
+                    ?</div>
+                <span class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[9px]">✏️</span>
+            </button>
             <div class="flex flex-col">
                 <h1 id="driver-name" class="text-lg font-bold text-gray-100 leading-tight">Chauffeur</h1>
                 <span id="date-subtitle" class="text-xs text-blue-400 font-medium tracking-wide uppercase">Today</span>
@@ -577,6 +587,12 @@
         let scheduleData = null;
         let selectedDriverId = localStorage.getItem('chauffeur_driver_id');
         let selectedMemberId = localStorage.getItem('chauffeur_member_id');
+
+        // A saved avatar changes the chip everywhere; refetch members so the
+        // header (and anything else drawn from the roster) picks it up.
+        window.addEventListener('avatar-saved', () => {
+            if (typeof fetchMembers === 'function') fetchMembers();
+        });
         let currentDates = [];
         let activeDateIndex = 0;
         let timelineInitialized = false;    // first build snaps to today

@@ -81,11 +81,19 @@
                                     <div class="text-lg font-black w-7 text-center shrink-0"
                                         :class="idx === 0 ? 'text-yellow-400' : (idx === 1 ? 'text-gray-300' : (idx === 2 ? 'text-amber-600' : 'text-gray-600'))"
                                         x-text="'#' + (idx + 1)"></div>
-                                    <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0 overflow-hidden"
-                                        :style="'background-color:' + (b.color_code || '#3b82f6')">
-                                        <template x-if="b.image"><img :src="b.image" class="w-full h-full object-cover"></template>
-                                        <template x-if="!b.image"><span x-text="b.avatar || (b.name || '?').charAt(0)"></span></template>
-                                    </div>
+                                    <!-- Your face is the door to the dressing-up box (avatar arc A3). -->
+                                    <button type="button" class="relative shrink-0"
+                                        :disabled="typeof openAvatarEditor === 'undefined'"
+                                        @click="typeof openAvatarEditor !== 'undefined'
+                                                && openAvatarEditor({ id: b.member_id, name: b.name })">
+                                        <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white overflow-hidden"
+                                            :style="'background-color:' + (b.color_code || '#3b82f6')">
+                                            <template x-if="b.image"><img :src="b.image" class="w-full h-full object-cover"></template>
+                                            <template x-if="!b.image"><span x-text="b.avatar || (b.name || '?').charAt(0)"></span></template>
+                                        </div>
+                                        <span x-show="typeof openAvatarEditor !== 'undefined'"
+                                            class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[9px]">✏️</span>
+                                    </button>
                                     <div class="min-w-0 flex-1">
                                         <div class="font-bold text-white text-lg truncate" x-text="b.name"></div>
                                         <template x-if="b.status">

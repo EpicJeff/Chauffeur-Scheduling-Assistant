@@ -21,12 +21,68 @@
      on a wall panel. Stacked keeps every tap low. Which is only true if the
      preview holds NO controls -- so undo/redo/shuffle/save live in a bar at
      the bottom edge, and the preview band is inert. -->
+{% raw %}
+<style>
+    /* The overlay is x-cloak'd; without this rule a page that lacks its
+       own cloak style draws it as a full-screen blank before Alpine boots. */
+    [x-cloak] { display: none !important; }
+</style>
 <script>
+// The one editor instance on a page. Everything that wants to edit an avatar
+// -- a pencil on a lane, a face on the board card -- goes through
+// openAvatarEditor(), which does the PIN handshake FIRST and only then opens
+// the overlay. The server re-checks regardless; the handshake is so the save
+// can succeed, not the thing that protects it.
+window.openAvatarEditor = async function (m) {
+    const base = (window.chfBase !== undefined) ? window.chfBase : '';
+    let member = (typeof m === 'string') ? { id: m } : Object.assign({}, m);
+    if (member.has_pin === undefined || !member.name) {
+        try {
+            const all = await fetch(base + 'api/members').then(r => r.json());
+            const hit = (Array.isArray(all) ? all : []).find(x => x.id === member.id);
+            if (hit) member = hit;
+        } catch (e) { /* offline: proceed; a PIN'd member will fail at save */ }
+    }
+    let token = null;
+    if (localStorage.getItem('chauffeur_member_token_for') === member.id) {
+        token = localStorage.getItem('chauffeur_member_token');
+    }
+    if (!token && member.has_pin) {
+        // app.html has the full sign-in flow; kiosk pages get a minimal pad.
+        token = (typeof ensureMemberAuth === 'function')
+            ? await ensureMemberAuth(member)
+            : await _avatarPinHandshake(base, member);
+        if (!token) return;                    // backed out: nothing opens
+    }
+    window.dispatchEvent(new CustomEvent('avatar-editor-open',
+        { detail: { memberId: member.id, token: token } }));
+};
+
+async function _avatarPinHandshake(base, member) {
+    while (true) {
+        const pin = await promptInput(`Hi ${member.name || ''}!`, 'Enter your PIN',
+            { type: 'password', placeholder: '••••' });
+        if (pin === null || pin === undefined) return null;
+        try {
+            const res = await fetch(`${base}api/members/${member.id}/auth`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pin: pin }),
+            });
+            if (res.status === 403) { showGlobalAlert('Wrong PIN'); continue; }
+            if (res.status === 429) { showGlobalAlert('Too many tries — wait a moment'); return null; }
+            if (!res.ok) return null;
+            return (await res.json()).token;
+        } catch (e) { showGlobalAlert('Could not verify — check connection'); return null; }
+    }
+}
+
 function avatarEditor(config) {
+    config = config || {};
     return {
-        memberId: config.memberId,
+        memberId: config.memberId || null,
         token: config.token || null,
         onSaved: config.onSaved || null,
+        visible: false,
         bundle: null, catalog: null,
         cfg: {}, owned: new Set(), counters: {},
         group: 'me', tab: null,
@@ -35,12 +91,42 @@ function avatarEditor(config) {
         dirty: false,
         thumbCache: new Map(),
 
+        // Called by the window event. Resets per-member state; the art bundle
+        // survives across opens (it never changes between members).
+        async openFor(detail) {
+            this.memberId = detail.memberId;
+            this.token = detail.token || null;
+            this.cfg = {}; this.owned = new Set();
+            this.history = []; this.future = [];
+            this.dirty = false; this.error = '';
+            this.group = 'me';
+            this.thumbCache.clear();
+            this.visible = true;
+            this.loading = true;
+            await this.init();
+        },
+        async close() {
+            if (this.dirty) {
+                const sure = await promptConfirm('Leave without saving?',
+                    'Your new look will be lost.', 'Leave', 'Stay');
+                if (!sure) return;
+            }
+            this.visible = false;
+        },
+
+        apiBase() {
+            // components never compute their own depth; chfBase is the page's job
+            return (window.chfBase !== undefined) ? window.chfBase : '';
+        },
         async init() {
+            if (!this.memberId) { this.loading = false; return; }
+            const base = this.apiBase();
             try {
                 const [b, cat, mine] = await Promise.all([
-                    fetch('/api/avatar/bundle').then(r => r.json()),
-                    fetch(`/api/avatar/catalog?member_id=${encodeURIComponent(this.memberId)}`).then(r => r.json()),
-                    fetch(`/api/avatar/${encodeURIComponent(this.memberId)}`).then(r => r.json()),
+                    // the art never changes between members; fetch it once per page
+                    this.bundle || fetch(base + 'api/avatar/bundle').then(r => r.json()),
+                    fetch(`${base}api/avatar/catalog?member_id=${encodeURIComponent(this.memberId)}`).then(r => r.json()),
+                    fetch(`${base}api/avatar/${encodeURIComponent(this.memberId)}`).then(r => r.json()),
                 ]);
                 this.bundle = b; this.catalog = cat;
                 this.cfg = Object.assign({}, mine.config || {});
@@ -137,7 +223,7 @@ function avatarEditor(config) {
             try {
                 const headers = { 'Content-Type': 'application/json' };
                 if (this.token) headers['X-Member-Token'] = this.token;
-                const r = await fetch(`/api/avatar/${encodeURIComponent(this.memberId)}`,
+                const r = await fetch(`${this.apiBase()}api/avatar/${encodeURIComponent(this.memberId)}`,
                     { method: 'POST', headers, body: JSON.stringify({ config: this.cfg }) });
                 if (r.status === 403) { this.error = 'Ask a grown-up for your PIN.'; return; }
                 if (!r.ok) { this.error = 'That did not save. Try again?'; return; }
@@ -145,6 +231,10 @@ function avatarEditor(config) {
                 this.cfg = out.config || this.cfg;
                 this.dirty = false;
                 if (this.onSaved) this.onSaved(this.cfg);
+                // Saved = done. Close, and tell the page so chips can refresh.
+                this.visible = false;
+                window.dispatchEvent(new CustomEvent('avatar-saved',
+                    { detail: { memberId: this.memberId } }));
             } catch (e) {
                 this.error = 'That did not save. Try again?';
             } finally { this.saving = false; }
@@ -292,8 +382,13 @@ function avatarEditor(config) {
 }
 </script>
 
-<div class="flex flex-col h-full min-h-0 select-none"
-     x-data="avatarEditor(JSON.parse($el.dataset.avatarConfig || '{}'))" x-init="init()">
+<!-- The overlay itself. One instance per page; opened via openAvatarEditor().
+     Backdrop taps do NOT close it -- a kid mid-outfit brushing the edge of a
+     wall panel must not lose their work; leaving is the ✕, which asks. -->
+<div class="fixed inset-0 z-[100] bg-gray-950 flex flex-col h-full min-h-0 select-none"
+     x-data="avatarEditor({})" x-show="visible" x-cloak
+     @avatar-editor-open.window="openFor($event.detail)"
+     @keydown.escape.window="visible && close()">
 
     <div x-show="loading" class="flex-1 grid place-items-center text-gray-400">Getting the dressing-up box…</div>
 
@@ -386,6 +481,8 @@ function avatarEditor(config) {
         <!-- CONTROL BAR. Everything tappable lives at the bottom edge: this is
              what lets one vertical layout serve a phone and a wall panel. -->
         <div class="shrink-0 flex items-center gap-2 px-2 py-2 border-t border-white/10">
+            <button type="button" @click="close()"
+                    class="w-11 h-11 rounded-xl bg-white/10 text-xl" aria-label="Close">✕</button>
             <button type="button" @click="undo()" :disabled="!history.length"
                     class="w-11 h-11 rounded-xl bg-white/10 text-xl disabled:opacity-30" aria-label="Undo">↺</button>
             <button type="button" @click="redo()" :disabled="!future.length"
@@ -400,3 +497,5 @@ function avatarEditor(config) {
     </div>
     </template>
 </div>
+
+{% endraw %}

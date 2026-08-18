@@ -99,7 +99,9 @@
                                     <template x-if="member.image"><img :src="member.image" class="w-full h-full object-cover"></template>
                                     <template x-if="!member.image"><span x-text="member.avatar || (member.name || '?').charAt(0)"></span></template>
                                 </div>
-                                <h3 class="text-xl font-bold text-white" x-text="member.name + \"'s routine\""></h3>
+                                <!-- was member.name + \"'s routine\" — the backslashes reached Alpine
+     verbatim and the expression threw on every render since. -->
+<h3 class="text-xl font-bold text-white" x-text="member.name + `'s routine`"></h3>
                                 <template x-if="streakFor(member.id)">
                                     <div class="flex items-center gap-3 ml-2">
                                         <span class="px-2 py-0.5 bg-orange-900/40 text-orange-300 rounded-lg font-bold text-sm"
@@ -894,6 +896,7 @@
          above and, on a board, by board_tile_body. -->
     {% include 'components/routine_lanes.html' %}
     {% include 'components/status_celebration.html' %}
+    {% include 'components/avatar_editor.html' %}
     {% include 'components/moments_hearth.html' %}
     {% include 'components/control_center.html' %}
     {% include 'components/emoji_picker.html' %}

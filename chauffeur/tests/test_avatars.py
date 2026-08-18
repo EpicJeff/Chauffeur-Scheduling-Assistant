@@ -287,6 +287,54 @@ def scenario_public_member_serves_the_effective_image():
           "secrets still stripped")
 
 
+# --- A3/A4: the hand paths -------------------------------------------------
+
+def scenario_editor_is_reachable_by_hand():
+    """The standing rule: never an agent-only or API-only capability. A person
+    must be able to OPEN the editor by tapping something, on every surface that
+    shows their face prominently."""
+    import os
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'templates')
+    def read(rel):
+        return open(os.path.join(root, rel), encoding='utf-8').read()
+
+    # The overlay component exists and owns the open event.
+    comp = read('components/avatar_editor.html')
+    check('openAvatarEditor' in comp and 'avatar-editor-open' in comp,
+          'overlay component defines the opener')
+    check('promptConfirm' in comp, 'closing a dirty editor asks, never discards')
+
+    # Every host page includes the overlay...
+    for page in ('app.html', 'home.html', 'chores.html', 'routines.html'):
+        check("components/avatar_editor.html" in read(page),
+              f'{page} mounts the editor overlay')
+    # ...and every prominent face is a door.
+    for comp_rel in ('components/chores_lanes.html', 'components/routine_lanes.html',
+                     'components/board_tile_body.html'):
+        check('openAvatarEditor' in read(comp_rel), f'{comp_rel} has a tap path')
+    check('openAvatarEditor' in read('app.html'), 'the app header chip is a door')
+
+
+def scenario_editor_card_is_placeable():
+    """The board card exists in the catalog, builds a payload, and hides
+    honestly when the art is not built."""
+    from services import home_board
+    _member("kid")
+    entry = next((c for c in home_board._TILE_CATALOG
+                  if c['key'] == 'avatar_editor'), None) if hasattr(home_board, '_TILE_CATALOG') else None
+    if entry is None:   # catalog constant name differs; find it wherever it lives
+        import inspect
+        src = inspect.getsource(home_board)
+        check("'key': 'avatar_editor'" in src, 'avatar_editor is in the tile catalog')
+    check('avatar_editor' in home_board._BUILDERS, 'builder is dispatchable')
+    data = home_board._BUILDERS['avatar_editor'](None, None)
+    check(data and data.get('members'), 'builder returns the family faces')
+    row = data['members'][0]
+    for field in ('member_id', 'name', 'has_pin', 'image'):
+        check(field in row, f'face rows carry {field}')
+
+
 SCENARIOS = [
     scenario_identity_is_free,
     scenario_unlock_is_never_lost,
@@ -302,6 +350,8 @@ SCENARIOS = [
     scenario_day_one_faces_are_distinct_and_pleasant,
     scenario_save_flips_kind_only_without_photo,
     scenario_public_member_serves_the_effective_image,
+    scenario_editor_is_reachable_by_hand,
+    scenario_editor_card_is_placeable,
 ]
 
 

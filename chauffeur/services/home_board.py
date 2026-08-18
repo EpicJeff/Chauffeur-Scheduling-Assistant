@@ -385,6 +385,14 @@ WIDGETS = [
     # ── The routines kiosk, as a card. `routines` above is the GLANCE — who
     # has kept theirs going and for how long. This is the kiosk's own lanes:
     # today's checklist per child, with the tap that ticks one off.
+    {'key': 'avatar_editor', 'icon': '🪞', 'label': 'Avatar editor',
+     'heading': '',
+     'blurb': "Tap a face, build your look. The dressing-up box as a card, "
+              "for anyone who wants to give it a wall of its own.",
+     'options': [
+         _opt('members', 'People', 'select', [], source='members', multi=True,
+              help='Leave empty for everyone.'),
+     ]},
     {'key': 'routines_lanes', 'icon': '✅', 'label': 'Routine lanes',
      'heading': '',
      'blurb': "Today's routine for each child, with a tap to tick one off. "
@@ -1766,6 +1774,32 @@ def _tile_routines(now, config=None, **_):
         return {'streaks': rows[:count]}
     except Exception as e:
         print(f"[home_board] routines failed: {e}")
+        return None
+
+
+def _tile_avatar_editor(now, config=None, **_):
+    """The dressing-up box as a card: a row of faces, each one a door.
+
+    The card is a launcher -- tapping a face runs the same PIN handshake and
+    opens the same overlay as the pencil on a lane. No avatar art built means
+    no card, honestly, rather than a grid of doors that open onto nothing."""
+    try:
+        from services import avatar_render
+        if not avatar_render.available():
+            return None
+        wanted = _cfg_ids(config, 'members')
+        rows = []
+        for m in storage.get_all_members():
+            if wanted and m['id'] not in wanted:
+                continue
+            rows.append({'member_id': m['id'], 'name': m.get('name'),
+                         'color_code': m.get('color_code'),
+                         'avatar': m.get('avatar'),
+                         'image': _member_image(m),
+                         'has_pin': bool(m.get('pin_hash'))})
+        return {'members': rows, 'interactive': True} if rows else None
+    except Exception as e:
+        print(f"[home_board] avatar editor tile failed: {e}")
         return None
 
 
@@ -3391,6 +3425,7 @@ _BUILDERS: dict = {
     'shopping_list': _tile_shopping_list,
     'chores_lanes': _tile_chores_lanes, 'chores_rewards': _tile_chores_goals,
     'routines': _tile_routines, 'routines_lanes': _tile_routines_lanes,
+    'avatar_editor': _tile_avatar_editor,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,
     'moments_gallery': _tile_moments_gallery,
     'calendar': _tile_calendar, 'errands': _tile_errands, 'tasks': _tile_tasks,

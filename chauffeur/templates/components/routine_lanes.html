@@ -47,11 +47,20 @@
                                 <!-- Lane header -->
                                 <template x-if="routineShow('header')">
                                 <div class="flex items-center gap-3 pb-2 border-b border-gray-700">
-                                    <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0 overflow-hidden"
-                                        :style="'background-color:' + (s.color_code || '#3b82f6')">
-                                        <template x-if="s.image"><img :src="s.image" class="w-full h-full object-cover"></template>
-                                        <template x-if="!s.image"><span x-text="s.avatar || (s.name || '?').charAt(0)"></span></template>
-                                    </div>
+                                    <!-- Your face is the door to the dressing-up box: tap it to
+                                         edit your look (avatar arc A3). Wordless on purpose. -->
+                                    <button type="button" class="relative shrink-0"
+                                        :disabled="typeof openAvatarEditor === 'undefined'"
+                                        @click="typeof openAvatarEditor !== 'undefined'
+                                                && openAvatarEditor({ id: s.member_id, name: s.name })">
+                                        <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white overflow-hidden"
+                                            :style="'background-color:' + (s.color_code || '#3b82f6')">
+                                            <template x-if="s.image"><img :src="s.image" class="w-full h-full object-cover"></template>
+                                            <template x-if="!s.image"><span x-text="s.avatar || (s.name || '?').charAt(0)"></span></template>
+                                        </div>
+                                        <span x-show="typeof openAvatarEditor !== 'undefined'"
+                                            class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[9px]">✏️</span>
+                                    </button>
                                     <div class="min-w-0 flex-1">
                                         <div class="font-bold text-white text-lg truncate" x-text="s.name"></div>
                                         <template x-if="routineShow('status') && s.status">
