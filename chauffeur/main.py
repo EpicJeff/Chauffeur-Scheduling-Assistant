@@ -7379,6 +7379,22 @@ def avatar_catalog_endpoint(member_id: Optional[str] = None):
             'headwear': list(cat.HEADWEAR), 'counters': counters}
 
 
+@app.get("/api/avatar/bundle")
+def avatar_bundle_endpoint():
+    """Everything the browser needs to composite avatars locally.
+
+    The editor draws a grid of thumbnails that each re-render as the member
+    changes something -- far too chatty to ask the server for one at a time.
+    So the art ships once (~80KB gzipped) and the browser runs the same layer
+    stack. Every path and palette in here comes from services/avatar_render, so
+    the two compositors can disagree about code but never about data."""
+    from services import avatar_render
+    if not avatar_render.available():
+        raise HTTPException(status_code=503,
+                            detail="Avatar art not built. Run tools/extract_avataaars.py")
+    return avatar_render.bundle()
+
+
 @app.get("/api/avatar/{member_id}")
 def get_avatar_endpoint(member_id: str):
     """Sync on read, so somebody who earned a piece while the app was closed --

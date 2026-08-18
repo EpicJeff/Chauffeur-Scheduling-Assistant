@@ -79,6 +79,24 @@ _LOWER = ("M76,280 L188,280 C188,318 186,346 184,372 "
           "C82,510 79,462 76,414 C75,402 76,394 80,372 "
           "C78,346 76,318 76,280 Z")
 
+# Verbatim source geometry: the head/neck/shoulder silhouette, and the shadow
+# the chin casts on the neck. Module-level so the browser bundle can serve them
+# instead of the client re-typing them.
+_BODY_PATH = ("M124,144.610951 L124,163 L128,163 C167.764502,163 200,195.235498 "
+              "200,235 L200,244 L0,244 L0,235 C0,195.235498 32.235498,163 72,163 "
+              "L72,163 L76,163 L76,144.610951 C58.7626345,136.422372 "
+              "46.3722246,119.687011 44.3051388,99.8812385 C38.4803105,99.0577866 "
+              "34,94.0521096 34,88 L34,74 C34,68.0540074 38.3245733,63.1180731 "
+              "44,62.1659169 L44,56 C44,25.072054 69.072054,0 100,0 "
+              "C130.927946,0 156,25.072054 156,56 L156,62.1659169 "
+              "C161.675427,63.1180731 166,68.0540074 166,74 L166,88 "
+              "C166,94.0521096 161.51969,99.0577866 155.694861,99.8812385 "
+              "C153.627775,119.687011 141.237365,136.422372 124,144.610951 Z")
+_NECK_SHADOW = ("M156,79 L156,102 C156,132.927946 130.927946,158 100,158 "
+                "C69.072054,158 44,132.927946 44,102 L44,79 L44,94 "
+                "C44,124.927946 69.072054,150 100,150 C130.927946,150 "
+                "156,124.927946 156,94 L156,79 Z")
+
 # Bottoms. Cut slightly WIDER than the leg beneath, or a sliver of skin shows
 # down the inner edge -- see docs/avatar_design.md.
 BOTTOMS = {
@@ -261,10 +279,8 @@ def render_svg(config: Dict, crop: str = 'head', size: Optional[int] = None,
         f'<g id="{ns}body" transform="translate(32,36)">'
         f'<mask id="{body_mask}" fill="white"><use xlink:href="#{ns}bodypath"/></mask>'
         f'<use fill="{skin}" xlink:href="#{ns}bodypath"/>'
-        f'<path d="M156,79 L156,102 C156,132.927946 130.927946,158 100,158 '
-        f'C69.072054,158 44,132.927946 44,102 L44,79 L44,94 C44,124.927946 '
-        f'69.072054,150 100,150 C130.927946,150 156,124.927946 156,94 L156,79 Z" '
-        f'fill="{SHADE}" fill-opacity="0.1" mask="url(#{body_mask})"/></g>'
+        f'<path d="{_NECK_SHADOW}" fill="{SHADE}" fill-opacity="0.1" '
+        f'mask="url(#{body_mask})"/></g>'
     )
 
     lower = ''
@@ -336,17 +352,6 @@ def render_svg(config: Dict, crop: str = 'head', size: Optional[int] = None,
             f'{_piece("mouth", cfg, ns)}{_piece("nose", cfg, ns)}'
             f'{_piece("eyes", cfg, ns)}{_piece("eyebrow", cfg, ns)}</g>')
 
-    body_path = ("M124,144.610951 L124,163 L128,163 C167.764502,163 200,195.235498 "
-                 "200,235 L200,244 L0,244 L0,235 C0,195.235498 32.235498,163 72,163 "
-                 "L72,163 L76,163 L76,144.610951 C58.7626345,136.422372 "
-                 "46.3722246,119.687011 44.3051388,99.8812385 C38.4803105,99.0577866 "
-                 "34,94.0521096 34,88 L34,74 C34,68.0540074 38.3245733,63.1180731 "
-                 "44,62.1659169 L44,56 C44,25.072054 69.072054,0 100,0 "
-                 "C130.927946,0 156,25.072054 156,56 L156,62.1659169 "
-                 "C161.675427,63.1180731 166,68.0540074 166,74 L166,88 "
-                 "C166,94.0521096 161.51969,99.0577866 155.694861,99.8812385 "
-                 "C153.627775,119.687011 141.237365,136.422372 124,144.610951 Z")
-
     hair_extra_svg = (f'<path d="{hair_extra}" fill="{accent}"/>' if hair_extra else '')
     dims = f'width="{size}" ' if size else ''
     return (
@@ -354,7 +359,7 @@ def render_svg(config: Dict, crop: str = 'head', size: Optional[int] = None,
         f'xmlns:xlink="http://www.w3.org/1999/xlink" {dims}'
         f'viewBox="0 0 264 {height}" preserveAspectRatio="xMidYMax meet" '
         f'role="img" aria-label="avatar">'
-        f'<defs><path d="{body_path}" id="{ns}bodypath"/></defs>'
+        f'<defs><path d="{_BODY_PATH}" id="{ns}bodypath"/></defs>'
         f'<g fill="none" fill-rule="evenodd" stroke="none">'
         f'{lower}{head}{torso_ext}{_piece("clothes", cfg, ns)}{extras}'
         f'{face}{_piece("top", cfg, ns)}'
@@ -366,3 +371,33 @@ def render_svg(config: Dict, crop: str = 'head', size: Optional[int] = None,
 def render_for_member(member_id: str, crop: str = 'head', **kw) -> str:
     from services import storage
     return render_svg(storage.get_avatar_config(member_id), crop, **kw)
+
+
+def bundle() -> Dict:
+    """Everything a browser needs to composite locally.
+
+    The editor renders a grid of ~37 thumbnails that each change as the member
+    changes, which is far too chatty to ask the server for. So the browser gets
+    the art once (80KB gzipped) and runs the same layer stack. Only the
+    assembly loop is duplicated -- every path, palette and baked hem in here is
+    served from this one source, so the two can never disagree about DATA."""
+    from services import avatar_catalog as cat
+    return {
+        'pieces': _load(),
+        'hems': _hems(),
+        'palettes': {'skin': SKIN_COLORS, 'hair_color': HAIR_COLORS,
+                     'clothe_color': CLOTHE_COLORS, 'hat_color': HAT_COLORS,
+                     'bottoms_color': CLOTHE_COLORS, 'shoes_color': CLOTHE_COLORS,
+                     'accent_color': CLOTHE_COLORS},
+        'defaults': {k: v[1] for k, v in _PALETTES.items()},
+        'rig': {'armL': _ARM_L, 'armR': _ARM_R, 'sleeveL': _SLEEVE_L,
+                'sleeveR': _SLEEVE_R, 'lower': _LOWER, 'body': _BODY_PATH,
+                'neckShadow': _NECK_SHADOW, 'shade': SHADE},
+        'tables': {'bottoms': BOTTOMS, 'bottomsDetail': BOTTOMS_DETAIL,
+                   'shoes': SHOES, 'neck': NECK, 'wrist': WRIST,
+                   'waist': WAIST, 'hair_accessory': HAIR_ACCESSORY},
+        'hems_meta': {'structured': sorted(STRUCTURED),
+                      'hemStructured': HEM_STRUCTURED, 'hemSoft': HEM_SOFT},
+        'slots': cat.get_slots(), 'groups': cat.GROUPS,
+        'palette_slots': cat.PALETTES,
+    }

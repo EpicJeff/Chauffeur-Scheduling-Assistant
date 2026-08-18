@@ -32,19 +32,64 @@ from typing import Dict, List, Optional
 #     one slot (that is how the source models it). A bow over a hat is wrong,
 #     so hair accessories declare a conflict with the headwear items instead.
 
+# `focus` is the viewBox a THUMBNAIL of this slot uses. It is not decoration:
+# a shoe inside a full-body thumbnail is about six pixels, and a grid of 37
+# identical tiny people is not a visual library. Each slot frames the thing
+# being chosen. The editor's users cannot be assumed to read, so the picture
+# has to carry the whole message.
+HEAD = '0 0 264 300'
+TORSO = '0 150 264 260'
+HIPS = '0 320 264 200'
+FEET = '0 470 264 140'
+ARMS = '0 330 264 140'
+WAISTLINE = '0 300 264 130'
+
 SLOTS = [
-    {'key': 'bottoms',        'label': 'Bottoms',    'z': 10, 'required': True},
-    {'key': 'shoes',          'label': 'Shoes',      'z': 20, 'required': True},
-    {'key': 'clothes',        'label': 'Top',        'z': 30, 'required': True},
-    {'key': 'graphic',        'label': 'Graphic',    'z': 35, 'required': False,
+    {'key': 'bottoms',        'label': 'Bottoms',    'z': 10, 'required': True,  'focus': HIPS},
+    {'key': 'shoes',          'label': 'Shoes',      'z': 20, 'required': True,  'focus': FEET},
+    {'key': 'clothes',        'label': 'Top',        'z': 30, 'required': True,  'focus': TORSO},
+    {'key': 'graphic',        'label': 'Graphic',    'z': 35, 'required': False, 'focus': TORSO,
      'only_with': ('clothes', 'GraphicShirt')},
-    {'key': 'waist',          'label': 'Belt',       'z': 40, 'required': False},
-    {'key': 'wrist',          'label': 'Wrist',      'z': 45, 'required': False},
-    {'key': 'neck',           'label': 'Neck',       'z': 50, 'required': False},
-    {'key': 'facial_hair',    'label': 'Facial hair','z': 55, 'required': False},
-    {'key': 'top',            'label': 'Hair & hats','z': 60, 'required': True},
-    {'key': 'hair_accessory', 'label': 'Hair extra', 'z': 65, 'required': False},
-    {'key': 'eyewear',        'label': 'Glasses',    'z': 70, 'required': False},
+    {'key': 'waist',          'label': 'Belt',       'z': 40, 'required': False, 'focus': WAISTLINE},
+    {'key': 'wrist',          'label': 'Wrist',      'z': 45, 'required': False, 'focus': ARMS},
+    {'key': 'neck',           'label': 'Neck',       'z': 50, 'required': False, 'focus': TORSO},
+    {'key': 'facial_hair',    'label': 'Facial hair','z': 55, 'required': False, 'focus': HEAD},
+    {'key': 'top',            'label': 'Hair & hats','z': 60, 'required': True,  'focus': HEAD},
+    {'key': 'hair_accessory', 'label': 'Hair extra', 'z': 65, 'required': False, 'focus': HEAD},
+    {'key': 'eyewear',        'label': 'Glasses',    'z': 70, 'required': False, 'focus': HEAD},
+    # Face parts are not unlockable -- they are identity, always free, and they
+    # live in the catalog only so the editor can offer them.
+    {'key': 'eyes',           'label': 'Eyes',       'z': 52, 'required': True,  'focus': HEAD},
+    {'key': 'eyebrow',        'label': 'Eyebrows',   'z': 53, 'required': True,  'focus': HEAD},
+    {'key': 'mouth',          'label': 'Mouth',      'z': 51, 'required': True,  'focus': HEAD},
+    {'key': 'nose',           'label': 'Nose',       'z': 54, 'required': True,  'focus': HEAD},
+]
+
+# Palette slots: colour swatches rather than avatar thumbnails. They sit inside
+# the group they belong to, because "hair colour" is only meaningful next to
+# hair.
+PALETTES = [
+    {'key': 'skin',          'label': 'Skin'},
+    {'key': 'hair_color',    'label': 'Hair colour'},
+    {'key': 'clothe_color',  'label': 'Top colour'},
+    {'key': 'bottoms_color', 'label': 'Bottoms colour'},
+    {'key': 'shoes_color',   'label': 'Shoe colour'},
+    {'key': 'accent_color',  'label': 'Accent'},
+]
+
+# Two tiers, because eleven slots in one strip is unusable and the reference
+# layouts all solve it this way. Glyphs lead: the word is for whoever can read
+# it, the picture is for everyone else (same compromise as kid_glyphs.html).
+GROUPS = [
+    {'key': 'me',      'label': 'Me',      'glyph': '🧑',
+     'tabs': ['skin', 'eyes', 'eyebrow', 'mouth', 'nose']},
+    {'key': 'hair',    'label': 'Hair',    'glyph': '💇',
+     'tabs': ['top', 'hair_color', 'facial_hair', 'hair_accessory']},
+    {'key': 'clothes', 'label': 'Clothes', 'glyph': '👕',
+     'tabs': ['clothes', 'clothe_color', 'graphic', 'bottoms', 'bottoms_color',
+              'shoes', 'shoes_color']},
+    {'key': 'extras',  'label': 'Extras',  'glyph': '🕶️',
+     'tabs': ['eyewear', 'neck', 'wrist', 'waist', 'accent_color']},
 ]
 
 # Headwear lives in `top` alongside hair; a hair accessory cannot sit on it.
@@ -103,8 +148,21 @@ _GRAPHICS = ['Skull', 'SkullOutline', 'Bat', 'Cumbia', 'Deer', 'Diamond',
              'Hola', 'Selena', 'Pizza', 'Resist', 'Bear']
 
 
+# A face is not a reward. Every expression, always.
+_EYES = ['Default', 'Happy', 'Wink', 'WinkWacky', 'Squint', 'Surprised', 'Side',
+         'Close', 'EyeRoll', 'Hearts', 'Dizzy', 'Cry']
+_EYEBROW = ['Default', 'DefaultNatural', 'RaisedExcited', 'RaisedExcitedNatural',
+            'FlatNatural', 'UpDown', 'UpDownNatural', 'Angry', 'AngryNatural',
+            'SadConcerned', 'SadConcernedNatural', 'FrownNatural', 'UnibrowNatural']
+_MOUTH = ['Default', 'Smile', 'Twinkle', 'Serious', 'Tongue', 'Eating',
+          'Grimace', 'Concerned', 'Disbelief', 'Sad', 'ScreamOpen', 'Vomit']
+
 ITEMS: List[Dict] = (
-    _free('top', _HAIR + _IDENTITY_HEADWEAR)
+    _free('eyes', _EYES)
+    + _free('eyebrow', _EYEBROW)
+    + _free('mouth', _MOUTH)
+    + _free('nose', ['Default'])
+    + _free('top', _HAIR + _IDENTITY_HEADWEAR)
     + _unlock('top', [
         ('Hat',        TRACK_ROUTINE, 20),
         ('WinterHat1', TRACK_ROUTINE, 60),

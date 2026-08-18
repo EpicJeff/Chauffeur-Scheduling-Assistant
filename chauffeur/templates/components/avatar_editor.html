@@ -1,0 +1,402 @@
+<!-- Avatar editor. One component, two mounts (kiosk-shares-logic pattern):
+     a placeable board card, and the PIN-gated overlay that opens from any
+     avatar's edit button. Presentation differs; none of the logic does.
+
+     THE USERS CANNOT BE ASSUMED TO READ. Every consequence of this:
+       - Options are a grid of RENDERED THUMBNAILS, never a list of names.
+       - Each slot frames its own thumbnail (a shoe in a full-body tile is six
+         pixels), so `focus` on the slot is load-bearing, not decoration.
+       - Every thumbnail is YOU with one thing swapped, not a mannequin -- the
+         question a child is asking is "what will I look like".
+       - Tabs lead with a glyph; the word is for whoever can read it. Same
+         compromise kid_glyphs.html already made.
+       - Locked pieces stay VISIBLE, greyed with a padlock and a progress ring.
+         An unlock nobody knew about motivates nobody, and a ring says "nearly"
+         without a number.
+       - Shuffle exists because for a pre-reader it teaches the whole system
+         without a word.
+
+     LAYOUT IS VERTICAL EVERYWHERE, and that is a reach decision, not a visual
+     one: a side panel is full height, so its top rows sit as high as anything
+     on a wall panel. Stacked keeps every tap low. Which is only true if the
+     preview holds NO controls -- so undo/redo/shuffle/save live in a bar at
+     the bottom edge, and the preview band is inert. -->
+<script>
+function avatarEditor(config) {
+    return {
+        memberId: config.memberId,
+        token: config.token || null,
+        onSaved: config.onSaved || null,
+        bundle: null, catalog: null,
+        cfg: {}, owned: new Set(), counters: {},
+        group: 'me', tab: null,
+        history: [], future: [],
+        loading: true, saving: false, error: '',
+        dirty: false,
+        thumbCache: new Map(),
+
+        async init() {
+            try {
+                const [b, cat, mine] = await Promise.all([
+                    fetch('/api/avatar/bundle').then(r => r.json()),
+                    fetch(`/api/avatar/catalog?member_id=${encodeURIComponent(this.memberId)}`).then(r => r.json()),
+                    fetch(`/api/avatar/${encodeURIComponent(this.memberId)}`).then(r => r.json()),
+                ]);
+                this.bundle = b; this.catalog = cat;
+                this.cfg = Object.assign({}, mine.config || {});
+                this.owned = new Set(mine.unlocks || []);
+                this.counters = cat.counters || {};
+                this.tab = this.groupTabs('me')[0];
+            } catch (e) {
+                this.error = 'Could not load the dressing-up box.';
+            }
+            this.loading = false;
+        },
+
+        // --- model helpers -------------------------------------------------
+        get groups() { return (this.bundle && this.bundle.groups) || []; },
+        groupTabs(key) {
+            const g = this.groups.find(x => x.key === key);
+            return g ? g.tabs : [];
+        },
+        isPalette(tab) {
+            return !!(this.bundle.palettes || {})[tab];
+        },
+        slotMeta(key) {
+            return (this.bundle.slots || []).find(s => s.key === key) || {};
+        },
+        tabLabel(tab) {
+            if (this.isPalette(tab)) {
+                const p = (this.bundle.palette_slots || []).find(x => x.key === tab);
+                return p ? p.label : tab;
+            }
+            return this.slotMeta(tab).label || tab;
+        },
+        itemsFor(slot) {
+            return (this.catalog.items || []).filter(i => i.slot === slot);
+        },
+        isOwned(item) { return item.tier === 'free' || this.owned.has(item.id); },
+        progressPct(item) {
+            if (!item.threshold) return 0;
+            const at = item.progress || 0;
+            return Math.max(0, Math.min(100, Math.round(at * 100 / item.threshold)));
+        },
+
+        // --- editing -------------------------------------------------------
+        push() {
+            this.history.push(JSON.stringify(this.cfg));
+            if (this.history.length > 40) this.history.shift();
+            this.future.length = 0;
+            this.dirty = true;
+        },
+        choose(slot, key) {
+            const item = this.itemsFor(slot).find(i => i.key === key);
+            if (item && !this.isOwned(item)) return;   // locked: the tap is inert
+            this.push();
+            // Tapping the current choice again clears it, where the slot allows
+            // it. That is how a child discovers "none" without a word for it.
+            if (this.cfg[slot] === key && !this.slotMeta(slot).required) {
+                delete this.cfg[slot];
+            } else {
+                this.cfg[slot] = key;
+            }
+            this.cfg = Object.assign({}, this.cfg);
+        },
+        setColor(pal, name) {
+            this.push();
+            this.cfg[pal] = name;
+            this.cfg = Object.assign({}, this.cfg);
+        },
+        undo() {
+            if (!this.history.length) return;
+            this.future.push(JSON.stringify(this.cfg));
+            this.cfg = JSON.parse(this.history.pop());
+        },
+        redo() {
+            if (!this.future.length) return;
+            this.history.push(JSON.stringify(this.cfg));
+            this.cfg = JSON.parse(this.future.pop());
+        },
+        shuffle() {
+            this.push();
+            const next = Object.assign({}, this.cfg);
+            for (const slot of (this.bundle.slots || [])) {
+                const pool = this.itemsFor(slot.key).filter(i => this.isOwned(i));
+                if (!pool.length) continue;
+                if (!slot.required && Math.random() < 0.35) { delete next[slot.key]; continue; }
+                next[slot.key] = pool[Math.floor(Math.random() * pool.length)].key;
+            }
+            for (const p of (this.bundle.palette_slots || [])) {
+                const names = Object.keys(this.bundle.palettes[p.key] || {});
+                if (names.length) next[p.key] = names[Math.floor(Math.random() * names.length)];
+            }
+            this.cfg = next;
+        },
+        async save() {
+            this.saving = true; this.error = '';
+            try {
+                const headers = { 'Content-Type': 'application/json' };
+                if (this.token) headers['X-Member-Token'] = this.token;
+                const r = await fetch(`/api/avatar/${encodeURIComponent(this.memberId)}`,
+                    { method: 'POST', headers, body: JSON.stringify({ config: this.cfg }) });
+                if (r.status === 403) { this.error = 'Ask a grown-up for your PIN.'; return; }
+                if (!r.ok) { this.error = 'That did not save. Try again?'; return; }
+                const out = await r.json();
+                this.cfg = out.config || this.cfg;
+                this.dirty = false;
+                if (this.onSaved) this.onSaved(this.cfg);
+            } catch (e) {
+                this.error = 'That did not save. Try again?';
+            } finally { this.saving = false; }
+        },
+
+        // --- the compositor ------------------------------------------------
+        // Mirrors services/avatar_render.render_svg. Only this loop is
+        // duplicated; every path and colour it uses came from the bundle.
+        color(kind, chosen) {
+            const table = this.bundle.palettes[kind] || {};
+            return table[chosen] || table[this.bundle.defaults[kind]] || '#000';
+        },
+        fillThrough(maskId, col) {
+            const rect = '<rect x="0" y="0" width="264" height="280"/>';
+            return maskId ? `<g mask="url(#${maskId})" fill="${col}">${rect}</g>`
+                          : `<g fill="${col}">${rect}</g>`;
+        },
+        expand(frag, ns, cfg, depth) {
+            if (!frag) return '';
+            let out = frag.split('{{NS}}').join(ns);
+            return out.replace(/\{\{(FILL|SLOT):([a-z_]+):?([^:}]*):?([^}]*)\}\}/g,
+                (m, kind, name, a, b) => {
+                    if (kind === 'FILL') return this.fillThrough(a, this.color(name, cfg[name] || b || null));
+                    if ((depth || 0) > 3) return '';
+                    return this.piece(name, cfg, ns, (depth || 0) + 1);
+                });
+        },
+        piece(slot, cfg, ns, depth) {
+            const key = cfg[slot];
+            if (!key) return '';
+            const frag = (this.bundle.pieces[slot] || {})[key];
+            if (frag === undefined) return '';
+            return this.expand(frag, `${ns}${slot}_`, cfg, depth);
+        },
+        conflicts(cfg) {
+            const out = [];
+            const headwear = (this.catalog.headwear || []);
+            if (headwear.includes(cfg.top) && cfg.hair_accessory) out.push('hair_accessory');
+            if (cfg.graphic && cfg.clothes !== 'GraphicShirt') out.push('graphic');
+            return out;
+        },
+        compose(rawCfg, opts) {
+            const o = opts || {};
+            const cfg = Object.assign({}, rawCfg);
+            for (const s of this.conflicts(cfg)) delete cfg[s];
+            const ns = `av${o.nonce || 'x'}_`;
+            const R = this.bundle.rig, T = this.bundle.tables, M = this.bundle.hems_meta;
+            const skin = this.color('skin', cfg.skin);
+            const clothe = this.color('clothe_color', cfg.clothe_color);
+            const accent = this.color('accent_color', cfg.accent_color);
+            const full = o.crop !== 'head';
+            const shade = (d, op) => `<path d="${d}" fill="${R.shade}" fill-opacity="${op || '0.1'}"/>`;
+
+            let lower = '';
+            if (full) {
+                const bot = T.bottoms[cfg.bottoms], det = T.bottomsDetail[cfg.bottoms],
+                      sh = T.shoes[cfg.shoes],
+                      botCol = this.color('bottoms_color', cfg.bottoms_color);
+                lower = `<path d="${R.armL}" fill="${skin}"/><path d="${R.armR}" fill="${skin}"/>`
+                      + `<path d="${R.lower}" fill="${skin}"/>`
+                      + (bot ? `<path d="M78,336 L186,336 C187,352 187,360 186,372 L78,372 `
+                             + `C77,360 77,352 78,336 Z" fill="${botCol}"/>`
+                             + `<path d="${bot}" fill="${botCol}"/>` : '')
+                      + (det ? shade(det, '0.16') : '')
+                      + (sh ? `<path d="${sh}" fill="${this.color('shoes_color', cfg.shoes_color)}"/>` : '');
+            }
+
+            const bodyMask = `${ns}bodymask`;
+            const head = `<g transform="translate(32,36)">`
+                + `<mask id="${bodyMask}" fill="white"><use xlink:href="#${ns}bodypath"/></mask>`
+                + `<use fill="${skin}" xlink:href="#${ns}bodypath"/>`
+                + `<path d="${R.neckShadow}" fill="${R.shade}" fill-opacity="0.1" mask="url(#${bodyMask})"/></g>`;
+
+            let torso = '';
+            if (full) {
+                const topKey = cfg.clothes || '';
+                const hem = M.structured.includes(topKey) ? M.hemStructured : M.hemSoft;
+                const runs = this.bundle.hems[topKey];
+                const taper = `M76,280 L188,280 C188,310 186,${hem - 26} 184,${hem} `
+                            + `L80,${hem} C78,${hem - 26} 76,310 76,280 Z`;
+                if (runs && runs.length) {
+                    const bars = runs.map(r => `<rect x="${r.x}" y="280" width="${r.w}" `
+                        + `height="${hem - 280}" fill="${r.fill || clothe}"/>`).join('');
+                    torso = `<clipPath id="${ns}tc"><path d="${taper}"/></clipPath>`
+                          + `<g clip-path="url(#${ns}tc)">${bars}</g>`;
+                } else {
+                    torso = `<path d="${taper}" fill="${clothe}"/>`;
+                }
+                if (M.structured.includes(topKey)) {
+                    torso += shade(`M78,${hem - 8} L186,${hem - 8} L184,${hem} L80,${hem} Z`, '0.16');
+                }
+                const l = (runs && runs.length && runs[0].fill) || clothe;
+                const r2 = (runs && runs.length && runs[runs.length - 1].fill) || clothe;
+                torso += `<path d="${R.sleeveL}" fill="${l}"/><path d="${R.sleeveR}" fill="${r2}"/>`;
+            }
+
+            let extras = '';
+            if (full) {
+                for (const [slot, table] of [['waist', T.waist], ['wrist', T.wrist], ['neck', T.neck]]) {
+                    const d = table[cfg[slot]];
+                    if (d) extras += `<path d="${d}" fill="${accent}"/>`;
+                }
+            }
+            const hx = T.hair_accessory[cfg.hair_accessory];
+            const face = `<g transform="translate(76,82)" fill="#000000">`
+                + this.piece('mouth', cfg, ns) + this.piece('nose', cfg, ns)
+                + this.piece('eyes', cfg, ns) + this.piece('eyebrow', cfg, ns) + '</g>';
+
+            const vb = o.viewBox || (full ? '0 0 264 600' : '0 0 264 280');
+            return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" `
+                + `viewBox="${vb}" preserveAspectRatio="xMidYMid meet" `
+                + `style="${o.fit || 'width:100%;height:100%'};display:block" role="img" aria-hidden="true">`
+                + `<defs><path d="${R.body}" id="${ns}bodypath"/></defs>`
+                + `<g fill="none" fill-rule="evenodd" stroke="none">`
+                + lower + head + torso + this.piece('clothes', cfg, ns) + extras + face
+                + this.piece('top', cfg, ns)
+                + (hx ? `<path d="${hx}" fill="${accent}"/>` : '')
+                + `</g></svg>`;
+        },
+
+        // The live preview. Full body, always -- it is the thing being made.
+        preview() {
+            // height-led, not width-led: the band is short and wide, and a
+            // width-led SVG at 264/600 would overflow it every time.
+            return this.compose(this.cfg, { crop: 'full', nonce: 'pv',
+                                            fit: 'height:100%;width:auto;margin:0 auto' });
+        },
+        // A thumbnail is the member's own avatar with ONE thing swapped, framed
+        // to the slot so the change is the thing you can see. Cached per
+        // (slot,key,config) because a grid re-renders on every tap.
+        thumb(slot, key, idx) {
+            const meta = this.slotMeta(slot);
+            const probe = Object.assign({}, this.cfg); probe[slot] = key;
+            const ck = slot + '|' + key + '|' + JSON.stringify(this.cfg);
+            if (this.thumbCache.has(ck)) return this.thumbCache.get(ck);
+            const svg = this.compose(probe, {
+                crop: 'full', nonce: 't' + idx,
+                viewBox: meta.focus || '0 0 264 600', cls: 'w-full h-full',
+            });
+            if (this.thumbCache.size > 400) this.thumbCache.clear();
+            this.thumbCache.set(ck, svg);
+            return svg;
+        },
+    };
+}
+</script>
+
+<div class="flex flex-col h-full min-h-0 select-none"
+     x-data="avatarEditor(JSON.parse($el.dataset.avatarConfig || '{}'))" x-init="init()">
+
+    <div x-show="loading" class="flex-1 grid place-items-center text-gray-400">Getting the dressing-up box…</div>
+
+    <template x-if="!loading && bundle">
+    <div class="flex flex-col h-full min-h-0">
+
+        <!-- PREVIEW BAND. Deliberately inert: no buttons live up here, because
+             on a wall panel this is the part a small child cannot reach. -->
+        <div class="shrink-0 grid place-items-center py-2 overflow-hidden"
+             style="height:38%; min-height:150px;" >
+            <div class="h-full" x-html="preview()"></div>
+        </div>
+
+        <!-- GROUP TABS: glyph first, word alongside for whoever reads. -->
+        <div class="shrink-0 flex gap-1 px-2 border-b border-white/10">
+            <template x-for="g in groups" :key="g.key">
+                <button type="button"
+                        @click="group = g.key; tab = groupTabs(g.key)[0]"
+                        class="flex-1 flex flex-col items-center gap-0.5 py-2 rounded-t-lg transition"
+                        :class="group === g.key ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-gray-200'">
+                    <span class="text-2xl leading-none" x-text="g.glyph"></span>
+                    <span class="text-[11px] font-medium" x-text="g.label"></span>
+                </button>
+            </template>
+        </div>
+
+        <!-- SUB-TAB CHIPS -->
+        <div class="shrink-0 flex gap-1.5 px-2 py-2 overflow-x-auto">
+            <template x-for="t in groupTabs(group)" :key="t">
+                <button type="button" @click="tab = t"
+                        class="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition"
+                        :class="tab === t ? 'bg-blue-500 text-white' : 'bg-white/10 text-gray-300'"
+                        x-text="tabLabel(t)"></button>
+            </template>
+        </div>
+
+        <!-- THE LIBRARY -->
+        <div class="flex-1 min-h-0 overflow-y-auto px-2 pb-2">
+
+            <!-- colour swatches -->
+            <template x-if="tab && isPalette(tab)">
+                <div class="grid grid-cols-5 sm:grid-cols-8 gap-2">
+                    <template x-for="(hex, name) in bundle.palettes[tab]" :key="name">
+                        <button type="button" @click="setColor(tab, name)"
+                                class="aspect-square rounded-xl border-2 transition"
+                                :style="`background:${hex}`"
+                                :class="(cfg[tab] || bundle.defaults[tab]) === name
+                                        ? 'border-blue-400 scale-95' : 'border-white/15'"
+                                :aria-label="name"></button>
+                    </template>
+                </div>
+            </template>
+
+            <!-- rendered option tiles -->
+            <template x-if="tab && !isPalette(tab)">
+                <div class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-7 gap-2">
+                    <template x-for="(item, idx) in itemsFor(tab)" :key="item.id">
+                        <button type="button" @click="choose(tab, item.key)"
+                                class="relative aspect-square rounded-xl overflow-hidden border-2 transition bg-white/5"
+                                :class="[
+                                    cfg[tab] === item.key ? 'border-blue-400' : 'border-transparent',
+                                    isOwned(item) ? '' : 'cursor-default'
+                                ]"
+                                :aria-label="item.label">
+                            <div class="w-full h-full" :class="isOwned(item) ? '' : 'opacity-25 grayscale'"
+                                 x-html="thumb(tab, item.key, idx)"></div>
+
+                            <!-- locked: padlock + a ring that says 'nearly' without a number -->
+                            <template x-if="!isOwned(item)">
+                                <div class="absolute inset-0 grid place-items-center">
+                                    <div class="relative w-9 h-9 grid place-items-center">
+                                        <svg viewBox="0 0 36 36" class="absolute inset-0 -rotate-90">
+                                            <circle cx="18" cy="18" r="16" fill="none"
+                                                    stroke="rgba(255,255,255,.2)" stroke-width="3"/>
+                                            <circle cx="18" cy="18" r="16" fill="none"
+                                                    stroke="#60a5fa" stroke-width="3" stroke-linecap="round"
+                                                    :stroke-dasharray="`${progressPct(item)} 100`"
+                                                    pathLength="100"/>
+                                        </svg>
+                                        <span class="text-base">🔒</span>
+                                    </div>
+                                </div>
+                            </template>
+                        </button>
+                    </template>
+                </div>
+            </template>
+        </div>
+
+        <!-- CONTROL BAR. Everything tappable lives at the bottom edge: this is
+             what lets one vertical layout serve a phone and a wall panel. -->
+        <div class="shrink-0 flex items-center gap-2 px-2 py-2 border-t border-white/10">
+            <button type="button" @click="undo()" :disabled="!history.length"
+                    class="w-11 h-11 rounded-xl bg-white/10 text-xl disabled:opacity-30" aria-label="Undo">↺</button>
+            <button type="button" @click="redo()" :disabled="!future.length"
+                    class="w-11 h-11 rounded-xl bg-white/10 text-xl disabled:opacity-30" aria-label="Redo">↻</button>
+            <button type="button" @click="shuffle()"
+                    class="w-11 h-11 rounded-xl bg-white/10 text-xl" aria-label="Surprise me">🎲</button>
+            <span class="flex-1 text-xs text-red-300 truncate" x-text="error"></span>
+            <button type="button" @click="save()" :disabled="saving || !dirty"
+                    class="px-5 h-11 rounded-xl bg-blue-500 text-white font-semibold disabled:opacity-40"
+                    x-text="saving ? 'Saving…' : 'Save'"></button>
+        </div>
+    </div>
+    </template>
+</div>
