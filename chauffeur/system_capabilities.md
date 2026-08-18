@@ -3007,9 +3007,30 @@ their entire wall.
   `loadSetup` returns, and `save()` omits the key entirely until then — omitted,
   not emptied, because the server merges what it is sent.
 
-**Not recoverable for a board already hit.** The stored pages are gone; what
-comes back is the pre-pages snapshot, which is why the tiles look familiar and
-the grid does not.
+**Where the "default" home board actually comes from** — it is NOT in
+`builtin_boards.json`, and that is correct: the eleven boards in there are the
+app's own destinations (schedule, calendar, errands, shopping, occasions,
+chores, routines, trips, map, moments, music). `home` is never shipped, because
+a household's home board is theirs. The fallback chain is:
+
+1. `settings['panel_pages']` — the household's own boards, the `home`-slugged
+   one among them. This is the real answer in any install that has ever opened
+   the editor.
+2. Empty or unusable → **`_legacy_page(settings)`** in `home_board.py`: the
+   pre-pages keys, i.e. `panel_widgets`, `panel_tile_spans`,
+   `grid_columns(settings)` (`panel_grid_columns`, default 12) and
+   `grid_row_height(settings)` (`panel_grid_row_height`, default 240) — and
+   **no `gap` at all**, so `_page_from` supplies 16. That missing gap is the
+   fingerprint: a board showing a 16px gutter the household never chose came
+   through here.
+3. `panel_widgets` empty too → `DEFAULT_WIDGETS` (13 tiles).
+
+**Not recoverable from the app for a board already hit.** The stored pages are
+gone; what comes back is the pre-pages snapshot, which is why the tiles look
+familiar and the grid does not. A board list dumped from
+`GET /api/home_board/pages` restores verbatim through
+`POST /api/settings {"panel_pages": [...]}` — the two endpoints speak the same
+shape, which is also how `builtin_boards.json` is authored.
 
 Tests: `test_board_pages.py — scenario_an_empty_board_list_never_replaces_a_real_one`
 (the refusal, that the rest of the save still lands, that a real list still
