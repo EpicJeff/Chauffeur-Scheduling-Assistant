@@ -76,52 +76,83 @@ at once, and there is no payoff at 40px.
 
 ### Source survey (checked 2026-08-18)
 
-| | Character Creator | Open Peeps | DiceBear |
-|---|---|---|---|
-| Where | [ubik23/charactercreator](https://github.com/ubik23/charactercreator), [charactercreator.org](https://charactercreator.org/) | [openpeeps.com](https://www.openpeeps.com/) | [dicebear.com](https://www.dicebear.com/) |
-| Who | Frédéric Guimont, Studio Chacre | Pablo Stanley | library wrapping many styles |
-| Art licence | **CC-BY-NC** (commercial via Patreon $5/mo) | **CC0** | per style: CC0, CC BY 4.0, proprietary-free |
-| Code licence | **AGPL** | n/a (assets only) | MIT |
-| Full body | **yes** — ships full body / upper body / close-up zooms | **yes** — standing, sitting, and bust | **no** for Open Peeps — the port is half-body |
-| Format | layered SVG | SVG + PNG | composed SVG out |
-| Real wardrobe | **yes** — the reason to pick it | **no** — clothing is baked into the pose art | fixed per style |
+The style we want and the coverage we want do not exist in the same library.
+Every flat cartoon avatar set in the Avataaars family is **bust only**; the two
+full-body sets are in styles we do not want.
 
-**Character Creator — the only one with an actual wardrobe.** Kisekae paper-doll
-style, layered SVG, and it already ships the two zoom levels this design needs.
-Three cautions:
+| | Avataaars | Beanheads | Character Creator | Open Peeps | DiceBear |
+|---|---|---|---|---|---|
+| Who | Pablo Stanley (art), fangpenlin (port) | Robert Broersma | Frédéric Guimont | Pablo Stanley | wrapper library |
+| Art licence | **free, personal + commercial** | **MIT** | CC-BY-NC (commercial = Patreon) | CC0 | mixed per style |
+| Code licence | **MIT** | MIT | **AGPL** | n/a | MIT |
+| Full body | no — bust | no — bust | yes | yes | no |
+| Real wardrobe | **yes** | yes | yes | **no** — clothing is drawn into the pose | fixed per style |
+| Style | flat bold cartoon | flat bold cartoon | detailed semi-realistic | sketchy hand-drawn | varies |
 
-1. **The AGPL is on the code, the CC-BY-NC is on `src/layer/` only.** Take the
-   assets; do not read or copy the layer-toggling logic. Chauffeur's repo is
-   public and ships an add-on — copying AGPL code relicenses the app. Our
-   compositor is ~20 lines and is written clean-room regardless.
-2. **NC is the only live constraint and it only bites if Chauffeur ever
-   monetises.** CC-BY-NC permits redistribution, so committing assets to a
-   public non-commercial repo with visible attribution is within the licence.
-   Add the credit. If the project ever takes money, the $5/mo patron tier
-   clears it — and also unlocks extra angles and poses.
-3. **`src/layer/` splits into `female/` and `male/` — two complete trees.**
-   This is exactly the 2x wardrobe tax this design set out to avoid, and worse,
-   it hard-forks the wardrobe by gender: a kid could not wear an item from the
-   other tree. That fights *identity is free* directly. **Pick one tree as the
-   base rig and port the best of the other onto it.** This is the single
-   biggest unknown in A0 and the thing that decides the schedule.
+**Decision: Avataaars is the rig, and we draw the lower body ourselves.**
 
-**Open Peeps — lovely, free, and nearly nothing to unlock.** Genuinely CC0 and
-genuinely full body (the *original*; DiceBear's port of it is half-body only,
-which is the trap). But its ~584k combinations come from faces, hair and poses,
-not from a clothing system — clothing is drawn into each pose. An unlock
-economy built on flair needs a wardrobe, and this has almost none. Excellent
-art, wrong shape.
+This is not a compromise, it is the cheapest path, for three reasons:
 
-**DiceBear — a renderer, not an asset library.** It hands back one composed
-SVG; individual layers are not ours to own, and adding a single hat means
-forking a style package. The premise that *adding wardrobe is adding catalog
-rows* does not survive it. **But it has one genuinely good role:** deterministic
-seed-based generation makes it the perfect **day-one default** — every member
-gets a distinct, decent-looking avatar before anyone opens the editor, and
-building a character becomes an upgrade rather than a chore. Adopt it for that
-and nothing else.
+1. **Flat style is cheap to extend.** Avataaars is flat fills, bold rounded
+   shapes, no gradients or line shading. Legs, shoes and trousers in that style
+   are a handful of SVG paths each. Extending Character Creator's rendering
+   style would be a genuine illustration job; extending this one is not. The
+   style that *looks* like less work actually is less work.
+2. **It is legible at 40px.** It was designed as an avatar, so the head crop is
+   its native form — the chip surfaces come free. Character Creator's detail
+   would have turned to mush at `w-8`.
+3. **The licences are clean.** Free for personal and commercial use on the art,
+   MIT on the port. No NC ambiguity, no AGPL trap, no attribution obligation to
+   design around (we will credit anyway).
 
+### The full-body extension is smaller than it looks
+
+Avataaars' canvas is `viewBox="0 0 264 280"`. Every garment sits in a group at
+`translate(0, 170)` and its path terminates at y=110 — **absolute y=280, exactly
+the bottom edge of the canvas.** The bust does not fade or taper; it ends flush
+on a flat horizontal line.
+
+So going full body needs **no modification to any existing asset**. Extend the
+viewBox downward and draw a new hips/legs/feet layer that starts at y=280 and
+butts against it. A shallow waistband layer overlapping the seam hides any
+join. The registration contract is already written and every existing garment
+already obeys it.
+
+What we author for v0: hips, two leg shapes, two shoe shapes, and trouser /
+shorts / skirt variants as flat paths over the legs. That is the entire
+full-body art task.
+
+### Inventory we inherit free
+
+| Category | Count |
+|---|---|
+| Tops (hair, hats, turban, hijab, eyepatch) | 37 |
+| Accessories (glasses) | 8 |
+| Facial hair | 8 |
+| Garments | 9 + graphic overlays |
+| Eyes / eyebrows / mouths / noses | 13 / 14 / 13 / 2 |
+
+Plus hair, hat, clothing and skin colour tables — every one of which multiplies
+the above at zero art cost.
+
+**Extraction note.** The assets are inline SVG inside React `.tsx` components
+using `lodash.uniqueId` for `<path>` and `<mask>` ids. Pulling them into plain
+SVG is mechanical but real work, and the ids matter: **our compositor must
+namespace ids per render**, or two avatars on the same board will collide on a
+shared mask id and one will render wrong. That is exactly why the original
+generates them at runtime.
+
+**DiceBear keeps one job:** deterministic seed-based generation as the
+**day-one default**, so every member has a distinct avatar before anyone opens
+the editor and building a character is an upgrade rather than a chore. Its
+avataaars style is a remix of the same Pablo Stanley art, so the default and
+the built character sit in the same visual family.
+
+**Not chosen:** Character Creator (style too detailed, CC-BY-NC + AGPL, and its
+`src/layer/` splits into `female/` and `male/` — two complete trees, which is
+both a 2x wardrobe tax and a hard gender fork of the wardrobe that fights
+*identity is free*). Open Peeps (CC0 and genuinely full body, but clothing is
+drawn into each pose, so there is almost nothing to unlock).
 ---
 
 ## Data model
@@ -226,12 +257,11 @@ limiting come for free.
 wall panel is theatre; `POST /api/avatar/config` requires a member token or a
 fresh PIN verification for that member, and re-checks server-side.
 
-**Open decision — a member with no PIN.** The existing endpoint no-ops the
-challenge when `pin_hash` is unset, which would leave a young kid's avatar
-open to any sibling at the panel. Options: (a) match existing posture, open;
-(b) require a PIN to edit from a panel, open on a signed-in device; (c) let a
-parent set "no PIN needed" per child. Recommendation: **(b)**, with the
-editor prompting to set a PIN on first use.
+**Decided — a member with no PIN edits freely.** The existing endpoint no-ops
+the challenge when `pin_hash` is unset, and the avatar editor matches that
+posture exactly rather than inventing a stricter rule for cosmetics than the
+app uses for everything else. A family that wants the protection sets a PIN;
+that already works. No new setting, no new code path.
 
 ## Economy
 
@@ -263,9 +293,10 @@ design.
 
 ## Slices
 
-- **A0** — pick the rig, collapse the two gender trees into one, define the
-  layer contract, import the first wardrobe. *The long pole. Everything else is
-  downstream of the rig being right.*
+- **A0** — extract Avataaars' SVG out of the `.tsx` components into plain
+  assets with namespaced ids, extend the viewBox, author the hips/legs/feet
+  layer and the first trousers and shoes. *The long pole, and the only slice
+  with real art in it.*
 - **A1** — catalog + unlock ledger + backfill + counters. No UI.
 - **A2** — renderer, both crops, `avatar_kind`, `avatarInner()` and the nine
   bypassing templates.
