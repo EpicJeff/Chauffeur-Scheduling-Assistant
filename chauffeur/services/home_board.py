@@ -256,6 +256,9 @@ WIDGETS = [
          # is not about a specific child, and the first household to put this
          # card on a board went looking for the setting that removed it.
          _opt('show_figure', 'The standing character', 'bool', True),
+         _opt('figure_compact', 'Compact avatar (small face)', 'bool', False,
+              help='On, the block shows the small face instead of the full '
+                   'figure - for pages that already show the figure nearby.'),
          _opt('show_day', 'Which day this is', 'bool', True,
               help='The strip flips between today and tomorrow at the '
                    'evening cutover, and says which.'),
@@ -1543,8 +1546,9 @@ def _tile_kids(now, kid_digest_fn=None, config=None, **_):
     # No weather: there is a weather CARD, and a payload that quietly carries
     # another card's content is how a board says the same thing twice.
     return {'label': digest.get('label'), 'kids': kids, 'lines': lines,
-            'parts': {p: _cfg_bool(config, f'show_{p}', True)
-                      for p in ('day', 'header', 'streak', 'tasks', 'routines', 'figure')}}
+            'parts': {**{p: _cfg_bool(config, f'show_{p}', True)
+                         for p in ('day', 'header', 'streak', 'tasks', 'routines', 'figure')},
+                      'figure_compact': _cfg_bool(config, 'figure_compact', False)}}
 
 
 def _tile_meals(now, config=None, **_):

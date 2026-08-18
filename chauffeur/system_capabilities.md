@@ -2890,8 +2890,21 @@ as every other figure surface -- as a tappable door, chip hidden while the
 figure shows (`show_figure` toggle, default on; figure rides the digest
 payload).
 
+**Figure placement pass (v2.285.0, family feedback).** Digest figures anchor
+TOP-left so blocks never grow to fit them. The kids card gains
+`figure_compact` (small face instead of the figure, for pages that draw the
+figure nearby) -- the shipped routines board sets it, since the lanes below
+carry the full figure. The HERO now honours the consumed kids card's config:
+`hero.kids_parts` rides the payload, so the home hero draws each kid's figure
+(band-sized, h-16) and the kids card's toggles keep meaning something even
+when the hero swallows the card. That is one instance of a general gap worth
+naming: **a hero that consumes a card hides that card's options from the
+board editor** -- the kids card fix threads config through by hand; a general
+"configure consumed cards" story is open architecture work.
+
 **Still open:** wardrobe breadth is deliberately thin and grows as data
-through the contact-sheet gate.
+through the contact-sheet gate; consumed-card configuration (above) wants a
+general answer.
 
 ## Security — how the house is locked (auth arc, standing reference)
 

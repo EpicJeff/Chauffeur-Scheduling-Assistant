@@ -137,7 +137,18 @@
                                 x-show="(hero.kids || []).length"
                                 :style="'grid-template-columns: repeat(' + Math.min((hero.kids||[]).length, 4) + ', minmax(0, 1fr))'">
                                 <template x-for="k in (hero.kids || [])" :key="k.name">
-                                    <a :href="link('routines')" class="block px-4 py-3 min-w-0 panel-card">
+                                    <a :href="link('routines')" class="block px-4 py-3 min-w-0 panel-card relative"
+                                        :class="(hero.kids_parts || {}).figure !== false
+                                                && !(hero.kids_parts || {}).figure_compact
+                                                && k.figure ? 'pl-14' : ''">
+                                        <!-- The consumed kids card's own toggles decide this
+                                             (avatar arc): the hero swallowing the card must not
+                                             swallow its configuration too. -->
+                                        <template x-if="(hero.kids_parts || {}).figure !== false
+                                                        && !(hero.kids_parts || {}).figure_compact
+                                                        && k.figure">
+                                            <img :src="k.figure" class="absolute top-2 left-2 h-16 drop-shadow-lg" :alt="k.name">
+                                        </template>
                                         <div class="text-sm font-black mb-1 truncate"
                                             :style="'color:' + tone(k.color_code, '#6366f1')" x-text="k.name"></div>
                                         <template x-for="(line, i) in k.lines.slice(0, 4)" :key="i">

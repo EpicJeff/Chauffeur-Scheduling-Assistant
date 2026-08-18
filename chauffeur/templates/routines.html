@@ -562,6 +562,9 @@
                 },
                 // The page shows every part; a card answers from its config.
                 digestShow(part) { return true; },
+                // the lanes right below draw the full figure; the digest strip
+                // up top shows the small face so the kid is not drawn twice
+                digestFigureFull(k) { return false; },
                 digestColumns() {
                     const n = this.digestCards().length;
                     if (n <= 1) return 1;
