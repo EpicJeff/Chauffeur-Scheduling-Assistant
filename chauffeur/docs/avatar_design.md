@@ -420,6 +420,31 @@ celebrate — reuse `status_celebration.html`.
 Parents get a hand path to **grant** items (config page). No revoke path, by
 design.
 
+## Full tops supersede extensions (user direction, 2026-08-18)
+
+"Stop trying to patch things together." Every catalog top is now a FULL
+garment in `FULL_TOPS` -- collar to hem, sleeves included, one self-contained
+multi-part asset drawn over the whole torso -- **keyed by its original name**,
+so saved configs, the unlock ledger and the editor carried over untouched.
+The source bust garments, the hem bake, the extrusion and the seam covers are
+dormant fallback code; nothing in the catalog reaches them.
+
+What this bought, beyond killing every torso seam class at once (garment hem
+AA, colour-mask #E6E6E6 leaks, shoulder skin joints -- fabric now covers them
+all):
+- The blazer takes the member's colour (the source hardcoded its jacket).
+- Chest graphics DRAW. They never had: `Graphics.tsx` holds all eleven in one
+  file, the extractor skipped it, and `{{SLOT:graphic}}` resolved to an empty
+  bucket -- the catalog sold unlockables that rendered nothing. Extracted now;
+  the renderer overlays them in the clothes frame (`translate(0,170)`).
+- Silhouette rules, learned on light backgrounds: shapes OVERLAP, never abut
+  (AA hairlines); leg separation is a DRAWN sh2 crease, never a transparent
+  gap (the page showed through the figure); shoe pairs gap 2 units.
+- The far-limb tint was tried and removed: on a symmetric front-facing rig it
+  reads as "one arm is the wrong colour", not depth.
+- Hair accessories anchor ON the hair (bow/clips y44-78): the face frame is
+  translate(76,82), so anything at y82-104 lands on the eyebrows.
+
 ## Production art: the rules the contact sheet taught (2026-08-18)
 
 `tools/avatar_contact_sheet.py` is the review gate for wardrobe art: every

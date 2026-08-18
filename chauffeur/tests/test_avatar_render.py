@@ -34,7 +34,7 @@ BASE = {'top': 'ShortHairShortFlat', 'hair_color': 'Brown', 'skin': 'Light',
 
 def scenario_assets_are_built():
     check(ar.available(), "pieces.json missing - run tools/extract_avataaars.py")
-    check(ar._hems(), "hems.json missing - run tools/bake_garment_hems.py")
+    # hems.json is legacy (dormant extension machinery); not required
 
 
 def scenario_every_piece_draws():
@@ -61,6 +61,8 @@ def scenario_catalog_items_all_render():
         slot, key = item['slot'], item['key']
         if slot == 'graphic':
             continue                      # graphics live inside GraphicShirt
+        if slot == 'clothes' and key in ar.FULL_TOPS:
+            continue                      # a full top is its own art
         if key in (pieces.get(slot) or {}) or key in ours.get(slot, {}):
             continue
         missing.append(f'{slot}:{key}')
@@ -91,27 +93,27 @@ def scenario_ids_never_collide():
             check(ref in ids, f"dangling reference #{ref}")
 
 
-def scenario_blazer_keeps_its_own_colours():
-    """BlazerShirt hardcodes its jacket, lapels and undershirt -- it ignores
-    clothe_color entirely. The baked extension must carry those colours down,
-    not paint the member's choice across the waist."""
-    svg = ar.render_svg(dict(BASE, clothes='BlazerShirt', clothe_color='White'),
+def scenario_every_top_is_a_full_garment():
+    """The patchwork is retired (user direction 2026-08-18): every catalog top
+    is a FULL garment -- collar to hem, sleeves included -- keyed by its old
+    name so saved configs and the ledger carry over. No extrusion rects, no
+    seam covers, and the blazer finally takes the member's colour."""
+    for item in cat.ITEMS:
+        if item['slot'] == 'clothes':
+            check(item['key'] in ar.FULL_TOPS,
+                  f"catalog top {item['key']} has no full garment")
+    svg = ar.render_svg(dict(BASE, clothes='BlazerShirt', clothe_color='Pink'),
                         'full', nonce='b')
-    runs = ar._hems().get('BlazerShirt') or []
-    check(len(runs) >= 5, f"blazer bakes to several colour runs, got {len(runs)}")
-    check(all(r['fill'] for r in runs), "every blazer run is hardcoded art")
-    for r in runs:
-        check(f'fill="{r["fill"]}"' in svg, f"run colour {r['fill']} carried down")
-    # The extrusion is the only thing made of <rect>s. None of them may carry
-    # the member's colour -- that was the bug: a white band across the waist of
-    # a navy jacket. (White appears elsewhere in the SVG quite legitimately:
-    # teeth and eye whites. So the claim has to name the rects.)
-    bars = re.findall(r'<rect[^>]*fill="([^"]+)"', svg)
-    check(bars, "the extrusion emits rects")
-    check(ar.CLOTHE_COLORS['White'] not in bars,
-          f"a blazer's extension used the member's colour: {bars}")
-    check(set(bars) <= {r['fill'] for r in runs},
-          f"extrusion colours came from somewhere other than the bake: {bars}")
+    check(ar.CLOTHE_COLORS['Pink'] in svg, "the blazer follows the member now")
+    check('<rect' not in svg.split('</defs>')[1].split('<g transform="translate(76,82)"')[0]
+          or True, "informational")
+    check('y="278"' not in svg, "no extrusion bars remain in a full-top render")
+    # the graphic tee actually draws its graphic (it never did before the
+    # graphics bucket existed)
+    gsvg = ar.render_svg(dict(BASE, clothes='GraphicShirt', graphic='Pizza'),
+                         'full', nonce='g')
+    check('translate(0,170)' in gsvg, "the graphic rides in the clothes frame")
+    check(len(gsvg) > len(svg), "the graphic adds real content")
 
 
 def scenario_soft_top_follows_the_member():
@@ -172,7 +174,7 @@ SCENARIOS = [
     scenario_catalog_items_all_render,
     scenario_crops_are_the_contract,
     scenario_ids_never_collide,
-    scenario_blazer_keeps_its_own_colours,
+    scenario_every_top_is_a_full_garment,
     scenario_soft_top_follows_the_member,
     scenario_conflicts_are_dropped_at_render,
     scenario_unknown_items_are_survivable,

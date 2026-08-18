@@ -383,18 +383,22 @@ function avatarEditor(config) {
                 + `<use fill="${skin}" xlink:href="#${ns}bodypath"/>`
                 + `<path d="${R.neckShadow}" fill="${R.shade}" fill-opacity="0.1" mask="url(#${bodyMask})"/></g>`;
 
-            let torso = '';
-            if (full) {
+            const fullTop = (this.bundle.full_tops || {})[cfg.clothes];
+            let torso = '', seamCover = '';
+            if (full && !fullTop) {
                 const topKey = cfg.clothes || '';
                 const hem = M.structured.includes(topKey) ? M.hemStructured : M.hemSoft;
                 const runs = this.bundle.hems[topKey];
-                const taper = `M76,280 L188,280 C188,310 186,${hem - 26} 184,${hem} `
-                            + `L80,${hem} C78,${hem - 26} 76,310 76,280 Z`;
+                const taper = `M76,278 L188,278 C188,310 186,${hem - 26} 184,${hem} `
+                            + `L80,${hem} C78,${hem - 26} 76,310 76,278 Z`;
                 if (runs && runs.length) {
-                    const bars = runs.map(r => `<rect x="${r.x}" y="280" width="${r.w}" `
-                        + `height="${hem - 280}" fill="${r.fill || clothe}"/>`).join('');
+                    const bars = runs.map(r => `<rect x="${r.x}" y="278" width="${r.w}" `
+                        + `height="${hem - 278}" fill="${r.fill || clothe}"/>`).join('');
                     torso = `<clipPath id="${ns}tc"><path d="${taper}"/></clipPath>`
                           + `<g clip-path="url(#${ns}tc)">${bars}</g>`;
+                    seamCover = `<g clip-path="url(#${ns}tc)">` + runs.map(r =>
+                        `<rect x="${r.x}" y="277" width="${r.w}" height="8" `
+                        + `fill="${r.fill || clothe}"/>`).join('') + '</g>';
                 } else {
                     torso = `<path d="${taper}" fill="${clothe}"/>`;
                 }
@@ -404,8 +408,7 @@ function avatarEditor(config) {
                 const l = (runs && runs.length && runs[0].fill) || clothe;
                 const r2 = (runs && runs.length && runs[runs.length - 1].fill) || clothe;
                 torso += `<path d="${R.sleeveL}" fill="${l}"/><path d="${R.sleeveR}" fill="${r2}"/>`
-                       + (D.sleeveShadow ? shade(D.sleeveShadow, '0.1') : '')
-                       + (D.farArm ? shade(D.farArm, '0.07') : '');
+                       + (D.sleeveShadow ? shade(D.sleeveShadow, '0.1') : '');
             }
 
             let extras = '';
@@ -427,7 +430,10 @@ function avatarEditor(config) {
                 + `style="${o.fit || 'width:100%;height:100%'};display:block" role="img" aria-hidden="true">`
                 + `<defs><path d="${R.body}" id="${ns}bodypath"/></defs>`
                 + `<g fill="none" fill-rule="evenodd" stroke="none">`
-                + lower + head + torso + this.piece('clothes', cfg, ns) + extras + face
+                + lower + head + torso + (fullTop ? paint(fullTop, clothe) + (D.sleeveShadow ? shade(D.sleeveShadow, '0.1') : '')
+                    + (cfg.clothes === 'GraphicShirt' && cfg.graphic
+                        ? `<g transform="translate(0,170)">${this.piece('graphic', cfg, ns)}</g>` : '')
+                  : this.piece('clothes', cfg, ns)) + seamCover + extras + face
                 + this.piece('top', cfg, ns)
                 + hxSvg
                 + `</g></svg>`;
@@ -464,6 +470,7 @@ function avatarEditor(config) {
      Backdrop taps do NOT close it -- a kid mid-outfit brushing the edge of a
      wall panel must not lose their work; leaving is the ✕, which asks. -->
 <div class="fixed inset-0 z-[100] bg-gray-950 flex flex-col h-full min-h-0 select-none"
+     style="background-color: Canvas; color-scheme: light dark"
      x-data="avatarEditor({})" x-show="visible" x-cloak
      @avatar-editor-open.window="openFor($event.detail)"
      @keydown.escape.window="visible && close()">

@@ -60,10 +60,13 @@ _PALETTES = {'skin': (SKIN_COLORS, 'Light'), 'hair_color': (HAIR_COLORS, 'BrownD
 # ways: 32..76 left arm, 76..188 torso, 188..232 right arm.
 SHADE = '#000000'
 
-_ARM_L = ("M32,280 C31,318 33,356 37,394 C39,414 46,424 58,424 "
-          "C70,424 77,414 77,394 C77,356 77,318 76,280 Z")
-_ARM_R = ("M188,280 C187,318 187,356 187,394 C187,414 194,424 206,424 "
-          "C218,424 225,414 227,394 C231,356 233,318 232,280 Z")
+# Tops start at y=278, not 280: shapes that ABUT leave an antialiasing
+# hairline (invisible on dark, glowing on light pages); shapes that
+# OVERLAP under the piece above them leave nothing.
+_ARM_L = ("M32,278 C31,318 33,356 37,394 C39,414 46,424 58,424 "
+          "C70,424 77,414 77,394 C77,356 77,318 76,278 Z")
+_ARM_R = ("M188,278 C187,318 187,356 187,394 C187,414 194,424 206,424 "
+          "C218,424 225,414 227,394 C231,356 233,318 232,278 Z")
 _SLEEVE_L = ("M32,280 L76,280 C76,306 76,330 77,352 C64,357 47,357 34,352 "
              "C32,330 32,306 32,280 Z")
 _SLEEVE_R = ("M188,280 L232,280 C232,306 232,330 230,352 C217,357 200,357 187,352 "
@@ -71,13 +74,12 @@ _SLEEVE_R = ("M188,280 L232,280 C232,306 232,330 230,352 C217,357 200,357 187,35
 # Starts at the SHOULDER edge, not the waist. A structured garment hems at the
 # hip, and if the body only began at the waist the gap between showed the page
 # straight through the midriff. There is always a body under the clothes.
-_LOWER = ("M76,280 L188,280 C188,318 186,346 184,372 "
+_LOWER = ("M76,278 L188,278 C188,318 186,346 184,372 "
           "C188,394 189,402 188,414 "
           "C185,462 182,510 181,556 C181,564 176,568 168,568 L152,568 "
-          "C144,568 140,564 140,556 L140,432 L124,432 L124,556 "
-          "C124,564 120,568 112,568 L96,568 C88,568 83,564 83,556 "
+          "C144,568 138,568 132,568 C126,568 120,568 112,568 L96,568 C88,568 83,564 83,556 "
           "C82,510 79,462 76,414 C75,402 76,394 80,372 "
-          "C78,346 76,318 76,280 Z")
+          "C78,346 76,318 76,278 Z")
 
 # Verbatim source geometry: the head/neck/shoulder silhouette, and the shadow
 # the chin casts on the neck. Module-level so the browser bundle can serve them
@@ -114,31 +116,33 @@ _NECK_SHADOW = ("M156,79 L156,102 C156,132.927946 130.927946,158 100,158 "
 BOTTOMS = {
     'Trousers': [
         {'d': ("M78,366 L186,366 C190,392 191,402 190,414 "
-               "C187,462 184,508 183,552 L138,552 L138,436 L126,436 L126,552 "
+               "C187,462 184,508 183,552 "
                "L81,552 C80,508 77,462 74,414 C73,402 74,392 78,366 Z"), 'f': 'c1'},
         {'d': "M78,366 L186,366 C187,371 188,375 188,379 L76,379 C76,375 77,371 78,366 Z", 'f': 'sh'},
-        {'d': ("M114,379 L126,379 L126,552 L112,552 C113,500 114,440 114,379 Z "
-               "M138,379 L150,379 L150,436 L138,436 Z"), 'f': 'sh', 'o': 0.06},
+        {'d': ("M118,379 L130,379 L130,552 L116,552 C113,500 114,440 114,379 Z "
+               "M134,379 L146,379 L146,464 L134,464 Z"), 'f': 'sh', 'o': 0.06},
         {'d': "M81,544 L126,544 L126,552 L81,552 Z M138,544 L183,544 L183,552 L138,552 Z", 'f': 'sh'},
+        {'d': "M130.8,450 L133.2,450 L133.2,548 L130.8,548 Z", 'f': 'sh2'},
     ],
     'Joggers': [
         {'d': ("M78,366 L186,366 C190,392 191,402 190,414 "
-               "C187,462 185,505 186,540 C186,548 180,552 172,552 L138,552 "
-               "L138,436 L126,436 L126,552 L92,552 C84,552 78,548 78,540 "
+               "C187,462 185,505 186,540 C186,548 180,552 172,552 L92,552 C84,552 78,548 78,540 "
                "C79,505 77,462 74,414 C73,402 74,392 78,366 Z"), 'f': 'c1'},
         {'d': ("M79,534 L126,534 L126,552 L92,552 C84,552 79,548 79,540 Z "
                "M138,534 L185,534 C185,548 180,552 172,552 L138,552 Z"), 'f': 'hi', 'o': 0.8},
-        {'d': ("M79,534 L126,534 L126,539 L79,539 Z M138,534 L185,534 L185,539 L138,539 Z"),
+        {'d': ("M79,534 L130,534 L130,539 L79,539 Z M134,534 L185,534 L185,539 L134,539 Z"),
          'f': 'sh'},
         {'d': "M124,372 L127,372 L126,396 L123,396 Z M137,372 L140,372 L141,396 L138,396 Z",
          'f': 'hi', 'o': 0.9},
+        {'d': "M130.8,450 L133.2,450 L133.2,548 L130.8,548 Z", 'f': 'sh2'},
         {'d': "M78,366 L186,366 C186.6,370 187,373 187.4,376 L76.6,376 C77,373 77.4,370 78,366 Z", 'f': 'sh'},
     ],
     'Shorts': [
         {'d': ("M78,366 L186,366 C190,392 191,402 190,414 C188,438 186,458 185,472 "
-               "L138,472 L138,440 L126,440 L126,472 L79,472 "
+               "L79,472 "
                "C78,458 76,438 74,414 C73,402 74,392 78,366 Z"), 'f': 'c1'},
         {'d': "M79,462 L126,462 L126,472 L79,472 Z M138,462 L185,462 L185,472 L138,472 Z", 'f': 'sh'},
+        {'d': "M130.8,458 L133.2,458 L133.2,470 L130.8,470 Z", 'f': 'sh2'},
         {'d': "M78,366 L186,366 C186.6,370 187,373 187.4,376 L76.6,376 C77,373 77.4,370 78,366 Z", 'f': 'sh'},
     ],
     'Skirt': [
@@ -150,18 +154,20 @@ BOTTOMS = {
     ],
     'CargoPants': [
         {'d': ("M76,366 L188,366 C192,392 193,402 192,414 "
-               "C189,462 186,508 185,552 L138,552 L138,436 L126,436 L126,552 "
+               "C189,462 186,508 185,552 "
                "L79,552 C78,508 75,462 72,414 C71,402 72,392 76,366 Z"), 'f': 'c1'},
         {'d': "M82,452 L112,452 L114,492 L84,492 Z M152,452 L182,452 L180,492 L150,492 Z", 'f': 'sh'},
         {'d': "M82,452 L112,452 L112.5,462 L82.5,462 Z M152,452 L182,452 L181.5,462 L151.5,462 Z", 'f': 'sh2'},
+        {'d': "M130.8,450 L133.2,450 L133.2,548 L130.8,548 Z", 'f': 'sh2'},
         {'d': "M76,366 L188,366 C188.6,370 189,373 189.4,376 L74.6,376 C75,373 75.4,370 76,366 Z", 'f': 'sh'},
     ],
     'Dungarees': [
         {'d': ("M78,366 L186,366 C190,392 191,402 190,414 "
-               "C187,462 184,508 183,552 L138,552 L138,436 L126,436 L126,552 "
+               "C187,462 184,508 183,552 "
                "L81,552 C80,508 77,462 74,414 C73,402 74,392 78,366 Z "
                "M96,280 L110,280 L110,372 L96,372 Z M154,280 L168,280 L168,372 L154,372 Z"), 'f': 'c1'},
         {'d': "M118,380 L146,380 L144,404 L120,404 Z", 'f': 'sh'},
+        {'d': "M130.8,450 L133.2,450 L133.2,548 L130.8,548 Z", 'f': 'sh2'},
         {'d': "M96,280 L100,280 L100,372 L96,372 Z M154,280 L158,280 L158,372 L154,372 Z", 'f': 'sh'},
         {'d': ("M103,364 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 "
                "M161,364 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"), 'f': 'hi', 'o': 0.9},
@@ -176,17 +182,17 @@ SHOES = {
         {'d': ("M80,566 C82,573 87,576 100,576 L112,576 C120,576 125,573 126,568 "
                "L126,562 L80,562 Z M138,562 L138,568 C139,573 144,576 152,576 "
                "L164,576 C177,576 182,573 184,566 L184,562 L138,562 Z"), 'f': '#FFFFFF'},
-        {'d': "M80,558 L126,558 L126,562 L80,562 Z M138,558 L184,558 L184,562 L138,562 Z", 'f': 'sh'},
-        {'d': "M79,540 L127,540 L127,545 L79,545 Z M137,540 L185,540 L185,545 L137,545 Z", 'f': 'sh', 'o': 0.06},
+        {'d': "M80,558 L130,558 L130,562 L80,562 Z M134,558 L184,558 L184,562 L134,562 Z", 'f': 'sh'},
+        {'d': "M79,540 L131,540 L131,545 L79,545 Z M133,540 L185,540 L185,545 L133,545 Z", 'f': 'sh', 'o': 0.06},
     ],
     'Boots': [
-        {'d': ("M77,520 C77,562 82,578 100,578 L114,578 C124,578 129,572 129,562 "
-               "L129,520 Z M135,520 L135,562 C135,572 140,578 150,578 L164,578 "
+        {'d': ("M77,520 C77,562 82,578 100,578 L114,578 C124,578 131,572 131,562 "
+               "L131,520 Z M133,520 L133,562 C135,572 140,578 150,578 L164,578 "
                "C182,578 187,562 187,520 Z"), 'f': 'c1'},
-        {'d': ("M78,564 C80,574 86,578 100,578 L114,578 C122,578 127,574 128,566 "
-               "L128,562 L78,562 Z M136,562 L136,566 C137,574 142,578 150,578 "
+        {'d': ("M78,564 C80,574 86,578 100,578 L114,578 C122,578 129,574 130,566 "
+               "L130,562 L78,562 Z M134,562 L134,566 C137,574 142,578 150,578 "
                "L164,578 C178,578 184,574 186,564 L186,562 L136,562 Z"), 'f': '#262E33'},
-        {'d': "M77,534 L129,534 L129,542 L77,542 Z M135,534 L187,534 L187,542 L135,542 Z", 'f': 'sh2'},
+        {'d': "M77,534 L131,534 L131,542 L77,542 Z M133,534 L187,534 L187,542 L133,542 Z", 'f': 'sh2'},
         {'d': "M117,534 L125,534 L125,542 L117,542 Z M147,534 L155,534 L155,542 L147,542 Z", 'f': '#E6E6E6'},
     ],
     'HighTops': [
@@ -199,16 +205,16 @@ SHOES = {
         {'d': ("M84,516 L122,516 L122,521 L84,521 Z M84,528 L122,528 L122,533 L84,533 Z "
                "M142,516 L180,516 L180,521 L142,521 Z M142,528 L180,528 L180,533 L142,533 Z"),
          'f': 'hi', 'o': 0.9},
-        {'d': "M78,556 L128,556 L128,561 L78,561 Z M136,556 L186,556 L186,561 L136,561 Z", 'f': 'sh'},
+        {'d': "M78,556 L131,556 L131,561 L78,561 Z M133,556 L186,556 L186,561 L133,561 Z", 'f': 'sh'},
     ],
     'WellyBoots': [
         {'d': ("M76,500 C76,564 81,580 100,580 L115,580 C125,580 130,573 130,563 "
-               "L130,500 Z M134,500 L134,563 C134,573 139,580 149,580 L164,580 "
+               "L130,500 Z M133,500 L133,563 C133,573 139,580 149,580 L164,580 "
                "C183,580 188,564 188,500 Z"), 'f': 'c1'},
-        {'d': "M76,500 L130,500 L130,510 L76,510 Z M134,500 L188,500 L188,510 L134,510 Z",
+        {'d': "M76,500 L131,500 L131,510 L76,510 Z M133,500 L188,500 L188,510 L133,510 Z",
          'f': 'hi', 'o': 0.35},
-        {'d': ("M77,566 C79,576 85,580 100,580 L115,580 C123,580 128,576 129,568 "
-               "L129,564 L77,564 Z M135,564 L135,568 C136,576 141,580 149,580 "
+        {'d': ("M77,566 C79,576 85,580 100,580 L115,580 C123,580 129,576 130,568 "
+               "L130,564 L77,564 Z M134,564 L134,568 C136,576 141,580 149,580 "
                "L164,580 C179,580 185,576 187,566 L187,564 L135,564 Z"), 'f': 'sh2'},
     ],
     'Sandals': [
@@ -221,6 +227,139 @@ SHOES = {
         {'d': ("M80,570 L128,570 C127,573 125,575 121,575 L88,575 C84,575 81,573 80,570 Z "
                "M136,570 L184,570 C183,573 181,575 177,575 L144,575 C140,575 137,573 136,570 Z"),
          'f': 'sh'},
+    ],
+}
+
+# --- FULL TOPS: whole garments, not extensions ----------------------------
+# The better architecture (user direction 2026-08-18): instead of matching a
+# new piece to the source bust's hem at y=280 -- the seam that spawned the hem
+# bake, the colour probes and the seam covers -- a top WE author is one
+# self-contained garment from collar to hem, sleeves included, drawn over the
+# whole torso. No bake, no extrusion, nothing to match. Source garments keep
+# the extension machinery; everything new goes here.
+# The collar/shoulder outline is traced from the source crew-neck silhouette,
+# so a full top still sits on the rig the way the source clothes do.
+# The shared torso outline. `collar` is the top-edge segment between the
+# shoulder points (99,199)..(166,199); each garment picks its neckline.
+def _top_body(collar: str) -> str:
+    return ("M166,199.3 "
+            "C202.9,202.3 232,233.3 232,271 "
+            "C232,306 232,330 230,352 L187,352 "
+            "C187,330 187,312 187,296 L188,296 "
+            "C188,330 186,352 184,372 L80,372 "
+            "C78,352 76,330 76,296 L77,296 "
+            "C77,312 77,330 77,352 L34,352 "
+            "C32,330 32,306 32,271 "
+            "C32,233.3 61.6,202.9 99,199.2 " + collar + " Z")
+
+_CREW = ("C99,211.9 113.5,221.8 132.5,221.8 "
+         "C151,221.8 166,211.9 166,199.3")
+_SCOOP = ("C99,220 112,234 132.5,234 "
+          "C153,234 166,220 166,199.3")
+_VEE = "L132,236 L166,199.3"
+_HIGH = ("C104,206 116,210 132.5,210 "
+         "C149,210 161,206 166,199.3")
+
+_CUFFS = ("M34,344 L77,344 L77,352 L34,352 Z "
+          "M187,344 L230,344 L230,352 L187,352 Z")
+_HEMBAND = "M80,364 L184,364 L184,372 L80,372 Z"
+
+FULL_TOPS = {
+    'ShirtCrewNeck': [
+        {'d': _top_body(_CREW), 'f': 'c1'},
+        {'d': ("M99,199.2 " + _CREW + " L166,206 C160,216 148,226 132.5,226 "
+               "C117,226 105,216 99,206 Z"), 'f': 'sh'},
+        {'d': _HEMBAND, 'f': 'sh'},
+    ],
+    'ShirtScoopNeck': [
+        {'d': _top_body(_SCOOP), 'f': 'c1'},
+        {'d': ("M99,199.2 " + _SCOOP + " L166,206 C161,226 150,238 132.5,238 "
+               "C115,238 104,226 99,206 Z"), 'f': 'sh'},
+        {'d': _HEMBAND, 'f': 'sh'},
+    ],
+    'ShirtVNeck': [
+        {'d': _top_body(_VEE), 'f': 'c1'},
+        {'d': "M99,199.2 L132,236 L166,199.3 L166,207 L132,244 L99,206 Z", 'f': 'sh'},
+        {'d': _HEMBAND, 'f': 'sh'},
+    ],
+    'GraphicShirt': [
+        # the graphic itself is overlaid by the renderer (translate 0,170)
+        {'d': _top_body(_CREW), 'f': 'c1'},
+        {'d': ("M99,199.2 " + _CREW + " L166,206 C160,216 148,226 132.5,226 "
+               "C117,226 105,216 99,206 Z"), 'f': 'sh'},
+        {'d': _HEMBAND, 'f': 'sh'},
+    ],
+    'CollarSweater': [
+        {'d': _top_body(_HIGH), 'f': 'c1'},
+        # rolled turtleneck collar
+        {'d': ("M102,190 C102,204 115,212 132.5,212 C150,212 163,204 163,190 "
+               "L163,202 C163,214 150,221 132.5,221 C115,221 102,214 102,202 Z"),
+         'f': 'c1'},
+        {'d': ("M102,196 C104,208 116,215 132.5,215 C149,215 161,208 163,196 "
+               "L163,202 C163,214 150,221 132.5,221 C115,221 102,214 102,202 Z"),
+         'f': 'sh'},
+        {'d': _CUFFS, 'f': 'sh'},
+        {'d': _HEMBAND, 'f': 'sh'},
+    ],
+    'Hoodie': [
+        {'d': _top_body(_SCOOP), 'f': 'c1'},
+        # the hood, resting on the shoulders
+        {'d': ("M92,208 C92,232 108,246 132.5,246 C157,246 173,232 173,208 "
+               "C173,196 166,190 160,192 C166,200 168,212 160,224 "
+               "C152,234 143,238 132.5,238 C122,238 113,234 105,224 "
+               "C97,212 99,200 105,192 C99,190 92,196 92,208 Z"), 'f': 'c1'},
+        {'d': ("M92,208 C92,232 108,246 132.5,246 C157,246 173,232 173,208 "
+               "L173,214 C170,236 155,250 132.5,250 C110,250 95,236 92,214 Z"),
+         'f': 'sh'},
+        # drawstrings
+        {'d': "M122,242 L125,242 L124,282 L121,282 Z M140,242 L143,242 L144,282 L141,282 Z",
+         'f': 'hi', 'o': 0.9},
+        # kangaroo pocket
+        {'d': ("M102,318 L162,318 C160,350 157,364 152,368 L112,368 "
+               "C107,364 104,350 102,318 Z"), 'f': 'sh'},
+        {'d': _HEMBAND, 'f': 'sh'},
+    ],
+    'Overall': [
+        # a grey tee underneath; the overall itself takes the member's colour
+        {'d': _top_body(_CREW), 'f': '#E6E6E6'},
+        {'d': "M96,236 L168,236 L168,372 L96,372 Z", 'f': 'c1'},
+        {'d': ("M96,199.2 L112,199.2 L112,252 L96,252 Z "
+               "M152,199.3 L168,199.3 L168,252 L152,252 Z"), 'f': 'c1'},
+        {'d': "M96,236 L168,236 L168,244 L96,244 Z", 'f': 'sh'},
+        {'d': ("M104,240 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 "
+               "M160,240 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"), 'f': 'hi', 'o': 0.9},
+        {'d': "M108,300 L156,300 L156,304 L108,304 Z", 'f': 'sh'},
+    ],
+    'BlazerShirt': [
+        # jacket in the member's colour over a white shirt, lapels a tone
+        # darker -- an upgrade on the source, whose blazer ignored colour
+        {'d': _top_body(_VEE), 'f': 'c1'},
+        {'d': "M110,214 L154,214 L150,372 L114,372 Z", 'f': '#FFFFFF'},
+        {'d': ("M99,199.2 L132,238 L112,306 L94,258 Z "
+               "M166,199.3 L132,238 L152,306 L170,258 Z"), 'f': 'sh2'},
+        {'d': "M155,246 L166,242 L165,252 L156,254 Z", 'f': 'hi', 'o': 0.85},
+        {'d': _HEMBAND, 'f': 'sh'},
+        {'d': _CUFFS, 'f': 'sh'},
+    ],
+    'BlazerSweater': [
+        {'d': _top_body(_VEE), 'f': 'c1'},
+        {'d': "M110,214 L154,214 L150,372 L114,372 Z", 'f': '#3C4F5C'},
+        {'d': ("M112,214 C116,222 123,226 132,226 C141,226 148,222 152,214 "
+               "L112,214 Z"), 'f': 'sh2'},
+        {'d': ("M99,199.2 L132,238 L112,306 L94,258 Z "
+               "M166,199.3 L132,238 L152,306 L170,258 Z"), 'f': 'sh2'},
+        {'d': "M155,246 L166,242 L165,252 L156,254 Z", 'f': 'hi', 'o': 0.85},
+        {'d': _HEMBAND, 'f': 'sh'},
+        {'d': _CUFFS, 'f': 'sh'},
+    ],
+    'ZipJacket': [
+        {'d': _top_body(_CREW), 'f': 'c1'},
+        {'d': ("M99,199.2 " + _CREW + " L166,207 "
+               "C160,219 148,227 132.5,227 C117,227 105,219 99,207 Z"), 'f': 'sh2'},
+        {'d': "M130,227 L135,227 L134,372 L131,372 Z", 'f': 'hi', 'o': 0.85},
+        {'d': "M129,238 L136,238 L136,252 L129,252 Z", 'f': 'sh2'},
+        {'d': _CUFFS, 'f': 'sh'},
+        {'d': _HEMBAND, 'f': 'sh'},
     ],
 }
 
@@ -304,22 +443,25 @@ HAIR_ACCESSORY = {
         {'d': ("M74,112 C74,90 98,74 132,74 C166,74 190,90 190,112 L190,118 "
                "C190,94 168,78 132,78 C96,78 74,94 74,118 Z"), 'f': 'sh'},
     ],
+    # Bow and clips sit ON THE HAIR, high on the skull -- the first draft put
+    # them at y82-104, which the face frame (translate 76,82) makes exactly
+    # eyebrow height (family-reported: "they are on the eyebrows").
     'Bow': [
-        {'d': ("M158,70 C146,60 132,62 130,72 C128,82 140,90 154,86 Z "
-               "M158,70 C170,58 186,60 188,70 C190,80 178,88 164,84 Z"), 'f': 'c1'},
-        {'d': "M152,68 C158,64 164,64 168,68 C172,74 168,82 160,82 C154,82 150,76 152,68 Z", 'f': 'sh2'},
-        {'d': "M156,82 L164,84 L158,104 L151,101 Z M164,84 L172,84 L172,102 L165,102 Z", 'f': 'c1'},
-        {'d': "M151,98 L158,101 L158,104 L151,101 Z M165,99 L172,99 L172,102 L165,102 Z", 'f': 'sh'},
+        {'d': ("M158,44 C146,34 132,36 130,46 C128,56 140,64 154,60 Z "
+               "M158,44 C170,32 186,34 188,44 C190,54 178,62 164,58 Z"), 'f': 'c1'},
+        {'d': "M152,42 C158,38 164,38 168,42 C172,48 168,56 160,56 C154,56 150,50 152,42 Z", 'f': 'sh2'},
+        {'d': "M156,56 L164,58 L158,78 L151,75 Z M164,58 L172,58 L172,76 L165,76 Z", 'f': 'c1'},
+        {'d': "M151,72 L158,75 L158,78 L151,75 Z M165,73 L172,73 L172,76 L165,76 Z", 'f': 'sh'},
     ],
     'Clips': [
-        {'d': ("M84,94 L106,82 C108,81 110,82 110,84 C110,85 109,86 108,87 L88,99 "
-               "C86,100 84,99 84,97 Z "
-               "M154,82 L176,94 C178,95 178,97 176,98 C175,99 173,99 172,98 L152,87 "
-               "C150,86 150,84 152,83 Z"), 'f': 'c1'},
-        {'d': ("M99,86 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
-               "M91,91 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
-               "M161,86 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
-               "M169,91 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"), 'f': 'hi', 'o': 0.7},
+        {'d': ("M84,64 L106,52 C108,51 110,52 110,54 C110,55 109,56 108,57 L88,69 "
+               "C86,70 84,69 84,67 Z "
+               "M154,52 L176,64 C178,65 178,67 176,68 C175,69 173,69 172,68 L152,57 "
+               "C150,56 150,54 152,53 Z"), 'f': 'c1'},
+        {'d': ("M99,56 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
+               "M91,61 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
+               "M161,56 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 "
+               "M169,61 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"), 'f': 'hi', 'o': 0.7},
     ],
 }
 
@@ -335,18 +477,16 @@ RIG_DEPTH = [
     {'d': ("M188,286 C187,318 187,352 187,386 C187,404 192,416 200,421 "
            "C190,420 187,412 187,394 C187,356 187,318 188,286 Z"), 'f': 'sh', 'o': 0.08},
     # inner edge of each leg, below wherever the bottoms end
-    {'d': "M124,436 L131,436 L131,568 L124,568 Z", 'f': 'sh', 'o': 0.07},
-    {'d': "M133,436 L140,436 L140,568 L133,568 Z", 'f': 'sh', 'o': 0.07},
+    # the leg separation is DRAWN (sh2 crease), never cut out of the
+    # silhouette: a transparent gap shows the page through the figure, and on
+    # a light board that read as a white slot from crotch to floor
+    {'d': "M130.7,470 L133.3,470 L133.3,566 L130.7,566 Z", 'f': 'sh2'},
 ]
 # Sleeve cuff shadows: the arm continues out of the sleeve, so the sleeve
 # casts on it exactly the way the source's chin casts on the neck.
 SLEEVE_SHADOW = ("M34,352 C47,357 64,357 77,352 L77,360 C64,365 47,365 34,360 Z "
                  "M187,352 C200,357 217,357 230,352 L230,360 C217,365 200,365 187,360 Z")
 
-# The far-limb cue every polished flat set uses (reference pass 2026-08-18):
-# the viewer-right arm sits a shade darker, whole silhouette, painted OVER
-# its sleeve so garment and skin darken together.
-FAR_ARM_TINT = _ARM_R
 _HEMS: Optional[Dict] = None
 _HEMS_PATH = os.path.join(os.path.dirname(_PIECES_PATH), 'hems.json')
 
@@ -515,20 +655,29 @@ def render_svg(config: Dict, crop: str = 'head', size: Optional[int] = None,
     # blazer's lapels and its undershirt can carry on in the right colours.
     # The extrusion is then clipped to a tapered torso so the silhouette
     # narrows even though every run is vertical.
+    full_top = FULL_TOPS.get(cfg.get('clothes') or '')
     torso_ext = ''
-    if full:
+    seam_cover = ''
+    if full and not full_top:
         top_key = cfg.get('clothes') or ''
         hem = HEM_STRUCTURED if top_key in STRUCTURED else HEM_SOFT
         runs = _hems().get(top_key)
         clip = f'{ns}torsoclip'
-        taper = (f'M76,280 L188,280 C188,310 186,{hem - 26} 184,{hem} '
-                 f'L80,{hem} C78,{hem - 26} 76,310 76,280 Z')
+        taper = (f'M76,278 L188,278 C188,310 186,{hem - 26} 184,{hem} '
+                 f'L80,{hem} C78,{hem - 26} 76,310 76,278 Z')
         if runs:
             bars = ''.join(
-                f'<rect x="{r["x"]}" y="280" width="{r["w"]}" height="{hem - 280}" '
+                f'<rect x="{r["x"]}" y="278" width="{r["w"]}" height="{hem - 278}" '
                 f'fill="{r["fill"] or clothe}"/>' for r in runs)
             torso_ext = (f'<clipPath id="{clip}"><path d="{taper}"/></clipPath>'
                          f'<g clip-path="url(#{clip})">{bars}</g>')
+            # The source garments' colour masks leak a hairline of #E6E6E6
+            # base along their hem edge (y=280) -- invisible on dark pages,
+            # glowing on light ones. A strip of the same colours painted
+            # AFTER the garment hides it exactly.
+            seam_cover = (f'<g clip-path="url(#{clip})">' + ''.join(
+                f'<rect x="{r["x"]}" y="277" width="{r["w"]}" height="8" '
+                f'fill="{r["fill"] or clothe}"/>' for r in runs) + '</g>')
         else:
             torso_ext = f'<path d="{taper}" fill="{clothe}"/>'
         # A structured garment needs its cut edge to read, or it looks torn off.
@@ -542,10 +691,8 @@ def render_svg(config: Dict, crop: str = 'head', size: Optional[int] = None,
         torso_ext += (f'<path d="{_SLEEVE_L}" fill="{left}"/>'
                       f'<path d="{_SLEEVE_R}" fill="{right}"/>'
                       # the sleeve casts on the arm below it, the same way the
-                      # source's chin casts on the neck -- and the far arm sits
-                      # a shade darker, whole silhouette, sleeve included
-                      + _shade(SLEEVE_SHADOW, '0.1')
-                      + _shade(FAR_ARM_TINT, '0.07'))
+                      # source's chin casts on the neck
+                      + _shade(SLEEVE_SHADOW, '0.1'))
 
     accent = _color('accent_color', cfg.get('accent_color'))
     extras = ''
@@ -560,6 +707,16 @@ def render_svg(config: Dict, crop: str = 'head', size: Optional[int] = None,
             f'{_piece("mouth", cfg, ns)}{_piece("nose", cfg, ns)}'
             f'{_piece("eyes", cfg, ns)}{_piece("eyebrow", cfg, ns)}</g>')
 
+    # a full top is ours: painted whole, worn in both crops, and it brings
+    # its own sleeves -- the generic ones would double-draw beneath it
+    if full_top:
+        clothes_svg = _paint(full_top, clothe) + _shade(SLEEVE_SHADOW, '0.1')
+        # chest graphics live in the clothes group's frame (translate 0,170)
+        if cfg.get('clothes') == 'GraphicShirt' and cfg.get('graphic'):
+            clothes_svg += (f'<g transform="translate(0,170)">'
+                            f'{_piece("graphic", cfg, ns)}</g>')
+    else:
+        clothes_svg = _piece('clothes', cfg, ns)
     hair_extra_svg = _paint(hair_extra, accent) if hair_extra else ''
     dims = f'width="{size}" ' if size else ''
     return (
@@ -569,7 +726,7 @@ def render_svg(config: Dict, crop: str = 'head', size: Optional[int] = None,
         f'role="img" aria-label="avatar">'
         f'<defs><path d="{_BODY_PATH}" id="{ns}bodypath"/></defs>'
         f'<g fill="none" fill-rule="evenodd" stroke="none">'
-        f'{lower}{head}{torso_ext}{_piece("clothes", cfg, ns)}{extras}'
+        f'{lower}{head}{torso_ext}{clothes_svg}{seam_cover}{extras}'
         f'{face}{_piece("top", cfg, ns)}'
         f'{hair_extra_svg}'
         f'</g></svg>'
@@ -676,8 +833,9 @@ def bundle() -> Dict:
         'tables': {'bottoms': BOTTOMS, 'shoes': SHOES, 'neck': NECK,
                    'wrist': WRIST, 'waist': WAIST,
                    'hair_accessory': HAIR_ACCESSORY},
+        'full_tops': FULL_TOPS,
         'rig_depth': {'ground': GROUND_SHADOW, 'parts': RIG_DEPTH,
-                      'sleeveShadow': SLEEVE_SHADOW, 'farArm': FAR_ARM_TINT},
+                      'sleeveShadow': SLEEVE_SHADOW},
         'hems_meta': {'structured': sorted(STRUCTURED),
                       'hemStructured': HEM_STRUCTURED, 'hemSoft': HEM_SOFT},
         'slots': cat.get_slots(), 'groups': cat.GROUPS,

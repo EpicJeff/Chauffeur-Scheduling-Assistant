@@ -156,6 +156,30 @@ def _convert(body: str, path: str) -> str:
     return body
 
 
+def _extract_graphics(path: str) -> dict:
+    """Graphics.tsx holds all eleven chest graphics as classes in ONE file --
+    which is why the per-file pass skipped them, and why the catalog spent a
+    while selling unlockables that drew nothing. Coordinates are relative to
+    the clothes group; the renderer wraps them in translate(0,170)."""
+    import re as _re
+    src = open(path, encoding='utf-8').read()
+    out = {}
+    # segment per class: some classes destructure ids between render() and
+    # return(, so reuse _render_body per chunk instead of one big regex
+    for chunk in src.split('export class ')[1:]:
+        m = _re.search(r"optionValue = '(\w+)'", chunk)
+        if not m:
+            continue
+        name = m.group(1)
+        raw = _render_body(chunk, f'Graphics/{name}')
+        if not raw:
+            continue
+        raw = _re.sub(r'\s*mask=\{`url\(#\$\{this\.props\.maskID\}\)`\}', '', raw)
+        raw = _re.sub(r'\s*mask=\{`url\(#\$\{mask1\}\)`\}', '', raw)
+        out[name] = _convert(raw, f'Graphics/{name}')
+    return out
+
+
 def extract(root: str) -> dict:
     base = os.path.join(root, 'src', 'avatar')
     if not os.path.isdir(base):
@@ -181,6 +205,10 @@ def extract(root: str) -> dict:
             except ValueError as e:
                 print(f'  ! {e}', file=sys.stderr)
         print(f'  {slot:12s} {len(bucket):3d} pieces')
+    gfx = os.path.join(base, 'clothes', 'Graphics.tsx')
+    if os.path.exists(gfx):
+        out['graphic'] = _extract_graphics(gfx)
+        print(f"  {'graphic':12s} {len(out['graphic']):3d} pieces")
     return out
 
 

@@ -2873,8 +2873,19 @@ is the standing review gate: every item worn, six variant columns, lane-scale
 strip -- no new art ships without a pass through it (it caught scarf-as-bib,
 scarf-as-horns, and all three neck anchors sitting 30 units low).
 
-**Still open:** wardrobe breadth is deliberately thin (~30 unlockables) and
-grows as data through the contact-sheet gate.
+**Full tops (v2.283.0, user direction).** Every catalog top is a FULL garment
+(`FULL_TOPS`, keyed by the original names so configs/ledger carry over):
+collar to hem, sleeves included, drawn over the whole torso. The source bust
+garments + hem bake + extrusion + seam covers are dormant fallbacks. The
+blazer finally takes the member's colour; chest graphics draw for the FIRST
+time (the extractor had skipped Graphics.tsx and the catalog sold unlockables
+that rendered nothing). Seam doctrine from the light-background pass: overlap
+never abut; leg separation is a drawn crease, never a transparent gap; the
+editor overlay is opaque via `background-color: Canvas`. Hair accessories
+anchor on the hair, not the eyebrows.
+
+**Still open:** wardrobe breadth is deliberately thin and grows as data
+through the contact-sheet gate.
 
 ## Security — how the house is locked (auth arc, standing reference)
 

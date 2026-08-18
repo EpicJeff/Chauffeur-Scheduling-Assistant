@@ -181,6 +181,8 @@ ITEMS: List[Dict] = (
         ('Overall',       TRACK_POINTS,  50),
         ('BlazerShirt',   TRACK_POINTS,  150),
         ('BlazerSweater', TRACK_STREAK,  21),
+        # the first FULL top (whole garment, no source bust underneath)
+        ('ZipJacket',     TRACK_ROUTINE, 130),
     ])
     + _free('bottoms', ['Trousers'])
     + _unlock('bottoms', [
