@@ -39,6 +39,26 @@ from services import shopping as _shop  # noqa: E402
 MONDAY = datetime.date(2026, 8, 10)       # the shop is Saturday the 15th
 
 
+def _ahead(days: int) -> str:
+    """A night that is still AHEAD of us, whenever this suite happens to run.
+
+    The claim scenarios below used fixed dates, and that made them rot rather
+    than fail: `reconcile_claims` counts only plates from TODAY forward (a
+    dinner you already ate does not hold your shopping list), so on the day the
+    wall clock passed the pinned night, "the other night still wants chicken"
+    quietly became false and the suite broke with no code change behind it.
+    Anchoring on today keeps the scenario saying what it means. Nights that
+    must be deterministic - the span maths, buy_on_for - still pin to MONDAY
+    and pass it in explicitly.
+    """
+    return (datetime.date.today() + datetime.timedelta(days=days)).isoformat()
+
+
+NIGHT_A = _ahead(3)      # two planned nights, far enough apart to be distinct
+NIGHT_B = _ahead(6)
+NIGHT_C = _ahead(7)      # where a punted dinner lands
+
+
 def _claim_pantry():
     """Two dinners that share an ingredient and each have one of their own —
     the only shape that can tell a correct un-add from a lucky one."""
@@ -67,10 +87,10 @@ def scenario_every_night_that_wants_an_ingredient_claims_it():
     first. One row, two claims — bought once, wanted twice."""
     chicken, stirfry = _claim_pantry()
     lst = storage.ensure_default_shopping_list()['id']
-    meals.pin_plate('2026-08-17', [chicken])
-    meals.pin_plate('2026-08-20', [stirfry])
-    meals.dishes_to_shopping([chicken], lst, date_str='2026-08-17')
-    meals.dishes_to_shopping([stirfry], lst, date_str='2026-08-20')
+    meals.pin_plate(NIGHT_A, [chicken])
+    meals.pin_plate(NIGHT_B, [stirfry])
+    meals.dishes_to_shopping([chicken], lst, date_str=NIGHT_A)
+    meals.dishes_to_shopping([stirfry], lst, date_str=NIGHT_B)
 
     rows = [i for i in storage.get_shopping_items(lst, include_checked=False)
             if i['name'] == 'chicken thighs']
@@ -86,13 +106,13 @@ def scenario_changing_a_night_takes_its_ingredients_back_off():
     other night still wants."""
     chicken, stirfry = _claim_pantry()
     lst = storage.ensure_default_shopping_list()['id']
-    meals.pin_plate('2026-08-17', [chicken])
-    meals.pin_plate('2026-08-20', [stirfry])
-    meals.dishes_to_shopping([chicken], lst, date_str='2026-08-17')
-    meals.dishes_to_shopping([stirfry], lst, date_str='2026-08-20')
+    meals.pin_plate(NIGHT_A, [chicken])
+    meals.pin_plate(NIGHT_B, [stirfry])
+    meals.dishes_to_shopping([chicken], lst, date_str=NIGHT_A)
+    meals.dishes_to_shopping([stirfry], lst, date_str=NIGHT_B)
     check('snow peas' in _open_names(lst), "setup: the peas never made it on")
 
-    meals.remove_from_plate('2026-08-20', stirfry['id'])
+    meals.remove_from_plate(NIGHT_B, stirfry['id'])
     names = _open_names(lst)
     check('snow peas' not in names, f"the peas stayed after the dish went: {names}")
     check('chicken thighs' in names,
@@ -106,11 +126,11 @@ def scenario_punting_a_meal_to_another_night_costs_nothing():
     strip the list every time; matching by dish is why it does not."""
     _chicken, stirfry = _claim_pantry()
     lst = storage.ensure_default_shopping_list()['id']
-    meals.pin_plate('2026-08-20', [stirfry])
-    meals.dishes_to_shopping([stirfry], lst, date_str='2026-08-20')
+    meals.pin_plate(NIGHT_B, [stirfry])
+    meals.dishes_to_shopping([stirfry], lst, date_str=NIGHT_B)
 
-    meals.arrange_week([{'date': '2026-08-20', 'dish_ids': []},
-                        {'date': '2026-08-21', 'dish_ids': [stirfry['id']]}])
+    meals.arrange_week([{'date': NIGHT_B, 'dish_ids': []},
+                        {'date': NIGHT_C, 'dish_ids': [stirfry['id']]}])
     check('snow peas' in _open_names(lst),
           "moving a dinner to the next night unbought its ingredients")
 
@@ -123,9 +143,9 @@ def scenario_a_persons_own_item_is_never_taken_off():
     lst = storage.ensure_default_shopping_list()['id']
     storage.add_shopping_item(ShoppingItem(
         list_id=lst, name='chicken thighs', added_via='voice').model_dump())
-    meals.pin_plate('2026-08-17', [chicken])
-    meals.dishes_to_shopping([chicken], lst, date_str='2026-08-17')
-    meals.remove_from_plate('2026-08-17', chicken['id'])
+    meals.pin_plate(NIGHT_A, [chicken])
+    meals.dishes_to_shopping([chicken], lst, date_str=NIGHT_A)
+    meals.remove_from_plate(NIGHT_A, chicken['id'])
     check('chicken thighs' in _open_names(lst),
           "a hand-added need was deleted because a dish shared its name")
 
@@ -135,13 +155,13 @@ def scenario_something_already_bought_is_never_taken_off():
     Rewriting the list to pretend it was never bought helps nobody."""
     chicken, _stirfry = _claim_pantry()
     lst = storage.ensure_default_shopping_list()['id']
-    meals.pin_plate('2026-08-17', [chicken])
-    meals.dishes_to_shopping([chicken], lst, date_str='2026-08-17')
+    meals.pin_plate(NIGHT_A, [chicken])
+    meals.dishes_to_shopping([chicken], lst, date_str=NIGHT_A)
     row = next(i for i in storage.get_shopping_items(lst)
                if i['name'] == 'chicken thighs')
     storage.check_shopping_item(row['id'], True)
 
-    meals.remove_from_plate('2026-08-17', chicken['id'])
+    meals.remove_from_plate(NIGHT_A, chicken['id'])
     after = storage.get_shopping_item(row['id'])
     check(after and after.get('is_checked'),
           "an item already in the cart was removed when the plan changed")
