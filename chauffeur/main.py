@@ -4792,10 +4792,13 @@ def list_assist_history(contact_id: str = None, limit: int = 200):
     return rows
 
 @app.get("/api/members")
-def get_members(request: Request = None, include_archived: bool = False):
+def get_members(request: Request = None, include_archived: bool = False,
+                figures: bool = False):
     """The family roster. Archived people are OFF it by default — that is
     what archiving means — and `include_archived=true` is how the People
-    config draws the road back."""
+    config draws the road back. `figures=true` adds the standing character
+    per member (~15KB each) for surfaces that draw it; off by default so a
+    kiosk polling for names does not pay for it."""
     _gate_family_listing(request, 'members')
     members = storage.get_all_members(include_archived=include_archived)
     drivers = {d.get('id'): d for d in storage.get_all_drivers()}
@@ -4804,6 +4807,8 @@ def get_members(request: Request = None, include_archived: bool = False):
     out = []
     for m in members:
         pub = _public_member(m)
+        if figures:
+            pub['figure'] = _effective_figure(m)
         pub['driver'] = drivers.get(m.get('driver_id'))
         pub['passenger'] = passengers.get(m.get('passenger_id'))
         # Stages (load arc A4): the PWA shell asks for a capability BY NAME
@@ -7449,9 +7454,17 @@ def get_avatar_endpoint(member_id: str):
     from services import avatar_catalog as cat
     storage.sync_avatar_unlocks(member_id)
     config = storage.get_avatar_config(member_id)
+    m = storage.get_member(member_id) or {}
     return {'member_id': member_id, 'config': config,
             'unlocks': storage.get_avatar_unlocks(member_id),
-            'conflicts': cat.conflicts(config)}
+            'conflicts': cat.conflicts(config),
+            # what the CHIP currently is, so the editor can offer the switch
+            # (avatar_kind hand path): the raw photo if one exists, the emoji,
+            # and the resolved kind.
+            'avatar_kind': m.get('avatar_kind'),
+            'has_photo': bool(m.get('image')),
+            'photo': m.get('image'),
+            'avatar_emoji': m.get('avatar') or (m.get('name') or '?')[:1].upper()}
 
 
 class AvatarConfigRequest(BaseModel):

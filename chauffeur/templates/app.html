@@ -1139,11 +1139,22 @@
             // "Hi James! \uD83D\uDC4B" is right for a seven-year-old and embarrassing
             // for a fifteen-year-old.
             const greet = showPoints ? `Hi ${mfEscape(first)}! \u{1F44B}` : `Hey ${mfEscape(first)}`;
+            // The standing character in the greeting (avatar arc): the day
+            // starts with YOU, and the figure is the door to the editor.
+            const figureHtml = m.figure ? `
+                <button onclick="typeof openAvatarEditor === 'function' && openAvatarEditor(selectedMemberId)"
+                    class="relative shrink-0 mr-3">
+                    <img src="${m.figure}" class="h-24 drop-shadow-lg" alt="">
+                    <span class="absolute bottom-0 -right-1 w-4 h-4 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[9px]">✏️</span>
+                </button>` : '';
             return `
             <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4 flex items-center justify-between mb-1">
-                <div>
-                    <div class="text-xl font-black text-gray-100">${greet}</div>
-                    <div class="text-sm font-bold text-gray-500">${done}/${total} done today${streak}</div>
+                <div class="flex items-center min-w-0">
+                    ${figureHtml}
+                    <div class="min-w-0">
+                        <div class="text-xl font-black text-gray-100">${greet}</div>
+                        <div class="text-sm font-bold text-gray-500">${done}/${total} done today${streak}</div>
+                    </div>
                 </div>
                 ${showPoints ? `<button onclick="setView('chores')" class="px-4 py-2 rounded-full font-black text-lg"
                     style="background:${kidTint(0.15)};color:${kidAccent()}">${balance} \u2B50</button>` : ''}
@@ -2181,7 +2192,7 @@
 
         async function fetchMembers() {
             try {
-                const res = await fetch(`${apiBase}api/members`);
+                const res = await fetch(`${apiBase}api/members?figures=1`);
                 // System members (e.g. the Argyle assistant) must never appear in
                 // pickers, passenger lists, or the identity switcher; their names
                 // are resolved specially where messages render.

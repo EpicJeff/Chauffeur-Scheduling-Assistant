@@ -2854,9 +2854,19 @@ verify screen. Lane headers are ONE horizontal row: the standing figure is the
 header's left element and replaces the head chip (both at once said the same
 thing twice); figure part off falls back to the chip.
 
-**Not built yet:** a hand path for a PHOTO member to switch `avatar_kind`
-(API-only today). The new slots' accessory art (belts, bracelets, necklaces,
-bows) is placeholder geometry and wants a proper pass.
+**The chip hand path + My Day (v2.281.0).** The editor's Me group leads with a
+"My picture" tab: three picture tiles -- the photo (when one exists), the
+character head, the emoji/initial -- choosing `avatar_kind` by tapping the
+thing itself; Save carries it. The avatar GET serves `avatar_kind`/`has_photo`
+/`photo`/`avatar_emoji` for the tiles. The PWA's My Day greeting block leads
+with the standing figure (door to the editor, pencil badge); the roster fetch
+opts into figures via `GET /api/members?figures=1` -- off by default so kiosk
+polls don't pay ~15KB/member for names. Celebration copy reads "Tap your
+avatar to wear it".
+
+**Still open:** the new slots' accessory art (belts, bracelets, necklaces,
+bows) is placeholder geometry and wants a proper pass; wardrobe breadth is
+deliberately thin (~30 unlockables) and grows as data.
 
 ## Security — how the house is locked (auth arc, standing reference)
 

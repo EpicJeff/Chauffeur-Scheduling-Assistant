@@ -116,7 +116,7 @@ function _celebrateOneUnlock(memberName, item, done) {
             ${picture}
             <div class="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-1">New for your avatar</div>
             <div class="text-3xl font-black text-blue-300">${esc(memberName || 'You')} unlocked ${esc(item.label)}!</div>
-            <div class="text-base text-gray-400 mt-2">Tap your face to wear it ✏️</div>
+            <div class="text-base text-gray-400 mt-2">Tap your avatar to wear it ✏️</div>
         </div>`;
     const finish = () => { overlay.remove(); done && done(); };
     overlay.addEventListener('click', finish);
@@ -138,6 +138,10 @@ function avatarEditor(config) {
         loading: true, saving: false, error: '',
         dirty: false,
         thumbCache: new Map(),
+        // The chip choice (avatar_kind hand path): what the small avatars
+        // around the app show for this member. The showcase figure is never
+        // gated by it.
+        kind: null, hasPhoto: false, photo: null, avatarEmoji: null,
 
         // Called by the window event. Resets per-member state; the art bundle
         // survives across opens (it never changes between members).
@@ -180,6 +184,10 @@ function avatarEditor(config) {
                 this.cfg = Object.assign({}, mine.config || {});
                 this.owned = new Set(mine.unlocks || []);
                 this.counters = cat.counters || {};
+                this.hasPhoto = !!mine.has_photo;
+                this.photo = mine.photo || null;
+                this.avatarEmoji = mine.avatar_emoji || null;
+                this.kind = mine.avatar_kind || (mine.has_photo ? 'photo' : 'character');
                 this.tab = this.groupTabs('me')[0];
             } catch (e) {
                 this.error = 'Could not load the dressing-up box.';
@@ -191,7 +199,9 @@ function avatarEditor(config) {
         get groups() { return (this.bundle && this.bundle.groups) || []; },
         groupTabs(key) {
             const g = this.groups.find(x => x.key === key);
-            return g ? g.tabs : [];
+            if (!g) return [];
+            if (key === 'me') return ['chip'].concat(g.tabs);
+            return g.tabs;
         },
         isPalette(tab) {
             return !!(this.bundle.palettes || {})[tab];
@@ -200,6 +210,7 @@ function avatarEditor(config) {
             return (this.bundle.slots || []).find(s => s.key === key) || {};
         },
         tabLabel(tab) {
+            if (tab === 'chip') return 'My picture';
             if (this.isPalette(tab)) {
                 const p = (this.bundle.palette_slots || []).find(x => x.key === tab);
                 return p ? p.label : tab;
@@ -235,6 +246,11 @@ function avatarEditor(config) {
                 this.cfg[slot] = key;
             }
             this.cfg = Object.assign({}, this.cfg);
+        },
+        setKind(k) {
+            if (this.kind === k) return;
+            this.kind = k;
+            this.dirty = true;
         },
         setColor(pal, name) {
             this.push();
@@ -272,7 +288,8 @@ function avatarEditor(config) {
                 const headers = { 'Content-Type': 'application/json' };
                 if (this.token) headers['X-Member-Token'] = this.token;
                 const r = await fetch(`${this.apiBase()}api/avatar/${encodeURIComponent(this.memberId)}`,
-                    { method: 'POST', headers, body: JSON.stringify({ config: this.cfg }) });
+                    { method: 'POST', headers,
+                      body: JSON.stringify({ config: this.cfg, avatar_kind: this.kind }) });
                 if (r.status === 403) { this.error = 'Ask a grown-up for your PIN.'; return; }
                 if (!r.ok) { this.error = 'That did not save. Try again?'; return; }
                 const out = await r.json();
@@ -475,6 +492,32 @@ function avatarEditor(config) {
 
         <!-- THE LIBRARY -->
         <div class="flex-1 min-h-0 overflow-y-auto px-2 pb-2">
+
+            <!-- My picture: what the small avatars around the app show.
+                 Pictures, not words -- each tile IS the thing it chooses. -->
+            <template x-if="tab === 'chip'">
+                <div class="grid grid-cols-3 gap-2 max-w-md">
+                    <button type="button" x-show="hasPhoto" @click="setKind('photo')"
+                            class="aspect-square rounded-xl overflow-hidden border-2 bg-white/5 grid place-items-center"
+                            :class="kind === 'photo' ? 'border-blue-400' : 'border-white/15'"
+                            aria-label="My photo">
+                        <img :src="photo" class="w-full h-full object-cover">
+                    </button>
+                    <button type="button" @click="setKind('character')"
+                            class="aspect-square rounded-xl overflow-hidden border-2 bg-white/5"
+                            :class="kind === 'character' ? 'border-blue-400' : 'border-white/15'"
+                            aria-label="My character">
+                        <div class="w-full h-full"
+                             x-html="compose(cfg, { crop: 'head', nonce: 'chip' })"></div>
+                    </button>
+                    <button type="button" @click="setKind('emoji')"
+                            class="aspect-square rounded-xl border-2 bg-white/5 grid place-items-center text-5xl font-black text-gray-200"
+                            :class="kind === 'emoji' ? 'border-blue-400' : 'border-white/15'"
+                            aria-label="Letter or emoji">
+                        <span x-text="avatarEmoji || '?'"></span>
+                    </button>
+                </div>
+            </template>
 
             <!-- colour swatches -->
             <template x-if="tab && isPalette(tab)">

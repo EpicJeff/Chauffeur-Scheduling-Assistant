@@ -349,6 +349,31 @@ def scenario_every_palette_slot_survives_a_save():
     check(not res['rejected'], f"no palette slot is rejected: {res['rejected']}")
 
 
+def scenario_avatar_kind_has_a_hand_path():
+    """The standing rule again: switching your chip between photo, character
+    and emoji must be doable by hand, not just by API."""
+    import os
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'templates')
+    comp = open(os.path.join(root, 'components', 'avatar_editor.html'),
+                encoding='utf-8').read()
+    check("setKind('photo')" in comp and "setKind('character')" in comp
+          and "setKind('emoji')" in comp, 'the editor offers all three chip kinds')
+    check('avatar_kind: this.kind' in comp, 'saving carries the choice')
+    check('My picture' in comp, 'the tab is named for reading adults too')
+
+    # And the endpoint the tab reads from serves what it draws.
+    import main
+    _member("kid")
+    storage.update_member("kid", {"image": "data:image/jpeg;base64,AAA",
+                                  "avatar": "🦖", "avatar_kind": "photo"})
+    out = main.get_avatar_endpoint("kid")
+    check(out['has_photo'] and out['photo'] == "data:image/jpeg;base64,AAA",
+          'the photo tile has its picture')
+    check(out['avatar_emoji'] == "🦖", 'the emoji tile has its glyph')
+    check(out['avatar_kind'] == 'photo', 'the current kind is reported')
+
+
 SCENARIOS = [
     scenario_identity_is_free,
     scenario_unlock_is_never_lost,
@@ -367,6 +392,7 @@ SCENARIOS = [
     scenario_editor_is_reachable_by_hand,
     scenario_editor_card_is_placeable,
     scenario_every_palette_slot_survives_a_save,
+    scenario_avatar_kind_has_a_hand_path,
 ]
 
 
