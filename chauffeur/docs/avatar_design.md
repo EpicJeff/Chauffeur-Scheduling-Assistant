@@ -175,6 +175,95 @@ cuff, hoodie, overall straps). v0 ships one generic sleeve and defers the rest.
 `viewBox="0 0 264 280"` — unmodified Avataaars, which is what it was designed
 to be.
 
+### Continuing a garment that isn't one colour
+
+One flat `TORSO_EXT` only works for the plain tops. `BlazerShirt` reaches y=280
+as five colour runs, not one:
+
+| x range | source | fill |
+|---|---|---|
+| 32..90 | `Saco` | `#3A4C5A` hardcoded |
+| 90..106 | `Wing` (lapel) | `#2F4351` hardcoded |
+| 106..158 | `Shirt` | **user's colour, via mask** |
+| 158..174 | `Wing` | `#2F4351` |
+| 174..232 | `Saco` | `#3A4C5A` |
+
+`BlazerSweater` is the same shape, `Overall` and `Hoodie` have four runs each.
+
+**The extension is baked, not drawn.** Every garment terminates on flat
+horizontal segments — verified across all nine — so the bottom edge is a set of
+colour runs, and a vertical extrusion of those runs is *exact* rather than
+approximate:
+
+1. Render the garment twice at build time with two different clothe colours.
+2. Sample the pixel row at y=279. Runs that change between the two renders are
+   mask-driven (user colour); runs that stay are hardcoded.
+3. Emit one extrusion rect per run, down to that garment's hem, carrying either
+   the hardcoded fill or a reference to the colour mask.
+
+That generates the continuation for all nine tops and any future one, with no
+hand-authoring and no possibility of a colour mismatch.
+
+**Structured garments end in a hem.** A blazer stops at the hip in real life,
+so it stops here too — extrude ~60 units to a hem at y≈340, cap it with the
+standard `#000` / 0.1 shading strip so the edge reads, and let trousers take
+over below. Soft tops (tees, hoodies, sweaters) extrude further, to the waist
+at y=372. Straight-sided extrusion is exactly right for both; it would only be
+wrong for a garment that flares, and v0 has none.
+
+### Slots, not accessories
+
+Avataaars models `accessoriesType` as a **single-choice enum** — seven glasses,
+one at a time. Belts, bracelets, necklaces and hairbands are not more items in
+that slot; they are worn *simultaneously*, so they are separate slots. This is
+a data-model change and it belongs in A1, before any content exists.
+
+The v0 slot set:
+
+| Slot | Source | Notes |
+|---|---|---|
+| top | inherited (37) | hair, hats — add mohawks and hats here, cheap |
+| facial hair | inherited (8) | |
+| eyewear | inherited (7) | the existing accessories enum, renamed |
+| clothes | inherited (9) | |
+| graphic | inherited (11) | valid only on `GraphicShirt` |
+| bottoms | **new** | trousers, shorts, skirt |
+| shoes | **new** | |
+| neck | **new** | necklaces, scarves |
+| wrist | **new** | bracelets, watches |
+| waist | **new** | belts |
+| hair accessory | **new** | bows, headbands |
+
+**Slots are expensive, items are cheap.** A new slot costs a registration
+decision and a z-order position, paid once and forever. A new item inside an
+existing slot is about a dozen path commands. So the discipline is: fix the
+slot set carefully now, then farm items indefinitely without further design.
+
+Registration hazards, each of which is a decision not a discovery:
+
+- **Neck** — nine garments have different necklines (crew, V, scoop, hoodie,
+  blazer). Keep necklaces short (choker/short chain) so they land on neck skin
+  above every one of them, or they will float on the low-cut tops.
+- **Wrist** — sits on the forearm we author, so it is ours to place, but it
+  must hide under long sleeves. Sleeve length becomes a property other slots
+  read.
+- **Waist** — belts ride the bottoms' waistband. One waistline in v0; adding
+  high-rise vs low-rise later means belts need a variant per waistline.
+- **Hair accessory** — must draw over hair but under hats, and there are 33
+  hair styles. Headbands sit on the skull line so they work generically; bows
+  take a fixed offset. Do not attempt per-hair placement.
+
+**This materially improves the economy.** One accessory slot means unlocking a
+hat ends the game. Eleven independent slots means layering, real combinatorics,
+and a long drip of small unlocks — which is exactly what a routine streak needs
+to keep paying out.
+
+**Where generation genuinely earns its keep: chest graphics.** A graphic is a
+self-contained motif inside a fixed bounding box on `GraphicShirt`, with no
+registration contract beyond that box and no style-matching burden. That is the
+one asset class where generated output needs no repair — unlike garments, where
+hand-authoring won.
+
 ### Inventory we inherit free
 
 | Category | Count |
