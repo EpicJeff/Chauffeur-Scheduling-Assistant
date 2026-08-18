@@ -62,13 +62,9 @@ idea, and it is where the schedule goes if we get it wrong.
   caps out near +/-15% before garment paths tear from the silhouette. That
   buys meaningfully different bodies, not radically different silhouettes, and
   it avoids paying 3x on every wardrobe item forever.
-- **Start from an existing CC0 layered set.** Open Peeps (Pablo Stanley) is
-  full-body, hand-drawn, mix-and-match by construction — heads, faces, hair,
-  torsos, arm poses, standing poses — and is believed CC0. **Verify the licence
-  before a line of code depends on it.** If it holds it is the rig and the
-  first few hundred combinations, free and pre-registered. Generation then
-  produces variants *against a fixed rig as a control image*, never assets
-  from scratch.
+- **Start from an existing layered set.** See the source survey below.
+  Generation then produces variants *against a fixed rig as a control image*,
+  never assets from scratch.
 - **Deferred: author in 3D, ship 2D.** Pose a rig, pre-render each garment to
   a flat sprite against a fixed camera. Perfect registration for free, and the
   whole wardrobe re-renders at a new angle with one batch job. Phase 2, once
@@ -77,6 +73,54 @@ idea, and it is where the schedule goes if we get it wrong.
 Not doing runtime 3D. Not because three.js is hard — because rigged meshes are
 *more* art pipeline, the wall panel is a modest device drawing several boards
 at once, and there is no payoff at 40px.
+
+### Source survey (checked 2026-08-18)
+
+| | Character Creator | Open Peeps | DiceBear |
+|---|---|---|---|
+| Where | [ubik23/charactercreator](https://github.com/ubik23/charactercreator), [charactercreator.org](https://charactercreator.org/) | [openpeeps.com](https://www.openpeeps.com/) | [dicebear.com](https://www.dicebear.com/) |
+| Who | Frédéric Guimont, Studio Chacre | Pablo Stanley | library wrapping many styles |
+| Art licence | **CC-BY-NC** (commercial via Patreon $5/mo) | **CC0** | per style: CC0, CC BY 4.0, proprietary-free |
+| Code licence | **AGPL** | n/a (assets only) | MIT |
+| Full body | **yes** — ships full body / upper body / close-up zooms | **yes** — standing, sitting, and bust | **no** for Open Peeps — the port is half-body |
+| Format | layered SVG | SVG + PNG | composed SVG out |
+| Real wardrobe | **yes** — the reason to pick it | **no** — clothing is baked into the pose art | fixed per style |
+
+**Character Creator — the only one with an actual wardrobe.** Kisekae paper-doll
+style, layered SVG, and it already ships the two zoom levels this design needs.
+Three cautions:
+
+1. **The AGPL is on the code, the CC-BY-NC is on `src/layer/` only.** Take the
+   assets; do not read or copy the layer-toggling logic. Chauffeur's repo is
+   public and ships an add-on — copying AGPL code relicenses the app. Our
+   compositor is ~20 lines and is written clean-room regardless.
+2. **NC is the only live constraint and it only bites if Chauffeur ever
+   monetises.** CC-BY-NC permits redistribution, so committing assets to a
+   public non-commercial repo with visible attribution is within the licence.
+   Add the credit. If the project ever takes money, the $5/mo patron tier
+   clears it — and also unlocks extra angles and poses.
+3. **`src/layer/` splits into `female/` and `male/` — two complete trees.**
+   This is exactly the 2x wardrobe tax this design set out to avoid, and worse,
+   it hard-forks the wardrobe by gender: a kid could not wear an item from the
+   other tree. That fights *identity is free* directly. **Pick one tree as the
+   base rig and port the best of the other onto it.** This is the single
+   biggest unknown in A0 and the thing that decides the schedule.
+
+**Open Peeps — lovely, free, and nearly nothing to unlock.** Genuinely CC0 and
+genuinely full body (the *original*; DiceBear's port of it is half-body only,
+which is the trap). But its ~584k combinations come from faces, hair and poses,
+not from a clothing system — clothing is drawn into each pose. An unlock
+economy built on flair needs a wardrobe, and this has almost none. Excellent
+art, wrong shape.
+
+**DiceBear — a renderer, not an asset library.** It hands back one composed
+SVG; individual layers are not ours to own, and adding a single hat means
+forking a style package. The premise that *adding wardrobe is adding catalog
+rows* does not survive it. **But it has one genuinely good role:** deterministic
+seed-based generation makes it the perfect **day-one default** — every member
+gets a distinct, decent-looking avatar before anyone opens the editor, and
+building a character becomes an upgrade rather than a chore. Adopt it for that
+and nothing else.
 
 ---
 
@@ -219,9 +263,9 @@ design.
 
 ## Slices
 
-- **A0** — licence check on Open Peeps, rig import, layer contract, first
-  wardrobe. *The long pole. Everything else is downstream of the rig being
-  right.*
+- **A0** — pick the rig, collapse the two gender trees into one, define the
+  layer contract, import the first wardrobe. *The long pole. Everything else is
+  downstream of the rig being right.*
 - **A1** — catalog + unlock ledger + backfill + counters. No UI.
 - **A2** — renderer, both crops, `avatar_kind`, `avatarInner()` and the nine
   bypassing templates.
