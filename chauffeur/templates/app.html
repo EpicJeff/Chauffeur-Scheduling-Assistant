@@ -996,6 +996,10 @@
                 const data = await res.json();
                 // Tier celebration first — it's the bigger moment than the daily streak toast.
                 maybeCelebrateStatus('routine', data.tier_status);
+                if (typeof celebrateAvatarUnlocks !== 'undefined') {
+                    const me = members.find(m => m.id === selectedMemberId);
+                    celebrateAvatarUnlocks(me ? me.name : '', data.avatar_unlocked);
+                }
                 if (data.streak && data.streak.today_complete && checked) {
                     showGlobalAlert(`Routine complete! 🔥 ${data.streak.current} day streak`);
                 }

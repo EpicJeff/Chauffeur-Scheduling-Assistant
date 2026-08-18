@@ -76,6 +76,54 @@ async function _avatarPinHandshake(base, member) {
     }
 }
 
+// New-wardrobe celebration (avatar arc A6): confetti in the house style
+// (status_celebration precedent), the member's OWN figure wearing the piece,
+// and no reading required to get the point. Queued, because a backfill can
+// grant several at once and overlapping overlays celebrate nothing.
+window.celebrateAvatarUnlocks = function (memberName, unlocks) {
+    const items = (unlocks || []).filter(u => u && u.label);
+    if (!items.length) return;
+    let i = 0;
+    const next = () => { if (i < items.length) _celebrateOneUnlock(memberName, items[i++], next); };
+    next();
+};
+
+function _celebrateOneUnlock(memberName, item, done) {
+    const esc = (t) => { const d = document.createElement('div'); d.textContent = t == null ? '' : String(t); return d.innerHTML; };
+    const overlay = document.createElement('div');
+    overlay.className = 'fixed inset-0 z-[200] flex items-center justify-center overflow-hidden';
+    overlay.style.background = 'rgba(0,0,0,0.72)';
+    const emojis = ['🎉', '✨', '🧢', '🎊', '👟'];
+    let confetti = '';
+    for (let n = 0; n < 24; n++) {
+        const e = emojis[n % emojis.length];
+        const left = Math.random() * 100, delay = Math.random() * 0.9,
+            dur = 2.2 + Math.random() * 1.6, size = 18 + Math.random() * 28;
+        confetti += `<span style="position:absolute;top:-56px;left:${left}%;font-size:${size}px;` +
+            `animation:avUnlockConfetti ${dur}s linear ${delay}s forwards;">${e}</span>`;
+    }
+    const picture = item.preview
+        ? `<img src="${item.preview}" style="height:13rem" class="mx-auto drop-shadow-xl mb-2">`
+        : `<div class="text-7xl mb-3">🎁</div>`;
+    overlay.innerHTML = `
+        <style>
+            @keyframes avUnlockConfetti { to { transform: translateY(115vh) rotate(340deg); opacity: .9; } }
+            @keyframes avUnlockPop { 0% { transform: scale(.4); opacity: 0; } 60% { transform: scale(1.12); } 100% { transform: scale(1); opacity: 1; } }
+        </style>
+        ${confetti}
+        <div style="animation:avUnlockPop .5s ease-out forwards"
+            class="relative text-center px-10 py-8 bg-gray-900 border border-blue-500/40 rounded-3xl shadow-2xl mx-6">
+            ${picture}
+            <div class="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-1">New for your avatar</div>
+            <div class="text-3xl font-black text-blue-300">${esc(memberName || 'You')} unlocked ${esc(item.label)}!</div>
+            <div class="text-base text-gray-400 mt-2">Tap your face to wear it ✏️</div>
+        </div>`;
+    const finish = () => { overlay.remove(); done && done(); };
+    overlay.addEventListener('click', finish);
+    document.body.appendChild(overlay);
+    setTimeout(finish, 6500);
+}
+
 function avatarEditor(config) {
     config = config || {};
     return {

@@ -4305,6 +4305,30 @@ def _effective_figure(m: dict):
     return avatar_render.effective_figure(m)
 
 
+def _avatar_unlock_payload(member_id: str, item_ids: list) -> list:
+    """Enrich freshly earned item ids into what a celebration can draw: the
+    label, and a preview of THIS member's own figure wearing the new piece --
+    the same you-not-a-mannequin rule the editor follows (avatar arc A6)."""
+    from services import avatar_catalog as cat
+    from services import avatar_render
+    out = []
+    for iid in (item_ids or []):
+        slot, key = cat.split_item_id(iid)
+        item = cat.get_item(slot, key)
+        if not item:
+            continue
+        row = {'id': iid, 'slot': slot, 'key': key, 'label': item['label']}
+        try:
+            if avatar_render.available():
+                cfg = dict(storage.get_avatar_config(member_id))
+                cfg[slot] = key
+                row['preview'] = avatar_render.figure_data_url(cfg)
+        except Exception:
+            pass                    # a celebration with no picture still lands
+        out.append(row)
+    return out
+
+
 def _public_member(m: dict) -> dict:
     """Strip credential secrets; expose has_pin / has_password instead.
 
@@ -6962,7 +6986,8 @@ def verify_chore_endpoint(chore_id: str, background_tasks: BackgroundTasks,
                               parent, str(result['awarded'] or ''))
     claimant = (result.get('chore') or {}).get('claimed_by')
     if claimant:
-        result['avatar_unlocked'] = storage.sync_avatar_unlocks(claimant)
+        result['avatar_unlocked'] = _avatar_unlock_payload(
+            claimant, storage.sync_avatar_unlocks(claimant))
     return result
 
 class ChoreRejectRequest(BaseModel):
@@ -7349,7 +7374,8 @@ def check_routine(routine_id: str, req: RoutineCheckRequest):
             'tier_status': status_tiers.compute_member_status(req.member_id, 'routine'),
             # Newly earned wardrobe, so the UI can celebrate it at the tap that
             # earned it. Empty list on an untick -- the ledger never gives back.
-            'avatar_unlocked': storage.sync_avatar_unlocks(req.member_id)}
+            'avatar_unlocked': _avatar_unlock_payload(
+                req.member_id, storage.sync_avatar_unlocks(req.member_id))}
 
 # --- Avatars API ---
 # The ledger is the authority on what a person may wear. These endpoints are a

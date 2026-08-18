@@ -664,6 +664,9 @@
                         showGlobalAlert(awarded
                             ? `Verified — ${awarded} points to ${chore.claimed_by_name || 'them'} ✅`
                             : 'Verified ✅', 'success');
+                        if (typeof celebrateAvatarUnlocks !== 'undefined') {
+                            celebrateAvatarUnlocks(chore.claimed_by_name || '', data.avatar_unlocked);
+                        }
                     } catch (e) {
                         showGlobalAlert("Couldn't verify that.");
                     } finally { this.busyChoreId = null; }

@@ -2842,9 +2842,21 @@ whitelist that silently dropped `bottoms_color` / `shoes_color` /
 derives from `avatar_render._PALETTES`, palette keys are excluded from the
 slot-rejection loop, and a test pins every palette slot surviving a save.
 
-**Not built yet:** the unlock celebration (A6), a hand path for a PHOTO member
-to switch `avatar_kind` (API-only today). The new slots' accessory art (belts,
-bracelets, necklaces, bows) is placeholder geometry and wants a proper pass.
+**The celebration (v2.280.0, A6).** The two earn responses (routine check,
+chore verify) return `avatar_unlocked` enriched by `_avatar_unlock_payload`:
+label plus a preview of THAT member's own figure wearing the new piece (the
+editor's you-not-a-mannequin rule). `celebrateAvatarUnlocks` (lives in
+avatar_editor.html, so it exists wherever the doors do) queues one confetti
+overlay per piece in the status_celebration style: the figure wearing it,
+"Emma unlocked Shorts!", "Tap your face to wear it". Hooked at the routine
+lanes (kiosks + cards + home board), the PWA's own toggle, and the parent's
+verify screen. Lane headers are ONE horizontal row: the standing figure is the
+header's left element and replaces the head chip (both at once said the same
+thing twice); figure part off falls back to the chip.
+
+**Not built yet:** a hand path for a PHOTO member to switch `avatar_kind`
+(API-only today). The new slots' accessory art (belts, bracelets, necklaces,
+bows) is placeholder geometry and wants a proper pass.
 
 ## Security — how the house is locked (auth arc, standing reference)
 

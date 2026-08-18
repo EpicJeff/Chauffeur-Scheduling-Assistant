@@ -75,34 +75,40 @@
                     <div class="grid gap-5" :style="'grid-template-columns: repeat(' + laneColumns() + ', minmax(0, 1fr))'">
                         <template x-for="(b, idx) in balances" :key="'lane-' + b.member_id">
                             <div class="bg-gray-800/60 rounded-2xl border border-gray-700 p-4 flex flex-col gap-3">
-                                <!-- The standing character (avatar arc A5). Tappable door. -->
-                                <template x-if="laneShow('figure') && b.figure">
-                                    <button type="button" class="self-center -mb-1"
-                                        :disabled="typeof openAvatarEditor === 'undefined'"
-                                        @click="typeof openAvatarEditor !== 'undefined'
-                                                && openAvatarEditor({ id: b.member_id, name: b.name })">
-                                        <img :src="b.figure" class="h-36 mx-auto drop-shadow-lg" :alt="b.name">
-                                    </button>
-                                </template>
-                                <!-- Lane header: rank, who, earned status, balance -->
+                                <!-- Lane header: rank, who, earned status, balance -- one
+                                     horizontal row. The standing character (avatar arc A5) is
+                                     its LEFT element and replaces the head chip; figure part
+                                     off (or no art) falls back to the chip. Either is the door
+                                     to the dressing-up box (A3). -->
                                 <template x-if="laneShow('header')">
                                 <div class="flex items-center gap-3 pb-2 border-b border-gray-700">
                                     <div class="text-lg font-black w-7 text-center shrink-0"
                                         :class="idx === 0 ? 'text-yellow-400' : (idx === 1 ? 'text-gray-300' : (idx === 2 ? 'text-amber-600' : 'text-gray-600'))"
                                         x-text="'#' + (idx + 1)"></div>
-                                    <!-- Your face is the door to the dressing-up box (avatar arc A3). -->
-                                    <button type="button" class="relative shrink-0"
-                                        :disabled="typeof openAvatarEditor === 'undefined'"
-                                        @click="typeof openAvatarEditor !== 'undefined'
-                                                && openAvatarEditor({ id: b.member_id, name: b.name })">
-                                        <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white overflow-hidden"
-                                            :style="'background-color:' + (b.color_code || '#3b82f6')">
-                                            <template x-if="b.image"><img :src="b.image" class="w-full h-full object-cover"></template>
-                                            <template x-if="!b.image"><span x-text="b.avatar || (b.name || '?').charAt(0)"></span></template>
-                                        </div>
-                                        <span x-show="typeof openAvatarEditor !== 'undefined'"
-                                            class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[9px]">✏️</span>
-                                    </button>
+                                    <template x-if="laneShow('figure') && b.figure">
+                                        <button type="button" class="relative shrink-0"
+                                            :disabled="typeof openAvatarEditor === 'undefined'"
+                                            @click="typeof openAvatarEditor !== 'undefined'
+                                                    && openAvatarEditor({ id: b.member_id, name: b.name })">
+                                            <img :src="b.figure" class="h-28 drop-shadow-lg" :alt="b.name">
+                                            <span x-show="typeof openAvatarEditor !== 'undefined'"
+                                                class="absolute bottom-0 -right-1 w-4 h-4 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[9px]">✏️</span>
+                                        </button>
+                                    </template>
+                                    <template x-if="!(laneShow('figure') && b.figure)">
+                                        <button type="button" class="relative shrink-0"
+                                            :disabled="typeof openAvatarEditor === 'undefined'"
+                                            @click="typeof openAvatarEditor !== 'undefined'
+                                                    && openAvatarEditor({ id: b.member_id, name: b.name })">
+                                            <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white overflow-hidden"
+                                                :style="'background-color:' + (b.color_code || '#3b82f6')">
+                                                <template x-if="b.image"><img :src="b.image" class="w-full h-full object-cover"></template>
+                                                <template x-if="!b.image"><span x-text="b.avatar || (b.name || '?').charAt(0)"></span></template>
+                                            </div>
+                                            <span x-show="typeof openAvatarEditor !== 'undefined'"
+                                                class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[9px]">✏️</span>
+                                        </button>
+                                    </template>
                                     <div class="min-w-0 flex-1">
                                         <div class="font-bold text-white text-lg truncate" x-text="b.name"></div>
                                         <template x-if="b.status">
