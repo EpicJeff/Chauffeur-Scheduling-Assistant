@@ -1849,18 +1849,22 @@ def _tile_pets(now, config=None, **_):
                 continue
             if m.get('status') in ('archived',):
                 continue
-            pet = storage.get_active_pet(m['id'])
-            if not pet and not show_empty:
+            # ONE ROW PER CRITTER, because a member may own more than one
+            # once they have bought a slot (P5). An empty slot is still a row:
+            # it is the invitation, and hiding it means the only way to find
+            # the feature is to already know about it.
+            pets = storage.get_pets(m['id'])
+            if not pets and not show_empty:
                 continue
-            row = {'member_id': m['id'], 'name': m.get('name'),
-                   'color_code': m.get('color_code'),
-                   'has_pin': bool(m.get('pin_hash')), 'pet': None}
-            if pet:
+            prog = storage.pet_level_progress(m['id'])
+            base = {'member_id': m['id'], 'name': m.get('name'),
+                    'color_code': m.get('color_code'),
+                    'has_pin': bool(m.get('pin_hash'))}
+            for pet in pets:
                 cfg = dict(pet.get('species') or {})
                 cfg.update(pet.get('look') or {})
                 t = pet_catalog.get(pet.get('type')) or {}
-                prog = storage.pet_level_progress(m['id'])
-                row['pet'] = {
+                rows.append(dict(base, kind='pet', pet={
                     'id': pet['id'], 'name': pet.get('name'),
                     'level': prog['level'], 'progress': prog,
                     'type': pet.get('type'), 'type_label': t.get('label'),
@@ -1868,8 +1872,16 @@ def _tile_pets(now, config=None, **_):
                     # the pet id is the id namespace, so a board may draw a
                     # dozen critters without their clips colliding
                     'svg': pet_render.render_svg(cfg, crop='chip',
-                                                 nonce=pet['id'][:12])}
-            rows.append(row)
+                                                 nonce=pet['id'][:12])}))
+            if not show_empty:
+                continue
+            if len(pets) < storage.pet_slots(m['id']):
+                rows.append(dict(base, kind='empty', pet=None))
+            elif storage.get_pet_xp_balance(m['id']) >= storage.PET_SLOT_COST:
+                # Affordable but not yet bought, so offer it. A carrot nobody
+                # can see is not a carrot.
+                rows.append(dict(base, kind='buy', pet=None,
+                                 cost=storage.PET_SLOT_COST))
         if not rows:
             return None
         return {'members': rows, 'interactive': _cfg_bool(config, 'interactive', True),

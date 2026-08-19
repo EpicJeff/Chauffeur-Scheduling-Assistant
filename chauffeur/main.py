@@ -7523,6 +7523,13 @@ def _pet_payload(pet: dict) -> dict:
     # rather than trusted from the record -- see storage._with_level.
     out['progress'] = storage.pet_level_progress(out.get('member_id') or '')
     out['level'] = out['progress']['level']
+    # The build, and what it may be built from. Training points are free and
+    # come with the level; the known-move list is the half that was bought.
+    out['native_moves'] = storage.pet_native_moves(out)
+    out['known_moves'] = storage.pet_known_moves(out)
+    out['moves'] = out.get('moves') or out['native_moves']
+    out['training_budget'] = storage.pet_training_budget(out.get('member_id') or '')
+    out['training_spent'] = sum((out.get('training') or {}).values())
     return out
 
 
@@ -7545,6 +7552,8 @@ def pets_bundle_endpoint():
     out['order'] = (pet_render._load() or {}).get('order') or []
     out['view'] = (pet_render._load() or {}).get('view') or [0, 0, 100, 100]
     out.update(pet_catalog.bundle())
+    out['move_cost'] = storage.PET_MOVE_COST
+    out['slot_cost'] = storage.PET_SLOT_COST
     return out
 
 
@@ -7669,6 +7678,23 @@ def create_pet_endpoint(req: PetCreateRequest,
             'rejected': res.get('rejected') or []}
 
 
+class PetSlotRequest(BaseModel):
+    member_id: str
+
+
+@app.post("/api/pets/slot")
+def buy_pet_slot_endpoint(req: PetSlotRequest,
+                          x_member_token: Optional[str] = Header(None)):
+    """Buy room for a second critter. Declared above `/api/pets/{pet_id}`
+    because FastAPI matches routes in order."""
+    _require_pet_owner(req.member_id, x_member_token)
+    res = storage.buy_pet_slot(req.member_id)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    return {'status': 'ok', **res,
+            'balance': storage.get_pet_xp_balance(req.member_id)}
+
+
 @app.get("/api/pets/{pet_id}")
 def get_pet_endpoint(pet_id: str):
     pet = storage.get_pet(pet_id)
@@ -7701,6 +7727,68 @@ def update_pet_endpoint(pet_id: str, req: PetUpdateRequest,
 
 class PetRetireRequest(BaseModel):
     retired: bool = True
+
+
+class PetTrainingRequest(BaseModel):
+    training: dict
+
+
+@app.post("/api/pets/{pet_id}/training")
+def set_pet_training_endpoint(pet_id: str, req: PetTrainingRequest,
+                              x_member_token: Optional[str] = Header(None)):
+    """Spend the level's training points. FREE, and freely re-spent: a child
+    has to be able to try a build, lose, and try another without paying for
+    the experiment. Over-budget requests are SCALED, keeping the shape the
+    child asked for rather than filling stats in tuple order."""
+    pet = storage.get_pet(pet_id)
+    if not pet:
+        raise HTTPException(status_code=404, detail="No such pet")
+    _require_pet_owner(pet['member_id'], x_member_token)
+    res = storage.set_pet_training(pet_id, req.training or {})
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    return {'status': 'ok', 'pet': _pet_payload(res['pet']),
+            'budget': res['budget'], 'spent': res['spent'],
+            'scaled': res.get('scaled', False)}
+
+
+class PetMovesRequest(BaseModel):
+    moves: List[str]
+
+
+@app.post("/api/pets/{pet_id}/moves")
+def set_pet_moves_endpoint(pet_id: str, req: PetMovesRequest,
+                           x_member_token: Optional[str] = Header(None)):
+    pet = storage.get_pet(pet_id)
+    if not pet:
+        raise HTTPException(status_code=404, detail="No such pet")
+    _require_pet_owner(pet['member_id'], x_member_token)
+    res = storage.set_pet_moves(pet_id, req.moves or [])
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    return {'status': 'ok', 'pet': _pet_payload(res['pet']),
+            'rejected': res.get('rejected') or []}
+
+
+class PetLearnRequest(BaseModel):
+    move: str
+
+
+@app.post("/api/pets/{pet_id}/learn")
+def learn_pet_move_endpoint(pet_id: str, req: PetLearnRequest,
+                            x_member_token: Optional[str] = Header(None)):
+    """Buy a move from another element -- coverage, the one purchase that
+    changes how a critter plays rather than how it looks."""
+    pet = storage.get_pet(pet_id)
+    if not pet:
+        raise HTTPException(status_code=404, detail="No such pet")
+    _require_pet_owner(pet['member_id'], x_member_token)
+    res = storage.learn_pet_move(pet_id, req.move)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    return {'status': 'ok', 'pet': _pet_payload(res['pet']),
+            'spent': res['spent'],
+            'balance': storage.get_pet_xp_balance(pet['member_id'])}
 
 
 @app.post("/api/pets/{pet_id}/retire")

@@ -219,8 +219,14 @@ that pays out on the surface kids care about most.
   event and inherits the same behaviour, so there is no reversal machinery to
   build and none was.
 
-**Sinks:** stat training, move slots, species unlocks, the second pet slot,
-cosmetic parts. Lifetime XP earned drives **level**; XP spent buys the rest.
+**Sinks** ~~stat training, species unlocks, cosmetic parts~~ — **wrong when
+written; corrected in P5.** Species and cosmetics cannot be sinks: rule 1 says
+identity is free and P1 shipped a test that every part, colour and element is
+choosable at a zero balance. Stat training is not one either — training points
+arrive with the level and are re-spendable for nothing, because training is
+the *build*, the thing level-matching exists to preserve; charging for it
+hands the better build to whoever has more XP. What is actually left is
+**breadth**: a move from another element (coverage) and the second pet slot. Lifetime XP earned drives **level**; XP spent buys the rest.
 Spending never lowers level — same shape as `get_points_balance` vs the status
 tiers that must never be taken away.
 
@@ -416,8 +422,10 @@ move must never be a code change.
   critters and two HP plates already fill a 16:9 stage, and a bust-crop
   avatar beside a full creature read as a collage. Revisit if the stage ever
   gets wider.
-- **P5 — training and spending.** Levels, training points, move slots, species
-  unlocks, second pet slot.
+- **P5 — training and spending.** *Done (v2.299.0).* Levels, training points
+  (free, re-spendable, proportionally scaled when over budget), cross-element
+  move learning at 60 XP, second pet slot at 500 XP. No species or cosmetic
+  unlocks — see the sinks note above.
 - **P6 — PvP.** Challenge, accept, resolve, both-sides replay, caps, quiet-hour
   respect, agent tools in both stacks.
 

@@ -3359,6 +3359,36 @@ picker shows Easy/Fair/Tough/Brutal against your own: a level 1 critter that
 walks into the tier 6 opponent is knocked out in one move, and that should be
 a choice made with the odds visible.
 
+**Training, moves and the second slot (P5, v2.299.0).** What XP buys, and
+what it must never buy. **Not looks** -- rule 1, and a test re-runs every part,
+colour and element at a zero balance. **Not stat training either**: training
+points arrive with the level and are re-spendable for nothing, because
+training is the BUILD, the thing level-matching deliberately preserves;
+charging for it would hand the better build to whoever has more XP, which is
+the one outcome this arc exists to prevent. The design brief listed "species
+unlocks" and "cosmetic parts" as sinks -- it was wrong, and it was corrected
+rather than obeyed.
+
+What is left is **breadth**: a move from another element (60 XP -- coverage,
+the one purchase that changes how a critter PLAYS) and a **second critter**
+(500 XP). A critter knows its own element's four moves free and forever, and
+`set_pet_moves` will not leave it with an empty loadout. The second pet
+arrives at its owner's level, because XP belongs to the member.
+
+**Over-budget training scales the shape rather than filling stats in order.**
+Walking `STATS` and stopping at the budget meant asking for 999 attack got you
+24 HP and no attack at all -- the child's actual intent discarded because `hp`
+sorts first. It now scales proportionally and hands the rounding remainder to
+the biggest asks, which is the same thing level-matching does to a training
+budget, so a build squeezed by either route keeps its shape.
+
+Surfaces: two new editor tabs (**Train**, **Moves**) behind the free ones, and
+**one Save button whose label follows the tab** -- two Saves on screen meaning
+different things is a trap for a child who cannot read either. The pets card
+now draws **one row per critter**, plus an egg for a free slot or a 🛒 tile at
+500 XP when a second is affordable but unbought: a carrot nobody can see is
+not a carrot.
+
 **A full-screen editor is opaque on a wall (v2.295.0).** `panel_skin` maps
 every `.bg-gray-950`/`.bg-gray-900` surface to translucent glass with
 `!important` so the wallpaper reads through the board — and a full-screen

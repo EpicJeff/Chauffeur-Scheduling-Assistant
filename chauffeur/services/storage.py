@@ -3663,8 +3663,9 @@ PET_NAME_MAX = 24
 
 
 def pet_slots(member_id: str) -> int:
-    """How many pets this member may keep active."""
-    return PET_SLOTS_FREE
+    """How many pets this member may keep active: the free one, plus any
+    bought with xp."""
+    return PET_SLOTS_FREE + pet_slots_bought(member_id)
 
 
 # --- pet xp (P2) ----------------------------------------------------------
@@ -3917,6 +3918,162 @@ def retire_pet(pet_id: str, retired: bool = True) -> Optional[dict]:
     return pet
 
 
+# --- training, moves and slots (P5) ---------------------------------------
+# WHAT XP CAN AND CANNOT BUY.
+#
+# Not species, not colours, not any part of how a critter looks -- rule 1 says
+# identity is free and P1 shipped a test that every part and colour is
+# choosable. The design brief listed "species unlocks" and "cosmetic parts"
+# as sinks; it was wrong, and it has been corrected rather than obeyed.
+#
+# Not stat training either, and that one is a real decision. Training points
+# come free with each level and can be moved around as often as a child likes,
+# because training is the BUILD -- the thing level-matching deliberately
+# preserves so that thinking about your critter still pays in a family fight.
+# Charging for it would mean the sibling with more xp has the better build,
+# which is the whole thing this arc exists to avoid.
+#
+# So what is left is BREADTH, and it is genuinely the interesting half:
+#   * moves from OTHER elements -- coverage, the one real strategic purchase
+#   * a second pet
+PET_MOVE_COST = 60
+PET_SLOT_COST = 500
+
+
+def pet_native_moves(pet: dict) -> List[str]:
+    """The four a critter has always known: its own element's kit, free."""
+    from services import pet_catalog
+    return pet_catalog.default_moves((pet or {}).get('type'))
+
+
+def pet_known_moves(pet: dict) -> List[str]:
+    """Everything it may equip -- its own element's four, plus anything
+    bought."""
+    known = list(pet_native_moves(pet))
+    for k in ((pet or {}).get('known_moves') or []):
+        if k not in known:
+            known.append(k)
+    return known
+
+
+def learn_pet_move(pet_id: str, move_key: str) -> dict:
+    """Buy a move from another element. Returns {'pet','spent'} or {'error'}.
+
+    Coverage is the point: an ember critter that learns a tide move stops
+    being helpless against the thing that beats it. A real decision with a
+    real cost, which is what a sink is supposed to be."""
+    from services import pet_catalog
+    pet = get_pet(pet_id)
+    if not pet:
+        return {'error': 'No such pet'}
+    mv = pet_catalog.move(move_key)
+    if not mv:
+        return {'error': 'No such move'}
+    if move_key in pet_known_moves(pet):
+        return {'error': 'Already knows it'}
+    member_id = pet.get('member_id')
+    if get_pet_xp_balance(member_id) < PET_MOVE_COST:
+        return {'error': 'Not enough XP'}
+    grant_pet_xp(member_id, -PET_MOVE_COST, 'spend', ref_id=pet_id,
+                 note='learned %s' % mv['name'])
+    known = list(pet.get('known_moves') or [])
+    known.append(move_key)
+    with db_lock:
+        pets_table.update({'known_moves': known}, Query().id == pet_id)
+    return {'pet': get_pet(pet_id), 'spent': PET_MOVE_COST}
+
+
+def set_pet_moves(pet_id: str, moves: List[str]) -> dict:
+    """Equip up to four, only ever from what the creature already knows -- the
+    ledger decides what may be equipped, never the editor."""
+    pet = get_pet(pet_id)
+    if not pet:
+        return {'error': 'No such pet'}
+    allowed = pet_known_moves(pet)
+    clean, rejected = [], []
+    for k in (moves or []):
+        if k in allowed and k not in clean:
+            clean.append(k)
+        else:
+            rejected.append(k)
+    clean = clean[:4]
+    if not clean:
+        # Never leave a critter with nothing to do in a fight.
+        clean = pet_native_moves(pet)[:4]
+    with db_lock:
+        pets_table.update({'moves': clean}, Query().id == pet_id)
+    return {'pet': get_pet(pet_id), 'rejected': rejected}
+
+
+def pet_training_budget(member_id: str) -> int:
+    from services import pet_battle
+    return pet_battle.training_budget(pet_level(member_id))
+
+
+def set_pet_training(pet_id: str, training: dict) -> dict:
+    """Spend the level's training points. FREE and freely re-spent -- a child
+    must be able to try a build, lose, and try another without paying for the
+    experiment."""
+    from services import pet_battle
+    from services import pet_catalog
+    pet = get_pet(pet_id)
+    if not pet:
+        return {'error': 'No such pet'}
+    budget = pet_training_budget(pet.get('member_id'))
+    want = {}
+    for stat in pet_catalog.STATS:
+        try:
+            v = max(0, int((training or {}).get(stat, 0) or 0))
+        except (TypeError, ValueError):
+            v = 0
+        want[stat] = min(v, pet_battle.TRAINING_STAT_CAP)
+
+    # OVER BUDGET SCALES THE SHAPE DOWN; it does not fill stats in whatever
+    # order the tuple happens to be in. Walking STATS and stopping at the
+    # budget meant asking for 999 attack got you 24 hp and no attack at all --
+    # the child's actual intent thrown away because 'hp' sorts first. Scaling
+    # is also what level-matching does to a training budget, so a pet squeezed
+    # by either route keeps the same shape.
+    total = sum(want.values())
+    scaled = total > budget
+    if scaled and total:
+        clean = {s: int(v * budget / total) for s, v in want.items()}
+        # hand the rounding remainder to the biggest asks first, so a build
+        # does not quietly lose points to floor()
+        left = budget - sum(clean.values())
+        for stat in sorted(want, key=lambda k: -want[k]):
+            if left <= 0:
+                break
+            if clean[stat] < min(want[stat], pet_battle.TRAINING_STAT_CAP):
+                clean[stat] += 1
+                left -= 1
+    else:
+        clean = dict(want)
+
+    with db_lock:
+        pets_table.update({'training': clean}, Query().id == pet_id)
+    return {'pet': get_pet(pet_id), 'budget': budget,
+            'spent': sum(clean.values()), 'scaled': scaled}
+
+
+def pet_slots_bought(member_id: str) -> int:
+    with db_lock:
+        return len(pet_xp_ledger_table.search(
+            (Query().member_id == member_id) & (Query().reason == 'pet_slot')))
+
+
+def buy_pet_slot(member_id: str) -> dict:
+    """The long carrot. A second critter is the reward rather than a thing you
+    are handed -- and it arrives at your own level instead of as a weakling,
+    because xp belongs to the member."""
+    if not get_member(member_id):
+        return {'error': 'No such member'}
+    if get_pet_xp_balance(member_id) < PET_SLOT_COST:
+        return {'error': 'Not enough XP'}
+    grant_pet_xp(member_id, -PET_SLOT_COST, 'pet_slot', note='a second critter')
+    return {'slots': pet_slots(member_id), 'spent': PET_SLOT_COST}
+
+
 # --- battles (P4) ---------------------------------------------------------
 
 PET_PVE_DAILY_CAP = 5
@@ -3949,7 +4106,8 @@ def pet_combatant_for(pet_id: str):
     return pet_battle.combatant(
         pet.get('name') or 'Critter', pet.get('type'), pet.get('species'),
         level=pet.get('level') or 1, training=pet.get('training'),
-        moves=pet.get('moves'), pet_id=pet_id, owner=m.get('name'))
+        moves=(pet.get('moves') or pet_native_moves(pet)),
+        pet_id=pet_id, owner=m.get('name'))
 
 
 def run_pet_battle(pet_id: str, opponent: str, seed: int = None) -> dict:

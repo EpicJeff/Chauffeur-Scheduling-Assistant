@@ -88,11 +88,43 @@ window.openPetEditor = async function (m) {
         { detail: { memberId: member.id, memberName: member.name, token: token } }));
 };
 
+// Buying room for a second critter, then going straight into naming it.
+// Lives beside the editor rather than in the board card, because the card is
+// a tile that has to draw on a wall panel, a kiosk and a phone alike, and the
+// purchase should behave the same from all three.
+window.buyPetSlot = async function (m) {
+    const base = (window.chfBase !== undefined) ? window.chfBase : '';
+    const ok = await promptConfirm('Room for another critter?',
+        'It costs ' + (m.cost || '') + ' XP. Your first one keeps everything it has.');
+    if (!ok) return;
+    let token = null;
+    if (localStorage.getItem('chauffeur_member_token_for') === m.member_id) {
+        token = localStorage.getItem('chauffeur_member_token');
+    }
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['X-Member-Token'] = token;
+    try {
+        const res = await fetch(base + 'api/pets/slot', {
+            method: 'POST', headers,
+            body: JSON.stringify({ member_id: m.member_id }),
+        });
+        if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            showGlobalAlert(d.detail || 'Could not buy a slot');
+            return;
+        }
+        window.openPetEditor({ id: m.member_id, name: m.name, has_pin: m.has_pin });
+    } catch (e) {
+        showGlobalAlert('Could not buy a slot');
+    }
+};
+
 function petEditorPanel() {
     return {
         show: false, loading: false, saving: false,
         bundle: null, memberId: null, memberName: '', token: null,
         pet: null, cfg: {}, name: '', type: 'ember', xp: null,
+        training: {}, equipped: [], busyBuy: false,
         tab: 'body', history: [], future: [],
 
         // Glyph first, word second -- the tabs have to work for a child who
@@ -106,6 +138,10 @@ function petEditorPanel() {
             { key: 'cheeks', glyph: '🌸', label: 'Cheeks' },
             { key: 'color', glyph: '🎨', label: 'Colour' },
             { key: 'type', glyph: '🔥', label: 'Element' },
+            // The earned half. Everything above this line is free and always
+            // will be; these two are what xp is actually for.
+            { key: 'train', glyph: '💪', label: 'Train' },
+            { key: 'moves', glyph: '📖', label: 'Moves' },
         ],
 
         get api() { return (window.chfBase !== undefined ? window.chfBase : ''); },
@@ -118,6 +154,52 @@ function petEditorPanel() {
         get colorNames() { return Object.keys((this.bundle && this.bundle.colors) || {}); },
         get typeInfo() {
             return ((this.bundle && this.bundle.types) || []).find(t => t.key === this.type) || {};
+        },
+        get stats() { return (this.bundle && this.bundle.stats) || []; },
+        get statLabels() { return (this.bundle && this.bundle.stat_labels) || {}; },
+        get budget() { return (this.pet && this.pet.training_budget) || 0; },
+        get trainSpent() {
+            return this.stats.reduce((n, s) => n + (this.training[s] || 0), 0);
+        },
+        get trainLeft() { return Math.max(0, this.budget - this.trainSpent); },
+        get balance() { return (this.xp && this.xp.balance) || 0; },
+        // A body's own spread, so a child can see WHY their critter is
+        // fast -- training is a nudge on top of a shape, not the shape.
+        baseOf(stat) {
+            const b = (this.bundle && this.bundle.bodies) || {};
+            return (b[this.cfg.body] || {})[stat] || 0;
+        },
+        bump(stat, by) {
+            const now = this.training[stat] || 0;
+            const next = Math.max(0, now + by);
+            if (by > 0 && this.trainLeft <= 0) return;
+            this.training = Object.assign({}, this.training, { [stat]: next });
+        },
+        resetTraining() {
+            const blank = {};
+            this.stats.forEach(s => { blank[s] = 0; });
+            this.training = blank;
+        },
+        moveInfo(key) {
+            return ((this.bundle && this.bundle.moves) || []).find(m => m.key === key) || {};
+        },
+        knows(key) {
+            return ((this.pet && this.pet.known_moves) || []).includes(key);
+        },
+        isEquipped(key) { return this.equipped.includes(key); },
+        toggleMove(key) {
+            if (!this.knows(key)) return;
+            if (this.isEquipped(key)) {
+                if (this.equipped.length <= 1) return;   // never leave it empty
+                this.equipped = this.equipped.filter(k => k !== key);
+            } else {
+                if (this.equipped.length >= 4) return;
+                this.equipped = this.equipped.concat([key]);
+            }
+        },
+        typeOf(key) {
+            return ((this.bundle && this.bundle.types) || [])
+                .find(t => t.key === key) || {};
         },
         // pattern and cheeks are genuinely optional; a body and a face are not
         get optional() { return this.tab === 'pattern' || this.tab === 'cheeks'; },
@@ -146,6 +228,8 @@ function petEditorPanel() {
                 } catch (e) { this.xp = null; }
                 if (this.pet) {
                     this.cfg = Object.assign({}, this.pet.species, this.pet.look);
+                    this.training = Object.assign({}, this.pet.training || {});
+                    this.equipped = (this.pet.moves || []).slice();
                     this.name = this.pet.name || '';
                     this.type = this.pet.type || this.bundle.default;
                 } else {
@@ -215,8 +299,20 @@ function petEditorPanel() {
             return window.petCompose(this.bundle, cfg, ns || 'pv');
         },
 
+        // ONE Save button, and it saves whatever tab you are on. Two Saves
+        // on screen at once -- one in the panel and one in the control bar,
+        // meaning different things -- is a trap for a child who cannot read
+        // either label.
+        get saveLabel() {
+            if (this.tab === 'train') return 'Save training';
+            if (this.tab === 'moves') return 'Save moves';
+            return this.pet ? 'Save' : 'Hatch!';
+        },
+
         async save() {
             if (this.saving) return;
+            if (this.tab === 'train' && this.pet) return this.saveTraining();
+            if (this.tab === 'moves' && this.pet) return this.saveMoves();
             this.saving = true;
             const species = { body: this.cfg.body, top: this.cfg.top };
             const look = {
@@ -256,6 +352,68 @@ function petEditorPanel() {
                 showGlobalAlert('Could not save — check connection');
             }
             this.saving = false;
+        },
+
+        async refresh() {
+            const list = await fetch(this.api + 'api/pets?member_id='
+                + encodeURIComponent(this.memberId)).then(r => r.json());
+            this.pet = (list.pets || [])[0] || this.pet;
+            this.training = Object.assign({}, this.pet.training || {});
+            this.equipped = (this.pet.moves || []).slice();
+            this.xp = await fetch(this.api + 'api/pets/xp?member_id='
+                + encodeURIComponent(this.memberId) + '&limit=6').then(r => r.json());
+        },
+
+        headers() {
+            const h = { 'Content-Type': 'application/json' };
+            if (this.token) h['X-Member-Token'] = this.token;
+            return h;
+        },
+
+        async saveTraining() {
+            if (!this.pet) return;
+            this.saving = true;
+            const res = await fetch(this.api + 'api/pets/' + this.pet.id + '/training', {
+                method: 'POST', headers: this.headers(),
+                body: JSON.stringify({ training: this.training }),
+            });
+            if (!res.ok) { this.saving = false; showGlobalAlert('Could not save training'); return; }
+            await this.refresh();
+            this.saving = false;
+            showGlobalAlert('Training saved');
+        },
+
+        async saveMoves() {
+            if (!this.pet) return;
+            this.saving = true;
+            const res = await fetch(this.api + 'api/pets/' + this.pet.id + '/moves', {
+                method: 'POST', headers: this.headers(),
+                body: JSON.stringify({ moves: this.equipped }),
+            });
+            if (!res.ok) { this.saving = false; showGlobalAlert('Could not save moves'); return; }
+            await this.refresh();
+            this.saving = false;
+            showGlobalAlert('Moves saved');
+        },
+
+        async learn(key) {
+            if (this.busyBuy || !this.pet) return;
+            this.busyBuy = true;
+            const cost = (this.bundle && this.bundle.move_cost) || 0;
+            const ok = await promptConfirm('Learn ' + this.moveInfo(key).name + '?',
+                'It costs ' + cost + ' XP. You have ' + this.balance + '.');
+            if (!ok) { this.busyBuy = false; return; }
+            const res = await fetch(this.api + 'api/pets/' + this.pet.id + '/learn', {
+                method: 'POST', headers: this.headers(),
+                body: JSON.stringify({ move: key }),
+            });
+            if (!res.ok) {
+                const d = await res.json().catch(() => ({}));
+                showGlobalAlert(d.detail || 'Could not learn it');
+            } else {
+                await this.refresh();
+            }
+            this.busyBuy = false;
         },
 
         async retire() {
@@ -335,7 +493,7 @@ function petEditorPanel() {
         <div x-show="loading" class="text-center text-gray-400 py-10">Loading…</div>
 
         <!-- part grids: every tile is this critter with one thing changed -->
-        <div x-show="!loading && !['color','type'].includes(tab)" class="grid grid-cols-4 sm:grid-cols-6 gap-2">
+        <div x-show="!loading && !['color','type','train','moves'].includes(tab)" class="grid grid-cols-4 sm:grid-cols-6 gap-2">
             <!-- the "none" tile, only where a blank is a real answer -->
             <template x-if="optional">
                 <button type="button" @click="pick(tab, null)"
@@ -362,6 +520,80 @@ function petEditorPanel() {
                                     class="pet-swatch w-11 h-11 rounded-full border-2"
                                     :class="cfg[slot] === c ? 'border-white' : 'border-transparent'"
                                     :style="'background:' + bundle.colors[c]" :title="c"></button>
+                        </template>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- TRAIN. Free points that arrive with the level, and re-spendable
+             as often as a child likes: trying a build, losing, and trying
+             another must not cost anything, or only the cautious kid ever
+             experiments. -->
+        <div x-show="!loading && tab === 'train'" class="space-y-3">
+            <div class="flex items-baseline justify-between">
+                <div class="text-xs text-gray-400">
+                    <span class="font-bold text-emerald-400" x-text="trainLeft"></span>
+                    of <span x-text="budget"></span> points left
+                </div>
+                <button type="button" @click="resetTraining()"
+                        class="text-[11px] text-gray-400 underline">Start over</button>
+            </div>
+            <div x-show="!budget" class="text-xs text-gray-500 bg-gray-800/60 rounded-lg p-3">
+                Training points arrive with each level. Do a chore or tick off a routine
+                and your critter gets stronger.
+            </div>
+            <template x-for="st in stats" :key="'tr' + st">
+                <div class="flex items-center gap-2">
+                    <span class="w-16 text-xs font-bold text-gray-300" x-text="statLabels[st]"></span>
+                    <span class="flex-1 h-2 rounded-full bg-gray-800 overflow-hidden">
+                        <!-- the body's own shape underneath, the training on top -->
+                        <span class="block h-full bg-gray-600"
+                              :style="'width:' + Math.round(100 * baseOf(st) / 80) + '%'"></span>
+                    </span>
+                    <button type="button" @click="bump(st, -2)"
+                            class="w-8 h-8 rounded-lg bg-gray-800 border border-gray-700 text-gray-300">−</button>
+                    <span class="w-7 text-center text-xs font-bold text-white" x-text="training[st] || 0"></span>
+                    <button type="button" @click="bump(st, 2)" :disabled="trainLeft <= 0"
+                            class="w-8 h-8 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 disabled:opacity-30">+</button>
+                </div>
+            </template>
+        </div>
+
+        <!-- MOVES. Four slots, and the one thing xp buys that changes how a
+             critter PLAYS: a move from another element covers the thing that
+             beats you. -->
+        <div x-show="!loading && tab === 'moves'" class="space-y-3">
+            <div class="text-xs text-gray-400">
+                <span x-text="equipped.length"></span>/4 equipped ·
+                <span class="text-emerald-400 font-bold" x-text="balance"></span> XP
+            </div>
+            <template x-for="t in (bundle ? bundle.types : [])" :key="'mt' + t.key">
+                <div>
+                    <div class="text-[11px] font-bold text-gray-400 mb-1">
+                        <span x-text="t.glyph"></span> <span x-text="t.label"></span>
+                        <span x-show="t.key === type" class="text-emerald-400">· yours, free</span>
+                    </div>
+                    <div class="space-y-1.5 mb-2">
+                        <template x-for="m in (bundle.moves || []).filter(x => x.type === t.key)" :key="m.key">
+                            <div class="flex items-center gap-2 p-2 rounded-lg border"
+                                 :class="isEquipped(m.key) ? 'border-blue-500 bg-gray-800' : 'border-gray-800 bg-gray-900'">
+                                <button type="button" @click="toggleMove(m.key)" :disabled="!knows(m.key)"
+                                        class="flex-1 text-left min-w-0 disabled:opacity-50">
+                                    <span class="block text-xs font-bold text-white" x-text="m.name"></span>
+                                    <span class="block text-[10px] text-gray-500">
+                                        <span x-text="m.category"></span>
+                                        <span x-show="m.power"> · <span x-text="m.power"></span> power</span>
+                                        <span x-show="m.effect"> · <span x-text="m.effect"></span></span>
+                                    </span>
+                                </button>
+                                <button type="button" x-show="!knows(m.key)" @click="learn(m.key)"
+                                        :disabled="busyBuy || balance < (bundle.move_cost || 0)"
+                                        class="px-2 py-1 rounded-md bg-emerald-700 text-white text-[10px] font-bold disabled:opacity-40"
+                                        x-text="(bundle.move_cost || 0) + ' XP'"></button>
+                                <span x-show="knows(m.key) && isEquipped(m.key)"
+                                      class="text-[10px] text-blue-400 font-bold">ON</span>
+                            </div>
                         </template>
                     </div>
                 </div>
@@ -410,7 +642,7 @@ function petEditorPanel() {
                 class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-200" title="Battle">⚔️</button>
         <button type="button" @click="save()" :disabled="saving"
                 class="flex-1 h-11 rounded-xl bg-blue-600 text-white font-bold disabled:opacity-50"
-                x-text="pet ? 'Save' : 'Hatch!'"></button>
+                x-text="saveLabel"></button>
     </div>
 </div>
 {% endraw %}
