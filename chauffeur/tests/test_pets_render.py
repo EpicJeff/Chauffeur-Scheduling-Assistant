@@ -148,6 +148,110 @@ def test_alt_text_says_something():
           "alt text should describe the critter: %r" % label)
 
 
+def test_the_browser_compositor_draws_the_same_creature():
+    """The editor composes critters in JS so a thumbnail grid does not have to
+    ask the server 80 times. Two compositors reading one bake may disagree
+    about code; they must never disagree about art -- otherwise the preview a
+    child taps 'Hatch' on is not the creature they get.
+
+    Skipped, loudly, where node is unavailable."""
+    import json
+    import shutil
+    import subprocess
+    import tempfile
+    if not shutil.which('node'):
+        print("       (skipped: no node)")
+        return
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(here, 'templates', 'components', 'pet_editor.html'),
+               encoding='utf-8').read()
+    i = src.index('window.petCompose')
+    fn = src[i:src.index('\n};', i) + 3]
+    data = pr._load()
+    bundle = {'pieces': data['pieces'], 'anchors': data['anchors'],
+              'order': data['order'], 'view': data['view'],
+              'colors': pr.BASE_COLORS, 'defaults': pr.DEFAULTS}
+    cases = [
+        {'body': 'tower', 'top': 'horns', 'eyes': 'angry', 'mouth': 'teeth',
+         'pattern': 'stripes', 'cheeks': None, 'base_color': 'Coral',
+         'accent_color': 'Amber'},
+        {'body': 'blob', 'top': 'nub', 'eyes': 'round', 'mouth': 'smile',
+         'pattern': None, 'cheeks': 'blush', 'base_color': 'Sky',
+         'accent_color': 'Rose'},
+        # a literal hex and every optional slot filled
+        {'body': 'squat', 'top': 'antennae', 'eyes': 'wink', 'mouth': 'tongue',
+         'pattern': 'dots', 'cheeks': 'freckles', 'base_color': '#123456',
+         'accent_color': 'Lime'},
+    ]
+    js = ("const window = {};\n%s\nconsole.log(JSON.stringify(%s.map("
+          "c => window.petCompose(%s, c, 'px'))));"
+          % (fn, json.dumps(cases), json.dumps(bundle)))
+    path = os.path.join(tempfile.mkdtemp(), 'compose.js')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(js)
+    out = subprocess.run(['node', path], capture_output=True, text=True)
+    check(out.returncode == 0, "the browser compositor threw: %s" % out.stderr[:400])
+    art = lambda s: re.search(r'<clipPath.*</svg>', s, re.S).group(0)
+    for cfg, client in zip(cases, json.loads(out.stdout)):
+        server = pr.render_svg(cfg, nonce='x')
+        check(art(server) == art(client),
+              "compositors disagree on %s/%s" % (cfg['body'], cfg['top']))
+
+
+def test_the_editor_lists_part_keys_not_part_art():
+    """The bundle carries the art twice over: `slots` is {slot: [key, ...]}
+    and `pieces` is {slot: {key: svg}}. The editor's thumbnail grid must walk
+    the KEYS.
+
+    Walking `pieces` instead does not throw -- x-for over an object iterates
+    its values, so every raw SVG fragment gets used as a part name AND as an
+    id namespace, and the grid renders unpainted bodies with no headgear and
+    half-substituted tokens baked into the ids. It shipped that way for
+    exactly one screenshot. This drives the real getter, so the two can never
+    be swapped again silently.
+
+    Skipped, loudly, where node is unavailable."""
+    import json
+    import shutil
+    import subprocess
+    import tempfile
+    if not shutil.which('node'):
+        print("       (skipped: no node)")
+        return
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(here, 'templates', 'components', 'pet_editor.html'),
+               encoding='utf-8').read()
+    i = src.index('function petEditorPanel')
+    panel = src[i:src.index('\n}\n', i) + 2]
+    data = pr._load()
+    bundle = {'pieces': data['pieces'],
+              'slots': {s: pr.parts(s) for s in
+                        ('body', 'top', 'eyes', 'mouth', 'pattern', 'cheeks')},
+              'colors': pr.BASE_COLORS, 'defaults': pr.DEFAULTS}
+    js = ("const window = {};\n%s\n"
+          "const p = petEditorPanel(); p.bundle = %s;\n"
+          "const out = {};\n"
+          "for (const slot of ['body','top','eyes','mouth','pattern','cheeks']) {\n"
+          "  const v = p.parts[slot];\n"
+          "  out[slot] = Array.isArray(v) ? v : ('NOT-AN-ARRAY:' + typeof v);\n"
+          "}\nconsole.log(JSON.stringify(out));"
+          % (panel, json.dumps(bundle)))
+    path = os.path.join(tempfile.mkdtemp(), 'panel.js')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(js)
+    res = subprocess.run(['node', path], capture_output=True, text=True)
+    check(res.returncode == 0, "the editor panel threw: %s" % res.stderr[:400])
+    got = json.loads(res.stdout)
+    for slot, keys in got.items():
+        check(isinstance(keys, list),
+              "editor's parts['%s'] is %s -- it must be a list of keys" % (slot, keys))
+        check(keys == pr.parts(slot),
+              "editor's parts['%s'] does not match the bake" % slot)
+        for k in keys:
+            check('<' not in k,
+                  "editor's parts['%s'] holds SVG art, not a key: %r" % (slot, k[:40]))
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     failed = 0

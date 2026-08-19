@@ -1,0 +1,387 @@
+<!-- Pet editor (pets arc P1). One component, two mounts, exactly like
+     avatar_editor: a placeable board card and a PIN-gated overlay that any
+     surface can open. Presentation differs; none of the logic does.
+
+     Everything in here is FREE, and the whole layout says so. There are no
+     padlocks, no progress rings, no greyed-out tiles -- rule 1 gates power
+     and never identity, and the editor is the one screen where that promise
+     is either visible or broken. What gets earned (xp, training, moves, a
+     second slot) arrives in P2/P5 and appears elsewhere.
+
+     Same reading-optional rules the avatar editor set:
+       - options are RENDERED THUMBNAILS, never a list of names
+       - every thumbnail is YOUR critter with one thing swapped, because the
+         question a child is asking is "what would mine look like"
+       - tabs lead with a glyph; the word is for whoever can read it
+       - shuffle exists because for a pre-reader it teaches the whole system
+         without a word
+     Controls sit in a bar at the bottom edge so every tap stays low on a
+     wall panel, and the preview band holds none of them. -->
+{% raw %}
+<style>
+    [x-cloak] { display: none !important; }
+    .pet-swatch { box-shadow: inset 0 0 0 2px rgba(255,255,255,.15); }
+    @keyframes petbob { 50% { transform: translateY(-3px); } }
+    .pet-preview .dbcr-c { animation: petbob 2.8s ease-in-out infinite; }
+</style>
+<script>
+// Compose a critter in the browser, from the same baked parts and the same
+// token grammar the server uses (services/pet_render.py). The editor redraws
+// a grid of thumbnails on every change, which is far too chatty to ask the
+// server for one at a time -- so the art ships once and both compositors read
+// the same data. They may disagree about code; they cannot disagree about art.
+window.petCompose = function (B, cfg, ns) {
+    if (!B || !B.pieces) return '';
+    const col = (name, fallback) => B.colors[name] || (/^#[0-9a-fA-F]{6}$/.test(name || '') ? name : B.colors[fallback]);
+    const expand = (raw) => raw.replace(/\{\{(NS|BASE|ACCENT|TOP)\}\}/g, (_, tok) => {
+        if (tok === 'NS') return ns;
+        if (tok === 'BASE') return col(cfg.base_color, B.defaults.base_color);
+        if (tok === 'ACCENT') return col(cfg.accent_color, B.defaults.accent_color);
+        // {{TOP}} only ever appears inside a body and a top never contains a
+        // body, so this cannot recurse forever.
+        const t = (B.pieces.top || {})[cfg.top || B.defaults.top];
+        return t ? expand(t) : '';
+    });
+    const layers = (B.order || []).map(slot => {
+        const key = cfg[slot];
+        const raw = key && (B.pieces[slot] || {})[key];
+        if (!raw) return '';
+        const at = (B.anchors || {})[slot];
+        const frag = expand(raw);
+        return at ? '<g transform="translate(' + at[0] + ' ' + at[1] + ')">' + frag + '</g>' : frag;
+    }).join('');
+    const v = B.view || [0, 0, 100, 100];
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="' + v.join(' ') + '" '
+        + 'fill="none" class="critter w-full h-full">'
+        + '<clipPath id="' + ns + 'clip"><rect x="' + v[0] + '" y="' + v[1]
+        + '" width="' + v[2] + '" height="' + v[3] + '"/></clipPath>'
+        + '<g clip-path="url(#' + ns + 'clip)" class="dbcr-c">' + layers + '</g></svg>';
+};
+
+// Everything that wants to edit a pet -- a critter on the board card, a
+// button on a lane -- comes through here, which does the PIN handshake FIRST
+// and only then opens the overlay. The server re-checks regardless; the
+// handshake is so the save can succeed, not the thing that protects it.
+window.openPetEditor = async function (m) {
+    const base = (window.chfBase !== undefined) ? window.chfBase : '';
+    let member = (typeof m === 'string') ? { id: m } : Object.assign({}, m);
+    if (member.has_pin === undefined || !member.name) {
+        try {
+            const all = await fetch(base + 'api/members').then(r => r.json());
+            const hit = (Array.isArray(all) ? all : []).find(x => x.id === member.id);
+            if (hit) member = hit;
+        } catch (e) { /* offline: proceed; a PIN'd member will fail at save */ }
+    }
+    let token = null;
+    if (localStorage.getItem('chauffeur_member_token_for') === member.id) {
+        token = localStorage.getItem('chauffeur_member_token');
+    }
+    if (!token && member.has_pin) {
+        // Prefer whatever sign-in the host page already has; fall back to the
+        // avatar editor's pad when both components are mounted together,
+        // which on every page that includes this one, they are.
+        if (typeof ensureMemberAuth === 'function') token = await ensureMemberAuth(member);
+        else if (typeof _avatarPinHandshake === 'function') token = await _avatarPinHandshake(base, member);
+        if (!token) return;
+    }
+    window.dispatchEvent(new CustomEvent('pet-editor-open',
+        { detail: { memberId: member.id, memberName: member.name, token: token } }));
+};
+
+function petEditorPanel() {
+    return {
+        show: false, loading: false, saving: false,
+        bundle: null, memberId: null, memberName: '', token: null,
+        pet: null, cfg: {}, name: '', type: 'ember',
+        tab: 'body', history: [], future: [],
+
+        // Glyph first, word second -- the tabs have to work for a child who
+        // cannot read them yet.
+        tabs: [
+            { key: 'body', glyph: '🫧', label: 'Body' },
+            { key: 'top', glyph: '👑', label: 'Head' },
+            { key: 'eyes', glyph: '👀', label: 'Eyes' },
+            { key: 'mouth', glyph: '👄', label: 'Mouth' },
+            { key: 'pattern', glyph: '✨', label: 'Pattern' },
+            { key: 'cheeks', glyph: '🌸', label: 'Cheeks' },
+            { key: 'color', glyph: '🎨', label: 'Colour' },
+            { key: 'type', glyph: '🔥', label: 'Element' },
+        ],
+
+        get api() { return (window.chfBase !== undefined ? window.chfBase : ''); },
+        // `slots` is {slot: [key, ...]} and `pieces` is {slot: {key: art}}.
+        // Iterate the KEYS -- x-for over `pieces` walks its values, which
+        // are raw SVG fragments, and every one of them then gets used as a
+        // part name and an id namespace. It renders something, which is why
+        // it is worth a comment: unpainted thumbnails with no headgear.
+        get parts() { return (this.bundle && this.bundle.slots) || {}; },
+        get colorNames() { return Object.keys((this.bundle && this.bundle.colors) || {}); },
+        get typeInfo() {
+            return ((this.bundle && this.bundle.types) || []).find(t => t.key === this.type) || {};
+        },
+        // pattern and cheeks are genuinely optional; a body and a face are not
+        get optional() { return this.tab === 'pattern' || this.tab === 'cheeks'; },
+
+        async open(detail) {
+            this.memberId = detail.memberId;
+            this.memberName = detail.memberName || '';
+            this.token = detail.token || null;
+            this.show = true; this.loading = true;
+            this.history = []; this.future = [];
+            try {
+                if (!this.bundle) {
+                    const r = await fetch(this.api + 'api/pets/bundle');
+                    if (!r.ok) throw new Error('no art');
+                    this.bundle = await r.json();
+                }
+                const list = await fetch(this.api + 'api/pets?member_id=' + encodeURIComponent(this.memberId)).then(r => r.json());
+                this.pet = (list.pets || [])[0] || null;
+                if (this.pet) {
+                    this.cfg = Object.assign({}, this.pet.species, this.pet.look);
+                    this.name = this.pet.name || '';
+                    this.type = this.pet.type || this.bundle.default;
+                } else {
+                    // A brand-new critter is randomised, not blank: a default
+                    // everyone shares is a form to fill in, and a creature
+                    // that already looks like something is an invitation.
+                    this.cfg = this.randomCfg();
+                    this.name = '';
+                    this.type = this.bundle.default;
+                }
+            } catch (e) {
+                showGlobalAlert('Pet art is not built yet');
+                this.show = false;
+            }
+            this.loading = false;
+        },
+
+        close() { this.show = false; },
+
+        pick(slot, key) {
+            this.push();
+            this.cfg = Object.assign({}, this.cfg, { [slot]: key });
+        },
+        pickColor(slot, name) { this.pick(slot, name); },
+        pickType(k) { this.push(); this.type = k; },
+
+        push() {
+            this.history.push({ cfg: Object.assign({}, this.cfg), type: this.type });
+            if (this.history.length > 40) this.history.shift();
+            this.future = [];
+        },
+        undo() {
+            if (!this.history.length) return;
+            this.future.push({ cfg: Object.assign({}, this.cfg), type: this.type });
+            const s = this.history.pop(); this.cfg = s.cfg; this.type = s.type;
+        },
+        redo() {
+            if (!this.future.length) return;
+            this.history.push({ cfg: Object.assign({}, this.cfg), type: this.type });
+            const s = this.future.pop(); this.cfg = s.cfg; this.type = s.type;
+        },
+
+        randomCfg() {
+            const P = this.parts, pick = a => a[Math.floor(Math.random() * a.length)];
+            const C = this.colorNames;
+            return {
+                body: pick(P.body || ['blob']), top: pick(P.top || ['nub']),
+                eyes: pick(P.eyes || ['round']), mouth: pick(P.mouth || ['smile']),
+                pattern: Math.random() < 0.6 ? pick(P.pattern || []) : null,
+                cheeks: Math.random() < 0.5 ? pick(P.cheeks || []) : null,
+                base_color: pick(C), accent_color: pick(C),
+            };
+        },
+        shuffle() {
+            this.push();
+            this.cfg = this.randomCfg();
+            const t = (this.bundle.types || []);
+            this.type = t.length ? t[Math.floor(Math.random() * t.length)].key : this.type;
+        },
+
+        // The preview, and every thumbnail, is YOUR critter -- the thumbnail
+        // grid swaps exactly one slot so the question being answered is
+        // "what would mine look like", not "what does a mannequin look like".
+        svg(overrideSlot, overrideKey, ns) {
+            const cfg = Object.assign({}, this.cfg);
+            if (overrideSlot) cfg[overrideSlot] = overrideKey;
+            return window.petCompose(this.bundle, cfg, ns || 'pv');
+        },
+
+        async save() {
+            if (this.saving) return;
+            this.saving = true;
+            const species = { body: this.cfg.body, top: this.cfg.top };
+            const look = {
+                eyes: this.cfg.eyes, mouth: this.cfg.mouth,
+                pattern: this.cfg.pattern, cheeks: this.cfg.cheeks,
+                base_color: this.cfg.base_color, accent_color: this.cfg.accent_color,
+            };
+            const headers = { 'Content-Type': 'application/json' };
+            if (this.token) headers['X-Member-Token'] = this.token;
+            try {
+                let res;
+                if (this.pet) {
+                    res = await fetch(this.api + 'api/pets/' + this.pet.id, {
+                        method: 'POST', headers,
+                        body: JSON.stringify({ name: this.name || 'Critter', species, look, type: this.type }),
+                    });
+                } else {
+                    res = await fetch(this.api + 'api/pets', {
+                        method: 'POST', headers,
+                        body: JSON.stringify({ member_id: this.memberId, name: this.name || 'Critter', species, look, type: this.type }),
+                    });
+                }
+                if (res.status === 403) { showGlobalAlert('Enter your PIN to change your pet'); this.saving = false; return; }
+                if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    showGlobalAlert(d.detail || 'Could not save');
+                    this.saving = false; return;
+                }
+                const out = await res.json();
+                const hatched = !this.pet;
+                this.pet = out.pet;
+                this.show = false;
+                window.dispatchEvent(new CustomEvent('pet-saved',
+                    { detail: { memberId: this.memberId, pet: out.pet, hatched } }));
+                if (hatched) showGlobalAlert((out.pet.name || 'Your critter') + ' hatched!');
+            } catch (e) {
+                showGlobalAlert('Could not save — check connection');
+            }
+            this.saving = false;
+        },
+
+        async retire() {
+            if (!this.pet) return;
+            const ok = await promptConfirm(
+                'Put ' + (this.pet.name || 'this critter') + ' on the shelf?',
+                'It keeps everything it has and can come back any time.');
+            if (!ok) return;
+            const headers = { 'Content-Type': 'application/json' };
+            if (this.token) headers['X-Member-Token'] = this.token;
+            const res = await fetch(this.api + 'api/pets/' + this.pet.id + '/retire', {
+                method: 'POST', headers, body: JSON.stringify({ retired: true }),
+            });
+            if (!res.ok) { showGlobalAlert('Could not do that'); return; }
+            this.show = false;
+            window.dispatchEvent(new CustomEvent('pet-saved',
+                { detail: { memberId: this.memberId, pet: null, retired: true } }));
+        },
+    };
+}
+</script>
+
+<div x-data="petEditorPanel()" x-cloak x-show="show"
+     @pet-editor-open.window="open($event.detail)"
+     class="panel-modal fixed inset-0 z-[100] bg-gray-950 flex flex-col h-full min-h-0 select-none">
+
+    <!-- preview band: inert on purpose, so every control stays low -->
+    <div class="flex-shrink-0 pt-3 pb-2 px-4 flex items-center gap-4 border-b border-gray-700/60">
+        <div class="pet-preview w-28 h-28 rounded-2xl bg-gray-700/50 border border-gray-600 overflow-hidden flex-shrink-0"
+             x-html="bundle ? svg(null, null, 'pv') : ''"></div>
+        <div class="min-w-0 flex-1">
+            <input type="text" x-model="name" maxlength="24" placeholder="Name your critter"
+                   class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white text-lg font-bold placeholder-gray-500 focus:outline-none focus:border-blue-500">
+            <div class="mt-1.5 flex items-center gap-2 text-xs text-gray-400">
+                <span x-text="typeInfo.glyph"></span>
+                <span x-text="typeInfo.label"></span>
+                <span x-show="memberName" class="text-gray-600">·</span>
+                <span x-show="memberName" x-text="memberName"></span>
+            </div>
+        </div>
+        <button type="button" @click="close()"
+                class="flex-shrink-0 w-10 h-10 rounded-full bg-gray-800 border border-gray-600 text-gray-300 text-xl leading-none">×</button>
+    </div>
+
+    <!-- tabs -->
+    <!-- WRAPPED, not scrolled. The avatar editor scrolls its strip because
+         its group list can grow; this one is exactly eight and always will be,
+         and the last two (Colour, Element) are the ones a child goes looking
+         for. Off the right-hand edge, they may as well not exist. -->
+    <div class="flex-shrink-0 flex flex-wrap gap-1 px-3 py-2 border-b border-gray-700/60">
+        <template x-for="t in tabs" :key="t.key">
+            <button type="button" @click="tab = t.key"
+                    class="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
+                    :class="tab === t.key ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300'">
+                <span x-text="t.glyph"></span><span x-text="t.label"></span>
+            </button>
+        </template>
+    </div>
+
+    <!-- choices -->
+    <div class="flex-1 overflow-y-auto p-3">
+        <div x-show="loading" class="text-center text-gray-400 py-10">Loading…</div>
+
+        <!-- part grids: every tile is this critter with one thing changed -->
+        <div x-show="!loading && !['color','type'].includes(tab)" class="grid grid-cols-4 sm:grid-cols-6 gap-2">
+            <!-- the "none" tile, only where a blank is a real answer -->
+            <template x-if="optional">
+                <button type="button" @click="pick(tab, null)"
+                        class="aspect-square rounded-xl bg-gray-800 border-2 grid place-items-center text-gray-500 text-xs"
+                        :class="!cfg[tab] ? 'border-blue-500' : 'border-gray-700'">none</button>
+            </template>
+            <template x-for="k in (parts[tab] || [])" :key="tab + '-' + k">
+                <button type="button" @click="pick(tab, k)"
+                        class="aspect-square rounded-xl bg-gray-700/50 border-2 overflow-hidden"
+                        :class="cfg[tab] === k ? 'border-blue-500' : 'border-gray-700'"
+                        x-html="bundle ? svg(tab, k, 'th' + tab + k) : ''"></button>
+            </template>
+        </div>
+
+        <!-- colour: two slots, one palette -->
+        <div x-show="!loading && tab === 'color'" class="space-y-4">
+            <template x-for="slot in ['base_color','accent_color']" :key="slot">
+                <div>
+                    <div class="text-xs text-gray-400 mb-1.5 font-semibold"
+                         x-text="slot === 'base_color' ? 'Body' : 'Horns, ears and antennae'"></div>
+                    <div class="flex flex-wrap gap-2">
+                        <template x-for="c in colorNames" :key="slot + c">
+                            <button type="button" @click="pickColor(slot, c)"
+                                    class="pet-swatch w-11 h-11 rounded-full border-2"
+                                    :class="cfg[slot] === c ? 'border-white' : 'border-transparent'"
+                                    :style="'background:' + bundle.colors[c]" :title="c"></button>
+                        </template>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- element: show the ring rather than describe it -->
+        <div x-show="!loading && tab === 'type'" class="space-y-2">
+            <template x-for="t in (bundle ? bundle.types : [])" :key="t.key">
+                <button type="button" @click="pickType(t.key)"
+                        class="w-full flex items-center gap-3 p-3 rounded-xl border-2 text-left"
+                        :class="type === t.key ? 'border-blue-500 bg-gray-800' : 'border-gray-700 bg-gray-800/50'">
+                    <span class="text-2xl" x-text="t.glyph"></span>
+                    <span class="min-w-0">
+                        <span class="block text-sm font-bold text-white" x-text="t.label"></span>
+                        <span class="block text-[11px] text-gray-400">
+                            strong against
+                            <span x-text="(bundle.types.find(x => x.key === t.beats) || {}).label"></span>
+                            · weak to
+                            <span x-text="(bundle.types.find(x => x.key === t.loses_to) || {}).label"></span>
+                        </span>
+                    </span>
+                </button>
+            </template>
+            <p class="text-[11px] text-gray-500 pt-1">
+                Every element beats one and loses to one, so there is no best one to pick.
+            </p>
+        </div>
+    </div>
+
+    <!-- controls, at the bottom edge so every tap stays low on a wall panel -->
+    <div class="flex-shrink-0 border-t border-gray-700/60 p-3 flex items-center gap-2">
+        <button type="button" @click="undo()" :disabled="!history.length"
+                class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-300 disabled:opacity-30" title="Undo">↶</button>
+        <button type="button" @click="redo()" :disabled="!future.length"
+                class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-300 disabled:opacity-30" title="Redo">↷</button>
+        <button type="button" @click="shuffle()"
+                class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-300" title="Shuffle">🎲</button>
+        <button type="button" x-show="pet" @click="retire()"
+                class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-400" title="Put on the shelf">📦</button>
+        <button type="button" @click="save()" :disabled="saving"
+                class="flex-1 h-11 rounded-xl bg-blue-600 text-white font-bold disabled:opacity-50"
+                x-text="pet ? 'Save' : 'Hatch!'"></button>
+    </div>
+</div>
+{% endraw %}

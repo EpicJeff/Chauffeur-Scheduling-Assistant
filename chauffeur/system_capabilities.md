@@ -3176,6 +3176,90 @@ Tests: `test_board_pages.py — scenario_a_fresh_install_gets_a_board_somebody_l
 (the seed is not a shipped slug, every tile it names exists, no orphan spans,
 and both boards that must beat it do).
 
+## Pets — sidekicks with stats (pets arc P0–P1, v2.294.0–v2.295.0)
+
+Not a virtual pet. A **rudimentary Pokémon**: a creature you hatch, name, dress
+and eventually fight. The framing matters — a battler cannot be neglected, so
+there is no hunger bar and no guilt, and rule two of the avatar arc (*a thing
+unlocked is never lost*) holds for free. Full brief in `docs/pets_design.md`.
+
+**Three rules, and every one of them has a test.** (1) *Identity is free,
+power is earned, and neither wins a fight* — species, look, name and element
+cost nothing, and PvP will be level-matched so a sibling fight is never
+decided by who did more chores. (2) *XP is not points* — pet XP will live in
+its own ledger (P2); points redeem for real money, and nothing converts back,
+or grinding NPCs prints money out of a parent's wallet. (3) *A pet is never
+lost, sick, hungry or taken away* — retiring is reversible and keeps the
+record; nothing in the app calls `delete_pet` on its own, and a test counts
+the callers.
+
+**The art (P0, v2.294.0).** DiceBear **Critters**, CC0 1.0, baked by
+`tools/harvest_critters.py` into `static/pets/pieces.json` — 80 parts, 26 KB,
+**14 bodies × 15 tops = 210 silhouettes** plus 19 eyes, 19 mouths, 10
+patterns, 3 cheeks and 12 pastels. Critters is a PREVIEW style (no npm
+package, `schema.json` 400s, option params ignored), so the harvest samples
+seeds until every variant is seen and pins the result — pets draw with no
+network, like avatars, because kiosk boards and digests have no JS runtime.
+The bake fixes three upstream things: unhashed `dbcrb-<body>` clipPath ids
+(two critters with the same body on one page collide — the battle overlay
+draws two side by side), bodies harvested from bare-headed critters that lost
+their top slot entirely, and colour slots identified by sentinel rather than
+guessed so shading overlays and a pink tongue stay literal. Face anchors are
+identical on all 14 bodies (only the top's y varies) and the harvest **asserts
+that** before writing.
+
+**The renderer.** `services/pet_render.py`, one canvas: the bottom edge of the
+100×100 square IS the ground line, so `crop` selects behaviour (`chip` static,
+`battle` with idle hooks live), not geometry. Two colour slots: BASE paints
+the body, ACCENT the horns/ears/antennae. Root class is `critter`, never
+`pet` — `.pet` is what a host page calls its own wrapper. `nonce` namespaces
+every id; the pet id is what gets passed, so a board may draw a dozen
+creatures safely.
+
+**Pets exist (P1, v2.295.0).** `pets_table`: `{species{body,top},
+look{eyes,mouth,pattern,cheeks,base_color,accent_color}, name, type, level,
+training, moves, active}`. **One free slot** (`PET_SLOTS_FREE`; the second is
+itself a reward, P5). Adults may hatch too — a parent with a critter is a real
+opponent and level-matching stops it being a way to lean on a kid. Names are
+tidied and capped at 24, never blanked. Unknown parts are **dropped and
+replaced**, never fatal — a child must not lose a creature to a slot rename.
+`update_pet` touches only the free fields: level, training, moves and
+`member_id` are not writable from any endpoint, because an editor must not
+hand out what a ledger is supposed to.
+
+**Elements — five in a ring, not eighteen in a table** (`pet_catalog`): Ember
+burns Leaf → Leaf splits Stone → Stone grounds Spark → Spark boils Tide →
+Tide quenches Ember. ×1.6 forward, ×0.625 back (reciprocal, so a lap
+multiplies to exactly 1), no immunities. The editor tells a child there is no
+best element to pick; a test multiplies each type across the whole ring to
+prove it.
+
+**API.** `GET/POST /api/pets`, `GET/POST /api/pets/{id}`,
+`POST /api/pets/{id}/retire`, `DELETE /api/pets/{id}`, `GET /api/pets/{id}/svg`,
+`GET /api/pets/bundle`. Gated like avatars: `GET` at WALL (boards draw them),
+writes SIGNED_IN plus a second per-member PIN/parent check inside the handler.
+
+**Surfaces.** `components/pet_editor.html` — one component, two mounts, like
+the avatar editor; `openPetEditor()` runs the PIN handshake first. Glyph-led
+tabs, thumbnails not names, and **every thumbnail is YOUR critter with one
+thing swapped**. No padlocks anywhere: the editor is where "identity is free"
+is either visible or broken. A new critter arrives randomised rather than
+blank. `window.petCompose` composes in the browser from the same bake and the
+same token grammar as the server, and a test runs both through node and
+asserts the SVGs are **byte-identical** — the preview a child taps "Hatch" on
+must be the creature they get. The `pets` board card shows everyone's
+creature; an **empty slot is still a door** (🥚 + ＋), because someone who has
+never hatched has to be able to find the feature. Card is PAGELESS.
+
+**A full-screen editor is opaque on a wall (v2.295.0).** `panel_skin` maps
+every `.bg-gray-950`/`.bg-gray-900` surface to translucent glass with
+`!important` so the wallpaper reads through the board — and a full-screen
+modal was caught in it. The avatar editor had been see-through on a panel
+since it shipped, and changing the overlay's own class could never have fixed
+it because the skin always won. `.panel-modal` + an alpha-free `--panel-modal`
+token is the opt-out; both editors wear it, and a test guards the token, the
+rule and the class.
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.

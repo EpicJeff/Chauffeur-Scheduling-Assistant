@@ -400,6 +400,20 @@ WIDGETS = [
          _opt('figures', 'Standing characters', 'bool', True,
               help='Off, the card is a compact row of faces.'),
      ]},
+    {'key': 'pets', 'icon': '🐾', 'label': 'Pets',
+     'heading': '',
+     'blurb': "Everyone's critter, and a way in to build one. Tap a pet to "
+              "open the editor; an empty slot is the invitation to hatch.",
+     'options': [
+         _opt('members', 'People', 'select', [], source='members', multi=True,
+              help='Leave empty for everyone.'),
+         _opt('show_unhatched', 'Empty slots', 'bool', True,
+              help='Off, the card shows only creatures that exist.'),
+         _opt('show_level', 'Level and element', 'bool', True),
+         _opt('show_owner', 'Whose pet it is', 'bool', True),
+         _opt('interactive', 'Tap to edit', 'bool', True,
+              help='Off, the card is a display shelf.'),
+     ]},
     {'key': 'routines_lanes', 'icon': '✅', 'label': 'Routine lanes',
      'heading': '',
      'blurb': "Today's routine for each child, with a tap to tick one off. "
@@ -1812,6 +1826,56 @@ def _tile_avatar_editor(now, config=None, **_):
                 'figures': _cfg_bool(config, 'figures', True)} if rows else None
     except Exception as e:
         print(f"[home_board] avatar editor tile failed: {e}")
+        return None
+
+
+def _tile_pets(now, config=None, **_):
+    """The family's critters, each one a door into the pet editor.
+
+    A member with no pet still gets a tile -- an empty slot that says "hatch
+    one" is the invitation, and hiding it would mean the only way to find the
+    feature is to already know about it. Turn it off for a wall that should
+    show only the creatures that exist."""
+    try:
+        from services import pet_render
+        from services import pet_catalog
+        if not pet_render.available():
+            return None                  # no art: no doors onto nothing
+        wanted = _cfg_ids(config, 'members')
+        show_empty = _cfg_bool(config, 'show_unhatched', True)
+        rows = []
+        for m in storage.get_all_members():
+            if wanted and m['id'] not in wanted:
+                continue
+            if m.get('status') in ('archived',):
+                continue
+            pet = storage.get_active_pet(m['id'])
+            if not pet and not show_empty:
+                continue
+            row = {'member_id': m['id'], 'name': m.get('name'),
+                   'color_code': m.get('color_code'),
+                   'has_pin': bool(m.get('pin_hash')), 'pet': None}
+            if pet:
+                cfg = dict(pet.get('species') or {})
+                cfg.update(pet.get('look') or {})
+                t = pet_catalog.get(pet.get('type')) or {}
+                row['pet'] = {
+                    'id': pet['id'], 'name': pet.get('name'),
+                    'level': pet.get('level') or 1,
+                    'type': pet.get('type'), 'type_label': t.get('label'),
+                    'type_glyph': t.get('glyph'), 'type_color': t.get('color'),
+                    # the pet id is the id namespace, so a board may draw a
+                    # dozen critters without their clips colliding
+                    'svg': pet_render.render_svg(cfg, crop='chip',
+                                                 nonce=pet['id'][:12])}
+            rows.append(row)
+        if not rows:
+            return None
+        return {'members': rows, 'interactive': _cfg_bool(config, 'interactive', True),
+                'show_level': _cfg_bool(config, 'show_level', True),
+                'show_owner': _cfg_bool(config, 'show_owner', True)}
+    except Exception as e:
+        print(f"[home_board] pets tile failed: {e}")
         return None
 
 
@@ -3499,7 +3563,7 @@ _BUILDERS: dict = {
     'shopping_list': _tile_shopping_list,
     'chores_lanes': _tile_chores_lanes, 'chores_rewards': _tile_chores_goals,
     'routines': _tile_routines, 'routines_lanes': _tile_routines_lanes,
-    'avatar_editor': _tile_avatar_editor,
+    'avatar_editor': _tile_avatar_editor, 'pets': _tile_pets,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,
     'moments_gallery': _tile_moments_gallery,
     'calendar': _tile_calendar, 'errands': _tile_errands, 'tasks': _tile_tasks,

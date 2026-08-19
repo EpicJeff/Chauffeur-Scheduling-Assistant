@@ -459,6 +459,10 @@ with db_lock:
     # thing a cosmetic system can do, and the streak bug proved we can
     # lose a value that only ever looked monotonic.
     avatar_unlocks_table = db.table('avatar_unlocks')
+    # Pets. A pet is never deleted by the app -- retiring sets active=False so
+    # the record outlives the fashion (pets arc rule 3). Deleting one is a
+    # deliberate act by its owner or a parent, never a side effect.
+    pets_table = db.table('pets')
     music_favorites_table = db.table('music_favorites')
     music_recent_table = db.table('music_recent')
 
@@ -3588,6 +3592,178 @@ def set_avatar_config(member_id: str, config: dict) -> dict:
             clean[pal] = config[pal]
     update_member(member_id, {'avatar_config': clean})
     return {'config': clean, 'rejected': rejected}
+
+
+# --- Pets ---
+# Sidekicks with stats. Everything here is FREE: species, look, name and
+# element cost nothing and always will, because rule 1 gates power and never
+# identity. What gets earned (xp, training, extra slots) lands in P2/P5 and
+# touches none of the fields below.
+
+# One pet to begin with, and the second slot is itself a reward rather than a
+# thing you are simply given. P5 replaces the constant with an earned count;
+# every caller already asks the function, so that change stays in one place.
+PET_SLOTS_FREE = 1
+PET_NAME_MAX = 24
+
+
+def pet_slots(member_id: str) -> int:
+    """How many pets this member may keep active."""
+    return PET_SLOTS_FREE
+
+
+def _pet_look(species: dict, look: dict) -> tuple:
+    """Validate a look against the BAKED ART, never a hand-kept list.
+
+    Anything unknown is dropped rather than rejected wholesale: a pet with one
+    unrecognised part is still a pet, and a child should never lose a creature
+    because a slot name drifted."""
+    import re
+    from services import pet_render as pr
+    species = dict(species or {})
+    look = dict(look or {})
+    clean_species, clean_look, rejected = {}, {}, []
+
+    for slot, target in (('body', clean_species), ('top', clean_species),
+                         ('eyes', clean_look), ('mouth', clean_look),
+                         ('pattern', clean_look), ('cheeks', clean_look)):
+        val = species.get(slot) if target is clean_species else look.get(slot)
+        if val in (None, '', 'none'):
+            # pattern and cheeks are genuinely optional; a body and a face are
+            # not, and fall back to the default rather than rendering a hole.
+            if slot in ('pattern', 'cheeks'):
+                target[slot] = None
+                continue
+            val = pr.DEFAULTS.get(slot)
+        if val not in pr.parts(slot):
+            rejected.append('%s:%s' % (slot, val))
+            val = pr.DEFAULTS.get(slot)
+        target[slot] = val
+
+    for slot in ('base_color', 'accent_color'):
+        val = look.get(slot)
+        if val in pr.BASE_COLORS or (isinstance(val, str)
+                                     and re.fullmatch(r'#[0-9a-fA-F]{6}', val or '')):
+            clean_look[slot] = val
+        else:
+            if val:
+                rejected.append('%s:%s' % (slot, val))
+            clean_look[slot] = pr.DEFAULTS[slot]
+    return clean_species, clean_look, rejected
+
+
+def _pet_name(name: str, fallback: str = 'Critter') -> str:
+    import re
+    name = re.sub(r'\s+', ' ', str(name or '')).strip()[:PET_NAME_MAX]
+    return name or fallback
+
+
+def get_pets(member_id: Optional[str] = None,
+             include_retired: bool = False) -> List[dict]:
+    with db_lock:
+        rows = [dict(p) for p in (
+            pets_table.search(Query().member_id == member_id) if member_id
+            else pets_table.all())]
+    if not include_retired:
+        rows = [p for p in rows if p.get('active', True)]
+    return sorted(rows, key=lambda p: p.get('created_at') or 0)
+
+
+def get_pet(pet_id: str) -> Optional[dict]:
+    with db_lock:
+        res = pets_table.search(Query().id == pet_id)
+    return dict(res[0]) if res else None
+
+
+def get_active_pet(member_id: str) -> Optional[dict]:
+    """The one that shows up on a board and would walk into a battle."""
+    pets = get_pets(member_id)
+    return pets[0] if pets else None
+
+
+def create_pet(member_id: str, name: str = '', species: Optional[dict] = None,
+               look: Optional[dict] = None, type_: str = None) -> dict:
+    """Hatch one. Returns {'pet', 'rejected'} or {'error'}.
+
+    Free, for everyone, once -- see PET_SLOTS_FREE. Adults included: a parent
+    with a critter is a real opponent, and PvP is level-matched so nobody can
+    lean on a kid with it."""
+    import time
+    import uuid as _uuid
+    from services import pet_catalog
+    if not get_member(member_id):
+        return {'error': 'No such member'}
+    if len(get_pets(member_id)) >= pet_slots(member_id):
+        return {'error': 'No free pet slot'}
+    clean_species, clean_look, rejected = _pet_look(species, look)
+    pet = {
+        'id': _uuid.uuid4().hex,
+        'member_id': member_id,
+        'name': _pet_name(name),
+        'species': clean_species,
+        'look': clean_look,
+        'type': pet_catalog.coerce(type_),
+        'level': 1,
+        'training': {},
+        'moves': [],
+        'active': True,
+        'created_at': time.time(),
+    }
+    with db_lock:
+        pets_table.insert(pet)
+    return {'pet': pet, 'rejected': rejected}
+
+
+def update_pet(pet_id: str, fields: Optional[dict] = None) -> dict:
+    """Rename, restyle, re-element. Returns {'pet', 'rejected'} or {'error'}.
+
+    Only ever touches the free fields. Level, training and moves are the
+    earned half and are not writable from here -- an editor must not be able
+    to hand out what a ledger is supposed to."""
+    from services import pet_catalog
+    pet = get_pet(pet_id)
+    if not pet:
+        return {'error': 'No such pet'}
+    fields = dict(fields or {})
+    updates, rejected = {}, []
+    if 'name' in fields:
+        updates['name'] = _pet_name(fields['name'], pet.get('name') or 'Critter')
+    if 'species' in fields or 'look' in fields:
+        species, look, rejected = _pet_look(
+            fields.get('species', pet.get('species')),
+            fields.get('look', pet.get('look')))
+        updates['species'], updates['look'] = species, look
+    if 'type' in fields:
+        if pet_catalog.valid(fields['type']):
+            updates['type'] = fields['type']
+        else:
+            rejected.append('type:%s' % fields['type'])
+    if updates:
+        with db_lock:
+            pets_table.update(updates, Query().id == pet_id)
+        pet.update(updates)
+    return {'pet': pet, 'rejected': rejected}
+
+
+def retire_pet(pet_id: str, retired: bool = True) -> Optional[dict]:
+    """Free the slot WITHOUT losing the creature (rule 3). Reversible, as long
+    as bringing it back would not overfill the member's slots."""
+    pet = get_pet(pet_id)
+    if not pet:
+        return None
+    if not retired and len(get_pets(pet['member_id'])) >= pet_slots(pet['member_id']):
+        return None
+    with db_lock:
+        pets_table.update({'active': not retired}, Query().id == pet_id)
+    pet['active'] = not retired
+    return pet
+
+
+def delete_pet(pet_id: str) -> bool:
+    """A deliberate act, exposed so the hand path is complete. Nothing in the
+    app calls this on its own."""
+    with db_lock:
+        return bool(pets_table.remove(Query().id == pet_id))
 
 
 # --- Prep kits ---

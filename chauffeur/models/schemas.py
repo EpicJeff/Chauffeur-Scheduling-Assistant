@@ -499,6 +499,35 @@ class PoolContribution(BaseModel):
     amount: int
     ts: float = Field(default_factory=time.time)
 
+class Pet(BaseModel):
+    # A sidekick with stats, NOT a care loop -- it cannot be hungry, sick or
+    # neglected, and nothing here decays. See docs/pets_design.md rule 3.
+    #
+    # `species` is body x top (210 silhouettes) and `look` is everything else.
+    # Both are FREE and always will be: rule 1 says identity is free and power
+    # is earned, for the same reason avatars gate flair and never a likeness.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    member_id: str
+    name: str
+    # body/top decide what kind of creature it is; the rest is how it looks.
+    # Validated against the baked art, never against a hand-kept list.
+    species: dict = Field(default_factory=dict)   # {body, top}
+    look: dict = Field(default_factory=dict)      # {eyes, mouth, pattern, cheeks, base_color, accent_color}
+    # The five-ring element: ember > leaf > stone > spark > tide > ember.
+    # Chosen, not assigned -- a ring has no dominant type, so letting a kid
+    # pick the one they like costs the balance nothing.
+    type: str = 'ember'
+    # Level is derived from LIFETIME xp earned and never falls when xp is
+    # spent, the same shape as points vs status tiers. Both arrive in P2/P5;
+    # a P1 pet is simply a level 1 creature with no training.
+    level: int = 1
+    training: dict = Field(default_factory=dict)  # {hp, atk, def, spa, spd, spe}
+    moves: List[str] = Field(default_factory=list)
+    # One pet is active at a time; more slots are earned later. Retiring a pet
+    # deactivates it and NEVER deletes it -- rule 3.
+    active: bool = True
+    created_at: float = Field(default_factory=time.time)
+
 class PointsEntry(BaseModel):
     # Append-only ledger: balances are sums, history is the table.
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

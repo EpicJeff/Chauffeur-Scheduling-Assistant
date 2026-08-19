@@ -89,6 +89,9 @@
         /* Mapped page surfaces. More opaque than the board's glass because
            they carry no blur — see the surfaces block below. */
         --panel-surface-1: rgb(10 13 22 / 0.62);
+        /* A full-screen modal is not a board surface -- see the .panel-modal
+           rule below. Same hue as surface-1, no alpha. */
+        --panel-modal: rgb(10 13 22);
         --panel-surface-2: rgb(18 24 38 / 0.72);
         --panel-surface-3: rgb(32 40 60 / 0.80);
         --panel-line: rgb(255 255 255 / 0.10);
@@ -125,6 +128,7 @@
         --panel-card-hi: rgb(255 255 255 / 0.96);
         --panel-card-lo: rgb(255 255 255 / 0.72);
         --panel-surface-1: rgb(255 255 255 / 0.78);
+        --panel-modal: rgb(255 255 255);
         --panel-surface-2: rgb(255 255 255 / 0.86);
         --panel-surface-3: rgb(255 255 255 / 0.93);
         --panel-line: rgb(15 23 42 / 0.13);
@@ -158,6 +162,8 @@
             --panel-card-hi: rgb(255 255 255 / 0.96);
             --panel-card-lo: rgb(255 255 255 / 0.72);
             --panel-surface-1: rgb(255 255 255 / 0.78);
+            --panel-modal: rgb(255 255 255);
+        --panel-modal: rgb(255 255 255);
             --panel-surface-2: rgb(255 255 255 / 0.86);
             --panel-surface-3: rgb(255 255 255 / 0.93);
             --panel-line: rgb(15 23 42 / 0.13);
@@ -427,6 +433,28 @@
     html[data-panel] .bg-gray-950,
     html[data-panel] .bg-gray-900 {
         background-color: var(--panel-surface-1) !important;
+    }
+
+    /* A FULL-SCREEN MODAL IS NOT A BOARD SURFACE.
+
+       The mapping above turns every card into glass on purpose, so the
+       wallpaper reads through the board. A modal that covers the whole screen
+       is the one place that is wrong: there is nothing behind it that should
+       be legible, and the page underneath competes with every control on top
+       of it. The avatar editor has been see-through on a wall panel since it
+       shipped for exactly this reason -- it asked for `bg-gray-950` and the
+       skin overrode it with `!important`, so no amount of changing the class
+       on the overlay could ever have fixed it.
+
+       Marked with a class rather than matched by shape, because "is this
+       fixed inset-0 element a modal or a background layer" is not something a
+       selector can know. `backdrop-filter: none` is a REMOVAL, so it cannot
+       reintroduce the containing-block problem described above. */
+    html[data-panel] .panel-modal,
+    html[data-panel] .panel-modal.bg-gray-950,
+    html[data-panel] .panel-modal.bg-gray-900 {
+        background-color: var(--panel-modal) !important;
+        backdrop-filter: none !important;
     }
 
     html[data-panel] .bg-gray-900\/30,

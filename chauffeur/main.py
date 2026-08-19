@@ -7491,6 +7491,173 @@ def set_avatar_endpoint(member_id: str, req: AvatarConfigRequest,
     return {'status': 'ok', 'avatar_kind': kind, **result}
 
 
+# --- Pets API (pets arc P1) ---
+# Free by design: species, look, name and element cost nothing. The earned
+# half -- xp, training, moves, extra slots -- arrives in P2/P5 and is
+# deliberately NOT writable through any endpoint here, so an editor can never
+# hand out what a ledger is supposed to.
+
+def _require_pet_owner(member_id: str, token: Optional[str]):
+    """Same gate as an avatar edit, and for the same reason: a member with a
+    PIN proves it, a member without one has never been challenged anywhere
+    else, and a parent may act for anyone."""
+    return _require_avatar_owner(member_id, token)
+
+
+def _pet_payload(pet: dict) -> dict:
+    """A pet as the UI wants it: the record, plus the drawing. Rendering
+    server-side keeps the wall panel, a digest and a phone drawing the same
+    creature from the same bytes."""
+    from services import pet_render
+    from services import pet_catalog
+    out = dict(pet or {})
+    cfg = dict(out.get('species') or {})
+    cfg.update(out.get('look') or {})
+    if pet_render.available():
+        # the pet id is the namespace, so any number of critters can share a
+        # page without their clip ids colliding
+        out['svg'] = pet_render.render_svg(cfg, crop='chip',
+                                           nonce=(out.get('id') or 'a')[:12])
+    out['type_info'] = pet_catalog.get(out.get('type')) or {}
+    return out
+
+
+@app.get("/api/pets/bundle")
+def pets_bundle_endpoint():
+    """Every part, colour and element the editor can offer, in one payload.
+
+    The editor redraws a grid of thumbnails on every change, which is far too
+    chatty to ask the server for one at a time -- so the art ships once and
+    the browser composes locally, exactly as the avatar editor does."""
+    from services import pet_render
+    from services import pet_catalog
+    if not pet_render.available():
+        raise HTTPException(
+            status_code=503,
+            detail="Pet art not built. Run tools/harvest_critters.py")
+    out = pet_render.bundle()
+    out['pieces'] = (pet_render._load() or {}).get('pieces') or {}
+    out['anchors'] = (pet_render._load() or {}).get('anchors') or {}
+    out['order'] = (pet_render._load() or {}).get('order') or []
+    out['view'] = (pet_render._load() or {}).get('view') or [0, 0, 100, 100]
+    out.update(pet_catalog.bundle())
+    return out
+
+
+@app.get("/api/pets")
+def list_pets_endpoint(member_id: Optional[str] = None,
+                       include_retired: bool = False):
+    """Everyone's pets, or one member's. Retired creatures are excluded unless
+    asked for -- they still exist, they are just off the shelf."""
+    from services import pet_render
+    pets = [_pet_payload(p) for p in
+            storage.get_pets(member_id, include_retired=include_retired)]
+    return {'pets': pets,
+            'slots': storage.pet_slots(member_id) if member_id else None,
+            'available': pet_render.available()}
+
+
+class PetCreateRequest(BaseModel):
+    member_id: str
+    name: Optional[str] = ""
+    species: Optional[dict] = None
+    look: Optional[dict] = None
+    type: Optional[str] = None
+
+
+@app.post("/api/pets")
+def create_pet_endpoint(req: PetCreateRequest,
+                        x_member_token: Optional[str] = Header(None)):
+    _require_pet_owner(req.member_id, x_member_token)
+    res = storage.create_pet(req.member_id, req.name or '', req.species,
+                             req.look, req.type)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    return {'status': 'ok', 'pet': _pet_payload(res['pet']),
+            'rejected': res.get('rejected') or []}
+
+
+@app.get("/api/pets/{pet_id}")
+def get_pet_endpoint(pet_id: str):
+    pet = storage.get_pet(pet_id)
+    if not pet:
+        raise HTTPException(status_code=404, detail="No such pet")
+    return _pet_payload(pet)
+
+
+class PetUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    species: Optional[dict] = None
+    look: Optional[dict] = None
+    type: Optional[str] = None
+
+
+@app.post("/api/pets/{pet_id}")
+def update_pet_endpoint(pet_id: str, req: PetUpdateRequest,
+                        x_member_token: Optional[str] = Header(None)):
+    pet = storage.get_pet(pet_id)
+    if not pet:
+        raise HTTPException(status_code=404, detail="No such pet")
+    _require_pet_owner(pet['member_id'], x_member_token)
+    fields = {k: v for k, v in req.dict().items() if v is not None}
+    res = storage.update_pet(pet_id, fields)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    return {'status': 'ok', 'pet': _pet_payload(res['pet']),
+            'rejected': res.get('rejected') or []}
+
+
+class PetRetireRequest(BaseModel):
+    retired: bool = True
+
+
+@app.post("/api/pets/{pet_id}/retire")
+def retire_pet_endpoint(pet_id: str, req: PetRetireRequest,
+                        x_member_token: Optional[str] = Header(None)):
+    """Off the shelf, not gone. A retired pet keeps everything it earned and
+    can come back whenever a slot is free (pets arc rule 3)."""
+    pet = storage.get_pet(pet_id)
+    if not pet:
+        raise HTTPException(status_code=404, detail="No such pet")
+    _require_pet_owner(pet['member_id'], x_member_token)
+    out = storage.retire_pet(pet_id, req.retired)
+    if not out:
+        raise HTTPException(status_code=400,
+                            detail="No free pet slot to bring it back to")
+    return {'status': 'ok', 'pet': _pet_payload(out)}
+
+
+@app.delete("/api/pets/{pet_id}")
+def delete_pet_endpoint(pet_id: str,
+                        x_member_token: Optional[str] = Header(None)):
+    """Actually gone. Nothing in the app calls this by itself -- it exists so
+    that a person who wants their creature gone has a way to say so."""
+    pet = storage.get_pet(pet_id)
+    if not pet:
+        raise HTTPException(status_code=404, detail="No such pet")
+    _require_pet_owner(pet['member_id'], x_member_token)
+    return {'status': 'ok', 'deleted': storage.delete_pet(pet_id)}
+
+
+@app.get("/api/pets/{pet_id}/svg")
+def pet_svg_endpoint(pet_id: str, size: Optional[int] = None,
+                     crop: str = 'chip'):
+    """The creature as an image, for anywhere an <img> is easier than markup
+    -- a digest, an email, a notification."""
+    from services import pet_render
+    pet = storage.get_pet(pet_id)
+    if not pet:
+        raise HTTPException(status_code=404, detail="No such pet")
+    cfg = dict(pet.get('species') or {})
+    cfg.update(pet.get('look') or {})
+    svg = pet_render.render_svg(cfg, crop=crop, size=size,
+                                nonce=(pet_id or 'a')[:12])
+    if not svg:
+        raise HTTPException(status_code=503, detail="Pet art not built")
+    return Response(content=svg, media_type="image/svg+xml",
+                    headers={'Cache-Control': 'public, max-age=60'})
+
+
 # --- Rewards + redemptions API ---
 
 class RewardRequest(BaseModel):

@@ -545,7 +545,7 @@ function avatarEditor(config) {
 <!-- The overlay itself. One instance per page; opened via openAvatarEditor().
      Backdrop taps do NOT close it -- a kid mid-outfit brushing the edge of a
      wall panel must not lose their work; leaving is the ✕, which asks. -->
-<div class="fixed inset-0 z-[100] bg-gray-950 flex flex-col h-full min-h-0 select-none"
+<div class="panel-modal fixed inset-0 z-[100] bg-gray-950 flex flex-col h-full min-h-0 select-none"
      style="background-color: Canvas; color-scheme: light dark"
      x-data="avatarEditor({})" x-show="visible" x-cloak
      @avatar-editor-open.window="openFor($event.detail)"

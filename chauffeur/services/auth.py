@@ -256,6 +256,16 @@ RULES = [
     # The ledger, not this table, decides what a person may actually wear.
     ('GET', '/api/avatar/*', WALL),
     (ANY, '/api/avatar/*', SIGNED_IN),
+    # Pets, gated exactly like avatars and for the same reasons: a panel READS
+    # them because boards draw the family's critters, and every write is gated
+    # a second time inside the endpoint, per-member, by PIN or parenthood.
+    # Nothing a pets write can reach is earned -- species, look, name and
+    # element are free -- so there is nothing here for a tier to protect
+    # beyond "this is mine to change".
+    ('GET', '/api/pets', WALL),
+    ('GET', '/api/pets/*', WALL),
+    (ANY, '/api/pets', SIGNED_IN),
+    (ANY, '/api/pets/*', SIGNED_IN),
     (ANY, '/api/points/*', WALL),
     (ANY, '/api/rewards/*', WALL),
     (ANY, '/api/redemptions/*', WALL),

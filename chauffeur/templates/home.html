@@ -1411,6 +1411,7 @@
     <!-- And the routines kiosk's lanes, plus the kid digest card's wrapper. -->
     {% include 'components/routine_lanes.html' %}
     {% include 'components/avatar_editor.html' %}
+    {% include 'components/pet_editor.html' %}
     {% include 'components/kid_digest_lanes.html' %}
     <!-- And the drives tile's timeline, which is the Drives page's own
          renderer. Both tiles are the page's view at tile size rather than a
@@ -4882,7 +4883,7 @@
                            'chores_lanes', 'chores_rewards',
                            'task_list', 'errand_list',
                            'shopping_staples', 'shopping_list',
-                           'routines_lanes', 'avatar_editor'],
+                           'routines_lanes', 'avatar_editor', 'pets'],
                 // Takes the TILE, not its type: interactivity is decided per
                 // instance. A card whose own content answers the tap — an
                 // event opening its details, a photo opening full screen, a
