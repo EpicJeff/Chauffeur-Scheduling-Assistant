@@ -3290,6 +3290,38 @@ in order. The pets card shows a progress bar under each critter and the editor
 shows "N XP to level M" — filled by chores and routines, and by nothing in the
 editor itself, which is rule 1 made visible.
 
+**The resolver (P3, v2.297.0).** `services/pet_battle.py` -- pure arithmetic
+over dicts, no storage, network, LLM or solver. `resolve(a, b, seed)` returns
+the whole replay, so what gets persisted is a seed and two snapshots (<2 KB)
+and the fight reconstructs on any device forever. Asynchronous by design:
+kids are not on the app at the same moment and a wall panel cannot block on a
+phone.
+
+**Level-matching is the load-bearing rule and has its own test.** In a family
+fight both sides scale to the lower level AND the smaller training budget,
+while each keeps its own DISTRIBUTION -- so thinking about your build still
+pays and grinding does not. A level 30 pet with a full budget against a level
+4 one wins 42-58% level-matched, and >90% unmatched. PvE is deliberately
+unmatched: the machine is where power progression is allowed to matter.
+
+**Stats and the catalogue.** Six stats (HP/atk/def/spa/spd/spe). Bodies carry
+the base spread, and **every body sums to 300** -- 14 shapes, no strong ones,
+because a child who picks the cute body must not have picked the weak one
+(asserted). `static/pets/catalog.json` holds bodies, 20 moves (4 per element)
+and 6 NPCs by tier; adding either is a JSON edit. A move may declare `uses`,
+and heals do (3) -- without it two critters top each other up forever and the
+turn limit picks the winner, which was 8-16% of fights before the cap. A pet
+with no moves, or junk moves, walks in with its element's full kit rather than
+nothing.
+
+**Calibrated, not inherited.** Pokemon's own constants assume level 50-100 and
+base stats near 100; at the levels a family reaches they gave two-hit
+knockouts. `HP_DIVISOR`/`DAMAGE_DIVISOR` are tuned so the median fight is
+7-12 rounds with zero timeouts across 1200 sampled battles, and a test holds
+the band. Crits 1/16 x1.5, STAB x1.2, roll 0.90-1.00, stat stages capped at
++/-4, no status clocks or weather. Mirror matches are 50.4% and a given pet
+wins equally from either slot -- being the challenger is worth nothing.
+
 **A full-screen editor is opaque on a wall (v2.295.0).** `panel_skin` maps
 every `.bg-gray-950`/`.bg-gray-900` surface to translucent glass with
 `!important` so the wallpaper reads through the board — and a full-screen

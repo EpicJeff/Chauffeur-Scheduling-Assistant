@@ -1,0 +1,451 @@
+{
+  "_note": "Game data for pets: what each body is good at, what moves exist, who the NPCs are. Data, not code -- adding an NPC or a move must never be a code change. See docs/pets_design.md.",
+  "_stat_total": 300,
+  "_stat_rule": "EVERY body sums to the same total. Bodies differ in SHAPE, never in strength, because a child who picks the cute one must not have picked the weak one. A test asserts the totals.",
+  "bodies": {
+    "blob": {
+      "hp": 60,
+      "atk": 45,
+      "def": 60,
+      "spa": 45,
+      "spd": 55,
+      "spe": 35,
+      "note": "bulky all-rounder"
+    },
+    "tower": {
+      "hp": 50,
+      "atk": 60,
+      "def": 40,
+      "spa": 55,
+      "spd": 40,
+      "spe": 55,
+      "note": "tall striker"
+    },
+    "block": {
+      "hp": 55,
+      "atk": 50,
+      "def": 70,
+      "spa": 35,
+      "spd": 55,
+      "spe": 35,
+      "note": "wall"
+    },
+    "squat": {
+      "hp": 70,
+      "atk": 55,
+      "def": 60,
+      "spa": 30,
+      "spd": 50,
+      "spe": 35,
+      "note": "tank"
+    },
+    "lean": {
+      "hp": 45,
+      "atk": 55,
+      "def": 35,
+      "spa": 55,
+      "spd": 45,
+      "spe": 65,
+      "note": "quick"
+    },
+    "wedge": {
+      "hp": 45,
+      "atk": 70,
+      "def": 45,
+      "spa": 40,
+      "spd": 40,
+      "spe": 60,
+      "note": "physical glass cannon"
+    },
+    "wedgeInv": {
+      "hp": 45,
+      "atk": 40,
+      "def": 45,
+      "spa": 70,
+      "spd": 40,
+      "spe": 60,
+      "note": "special glass cannon"
+    },
+    "peak": {
+      "hp": 50,
+      "atk": 65,
+      "def": 45,
+      "spa": 50,
+      "spd": 45,
+      "spe": 45,
+      "note": "brawler"
+    },
+    "dome": {
+      "hp": 60,
+      "atk": 40,
+      "def": 55,
+      "spa": 50,
+      "spd": 60,
+      "spe": 35,
+      "note": "special wall"
+    },
+    "round": {
+      "hp": 65,
+      "atk": 45,
+      "def": 50,
+      "spa": 45,
+      "spd": 60,
+      "spe": 35,
+      "note": "cushion"
+    },
+    "bell": {
+      "hp": 50,
+      "atk": 45,
+      "def": 50,
+      "spa": 60,
+      "spd": 55,
+      "spe": 40,
+      "note": "caster"
+    },
+    "chimney": {
+      "hp": 45,
+      "atk": 50,
+      "def": 45,
+      "spa": 60,
+      "spd": 45,
+      "spe": 55,
+      "note": "quick caster"
+    },
+    "steps": {
+      "hp": 55,
+      "atk": 55,
+      "def": 55,
+      "spa": 45,
+      "spd": 45,
+      "spe": 45,
+      "note": "balanced"
+    },
+    "tilt": {
+      "hp": 50,
+      "atk": 50,
+      "def": 40,
+      "spa": 55,
+      "spd": 50,
+      "spe": 55,
+      "note": "skirmisher"
+    }
+  },
+  "moves": [
+    {
+      "key": "emberfang",
+      "name": "Emberfang",
+      "type": "ember",
+      "category": "physical",
+      "power": 60,
+      "accuracy": 100
+    },
+    {
+      "key": "cinderspit",
+      "name": "Cinderspit",
+      "type": "ember",
+      "category": "special",
+      "power": 55,
+      "accuracy": 100,
+      "effect": "lower",
+      "stat": "spd",
+      "chance": 30
+    },
+    {
+      "key": "flarerush",
+      "name": "Flarerush",
+      "type": "ember",
+      "category": "physical",
+      "power": 80,
+      "accuracy": 85
+    },
+    {
+      "key": "warmcoat",
+      "name": "Warm Coat",
+      "type": "ember",
+      "category": "status",
+      "power": 0,
+      "accuracy": 100,
+      "effect": "heal",
+      "amount": 30,
+      "uses": 3
+    },
+    {
+      "key": "vinewhip",
+      "name": "Vinewhip",
+      "type": "leaf",
+      "category": "physical",
+      "power": 60,
+      "accuracy": 100
+    },
+    {
+      "key": "seedspray",
+      "name": "Seedspray",
+      "type": "leaf",
+      "category": "special",
+      "power": 55,
+      "accuracy": 100,
+      "effect": "lower",
+      "stat": "spa",
+      "chance": 30
+    },
+    {
+      "key": "thornrush",
+      "name": "Thornrush",
+      "type": "leaf",
+      "category": "physical",
+      "power": 80,
+      "accuracy": 85
+    },
+    {
+      "key": "sunsoak",
+      "name": "Sunsoak",
+      "type": "leaf",
+      "category": "status",
+      "power": 0,
+      "accuracy": 100,
+      "effect": "heal",
+      "amount": 30,
+      "uses": 3
+    },
+    {
+      "key": "pebbledash",
+      "name": "Pebbledash",
+      "type": "stone",
+      "category": "physical",
+      "power": 60,
+      "accuracy": 100
+    },
+    {
+      "key": "gritblast",
+      "name": "Gritblast",
+      "type": "stone",
+      "category": "special",
+      "power": 55,
+      "accuracy": 100,
+      "effect": "lower",
+      "stat": "def",
+      "chance": 30
+    },
+    {
+      "key": "boulderdrop",
+      "name": "Boulderdrop",
+      "type": "stone",
+      "category": "physical",
+      "power": 85,
+      "accuracy": 80
+    },
+    {
+      "key": "harden",
+      "name": "Harden",
+      "type": "stone",
+      "category": "status",
+      "power": 0,
+      "accuracy": 100,
+      "effect": "raise",
+      "stat": "def",
+      "stages": 2,
+      "uses": 4
+    },
+    {
+      "key": "zapnip",
+      "name": "Zapnip",
+      "type": "spark",
+      "category": "physical",
+      "power": 60,
+      "accuracy": 100
+    },
+    {
+      "key": "sparkbolt",
+      "name": "Sparkbolt",
+      "type": "spark",
+      "category": "special",
+      "power": 55,
+      "accuracy": 100
+    },
+    {
+      "key": "thunderclap",
+      "name": "Thunderclap",
+      "type": "spark",
+      "category": "physical",
+      "power": 75,
+      "accuracy": 90,
+      "effect": "flinch",
+      "chance": 20
+    },
+    {
+      "key": "charge",
+      "name": "Charge",
+      "type": "spark",
+      "category": "status",
+      "power": 0,
+      "accuracy": 100,
+      "effect": "raise",
+      "stat": "spa",
+      "stages": 2,
+      "uses": 4
+    },
+    {
+      "key": "splashkick",
+      "name": "Splashkick",
+      "type": "tide",
+      "category": "physical",
+      "power": 60,
+      "accuracy": 100
+    },
+    {
+      "key": "bubblebeam",
+      "name": "Bubblebeam",
+      "type": "tide",
+      "category": "special",
+      "power": 55,
+      "accuracy": 100,
+      "effect": "lower",
+      "stat": "spe",
+      "chance": 30
+    },
+    {
+      "key": "wavecrash",
+      "name": "Wavecrash",
+      "type": "tide",
+      "category": "physical",
+      "power": 85,
+      "accuracy": 80
+    },
+    {
+      "key": "mistveil",
+      "name": "Mistveil",
+      "type": "tide",
+      "category": "status",
+      "power": 0,
+      "accuracy": 100,
+      "effect": "raise",
+      "stat": "spe",
+      "stages": 2,
+      "uses": 4
+    }
+  ],
+  "npcs": [
+    {
+      "key": "pebble",
+      "name": "Pebble",
+      "tier": 1,
+      "level": 3,
+      "xp": 15,
+      "type": "stone",
+      "species": {
+        "body": "block",
+        "top": "nub"
+      },
+      "look": {
+        "eyes": "dots",
+        "mouth": "line",
+        "pattern": "speckles",
+        "base_color": "Stone",
+        "accent_color": "Stone"
+      },
+      "taunt": "Pebble does not move much."
+    },
+    {
+      "key": "sprout",
+      "name": "Sprout",
+      "tier": 2,
+      "level": 6,
+      "xp": 20,
+      "type": "leaf",
+      "species": {
+        "body": "round",
+        "top": "sprout"
+      },
+      "look": {
+        "eyes": "happy",
+        "mouth": "smile",
+        "pattern": "belly",
+        "cheeks": "blush",
+        "base_color": "Lime",
+        "accent_color": "Mint"
+      },
+      "taunt": "Sprout is delighted to be here."
+    },
+    {
+      "key": "puddle",
+      "name": "Puddle",
+      "tier": 3,
+      "level": 10,
+      "xp": 25,
+      "type": "tide",
+      "species": {
+        "body": "blob",
+        "top": "fin"
+      },
+      "look": {
+        "eyes": "sleepy",
+        "mouth": "ooh",
+        "pattern": "ring",
+        "base_color": "Sky",
+        "accent_color": "Teal"
+      },
+      "taunt": "Puddle sloshes ominously."
+    },
+    {
+      "key": "fizz",
+      "name": "Fizz",
+      "tier": 4,
+      "level": 15,
+      "xp": 30,
+      "type": "spark",
+      "species": {
+        "body": "lean",
+        "top": "antennae"
+      },
+      "look": {
+        "eyes": "wide",
+        "mouth": "grin",
+        "pattern": "bars",
+        "base_color": "Amber",
+        "accent_color": "Periwinkle"
+      },
+      "taunt": "Fizz will not stand still."
+    },
+    {
+      "key": "scorch",
+      "name": "Scorch",
+      "tier": 5,
+      "level": 21,
+      "xp": 35,
+      "type": "ember",
+      "species": {
+        "body": "wedge",
+        "top": "horns"
+      },
+      "look": {
+        "eyes": "angry",
+        "mouth": "teeth",
+        "pattern": "stripes",
+        "base_color": "Coral",
+        "accent_color": "Amber"
+      },
+      "taunt": "Scorch has been waiting for you."
+    },
+    {
+      "key": "monolith",
+      "name": "Monolith",
+      "tier": 6,
+      "level": 28,
+      "xp": 40,
+      "type": "stone",
+      "species": {
+        "body": "tower",
+        "top": "crown"
+      },
+      "look": {
+        "eyes": "mono",
+        "mouth": "slant",
+        "pattern": "chevron",
+        "base_color": "Lilac",
+        "accent_color": "Stone"
+      },
+      "taunt": "Monolith says nothing at all."
+    }
+  ],
+  "_uses_rule": "A move may declare `uses`; unset means unlimited. Heals are capped because two critters that both top themselves up forever produce a sixty-round replay nobody watches and a winner decided by a timer rather than by play."
+}

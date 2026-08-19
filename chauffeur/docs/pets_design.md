@@ -401,9 +401,15 @@ move must never be a code change.
   with their guards, levels, rates in Settings, balance and progress on the
   card and in the editor. No reversal path — see above. Nothing to spend it on
   yet.
-- **P3 — the resolver.** Pure `pet_battle.py`: stats, five-ring types, ~20
-  moves, damage, turn order, level-matching, seeded RNG. Unit tests only, no UI.
-  *Cheapest slice, highest leverage — build it before anything visual.*
+- **P3 — the resolver.** *Done (v2.297.0).* Pure `pet_battle.py`: stats,
+  five-ring types, 20 moves, damage, turn order, level-matching, seeded RNG.
+  20 tests, no UI. Two things the build added that this brief did not
+  anticipate: **every body sums to the same stat total** (shape, never
+  strength — rule 1 at the stat table), and **moves may declare `uses`**,
+  which heals do, because two healers otherwise ride the turn limit to a
+  coin flip in 8–16% of fights. Damage constants are calibrated, not
+  inherited from Pokémon — theirs assume level 50–100 and gave two-hit
+  knockouts here.
 - **P4 — the overlay.** Replay player on the background: two critters, two
   avatars, HP bars, move log, CSS transform hits. PvE against 6 NPCs.
 - **P5 — training and spending.** Levels, training points, move slots, species
