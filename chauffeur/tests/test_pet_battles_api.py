@@ -244,6 +244,68 @@ def test_there_is_a_way_in_by_hand():
     check('openPetBattle' in editor, "the editor has no way into a battle")
 
 
+def test_a_replay_arrives_dressed_for_today():
+    """The numbers are pinned to what was stored -- restyling never rewrites a
+    fight -- but the PICTURES are today's, same as the live fight drew today's
+    look. Both ride the replay payload so the player can stage a fight whose
+    critters are not the viewer's current ones."""
+    reset_db()
+    import main
+    pet = _kid()
+    out = main.pet_battle_endpoint(
+        main.PetBattleRequest(pet_id=pet['id'], opponent='npc:pebble', seed=3))
+    again = main.pet_battle_replay_endpoint(out['battle']['id'])
+    check(again['a_svg'].startswith('<svg') and again['b_svg'].startswith('<svg'),
+          "a replay arrived without its fighters' pictures")
+    check(again['replay'] == out['replay'],
+          "the pictures changed the fight")
+    # A practice row read from the fighter's chair: the machine has no owner.
+    row = main.pet_battles_endpoint(member_id="k1")['battles'][0]
+    check(row['vs_name'] and row['vs_owner'] is None and not row['family'],
+          "a practice row reads wrong: %s" %
+          {k: row.get(k) for k in ('vs_name', 'vs_owner', 'family')})
+
+
+def test_a_question_asked_over_an_overlay_is_answerable():
+    """promptConfirm/promptInput/promptChoice ARE the app's dialogs (browser
+    dialogs are banned), so like the browser's they must outrank anything that
+    can summon them. They sat at z-100/110 while the pet editor (100), the
+    battle arena (110) and the guide (120) covered them: the question landed
+    BEHIND the overlay that asked it, unanswerable until the overlay was
+    closed. The contract now: every fullscreen overlay stays below the
+    dialogs' 400."""
+    import re
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'templates')
+    cc = open(os.path.join(base, 'components', 'control_center.html'),
+              encoding='utf-8').read()
+    dialog_z = []
+    for mid in ('cc-confirm-modal', 'cc-alert-modal', 'cc-input-modal',
+                'cc-choice-modal'):
+        m = re.search(r'id="%s"[^>]*z-\[(\d+)\]' % mid, cc)
+        check(m, "%s has no z-index at all" % mid)
+        dialog_z.append(int(m.group(1)))
+    overlay_z = []
+    for name in ('pet_battle.html', 'pet_editor.html', 'pet_guide.html',
+                 'avatar_editor.html', 'status_celebration.html'):
+        src = open(os.path.join(base, 'components', name), encoding='utf-8').read()
+        overlay_z += [int(z) for z in re.findall(r'z-\[(\d+)\]', src)]
+    check(min(dialog_z) > max(overlay_z),
+          "a global dialog (z %d) can land behind an overlay (z %d)"
+          % (min(dialog_z), max(overlay_z)))
+    # The PWA carries its OWN prompt family (app.html does not include
+    # control_center) and its own toast -- the same contract binds both.
+    # The toast especially: "Emma has been asked!" fires from INSIDE the
+    # arena, and at its old z-70 it landed invisible behind it.
+    app = open(os.path.join(base, 'app.html'), encoding='utf-8').read()
+    m = re.search(r'function _pwaModal.*?z-\[(\d+)\]', app, re.S)
+    check(m and int(m.group(1)) > max(overlay_z),
+          "the PWA's prompt family can land behind an overlay")
+    m = re.search(r'function showGlobalAlert.*?z-\[(\d+)\]', app, re.S)
+    check(m and int(m.group(1)) > max(overlay_z),
+          "the PWA's toast can vanish behind an overlay")
+
+
 def test_every_battle_route_is_classified():
     from services import auth
     for method, path in (('POST', '/api/pets/battle'),

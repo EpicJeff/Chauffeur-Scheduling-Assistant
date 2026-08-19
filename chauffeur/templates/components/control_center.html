@@ -30,7 +30,16 @@
 </style>
 
 <!-- Control Center Confirm Modal -->
-<div id="cc-confirm-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[100] items-center justify-center p-4">
+<!-- z-[400] on all four global dialogs, and the number is a contract: these
+     ARE the app's alert/confirm/prompt (no browser dialogs, ever), so like
+     the browser's they must outrank anything that can summon them. They sat
+     at 100/110 while the fullscreen overlays climbed past them -- pet editor
+     and avatar editor at 100, the battle arena at 110, the guide at 120, the
+     PWA action sheets at 210-220 -- so a question asked FROM an overlay
+     landed behind it, unanswerable until the overlay it was asked over was
+     closed. Any overlay must stay below 400; only the toast (9999) sits
+     above, because a toast never needs an answer. -->
+<div id="cc-confirm-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[400] items-center justify-center p-4">
     <div class="bg-gray-800 rounded-lg shadow-2xl p-6 max-w-sm w-full border border-gray-700">
         <h3 id="cc-confirm-title" class="text-xl font-bold text-white mb-4">Confirm Action</h3>
         <p id="cc-confirm-message" class="text-gray-300 mb-6 text-sm whitespace-pre-wrap"></p>
@@ -42,7 +51,7 @@
 </div>
 
 <!-- Global Alert Modal -->
-<div id="cc-alert-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[110] items-center justify-center p-4">
+<div id="cc-alert-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[400] items-center justify-center p-4">
     <div class="bg-gray-800 rounded-lg shadow-2xl p-6 max-w-sm w-full border border-gray-700">
         <h3 class="text-xl font-bold text-white mb-4">Notice</h3>
         <p id="cc-alert-message" class="text-gray-300 mb-6 text-sm"></p>
@@ -53,7 +62,7 @@
 </div>
 
 <!-- Global Input Modal (shared prompt() replacement — use window.promptInput) -->
-<div id="cc-input-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[110] items-center justify-center p-4">
+<div id="cc-input-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[400] items-center justify-center p-4">
     <div class="bg-gray-800 rounded-lg shadow-2xl p-6 max-w-sm w-full border border-gray-700">
         <h3 id="cc-input-title" class="text-xl font-bold text-white mb-4">Input</h3>
         <p id="cc-input-message" class="text-gray-300 mb-4 text-sm whitespace-pre-wrap"></p>
@@ -70,7 +79,7 @@
      people or options is a prompt too, and the browser has no dialog for it,
      so the one place that answers "which one?" lives here beside the other two
      rather than being rebuilt per page. -->
-<div id="cc-choice-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[110] items-center justify-center p-4"
+<div id="cc-choice-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[400] items-center justify-center p-4"
     onclick="if(event.target === this) window._ccChoiceResolve && window._ccChoiceResolve(null)">
     <div class="bg-gray-800 rounded-lg shadow-2xl p-6 max-w-sm w-full border border-gray-700">
         <h3 id="cc-choice-title" class="text-xl font-bold text-white mb-2">Choose</h3>

@@ -3423,6 +3423,45 @@ is waiting on the card in the morning. Agent tools `challenge_pet_battle` and
 `get_pet_status` are wired into **both** stacks (`agent_tools` schemas +
 handlers for the loop, `agent_router` dispatch for the chat widget).
 
+**The one who asked gets to see it (v2.306.0).** P6 shipped with only half an
+audience: the fight resolves the moment the sibling says yes, on whatever
+surface *they* are holding — and the challenger was never told and had no way
+back to it. Their invitation vanished on accept (`get_pet_challenges` returns
+pending only, and the overlay filtered to `incoming`), the battles list had
+exactly one caller (`limit=1`, for the cap counter), and the replay endpoint
+had **no caller at all**. Their only trace was unexplained XP in the ledger.
+Now: (1) accepting **pings the asker** (`_notify_challenge_answered`, same
+quiet-hours rule as the invitation; a decline still sends *nothing* — no
+`notified` key at all, because a "no" push is a forfeit announcement wearing
+kinder words); (2) the overlay shows outgoing invitations as a **waiting
+row** ("You asked Ben — waiting on them"; a decline simply makes it vanish,
+unannounced); (3) a **Watch again** list (the same battles fetch, `limit=8`)
+plays any stored fight through the existing player — `GET
+/api/pets/battles/{id}` now ships `a_svg`/`b_svg` (today's look on the stored
+numbers, falling back to the stored species when the critter is gone) so the
+player can stage fighters that are not the viewer's current pet, a side-B
+viewer gets the mirrored telling, and a replay pays nothing and emits no
+`pet-battle-done`. The battles list is decorated per chair (`mine_side`,
+`family`, `vs_name`, `vs_owner`) because the row is filed under the
+challenger and side B would read it inside out. **Deliberately no outcome on
+the list rows**: who won lives inside the replay, where it is a story — a
+column of results next to a sibling's name is a win-loss record with a
+friendlier font, and there is no record (pinned: the overlay may not
+reference `b.won`/`b.winner`).
+
+**Global dialogs outrank overlays (v2.306.0).** `promptConfirm` / `promptInput`
+/ `promptChoice` are THE app's dialogs (browser dialogs are banned), yet they
+sat at z-100/110 while the fullscreen overlays climbed past them — pet editor
+and avatar editor at 100, the battle arena at 110, the guide at 120 — so a
+question asked *from* an overlay landed behind it, unanswerable until the
+overlay it was asked over was closed. The layer contract now: **overlays stay
+below 400, the four global dialogs sit at z-[400]** (both copies: `components/
+control_center.html` for the pages, app.html's own prompt family for the PWA),
+and **toasts at z-[9999]** — the PWA's `showGlobalAlert` sat at z-70, so
+"Emma has been asked!" fired from inside the arena and landed invisible.
+Pinned by `test_a_question_asked_over_an_overlay_is_answerable`, which parses
+the z values rather than trusting anyone to remember the contract.
+
 **Pets belong to the whole house (v2.301.0).** Four gaps, none of which were
 decisions anybody made.
 

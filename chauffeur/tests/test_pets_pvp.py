@@ -266,6 +266,16 @@ def test_there_is_no_scoreboard_anywhere():
     blob = repr(tile).lower()
     for word in banned:
         check(("'%s'" % word) not in blob, "a %s appeared on the pets card" % word)
+    # The watch-again list shows who and when and never how it ended. A
+    # column of results next to a sibling's name is a win-loss record with a
+    # friendlier font; the outcome lives inside the replay, where it is a
+    # story with one ending rather than a running score.
+    overlay = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'templates', 'components',
+        'pet_battle.html'), encoding='utf-8').read()
+    for needle in ('b.won', 'b.winner'):
+        check(needle not in overlay,
+              "the watch-again list draws outcomes (%s) -- that is a record" % needle)
 
 
 def test_both_children_own_the_battle():
@@ -305,12 +315,77 @@ def test_quiet_hours_silence_the_ping_and_not_the_invitation():
     storage.patch_settings({'kid_quiet_hours_enabled': False})
 
 
+def test_the_one_who_asked_is_told_and_can_watch():
+    """The fight resolves the moment the sibling says yes, on whatever surface
+    THEY are holding -- the challenger is not there for it. Without a ping and
+    a way back, the only trace they would ever see is unexplained XP in their
+    ledger. And a decline sends NOTHING: a push saying "no" is a forfeit
+    announcement wearing kinder words."""
+    import main
+    reset_db()
+    _pair()
+    ch = main.create_pet_challenge_endpoint(
+        main.PetChallengeRequest(from_member="k1", to_member="k2"))['challenge']
+    res = main.respond_pet_challenge_endpoint(
+        ch['id'], main.PetChallengeReplyRequest(accept=True, seed=9))
+    check(res.get('notified') is True, "the challenger was never told")
+
+    # The fight is in the ASKER's list, read from their chair: the row is
+    # filed under them (side a), and the opponent named is the sibling's
+    # critter -- not their own reflected back.
+    hist = main.pet_battles_endpoint(member_id="k1")['battles']
+    check(hist and hist[0]['id'] == res['battle']['id'],
+          "the fight is not in the challenger's list")
+    check(hist[0]['family'] and hist[0]['mine_side'] == 'a'
+          and hist[0]['vs_name'] == 'Pickle' and hist[0]['vs_owner'] == 'Ben',
+          "the challenger's row reads wrong: %s" %
+          {k: hist[0].get(k) for k in ('family', 'mine_side', 'vs_name', 'vs_owner')})
+    # ... and in the ACCEPTER's list, inside out.
+    theirs = main.pet_battles_endpoint(member_id="k2")['battles']
+    check(theirs[0]['mine_side'] == 'b' and theirs[0]['vs_name'] == 'Rocket'
+          and theirs[0]['vs_owner'] == 'Ada',
+          "the accepter's row reads wrong: %s" %
+          {k: theirs[0].get(k) for k in ('mine_side', 'vs_name', 'vs_owner')})
+    # The replay endpoint stages the fight for a viewer who was NOT there:
+    # both pictures ride along, so the player never guesses from the shelf.
+    again = main.pet_battle_replay_endpoint(res['battle']['id'])
+    check(again['a_svg'].startswith('<svg') and again['b_svg'].startswith('<svg'),
+          "a replay arrived without its fighters' pictures")
+
+    # Declining is free, silent and FINAL -- no notified key at all, because
+    # even False would be a thing the code had to decide not to send.
+    ch2 = main.create_pet_challenge_endpoint(
+        main.PetChallengeRequest(from_member="k1", to_member="k2"))['challenge']
+    res2 = main.respond_pet_challenge_endpoint(
+        ch2['id'], main.PetChallengeReplyRequest(accept=False))
+    check('notified' not in res2, "a decline announced itself")
+
+    # Quiet hours silence THIS ping too -- and never the battle, which is
+    # saved and waiting in the arena in the morning.
+    storage.patch_settings({'kid_quiet_hours_enabled': True,
+                            'kid_quiet_start': '00:00', 'kid_quiet_end': '23:59'})
+    ch3 = main.create_pet_challenge_endpoint(
+        main.PetChallengeRequest(from_member="k2", to_member="k1"))['challenge']
+    res3 = main.respond_pet_challenge_endpoint(
+        ch3['id'], main.PetChallengeReplyRequest(accept=True, seed=10))
+    check(res3.get('notified') is False, "a ping went out during quiet hours")
+    check(storage.get_pet_battle(res3['battle']['id']),
+          "quiet hours ate the battle itself")
+    storage.patch_settings({'kid_quiet_hours_enabled': False})
+
+
 def test_the_hand_path_and_both_agent_stacks():
     from services import agent_tools, auth
     base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         'templates', 'components')
     overlay = open(os.path.join(base, 'pet_battle.html'), encoding='utf-8').read()
-    for needle in ('challenge(', 'answer(ch, true)', 'answer(ch, false)', 'rivals'):
+    for needle in ('challenge(', 'answer(ch, true)', 'answer(ch, false)', 'rivals',
+                   # The asker's half: they can SEE the invitation is out
+                   # (waiting), and they can WATCH the fight that happened on
+                   # their sibling's screen (the replay fetch). Both were
+                   # missing for a version -- the challenge vanished on accept
+                   # and the replay endpoint had no caller anywhere.
+                   'watch(', "api/pets/battles/", 'waiting'):
         check(needle in overlay, "the overlay has no hand path for %s" % needle)
     for tool in ('challenge_pet_battle', 'get_pet_status'):
         check(tool in agent_tools.TOOL_SCHEMAS, "%s missing from the loop's schemas" % tool)

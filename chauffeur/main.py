@@ -7697,6 +7697,36 @@ def _notify_challenge(challenge: dict):
         return False
 
 
+def _notify_challenge_answered(challenge: dict):
+    """Tell the ASKER their invitation became a fight. The battle resolved
+    the moment the sibling said yes, on whatever surface the sibling was
+    holding -- the challenger was not there for it, and without this ping the
+    only trace they would ever see is unexplained XP in their ledger.
+
+    A decline sends NOTHING, on purpose: declining is free, silent and final,
+    and a push saying "no" is a forfeit announcement wearing kinder words.
+    Same quiet-hours rule as the invitation itself -- the battle is saved
+    either way, waiting in the arena in the morning."""
+    import datetime
+    from services import family_digest
+    try:
+        target = storage.get_member(challenge['from_member']) or {}
+        who = (storage.get_member(challenge['to_member']) or {}).get('name') or 'They'
+        now = datetime.datetime.now()
+        settings = storage.get_settings() or {}
+        if family_digest.in_kid_quiet_hours(now, settings) \
+                or family_digest.in_member_quiet_hours(target, now):
+            return False
+        send_push_to_member(challenge['from_member'],
+                            "%s said yes!" % who,
+                            "The battle already happened — watch it in the arena.",
+                            url="/chores")
+        return True
+    except Exception as e:
+        print(f"[pets] challenge answered notify failed: {e}")
+        return False
+
+
 class PetChallengeRequest(BaseModel):
     from_member: str
     to_member: str
@@ -7735,6 +7765,10 @@ def respond_pet_challenge_endpoint(challenge_id: str,
     res = storage.respond_pet_challenge(challenge_id, req.accept, seed=req.seed)
     if res.get('error'):
         raise HTTPException(status_code=400, detail=res['error'])
+    if req.accept:
+        # The one who asked gets told -- they were not there for the fight.
+        # No 'notified' key at all on a decline: silence, not a False.
+        res['notified'] = _notify_challenge_answered(res.get('challenge') or {})
     return res
 
 
@@ -7773,20 +7807,66 @@ def pet_challenges_endpoint(member_id: Optional[str] = None):
 
 @app.get("/api/pets/battles")
 def pet_battles_endpoint(member_id: Optional[str] = None, limit: int = 20):
-    return {'battles': storage.get_pet_battles(member_id, limit=limit),
+    """Past fights, plus what the day's cap has left.
+
+    The row is filed under the CHALLENGER, so a viewer who was side B would
+    read it inside out -- their own critter under `opponent_name`. When the
+    list is asked for from one chair, each row says who the fight was against
+    FROM that chair. Deliberately no outcome fields are added here: who won
+    lives inside the replay, where it is a story. A column of results next to
+    a sibling's name is a win-loss record, and there is no record."""
+    battles = storage.get_pet_battles(member_id, limit=limit)
+    if member_id:
+        for b in battles:
+            mine = b.get('member_id') == member_id
+            other = (b.get('b_in') if mine else b.get('a_in')) or {}
+            b['mine_side'] = 'a' if mine else 'b'
+            b['family'] = bool(b.get('pair'))
+            b['vs_name'] = other.get('name')
+            b['vs_owner'] = other.get('owner')
+    return {'battles': battles,
             'cap': storage.pet_pve_cap(),
             'used_today': storage.pet_battles_today(member_id) if member_id else 0}
+
+
+def _battle_side_svg(c: dict, nonce: str) -> str:
+    """The picture for one stored combatant. The NUMBERS are pinned to what
+    was stored -- restyling a pet never rewrites an old fight -- but the
+    picture is today's, exactly as the live fight drew today's look. Falls
+    back to the stored species when the critter (or NPC) is gone, so a
+    retired fighter still walks into its own replay."""
+    from services import pet_render, pet_catalog
+    if not pet_render.available():
+        return ''
+    pid = str((c or {}).get('pet_id') or '')
+    cfg = dict((c or {}).get('species') or {})
+    if pid.startswith('npc:'):
+        n = pet_catalog.npc(pid[4:]) or {}
+        if n.get('species'):
+            cfg = dict(n['species'])
+        cfg.update(n.get('look') or {})
+    else:
+        pet = storage.get_pet(pid) or {}
+        if pet.get('species'):
+            cfg = dict(pet['species'])
+        cfg.update(pet.get('look') or {})
+    return pet_render.render_svg(cfg, crop='battle', nonce=nonce)
 
 
 @app.get("/api/pets/battles/{battle_id}")
 def pet_battle_replay_endpoint(battle_id: str):
     """The same fight again, rebuilt from its seed. Nothing but the seed and
-    the two combatants was ever stored."""
+    the two combatants was ever stored. Pictures ride along so the player can
+    stage a fight whose critters are not the viewer's current ones -- the
+    challenger watching back a battle their SIBLING accepted was the missing
+    audience this endpoint existed for and never had."""
     battle = storage.get_pet_battle(battle_id)
     replay = storage.replay_pet_battle(battle_id)
     if not replay:
         raise HTTPException(status_code=404, detail="No such battle")
-    return {'battle': battle, 'replay': replay}
+    return {'battle': battle, 'replay': replay,
+            'a_svg': _battle_side_svg(battle.get('a_in'), 'rpa'),
+            'b_svg': _battle_side_svg(battle.get('b_in'), 'rpb')}
 
 
 @app.get("/api/pets")

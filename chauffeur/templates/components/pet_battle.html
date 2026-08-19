@@ -99,7 +99,8 @@ function petBattlePanel() {
         show: false, stage: 'pick', busy: false,
         memberId: null, memberName: '', token: null,
         pet: null, opponents: [], chosen: null,
-        challenges: [], rivals: [], pvpEnabled: true,
+        challenges: [], waiting: [], rivals: [], pvpEnabled: true,
+        past: [], isReplay: false, sceneMine: null,
         replay: null, idx: -1, hp: { a: 0, b: 0 }, maxHp: { a: 1, b: 1 },
         note: '', moveText: '', lines: [], awarded: 0, capped: false, remaining: null,
         anim: { mine: '', theirs: '' }, fainted: { a: false, b: false },
@@ -134,6 +135,7 @@ function petBattlePanel() {
             this.show = true; this.stage = 'pick';
             this.replay = null; this.chosen = null; this.awarded = 0;
             this.capped = false; this.fainted = { a: false, b: false };
+            this.isReplay = false; this.sceneMine = null;
             this.bg = this.api + 'static/pet_battle_background.webp';
             try {
                 const list = await fetch(this.api + 'api/pets?member_id='
@@ -145,9 +147,14 @@ function petBattlePanel() {
                 }
                 const o = await fetch(this.api + 'api/pets/opponents').then(r => r.json());
                 this.opponents = o.opponents || [];
+                // One fetch, two questions: what the cap has left, and the
+                // watch-again list. The list matters most to the child who
+                // ASKED for a battle -- it resolved on their sibling's screen,
+                // and this is the only way they ever see it.
                 const b = await fetch(this.api + 'api/pets/battles?member_id='
-                    + encodeURIComponent(this.memberId) + '&limit=1').then(r => r.json());
+                    + encodeURIComponent(this.memberId) + '&limit=8').then(r => r.json());
                 this.remaining = Math.max(0, (b.cap || 0) - (b.used_today || 0));
+                this.past = b.battles || [];
                 await this.loadChallenges();
             } catch (e) {
                 showGlobalAlert('Could not reach the arena');
@@ -171,9 +178,14 @@ function petBattlePanel() {
                 const c = await fetch(this.api + 'api/pets/challenges?member_id='
                     + encodeURIComponent(this.memberId)).then(r => r.json());
                 this.challenges = (c.challenges || []).filter(x => x.incoming);
+                // The other half of consent: asking used to look like it did
+                // nothing. A waiting row says the invitation is out there --
+                // and no more, because the answer is the sibling's to give
+                // and a decline simply makes the row go away, unannounced.
+                this.waiting = (c.challenges || []).filter(x => !x.incoming);
                 this.rivals = c.rivals || [];
                 this.pvpEnabled = c.pvp_enabled !== false;
-            } catch (e) { this.challenges = []; this.rivals = []; }
+            } catch (e) { this.challenges = []; this.waiting = []; this.rivals = []; }
         },
 
         // Asking is an INVITATION. Nothing happens to the other child until
@@ -210,6 +222,7 @@ function petBattlePanel() {
                     // The person who accepted is side B of the stored fight,
                     // so the scene is drawn from their side: their critter is
                     // the near one.
+                    this.isReplay = false; this.sceneMine = null;
                     this.chosen = { name: d.replay.a.name, svg: this.rivalSvg(ch.from_member) };
                     this.awarded = (d.awards || {})[this.memberId] || 0;
                     this.capped = !!d.capped;
@@ -226,6 +239,46 @@ function petBattlePanel() {
         rivalSvg(memberId) {
             const r = (this.rivals || []).find(x => x.member_id === memberId);
             return r ? r.svg : '';
+        },
+
+        // --- watching it back ------------------------------------------
+        // A family fight resolves the moment the OTHER child says yes, on
+        // whatever surface they are holding -- the one who asked was not
+        // there for it. This is the way back: the server rebuilds the fight
+        // from its seed and hands over both pictures, and the same player
+        // plays it. XP was settled when it happened; a replay pays nothing
+        // and tells nobody.
+        async watch(b) {
+            if (this.busy) return;
+            this.busy = true;
+            try {
+                const d = await fetch(this.api + 'api/pets/battles/' + b.id)
+                    .then(r => r.ok ? r.json() : null);
+                if (!d || !d.replay) {
+                    showGlobalAlert('That battle is gone.');
+                    this.busy = false; return;
+                }
+                // The stored fight is told from the challenger's chair (side
+                // A). A viewer who was side B watches the SAME fight mirrored
+                // -- same seed, same result, their critter the near one.
+                const mineIsA = ((d.battle || {}).member_id === this.memberId);
+                this.isReplay = true;
+                this.awarded = 0; this.capped = false;
+                this.sceneMine = mineIsA ? d.a_svg : d.b_svg;
+                this.chosen = { svg: mineIsA ? d.b_svg : d.a_svg };
+                this.replay = mineIsA ? d.replay : this.mirror(d.replay);
+                this.startPlayback();
+            } catch (e) { showGlobalAlert('Could not fetch that battle'); }
+            this.busy = false;
+        },
+
+        dayLabel(b) {
+            const d = new Date((b.created_at || 0) * 1000);
+            const now = new Date();
+            if (d.toDateString() === now.toDateString()) return 'Today';
+            if (now - d < 6 * 86400000)
+                return d.toLocaleDateString('en-US', { weekday: 'short' });
+            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         },
 
         // Both children watch the SAME fight, each from their own side. Rather
@@ -248,6 +301,7 @@ function petBattlePanel() {
         async fight(opp) {
             if (this.busy) return;
             this.busy = true; this.chosen = opp;
+            this.isReplay = false; this.sceneMine = null;
             const headers = { 'Content-Type': 'application/json' };
             if (this.token) headers['X-Member-Token'] = this.token;
             try {
@@ -339,6 +393,7 @@ function petBattlePanel() {
 
         finish() {
             this.stage = 'result';
+            if (this.isReplay) return;   // watching back pays nothing and tells nobody
             window.dispatchEvent(new CustomEvent('pet-battle-done',
                 { detail: { memberId: this.memberId, won: this.won,
                             awarded: this.awarded } }));
@@ -347,6 +402,7 @@ function petBattlePanel() {
         again() {
             this.replay = null; this.chosen = null; this.stage = 'pick';
             this.awarded = 0; this.capped = false;
+            this.isReplay = false; this.sceneMine = null;
         },
     };
 }
@@ -436,6 +492,20 @@ function petBattlePanel() {
                     </div>
                 </template>
 
+                <!-- ASKED, AND WAITING. Without this row, asking looked like
+                     it did nothing. It says the invitation is out there and
+                     no more: the answer is theirs to give, and a decline
+                     simply makes this row disappear, unannounced. -->
+                <template x-for="w in waiting" :key="w.id">
+                    <div class="flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-900/60 border border-gray-800">
+                        <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse flex-shrink-0"></span>
+                        <span class="text-[11px] text-gray-400 min-w-0 truncate">
+                            You asked <b class="text-gray-300" x-text="w.to_name"></b> for a battle
+                            &mdash; waiting on them.
+                        </span>
+                    </div>
+                </template>
+
                 <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wide pt-1">Practice</div>
                 <template x-for="o in opponents" :key="o.key">
                     <button type="button" @click="fight(o)" :disabled="busy"
@@ -455,6 +525,35 @@ function petBattlePanel() {
                         <span class="text-[10px] text-emerald-400 font-bold flex-shrink-0"
                               x-text="'+' + o.xp + ' XP'"></span>
                     </button>
+                </template>
+
+                <!-- WATCH IT BACK. A family fight happened on the OTHER
+                     child's screen; this list is how the one who asked ever
+                     sees it at all. The rows show who and when and NOT how it
+                     ended -- the outcome lives inside the replay, where it is
+                     a story. A column of results next to a sibling's name is
+                     a win-loss record, and there is no record. -->
+                <template x-if="past.length">
+                    <div class="pt-1">
+                        <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1.5">Watch again</div>
+                        <div class="space-y-1.5">
+                            <template x-for="b in past" :key="b.id">
+                                <button type="button" @click="watch(b)" :disabled="busy"
+                                        class="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl bg-gray-900 border border-gray-800 text-left disabled:opacity-50">
+                                    <span class="text-base flex-shrink-0" x-text="b.family ? '\ud83e\udd1d' : '\ud83c\udfaf'"></span>
+                                    <span class="min-w-0 flex-1 text-xs text-gray-400 truncate">
+                                        <span x-text="b.vs_owner ? (b.vs_owner + '\u2019s') : 'vs'"></span>
+                                        <b class="text-white" x-text="b.vs_name"></b>
+                                    </span>
+                                    <span class="text-[10px] text-gray-500 flex-shrink-0" x-text="dayLabel(b)"></span>
+                                    <span class="text-[10px] text-blue-300 font-bold flex-shrink-0">&#9654; Watch</span>
+                                </button>
+                            </template>
+                        </div>
+                        <p class="text-[10px] text-gray-600 mt-1.5">
+                            A replay is rebuilt from its seed &mdash; the same fight, exactly as it happened.
+                        </p>
+                    </div>
                 </template>
             </div>
         </div>
@@ -498,8 +597,10 @@ function petBattlePanel() {
                          x-html="chosen && chosen.svg"></div>
                 </div>
                 <div class="pb-fighter pb-mine">
+                    <!-- A replay stages the critter that FOUGHT, which after a
+                         retirement is not the critter on the shelf today. -->
                     <div class="pb-anim" :class="[anim.mine, fainted.a ? 'pb-fainted' : '']"
-                         x-html="pet && pet.svg"></div>
+                         x-html="sceneMine || (pet && pet.svg)"></div>
                 </div>
 
                 <!-- level-matched fights say so, because a kid who loses to a
@@ -521,8 +622,11 @@ function petBattlePanel() {
                                 No XP for this one &mdash; today's rewarded battles are used up.
                                 The fight still counts for fun.
                             </div>
-                            <div x-show="!won" class="mt-2 text-xs text-gray-400 max-w-xs">
+                            <div x-show="!won && !isReplay" class="mt-2 text-xs text-gray-400 max-w-xs">
                                 Losing still pays. Try a different element, or train up.
+                            </div>
+                            <div x-show="isReplay" class="mt-2 text-xs text-gray-500 max-w-xs">
+                                A replay &mdash; it went exactly like this the first time.
                             </div>
                             <div class="mt-5 flex gap-2 justify-center">
                                 <button type="button" @click="again()"

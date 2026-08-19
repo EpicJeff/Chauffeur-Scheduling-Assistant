@@ -1747,7 +1747,11 @@
             if (!el) {
                 el = document.createElement('div');
                 el.id = 'global-alert';
-                el.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[70] bg-gray-800 border border-gray-600 text-gray-100 text-sm font-bold px-4 py-3 rounded-xl shadow-2xl max-w-[90vw] text-center transition-opacity duration-300 opacity-0 pointer-events-none';
+                // z-9999 like control_center's toast: a toast can be fired
+                // from inside any fullscreen overlay and answers nothing, so
+                // nothing may ever cover it. It sat at z-70 and vanished
+                // behind the pet overlays (100-120).
+                el.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[9999] bg-gray-800 border border-gray-600 text-gray-100 text-sm font-bold px-4 py-3 rounded-xl shadow-2xl max-w-[90vw] text-center transition-opacity duration-300 opacity-0 pointer-events-none';
                 document.body.appendChild(el);
             }
             el.textContent = msg;
@@ -1766,7 +1770,12 @@
         // standalone PWAs can be suppressed outright.
         function _pwaModal(inner, wire) {
             const overlay = document.createElement('div');
-            overlay.className = 'fixed inset-0 z-[220] bg-black/70 flex items-end sm:items-center justify-center p-4';
+            // z-[400]: the same layer contract as control_center's global
+            // dialogs. These ARE the app's confirm/prompt/choice, so like the
+            // browser's they must outrank every overlay that can summon them
+            // -- the pet and avatar overlays (100-120), the lightbox (210),
+            // the celebrations (200). Only the toast (9999) sits above.
+            overlay.className = 'fixed inset-0 z-[400] bg-black/70 flex items-end sm:items-center justify-center p-4';
             overlay.innerHTML = `<div class="w-full max-w-sm bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-5">${inner}</div>`;
             document.body.appendChild(overlay);
             wire(overlay, () => overlay.remove());
