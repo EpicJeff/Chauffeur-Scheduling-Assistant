@@ -1015,6 +1015,10 @@ class Settings(BaseModel):
     pet_xp_per_chore_point: float = 1.0
     pet_xp_per_routine: int = 3
     pet_xp_routine_all_bonus: int = 10
+    # Rewarded battles per child per day. Past it the fight still runs and the
+    # replay still plays -- only the xp stops. Refusing a child the thing they
+    # built is a punishment; paying nothing for the sixth go is an economy.
+    pet_pve_daily_cap: int = 5
     # Email intake (intake arc phase 2): a dedicated mailbox polled over IMAP;
     # allowlisted senders' messages are LLM-extracted into event/task
     # proposals a parent approves on /intake. The password is a Gmail app

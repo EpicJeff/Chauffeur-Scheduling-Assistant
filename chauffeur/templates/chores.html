@@ -368,7 +368,7 @@
                                 back into points. Routines pay XP only; it is the first thing a kept routine
                                 has ever bought.
                             </p>
-                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                                 <label class="block">
                                     <span class="block text-xs font-bold text-gray-300 mb-1">XP per chore point</span>
                                     <input type="number" min="0" step="0.5" x-model.number="petXp.pet_xp_per_chore_point"
@@ -384,6 +384,14 @@
                                         class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white">
                                     <span class="block text-[11px] text-gray-500 mt-1">Once per item per day, however
                                         many times it is tapped.</span>
+                                </label>
+                                <label class="block">
+                                    <span class="block text-xs font-bold text-gray-300 mb-1">Rewarded battles a day</span>
+                                    <input type="number" min="0" step="1" x-model.number="petXp.pet_pve_daily_cap"
+                                        @change="savePetXp()"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                                    <span class="block text-[11px] text-gray-500 mt-1">Past this the fight still happens
+                                        and the replay still plays &mdash; only the XP stops.</span>
                                 </label>
                                 <label class="block">
                                     <span class="block text-xs font-bold text-gray-300 mb-1">Full routine day bonus</span>
@@ -493,7 +501,7 @@
                 // because /api/settings merges by field -- this panel never
                 // has to know what else lives in settings.
                 petXp: { pet_xp_per_chore_point: 1, pet_xp_per_routine: 3,
-                         pet_xp_routine_all_bonus: 10 },
+                         pet_xp_routine_all_bonus: 10, pet_pve_daily_cap: 5 },
                 petXpSaved: false,
                 async loadPetXp() {
                     try {
@@ -958,6 +966,7 @@
     {% include 'components/status_celebration.html' %}
     {% include 'components/avatar_editor.html' %}
     {% include 'components/pet_editor.html' %}
+    {% include 'components/pet_battle.html' %}
     {% include 'components/moments_hearth.html' %}
     {% include 'components/control_center.html' %}
     {% include 'components/emoji_picker.html' %}

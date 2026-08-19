@@ -7566,6 +7566,76 @@ def pet_xp_endpoint(member_id: str, limit: int = 25):
             'ledger': storage.get_pet_xp_ledger(member_id, limit=limit)}
 
 
+@app.get("/api/pets/opponents")
+def pet_opponents_endpoint():
+    """The NPC roster, drawn and ready. Tiered so a kid can see the ladder
+    rather than be told about it."""
+    from services import pet_render, pet_catalog
+    out = []
+    for n in pet_catalog.npcs():
+        cfg = dict(n.get('species') or {})
+        cfg.update(n.get('look') or {})
+        t = pet_catalog.get(n.get('type')) or {}
+        out.append({
+            'key': 'npc:%s' % n['key'], 'name': n['name'], 'tier': n['tier'],
+            'level': n['level'], 'xp': n.get('xp'), 'taunt': n.get('taunt'),
+            'type': n['type'], 'type_label': t.get('label'),
+            'type_glyph': t.get('glyph'), 'type_color': t.get('color'),
+            'svg': (pet_render.render_svg(cfg, crop='battle',
+                                          nonce='npc%s' % n['key'])
+                    if pet_render.available() else ''),
+        })
+    return {'opponents': out}
+
+
+class PetBattleRequest(BaseModel):
+    pet_id: str
+    opponent: str                      # 'npc:<key>' -- pets fight pets in P6
+    seed: Optional[int] = None         # tests and replays only
+
+
+@app.post("/api/pets/battle")
+def pet_battle_endpoint(req: PetBattleRequest,
+                        x_member_token: Optional[str] = Header(None)):
+    """Fight, and hand back the whole replay to watch.
+
+    The battle is resolved HERE, in one call, rather than played out over a
+    live connection -- kids are not on the app at the same moment and a wall
+    panel cannot sit blocked waiting for a phone. What comes back is every
+    turn, so the overlay is a replay player and nothing more."""
+    pet = storage.get_pet(req.pet_id)
+    if not pet:
+        raise HTTPException(status_code=404, detail="No such pet")
+    _require_pet_owner(pet['member_id'], x_member_token)
+    if not str(req.opponent or '').startswith('npc:'):
+        # P6 opens this up; until then a challenge needs the other child's
+        # consent and there is nowhere yet to give it.
+        raise HTTPException(status_code=400,
+                            detail="Only practice battles for now")
+    res = storage.run_pet_battle(req.pet_id, req.opponent, seed=req.seed)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    return res
+
+
+@app.get("/api/pets/battles")
+def pet_battles_endpoint(member_id: Optional[str] = None, limit: int = 20):
+    return {'battles': storage.get_pet_battles(member_id, limit=limit),
+            'cap': storage.pet_pve_cap(),
+            'used_today': storage.pet_battles_today(member_id) if member_id else 0}
+
+
+@app.get("/api/pets/battles/{battle_id}")
+def pet_battle_replay_endpoint(battle_id: str):
+    """The same fight again, rebuilt from its seed. Nothing but the seed and
+    the two combatants was ever stored."""
+    battle = storage.get_pet_battle(battle_id)
+    replay = storage.replay_pet_battle(battle_id)
+    if not replay:
+        raise HTTPException(status_code=404, detail="No such battle")
+    return {'battle': battle, 'replay': replay}
+
+
 @app.get("/api/pets")
 def list_pets_endpoint(member_id: Optional[str] = None,
                        include_retired: bool = False):

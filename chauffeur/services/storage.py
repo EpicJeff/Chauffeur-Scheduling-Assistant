@@ -469,6 +469,11 @@ with db_lock:
     # would mean a kid choosing between levelling their critter and the family
     # movie-night pool, and would let battle winnings print money.
     pet_xp_ledger_table = db.table('pet_xp_ledger')
+    # Battles. What is stored is the SEED and the two combatants that went in,
+    # never the frames -- `pet_battle.resolve` is a pure function of exactly
+    # those, so a replay reconstructs on any device, at any time, from about a
+    # kilobyte.
+    pet_battles_table = db.table('pet_battles')
     music_favorites_table = db.table('music_favorites')
     music_recent_table = db.table('music_recent')
 
@@ -3910,6 +3915,139 @@ def retire_pet(pet_id: str, retired: bool = True) -> Optional[dict]:
         pets_table.update({'active': not retired}, Query().id == pet_id)
     pet['active'] = not retired
     return pet
+
+
+# --- battles (P4) ---------------------------------------------------------
+
+PET_PVE_DAILY_CAP = 5
+PET_PVE_LOSS_XP = 5
+
+
+def pet_pve_cap() -> int:
+    s = get_settings() or {}
+    try:
+        return max(0, int(s.get('pet_pve_daily_cap', PET_PVE_DAILY_CAP)))
+    except (TypeError, ValueError):
+        return PET_PVE_DAILY_CAP
+
+
+def pet_battles_today(member_id: str, date_str: str = None) -> int:
+    from datetime import date
+    date_str = date_str or date.today().isoformat()
+    with db_lock:
+        return len(pet_battles_table.search(
+            (Query().member_id == member_id) & (Query().date_str == date_str)))
+
+
+def pet_combatant_for(pet_id: str):
+    """A stored pet as a fighter. None if there is no such pet."""
+    from services import pet_battle
+    pet = get_pet(pet_id)
+    if not pet:
+        return None
+    m = get_member(pet.get('member_id')) or {}
+    return pet_battle.combatant(
+        pet.get('name') or 'Critter', pet.get('type'), pet.get('species'),
+        level=pet.get('level') or 1, training=pet.get('training'),
+        moves=pet.get('moves'), pet_id=pet_id, owner=m.get('name'))
+
+
+def run_pet_battle(pet_id: str, opponent: str, seed: int = None) -> dict:
+    """Fight, award, record. Returns {'battle', 'replay'} or {'error'}.
+
+    THE CAP DOES NOT REFUSE THE FUN. Past the daily limit the battle still
+    runs and the replay still plays -- only the xp stops, and the record says
+    so. Refusing to let a child play with the thing they built, because they
+    already played five times, is a punishment; paying nothing for the sixth
+    is just an economy.
+    """
+    import time
+    import uuid as _uuid
+    from datetime import date
+    from services import pet_battle, pet_catalog
+    mine = pet_combatant_for(pet_id)
+    if not mine:
+        return {'error': 'No such pet'}
+    pet = get_pet(pet_id)
+    member_id = pet.get('member_id')
+
+    npc_key = opponent[4:] if str(opponent).startswith('npc:') else None
+    if npc_key:
+        theirs = pet_battle.npc_combatant(npc_key)
+        npc = pet_catalog.npc(npc_key)
+        if not theirs:
+            return {'error': 'No such opponent'}
+        # PvE is NOT level-matched: the machine is where the grind is allowed
+        # to pay off, because losing to it hurts nobody's feelings.
+        level_match = False
+        win_xp = int((npc or {}).get('xp') or 15)
+    else:
+        theirs = pet_combatant_for(opponent)
+        if not theirs:
+            return {'error': 'No such opponent'}
+        level_match = True
+        win_xp = 30
+
+    if seed is None:
+        seed = int.from_bytes(os.urandom(4), 'big')
+    replay = pet_battle.resolve(mine, theirs, seed=seed, level_match=level_match)
+    won = replay['winner'] == 'a'
+
+    today = date.today().isoformat()
+    capped = pet_battles_today(member_id, today) >= pet_pve_cap()
+    awarded = 0
+    if not capped:
+        awarded = win_xp if won else PET_PVE_LOSS_XP
+        awarded = grant_pet_xp(member_id, awarded, 'battle', note=(
+            'beat %s' % theirs['name'] if won else 'fought %s' % theirs['name']))
+
+    row = {
+        'id': _uuid.uuid4().hex,
+        'member_id': member_id,
+        'date_str': today,
+        'pet_id': pet_id,
+        'opponent': opponent,
+        'opponent_name': theirs['name'],
+        'seed': int(seed),
+        'level_match': level_match,
+        # The INPUTS, not the frames. resolve() is pure over exactly these.
+        'a_in': mine, 'b_in': theirs,
+        'winner': replay['winner'],
+        'won': won,
+        'xp': awarded,
+        'capped': bool(capped),
+        'created_at': time.time(),
+    }
+    with db_lock:
+        pet_battles_table.insert(row)
+    return {'battle': row, 'replay': replay, 'awarded': awarded,
+            'capped': bool(capped),
+            'remaining': max(0, pet_pve_cap() - pet_battles_today(member_id, today))}
+
+
+def get_pet_battles(member_id: str = None, limit: int = 20) -> List[dict]:
+    with db_lock:
+        rows = [dict(b) for b in (
+            pet_battles_table.search(Query().member_id == member_id)
+            if member_id else pet_battles_table.all())]
+    rows.sort(key=lambda r: r.get('created_at') or 0, reverse=True)
+    return rows[:limit]
+
+
+def get_pet_battle(battle_id: str) -> Optional[dict]:
+    with db_lock:
+        res = pet_battles_table.search(Query().id == battle_id)
+    return dict(res[0]) if res else None
+
+
+def replay_pet_battle(battle_id: str) -> Optional[dict]:
+    """Reconstruct a stored fight, move for move, from its seed."""
+    from services import pet_battle
+    b = get_pet_battle(battle_id)
+    if not b:
+        return None
+    return pet_battle.resolve(b['a_in'], b['b_in'], seed=b['seed'],
+                              level_match=b.get('level_match', True))
 
 
 def delete_pet(pet_id: str) -> bool:

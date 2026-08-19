@@ -410,8 +410,12 @@ move must never be a code change.
   coin flip in 8–16% of fights. Damage constants are calibrated, not
   inherited from Pokémon — theirs assume level 50–100 and gave two-hit
   knockouts here.
-- **P4 — the overlay.** Replay player on the background: two critters, two
-  avatars, HP bars, move log, CSS transform hits. PvE against 6 NPCs.
+- **P4 — the overlay.** *Done (v2.298.0).* Replay player on the background:
+  two critters, HP bars, scrolling move log, CSS transform hits. PvE against
+  6 NPCs, daily cap, visible odds. **Avatars are NOT in the scene** — two
+  critters and two HP plates already fill a 16:9 stage, and a bust-crop
+  avatar beside a full creature read as a collage. Revisit if the stage ever
+  gets wider.
 - **P5 — training and spending.** Levels, training points, move slots, species
   unlocks, second pet slot.
 - **P6 — PvP.** Challenge, accept, resolve, both-sides replay, caps, quiet-hour

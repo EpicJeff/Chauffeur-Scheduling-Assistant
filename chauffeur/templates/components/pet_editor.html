@@ -402,6 +402,12 @@ function petEditorPanel() {
                 class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-300" title="Shuffle">🎲</button>
         <button type="button" x-show="pet" @click="retire()"
                 class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-400" title="Put on the shelf">📦</button>
+        <!-- Straight from the dressing room into the arena. The editor is
+             where a kid is already looking at their critter, so it is the
+             obvious door. -->
+        <button type="button" x-show="pet && typeof openPetBattle !== 'undefined'"
+                @click="close(); openPetBattle({ id: memberId, name: memberName })"
+                class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-200" title="Battle">⚔️</button>
         <button type="button" @click="save()" :disabled="saving"
                 class="flex-1 h-11 rounded-xl bg-blue-600 text-white font-bold disabled:opacity-50"
                 x-text="pet ? 'Save' : 'Hatch!'"></button>

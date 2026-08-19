@@ -1,0 +1,437 @@
+<!-- Pet battle overlay (pets arc P4). A REPLAY PLAYER, not a game loop.
+
+     The fight is already over by the time this opens: one POST resolves the
+     whole thing server-side and hands back every turn, and this walks the
+     list. That is not a shortcut, it is the design -- kids are not on the app
+     at the same moment and a wall panel cannot sit blocked waiting for a
+     phone, so a battle has to be a thing you watch rather than a thing two
+     people are both present for.
+
+     Critters have no limbs and no poses, so every hit is TRANSFORM-based:
+     lunge, recoil, shake, flash. That was a constraint of the art and it
+     turned out to be the cheap answer -- pure CSS on a <g>, readable at any
+     size, and it costs nothing when a new species arrives. -->
+{% raw %}
+<style>
+    [x-cloak] { display: none !important; }
+    /* THE STAGE KEEPS THE IMAGE'S OWN SHAPE, and that is not a nicety.
+       The two arena pads are at fixed spots in the artwork, so the fighters
+       are placed in IMAGE coordinates. Let the stage take the viewport's
+       shape instead and `cover` crops a different slice on every screen --
+       the pads slide out from under the critters, and no percentage can
+       track them. So: fix the ratio, letterbox the remainder, and the
+       positions below mean the same thing on a phone and on a wall. */
+    /* The arena takes the height its own shape asks for and no more. A 16:9
+       stage in a tall phone viewport would otherwise sit marooned in the
+       middle of a black field -- so it is capped, and the space underneath
+       becomes the log rather than nothing. */
+    .pb-arena { display: grid; place-items: center; background: #05070c; }
+    .pb-stage {
+        position: relative;
+        width: 100%; max-width: 100%; max-height: 58vh;
+        aspect-ratio: 1600 / 893;
+        background-size: cover; background-position: center;
+    }
+    /* Centering lives on the OUTER box and the animations on the inner one.
+       Both want `transform`, and a keyframe that sets it would otherwise wipe
+       out the centering for the length of the animation -- so every hit would
+       jog the critter half its own width sideways and back. */
+    .pb-fighter { position: absolute; transform: translate(-50%, -100%); line-height: 0; }
+    .pb-anim { line-height: 0; }
+    /* Measured off the artwork with a percentage grid. `top` is the SURFACE of
+       each pad and the fighter hangs from it (translate -100%), because the
+       bottom edge of a critter IS its ground line. The two pads sit side by
+       side at almost the same depth, so the two creatures are near enough the
+       same size -- one big and one small read as a mistake, not as distance. */
+    .pb-fighter.pb-mine { left: 22%; top: 73%; width: 17%; }
+    .pb-fighter.pb-theirs { left: 76%; top: 70%; width: 15.5%; }
+    /* Sized as a share of the stage, so the creatures scale with the arena
+       instead of staying 168px while it shrinks. */
+    .pb-fighter svg {
+        display: block; width: 100%; height: auto;
+        filter: drop-shadow(0 6px 8px rgba(0,0,0,.45));
+    }
+
+    @keyframes pb-bob { 50% { transform: translateY(-3px); } }
+    .pb-fighter .dbcr-c { animation: pb-bob 2.6s ease-in-out infinite; }
+
+    @keyframes pb-lunge-r { 40% { transform: translate(26px, -8px) scale(1.04); } }
+    @keyframes pb-lunge-l { 40% { transform: translate(-26px, -8px) scale(1.04); } }
+    .pb-lunge-mine { animation: pb-lunge-r .42s ease-out; }
+    .pb-lunge-theirs { animation: pb-lunge-l .42s ease-out; }
+
+    @keyframes pb-shake {
+        0%,100% { transform: translateX(0); }
+        20% { transform: translateX(-7px); } 40% { transform: translateX(6px); }
+        60% { transform: translateX(-4px); } 80% { transform: translateX(3px); }
+    }
+    .pb-hit { animation: pb-shake .38s ease-in-out; }
+    /* The flash is a filter on the SVG, so it tints the whole creature
+       without needing a second copy of the art. */
+    @keyframes pb-flash {
+        0%,100% { filter: drop-shadow(0 6px 8px rgba(0,0,0,.45)); }
+        30% { filter: drop-shadow(0 6px 8px rgba(0,0,0,.45)) brightness(2.6) saturate(.2); }
+    }
+    .pb-hit svg { animation: pb-flash .38s ease-in-out; }
+
+    @keyframes pb-faint { to { transform: translateY(26px) rotate(12deg); opacity: 0; } }
+    .pb-fainted { animation: pb-faint .7s ease-in forwards; }
+
+    .pb-hp > i { display: block; height: 100%; transition: width .45s ease-out; }
+    @keyframes pb-pop { 0% { transform: scale(.6); opacity: 0; } 60% { transform: scale(1.15); } 100% { transform: scale(1); opacity: 1; } }
+    .pb-pop { animation: pb-pop .35s ease-out; }
+</style>
+<script>
+window.openPetBattle = async function (m) {
+    const base = (window.chfBase !== undefined) ? window.chfBase : '';
+    let member = (typeof m === 'string') ? { id: m } : Object.assign({}, m);
+    if (member.has_pin === undefined || !member.name) {
+        try {
+            const all = await fetch(base + 'api/members').then(r => r.json());
+            const hit = (Array.isArray(all) ? all : []).find(x => x.id === member.id);
+            if (hit) member = hit;
+        } catch (e) { /* offline: the save will fail loudly instead */ }
+    }
+    let token = null;
+    if (localStorage.getItem('chauffeur_member_token_for') === member.id) {
+        token = localStorage.getItem('chauffeur_member_token');
+    }
+    if (!token && member.has_pin) {
+        if (typeof ensureMemberAuth === 'function') token = await ensureMemberAuth(member);
+        else if (typeof _avatarPinHandshake === 'function') token = await _avatarPinHandshake(base, member);
+        if (!token) return;
+    }
+    window.dispatchEvent(new CustomEvent('pet-battle-open',
+        { detail: { memberId: member.id, memberName: member.name, token: token } }));
+};
+
+function petBattlePanel() {
+    return {
+        show: false, stage: 'pick', busy: false,
+        memberId: null, memberName: '', token: null,
+        pet: null, opponents: [], chosen: null,
+        replay: null, idx: -1, hp: { a: 0, b: 0 }, maxHp: { a: 1, b: 1 },
+        note: '', moveText: '', lines: [], awarded: 0, capped: false, remaining: null,
+        anim: { mine: '', theirs: '' }, fainted: { a: false, b: false },
+        timer: null, bg: '',
+
+        get api() { return (window.chfBase !== undefined ? window.chfBase : ''); },
+        get won() { return this.replay && this.replay.winner === 'a'; },
+        pct(side) {
+            return Math.max(0, Math.min(100,
+                Math.round(100 * (this.hp[side] / (this.maxHp[side] || 1)))));
+        },
+        // A level 1 critter that walks into the top tier is knocked out in
+        // one move and reads a one-line log. Nothing is LOCKED -- picking a
+        // fight you cannot win is allowed, and losing pays -- but it should
+        // be a choice made with the odds visible rather than a surprise.
+        odds(o) {
+            const d = (o.level || 1) - ((this.pet && this.pet.level) || 1);
+            if (d <= -3) return { label: 'Easy', cls: 'bg-emerald-900/60 text-emerald-300' };
+            if (d <= 2) return { label: 'Fair', cls: 'bg-sky-900/60 text-sky-300' };
+            if (d <= 7) return { label: 'Tough', cls: 'bg-amber-900/60 text-amber-300' };
+            return { label: 'Brutal', cls: 'bg-rose-900/60 text-rose-300' };
+        },
+        barColor(side) {
+            const p = this.pct(side);
+            return p > 50 ? '#22c55e' : p > 20 ? '#f59e0b' : '#ef4444';
+        },
+
+        async open(detail) {
+            this.memberId = detail.memberId;
+            this.memberName = detail.memberName || '';
+            this.token = detail.token || null;
+            this.show = true; this.stage = 'pick';
+            this.replay = null; this.chosen = null; this.awarded = 0;
+            this.capped = false; this.fainted = { a: false, b: false };
+            this.bg = this.api + 'static/pet_battle_background.webp';
+            try {
+                const list = await fetch(this.api + 'api/pets?member_id='
+                    + encodeURIComponent(this.memberId)).then(r => r.json());
+                this.pet = (list.pets || [])[0] || null;
+                if (!this.pet) {
+                    showGlobalAlert('Hatch a critter first!');
+                    this.show = false; return;
+                }
+                const o = await fetch(this.api + 'api/pets/opponents').then(r => r.json());
+                this.opponents = o.opponents || [];
+                const b = await fetch(this.api + 'api/pets/battles?member_id='
+                    + encodeURIComponent(this.memberId) + '&limit=1').then(r => r.json());
+                this.remaining = Math.max(0, (b.cap || 0) - (b.used_today || 0));
+            } catch (e) {
+                showGlobalAlert('Could not reach the arena');
+                this.show = false;
+            }
+        },
+
+        close() {
+            if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+            this.show = false;
+        },
+
+        async fight(opp) {
+            if (this.busy) return;
+            this.busy = true; this.chosen = opp;
+            const headers = { 'Content-Type': 'application/json' };
+            if (this.token) headers['X-Member-Token'] = this.token;
+            try {
+                const res = await fetch(this.api + 'api/pets/battle', {
+                    method: 'POST', headers,
+                    body: JSON.stringify({ pet_id: this.pet.id, opponent: opp.key }),
+                });
+                if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    showGlobalAlert(d.detail || 'The battle could not start');
+                    this.busy = false; return;
+                }
+                const out = await res.json();
+                this.replay = out.replay;
+                this.awarded = out.awarded || 0;
+                this.capped = !!out.capped;
+                this.remaining = out.remaining;
+                this.startPlayback();
+            } catch (e) {
+                showGlobalAlert('Could not reach the arena');
+            }
+            this.busy = false;
+        },
+
+        startPlayback() {
+            this.stage = 'fight';
+            this.maxHp = { a: this.replay.a.max_hp, b: this.replay.b.max_hp };
+            this.hp = { a: this.maxHp.a, b: this.maxHp.b };
+            this.idx = -1; this.note = ''; this.moveText = ''; this.lines = [];
+            this.fainted = { a: false, b: false };
+            this.step();
+        },
+
+        step() {
+            this.idx += 1;
+            const turns = (this.replay && this.replay.turns) || [];
+            if (this.idx >= turns.length) { this.finish(); return; }
+            const t = turns[this.idx];
+            const mine = t.actor === 'a';
+            this.moveText = t.move_name
+                ? `${t.name} used ${t.move_name}!`
+                : `${t.name} can't move!`;
+            this.note = t.note || '';
+            this.lines.push({ text: this.moveText, note: this.note, mine: mine });
+            this.$nextTick(() => {
+                const el = this.$refs.log;
+                if (el) el.scrollTop = el.scrollHeight;
+            });
+
+            // lunge, then land the hit a beat later, so the two read as one
+            // action rather than two things happening at once
+            this.anim[mine ? 'mine' : 'theirs'] = mine ? 'pb-lunge-mine' : 'pb-lunge-theirs';
+            setTimeout(() => { this.anim.mine = ''; this.anim.theirs = ''; }, 430);
+
+            setTimeout(() => {
+                this.hp = { a: t.hp.a, b: t.hp.b };
+                if (t.damage > 0) {
+                    const hurt = mine ? 'theirs' : 'mine';
+                    this.anim[hurt] = 'pb-hit';
+                    setTimeout(() => { this.anim[hurt] = ''; }, 400);
+                }
+                if (t.hp.a <= 0) this.fainted.a = true;
+                if (t.hp.b <= 0) this.fainted.b = true;
+            }, 220);
+
+            // A busier line needs longer on screen than a plain hit.
+            const dwell = this.note ? 1500 : 1050;
+            this.timer = setTimeout(() => this.step(), dwell);
+        },
+
+        skip() {
+            if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+            const turns = (this.replay && this.replay.turns) || [];
+            for (let i = this.idx + 1; i < turns.length; i++) {
+                const t = turns[i];
+                this.lines.push({
+                    text: t.move_name ? `${t.name} used ${t.move_name}!`
+                                      : `${t.name} can't move!`,
+                    note: t.note || '', mine: t.actor === 'a' });
+            }
+            this.idx = turns.length - 1;
+            const last = turns[turns.length - 1];
+            if (last) {
+                this.hp = { a: last.hp.a, b: last.hp.b };
+                this.fainted = { a: last.hp.a <= 0, b: last.hp.b <= 0 };
+            }
+            this.finish();
+        },
+
+        finish() {
+            this.stage = 'result';
+            window.dispatchEvent(new CustomEvent('pet-battle-done',
+                { detail: { memberId: this.memberId, won: this.won,
+                            awarded: this.awarded } }));
+        },
+
+        again() {
+            this.replay = null; this.chosen = null; this.stage = 'pick';
+            this.awarded = 0; this.capped = false;
+        },
+    };
+}
+</script>
+
+<div x-data="petBattlePanel()" x-cloak x-show="show"
+     @pet-battle-open.window="open($event.detail)"
+     class="panel-modal fixed inset-0 z-[110] bg-gray-950 flex flex-col select-none">
+
+    <!-- ===== choose an opponent ===== -->
+    <template x-if="stage === 'pick'">
+        <div class="flex-1 min-h-0 flex flex-col">
+            <div class="flex items-center gap-3 p-3 border-b border-gray-800">
+                <span class="w-12 h-12 rounded-xl overflow-hidden bg-gray-800 flex-shrink-0"
+                      x-html="pet && pet.svg"></span>
+                <div class="min-w-0 flex-1">
+                    <div class="text-base font-bold text-white truncate" x-text="pet && pet.name"></div>
+                    <div class="text-xs text-gray-400">
+                        <span x-text="pet && pet.type_info && pet.type_info.glyph"></span>
+                        <span x-text="pet ? ('Lv' + pet.level) : ''"></span>
+                    </div>
+                </div>
+                <button type="button" @click="close()"
+                        class="w-10 h-10 rounded-full bg-gray-800 border border-gray-700 text-gray-300 text-xl leading-none">×</button>
+            </div>
+            <div class="px-3 pt-2 text-xs text-gray-400">
+                <span x-show="remaining > 0">
+                    <span x-text="remaining"></span> rewarded battles left today.
+                </span>
+                <!-- Past the cap the fight is still offered. The cap is an
+                     economy, not a punishment. -->
+                <span x-show="remaining === 0" class="text-amber-400">
+                    No XP left today &mdash; you can still fight for fun.
+                </span>
+            </div>
+            <div class="flex-1 overflow-y-auto p-3 space-y-2">
+                <template x-for="o in opponents" :key="o.key">
+                    <button type="button" @click="fight(o)" :disabled="busy"
+                            class="w-full flex items-center gap-3 p-2.5 rounded-xl bg-gray-900 border-2 border-gray-800 text-left disabled:opacity-50">
+                        <span class="w-16 h-16 rounded-lg overflow-hidden bg-gray-800 flex-shrink-0" x-html="o.svg"></span>
+                        <span class="min-w-0 flex-1">
+                            <span class="flex items-center gap-2">
+                                <span class="text-sm font-bold text-white" x-text="o.name"></span>
+                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-300"
+                                      x-text="'Lv' + o.level"></span>
+                                <span class="text-[10px]" x-text="o.type_glyph"></span>
+                                <span class="text-[10px] px-1.5 py-0.5 rounded font-bold"
+                                      :class="odds(o).cls" x-text="odds(o).label"></span>
+                            </span>
+                            <span class="block text-[11px] text-gray-500 mt-0.5" x-text="o.taunt"></span>
+                        </span>
+                        <span class="text-[10px] text-emerald-400 font-bold flex-shrink-0"
+                              x-text="'+' + o.xp + ' XP'"></span>
+                    </button>
+                </template>
+            </div>
+        </div>
+    </template>
+
+    <!-- ===== the fight, and its result ===== -->
+    <template x-if="stage !== 'pick'">
+        <div class="flex-1 min-h-0 flex flex-col">
+            <div class="pb-arena flex-none">
+              <div class="relative pb-stage" :style="'background-image:url(' + bg + ')'">
+
+                <!-- name plates -->
+                <!-- Opponent's bar top-left, yours bottom-right: the layout
+                     the games have used for thirty years, and the one that
+                     keeps each plate out of the corner its critter stands in. -->
+                <div class="absolute top-2 left-2 w-40 bg-gray-950/80 rounded-lg p-2">
+                    <div class="flex items-baseline justify-between gap-2">
+                        <span class="text-xs font-bold text-white truncate" x-text="replay && replay.b.name"></span>
+                        <span class="text-[10px] text-gray-400" x-text="replay ? ('Lv' + replay.b.level) : ''"></span>
+                    </div>
+                    <div class="pb-hp h-2 rounded bg-black/50 overflow-hidden mt-1">
+                        <i :style="'width:' + pct('b') + '%;background:' + barColor('b')"></i>
+                    </div>
+                </div>
+                <div class="absolute bottom-2 right-2 w-40 bg-gray-950/80 rounded-lg p-2">
+                    <div class="flex items-baseline justify-between gap-2">
+                        <span class="text-xs font-bold text-white truncate" x-text="replay && replay.a.name"></span>
+                        <span class="text-[10px] text-gray-400" x-text="replay ? ('Lv' + replay.a.level) : ''"></span>
+                    </div>
+                    <div class="pb-hp h-2 rounded bg-black/50 overflow-hidden mt-1">
+                        <i :style="'width:' + pct('a') + '%;background:' + barColor('a')"></i>
+                    </div>
+                    <div class="text-[10px] text-gray-400 mt-0.5">
+                        <span x-text="hp.a"></span>/<span x-text="maxHp.a"></span>
+                    </div>
+                </div>
+
+                <!-- the two critters -->
+                <div class="pb-fighter pb-theirs">
+                    <div class="pb-anim" :class="[anim.theirs, fainted.b ? 'pb-fainted' : '']"
+                         x-html="chosen && chosen.svg"></div>
+                </div>
+                <div class="pb-fighter pb-mine">
+                    <div class="pb-anim" :class="[anim.mine, fainted.a ? 'pb-fainted' : '']"
+                         x-html="pet && pet.svg"></div>
+                </div>
+
+                <!-- level-matched fights say so, because a kid who loses to a
+                     bigger sibling deserves to know it was not the levels -->
+                <div x-show="replay && replay.level_matched"
+                     class="absolute top-2 right-2 text-[10px] px-2 py-1 rounded bg-gray-950/80 text-gray-300">
+                    Level-matched
+                </div>
+
+                <!-- result -->
+                <template x-if="stage === 'result'">
+                    <div class="absolute inset-0 grid place-items-center bg-gray-950/70">
+                        <div class="pb-pop text-center px-6">
+                            <div class="text-3xl font-black" :class="won ? 'text-emerald-400' : 'text-gray-300'"
+                                 x-text="won ? 'You win!' : 'Knocked out'"></div>
+                            <div x-show="awarded > 0" class="mt-2 text-lg font-bold text-emerald-300"
+                                 x-text="'+' + awarded + ' XP'"></div>
+                            <div x-show="capped" class="mt-2 text-xs text-amber-400 max-w-xs">
+                                No XP for this one &mdash; today's rewarded battles are used up.
+                                The fight still counts for fun.
+                            </div>
+                            <div x-show="!won" class="mt-2 text-xs text-gray-400 max-w-xs">
+                                Losing still pays. Try a different element, or train up.
+                            </div>
+                            <div class="mt-5 flex gap-2 justify-center">
+                                <button type="button" @click="again()"
+                                        class="px-5 h-11 rounded-xl bg-blue-600 text-white font-bold">Again</button>
+                                <button type="button" @click="close()"
+                                        class="px-5 h-11 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 font-bold">Done</button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- The log. On a phone this is most of the screen, which is why
+                 it keeps the whole history rather than only the current line:
+                 a fight you can scroll back through beats a strip of dead
+                 letterbox. -->
+            <div class="flex-1 min-h-0 flex flex-col bg-gray-950 border-t border-gray-800">
+                <div class="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-1" x-ref="log">
+                    <template x-for="(l, i) in lines" :key="i">
+                        <div>
+                            <div class="text-sm" :class="l.mine ? 'text-white' : 'text-gray-300'"
+                                 x-text="l.text"></div>
+                            <div x-show="l.note" class="text-xs text-amber-300" x-text="l.note"></div>
+                        </div>
+                    </template>
+                    <div x-show="!lines.length" class="text-xs text-gray-600">The bell is about to ring…</div>
+                </div>
+                <div class="flex-shrink-0 flex gap-2 p-2 border-t border-gray-800/80">
+                    <button type="button" x-show="stage === 'fight'" @click="skip()"
+                            class="px-4 h-9 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 text-xs font-bold">Skip</button>
+                    <button type="button" x-show="stage === 'fight'" @click="close()"
+                            class="px-4 h-9 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 text-xs">Leave</button>
+                    <span class="flex-1"></span>
+                    <span x-show="stage === 'fight'" class="text-[11px] text-gray-600 self-center pr-1"
+                          x-text="replay ? ((idx + 1) + '/' + replay.turns.length) : ''"></span>
+                </div>
+            </div>
+        </div>
+    </template>
+</div>
+{% endraw %}

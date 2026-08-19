@@ -458,6 +458,10 @@ ENTRIES: List[dict] = [
     _e('pet_xp_routine_all_bonus', 'kids', 'Pet XP for a full routine day',
        'A bonus the first time every routine due today is done.',
        page='chores', anchor='petxp'),
+    _e('pet_pve_daily_cap', 'kids', 'Rewarded battles a day',
+       'How many battles pay experience each day. Past it the fight still '
+       'happens and the replay still plays -- only the reward stops.',
+       page='chores', anchor='petxp'),
 ]
 
 BY_KEY: Dict[str, dict] = {e['key']: e for e in ENTRIES}

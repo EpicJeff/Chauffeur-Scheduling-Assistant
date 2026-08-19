@@ -3322,6 +3322,43 @@ the band. Crits 1/16 x1.5, STAB x1.2, roll 0.90-1.00, stat stages capped at
 +/-4, no status clocks or weather. Mirror matches are 50.4% and a given pet
 wins equally from either slot -- being the challenger is worth nothing.
 
+**The arena (P4, v2.298.0).** `POST /api/pets/battle` resolves the whole
+fight in one call and hands back every turn; `components/pet_battle.html` is
+a **replay player**, not a game loop. `pet_battles_table` stores the seed and
+the two combatants and NEVER the frames -- `replay_pet_battle` rebuilds the
+fight from them, so restyling a pet cannot rewrite a battle already watched
+(tested). Six NPCs by tier, each drawn from the same bake. PvP is refused with
+a 400 until P6: a sibling has to be able to consent to a challenge, and there
+is nowhere yet to do it.
+
+**The cap does not refuse the fun.** `pet_pve_daily_cap` (Chores → Pet XP,
+default 5) stops the XP and never the fight -- past it the battle still runs,
+the replay still plays, and the result says so. Refusing a child the thing
+they built because they already played five times is a punishment; paying
+nothing for the sixth is an economy. Losing pays 5 XP, because a child who
+tries and gets nothing learns not to try. Battle winnings are still XP and a
+test grinds 30 fights to prove none of it reaches the points ledger.
+
+**The stage keeps the image's own shape, and that is load-bearing.** The two
+arena pads are at fixed spots in the artwork and the fighters are placed in
+IMAGE coordinates (mine 22%/73%, theirs 76%/70%, measured off a percentage
+grid). Letting the stage take the viewport's shape instead means `cover` crops
+a different slice on every screen and the pads slide out from under the
+critters -- which is exactly what was wrong the first two times. So the stage
+is pinned to `1600/893`, capped at `58vh`, and the space that opens up under
+it on a phone becomes the scrollable battle log rather than dead letterbox.
+HP plates sit opponent-top-left / yours-bottom-right: the layout the games
+have used for thirty years, and the one that keeps each plate out of the
+corner its critter stands in.
+
+Hits are **transform-based** -- lunge, shake, brightness flash, faint -- on an
+inner wrapper, because the outer box owns `translate(-50%,-100%)` for
+centering and a keyframe touching `transform` would otherwise jog every
+critter half its own width sideways. Nothing is locked by level, but the
+picker shows Easy/Fair/Tough/Brutal against your own: a level 1 critter that
+walks into the tier 6 opponent is knocked out in one move, and that should be
+a choice made with the odds visible.
+
 **A full-screen editor is opaque on a wall (v2.295.0).** `panel_skin` maps
 every `.bg-gray-950`/`.bg-gray-900` surface to translucent glass with
 `!important` so the wallpaper reads through the board — and a full-screen

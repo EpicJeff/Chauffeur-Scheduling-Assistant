@@ -442,6 +442,7 @@
                     <template x-if="t.type === 'pets'">
                         <div class="flex flex-wrap gap-3 justify-center items-end py-2">
                             <template x-for="m in (t.data.members || [])" :key="'pet-' + m.member_id">
+                              <div class="flex flex-col items-center gap-1">
                                 <button type="button" class="flex flex-col items-center gap-1 group"
                                     :disabled="!t.data.interactive || typeof openPetEditor === 'undefined'"
                                     @click="t.data.interactive && typeof openPetEditor !== 'undefined' && openPetEditor({ id: m.member_id, name: m.name, has_pin: m.has_pin })">
@@ -473,6 +474,14 @@
                                     </span>
                                     <span x-show="t.data.show_owner" class="text-[10px] text-gray-500 truncate max-w-[6rem]" x-text="m.name"></span>
                                 </button>
+                                <!-- A second door, because "edit my critter"
+                                     and "go and fight" are different errands
+                                     and one tap target cannot mean both. -->
+                                <button type="button"
+                                    x-show="t.data.interactive && m.pet && typeof openPetBattle !== 'undefined'"
+                                    @click="openPetBattle({ id: m.member_id, name: m.name, has_pin: m.has_pin })"
+                                    class="-mt-1 px-2 py-0.5 rounded-md bg-gray-700/70 border border-gray-600 text-[10px] text-gray-200 font-bold">⚔️ Battle</button>
+                              </div>
                             </template>
                         </div>
                     </template>
