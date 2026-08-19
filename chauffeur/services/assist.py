@@ -71,6 +71,16 @@ def coverage_keys(event) -> list:
     eid = get('id')
     if eid:
         keys.append(str(eid))
+    # The refresh SPLITS one event into ids the family never sees: a
+    # dropoff/pickup pair, or one copy per passenger-time group. Coverage is
+    # always keyed by the whole event -- `_assist_event_context` strips the leg
+    # suffix on the way in, because "Emma's mom has the drive" means both legs
+    # and every copy -- so a leg that only knew its own id matched nothing,
+    # stayed in the solve, and came back out wearing "Needs driver" over a ride
+    # that was handled. `original_event_id` is the event the family pointed at.
+    orig = get('original_event_id')
+    if orig and str(orig) not in keys:
+        keys.append(str(orig))
     rec = get('recurring_event_id')
     if rec and str(rec) not in keys:
         keys.append(str(rec))

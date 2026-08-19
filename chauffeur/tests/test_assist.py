@@ -413,6 +413,70 @@ def scenario_every_agent_capability_has_a_hand_path():
           "cannot disagree about what a covered ride looks like")
 
 
+def scenario_a_split_drive_is_covered_on_every_leg_and_copy():
+    """The refresh renames events the family never renamed. A drive it decides
+    to split becomes `X_dropoff` and `X_pickup`; an event with per-passenger
+    times becomes `X_unrolled_0`, `X_unrolled_1`. Coverage is always keyed by
+    the whole event -- the server strips the leg suffix on the way in, because
+    "Emma's mom has the drive" means both legs -- so a leg that knew only its
+    own id matched nothing, stayed in the solve, and came back out wearing
+    "Needs driver" over a ride that was handled."""
+    from services import assist as assist_svc
+    _reset()
+    c = _contact()
+    storage.set_assist_assignment('cal::soccer', c['id'], scope='instance',
+                                  event_date='2026-09-08')
+    amap = storage.get_assist_assignment_map()
+
+    for leg in ('cal::soccer_dropoff', 'cal::soccer_pickup'):
+        check(assist_svc.coverage_for(
+            amap, {'id': leg, 'original_event_id': 'cal::soccer'}) == c['id'],
+            f"{leg} is the same covered drive, not a second uncovered one")
+    check(assist_svc.coverage_for(
+        amap, {'id': 'cal::soccer_unrolled_1',
+               'original_event_id': 'cal::soccer'}) == c['id'],
+        "and so is a per-passenger-time copy of it")
+    check(assist_svc.coverage_for(
+        amap, {'id': 'cal::guitar_dropoff',
+               'original_event_id': 'cal::guitar'}) is None,
+        "a leg of somebody else's drive is still nobody's business")
+
+
+def scenario_the_calendar_says_who_is_covering_it():
+    """The surface a household actually plans its week on. A covered event has
+    no driver and is not unassigned, so the calendar drew it with an EMPTY
+    badge: the rides that were handled looked exactly like the rides nobody
+    had thought about yet, on the month grid, in the week columns, in the
+    agenda list a parent scrolls at seven in the morning, and in the event
+    dialog behind all three."""
+    import os
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    cal = open(os.path.join(tpl, 'components', 'family_calendar.html'),
+               encoding='utf-8').read()
+    check('assist_assignments' in cal and 'assist_contacts' in cal,
+          "the calendar reads the coverage the payload has always carried")
+    check('relation_label' in cal,
+          "and names them the way the family does -- 'Emma's mom', not the "
+          "legal name off the contact editor")
+    # One builder feeds every view in this component, but each view draws its
+    # own badge -- so presence in the builder proves nothing about what a
+    # parent SEES. Four drawings, four assertions.
+    check(cal.count('props.assistName') >= 5,
+          "month chip, compact chip, week/day badge, agenda row and the event "
+          "dialog all say it -- a covered ride is not invisible in any view")
+    check('Covered by ' in cal,
+          "in the same words the phone uses when it hands the drive over")
+    check('!covering && true_unassigned.includes(ev.id)' in cal,
+          "and coverage outranks a stale solve: a person saying 'I have got "
+          "it' beats a solve that predates them saying so, so a covered ride "
+          "never wears the red Needs-driver badge")
+    check('assistAssignments[baseId]' in cal
+          and 'assistAssignments[ev.recurring_event_id]' in cal,
+          "looked up under the split-leg parent and the series too, since the "
+          "calendar holds instance ids the coverage was never keyed by")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

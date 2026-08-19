@@ -755,6 +755,13 @@ function _calOptions(inst) {
                             const isDrHidden = window.hiddenMembers && window.hiddenMembers.has(props.driverName);
                             mBadge.className = `font-bold bg-black/40 text-white rounded shrink-0 truncate max-w-[3.5rem] text-[0.52rem] leading-none px-1 py-px ${isDrHidden ? 'opacity-30 grayscale' : ''}`;
                             mBadge.innerText = props.driverName;
+                        } else if (props.assistName) {
+                            // Teal: what outside help has worn since the phone learnt
+                            // to hand a drive over. A month cell has room for a name
+                            // and nothing else, so the name is what it gets.
+                            mBadge.className = 'font-bold bg-teal-600/80 text-white rounded shrink-0 truncate max-w-[3.5rem] text-[0.52rem] leading-none px-1 py-px';
+                            mBadge.innerText = props.assistName;
+                            mBadge.title = 'Covered by ' + props.assistName;
                         } else if (isErrand) {
                             mBadge.className = 'font-bold bg-amber-500/80 text-white rounded shrink-0 text-[0.5rem] leading-none px-1 py-px';
                             mBadge.innerText = 'Errand';
@@ -801,6 +808,10 @@ function _calOptions(inst) {
                         } else if (props.driverName) {
                             compactBadge.className = 'font-bold bg-black/40 text-white rounded shrink-0 text-[9px] px-1 truncate max-w-[52px]';
                             compactBadge.innerText = props.driverName;
+                        } else if (props.assistName) {
+                            compactBadge.className = 'font-bold bg-teal-600/80 text-white rounded shrink-0 text-[9px] px-1 truncate max-w-[64px]';
+                            compactBadge.innerText = props.assistName;
+                            compactBadge.title = 'Covered by ' + props.assistName;
                         } else if (isErrand) {
                             compactBadge.className = 'font-bold bg-amber-500/80 text-white rounded shrink-0 text-[8.5px] px-1';
                             compactBadge.innerText = 'Errand';
@@ -866,6 +877,11 @@ function _calOptions(inst) {
                         const isDrHidden = window.hiddenMembers && window.hiddenMembers.has(props.driverName);
                         rightBadge.className = `font-bold bg-black/40 text-white rounded backdrop-blur-sm truncate max-w-[60px] shadow-sm transition-all text-[10px] px-2 py-0.5 ${isDrHidden ? 'opacity-30 grayscale border-transparent' : ''}`;
                         rightBadge.innerText = props.driverName;
+                    } else if (props.assistName) {
+                        rightBadge.className = 'font-bold bg-teal-600/80 text-white rounded backdrop-blur-sm truncate max-w-[96px] shadow-sm text-[10px] px-2 py-0.5';
+                        rightBadge.innerText = '\u{1f91d} ' + props.assistName;
+                        rightBadge.title = 'Covered by ' + props.assistName
+                            + ' \u2014 nobody in this house is driving it';
                     } else if (isErrand) {
                         rightBadge.className = 'font-bold bg-amber-500/80 text-white rounded shadow-sm text-[9px] px-1.5 py-0.5';
                         rightBadge.innerText = 'Errand';
@@ -1091,6 +1107,11 @@ async function _renderAgenda(inst) {
                 if (props.carName) {
                     badge += `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 max-w-[90px] truncate ${props.carSwap ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-700 text-gray-400'}" title="${props.carSwap ? 'Car swap: not this driver&#39;s usual car' : 'Assigned car'}">${_agEsc(props.carName)}${props.carSwap ? ' \u21c4' : ''}</span>`;
                 }
+            } else if (props.assistName) {
+                // The agenda is the list a parent scrolls on a phone at seven in
+                // the morning. A covered ride showing nothing there is the whole
+                // complaint: the day looks unhandled when it is handled.
+                badge = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 shrink-0 max-w-[110px] truncate" title="Covered by ${_agEsc(props.assistName)} \u2014 nobody in this house is driving it">\u{1f91d} ${_agEsc(props.assistName)}</span>`;
             } else if (props.isErrand) {
                 badge = '<span class="text-[10px] font-bold text-amber-400 shrink-0">Errand</span>';
             }
@@ -1195,6 +1216,21 @@ function _openEventDetails(inst, evObj) {
                 ${props.driverName.charAt(0)}
             </div>
             <span class="font-bold text-white">${props.driverName}</span>
+        `;
+    } else if (props.assistName) {
+        // Same words the phone uses when it hands a drive over: "Covered by",
+        // teal, the name the family says out loud, and the number to ring.
+        const _aPhone = props.assistPhone
+            ? ` <a href="tel:${encodeURIComponent(props.assistPhone)}" class="text-teal-400 underline text-sm">${_agEsc(props.assistPhone)}</a>`
+            : '';
+        driverContainer.innerHTML = `
+            <div class="w-8 h-8 rounded-full bg-teal-500/20 text-teal-300 flex items-center justify-center font-bold text-lg border border-teal-500/30">
+                \u{1f91d}
+            </div>
+            <div class="flex flex-col">
+                <span class="font-bold text-teal-300">Covered by ${_agEsc(props.assistName)}</span>
+                <span class="text-white/40 text-xs">Nobody in this house is driving it${_aPhone}</span>
+            </div>
         `;
     } else if (props.isUnassigned) {
         driverContainer.innerHTML = `<span class="text-red-400 font-bold italic">\u26a0\ufe0f Needs Driver</span>`;
@@ -1386,6 +1422,28 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                         const carsById = new Map((data.cars || []).map(c => [c.id, c]));
                         const true_unassigned = data.true_unassigned || [];
                         const drivers = data.drivers || [];
+                        // Outside hands (load arc A1). A covered event leaves the
+                        // SOLVE - that is the point - so it carries no driver and is
+                        // not unassigned either, and this builder drew it with an
+                        // EMPTY badge. The one surface a household plans its week on
+                        // therefore said nothing at all about the rides that ARE
+                        // handled, and a covered Tuesday read as an unhandled one.
+                        // Looked up under the instance the calendar is holding, its
+                        // split-leg / unrolled parent, and the series - the same
+                        // three keys the server resolves coverage under.
+                        const assistAssignments = data.assist_assignments || {};
+                        const assistById = new Map((data.assist_contacts || []).map(c => [c.id, c]));
+                        // "What we call them" IS what we call them: "Emma's mom",
+                        // not "Rachel Stern (Emma's mom)" - same rule as the phone.
+                        const _assistLabel = c => (c && (c.relation_label || c.name)) || 'Outside hands';
+                        function _coveringContact(ev, baseId) {
+                            const cid = assistAssignments[ev.id]
+                                || (baseId && assistAssignments[baseId])
+                                || (ev.recurring_event_id && assistAssignments[ev.recurring_event_id]);
+                            if (!cid) return null;
+                            // Contact deleted mid-flight: still covered, just nameless.
+                            return assistById.get(cid) || { id: cid };
+                        }
                         
                         // Parse standard events
                         if (data.events && data.events.length > 0) {
@@ -1481,7 +1539,16 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                         color: paxMap[name]
                                     }));
                                     
-                                    const isUnassigned = true_unassigned.includes(ev.id);
+                                    // Outside hands (load arc A1): who outside this
+                                    // house has it, if anyone. Resolved BEFORE the
+                                    // unassigned flag on purpose - coverage is a person
+                                    // saying "I've got it", the flag is a solve that can
+                                    // predate them saying so, and "Needs driver" over a
+                                    // ride that is handled is the exact false alarm this
+                                    // arc exists to retire.
+                                    const covering = _coveringContact(ev, baseId);
+                                    const assistName = covering ? _assistLabel(covering) : null;
+                                    const isUnassigned = !covering && true_unassigned.includes(ev.id);
                                     // Unassignable vs. merely unassigned: when EVERY driver
                                     // is hard-blocked (no 'optimization' reasons), assigning
                                     // a driver isn't the fix — surface it as a conflict
@@ -1492,7 +1559,7 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                         isConflict = reasons.length > 0 && reasons.every(r => r && r.type !== 'optimization');
                                     }
                                     let driverName = null;
-                                    if (!isUnassigned && assignments[ev.id]) {
+                                    if (!isUnassigned && !covering && assignments[ev.id]) {
                                         const d = drivers.find(d => d.id === assignments[ev.id]);
                                         if (d) driverName = d.name;
                                     }
@@ -1543,6 +1610,18 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                                 }
                                             }
                                         }
+                                        // A drive handed outside is handed WHOLE - the
+                                        // dropoff and the pickup are two legs of one
+                                        // carpool - so the first covered leg names the
+                                        // merged card, and the merge cannot leave that
+                                        // card wearing a red badge some other leg put
+                                        // there first.
+                                        if (assistName && !existing.extendedProps.assistName) {
+                                            existing.extendedProps.assistName = assistName;
+                                            existing.extendedProps.assistPhone = (covering || {}).phone || null;
+                                            existing.extendedProps.isUnassigned = false;
+                                            existing.extendedProps.isConflict = false;
+                                        }
                                         if (carName && !existing.extendedProps.isUnassigned) {
                                             if (!existing.extendedProps.carName) {
                                                 existing.extendedProps.carName = carName;
@@ -1566,6 +1645,8 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                                 isUnassigned: isUnassigned,
                                                 isConflict: isConflict,
                                                 driverName: driverName,
+                                                assistName: assistName,
+                                                assistPhone: (covering || {}).phone || null,
                                                 carName: carName,
                                                 carSwap: carSwap,
                                                 isErrand: false,
