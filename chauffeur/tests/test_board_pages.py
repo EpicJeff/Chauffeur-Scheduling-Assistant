@@ -614,6 +614,69 @@ def scenario_every_nav_link_survives_a_two_segment_route():
           "the nav decides its depth some other way than 'am I on a board'")
 
 
+def scenario_the_stroked_icon_set_is_a_set_and_not_a_sample():
+    """The shelf's stroked icons shipped as eighteen, which is a sample: a
+    household naming a board "Homework" or "Grandma's" found nothing that fit
+    and fell back to an emoji — the ragged row the stroked set exists to
+    prevent. Sixty-plus now, grouped, because sixty glyphs in one
+    undifferentiated wrap is a worse picker than eighteen were.
+
+    Two things must hold forever after: a stored `icon:<key>` keeps drawing
+    what it drew (nobody's board changes appearance because this table was
+    edited), and every path is well-formed — a typo in `d` is a garbage glyph
+    on somebody's wall, and nothing else in the app would catch it.
+    """
+    icons = home_board.BOARD_ICONS
+    groups = home_board.BOARD_ICON_GROUPS
+    check(len(icons) >= 60, f"the set is still a sample: {len(icons)}")
+
+    # The keys that already existed. A board wearing one of these was arranged
+    # by hand and must survive every future edit of this table.
+    for key in ('grid', 'tv', 'calendar', 'clock', 'sun', 'moon', 'star',
+                'heart', 'sparkles', 'fire', 'photo', 'map', 'pin', 'bell',
+                'bookmark', 'bulb', 'music', 'puzzle'):
+        check(home_board.icon_paths('icon:' + key),
+              f"icon:{key} stopped resolving — boards wearing it just changed")
+        check(home_board._norm_icon('icon:' + key) == 'icon:' + key,
+              f"icon:{key} no longer survives normalisation")
+
+    # Well-formed path data. Every path starts with a move and carries nothing
+    # but path commands and numbers.
+    for key, paths in icons.items():
+        check(paths and isinstance(paths, list), f"{key} has no paths")
+        for d in paths:
+            check(re.match(r'^[Mm]', d), f"{key}: a path does not start with a move")
+            check(not re.search(r'[^MmLlHhVvCcSsQqTtAaZz0-9,.\- ]', d),
+                  f"{key}: a path carries something that is not path data")
+
+    # The groups are the picker and the flat map is the resolver: every icon
+    # is placed exactly once, and the two agree.
+    placed = [k for _, items in groups for k, _ in items]
+    check(len(placed) == len(set(placed)), "an icon is in two groups")
+    check(set(placed) == set(icons), "the groups and the flat lookup disagree")
+    check(len(groups) >= 4, "a set this size arrived without groups")
+
+    # Anything that is not a known key is still emoji, so a household's 🗂️
+    # never changes out from under them.
+    check(home_board.icon_paths('icon:definitely-not-an-icon') is None,
+          "an unknown key resolved to paths")
+    check(home_board.icon_paths('\U0001f5c2\ufe0f') is None, "an emoji resolved to paths")
+
+    # The catalog carries the grouping, and the picker actually draws it —
+    # a bigger set behind a flat wrap is a longer scroll, not a better picker.
+    cat = home_board.catalog()
+    rows = cat['board_icons']
+    check(len(rows) == len(icons), "the catalog dropped icons")
+    check(all(r.get('group') for r in rows), "an icon reached the picker ungrouped")
+    check(all(r.get('paths') and r.get('key') for r in rows),
+          "an icon reached the picker without a key or paths")
+    home_html = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    check('iconGroups()' in home_html and 'grp.items' in home_html,
+          "the board settings picker still draws one flat list")
+    check('max-h-56' in home_html.split('x-show="iconPicking"')[1][:200],
+          "the picker is uncapped — a set this size would shove the dialog off screen")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

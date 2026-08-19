@@ -1130,18 +1130,35 @@
                         placeholder="Board name"
                         class="flex-1 min-w-0 ed-input rounded px-2 py-1.5 text-sm ed-title">
                 </div>
-                <div x-show="iconPicking" x-cloak class="mb-3 flex flex-wrap items-center gap-1">
-                    <template x-for="ic in (catalog.board_icons || [])" :key="ic.key">
-                        <button type="button" :title="ic.key"
-                            @click="setPageField('icon', 'icon:' + ic.key); iconPicking = false"
-                            :class="page().icon === 'icon:' + ic.key
-                                ? 'ring-1 ring-sky-500' : ''"
-                            class="w-8 h-8 flex items-center justify-center ed-input rounded"
-                            x-html="iconSvg(ic.paths, 'w-4 h-4')"></button>
+                <!-- Grouped, and capped in height so a set this size opens a
+                     picker rather than shoving the rest of the dialog off the
+                     screen. The emoji door stays at the end: the stroked set
+                     is the one that matches the shelf, and anything the
+                     household would rather type is still theirs to type. -->
+                <div x-show="iconPicking" x-cloak
+                    class="mb-3 max-h-56 overflow-y-auto pr-1 space-y-2">
+                    <template x-for="grp in iconGroups()" :key="grp.label">
+                        <div>
+                            <div class="text-[0.6rem] ed-note uppercase tracking-wide mb-1"
+                                x-text="grp.label"></div>
+                            <div class="flex flex-wrap items-center gap-1">
+                                <template x-for="ic in grp.items" :key="ic.key">
+                                    <button type="button" :title="ic.key"
+                                        @click="setPageField('icon', 'icon:' + ic.key); iconPicking = false"
+                                        :class="page().icon === 'icon:' + ic.key
+                                            ? 'ring-1 ring-sky-500' : ''"
+                                        class="w-8 h-8 flex items-center justify-center ed-input rounded"
+                                        x-html="iconSvg(ic.paths, 'w-4 h-4')"></button>
+                                </template>
+                            </div>
+                        </div>
                     </template>
-                    <button type="button" class="w-8 h-8 ed-input rounded text-sm"
-                        @click="EmojiPicker.open($event.currentTarget,
-                            v => setPageField('icon', v || '🗂️'))">🙂</button>
+                    <div>
+                        <div class="text-[0.6rem] ed-note uppercase tracking-wide mb-1">Emoji</div>
+                        <button type="button" class="w-8 h-8 ed-input rounded text-sm"
+                            @click="EmojiPicker.open($event.currentTarget,
+                                v => setPageField('icon', v || '🗂️'))">🙂</button>
+                    </div>
                 </div>
 
                 <!-- The ADDRESS. A wall panel is a bookmark, so this has to be
@@ -4463,6 +4480,21 @@
                         + (paths || []).map(d =>
                             `<path stroke-linecap="round" stroke-linejoin="round" d="${d}"></path>`
                         ).join('') + '</svg>';
+                },
+
+                // The icon set, in the groups the server sent. Built from the
+                // flat list rather than a second table so adding an icon stays
+                // one edit in one place; order is preserved, so the groups
+                // come out in the order they were defined.
+                iconGroups() {
+                    const out = [];
+                    for (const ic of (this.catalog.board_icons || [])) {
+                        const label = ic.group || 'Icons';
+                        let grp = out.find(g => g.label === label);
+                        if (!grp) { grp = { label, items: [] }; out.push(grp); }
+                        grp.items.push(ic);
+                    }
+                    return out;
                 },
 
                 boardIconHtml(icon, cls) {
