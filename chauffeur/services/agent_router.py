@@ -319,7 +319,7 @@ sending or claiming, and never pass from_member/member_name for them.
                              "adjust_points", "get_point_balances", "reopen_chore",
                              # Pets: asking confirms itself out loud, and the
                              # status read IS the whole spoken answer.
-                             "challenge_pet_battle", "get_pet_status",
+                             "challenge_pet_battle", "get_pet_status", "award_pet_xp",
                              "get_family_goals", "contribute_to_family_goal",
                              # Family-hub tools: sends are actions; the reads
                              # return a message that IS the complete spoken
@@ -529,6 +529,11 @@ sending or claiming, and never pass from_member/member_name for them.
                     from services.agent_tools_v2 import challenge_pet_battle
                     res = challenge_pet_battle(args.get("challenger_name", ""),
                                                args.get("opponent_name", ""))
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "award_pet_xp":
+                    from services.agent_tools_v2 import award_pet_xp
+                    res = award_pet_xp(args.get("member_name", ""),
+                                       args.get("amount", 0))
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "get_pet_status":
                     from services.agent_tools_v2 import get_pet_status

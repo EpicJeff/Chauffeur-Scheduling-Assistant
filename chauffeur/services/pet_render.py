@@ -170,6 +170,25 @@ def render_svg(config: Optional[Dict], crop: str = 'chip',
                describe(cfg), body))
 
 
+def embed_svg(config: Optional[Dict], x: float, y: float, size: float,
+              nonce: str = 'c') -> str:
+    """The same critter as a NESTED <svg>, for dropping into another drawing.
+
+    A nested svg carries its own viewBox, so the pet keeps its own coordinate
+    system and lands wherever the host puts it -- which is what lets a critter
+    stand beside an avatar without either art knowing the other's geometry."""
+    inner = render_svg(config, crop='chip', nonce=nonce)
+    if not inner:
+        return ''
+    # keep the body, re-hang it at the caller's coordinates
+    body = inner[inner.index('>') + 1:-len('</svg>')]
+    vb = (_load().get('view') or [0, 0, 100, 100])
+    return ('<svg x="%s" y="%s" width="%s" height="%s" viewBox="%s %s %s %s" '
+            'overflow="visible" class="critter critter-companion">%s</svg>'
+            % (_num(x), _num(y), _num(size), _num(size),
+               _num(vb[0]), _num(vb[1]), _num(vb[2]), _num(vb[3]), body))
+
+
 def _num(v) -> str:
     f = float(v)
     return str(int(f)) if f == int(f) else str(f)

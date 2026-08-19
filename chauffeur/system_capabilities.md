@@ -3420,6 +3420,48 @@ is waiting on the card in the morning. Agent tools `challenge_pet_battle` and
 `get_pet_status` are wired into **both** stacks (`agent_tools` schemas +
 handlers for the loop, `agent_router` dispatch for the chat widget).
 
+**Pets belong to the whole house (v2.301.0).** Four gaps, none of which were
+decisions anybody made.
+
+**A critter stands with its person.** `avatar_render.effective_figure` now
+composites the member's active pet as a nested `<svg>` hung from the figure's
+own ground line (x=132, 150 units, ground y=582 — knee height, at their right,
+overlapping the shin so it reads as *with* them). That is the ONE function
+every showcase surface already calls, so a pet turns up on the hearth, both
+sets of lanes, the home board, the editor card and My Day from a single
+change — and a household that never hatched anything sees exactly what it saw
+before. The cache key folds in the pet's look, so a restyle redraws. A broken
+pet can never cost somebody their avatar (tested by making `render_svg` throw).
+
+**Nobody starts behind.** `sync_pet_xp` converts lifetime chore points and
+routine history to XP exactly once, and is called on read like
+`sync_avatar_unlocks`. The avatar arc made that promise; pets shipped without
+honouring it, and a child with 2,000 lifetime points was starting at level 1.
+
+**Everyone plays, at the same rate.** `pet_xp_daily_grant` (default 15) goes
+to EVERY member each day, once. Adults have no chores to earn from — but a
+grant for adults only would have a child earning theirs with a broom while a
+parent collects for existing. A day of chores still dwarfs it (tested).
+
+**Adults own the wardrobe.** Every avatar unlock track reads zero for a parent
+forever, because chore points are children-only — so the wardrobe was
+permanently shut to them. `sync_avatar_unlocks` grants the lot to parents with
+source `role`, and deliberately does **not** return them as `fresh`: the
+celebration is for *earning*, and confetti at a parent for a role grant is
+exactly what would cheapen a child's. A child still has to earn theirs
+(tested).
+
+**Awarding XP by hand.** `POST /api/pets/xp/adjust` (parents only, real member
+token), a Pet XP row on the chores admin beside the points row — separate box,
+separate colour, because the two currencies must never look like one control
+— and `award_pet_xp` in both agent stacks. Taking XP back lowers a balance and
+never a level.
+
+**The doors.** The PWA header carries a 🐾 on **every view for every role**;
+My Day's pet buttons only ever served children, and adults have no My Day at
+all. The avatar editor also links to the pet editor, which makes pets
+reachable from every surface the figure appears on.
+
 **A full-screen editor is opaque on a wall (v2.295.0).** `panel_skin` maps
 every `.bg-gray-950`/`.bg-gray-900` surface to translucent glass with
 `!important` so the wallpaper reads through the board — and a full-screen

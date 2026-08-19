@@ -1024,6 +1024,10 @@ class Settings(BaseModel):
     # per couple per day, and past it the fight still happens for nothing.
     pet_pvp_enabled: bool = True
     pet_pvp_pair_cap: int = 3
+    # A flat daily grant to EVERY member, for the app being used. Adults have
+    # no chores or routines to earn from; giving it only to them would have a
+    # child earning theirs with a broom while a parent collects for existing.
+    pet_xp_daily_grant: int = 15
     # Email intake (intake arc phase 2): a dedicated mailbox polled over IMAP;
     # allowlisted senders' messages are LLM-extracted into event/task
     # proposals a parent approves on /intake. The password is a Gmail app

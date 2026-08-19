@@ -3564,6 +3564,22 @@ def sync_avatar_unlocks(member_id: str) -> List[str]:
         iid = cat.item_id(item['slot'], item['key'])
         if iid not in owned and grant_avatar_unlock(member_id, iid, 'default'):
             fresh.append(iid)
+    # AN ADULT HAS NO WAY TO EARN ANY OF THIS. Chore points are awarded to
+    # children by design, so every unlock track reads zero for a parent
+    # forever -- they were locked out of the wardrobe permanently, which is
+    # not a design decision anybody made, it is a gap.
+    #
+    # Granted as `role`, and deliberately NOT returned as `fresh`: the
+    # celebration is for EARNING something, and firing confetti at a parent
+    # for a role grant is exactly what would cheapen a child's unlock.
+    m = get_member(member_id) or {}
+    if m.get('role') == 'parent':
+        for item in cat.unlockable_items():
+            iid = cat.item_id(item['slot'], item['key'])
+            if iid not in owned:
+                grant_avatar_unlock(member_id, iid, 'role')
+        return fresh
+
     cache = {}
     for item in cat.unlockable_items():
         iid = cat.item_id(item['slot'], item['key'])
@@ -3726,6 +3742,77 @@ def grant_pet_xp(member_id: str, delta: int, reason: str, ref_id: str = None,
                'date_str': date_str, 'note': note, 'ts': time.time()}
         pet_xp_ledger_table.insert(row)
     return delta
+
+
+PET_XP_DAILY_GRANT = 15
+
+
+def pet_xp_daily_grant() -> int:
+    s = get_settings() or {}
+    try:
+        return max(0, int(s.get('pet_xp_daily_grant', PET_XP_DAILY_GRANT)))
+    except (TypeError, ValueError):
+        return PET_XP_DAILY_GRANT
+
+
+def sync_pet_xp(member_id: str) -> dict:
+    """Bring a member up to date: the work they did BEFORE pets existed, and
+    today's showing-up grant. Safe to call on every read.
+
+    THE BACKFILL IS THE POINT. The avatar arc already promised that "nobody
+    who was here before the feature starts behind", and pets shipped without
+    honouring it -- a child with two thousand lifetime chore points started at
+    level 1 beside a sibling with a hundred. Both rows are idempotent, so this
+    converts a history exactly once and never again.
+
+    THE DAILY GRANT GOES TO EVERYONE, at the same rate. Giving it to adults
+    only would have a child sweeping the floor for xp while a parent collects
+    it for existing, which is a fair thing for a seven-year-old to resent.
+    Everyone gets the same small amount for the app being used, and anybody
+    who does chores or routines still races past it -- which is the incentive
+    we actually want."""
+    from datetime import date
+    out = {'backfilled': 0, 'daily': 0}
+    # 1. history, once, ever
+    points = get_points_earned(member_id)
+    if points:
+        out['backfilled'] += grant_pet_xp(
+            member_id, round(points * pet_xp_rate('pet_xp_per_chore_point')),
+            'backfill', ref_id='chore_points', once=True,
+            note='chores done before critters existed')
+    routines = count_routine_completions(member_id)
+    if routines:
+        out['backfilled'] += grant_pet_xp(
+            member_id, routines * pet_xp_rate('pet_xp_per_routine'),
+            'backfill', ref_id='routine_history', once=True,
+            note='routines kept before critters existed')
+    # 2. today, once a day
+    grant = pet_xp_daily_grant()
+    if grant:
+        out['daily'] = grant_pet_xp(member_id, grant, 'daily', ref_id='daily',
+                                    date_str=date.today().isoformat(), once=True,
+                                    note='for showing up')
+    return out
+
+
+def adjust_pet_xp(member_id: str, delta: int, by_member_id: str = None,
+                  reason_note: str = None) -> dict:
+    """A parent handing out (or taking back) xp by hand, exactly as they can
+    with chore points. Returns {'balance','level'} or {'error'}.
+
+    Taking xp back can lower a BALANCE and never a level: level comes from
+    lifetime earned, so nothing a parent does here can undo something a child
+    already achieved."""
+    if not get_member(member_id):
+        return {'error': 'No such member'}
+    delta = int(delta or 0)
+    if not delta:
+        return {'error': 'Nothing to change'}
+    grant_pet_xp(member_id, delta, 'adjust',
+                 note=('%s (by %s)' % (reason_note or 'adjusted', by_member_id))
+                 if by_member_id else (reason_note or 'adjusted'))
+    return {'balance': get_pet_xp_balance(member_id),
+            'level': pet_level(member_id)}
 
 
 def get_pet_xp_balance(member_id: str) -> int:

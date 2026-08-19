@@ -84,6 +84,22 @@
                                     <button @click="zeroOut(b)"
                                         class="text-red-400 hover:text-red-300 bg-red-500/10 font-bold px-3 py-2 rounded-lg text-sm">Zero</button>
                                 </div>
+                                <!-- PET XP BY HAND. The twin of the points row
+                                     above, and deliberately a SEPARATE row with
+                                     its own box: the two currencies must never
+                                     look like one control with two buttons.
+                                     Points cost real money; xp cannot. -->
+                                <div class="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-gray-700/60">
+                                    <span class="text-[11px] font-bold text-emerald-400 uppercase tracking-wide">Pet XP</span>
+                                    <input type="number" min="1" x-model.number="tools[b.member_id].xp"
+                                        placeholder="xp"
+                                        class="w-20 bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm">
+                                    <button @click="adjustXp(b, 1)"
+                                        class="bg-emerald-600/80 hover:bg-emerald-500 text-white font-bold px-3 py-2 rounded-lg text-sm">+ Add</button>
+                                    <button @click="adjustXp(b, -1)"
+                                        class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-3 py-2 rounded-lg text-sm">− Subtract</button>
+                                    <span class="text-[11px] text-gray-500">Buys moves and critters. Never points.</span>
+                                </div>
                                 <button @click="toggleHistory(b.member_id)"
                                     class="mt-3 text-xs font-bold text-gray-500 hover:text-gray-300 uppercase tracking-widest"
                                     x-text="expanded[b.member_id] ? 'Hide history' : 'Show history'"></button>
@@ -386,6 +402,14 @@
                                         many times it is tapped.</span>
                                 </label>
                                 <label class="block">
+                                    <span class="block text-xs font-bold text-gray-300 mb-1">Daily XP for everyone</span>
+                                    <input type="number" min="0" step="1" x-model.number="petXp.pet_xp_daily_grant"
+                                        @change="savePetXp()"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                                    <span class="block text-[11px] text-gray-500 mt-1">Everyone gets this each day just for
+                                        using the app, so grown-ups with no chores can play too.</span>
+                                </label>
+                                <label class="block">
                                     <span class="block text-xs font-bold text-gray-300 mb-1">Rewarded battles a day</span>
                                     <input type="number" min="0" step="1" x-model.number="petXp.pet_pve_daily_cap"
                                         @change="savePetXp()"
@@ -520,7 +544,8 @@
                 // has to know what else lives in settings.
                 petXp: { pet_xp_per_chore_point: 1, pet_xp_per_routine: 3,
                          pet_xp_routine_all_bonus: 10, pet_pve_daily_cap: 5,
-                         pet_pvp_enabled: true, pet_pvp_pair_cap: 3 },
+                         pet_pvp_enabled: true, pet_pvp_pair_cap: 3,
+                         pet_xp_daily_grant: 15 },
                 petXpSaved: false,
                 async loadPetXp() {
                     try {
@@ -597,7 +622,7 @@
                 lanesOnBalances(data) {
                     // tools entries must exist before the cards render
                     for (const b of data) {
-                        if (!this.tools[b.member_id]) this.tools[b.member_id] = { amount: null, note: '' };
+                        if (!this.tools[b.member_id]) this.tools[b.member_id] = { amount: null, note: '', xp: null };
                         if (!this.isKiosk) this.loadLedger(b.member_id);
                     }
                     // Kiosk: a chore tier-up (points land when a parent
@@ -632,6 +657,33 @@
                         showGlobalAlert('Enter the target balance in the points box first'); return;
                     }
                     await this.postAdjust({ member_id: b.member_id, set_to: Number(t.amount), note: t.note || '' });
+                },
+                async adjustXp(b, sign) {
+                    const t = this.tools[b.member_id];
+                    const amount = Math.abs(Number(t.xp) || 0);
+                    if (!amount) { showGlobalAlert('Enter an XP amount first'); return; }
+                    // A REAL parent token, the same one chore verification
+                    // uses. Awarding xp by hand is the one unearned door into
+                    // the ledger, so it belongs to a named parent rather than
+                    // to whoever is standing at the admin page.
+                    const tok = await this.ensureParentToken();
+                    if (!tok) return;
+                    const headers = { 'Content-Type': 'application/json',
+                                      'X-Member-Token': tok };
+                    const res = await fetch(`${this.apiBase}api/pets/xp/adjust`, {
+                        method: 'POST', headers,
+                        body: JSON.stringify({ member_id: b.member_id,
+                                               delta: sign * amount,
+                                               note: t.note || '' }),
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showGlobalAlert(err.detail || 'Could not adjust XP');
+                        return;
+                    }
+                    const d = await res.json();
+                    this.tools[b.member_id].xp = null;
+                    showGlobalAlert(`${b.name} is level ${d.level} with ${d.balance} XP to spend.`);
                 },
                 async postAdjust(payload) {
                     const res = await fetch(`${this.apiBase}api/points/adjust`, {

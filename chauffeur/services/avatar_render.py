@@ -926,22 +926,81 @@ def figure_data_url(config: Dict) -> str:
     return 'data:image/svg+xml;base64,' + base64.b64encode(svg.encode('utf-8')).decode('ascii')
 
 
+# A CRITTER STANDS WITH ITS PERSON.
+#
+# The full crop is 264x600 with the ground shadow at y=574, so the sidekick is
+# hung from that same ground line at the owner's right, overlapping their shin
+# a little -- it reads as *with* them rather than as a second portrait beside
+# them. Knee height on purpose: a companion, not a rival.
+#
+# It lives HERE, in the one function every showcase surface already calls,
+# rather than being added to each of them. That is the whole reason a pet
+# turns up on the hearth, both sets of lanes, the home board, the editor card
+# and the PWA's My Day from a single change -- and why a household that has
+# never hatched anything sees exactly what it saw before.
+COMPANION_X = 132
+COMPANION_SIZE = 150
+COMPANION_GROUND = 582
+
+
+def _companion(member_id: str) -> str:
+    """The member's active critter as a nested svg, or '' for no pet, no pet
+    art, or anything at all going wrong -- a figure must still draw."""
+    try:
+        from services import pet_render
+        from services import storage
+        if not pet_render.available():
+            return ''
+        pet = storage.get_active_pet(member_id)
+        if not pet:
+            return ''
+        cfg = dict(pet.get('species') or {})
+        cfg.update(pet.get('look') or {})
+        return pet_render.embed_svg(
+            cfg, COMPANION_X, COMPANION_GROUND - COMPANION_SIZE,
+            COMPANION_SIZE, nonce='c%s' % (pet.get('id') or '')[:10])
+    except Exception as e:
+        print(f"[avatar_render] companion failed: {e}")
+        return ''
+
+
+def _companion_key(member_id: str) -> str:
+    """What the cache has to notice. A restyled or renamed critter must
+    redraw, so the pet's look is part of the figure's identity."""
+    try:
+        from services import storage
+        pet = storage.get_active_pet(member_id)
+        if not pet:
+            return '-'
+        return json.dumps([pet.get('id'), pet.get('species'), pet.get('look')],
+                          sort_keys=True)
+    except Exception:
+        return '-'
+
+
 def effective_figure(member: Dict) -> Optional[str]:
-    """The standing character for the showcase surfaces (lanes, boards).
+    """The standing character for the showcase surfaces (lanes, boards), with
+    their critter beside them.
 
     Deliberately NOT gated by avatar_kind: the character someone built always
     draws at full size, even for a member whose CHIP is their photo -- a photo
     cannot stand in a lane, and the whole economy pays out here."""
     if not member or not available():
         return None
+    import base64
     from services import storage
     mid = member.get('id')
     cfg = storage.get_avatar_config(mid)
-    key = json.dumps(cfg, sort_keys=True)
+    key = json.dumps(cfg, sort_keys=True) + '|' + _companion_key(mid)
     hit = _EFFECTIVE_CACHE.get((mid, 'full'))
     if hit and hit[0] == key:
         return hit[1]
-    url = figure_data_url(cfg)
+    svg = render_svg(cfg, 'full', nonce='f')
+    pet = _companion(mid)
+    if pet and svg.endswith('</svg>'):
+        svg = svg[:-len('</svg>')] + pet + '</svg>'
+    url = ('data:image/svg+xml;base64,'
+           + base64.b64encode(svg.encode('utf-8')).decode('ascii'))
     _EFFECTIVE_CACHE[(mid, 'full')] = (key, url)
     return url
 

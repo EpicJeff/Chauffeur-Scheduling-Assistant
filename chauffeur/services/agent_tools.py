@@ -371,6 +371,14 @@ class ChallengePetBattleTool(BaseModel):
     challenger_name: str
     opponent_name: str
 
+class AwardPetXpTool(BaseModel):
+    """
+    Gives (or takes back) pet experience for a family member. Pet XP is a
+    separate currency from chore points and can never become chore points.
+    """
+    member_name: str
+    amount: int
+
 class GetPetStatusTool(BaseModel):
     """
     Reports how somebody's pet critter is doing: its level, its element and
@@ -829,6 +837,7 @@ TOOL_SCHEMAS = {
     "edit_trip_flight": EditTripFlightTool.model_json_schema(),
     "delete_trip_flight": DeleteTripFlightTool.model_json_schema(),
     "challenge_pet_battle": ChallengePetBattleTool.model_json_schema(),
+    "award_pet_xp": AwardPetXpTool.model_json_schema(),
     "get_pet_status": GetPetStatusTool.model_json_schema(),
     "get_point_balances": GetPointBalancesTool.model_json_schema(),
     "adjust_points": AdjustPointsTool.model_json_schema(),
@@ -1929,6 +1938,10 @@ def handle_challenge_pet_battle(args: dict) -> dict:
     return challenge_pet_battle(args.get("challenger_name", ""),
                                 args.get("opponent_name", ""))
 
+def handle_award_pet_xp(args: dict) -> dict:
+    from services.agent_tools_v2 import award_pet_xp
+    return award_pet_xp(args.get("member_name", ""), args.get("amount", 0))
+
 def handle_get_pet_status(args: dict) -> dict:
     from services.agent_tools_v2 import get_pet_status
     return get_pet_status(args.get("member_name"))
@@ -2270,6 +2283,7 @@ TOOL_HANDLERS = {
     "edit_trip_flight": handle_edit_trip_flight,
     "delete_trip_flight": handle_delete_trip_flight,
     "challenge_pet_battle": handle_challenge_pet_battle,
+    "award_pet_xp": handle_award_pet_xp,
     "get_pet_status": handle_get_pet_status,
     "get_point_balances": handle_get_point_balances,
     "adjust_points": handle_adjust_points,

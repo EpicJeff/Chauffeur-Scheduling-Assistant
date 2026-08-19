@@ -4346,6 +4346,15 @@ def _public_member(m: dict) -> dict:
     # ten templates don't each need an opinion.
     from services import avatar_render
     out['image'] = avatar_render.effective_image(m)
+    # The critter's name, so a surface can label the door to it without a
+    # second round trip. Cheap: one lookup, no art.
+    try:
+        pet = storage.get_active_pet(m.get('id'))
+        if pet:
+            out['pet_name'] = pet.get('name')
+            out['pet_id'] = pet.get('id')
+    except Exception:
+        pass
     return out
 
 # --- Protected commitments (load arc A6) ---
@@ -7557,6 +7566,31 @@ def pets_bundle_endpoint():
     return out
 
 
+class PetXpAdjustRequest(BaseModel):
+    member_id: str
+    delta: int
+    note: Optional[str] = None
+
+
+@app.post("/api/pets/xp/adjust")
+def adjust_pet_xp_endpoint(req: PetXpAdjustRequest,
+                           x_member_token: Optional[str] = Header(None)):
+    """A parent handing out pet XP by hand, the way they already can with
+    chore points. Parents only -- this is the one door into the xp ledger that
+    is not earned, so it belongs to the same people who verify chores.
+
+    Declared above `/api/pets/{pet_id}` because FastAPI matches in order."""
+    holder = storage.get_member_by_token(x_member_token or '')
+    if not holder or holder.get('role') != 'parent':
+        raise HTTPException(status_code=403, detail="Parents only")
+    res = storage.adjust_pet_xp(req.member_id, req.delta,
+                               by_member_id=holder.get('id'),
+                               reason_note=req.note)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    return {'status': 'ok', **res}
+
+
 @app.get("/api/pets/xp")
 def pet_xp_endpoint(member_id: str, limit: int = 25):
     """One member's pet experience: balance, lifetime, level and the recent
@@ -7568,6 +7602,10 @@ def pet_xp_endpoint(member_id: str, limit: int = 25):
     `balance` is what is left to spend, `earned` is lifetime and drives the
     level. Spending can never cost a level, the same way redeeming points
     never costs a status tier."""
+    # Sync on read, so somebody who earned before pets existed -- or who has
+    # not opened the app today -- is never shown as behind. Same shape as
+    # `sync_avatar_unlocks`, and for the same reason.
+    storage.sync_pet_xp(member_id)
     return {'member_id': member_id,
             'balance': storage.get_pet_xp_balance(member_id),
             'earned': storage.get_pet_xp_earned(member_id),
@@ -7751,6 +7789,8 @@ def list_pets_endpoint(member_id: Optional[str] = None,
     """Everyone's pets, or one member's. Retired creatures are excluded unless
     asked for -- they still exist, they are just off the shelf."""
     from services import pet_render
+    if member_id:
+        storage.sync_pet_xp(member_id)
     pets = [_pet_payload(p) for p in
             storage.get_pets(member_id, include_retired=include_retired)]
     return {'pets': pets,

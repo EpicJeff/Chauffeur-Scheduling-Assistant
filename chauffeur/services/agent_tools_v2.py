@@ -464,6 +464,24 @@ def challenge_pet_battle(challenger_name: str, opponent_name: str) -> Dict[str, 
                        f"It's up to them now — and it'll be level-matched."}
 
 
+def award_pet_xp(member_name: str, amount: int) -> Dict[str, Any]:
+    """Hand somebody pet experience out loud -- the xp twin of adjust_points.
+
+    Deliberately cannot reach the POINTS ledger: xp buys nothing outside the
+    game, so this is a safe thing to say to a speaker, and points are not."""
+    from services import storage
+    m = _find_member_fuzzy(member_name)
+    if not m:
+        return {"message": f"I don't know who {member_name} is."}
+    res = storage.adjust_pet_xp(m['id'], int(amount or 0))
+    if res.get('error'):
+        return {"message": res['error']}
+    verb = "gave" if int(amount or 0) > 0 else "took back"
+    return {"message": f"{verb} {abs(int(amount))} pet XP "
+                       f"{'to' if int(amount) > 0 else 'from'} {m.get('name')}. "
+                       f"They're level {res['level']} with {res['balance']} to spend."}
+
+
 def get_pet_status(member_name: str = None) -> Dict[str, Any]:
     """How somebody's critter is doing. Deliberately reports level, element
     and XP and NOT a win-loss record: there isn't one, and inventing one in a

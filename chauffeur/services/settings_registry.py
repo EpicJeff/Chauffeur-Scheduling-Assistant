@@ -458,6 +458,10 @@ ENTRIES: List[dict] = [
     _e('pet_xp_routine_all_bonus', 'kids', 'Pet XP for a full routine day',
        'A bonus the first time every routine due today is done.',
        page='chores', anchor='petxp'),
+    _e('pet_xp_daily_grant', 'kids', 'Daily pet XP for everyone',
+       'A small amount of pet experience every member gets each day just for '
+       'using the app, so adults with no chores can play too.',
+       page='chores', anchor='petxp'),
     _e('pet_pvp_enabled', 'kids', 'Battles between family',
        'Whether children may challenge each other. Off, only the practice '
        'opponents remain. Family battles are always level-matched.',

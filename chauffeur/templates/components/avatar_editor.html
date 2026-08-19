@@ -702,6 +702,15 @@ function avatarEditor(config) {
                     class="w-11 h-11 rounded-xl bg-white/10 text-xl disabled:opacity-30" aria-label="Redo">↻</button>
             <button type="button" @click="shuffle()"
                     class="w-11 h-11 rounded-xl bg-white/10 text-xl" aria-label="Surprise me">🎲</button>
+        <!-- PETS LIVE WITH AVATARS. The critter already stands beside the
+             figure on every showcase surface, and this is the door beside it:
+             the avatar editor is reachable from the hearth, both sets of
+             lanes, the home board and My Day, so putting the way in here
+             makes pets reachable from all of them at once. -->
+        <button type="button" x-show="typeof openPetEditor !== 'undefined'"
+            @click="close && close(); openPetEditor(memberId)"
+            class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-200"
+            title="Your critter">🐾</button>
             <span class="flex-1 text-xs text-red-300 truncate" x-text="error"></span>
             <button type="button" @click="save()" :disabled="saving || !dirty"
                     class="px-5 h-11 rounded-xl bg-blue-500 text-white font-semibold disabled:opacity-40"

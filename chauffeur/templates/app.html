@@ -138,6 +138,16 @@
             </div>
         </div>
         <div class="flex items-center gap-2">
+            <!-- PETS, FROM ANYWHERE IN THE PWA, FOR ANYBODY.
+                 The My Day buttons only serve children -- adults have no My
+                 Day at all -- and burying the way in inside the avatar editor
+                 makes a whole feature something you have to already know
+                 about. The header is on every view for every role, which is
+                 exactly what a built-in feature needs. -->
+            <button id="btn-pet" type="button"
+                onclick="if (selectedMemberId && typeof openPetEditor === 'function') openPetEditor(selectedMemberId)"
+                class="p-3 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors"
+                title="Your critter">🐾</button>
             <button id="btn-push" onclick="enableNotifications()"
                 class="p-3 rounded-full bg-blue-800 text-blue-200 hover:text-gray-100 transition-colors relative hidden"
                 title="Enable Push Notifications">
@@ -1248,6 +1258,21 @@
                     <img src="${m.figure}" class="h-24 drop-shadow-lg" alt="">
                     <span class="absolute bottom-0 -right-1 w-4 h-4 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[9px]">✏️</span>
                 </button>` : '';
+            // PETS, IN THE PWA. The critter already stands in the figure above
+            // (it is part of `m.figure`), but a picture is not a door -- and
+            // the phone had no way into the editor or the arena at all, which
+            // made a whole feature invisible to anyone not standing at the
+            // wall panel. Two small buttons, under the greeting, where a kid
+            // is already looking at their own day.
+            const petHtml = `
+                <div class="flex gap-1.5 mt-1.5">
+                    <button onclick="typeof openPetEditor === 'function' && openPetEditor(selectedMemberId)"
+                        class="px-2.5 py-1 rounded-full text-[11px] font-bold bg-gray-800 border border-gray-700 text-gray-200">
+                        ${m.pet_name ? '\u{1F43E} ' + mfEscape(m.pet_name) : '\u{1F95A} Hatch a critter'}
+                    </button>
+                    ${m.pet_name ? `<button onclick="typeof openPetBattle === 'function' && openPetBattle(selectedMemberId)"
+                        class="px-2.5 py-1 rounded-full text-[11px] font-bold bg-gray-800 border border-gray-700 text-gray-200">\u2694\uFE0F Battle</button>` : ''}
+                </div>`;
             return `
             <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4 flex items-center justify-between mb-1">
                 <div class="flex items-center min-w-0">
@@ -1255,6 +1280,7 @@
                     <div class="min-w-0">
                         <div class="text-xl font-black text-gray-100">${greet}</div>
                         <div class="text-sm font-bold text-gray-500">${done}/${total} done today${streak}</div>
+                        ${petHtml}
                     </div>
                 </div>
                 ${showPoints ? `<button onclick="setView('chores')" class="px-4 py-2 rounded-full font-black text-lg"
