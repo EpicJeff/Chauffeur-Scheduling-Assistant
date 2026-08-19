@@ -829,8 +829,15 @@ def _collect_assignment_changes(old_cache, new_payload, overrides):
 
 def flush_assignment_notifications():
     """Send at most ONE Schedule Updated push per driver for a whole re-solve
-    run: detailed +/- lines for TODAY's changes, a single summary line naming
-    the affected dates for future days."""
+    run — and only about TODAY and TOMORROW, with detailed +/- lines for
+    both (tomorrow's marked). Changes beyond tomorrow send NOTHING: the
+    30-day horizon rolls onto a new day every day and far-future assignments
+    churn between equally-good drivers on every re-solve, so 'Your upcoming
+    schedule changed' fired near-daily — and a daily push is a push people
+    train themselves to swipe away. The kid pushes have had this rule from
+    day one ('far-future churn is noise'); beyond-tomorrow changes still
+    land quietly in the in-app bell (telemetry) and the schedule itself,
+    and the 20:00 digest restates tomorrow regardless."""
     import datetime as _dt
     from services import storage
     global _pending_flush_timer
@@ -852,9 +859,12 @@ def flush_assignment_notifications():
         print(f"Kid driver-change push failed: {ke}")
 
     today = _dt.date.today()
+    tomorrow = today + _dt.timedelta(days=1)
     changes = {}
     def _bucket(d_id):
-        return changes.setdefault(d_id, {"today_gained": [], "today_lost": [], "future_dates": set()})
+        return changes.setdefault(d_id, {"today_gained": [], "today_lost": [],
+                                         "tmrw_gained": [], "tmrw_lost": [],
+                                         "future_dates": set()})
 
     for ev_id, entry in buffered.items():
         old_d = entry.get("first_old")
@@ -866,15 +876,20 @@ def flush_assignment_notifications():
             start_date = _dt.datetime.fromisoformat(ev["start"]).date()
         except Exception:
             continue
-        is_today = start_date == today
+        if start_date == today:
+            gained, lost = "today_gained", "today_lost"
+        elif start_date == tomorrow:
+            gained, lost = "tmrw_gained", "tmrw_lost"
+        else:
+            gained = lost = None  # bell-only, never a push
         if old_d and not str(old_d).startswith("ghost_"):
-            if is_today:
-                _bucket(old_d)["today_lost"].append(ev)
+            if lost:
+                _bucket(old_d)[lost].append(ev)
             else:
                 _bucket(old_d)["future_dates"].add(start_date)
         if new_d and not str(new_d).startswith("ghost_") and entry.get("pwa_claimer") != new_d:
-            if is_today:
-                _bucket(new_d)["today_gained"].append(ev)
+            if gained:
+                _bucket(new_d)[gained].append(ev)
             else:
                 _bucket(new_d)["future_dates"].add(start_date)
 
@@ -883,33 +898,31 @@ def flush_assignment_notifications():
 
     subs = storage.get_push_subscriptions()
     for d_id, ch in changes.items():
-        lines = [f"+ {_fmt_change_event(e)}" for e in ch["today_gained"]] \
-              + [f"- {_fmt_change_event(e)}" for e in ch["today_lost"]]
-        shown = lines[:5]
-        if len(lines) > 5:
-            shown.append(f"...and {len(lines) - 5} more today")
+        today_lines = [f"+ {_fmt_change_event(e)}" for e in ch["today_gained"]] \
+                    + [f"- {_fmt_change_event(e)}" for e in ch["today_lost"]]
+        tmrw_lines = [f"+ {_fmt_change_event(e)} tomorrow" for e in ch["tmrw_gained"]] \
+                   + [f"- {_fmt_change_event(e)} tomorrow" for e in ch["tmrw_lost"]]
+        lines = today_lines + tmrw_lines
+        if lines:
+            shown = lines[:5]
+            if len(lines) > 5:
+                shown.append(f"...and {len(lines) - 5} more")
+            title = "Schedule Updated Today" if today_lines else "Schedule Updated Tomorrow"
+            send_push(d_id, subs, title, "\n".join(shown),
+                      f"sched_change_{int(time.time())}", actions=[])
 
-        fdates = sorted(ch["future_dates"])
-        if fdates:
-            dates_str = ", ".join(d.strftime('%a %m/%d') for d in fdates[:4])
-            if len(fdates) > 4:
-                dates_str += f" +{len(fdates) - 4} more"
-            prefix = "Also changes on: " if lines else "Your upcoming schedule changed: "
-            shown.append(prefix + dates_str)
-
-        title = "Schedule Updated Today" if lines else "Schedule Updated"
-        send_push(d_id, subs, title, "\n".join(shown),
-                  f"sched_change_{int(time.time())}", actions=[])
-
-        for e in ch["today_gained"]:
+        for e in ch["today_gained"] + ch["tmrw_gained"]:
             storage.add_telemetry_event(TelemetryEvent(
                 driver_id=d_id, event_id=e.get("id") or "",
                 action="assigned", details=_fmt_change_event(e)).model_dump())
-        for e in ch["today_lost"]:
+        for e in ch["today_lost"] + ch["tmrw_lost"]:
             storage.add_telemetry_event(TelemetryEvent(
                 driver_id=d_id, event_id=e.get("id") or "",
                 action="removed", details=_fmt_change_event(e)).model_dump())
+        fdates = sorted(ch["future_dates"])
         if fdates:
+            # Quiet record only — the in-app bell keeps the audit trail for
+            # far-out changes, but no push ever fires for them.
             storage.add_telemetry_event(TelemetryEvent(
                 driver_id=d_id, event_id="schedule", action="updated",
                 details="Upcoming schedule changed: " + ", ".join(d.strftime('%a %m/%d') for d in fdates)).model_dump())
