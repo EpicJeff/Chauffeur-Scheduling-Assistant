@@ -34,28 +34,15 @@
 // the overlay. The server re-checks regardless; the handshake is so the save
 // can succeed, not the thing that protects it.
 window.openAvatarEditor = async function (m) {
-    const base = (window.chfBase !== undefined) ? window.chfBase : '';
-    let member = (typeof m === 'string') ? { id: m } : Object.assign({}, m);
-    if (member.has_pin === undefined || !member.name) {
-        try {
-            const all = await fetch(base + 'api/members').then(r => r.json());
-            const hit = (Array.isArray(all) ? all : []).find(x => x.id === member.id);
-            if (hit) member = hit;
-        } catch (e) { /* offline: proceed; a PIN'd member will fail at save */ }
-    }
-    let token = null;
-    if (localStorage.getItem('chauffeur_member_token_for') === member.id) {
-        token = localStorage.getItem('chauffeur_member_token');
-    }
-    if (!token && member.has_pin) {
-        // app.html has the full sign-in flow; kiosk pages get a minimal pad.
-        token = (typeof ensureMemberAuth === 'function')
-            ? await ensureMemberAuth(member)
-            : await _avatarPinHandshake(base, member);
-        if (!token) return;                    // backed out: nothing opens
-    }
+    // ONE gate for everything (control_center.chfMemberToken): it
+    // remembers, so a child who proved who they were to open one
+    // overlay is not asked again by the next.
+    const member = (typeof m === 'string') ? { id: m } : Object.assign({}, m);
+    const token = (typeof chfMemberToken === 'function')
+        ? await chfMemberToken(member) : '';
+    if (token === null) return;              // asked, and they backed out
     window.dispatchEvent(new CustomEvent('avatar-editor-open',
-        { detail: { memberId: member.id, token: token } }));
+        { detail: { memberId: member.id, token: token || null } }));
 };
 
 async function _avatarPinHandshake(base, member) {

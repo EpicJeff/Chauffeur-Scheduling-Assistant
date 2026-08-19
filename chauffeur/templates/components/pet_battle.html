@@ -83,26 +83,15 @@
 </style>
 <script>
 window.openPetBattle = async function (m) {
-    const base = (window.chfBase !== undefined) ? window.chfBase : '';
-    let member = (typeof m === 'string') ? { id: m } : Object.assign({}, m);
-    if (member.has_pin === undefined || !member.name) {
-        try {
-            const all = await fetch(base + 'api/members').then(r => r.json());
-            const hit = (Array.isArray(all) ? all : []).find(x => x.id === member.id);
-            if (hit) member = hit;
-        } catch (e) { /* offline: the save will fail loudly instead */ }
-    }
-    let token = null;
-    if (localStorage.getItem('chauffeur_member_token_for') === member.id) {
-        token = localStorage.getItem('chauffeur_member_token');
-    }
-    if (!token && member.has_pin) {
-        if (typeof ensureMemberAuth === 'function') token = await ensureMemberAuth(member);
-        else if (typeof _avatarPinHandshake === 'function') token = await _avatarPinHandshake(base, member);
-        if (!token) return;
-    }
+    // ONE gate for everything (control_center.chfMemberToken): it
+    // remembers, so a child who proved who they were to open one
+    // overlay is not asked again by the next.
+    const member = (typeof m === 'string') ? { id: m } : Object.assign({}, m);
+    const token = (typeof chfMemberToken === 'function')
+        ? await chfMemberToken(member) : '';
+    if (token === null) return;              // asked, and they backed out
     window.dispatchEvent(new CustomEvent('pet-battle-open',
-        { detail: { memberId: member.id, memberName: member.name, token: token } }));
+        { detail: { memberId: member.id, memberName: member.name, token: token || null } }));
 };
 
 function petBattlePanel() {

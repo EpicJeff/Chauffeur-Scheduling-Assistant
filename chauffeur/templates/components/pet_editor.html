@@ -63,29 +63,15 @@ window.petCompose = function (B, cfg, ns) {
 // and only then opens the overlay. The server re-checks regardless; the
 // handshake is so the save can succeed, not the thing that protects it.
 window.openPetEditor = async function (m) {
-    const base = (window.chfBase !== undefined) ? window.chfBase : '';
-    let member = (typeof m === 'string') ? { id: m } : Object.assign({}, m);
-    if (member.has_pin === undefined || !member.name) {
-        try {
-            const all = await fetch(base + 'api/members').then(r => r.json());
-            const hit = (Array.isArray(all) ? all : []).find(x => x.id === member.id);
-            if (hit) member = hit;
-        } catch (e) { /* offline: proceed; a PIN'd member will fail at save */ }
-    }
-    let token = null;
-    if (localStorage.getItem('chauffeur_member_token_for') === member.id) {
-        token = localStorage.getItem('chauffeur_member_token');
-    }
-    if (!token && member.has_pin) {
-        // Prefer whatever sign-in the host page already has; fall back to the
-        // avatar editor's pad when both components are mounted together,
-        // which on every page that includes this one, they are.
-        if (typeof ensureMemberAuth === 'function') token = await ensureMemberAuth(member);
-        else if (typeof _avatarPinHandshake === 'function') token = await _avatarPinHandshake(base, member);
-        if (!token) return;
-    }
+    // ONE gate for everything (control_center.chfMemberToken): it
+    // remembers, so a child who proved who they were to open one
+    // overlay is not asked again by the next.
+    const member = (typeof m === 'string') ? { id: m } : Object.assign({}, m);
+    const token = (typeof chfMemberToken === 'function')
+        ? await chfMemberToken(member) : '';
+    if (token === null) return;              // asked, and they backed out
     window.dispatchEvent(new CustomEvent('pet-editor-open',
-        { detail: { memberId: member.id, memberName: member.name, token: token } }));
+        { detail: { memberId: member.id, memberName: member.name, token: token || null } }));
 };
 
 // Buying room for a second critter, then going straight into naming it.
@@ -124,7 +110,7 @@ function petEditorPanel() {
         show: false, loading: false, saving: false,
         bundle: null, memberId: null, memberName: '', token: null,
         pet: null, cfg: {}, name: '', type: 'ember', xp: null,
-        training: {}, equipped: [], busyBuy: false,
+        training: {}, equipped: [], busyBuy: false, shelf: [],
         tab: 'body', history: [], future: [],
 
         // Glyph first, word second -- the tabs have to work for a child who
@@ -216,8 +202,15 @@ function petEditorPanel() {
                     if (!r.ok) throw new Error('no art');
                     this.bundle = await r.json();
                 }
-                const list = await fetch(this.api + 'api/pets?member_id=' + encodeURIComponent(this.memberId)).then(r => r.json());
-                this.pet = (list.pets || [])[0] || null;
+                // include_retired, because "put on the shelf" promised the
+                // creature could come back and nothing in the app was asking
+                // for it -- so retiring was a one-way door that said it wasn't.
+                const list = await fetch(this.api + 'api/pets?member_id='
+                    + encodeURIComponent(this.memberId) + '&include_retired=true')
+                    .then(r => r.json());
+                const all = list.pets || [];
+                this.pet = all.find(p => p.active !== false) || null;
+                this.shelf = all.filter(p => p.active === false);
                 // Level and xp are the MEMBER's, not the creature's -- every
                 // pet they own shares what their effort bought, so a second
                 // critter never arrives as a weakling. Shown here because the
@@ -340,7 +333,14 @@ function petEditorPanel() {
                         body: JSON.stringify({ member_id: this.memberId, name: this.name || 'Critter', species, look, type: this.type }),
                     });
                 }
-                if (res.status === 403) { showGlobalAlert('Enter your PIN to change your pet'); this.saving = false; return; }
+                if (res.status === 403) {
+                    // The stored token is no longer good (expired, or signed
+                    // out elsewhere). Drop it so the NEXT open asks once,
+                    // rather than failing quietly forever.
+                    if (typeof chfClearMemberToken === 'function') chfClearMemberToken(this.memberId);
+                    showGlobalAlert('Enter your PIN to change your pet');
+                    this.saving = false; return;
+                }
                 if (!res.ok) {
                     const d = await res.json().catch(() => ({}));
                     showGlobalAlert(d.detail || 'Could not save');
@@ -361,8 +361,11 @@ function petEditorPanel() {
 
         async refresh() {
             const list = await fetch(this.api + 'api/pets?member_id='
-                + encodeURIComponent(this.memberId)).then(r => r.json());
-            this.pet = (list.pets || [])[0] || this.pet;
+                + encodeURIComponent(this.memberId) + '&include_retired=true')
+                .then(r => r.json());
+            const all = list.pets || [];
+            this.shelf = all.filter(p => p.active === false);
+            this.pet = all.find(p => p.active !== false) || this.pet;
             this.training = Object.assign({}, this.pet.training || {});
             this.equipped = (this.pet.moves || []).slice();
             this.xp = await fetch(this.api + 'api/pets/xp?member_id='
@@ -418,6 +421,31 @@ function petEditorPanel() {
             } else {
                 await this.refresh();
             }
+            this.busyBuy = false;
+        },
+
+        // The other half of the shelf. Refused by the server when there is
+        // no free slot, which is right -- but say so in words rather than
+        // letting the tap do nothing.
+        async bringBack(p) {
+            if (this.busyBuy) return;
+            this.busyBuy = true;
+            try {
+                const res = await fetch(this.api + 'api/pets/' + p.id + '/retire', {
+                    method: 'POST', headers: this.headers(),
+                    body: JSON.stringify({ retired: false }),
+                });
+                if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    showGlobalAlert(d.detail || 'No room for another critter right now');
+                } else {
+                    await this.refresh();
+                    this.cfg = Object.assign({}, this.pet.species, this.pet.look);
+                    this.name = this.pet.name || '';
+                    this.type = this.pet.type || this.type;
+                    showGlobalAlert((p.name || 'Your critter') + ' is back!');
+                }
+            } catch (e) { showGlobalAlert('Could not bring it back'); }
             this.busyBuy = false;
         },
 
@@ -501,6 +529,23 @@ function petEditorPanel() {
                     class="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
                     :class="tab === t.key ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300'">
                 <span x-text="t.glyph"></span><span x-text="t.label"></span>
+            </button>
+        </template>
+    </div>
+
+    <!-- ON THE SHELF. Only appears when something is on it. The retire
+         button has always said a critter "can come back any time"; until this
+         existed, nothing in the app could actually bring one back. -->
+    <div x-show="shelf.length" class="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-gray-800 overflow-x-auto">
+        <span class="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex-shrink-0">On the shelf</span>
+        <template x-for="p in shelf" :key="p.id">
+            <button type="button" @click="bringBack(p)" :disabled="busyBuy"
+                    class="flex-shrink-0 flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-lg bg-gray-800 border border-gray-700 disabled:opacity-50">
+                <span class="w-8 h-8 rounded-md overflow-hidden bg-gray-700/60" x-html="p.svg"></span>
+                <span class="text-left">
+                    <span class="block text-[11px] font-bold text-gray-100" x-text="p.name"></span>
+                    <span class="block text-[9px] text-emerald-400">Bring back</span>
+                </span>
             </button>
         </template>
     </div>
@@ -654,7 +699,8 @@ function petEditorPanel() {
                 class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-300"
                 title="How to play">?</button>
         <button type="button" x-show="pet" @click="retire()"
-                class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-400" title="Put on the shelf">📦</button>
+                class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-400"
+                title="Put this critter on the shelf — it keeps everything and can come back">📦</button>
         <!-- Straight from the dressing room into the arena. The editor is
              where a kid is already looking at their critter, so it is the
              obvious door. -->

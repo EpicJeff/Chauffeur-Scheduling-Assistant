@@ -1457,3 +1457,84 @@ function closeChatHelpModal() {
         });
     }
 </script>
+<script>
+// ONE PIN GATE FOR THE WHOLE HOUSE.
+//
+// The kiosk pad used to RETURN a token and never store it, while the PWA's
+// own sign-in stored it -- so on a wall panel a child tapped their face and
+// entered a PIN, opened their critter and entered it again, went to battle
+// and entered it a third time. Each overlay was gating independently and
+// none of them told the next one.
+//
+// So: one function. It checks what is already stored, prompts at most once,
+// and STORES the result under the same keys the PWA uses, which is what makes
+// the next overlay silent. A member with no PIN is never asked anything.
+window.chfMemberToken = async function (member, opts) {
+    opts = opts || {};
+    const base = (window.chfBase !== undefined) ? window.chfBase : '';
+    if (!member || !member.id) return '';
+
+    // 0. fill in what we were not told, so a caller can pass just an id
+    if (member.has_pin === undefined || !member.name) {
+        try {
+            const all = await fetch(base + 'api/members').then(r => r.json());
+            const hit = (Array.isArray(all) ? all : []).find(x => x.id === member.id);
+            if (hit) member = Object.assign({}, hit, member, { has_pin: hit.has_pin });
+        } catch (e) { /* offline: a PIN'd member will fail at the save instead */ }
+    }
+    // 1. already proven, this session or a previous one
+    if (localStorage.getItem('chauffeur_member_token_for') === member.id) {
+        const tok = localStorage.getItem('chauffeur_member_token');
+        if (tok) return tok;
+    }
+    // 2. nothing to prove. '' and null are DIFFERENT answers: '' means "no
+    //    gate needed, go ahead", null means "asked and refused". A caller that
+    //    was handed only an id cannot tell those apart on its own.
+    if (!member.has_pin) return '';
+    // 3. the PWA has a richer flow of its own, and it stores the token itself
+    if (typeof ensureMemberAuth === 'function') {
+        const tok = await ensureMemberAuth(member);
+        if (tok) window.chfStoreMemberToken(member.id, tok);
+        return tok || null;
+    }
+    // 4. the kiosk pad
+    while (true) {
+        const pin = await promptInput('Hi ' + (member.name || '') + '!', 'Enter your PIN',
+            { type: 'password', placeholder: '\u2022\u2022\u2022\u2022' });
+        if (pin === null || pin === undefined) return null;
+        try {
+            const res = await fetch(base + 'api/members/' + member.id + '/auth', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pin: pin }),
+            });
+            if (res.status === 403) { showGlobalAlert('Wrong PIN'); continue; }
+            if (res.status === 429) { showGlobalAlert('Too many tries \u2014 wait a moment'); return null; }
+            if (!res.ok) return null;
+            const tok = (await res.json()).token;
+            if (tok) window.chfStoreMemberToken(member.id, tok);
+            return tok || null;
+        } catch (e) {
+            showGlobalAlert('Could not verify \u2014 check connection');
+            return null;
+        }
+    }
+};
+
+window.chfStoreMemberToken = function (memberId, token) {
+    try {
+        localStorage.setItem('chauffeur_member_token_for', memberId);
+        localStorage.setItem('chauffeur_member_token', token);
+    } catch (e) { /* private mode: the gate simply asks again next time */ }
+};
+
+// Called when the SERVER refuses a stored token, so the next open asks once
+// rather than failing silently forever.
+window.chfClearMemberToken = function (memberId) {
+    try {
+        if (!memberId || localStorage.getItem('chauffeur_member_token_for') === memberId) {
+            localStorage.removeItem('chauffeur_member_token_for');
+            localStorage.removeItem('chauffeur_member_token');
+        }
+    } catch (e) { /* nothing to clear */ }
+};
+</script>

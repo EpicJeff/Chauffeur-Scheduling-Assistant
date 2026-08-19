@@ -431,6 +431,104 @@ def test_the_ring_is_drawn_rather_than_x_for_ed():
           "will render as an empty box")
 
 
+# --- one PIN gate ---------------------------------------------------------
+
+def test_every_overlay_goes_through_the_one_gate():
+    """A child tapped their face and entered a PIN, opened their critter and
+    entered it again, went to battle and entered it a third time. Each overlay
+    was gating on its own and none of them told the next: the kiosk pad
+    RETURNED a token and never stored it, while the PWA's own sign-in did."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    comp = os.path.join(here, 'templates', 'components')
+    cc = open(os.path.join(comp, 'control_center.html'), encoding='utf-8').read()
+    check('chfMemberToken' in cc and 'chfStoreMemberToken' in cc,
+          "the shared gate is gone from control_center")
+    check("localStorage.setItem('chauffeur_member_token'" in cc,
+          "the gate does not STORE the token, so the next overlay re-prompts")
+    for f in ('avatar_editor.html', 'pet_editor.html', 'pet_battle.html'):
+        src = open(os.path.join(comp, f), encoding='utf-8').read()
+        opener = src[src.index('window.open'):src.index('dispatchEvent')]
+        check('chfMemberToken' in opener,
+              "%s still gates on its own" % f)
+        check('api/members/' not in opener,
+              "%s still has a PIN pad of its own" % f)
+
+
+def test_a_cancelled_pin_does_not_open_the_overlay_anyway():
+    """The gate answers '' for "no gate needed" and null for "asked and
+    refused". A caller handed only a member id cannot tell those apart itself,
+    and treating both as falsy opened the editor for somebody who backed
+    out."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    comp = os.path.join(here, 'templates', 'components')
+    cc = open(os.path.join(comp, 'control_center.html'), encoding='utf-8').read()
+    check("if (!member.has_pin) return '';" in cc,
+          "the gate no longer distinguishes 'no PIN needed' from 'refused'")
+    for f in ('avatar_editor.html', 'pet_editor.html', 'pet_battle.html'):
+        src = open(os.path.join(comp, f), encoding='utf-8').read()
+        check('token === null' in src,
+              "%s does not check for a refusal specifically" % f)
+
+
+def test_a_stale_token_is_dropped_rather_than_failing_forever():
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ed = open(os.path.join(here, 'templates', 'components', 'pet_editor.html'),
+              encoding='utf-8').read()
+    check('chfClearMemberToken' in ed,
+          "a 403 leaves the dead token in place, so every save fails quietly")
+
+
+# --- the shelf is a door that swings both ways ----------------------------
+
+def test_a_shelved_critter_can_actually_come_back():
+    """The retire button has always promised the creature 'can come back any
+    time'. Nothing in the app ever asked for a retired pet, so it could
+    not."""
+    import main
+    reset_db()
+    _member("k1", "Ada")
+    pet = storage.create_pet("k1", "Rocket", {'body': 'wedge'}, {}, 'ember')['pet']
+    main.retire_pet_endpoint(pet['id'], main.PetRetireRequest(retired=True))
+    check(not main.list_pets_endpoint(member_id="k1")['pets'],
+          "a shelved critter is still on the shelf list")
+    shelved = main.list_pets_endpoint(member_id="k1", include_retired=True)['pets']
+    check(len(shelved) == 1 and shelved[0]['active'] is False,
+          "the shelf cannot be listed at all")
+    check(shelved[0].get('svg', '').startswith('<svg'),
+          "a shelved critter has no picture, so the shelf cannot draw it")
+    back = main.retire_pet_endpoint(pet['id'], main.PetRetireRequest(retired=False))
+    check(back['pet']['active'] is True, "it could not come back")
+    check(len(storage.get_pets("k1")) == 1, "it came back but is not active")
+
+
+def test_bringing_one_back_over_the_limit_is_refused_in_words():
+    import main
+    from fastapi import HTTPException
+    reset_db()
+    _member("k1", "Ada")
+    first = storage.create_pet("k1", "Rocket")['pet']
+    main.retire_pet_endpoint(first['id'], main.PetRetireRequest(retired=True))
+    storage.create_pet("k1", "Second")
+    try:
+        main.retire_pet_endpoint(first['id'], main.PetRetireRequest(retired=False))
+        raise AssertionError("a critter came back with no slot to come back to")
+    except HTTPException as e:
+        check(e.status_code == 400 and 'slot' in (e.detail or '').lower(),
+              "the refusal does not say why: %s" % e.detail)
+    check(storage.get_pet(first['id']) is not None,
+          "the refusal ate the record")
+
+
+def test_the_editor_can_reach_the_shelf():
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ed = open(os.path.join(here, 'templates', 'components', 'pet_editor.html'),
+              encoding='utf-8').read()
+    check('include_retired=true' in ed,
+          "the editor never asks for shelved critters, so it cannot show them")
+    check('bringBack(' in ed and 'On the shelf' in ed,
+          "the editor has no way to bring one back")
+
+
 def run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     failed = 0

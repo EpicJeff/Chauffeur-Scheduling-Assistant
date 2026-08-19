@@ -3508,6 +3508,28 @@ clones `<line>` and `<circle>` as HTML elements and the browser draws
 precisely nothing -- no error, just an empty box. It shipped that way for one
 screenshot; a test now keeps inline `<svg>` out of the markup.
 
+**ONE PIN GATE (v2.304.0).** `control_center.chfMemberToken` is now the only
+gate: it checks what is stored, prompts at most once, and **stores the
+result**. The kiosk pad used to RETURN a token and never store it while the
+PWA's own sign-in did, so on a wall panel a child entered their PIN to open
+their face, again to open their critter, and a third time to reach the arena
+-- each overlay gating independently and none telling the next. Measured
+after the fix: **one prompt** across avatar editor → pet editor → battle.
+
+The gate answers `''` for "no gate needed" and `null` for "asked and
+refused" -- a caller handed only a member id cannot tell those apart, and
+treating both as falsy opened the overlay for somebody who backed out. A 403
+on a save calls `chfClearMemberToken`, so a stale token asks once instead of
+failing quietly forever.
+
+**"Put on the shelf" swings both ways (v2.304.0).** 📦 retires a critter:
+active=false, the record and everything it earned kept (rule 3), the slot
+freed. The confirm has always said it "can come back any time" -- and nothing
+in the app ever asked for a retired pet, so it could not. The editor now
+fetches `include_retired=true` and shows an **On the shelf** strip with the
+creature drawn and a Bring back button; over the slot limit the server refuses
+in words rather than the tap doing nothing.
+
 **A full-screen editor is opaque on a wall (v2.295.0).** `panel_skin` maps
 every `.bg-gray-950`/`.bg-gray-900` surface to translucent glass with
 `!important` so the wallpaper reads through the board — and a full-screen
