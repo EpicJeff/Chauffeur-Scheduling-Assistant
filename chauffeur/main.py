@@ -7519,6 +7519,10 @@ def _pet_payload(pet: dict) -> dict:
         out['svg'] = pet_render.render_svg(cfg, crop='chip',
                                            nonce=(out.get('id') or 'a')[:12])
     out['type_info'] = pet_catalog.get(out.get('type')) or {}
+    # Level is derived from the OWNER's lifetime xp, so it is stamped here
+    # rather than trusted from the record -- see storage._with_level.
+    out['progress'] = storage.pet_level_progress(out.get('member_id') or '')
+    out['level'] = out['progress']['level']
     return out
 
 
@@ -7542,6 +7546,24 @@ def pets_bundle_endpoint():
     out['view'] = (pet_render._load() or {}).get('view') or [0, 0, 100, 100]
     out.update(pet_catalog.bundle())
     return out
+
+
+@app.get("/api/pets/xp")
+def pet_xp_endpoint(member_id: str, limit: int = 25):
+    """One member's pet experience: balance, lifetime, level and the recent
+    rows behind it.
+
+    Declared ABOVE `/api/pets/{pet_id}` on purpose -- FastAPI matches in
+    order, and a literal path after a parameterised one is never reached.
+
+    `balance` is what is left to spend, `earned` is lifetime and drives the
+    level. Spending can never cost a level, the same way redeeming points
+    never costs a status tier."""
+    return {'member_id': member_id,
+            'balance': storage.get_pet_xp_balance(member_id),
+            'earned': storage.get_pet_xp_earned(member_id),
+            'progress': storage.pet_level_progress(member_id),
+            'ledger': storage.get_pet_xp_ledger(member_id, limit=limit)}
 
 
 @app.get("/api/pets")

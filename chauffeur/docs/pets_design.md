@@ -211,13 +211,35 @@ that pays out on the surface kids care about most.
   payout.
 - **PvP cap.** Default 3 rewarded battles per opponent pair per day, for the
   same reason and also because sibling grudge-matching should have a floor.
-- **Chore reversal.** If a verified chore is later rejected, the points row is
-  reversed today; the XP row must reverse with it, in the same transaction.
+- ~~**Chore reversal.**~~ **Wrong when written; checked in P2.** There is no
+  such path. Points are minted exactly once, at `verify_chore`, and nothing in
+  the app ever reverses a chore award — `reject_chore` fires at `done`, before
+  anything is awarded ("No forfeiture — points just wait for a pass"), and
+  reopening a verified chore only changes its state. XP mints on the same
+  event and inherits the same behaviour, so there is no reversal machinery to
+  build and none was.
 
 **Sinks:** stat training, move slots, species unlocks, the second pet slot,
 cosmetic parts. Lifetime XP earned drives **level**; XP spent buys the rest.
 Spending never lowers level — same shape as `get_points_balance` vs the status
 tiers that must never be taken away.
+
+**XP belongs to the MEMBER, and every pet they own shares the level it buys**
+(decided in P2). Banking XP per creature splits a child's effort the moment
+they own two: the second pet arrives useless and the first one they liked
+stops growing. Sharing answers "which one do I feed" with *neither, you feed
+yourself*. Training points are still spent per pet, so the choice that matters
+is where effort goes, not which animal receives it. `Pet.level` is therefore
+**derived on every read** and never trusted from the record.
+
+**The curve** is quadratic: `20 × (L−1)²` lifetime XP to reach level L, capped
+at 50. L2 at 20, L5 at 320, L10 at 1620. At roughly 25–80 XP a day that is a
+level on day one and L10 in about a month.
+
+**XP mints for adults too**, even though points do not. Points are
+children-only because they cost a parent real money; XP costs nothing and buys
+nothing outside the game — and a parent's critter has to be able to level or
+it drags every level-matched fight down to its own floor.
 
 ---
 
@@ -367,16 +389,18 @@ move must never be a code change.
 
 ## Slices
 
-- **P0 — the bake.** Harvest script → `static/pets/pieces.json` (80 groups, ids
+- **P0 — the bake.** *Done (v2.294.0).* Harvest script → `static/pets/pieces.json` (80 groups, ids
   namespaced, top-anchor table, base-fill slot marked). `pet_render.py`
   compositor, two crops (`chip` 100×100, `battle` full). Downscaled background.
   *No gameplay. This is the only slice with asset work in it, and it is a day,
   not the week Avataaars' A0 was.*
-- **P1 — pets exist.** `pets_table`, hatch, name, free customisation, pets card,
+- **P1 — pets exist.** *Done (v2.295.0).* `pets_table`, hatch, name, free customisation, pets card,
   editor overlay. No XP, no battle. A kid can make a critter and everyone sees
   it on the wall.
-- **P2 — the ledger.** `pet_xp_ledger`, the two mint hooks with their guards,
-  the reversal path, balance display. Nothing to spend it on yet.
+- **P2 — the ledger.** *Done (v2.296.0).* `pet_xp_ledger`, the two mint hooks
+  with their guards, levels, rates in Settings, balance and progress on the
+  card and in the editor. No reversal path — see above. Nothing to spend it on
+  yet.
 - **P3 — the resolver.** Pure `pet_battle.py`: stats, five-ring types, ~20
   moves, damage, turn order, level-matching, seeded RNG. Unit tests only, no UI.
   *Cheapest slice, highest leverage — build it before anything visual.*

@@ -3251,6 +3251,45 @@ must be the creature they get. The `pets` board card shows everyone's
 creature; an **empty slot is still a door** (🥚 + ＋), because someone who has
 never hatched has to be able to find the feature. Card is PAGELESS.
 
+**The ledger (P2, v2.296.0).** `pet_xp_ledger_table`, append-only,
+deliberately NOT `points_ledger`. A verified chore mints **both** currencies
+from the same event (`verify_chore` returns `pet_xp` alongside `awarded`), so
+no child chooses between levelling their critter and the family goal; nothing
+converts XP back into points in either direction, and a test drives 600 xp of
+battle winnings through the ledger to prove none of it reaches real money.
+**Routines mint XP** — the first thing a kept routine has ever bought, streaks
+aside.
+
+Two guards, both tested. `grant_pet_xp(..., once=True)` makes a row idempotent
+on (member, reason, ref_id, date_str): routines pass it, so 26 taps of one
+checkbox mint one row. Chores deliberately do **not** — a daily chore is real
+work again tomorrow and points mint again, so xp minting once-per-chore would
+have silently starved every recurring chore after day one. Unticking never
+claws XP back (rule 3). There is **no reversal path** and none was built: the
+app mints chore points exactly once, at verify, and never reverses them —
+`reject_chore` fires at `done`, before any award. The design brief claimed
+otherwise and was corrected against the code.
+
+**Levels.** XP belongs to the MEMBER and every pet they own shares the level
+it buys — banking per creature would split a child's effort so the second pet
+arrives useless. `Pet.level` is derived on every read (`storage._with_level`),
+so a level written straight into the table cannot survive a read. Curve is
+`20 × (L−1)²` lifetime XP, capped at 50: L2 at 20, L5 at 320, L10 at 1620 —
+about a level on day one and L10 in a month. Lifetime EARNED drives the level,
+so spending can never cost one, exactly as points vs status tiers. XP mints
+for **adults too** though points do not: points cost a parent money, xp costs
+nothing, and a parent's critter must be able to level or it drags every
+level-matched fight to its own floor.
+
+**Rates** (`pet_xp_per_chore_point` 1.0, `pet_xp_per_routine` 3,
+`pet_xp_routine_all_bonus` 10) are real settings on **Chores → Pet XP**, not
+constants — one home for the rates even though routines mint too.
+`GET /api/pets/xp?member_id=` serves balance, lifetime, level progress and the
+recent rows; it is declared ABOVE `/api/pets/{pet_id}` because FastAPI matches
+in order. The pets card shows a progress bar under each critter and the editor
+shows "N XP to level M" — filled by chores and routines, and by nothing in the
+editor itself, which is rule 1 made visible.
+
 **A full-screen editor is opaque on a wall (v2.295.0).** `panel_skin` maps
 every `.bg-gray-950`/`.bg-gray-900` surface to translucent glass with
 `!important` so the wallpaper reads through the board — and a full-screen

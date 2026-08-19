@@ -1007,6 +1007,14 @@ class Settings(BaseModel):
     # whitelist merge) never drop them.
     chore_status_tiers: Optional[List[StatusTier]] = None      # thresholds = lifetime points
     routine_status_tiers: Optional[List[StatusTier]] = None    # thresholds = best-streak days
+    # Pet XP rates (pets arc P2). A SEPARATE currency from points: a verified
+    # chore mints both, so no child ever chooses between levelling their
+    # critter and the family goal, and nothing converts xp back into points.
+    # Routines mint xp only -- it is the first thing a kept routine has ever
+    # bought, streaks aside.
+    pet_xp_per_chore_point: float = 1.0
+    pet_xp_per_routine: int = 3
+    pet_xp_routine_all_bonus: int = 10
     # Email intake (intake arc phase 2): a dedicated mailbox polled over IMAP;
     # allowlisted senders' messages are LLM-extracted into event/task
     # proposals a parent approves on /intake. The password is a Gmail app

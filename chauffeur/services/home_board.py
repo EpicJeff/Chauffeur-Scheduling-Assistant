@@ -1859,9 +1859,10 @@ def _tile_pets(now, config=None, **_):
                 cfg = dict(pet.get('species') or {})
                 cfg.update(pet.get('look') or {})
                 t = pet_catalog.get(pet.get('type')) or {}
+                prog = storage.pet_level_progress(m['id'])
                 row['pet'] = {
                     'id': pet['id'], 'name': pet.get('name'),
-                    'level': pet.get('level') or 1,
+                    'level': prog['level'], 'progress': prog,
                     'type': pet.get('type'), 'type_label': t.get('label'),
                     'type_glyph': t.get('glyph'), 'type_color': t.get('color'),
                     # the pet id is the id namespace, so a board may draw a

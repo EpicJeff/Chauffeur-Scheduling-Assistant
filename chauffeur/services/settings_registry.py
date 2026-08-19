@@ -444,6 +444,20 @@ ENTRIES: List[dict] = [
     _e('routine_status_tiers', 'solver', 'Routine status tiers',
        'The streak thresholds behind the routine status colours.',
        page='routines', anchor='tiers', ui_marker='statusTiersEditor'),
+    # Pet xp. All three live on the CHORES page because that is where the
+    # economy is already tuned, even though routines mint too -- one home for
+    # the rates beats two half-homes.
+    _e('pet_xp_per_chore_point', 'kids', 'Pet XP per chore point',
+       'How much pet experience a verified chore mints, per point it is worth. '
+       'Separate from points: a chore pays both, and xp never becomes points.',
+       page='chores', anchor='petxp'),
+    _e('pet_xp_per_routine', 'kids', 'Pet XP per routine',
+       'Experience for ticking off one routine item. Once per item per day, '
+       'however many times it is tapped.',
+       page='chores', anchor='petxp'),
+    _e('pet_xp_routine_all_bonus', 'kids', 'Pet XP for a full routine day',
+       'A bonus the first time every routine due today is done.',
+       page='chores', anchor='petxp'),
 ]
 
 BY_KEY: Dict[str, dict] = {e['key']: e for e in ENTRIES}

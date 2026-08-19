@@ -463,6 +463,14 @@
                                         <span x-text="m.pet && m.pet.type_glyph"></span>
                                         <span x-text="m.pet ? ('Lv' + m.pet.level) : ''"></span>
                                     </span>
+                                    <!-- how close to the next level. A bar, not a
+                                         number: the question is "am I nearly there",
+                                         and a ratio answers it without reading. -->
+                                    <span x-show="t.data.show_level && m.pet && m.pet.progress && !m.pet.progress.max"
+                                        class="block w-14 h-1 rounded-full bg-gray-700 overflow-hidden">
+                                        <span class="block h-full bg-emerald-500"
+                                            :style="'width:' + Math.round(100 * ((m.pet && m.pet.progress ? m.pet.progress.ratio : 0))) + '%'"></span>
+                                    </span>
                                     <span x-show="t.data.show_owner" class="text-[10px] text-gray-500 truncate max-w-[6rem]" x-text="m.name"></span>
                                 </button>
                             </template>

@@ -463,6 +463,12 @@ with db_lock:
     # the record outlives the fashion (pets arc rule 3). Deleting one is a
     # deliberate act by its owner or a parent, never a side effect.
     pets_table = db.table('pets')
+    # Pet XP: APPEND-ONLY, and deliberately a SEPARATE ledger from points.
+    # Points redeem for real money; xp buys nothing outside the game and
+    # NOTHING converts between them in either direction. Sharing one ledger
+    # would mean a kid choosing between levelling their critter and the family
+    # movie-night pool, and would let battle winnings print money.
+    pet_xp_ledger_table = db.table('pet_xp_ledger')
     music_favorites_table = db.table('music_favorites')
     music_recent_table = db.table('music_recent')
 
@@ -2075,9 +2081,10 @@ def _chore_next_reopen(recurrence: str) -> Optional[str]:
 def verify_chore(chore_id: str, verifier_member_id: str) -> Optional[dict]:
     """done -> verified. Awards points to the claimant IF they are a child
     (adults are claimable-but-pointless by design). Recurring chores get a
-    reopens_on date. Returns {'chore', 'awarded'} or None."""
+    reopens_on date. Returns {'chore', 'awarded', 'pet_xp'} or None."""
     import time
     import uuid as _uuid
+    from datetime import date
     with db_lock:
         res = chores_table.search(Query().id == chore_id)
         if not res or res[0].get('state') != 'done':
@@ -2102,7 +2109,24 @@ def verify_chore(chore_id: str, verifier_member_id: str) -> Optional[dict]:
                 'by_member_id': verifier_member_id,
                 'ts': time.time(),
             })
-        return {'chore': chore, 'awarded': awarded}
+    # Pet xp, minted from the SAME event and never instead of it -- a kid
+    # must not have to choose between levelling their critter and the family
+    # movie-night pool. Outside the points lock because this ledger is its
+    # own; keyed on the chore id so a re-verify of the same instance cannot
+    # mint twice.
+    #
+    # Unlike points, this is NOT children-only. Points are children-only
+    # because they cost a parent real money; xp costs nothing and buys
+    # nothing outside the game, and a parent's critter has to be able to
+    # level or it drags every level-matched fight down to its own floor.
+    xp_awarded = 0
+    if chore.get('claimed_by') and int(chore.get('points', 0) or 0) > 0:
+        xp_awarded = grant_pet_xp(
+            chore['claimed_by'],
+            round(int(chore['points']) * pet_xp_rate('pet_xp_per_chore_point')),
+            'chore', ref_id=chore_id, date_str=date.today().isoformat(),
+            note=chore.get('title'))
+    return {'chore': chore, 'awarded': awarded, 'pet_xp': xp_awarded}
 
 def reject_chore(chore_id: str, verifier_member_id: str, reason: str) -> Optional[dict]:
     """done -> claimed (redo). No forfeiture — points just wait for a pass."""
@@ -3344,7 +3368,33 @@ def set_routine_check(routine_id: str, member_id: str, date_str: str, checked: b
                  'date_str': date_str, 'ts': time.time()}, q)
         else:
             routine_checks_table.remove(q)
-        return True
+    # ROUTINES FINALLY HAVE A SINK. They have always earned a streak and
+    # nothing else -- the complaint the avatar arc opened with -- so this is
+    # the first thing a kept routine actually buys.
+    #
+    # Unticking does NOT claw the xp back: rule 3 says a thing earned is never
+    # taken away, and a box tapped by accident must not cost a child anything.
+    # `grant_pet_xp` is idempotent per (routine, day), so the ticking is not a
+    # faucet either.
+    if checked:
+        grant_pet_xp(member_id, pet_xp_rate('pet_xp_per_routine'), 'routine',
+                     ref_id=routine_id, date_str=date_str, once=True)
+        _grant_routine_day_bonus(member_id, date_str)
+    return True
+
+
+def _grant_routine_day_bonus(member_id: str, date_str: str) -> int:
+    """The whole day's routine, done. Idempotent per (member, day) -- and it
+    survives unticking, which is deliberate: having finished the day once is a
+    thing that happened."""
+    try:
+        due = routines_for_day(member_id, date_str)
+    except (ValueError, TypeError):
+        return 0                       # a malformed date is not a finished day
+    if not due or not all(r.get('checked') for r in due):
+        return 0
+    return grant_pet_xp(member_id, pet_xp_rate('pet_xp_routine_all_bonus'),
+                        'routine_all', ref_id='day', date_str=date_str, once=True)
 
 _MAX_STREAK_SCAN_DAYS = 3650  # a decade; a guard against a bad date_str, not a policy
 
@@ -3612,6 +3662,108 @@ def pet_slots(member_id: str) -> int:
     return PET_SLOTS_FREE
 
 
+# --- pet xp (P2) ----------------------------------------------------------
+# The membrane, in one place: this ledger is written by chores, routines and
+# (later) battles, and read by levels and training. It never touches
+# `points_ledger` and `points_ledger` never touches it.
+
+# Defaults; a household can retune them in Settings.
+PET_XP_RATES = {
+    'pet_xp_per_chore_point': 1.0,   # a 10-point chore mints 10 xp
+    'pet_xp_per_routine': 3,
+    'pet_xp_routine_all_bonus': 10,
+}
+
+
+def pet_xp_rate(key: str):
+    s = get_settings() or {}
+    val = s.get(key, PET_XP_RATES[key])
+    try:
+        return type(PET_XP_RATES[key])(val)
+    except (TypeError, ValueError):
+        return PET_XP_RATES[key]
+
+
+def grant_pet_xp(member_id: str, delta: int, reason: str, ref_id: str = None,
+                 date_str: str = None, note: str = None, once: bool = False) -> int:
+    """Append one xp row. Returns what was actually minted (0 if nothing).
+
+    `once` makes the row IDEMPOTENT on (member, reason, ref_id, date_str), and
+    it is the whole anti-farm story for routines: `set_routine_check` upserts
+    one check row per (routine, day), but a child can tick and untick a box
+    all afternoon. Without the guard that is an xp faucet.
+
+    Chores deliberately do NOT pass it. A recurring chore is a real second
+    piece of work when it comes round again, and points mint every time it is
+    verified -- xp minting on exactly the same events as points is the point.
+    Making it once-per-chore would have silently starved every daily chore
+    after its first day."""
+    import time
+    import uuid as _uuid
+    delta = int(delta or 0)
+    if not delta or not member_id:
+        return 0
+    with db_lock:
+        if once and ref_id is not None:
+            q = ((Query().member_id == member_id) & (Query().reason == reason)
+                 & (Query().ref_id == ref_id))
+            if date_str is not None:
+                q = q & (Query().date_str == date_str)
+            if pet_xp_ledger_table.search(q):
+                return 0
+        row = {'id': _uuid.uuid4().hex, 'member_id': member_id,
+               'delta': delta, 'reason': reason, 'ref_id': ref_id,
+               'date_str': date_str, 'note': note, 'ts': time.time()}
+        pet_xp_ledger_table.insert(row)
+    return delta
+
+
+def get_pet_xp_balance(member_id: str) -> int:
+    """Everything minted minus everything spent -- what is left to spend."""
+    with db_lock:
+        return sum(int(e.get('delta', 0))
+                   for e in pet_xp_ledger_table.search(Query().member_id == member_id))
+
+
+def get_pet_xp_earned(member_id: str) -> int:
+    """Lifetime xp EARNED. Drives level, so spending never costs a level --
+    the same shape as points vs status tiers, and for the same reason: a thing
+    you have already achieved is not a thing a purchase can take away."""
+    with db_lock:
+        return sum(d for e in pet_xp_ledger_table.search(Query().member_id == member_id)
+                   if (d := int(e.get('delta', 0))) > 0)
+
+
+def get_pet_xp_ledger(member_id: str, limit: int = 25) -> List[dict]:
+    with db_lock:
+        rows = [dict(e) for e in
+                pet_xp_ledger_table.search(Query().member_id == member_id)]
+    rows.sort(key=lambda r: r.get('ts') or 0, reverse=True)
+    return rows[:limit]
+
+
+def pet_level(member_id: str) -> int:
+    from services import pet_catalog
+    return pet_catalog.level_for_xp(get_pet_xp_earned(member_id))
+
+
+def pet_level_progress(member_id: str) -> dict:
+    from services import pet_catalog
+    return pet_catalog.level_progress(get_pet_xp_earned(member_id))
+
+
+def _with_level(pet: Optional[dict]) -> Optional[dict]:
+    """A pet's level is DERIVED from its owner's lifetime xp, never stored.
+
+    Stamped on every read so the stored field can never drift, and so a write
+    that tries to set it is not merely ignored but overwritten."""
+    if not pet:
+        return pet
+    pet = dict(pet)
+    pet['level'] = pet_level(pet.get('member_id') or '')
+    return pet
+
+
 def _pet_look(species: dict, look: dict) -> tuple:
     """Validate a look against the BAKED ART, never a hand-kept list.
 
@@ -3666,13 +3818,14 @@ def get_pets(member_id: Optional[str] = None,
             else pets_table.all())]
     if not include_retired:
         rows = [p for p in rows if p.get('active', True)]
-    return sorted(rows, key=lambda p: p.get('created_at') or 0)
+    return [_with_level(p) for p in
+            sorted(rows, key=lambda p: p.get('created_at') or 0)]
 
 
 def get_pet(pet_id: str) -> Optional[dict]:
     with db_lock:
         res = pets_table.search(Query().id == pet_id)
-    return dict(res[0]) if res else None
+    return _with_level(dict(res[0])) if res else None
 
 
 def get_active_pet(member_id: str) -> Optional[dict]:
@@ -3711,7 +3864,7 @@ def create_pet(member_id: str, name: str = '', species: Optional[dict] = None,
     }
     with db_lock:
         pets_table.insert(pet)
-    return {'pet': pet, 'rejected': rejected}
+    return {'pet': _with_level(pet), 'rejected': rejected}
 
 
 def update_pet(pet_id: str, fields: Optional[dict] = None) -> dict:
@@ -3742,7 +3895,7 @@ def update_pet(pet_id: str, fields: Optional[dict] = None) -> dict:
         with db_lock:
             pets_table.update(updates, Query().id == pet_id)
         pet.update(updates)
-    return {'pet': pet, 'rejected': rejected}
+    return {'pet': _with_level(pet), 'rejected': rejected}
 
 
 def retire_pet(pet_id: str, retired: bool = True) -> Optional[dict]:

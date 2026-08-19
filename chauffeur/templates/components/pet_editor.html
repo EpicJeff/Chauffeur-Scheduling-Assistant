@@ -92,7 +92,7 @@ function petEditorPanel() {
     return {
         show: false, loading: false, saving: false,
         bundle: null, memberId: null, memberName: '', token: null,
-        pet: null, cfg: {}, name: '', type: 'ember',
+        pet: null, cfg: {}, name: '', type: 'ember', xp: null,
         tab: 'body', history: [], future: [],
 
         // Glyph first, word second -- the tabs have to work for a child who
@@ -136,6 +136,14 @@ function petEditorPanel() {
                 }
                 const list = await fetch(this.api + 'api/pets?member_id=' + encodeURIComponent(this.memberId)).then(r => r.json());
                 this.pet = (list.pets || [])[0] || null;
+                // Level and xp are the MEMBER's, not the creature's -- every
+                // pet they own shares what their effort bought, so a second
+                // critter never arrives as a weakling. Shown here because the
+                // editor is where a kid looks at their pet properly.
+                try {
+                    this.xp = await fetch(this.api + 'api/pets/xp?member_id='
+                        + encodeURIComponent(this.memberId) + '&limit=6').then(r => r.json());
+                } catch (e) { this.xp = null; }
                 if (this.pet) {
                     this.cfg = Object.assign({}, this.pet.species, this.pet.look);
                     this.name = this.pet.name || '';
@@ -281,11 +289,26 @@ function petEditorPanel() {
         <div class="min-w-0 flex-1">
             <input type="text" x-model="name" maxlength="24" placeholder="Name your critter"
                    class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white text-lg font-bold placeholder-gray-500 focus:outline-none focus:border-blue-500">
-            <div class="mt-1.5 flex items-center gap-2 text-xs text-gray-400">
+            <div class="mt-1.5 flex items-center gap-2 text-xs text-gray-400 flex-wrap">
                 <span x-text="typeInfo.glyph"></span>
                 <span x-text="typeInfo.label"></span>
                 <span x-show="memberName" class="text-gray-600">·</span>
                 <span x-show="memberName" x-text="memberName"></span>
+                <span x-show="xp && xp.progress" class="text-gray-600">·</span>
+                <span x-show="xp && xp.progress" class="font-bold text-emerald-400"
+                      x-text="xp && xp.progress ? ('Lv' + xp.progress.level) : ''"></span>
+            </div>
+            <!-- Progress to the next level. Chores and routines fill this;
+                 nothing in this editor ever can, which is the whole point of
+                 rule 1 -- what you build here is free, what fills the bar is
+                 earned. -->
+            <div x-show="xp && xp.progress && !xp.progress.max" class="mt-1.5">
+                <div class="h-1.5 rounded-full bg-gray-800 overflow-hidden">
+                    <div class="h-full bg-emerald-500 transition-all"
+                         :style="'width:' + Math.round(100 * (xp && xp.progress ? xp.progress.ratio : 0)) + '%'"></div>
+                </div>
+                <div class="text-[10px] text-gray-500 mt-0.5"
+                     x-text="xp && xp.progress ? (xp.progress.need + ' XP to level ' + (xp.progress.level + 1)) : ''"></div>
             </div>
         </div>
         <button type="button" @click="close()"

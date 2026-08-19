@@ -351,6 +351,53 @@
                         </div>
                     </section>
 
+                    <!-- ===== Pet XP rates (pets arc P2) =====
+                         Here rather than on a pets page of its own, because
+                         this IS where the economy gets tuned. The panel says
+                         out loud that xp and points are separate currencies:
+                         a parent looking at two number boxes has no other way
+                         to know that one of them costs real money and the
+                         other never will. -->
+                    <section class="mb-10" id="petxp">
+                        <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Pet XP</h3>
+                        <div class="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-4">
+                            <p class="text-xs text-gray-400 leading-relaxed">
+                                Pet experience is its own currency. A verified chore pays
+                                <strong class="text-gray-200">points and XP</strong>, so nobody has to choose
+                                between levelling their critter and the family goal &mdash; and XP never turns
+                                back into points. Routines pay XP only; it is the first thing a kept routine
+                                has ever bought.
+                            </p>
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <label class="block">
+                                    <span class="block text-xs font-bold text-gray-300 mb-1">XP per chore point</span>
+                                    <input type="number" min="0" step="0.5" x-model.number="petXp.pet_xp_per_chore_point"
+                                        @change="savePetXp()"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                                    <span class="block text-[11px] text-gray-500 mt-1">A 10-point chore mints
+                                        <span x-text="Math.round(10 * (petXp.pet_xp_per_chore_point || 0))"></span> XP.</span>
+                                </label>
+                                <label class="block">
+                                    <span class="block text-xs font-bold text-gray-300 mb-1">XP per routine</span>
+                                    <input type="number" min="0" step="1" x-model.number="petXp.pet_xp_per_routine"
+                                        @change="savePetXp()"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                                    <span class="block text-[11px] text-gray-500 mt-1">Once per item per day, however
+                                        many times it is tapped.</span>
+                                </label>
+                                <label class="block">
+                                    <span class="block text-xs font-bold text-gray-300 mb-1">Full routine day bonus</span>
+                                    <input type="number" min="0" step="1" x-model.number="petXp.pet_xp_routine_all_bonus"
+                                        @change="savePetXp()"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                                    <span class="block text-[11px] text-gray-500 mt-1">First time everything due today
+                                        is done.</span>
+                                </label>
+                            </div>
+                            <p class="text-[11px] text-emerald-400" x-show="petXpSaved" x-cloak>Saved.</p>
+                        </div>
+                    </section>
+
                     <!-- ===== Rewards admin ===== -->
                     <section class="mb-10">
                         <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Rewards Store</h3>
@@ -442,6 +489,32 @@
                 // kiosk can never drift apart.
                 ...choresLanesLogic(apiBase),
                 apiBase: apiBase,
+                // Pet XP rates (pets arc P2). Loaded and saved on their own,
+                // because /api/settings merges by field -- this panel never
+                // has to know what else lives in settings.
+                petXp: { pet_xp_per_chore_point: 1, pet_xp_per_routine: 3,
+                         pet_xp_routine_all_bonus: 10 },
+                petXpSaved: false,
+                async loadPetXp() {
+                    try {
+                        const s = await fetch(`${this.apiBase}api/settings`).then(r => r.json());
+                        for (const k of Object.keys(this.petXp)) {
+                            if (s && s[k] !== undefined && s[k] !== null) this.petXp[k] = s[k];
+                        }
+                    } catch (e) { /* defaults stand */ }
+                },
+                async savePetXp() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/settings`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.petXp),
+                        });
+                        if (!res.ok) throw new Error('save failed');
+                        this.petXpSaved = true;
+                        setTimeout(() => { this.petXpSaved = false; }, 2000);
+                    } catch (e) { showGlobalAlert('Could not save pet XP rates'); }
+                },
                 isKiosk: new URLSearchParams(window.location.search).get('kiosk') === 'true',
                 hideTitle: ['none', 'off', '0', 'false', 'hide'].includes(
                     (new URLSearchParams(window.location.search).get('title') || '').toLowerCase()),
@@ -460,7 +533,8 @@
                     await this.loadPoints();
                     if (!this.isKiosk) {
                         await Promise.all([this.loadMembers(), this.loadChores(),
-                                           this.loadRewards(), this.loadRedemptions()]);
+                                           this.loadRewards(), this.loadRedemptions(),
+                                           this.loadPetXp()]);
                     } else {
                         // Kiosk needs the same data as the PWA so each lane can
                         // show claimable chores + affordable rewards. Refresh on

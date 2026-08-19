@@ -91,10 +91,63 @@ def matchup_text(attacker: str, defender: str) -> str:
     return ''
 
 
+# --- levels ---------------------------------------------------------------
+# XP IS THE MEMBER'S, AND EVERY PET THEY OWN SHARES THE LEVEL IT BUYS.
+#
+# The alternative -- xp banked per creature -- splits a child's effort the
+# moment they own two, so the second pet arrives useless and the first one
+# they liked stops growing. Sharing means a new critter is instantly as strong
+# as the one beside it, which is the answer to "which one do I feed": neither,
+# you feed yourself. Training points are still spent PER PET (P5), so the
+# choice that matters is where the effort goes, not which animal receives it.
+#
+# Quadratic, so the early levels come fast and the later ones mean something:
+# 20 xp to reach L2, 320 to reach L5, 1620 to reach L10. At roughly 25-80 xp a
+# day from chores and routines, that is a level on day one and L10 in about a
+# month -- fast enough to feel earned, slow enough to still be climbing.
+LEVEL_STEP = 20
+LEVEL_MAX = 50
+
+
+def xp_for_level(level: int) -> int:
+    """Lifetime xp needed to REACH this level. Level 1 is free."""
+    level = max(1, min(int(level or 1), LEVEL_MAX))
+    return LEVEL_STEP * (level - 1) ** 2
+
+
+def level_for_xp(xp: int) -> int:
+    xp = max(0, int(xp or 0))
+    level = int((xp / LEVEL_STEP) ** 0.5) + 1
+    # integer-sqrt drift at the boundaries, fixed by stepping rather than by
+    # trusting a float
+    while level < LEVEL_MAX and xp_for_level(level + 1) <= xp:
+        level += 1
+    while level > 1 and xp_for_level(level) > xp:
+        level -= 1
+    return min(level, LEVEL_MAX)
+
+
+def level_progress(xp: int) -> Dict:
+    """{level, xp, into, need, next_at, ratio} -- everything a progress bar
+    needs, so no surface has to do this arithmetic itself and get it slightly
+    different from the one beside it."""
+    xp = max(0, int(xp or 0))
+    level = level_for_xp(xp)
+    at = xp_for_level(level)
+    if level >= LEVEL_MAX:
+        return {'level': level, 'xp': xp, 'into': 0, 'need': 0,
+                'next_at': None, 'ratio': 1.0, 'max': True}
+    nxt = xp_for_level(level + 1)
+    span = max(1, nxt - at)
+    return {'level': level, 'xp': xp, 'into': xp - at, 'need': nxt - xp,
+            'next_at': nxt, 'ratio': round((xp - at) / span, 4), 'max': False}
+
+
 def bundle() -> Dict:
     """What the editor needs to draw the type picker, including who each
     element beats so the picker can SHOW the ring rather than describe it."""
     return {'types': [dict(t, beats=_ORDER[(i + 1) % len(_ORDER)],
                            loses_to=_ORDER[(i - 1) % len(_ORDER)])
                       for i, t in enumerate(TYPES)],
-            'super': SUPER, 'resist': RESIST, 'default': DEFAULT}
+            'super': SUPER, 'resist': RESIST, 'default': DEFAULT,
+            'level_max': LEVEL_MAX, 'level_step': LEVEL_STEP}
