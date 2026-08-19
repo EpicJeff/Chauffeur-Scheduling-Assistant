@@ -242,6 +242,17 @@ def test_there_is_a_way_in_by_hand():
     editor = open(os.path.join(base, 'components', 'pet_editor.html'),
                   encoding='utf-8').read()
     check('openPetBattle' in editor, "the editor has no way into a battle")
+    # BOTH WAYS. The editor has had a door into the arena since P4 and the
+    # arena had none back, so training, moves and slots -- the things losing a
+    # fight makes you want to change -- were reachable only by closing the
+    # arena and finding the critter again. Two views of one critter need two
+    # doors, and the one on the result screen matters most: the losing copy
+    # says "train up", which was advice with nowhere to go.
+    arena = open(os.path.join(base, 'components', 'pet_battle.html'),
+                 encoding='utf-8').read()
+    check('openPetEditor' in arena, "the arena has no way back to the editor")
+    check(arena.count('openPetEditor({ id: memberId, name: memberName })') >= 2,
+          "the way back is missing from the header or from the result screen")
 
 
 def test_a_replay_arrives_dressed_for_today():

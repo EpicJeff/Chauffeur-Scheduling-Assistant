@@ -425,6 +425,18 @@ function petBattlePanel() {
                         <span x-text="pet ? ('Lv' + pet.level) : ''"></span>
                     </div>
                 </div>
+                <!-- BACK TO THE DRESSING ROOM. The editor has had a door into
+                     the arena since P4 and the arena had none back: training,
+                     moves and slots -- the things a fight makes you want to
+                     change -- were reachable only by closing this and starting
+                     over from the card. The pair of overlays are two views of
+                     one critter, so both doors have to exist.
+                     The PIN gate is already satisfied (chfMemberToken caches
+                     it), so this reopens silently. -->
+                <button type="button" x-show="pet && typeof openPetEditor !== 'undefined'"
+                        @click="close(); openPetEditor({ id: memberId, name: memberName })"
+                        class="w-10 h-10 rounded-full bg-gray-800 border border-gray-700 text-gray-200"
+                        title="Train &amp; customise">🛠️</button>
                 <button type="button" x-show="typeof openPetGuide !== 'undefined'"
                         @click="openPetGuide(memberId)"
                         class="w-10 h-10 rounded-full bg-gray-800 border border-gray-700 text-gray-300"
@@ -628,9 +640,17 @@ function petBattlePanel() {
                             <div x-show="isReplay" class="mt-2 text-xs text-gray-500 max-w-xs">
                                 A replay &mdash; it went exactly like this the first time.
                             </div>
-                            <div class="mt-5 flex gap-2 justify-center">
+                            <div class="mt-5 flex gap-2 justify-center flex-wrap">
                                 <button type="button" @click="again()"
                                         class="px-5 h-11 rounded-xl bg-blue-600 text-white font-bold">Again</button>
+                                <!-- "Try a different element, or train up" is
+                                     printed directly above this row after a
+                                     loss, and until now it was advice with no
+                                     door: the way to act on it was to close the
+                                     arena and find the critter again. -->
+                                <button type="button" x-show="pet && typeof openPetEditor !== 'undefined'"
+                                        @click="close(); openPetEditor({ id: memberId, name: memberName })"
+                                        class="px-5 h-11 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 font-bold">Train</button>
                                 <button type="button" @click="close()"
                                         class="px-5 h-11 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 font-bold">Done</button>
                             </div>

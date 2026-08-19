@@ -3465,6 +3465,16 @@ the z values rather than trusting anyone to remember the contract.
 **Pets belong to the whole house (v2.301.0).** Four gaps, none of which were
 decisions anybody made.
 
+*(v2.308.0)* **The arena has a door back.** The editor has had a ⚔️ into the
+arena since P4 and the arena had none in return — so training, moves and slots,
+the things losing a fight makes you want to change, were reachable only by
+closing the arena and finding the critter again. A 🛠️ in the arena header and
+a **Train** button on the result screen both reopen the editor (the PIN gate is
+already satisfied, so it is silent). The result-screen one matters most: the
+losing copy says *"try a different element, or train up"*, which until now was
+advice with nowhere to go. Two views of one critter need two doors — pinned in
+`test_there_is_a_way_in_by_hand`, which asserted only the outbound half.
+
 *(v2.307.0)* The pencil badge on a **standing figure** moved from the bottom
 corner to the **top** corner everywhere (avatar-editor card, pets card tile,
 My Day greeting, chores + routine lanes): v2.301 composited the critter into
