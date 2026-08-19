@@ -146,8 +146,17 @@
                  exactly what a built-in feature needs. -->
             <button id="btn-pet" type="button"
                 onclick="if (selectedMemberId && typeof openPetEditor === 'function') openPetEditor(selectedMemberId)"
-                class="p-3 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors"
-                title="Your critter">🐾</button>
+                class="p-3 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors relative"
+                title="Your critter">🐾
+                <!-- The balance rides the button, because a currency nobody
+                     can see is not a reward. The DOT lights only when it can
+                     actually buy something -- a badge that is always on stops
+                     meaning anything. -->
+                <span id="pet-xp-badge"
+                    class="absolute -bottom-1 -right-1 px-1 rounded-full bg-gray-900 border border-gray-700 text-[9px] font-bold text-emerald-400 hidden"></span>
+                <span id="pet-xp-dot"
+                    class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 hidden"></span>
+            </button>
             <button id="btn-push" onclick="enableNotifications()"
                 class="p-3 rounded-full bg-blue-800 text-blue-200 hover:text-gray-100 transition-colors relative hidden"
                 title="Enable Push Notifications">
@@ -1264,6 +1273,7 @@
             // made a whole feature invisible to anyone not standing at the
             // wall panel. Two small buttons, under the greeting, where a kid
             // is already looking at their own day.
+            updatePetBadge(m);
             const petHtml = `
                 <div class="flex gap-1.5 mt-1.5">
                     <button onclick="typeof openPetEditor === 'function' && openPetEditor(selectedMemberId)"
@@ -1283,9 +1293,29 @@
                         ${petHtml}
                     </div>
                 </div>
-                ${showPoints ? `<button onclick="setView('chores')" class="px-4 py-2 rounded-full font-black text-lg"
-                    style="background:${kidTint(0.15)};color:${kidAccent()}">${balance} \u2B50</button>` : ''}
+                <div class="flex flex-col items-end gap-1 shrink-0">
+                    ${showPoints ? `<button onclick="setView('chores')" class="px-4 py-2 rounded-full font-black text-lg"
+                        style="background:${kidTint(0.15)};color:${kidAccent()}">${balance} \u2B50</button>` : ''}
+                    ${m.pet_xp ? `<button onclick="typeof openPetEditor === 'function' && openPetEditor(selectedMemberId)"
+                        class="px-3 py-1 rounded-full font-bold text-xs bg-emerald-500/15 text-emerald-300 whitespace-nowrap">${m.pet_xp} XP${m.pet_hint ? ' \u2022 ' + mfEscape(m.pet_hint) : ''}</button>` : ''}
+                </div>
             </div>`;
+        }
+
+        // Keeps the header's XP badge honest. Called from the greeting and
+        // from member selection, so it reaches ADULTS too -- they have no My
+        // Day at all, and the header is the only surface they share with the
+        // kids.
+        function updatePetBadge(m) {
+            const badge = document.getElementById('pet-xp-badge');
+            const dot = document.getElementById('pet-xp-dot');
+            if (!badge || !dot) return;
+            const xp = m && m.pet_xp;
+            if (xp) { badge.textContent = xp > 999 ? '999+' : xp; badge.classList.remove('hidden'); }
+            else { badge.classList.add('hidden'); }
+            dot.classList.toggle('hidden', !(m && m.pet_hint));
+            const btn = document.getElementById('btn-pet');
+            if (btn) btn.title = (m && m.pet_hint) ? ('You can ' + m.pet_hint) : 'Your critter';
         }
 
         async function renderMyDay() {

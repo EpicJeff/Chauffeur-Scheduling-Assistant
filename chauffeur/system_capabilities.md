@@ -3462,6 +3462,28 @@ My Day's pet buttons only ever served children, and adults have no My Day at
 all. The avatar editor also links to the pet editor, which makes pets
 reachable from every surface the figure appears on.
 
+**The balance is visible, and it says what it is for (v2.302.0).** Pet XP was
+readable in exactly one place -- the Moves tab of the editor -- and everywhere
+else showed LEVEL, which is a different thing: level is what your history
+bought and cannot be spent, the balance is what is in your pocket now.
+
+`storage.pet_spend_hint(member_id)` is the single answer to both "how much"
+and "what for": `{balance, hint, can_spend}`, where `hint` is `hatch a
+critter` / `teach a new move` / `get another critter`, and **None when there
+is nothing to buy** -- a badge that is always lit stops meaning anything. It
+also goes quiet once a critter knows every move. Every surface reads it, so
+none of them work out affordability slightly differently.
+
+Where it shows: the PWA **header** carries the balance as a badge with a dot
+that lights only when something is affordable (on every view, for every role
+-- the only pets surface an adult shares with the kids); **My Day** gets an XP
+chip beside the points chip, reading e.g. "1435 XP · get another critter";
+the **editor's preview band** shows the balance next to the level with a
+"spend it" jump to the Moves tab; the **pets card** shows "N XP · hint" under
+a critter, and nothing at all when there is nothing to spend on. The roster
+(`_public_member`) and the pets tile both carry `pet_xp`/`pet_hint`, so no
+surface pays for a second round trip.
+
 **A full-screen editor is opaque on a wall (v2.295.0).** `panel_skin` maps
 every `.bg-gray-950`/`.bg-gray-900` surface to translucent glass with
 `!important` so the wallpaper reads through the board — and a full-screen

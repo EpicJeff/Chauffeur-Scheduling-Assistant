@@ -1857,9 +1857,13 @@ def _tile_pets(now, config=None, **_):
             if not pets and not show_empty:
                 continue
             prog = storage.pet_level_progress(m['id'])
+            spend = storage.pet_spend_hint(m['id'])
             base = {'member_id': m['id'], 'name': m.get('name'),
                     'color_code': m.get('color_code'),
-                    'has_pin': bool(m.get('pin_hash'))}
+                    'has_pin': bool(m.get('pin_hash')),
+                    # Shown only when it can actually buy something -- a badge
+                    # that is always lit stops meaning anything.
+                    'xp': spend['balance'], 'hint': spend['hint']}
             for pet in pets:
                 cfg = dict(pet.get('species') or {})
                 cfg.update(pet.get('look') or {})

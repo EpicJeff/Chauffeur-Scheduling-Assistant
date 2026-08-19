@@ -312,6 +312,75 @@ def test_the_pwa_has_a_way_in_for_every_role():
           "no door to the critter standing next to the figure")
 
 
+# --- the balance is visible, and it says what it is for -------------------
+
+def test_the_hint_is_silent_until_there_is_something_to_buy():
+    """A badge that is always lit stops meaning anything."""
+    reset_db()
+    _member("k1", "Ada")
+    check(storage.pet_spend_hint("k1")['hint'] == 'hatch a critter',
+          "somebody with no critter was not pointed at hatching one")
+    storage.create_pet("k1", "Rocket", {}, {}, 'ember')
+    check(storage.pet_spend_hint("k1")['hint'] is None,
+          "a broke owner was nudged to spend nothing")
+    storage.grant_pet_xp("k1", storage.PET_MOVE_COST, 'grant')
+    check(storage.pet_spend_hint("k1")['hint'] == 'teach a new move',
+          "an affordable move was not surfaced")
+    storage.grant_pet_xp("k1", storage.PET_SLOT_COST, 'grant')
+    check(storage.pet_spend_hint("k1")['hint'] == 'get another critter',
+          "an affordable slot was not surfaced")
+
+
+def test_a_pet_that_knows_everything_stops_nagging():
+    reset_db()
+    _member("k1", "Ada")
+    from services import pet_catalog
+    pet = storage.create_pet("k1", "Rocket", {}, {}, 'ember')['pet']
+    storage.grant_pet_xp("k1", storage.PET_MOVE_COST * 40, 'grant')
+    for m in pet_catalog.moves():
+        storage.learn_pet_move(pet['id'], m['key'])
+    hint = storage.pet_spend_hint("k1")['hint']
+    check(hint != 'teach a new move',
+          "a critter that knows every move is still being told to learn one")
+
+
+def test_the_balance_reaches_the_surfaces_that_show_it():
+    import datetime
+    import main
+    from services import home_board
+    reset_db()
+    _member("k1", "Ada")
+    storage.create_pet("k1", "Rocket", {}, {}, 'ember')
+    storage.grant_pet_xp("k1", 400, 'grant')
+    roster = main._public_member(storage.get_member("k1"))
+    check(roster.get('pet_xp') == 400, "the PWA roster has no balance")
+    check('pet_hint' in roster, "the PWA roster cannot nudge")
+    tile = home_board._BUILDERS['pets'](datetime.datetime.now(), config={})
+    row = tile['members'][0]
+    check(row.get('xp') == 400, "the board card has no balance")
+    check(main.pet_xp_endpoint("k1").get('hint') is not None
+          or storage.pet_spend_hint("k1")['hint'] is None,
+          "the xp endpoint disagrees with the hint")
+
+
+def test_every_surface_that_should_show_xp_does():
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    app = open(os.path.join(here, 'templates', 'app.html'), encoding='utf-8').read()
+    check('pet-xp-badge' in app and 'pet_xp' in app,
+          "the PWA never shows a balance")
+    head = app[:app.index('</header>')]
+    check('pet-xp-badge' in head,
+          "the balance is not on the header, so an adult never sees it")
+    editor = open(os.path.join(here, 'templates', 'components',
+                               'pet_editor.html'), encoding='utf-8').read()
+    band = editor[:editor.index('<!-- tabs -->')]
+    check('balance' in band,
+          "the balance is still buried in one tab instead of the preview band")
+    card = open(os.path.join(here, 'templates', 'components',
+                             'board_tile_body.html'), encoding='utf-8').read()
+    check('m.hint' in card, "the board card cannot nudge")
+
+
 def run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     failed = 0

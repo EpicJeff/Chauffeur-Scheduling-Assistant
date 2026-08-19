@@ -482,6 +482,11 @@
                                             :style="'width:' + Math.round(100 * ((m.pet && m.pet.progress ? m.pet.progress.ratio : 0))) + '%'"></span>
                                     </span>
                                     <span x-show="t.data.show_owner" class="text-[10px] text-gray-500 truncate max-w-[6rem]" x-text="m.name"></span>
+                                    <!-- Only when there is something to spend
+                                         it on. The nudge IS the display. -->
+                                    <span x-show="m.hint && m.kind === 'pet'"
+                                        class="text-[10px] font-bold text-emerald-400"
+                                        x-text="m.xp + ' XP · ' + m.hint"></span>
                                 </button>
                                 <!-- A second door, because "edit my critter"
                                      and "go and fight" are different errands

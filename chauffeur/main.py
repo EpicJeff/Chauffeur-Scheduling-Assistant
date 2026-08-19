@@ -4353,6 +4353,11 @@ def _public_member(m: dict) -> dict:
         if pet:
             out['pet_name'] = pet.get('name')
             out['pet_id'] = pet.get('id')
+        # The spendable balance and whether it can buy anything, so a header
+        # or a greeting can show both without a second round trip.
+        spend = storage.pet_spend_hint(m.get('id'))
+        out['pet_xp'] = spend['balance']
+        out['pet_hint'] = spend['hint']
     except Exception:
         pass
     return out
@@ -7610,6 +7615,7 @@ def pet_xp_endpoint(member_id: str, limit: int = 25):
             'balance': storage.get_pet_xp_balance(member_id),
             'earned': storage.get_pet_xp_earned(member_id),
             'progress': storage.pet_level_progress(member_id),
+            'hint': storage.pet_spend_hint(member_id)['hint'],
             'ledger': storage.get_pet_xp_ledger(member_id, limit=limit)}
 
 

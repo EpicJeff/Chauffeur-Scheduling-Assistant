@@ -455,6 +455,18 @@ function petEditorPanel() {
                 <span x-show="xp && xp.progress" class="text-gray-600">·</span>
                 <span x-show="xp && xp.progress" class="font-bold text-emerald-400"
                       x-text="xp && xp.progress ? ('Lv' + xp.progress.level) : ''"></span>
+                <!-- LEVEL and BALANCE are different things and were being
+                     confused: level is what your history bought and cannot be
+                     spent, the balance is what is in your pocket right now.
+                     The balance was only visible on the Moves tab, which is a
+                     strange place to keep the one number that tells a child
+                     they can afford something. -->
+                <span x-show="balance" class="text-gray-600">·</span>
+                <span x-show="balance" class="font-bold text-emerald-300"
+                      x-text="balance + ' XP'"></span>
+                <span x-show="xp && xp.hint" @click="tab = 'moves'"
+                      class="px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-300 font-bold cursor-pointer"
+                      x-text="'spend it'"></span>
             </div>
             <!-- Progress to the next level. Chores and routines fill this;
                  nothing in this editor ever can, which is the whole point of

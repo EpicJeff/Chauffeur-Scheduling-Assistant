@@ -3831,6 +3831,31 @@ def get_pet_xp_earned(member_id: str) -> int:
                    if (d := int(e.get('delta', 0))) > 0)
 
 
+def pet_spend_hint(member_id: str) -> dict:
+    """{balance, hint, can_spend} -- what this member could buy right now.
+
+    A currency nobody can see is not a reward, and a balance with nothing to
+    do is just a number. So the SAME function answers both questions, and
+    every surface reads it rather than each one working out affordability
+    slightly differently: the nudge and the display are the same thing.
+
+    Silent on purpose when there is nothing to buy. A badge that is always
+    lit stops meaning anything."""
+    balance = get_pet_xp_balance(member_id)
+    pets = get_pets(member_id)
+    hint = None
+    if pets and balance >= PET_MOVE_COST:
+        from services import pet_catalog
+        known = set(pet_known_moves(pets[0]))
+        if any(m['key'] not in known for m in pet_catalog.moves()):
+            hint = 'teach a new move'
+    if balance >= PET_SLOT_COST and len(pets) >= pet_slots(member_id):
+        hint = 'get another critter'
+    if not pets:
+        hint = 'hatch a critter'
+    return {'balance': balance, 'hint': hint, 'can_spend': bool(hint)}
+
+
 def get_pet_xp_ledger(member_id: str, limit: int = 25) -> List[dict]:
     with db_lock:
         rows = [dict(e) for e in
