@@ -1,0 +1,244 @@
+<!-- How to play (pets arc). Written for the kids, not for us.
+
+     THE USERS CANNOT BE ASSUMED TO READ -- the same rule the avatar and pet
+     editors were built under. So every section leads with a picture or a
+     glyph, sentences are short, and the one idea that genuinely needs a
+     diagram (the element ring) gets drawn rather than described. A child who
+     can only look at it should still come away knowing that everyone gets a
+     critter, that chores make it stronger, and that no element is the best
+     one.
+
+     It opens from the '?' on the editor and on the arena, and it opens BY
+     ITSELF the first time somebody with no critter reaches the editor --
+     which is exactly the moment the rules are worth having, and the only
+     moment auto-opening is not an interruption. Remembered per member in
+     localStorage, so it never does it twice. -->
+{% raw %}
+<style>
+    [x-cloak] { display: none !important; }
+    .pg-critter svg { display: block; width: 100%; height: 100%; }
+    .pg-step { counter-increment: pg; }
+    .pg-step > .pg-num::before { content: counter(pg); }
+</style>
+<script>
+window.openPetGuide = function (memberId) {
+    window.dispatchEvent(new CustomEvent('pet-guide-open',
+        { detail: { memberId: memberId || null } }));
+};
+
+// Shown once, to the person who has not started yet.
+window.maybeOpenPetGuide = function (memberId, hasPet) {
+    if (hasPet) return false;
+    const key = 'chauffeur_pet_guide_seen_' + memberId;
+    if (localStorage.getItem(key)) return false;
+    localStorage.setItem(key, '1');
+    window.openPetGuide(memberId);
+    return true;
+};
+
+function petGuidePanel() {
+    return {
+        show: false, bundle: null, memberId: null,
+
+        get api() { return (window.chfBase !== undefined ? window.chfBase : ''); },
+        get types() { return (this.bundle && this.bundle.types) || []; },
+
+        async open(detail) {
+            this.memberId = (detail || {}).memberId || null;
+            this.show = true;
+            if (!this.bundle) {
+                try {
+                    this.bundle = await fetch(this.api + 'api/pets/bundle')
+                        .then(r => r.json());
+                } catch (e) { this.bundle = null; }
+            }
+        },
+        close() { this.show = false; },
+
+        // A few example critters, so the page is full of the actual thing
+        // rather than of words about it.
+        sample(body, top, colour, accent, eyes, mouth, ns) {
+            if (!this.bundle || !window.petCompose) return '';
+            return window.petCompose(this.bundle, {
+                body: body, top: top, eyes: eyes, mouth: mouth,
+                base_color: colour, accent_color: accent,
+            }, 'g' + ns);
+        },
+
+        // The ring, drawn. Five elements on a pentagon with an arrow from
+        // each to the one it beats -- the single idea in the whole game that
+        // is genuinely easier to see than to read.
+        //
+        // Built as a STRING and injected with x-html rather than with x-for
+        // inside the <svg>. A <template> written inside an <svg> in HTML
+        // source is parsed in the HTML namespace, so Alpine clones <line> and
+        // <circle> as HTML elements and the browser draws precisely nothing --
+        // no error, just an empty box where the diagram should be.
+        ringSvg() {
+            const types = this.types;
+            if (!types.length) return '';
+            const n = types.length, R = 74, cx = 100, cy = 92;
+            const pts = types.map((t, i) => {
+                const a = (-Math.PI / 2) + (i * 2 * Math.PI / n);
+                return { t: t, x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) };
+            });
+            let out = '';
+            pts.forEach((p, i) => {
+                const q = pts[(i + 1) % n];
+                const dx = q.x - p.x, dy = q.y - p.y;
+                // enough clearance that an arrowhead never lands on a label
+                const len = Math.hypot(dx, dy) || 1, pad = 29;
+                out += '<line x1="' + (p.x + dx / len * pad).toFixed(1)
+                    + '" y1="' + (p.y + dy / len * pad).toFixed(1)
+                    + '" x2="' + (q.x - dx / len * pad).toFixed(1)
+                    + '" y2="' + (q.y - dy / len * pad).toFixed(1)
+                    + '" stroke="#64748b" stroke-width="2" marker-end="url(#pgArrow)"/>';
+            });
+            pts.forEach(p => {
+                out += '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1)
+                    + '" r="18" fill="#1e293b" stroke="#334155" stroke-width="2"/>'
+                    + '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + 6).toFixed(1)
+                    + '" text-anchor="middle" font-size="17">' + p.t.glyph + '</text>'
+                    + '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + 31).toFixed(1)
+                    + '" text-anchor="middle" font-size="10" fill="#94a3b8" '
+                    + 'font-weight="bold">' + p.t.label + '</text>';
+            });
+            return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 190" '
+                + 'class="w-full" aria-hidden="true"><defs>'
+                + '<marker id="pgArrow" viewBox="0 0 10 10" refX="9" refY="5" '
+                + 'markerWidth="5" markerHeight="5" orient="auto-start-reverse">'
+                + '<path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker></defs>'
+                + out + '</svg>';
+        },
+    };
+}
+</script>
+
+<div x-data="petGuidePanel()" x-cloak x-show="show"
+     @pet-guide-open.window="open($event.detail)"
+     class="panel-modal fixed inset-0 z-[120] bg-gray-950 flex flex-col select-none">
+
+    <div class="flex-shrink-0 flex items-center gap-3 p-3 border-b border-gray-800">
+        <span class="text-2xl">🐾</span>
+        <div class="min-w-0 flex-1">
+            <div class="text-lg font-black text-white">How to play</div>
+            <div class="text-[11px] text-gray-500">Critters, chores and battles</div>
+        </div>
+        <button type="button" @click="close()"
+                class="w-10 h-10 rounded-full bg-gray-800 border border-gray-700 text-gray-300 text-xl leading-none">×</button>
+    </div>
+
+    <div class="flex-1 min-h-0 overflow-y-auto p-4 space-y-6" style="counter-reset: pg">
+
+        <!-- 1. everyone gets one -->
+        <section class="pg-step flex gap-3">
+            <span class="pg-num flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 text-white font-black grid place-items-center text-sm"></span>
+            <div class="min-w-0 flex-1">
+                <h3 class="text-base font-bold text-white">You get a critter. It's free.</h3>
+                <p class="text-sm text-gray-400 mt-1">
+                    Everybody gets one. Pick how it looks — body, horns, eyes, colours.
+                    Changing how it looks <strong class="text-gray-200">never costs anything</strong>,
+                    ever. Make it weird if you want.
+                </p>
+                <div class="flex gap-2 mt-2">
+                    <template x-for="(s, i) in [['wedge','horns','Coral','Amber','angry','teeth'],
+                                                ['blob','antennae','Teal','Lilac','wide','ooh'],
+                                                ['round','fin','Lime','Sky','happy','grin'],
+                                                ['squat','crown','Blossom','Amber','wink','smile']]" :key="i">
+                        <span class="pg-critter w-14 h-14 rounded-lg bg-gray-800 overflow-hidden"
+                              x-html="sample(s[0], s[1], s[2], s[3], s[4], s[5], i)"></span>
+                    </template>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. how it gets stronger -->
+        <section class="pg-step flex gap-3">
+            <span class="pg-num flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 text-white font-black grid place-items-center text-sm"></span>
+            <div class="min-w-0 flex-1">
+                <h3 class="text-base font-bold text-white">Chores and routines make it stronger.</h3>
+                <p class="text-sm text-gray-400 mt-1">
+                    Every chore you finish and every routine you tick off gives your critter
+                    <strong class="text-emerald-400">XP</strong>. XP makes it level up, and each
+                    level gives you <strong class="text-gray-200">training points</strong> to make it
+                    tougher, faster or hit harder.
+                </p>
+                <p class="text-xs text-gray-500 mt-1.5">
+                    🧹 chore → ⭐ points <em>and</em> ✨ XP. You never have to choose between them.
+                </p>
+            </div>
+        </section>
+
+        <!-- 3. the ring -->
+        <section class="pg-step flex gap-3">
+            <span class="pg-num flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 text-white font-black grid place-items-center text-sm"></span>
+            <div class="min-w-0 flex-1">
+                <h3 class="text-base font-bold text-white">Every element beats one and loses to one.</h3>
+                <p class="text-sm text-gray-400 mt-1">
+                    There is <strong class="text-gray-200">no best element</strong>. Pick the one
+                    you like. The arrows show who beats who — and it goes all the way round.
+                </p>
+                <div class="w-full max-w-[15rem] mx-auto mt-2"
+                     x-html="ringSvg()"></div>
+            </div>
+        </section>
+
+        <!-- 4. battles -->
+        <section class="pg-step flex gap-3">
+            <span class="pg-num flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 text-white font-black grid place-items-center text-sm"></span>
+            <div class="min-w-0 flex-1">
+                <h3 class="text-base font-bold text-white">Battle for more XP.</h3>
+                <p class="text-sm text-gray-400 mt-1">
+                    Tap <strong class="text-gray-200">⚔️ Battle</strong>. Fight a practice opponent,
+                    or ask somebody in your family. They have to say yes first — nobody can drag
+                    you into a fight.
+                </p>
+                <div class="mt-2 p-2.5 rounded-lg bg-blue-950/50 border border-blue-800/60">
+                    <p class="text-xs text-blue-200">
+                        <strong>Family battles are level-matched.</strong> Both critters drop to the
+                        same level, so it <em>does not matter</em> who has done more chores. It is
+                        down to your elements, your moves and a bit of luck.
+                    </p>
+                </div>
+                <p class="text-xs text-gray-500 mt-1.5">
+                    You get XP even when you lose. Trying always pays.
+                </p>
+            </div>
+        </section>
+
+        <!-- 5. spending -->
+        <section class="pg-step flex gap-3">
+            <span class="pg-num flex-shrink-0 w-7 h-7 rounded-full bg-blue-600 text-white font-black grid place-items-center text-sm"></span>
+            <div class="min-w-0 flex-1">
+                <h3 class="text-base font-bold text-white">Spend XP on new moves.</h3>
+                <p class="text-sm text-gray-400 mt-1">
+                    Your critter already knows four moves from its own element, free.
+                    Buy a move from a <em>different</em> element to cover the thing that beats you —
+                    that is the clever bit.
+                </p>
+                <p class="text-sm text-gray-400 mt-1.5">
+                    Save up enough and you can get a <strong class="text-gray-200">second critter</strong>.
+                    It starts at your level, so it is never a weakling.
+                </p>
+            </div>
+        </section>
+
+        <!-- 6. the promises -->
+        <section class="rounded-xl bg-gray-900 border border-gray-800 p-3">
+            <h3 class="text-sm font-bold text-white mb-1.5">Things that will never happen</h3>
+            <ul class="text-xs text-gray-400 space-y-1">
+                <li>• Your critter can never get sick, hungry or sad. You cannot forget to feed it.</li>
+                <li>• Nothing you have earned is ever taken away.</li>
+                <li>• Your XP is <strong class="text-gray-200">not</strong> your chore points.
+                    Spending XP never costs you points, and battling never earns them.</li>
+                <li>• Nobody keeps score of who wins. There is no leaderboard.</li>
+            </ul>
+        </section>
+    </div>
+
+    <div class="flex-shrink-0 border-t border-gray-800 p-3">
+        <button type="button" @click="close()"
+                class="w-full h-12 rounded-xl bg-blue-600 text-white font-bold">Got it!</button>
+    </div>
+</div>
+{% endraw %}

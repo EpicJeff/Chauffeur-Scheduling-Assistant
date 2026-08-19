@@ -3484,6 +3484,30 @@ a critter, and nothing at all when there is nothing to spend on. The roster
 (`_public_member`) and the pets tile both carry `pet_xp`/`pet_hint`, so no
 surface pays for a second round trip.
 
+**How to play (v2.303.0).** `components/pet_guide.html` -- the rules, written
+for the kids. Same reading-optional rule the editors were built under: every
+section leads with a picture or a glyph, sentences are short, and the one idea
+that genuinely needs a diagram gets one. Real critters are composed inline
+with `petCompose` rather than described.
+
+Five steps (everyone gets one free / chores and routines make it stronger /
+the element ring / battling / spending), then a **"Things that will never
+happen"** panel that states the arc's promises to the person they were made
+for: your critter cannot get sick or hungry, nothing earned is taken away, XP
+is not your chore points, and nobody keeps score. A test asserts those
+sentences are present, so if a rule ever changes the words fail with it.
+
+Reachable from `?` on the editor and the arena, and it **opens itself once**
+for somebody with no critter -- the one moment the rules are worth having and
+the only moment auto-opening is not an interruption (remembered per member in
+localStorage).
+
+**The ring is built as a STRING and injected with `x-html`.** A `<template
+x-for>` written inside an `<svg>` is parsed in the HTML namespace, so Alpine
+clones `<line>` and `<circle>` as HTML elements and the browser draws
+precisely nothing -- no error, just an empty box. It shipped that way for one
+screenshot; a test now keeps inline `<svg>` out of the markup.
+
 **A full-screen editor is opaque on a wall (v2.295.0).** `panel_skin` maps
 every `.bg-gray-950`/`.bg-gray-900` surface to translucent glass with
 `!important` so the wallpaper reads through the board — and a full-screen

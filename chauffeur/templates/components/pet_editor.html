@@ -245,6 +245,11 @@ function petEditorPanel() {
                 this.show = false;
             }
             this.loading = false;
+            // The rules are worth having at exactly one moment: the first time
+            // somebody with no critter opens this. Once per member, ever.
+            if (typeof maybeOpenPetGuide === 'function') {
+                maybeOpenPetGuide(this.memberId, !!this.pet);
+            }
         },
 
         close() { this.show = false; },
@@ -644,6 +649,10 @@ function petEditorPanel() {
                 class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-300 disabled:opacity-30" title="Redo">↷</button>
         <button type="button" @click="shuffle()"
                 class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-300" title="Shuffle">🎲</button>
+        <button type="button" x-show="typeof openPetGuide !== 'undefined'"
+                @click="openPetGuide(memberId)"
+                class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-300"
+                title="How to play">?</button>
         <button type="button" x-show="pet" @click="retire()"
                 class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-400" title="Put on the shelf">📦</button>
         <!-- Straight from the dressing room into the arena. The editor is

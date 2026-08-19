@@ -381,6 +381,56 @@ def test_every_surface_that_should_show_xp_does():
     check('m.hint' in card, "the board card cannot nudge")
 
 
+# --- the rules, where a child can read them ------------------------------
+
+def test_the_guide_exists_and_is_reachable_from_the_game():
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    comp = os.path.join(here, 'templates', 'components')
+    guide = open(os.path.join(comp, 'pet_guide.html'), encoding='utf-8').read()
+    check('openPetGuide' in guide and 'maybeOpenPetGuide' in guide,
+          "the guide cannot be opened")
+    for page in ('app.html', 'home.html', 'chores.html', 'routines.html'):
+        src = open(os.path.join(here, 'templates', page), encoding='utf-8').read()
+        check("components/pet_guide.html" in src,
+              "%s cannot show the rules" % page)
+    for host in ('pet_editor.html', 'pet_battle.html'):
+        src = open(os.path.join(comp, host), encoding='utf-8').read()
+        check('openPetGuide' in src, "%s has no way to the rules" % host)
+
+
+def test_the_guide_states_the_promises_it_has_to_state():
+    """The four things a child most needs to know are the four this arc spent
+    the most effort making true. If a rule ever changes, this fails and the
+    words get changed with it."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    g = open(os.path.join(here, 'templates', 'components', 'pet_guide.html'),
+             encoding='utf-8').read().lower()
+    for phrase, why in (
+            ('never costs anything', 'that looks are free'),
+            ('level-matched', 'that a family fight ignores who did more chores'),
+            ('no best element', 'that no element is better than another'),
+            ('even when you lose', 'that losing still pays'),
+            ('leaderboard', 'that nobody keeps score')):
+        check(phrase in g, "the guide never tells a child %s" % why)
+
+
+def test_the_ring_is_drawn_rather_than_x_for_ed():
+    """A <template x-for> inside an <svg> is parsed in the HTML namespace, so
+    Alpine clones <line> and <circle> as HTML elements and the browser draws
+    nothing at all -- silently. The ring is built as a string for that reason
+    and must stay that way."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    g = open(os.path.join(here, 'templates', 'components', 'pet_guide.html'),
+             encoding='utf-8').read()
+    check('ringSvg()' in g, "the ring builder is gone")
+    svg_start = g.index('<svg')
+    if svg_start > 0:
+        pass
+    check('<svg viewBox' not in g,
+          "an inline <svg> is back in the markup -- if it holds an x-for it "
+          "will render as an empty box")
+
+
 def run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     failed = 0

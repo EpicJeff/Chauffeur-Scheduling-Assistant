@@ -380,6 +380,10 @@ function petBattlePanel() {
                         <span x-text="pet ? ('Lv' + pet.level) : ''"></span>
                     </div>
                 </div>
+                <button type="button" x-show="typeof openPetGuide !== 'undefined'"
+                        @click="openPetGuide(memberId)"
+                        class="w-10 h-10 rounded-full bg-gray-800 border border-gray-700 text-gray-300"
+                        title="How to play">?</button>
                 <button type="button" @click="close()"
                         class="w-10 h-10 rounded-full bg-gray-800 border border-gray-700 text-gray-300 text-xl leading-none">×</button>
             </div>
