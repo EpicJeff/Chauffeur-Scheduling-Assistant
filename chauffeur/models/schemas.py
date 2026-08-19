@@ -1019,6 +1019,11 @@ class Settings(BaseModel):
     # replay still plays -- only the xp stops. Refusing a child the thing they
     # built is a punishment; paying nothing for the sixth go is an economy.
     pet_pve_daily_cap: int = 5
+    # Battles between family members. OFF is a real option -- a household that
+    # does not want siblings fighting keeps everything else. The pair cap is
+    # per couple per day, and past it the fight still happens for nothing.
+    pet_pvp_enabled: bool = True
+    pet_pvp_pair_cap: int = 3
     # Email intake (intake arc phase 2): a dedicated mailbox polled over IMAP;
     # allowlisted senders' messages are LLM-extracted into event/task
     # proposals a parent approves on /intake. The password is a Gmail app

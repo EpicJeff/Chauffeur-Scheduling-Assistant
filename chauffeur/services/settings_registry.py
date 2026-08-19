@@ -458,6 +458,13 @@ ENTRIES: List[dict] = [
     _e('pet_xp_routine_all_bonus', 'kids', 'Pet XP for a full routine day',
        'A bonus the first time every routine due today is done.',
        page='chores', anchor='petxp'),
+    _e('pet_pvp_enabled', 'kids', 'Battles between family',
+       'Whether children may challenge each other. Off, only the practice '
+       'opponents remain. Family battles are always level-matched.',
+       page='chores', anchor='petxp'),
+    _e('pet_pvp_pair_cap', 'kids', 'Family battles a day',
+       'How many battles between the same two people pay experience each day.',
+       page='chores', anchor='petxp'),
     _e('pet_pve_daily_cap', 'kids', 'Rewarded battles a day',
        'How many battles pay experience each day. Past it the fight still '
        'happens and the replay still plays -- only the reward stops.',

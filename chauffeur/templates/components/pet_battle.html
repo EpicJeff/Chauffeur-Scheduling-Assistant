@@ -110,6 +110,7 @@ function petBattlePanel() {
         show: false, stage: 'pick', busy: false,
         memberId: null, memberName: '', token: null,
         pet: null, opponents: [], chosen: null,
+        challenges: [], rivals: [], pvpEnabled: true,
         replay: null, idx: -1, hp: { a: 0, b: 0 }, maxHp: { a: 1, b: 1 },
         note: '', moveText: '', lines: [], awarded: 0, capped: false, remaining: null,
         anim: { mine: '', theirs: '' }, fainted: { a: false, b: false },
@@ -158,6 +159,7 @@ function petBattlePanel() {
                 const b = await fetch(this.api + 'api/pets/battles?member_id='
                     + encodeURIComponent(this.memberId) + '&limit=1').then(r => r.json());
                 this.remaining = Math.max(0, (b.cap || 0) - (b.used_today || 0));
+                await this.loadChallenges();
             } catch (e) {
                 showGlobalAlert('Could not reach the arena');
                 this.show = false;
@@ -167,6 +169,91 @@ function petBattlePanel() {
         close() {
             if (this.timer) { clearTimeout(this.timer); this.timer = null; }
             this.show = false;
+        },
+
+        headers() {
+            const h = { 'Content-Type': 'application/json' };
+            if (this.token) h['X-Member-Token'] = this.token;
+            return h;
+        },
+
+        async loadChallenges() {
+            try {
+                const c = await fetch(this.api + 'api/pets/challenges?member_id='
+                    + encodeURIComponent(this.memberId)).then(r => r.json());
+                this.challenges = (c.challenges || []).filter(x => x.incoming);
+                this.rivals = c.rivals || [];
+                this.pvpEnabled = c.pvp_enabled !== false;
+            } catch (e) { this.challenges = []; this.rivals = []; }
+        },
+
+        // Asking is an INVITATION. Nothing happens to the other child until
+        // they say yes, so this ends with "asked" and not with a battle.
+        async challenge(r) {
+            if (this.busy) return;
+            this.busy = true;
+            try {
+                const res = await fetch(this.api + 'api/pets/challenge', {
+                    method: 'POST', headers: this.headers(),
+                    body: JSON.stringify({ from_member: this.memberId,
+                                           to_member: r.member_id }),
+                });
+                const d = await res.json().catch(() => ({}));
+                if (!res.ok) showGlobalAlert(d.detail || 'Could not ask them');
+                else showGlobalAlert(r.name + ' has been asked!');
+                await this.loadChallenges();
+            } catch (e) { showGlobalAlert('Could not ask them'); }
+            this.busy = false;
+        },
+
+        async answer(ch, accept) {
+            if (this.busy) return;
+            this.busy = true;
+            try {
+                const res = await fetch(this.api + 'api/pets/challenge/'
+                    + ch.id + '/respond', {
+                    method: 'POST', headers: this.headers(),
+                    body: JSON.stringify({ accept: accept }),
+                });
+                const d = await res.json().catch(() => ({}));
+                if (!res.ok) { showGlobalAlert(d.detail || 'Could not answer'); }
+                else if (accept && d.replay) {
+                    // The person who accepted is side B of the stored fight,
+                    // so the scene is drawn from their side: their critter is
+                    // the near one.
+                    this.chosen = { name: d.replay.a.name, svg: this.rivalSvg(ch.from_member) };
+                    this.awarded = (d.awards || {})[this.memberId] || 0;
+                    this.capped = !!d.capped;
+                    this.replay = this.mirror(d.replay);
+                    this.startPlayback();
+                } else {
+                    showGlobalAlert('Maybe another time.');
+                }
+                await this.loadChallenges();
+            } catch (e) { showGlobalAlert('Could not answer'); }
+            this.busy = false;
+        },
+
+        rivalSvg(memberId) {
+            const r = (this.rivals || []).find(x => x.member_id === memberId);
+            return r ? r.svg : '';
+        },
+
+        // Both children watch the SAME fight, each from their own side. Rather
+        // than a second resolve (which would be a different battle), the
+        // replay is flipped: a becomes b, and every turn's actor and hp with
+        // it. Same seed, same result, told from the other chair.
+        mirror(replay) {
+            const flip = t => Object.assign({}, t, {
+                actor: t.actor === 'a' ? 'b' : 'a',
+                hp: { a: t.hp.b, b: t.hp.a },
+                max_hp: { a: t.max_hp.b, b: t.max_hp.a },
+            });
+            return Object.assign({}, replay, {
+                a: replay.b, b: replay.a,
+                winner: replay.winner === 'a' ? 'b' : 'a',
+                turns: (replay.turns || []).map(flip),
+            });
         },
 
         async fight(opp) {
@@ -307,6 +394,56 @@ function petBattlePanel() {
                 </span>
             </div>
             <div class="flex-1 overflow-y-auto p-3 space-y-2">
+
+                <!-- SOMEBODY ASKED YOU. Top of the list, because an invitation
+                     left unanswered is the one thing here with another child
+                     waiting on the other end of it. Declining is free and says
+                     nothing to anybody. -->
+                <template x-for="ch in challenges" :key="ch.id">
+                    <div class="p-3 rounded-xl bg-blue-950/60 border-2 border-blue-700">
+                        <div class="text-sm font-bold text-white">
+                            <span x-text="ch.from_name"></span> wants a battle!
+                        </div>
+                        <div class="text-[11px] text-blue-200/80 mt-0.5">
+                            Level-matched, so it is down to your critters.
+                        </div>
+                        <div class="flex gap-2 mt-2">
+                            <button type="button" @click="answer(ch, true)" :disabled="busy"
+                                class="flex-1 h-10 rounded-lg bg-blue-600 text-white font-bold text-sm disabled:opacity-50">Fight!</button>
+                            <button type="button" @click="answer(ch, false)" :disabled="busy"
+                                class="px-4 h-10 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 text-sm">Not now</button>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- FAMILY. Asking is an invitation; nothing happens to them
+                     until they say yes. No records, no ladder, no standings --
+                     a battle is a toy, not a position in the family. -->
+                <template x-if="pvpEnabled && rivals.length">
+                    <div class="pt-1">
+                        <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1.5">Family</div>
+                        <div class="space-y-2">
+                            <template x-for="r in rivals" :key="r.member_id">
+                                <div class="w-full flex items-center gap-3 p-2.5 rounded-xl bg-gray-900 border-2 border-gray-800">
+                                    <span class="w-14 h-14 rounded-lg overflow-hidden bg-gray-800 flex-shrink-0" x-html="r.svg"></span>
+                                    <span class="min-w-0 flex-1">
+                                        <span class="block text-sm font-bold text-white" x-text="r.pet_name"></span>
+                                        <span class="block text-[11px] text-gray-500">
+                                            <span x-text="r.name"></span> · Lv<span x-text="r.level"></span>
+                                        </span>
+                                    </span>
+                                    <button type="button" @click="challenge(r)" :disabled="busy"
+                                        class="px-3 h-9 rounded-lg bg-blue-600 text-white text-xs font-bold disabled:opacity-50">Ask</button>
+                                </div>
+                            </template>
+                        </div>
+                        <p class="text-[10px] text-gray-600 mt-1.5">
+                            Family battles are level-matched, and both of you earn XP.
+                        </p>
+                    </div>
+                </template>
+
+                <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wide pt-1">Practice</div>
                 <template x-for="o in opponents" :key="o.key">
                     <button type="button" @click="fight(o)" :disabled="busy"
                             class="w-full flex items-center gap-3 p-2.5 rounded-xl bg-gray-900 border-2 border-gray-800 text-left disabled:opacity-50">

@@ -362,6 +362,22 @@ class ReopenChoreTool(BaseModel):
     """
     chore_title: str = Field(..., description="The chore's name (fuzzy matched).")
 
+class ChallengePetBattleTool(BaseModel):
+    """
+    Asks another family member for a pet battle on behalf of a child. Only
+    ASKS -- the other person still has to accept, and the fight is always
+    level-matched so it is never decided by who did more chores.
+    """
+    challenger_name: str
+    opponent_name: str
+
+class GetPetStatusTool(BaseModel):
+    """
+    Reports how somebody's pet critter is doing: its level, its element and
+    how far it is from levelling up. There is no win-loss record to report.
+    """
+    member_name: Optional[str] = None
+
 class GetPointBalancesTool(BaseModel):
     """
     Gets the current chore-point balance for every child, sorted highest first.
@@ -812,6 +828,8 @@ TOOL_SCHEMAS = {
     "add_trip_flight": AddTripFlightTool.model_json_schema(),
     "edit_trip_flight": EditTripFlightTool.model_json_schema(),
     "delete_trip_flight": DeleteTripFlightTool.model_json_schema(),
+    "challenge_pet_battle": ChallengePetBattleTool.model_json_schema(),
+    "get_pet_status": GetPetStatusTool.model_json_schema(),
     "get_point_balances": GetPointBalancesTool.model_json_schema(),
     "adjust_points": AdjustPointsTool.model_json_schema(),
     "get_family_goals": GetFamilyGoalsTool.model_json_schema(),
@@ -1906,6 +1924,15 @@ def handle_update_drive_status(args: dict) -> dict:
 
     return {"status": "success", "message": f"Marked drive status as {status}."}
 
+def handle_challenge_pet_battle(args: dict) -> dict:
+    from services.agent_tools_v2 import challenge_pet_battle
+    return challenge_pet_battle(args.get("challenger_name", ""),
+                                args.get("opponent_name", ""))
+
+def handle_get_pet_status(args: dict) -> dict:
+    from services.agent_tools_v2 import get_pet_status
+    return get_pet_status(args.get("member_name"))
+
 def handle_get_point_balances(args: dict) -> dict:
     # Shared implementation with the v2 (Gemma router) stack so both agent
     # stacks stay in lockstep on chore-point behavior.
@@ -2242,6 +2269,8 @@ TOOL_HANDLERS = {
     "add_trip_flight": handle_add_trip_flight,
     "edit_trip_flight": handle_edit_trip_flight,
     "delete_trip_flight": handle_delete_trip_flight,
+    "challenge_pet_battle": handle_challenge_pet_battle,
+    "get_pet_status": handle_get_pet_status,
     "get_point_balances": handle_get_point_balances,
     "adjust_points": handle_adjust_points,
     "get_family_goals": handle_get_family_goals,

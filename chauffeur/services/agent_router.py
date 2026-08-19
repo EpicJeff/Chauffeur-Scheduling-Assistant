@@ -317,6 +317,9 @@ sending or claiming, and never pass from_member/member_name for them.
                              "manage_trip_rules", "manage_trip_flights",
                              "start_route", "complete_route",
                              "adjust_points", "get_point_balances", "reopen_chore",
+                             # Pets: asking confirms itself out loud, and the
+                             # status read IS the whole spoken answer.
+                             "challenge_pet_battle", "get_pet_status",
                              "get_family_goals", "contribute_to_family_goal",
                              # Family-hub tools: sends are actions; the reads
                              # return a message that IS the complete spoken
@@ -522,6 +525,15 @@ sending or claiming, and never pass from_member/member_name for them.
                                               prompt=args.get("prompt", ""), flight=args.get("flight"))
                     if res.get("message"): agent_message = res["message"]
                     if res.get("ui_action"): ui_action = res["ui_action"]
+                elif func_name == "challenge_pet_battle":
+                    from services.agent_tools_v2 import challenge_pet_battle
+                    res = challenge_pet_battle(args.get("challenger_name", ""),
+                                               args.get("opponent_name", ""))
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "get_pet_status":
+                    from services.agent_tools_v2 import get_pet_status
+                    res = get_pet_status(args.get("member_name"))
+                    if res.get("message"): agent_message = res["message"]
                 elif func_name == "get_point_balances":
                     from services.agent_tools_v2 import get_point_balances
                     res = get_point_balances()

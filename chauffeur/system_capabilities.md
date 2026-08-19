@@ -3389,6 +3389,37 @@ now draws **one row per critter**, plus an egg for a free slot or a 🛒 tile at
 500 XP when a second is affordable but unbought: a carrot nobody can see is
 not a carrot.
 
+**Sibling battles (P6, v2.300.0) — the arc is complete.** Three promises,
+each with tests.
+
+**Consent.** A challenge is an invitation, never an event: nothing resolves
+until the other child accepts, declining is free and silent and is not
+recorded as a forfeit, and only the person who was ASKED may answer (the
+endpoint gates on `to_member`). The agent may ask and can never accept — an
+`accept-on-behalf` tool would mean a kid gets dragged into a fight by a
+sibling talking to a speaker in another room, and a test asserts no such tool
+exists. Invitations expire after 24h, swept on read.
+
+**Level-matching, for real this time.** A level-32 pet with a full training
+budget against a level-1 sibling wins 35–65% of 200 fights — measured with
+both critters set to the same species and element, because the first cut of
+that test read 0.00 and that was tide beating ember exactly as designed. A
+fairness test that also varies the type chart measures the type chart.
+
+**No standing.** Both sides are paid and the loser meaningfully (30/18), the
+pair cap (`pet_pvp_pair_cap`, default 3) stops the XP and never the fight, and
+there is **no ladder, ranking, streak or win-loss record anywhere** — a test
+greps every pets API payload and the board card for the words. `pet_pvp_enabled`
+turns family battles off entirely and keeps everything else.
+
+Both children own the battle row and each watches the same seed from their own
+chair: the accepting child's client **mirrors** the replay (a↔b, and every
+turn's actor and hp with it) rather than re-resolving, which would be a
+different fight. Quiet hours suppress the ping and never the invitation — it
+is waiting on the card in the morning. Agent tools `challenge_pet_battle` and
+`get_pet_status` are wired into **both** stacks (`agent_tools` schemas +
+handlers for the loop, `agent_router` dispatch for the chat widget).
+
 **A full-screen editor is opaque on a wall (v2.295.0).** `panel_skin` maps
 every `.bg-gray-950`/`.bg-gray-900` surface to translucent glass with
 `!important` so the wallpaper reads through the board — and a full-screen

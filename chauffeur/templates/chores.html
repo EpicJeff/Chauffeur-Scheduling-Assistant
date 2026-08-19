@@ -402,6 +402,24 @@
                                         is done.</span>
                                 </label>
                             </div>
+                            <div class="pt-1 border-t border-gray-700/60 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <label class="flex items-center gap-3 cursor-pointer">
+                                    <input type="checkbox" x-model="petXp.pet_pvp_enabled" @change="savePetXp()"
+                                        class="w-5 h-5 rounded bg-gray-900 border-gray-600">
+                                    <span>
+                                        <span class="block text-xs font-bold text-gray-300">Battles between family</span>
+                                        <span class="block text-[11px] text-gray-500">Always level-matched, so more chores
+                                            never means a stronger critter in a sibling fight.</span>
+                                    </span>
+                                </label>
+                                <label class="block">
+                                    <span class="block text-xs font-bold text-gray-300 mb-1">Family battles a day</span>
+                                    <input type="number" min="0" step="1" x-model.number="petXp.pet_pvp_pair_cap"
+                                        @change="savePetXp()"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white">
+                                    <span class="block text-[11px] text-gray-500 mt-1">Per pair of people.</span>
+                                </label>
+                            </div>
                             <p class="text-[11px] text-emerald-400" x-show="petXpSaved" x-cloak>Saved.</p>
                         </div>
                     </section>
@@ -501,7 +519,8 @@
                 // because /api/settings merges by field -- this panel never
                 // has to know what else lives in settings.
                 petXp: { pet_xp_per_chore_point: 1, pet_xp_per_routine: 3,
-                         pet_xp_routine_all_bonus: 10, pet_pve_daily_cap: 5 },
+                         pet_xp_routine_all_bonus: 10, pet_pve_daily_cap: 5,
+                         pet_pvp_enabled: true, pet_pvp_pair_cap: 3 },
                 petXpSaved: false,
                 async loadPetXp() {
                     try {

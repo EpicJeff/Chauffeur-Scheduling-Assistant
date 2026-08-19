@@ -426,8 +426,12 @@ move must never be a code change.
   (free, re-spendable, proportionally scaled when over budget), cross-element
   move learning at 60 XP, second pet slot at 500 XP. No species or cosmetic
   unlocks — see the sinks note above.
-- **P6 — PvP.** Challenge, accept, resolve, both-sides replay, caps, quiet-hour
-  respect, agent tools in both stacks.
+- **P6 — PvP.** *Done (v2.300.0).* Challenge, accept, resolve, both-sides
+  replay (the accepting client mirrors rather than re-resolves), pair cap,
+  quiet-hour respect, `pet_pvp_enabled` off-switch, agent tools in both
+  stacks. The agent can ask and can never accept.
+
+**The arc is complete: P0–P6, v2.294.0–v2.300.0.**
 
 Full sweep with `tools/test.py` before each commit; `--focus` for the inner
 loop. Bump `config.yaml` and commit at every slice.

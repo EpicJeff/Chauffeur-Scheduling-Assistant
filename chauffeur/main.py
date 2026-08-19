@@ -7627,6 +7627,106 @@ def pet_battle_endpoint(req: PetBattleRequest,
     return res
 
 
+def _notify_challenge(challenge: dict):
+    """Tell the other child, unless it is quiet hours for them.
+
+    THE CHALLENGE STILL EXISTS EITHER WAY. Quiet hours suppress the ping, not
+    the invitation -- it is waiting on the pets card in the morning. Silencing
+    a notification is kindness; deleting the thing it was about is not."""
+    import datetime
+    from services import family_digest
+    try:
+        target = storage.get_member(challenge['to_member']) or {}
+        who = (storage.get_member(challenge['from_member']) or {}).get('name') or 'Someone'
+        now = datetime.datetime.now()
+        settings = storage.get_settings() or {}
+        if family_digest.in_kid_quiet_hours(now, settings) \
+                or family_digest.in_member_quiet_hours(target, now):
+            return False
+        send_push_to_member(challenge['to_member'],
+                            "%s wants a battle!" % who,
+                            "Their critter is waiting. Level-matched, as always.",
+                            url="/chores")
+        return True
+    except Exception as e:
+        print(f"[pets] challenge notify failed: {e}")
+        return False
+
+
+class PetChallengeRequest(BaseModel):
+    from_member: str
+    to_member: str
+
+
+@app.post("/api/pets/challenge")
+def create_pet_challenge_endpoint(req: PetChallengeRequest,
+                                  x_member_token: Optional[str] = Header(None)):
+    """Invite a sibling. An invitation, never an event -- nothing resolves
+    until they say yes, and declining costs them nothing."""
+    _require_pet_owner(req.from_member, x_member_token)
+    res = storage.create_pet_challenge(req.from_member, req.to_member)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    res['notified'] = _notify_challenge(res['challenge'])
+    return res
+
+
+class PetChallengeReplyRequest(BaseModel):
+    accept: bool = True
+    seed: Optional[int] = None
+
+
+@app.post("/api/pets/challenge/{challenge_id}/respond")
+def respond_pet_challenge_endpoint(challenge_id: str,
+                                   req: PetChallengeReplyRequest,
+                                   x_member_token: Optional[str] = Header(None)):
+    """Only the person who was ASKED may answer. Anything else would let a
+    child accept on their sibling's behalf, which is the whole thing consent
+    is here to prevent."""
+    pending = [c for c in storage.get_pet_challenges(state=None)
+               if c['id'] == challenge_id]
+    if not pending:
+        raise HTTPException(status_code=404, detail="No such challenge")
+    _require_pet_owner(pending[0]['to_member'], x_member_token)
+    res = storage.respond_pet_challenge(challenge_id, req.accept, seed=req.seed)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    return res
+
+
+@app.get("/api/pets/challenges")
+def pet_challenges_endpoint(member_id: Optional[str] = None):
+    """Who is waiting on whom, plus who could be asked. Deliberately returns
+    NO win-loss record: a battle is a toy, not a position in the family."""
+    from services import pet_render
+    out, rivals = [], []
+    for c in storage.get_pet_challenges(member_id):
+        frm = storage.get_member(c['from_member']) or {}
+        to = storage.get_member(c['to_member']) or {}
+        out.append(dict(c, from_name=frm.get('name'), to_name=to.get('name'),
+                        incoming=bool(member_id and c['to_member'] == member_id)))
+    if member_id and storage.pet_pvp_enabled():
+        for m in storage.get_all_members():
+            if m['id'] == member_id or m.get('status') == 'archived':
+                continue
+            pet = storage.get_active_pet(m['id'])
+            if not pet:
+                continue
+            cfg = dict(pet.get('species') or {})
+            cfg.update(pet.get('look') or {})
+            rivals.append({
+                'member_id': m['id'], 'name': m.get('name'),
+                'pet_name': pet.get('name'),
+                'level': storage.pet_level(m['id']),
+                'has_pin': bool(m.get('pin_hash')),
+                'svg': (pet_render.render_svg(cfg, crop='battle',
+                                              nonce='riv%s' % pet['id'][:8])
+                        if pet_render.available() else ''),
+            })
+    return {'challenges': out, 'rivals': rivals,
+            'pvp_enabled': storage.pet_pvp_enabled()}
+
+
 @app.get("/api/pets/battles")
 def pet_battles_endpoint(member_id: Optional[str] = None, limit: int = 20):
     return {'battles': storage.get_pet_battles(member_id, limit=limit),

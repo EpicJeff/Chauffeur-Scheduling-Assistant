@@ -474,6 +474,10 @@ with db_lock:
     # those, so a replay reconstructs on any device, at any time, from about a
     # kilobyte.
     pet_battles_table = db.table('pet_battles')
+    # Challenges between family members. A fight needs the other child's YES
+    # before it happens -- a sibling must never be dragged into a battle, or
+    # losing becomes a thing done TO you.
+    pet_challenges_table = db.table('pet_challenges')
     music_favorites_table = db.table('music_favorites')
     music_recent_table = db.table('music_recent')
 
@@ -4172,6 +4176,7 @@ def run_pet_battle(pet_id: str, opponent: str, seed: int = None) -> dict:
         'a_in': mine, 'b_in': theirs,
         'winner': replay['winner'],
         'won': won,
+        'pair': None,               # PvE has no pair; the counter skips it
         'xp': awarded,
         'capped': bool(capped),
         'created_at': time.time(),
@@ -4183,11 +4188,183 @@ def run_pet_battle(pet_id: str, opponent: str, seed: int = None) -> dict:
             'remaining': max(0, pet_pve_cap() - pet_battles_today(member_id, today))}
 
 
+# --- challenges (P6) ------------------------------------------------------
+# PvP, and the two rules that make it safe to put in a house with siblings in
+# it. Level-matching lives in the resolver; these are the other two.
+#
+# 1. CONSENT. A challenge is an invitation, not an event. Nothing resolves
+#    until the other child accepts, and declining costs nothing and is never
+#    announced as a forfeit.
+# 2. NO STANDING. Both sides are paid, the loser meaningfully, and there is no
+#    ladder, no ranking and no win-loss record anywhere -- a battle is a toy,
+#    not a position in the family.
+
+PET_PVP_WIN_XP = 30
+PET_PVP_LOSS_XP = 18
+PET_PVP_PAIR_CAP = 3
+CHALLENGE_TTL_HOURS = 24
+
+
+def pet_pvp_pair_cap() -> int:
+    s = get_settings() or {}
+    try:
+        return max(0, int(s.get('pet_pvp_pair_cap', PET_PVP_PAIR_CAP)))
+    except (TypeError, ValueError):
+        return PET_PVP_PAIR_CAP
+
+
+def pet_pvp_enabled() -> bool:
+    """A household may turn sibling battles off entirely and keep the rest."""
+    s = get_settings() or {}
+    return bool(s.get('pet_pvp_enabled', True))
+
+
+def _pair_key(a: str, b: str) -> str:
+    return '|'.join(sorted([a or '', b or '']))
+
+
+def pet_pvp_battles_today(a: str, b: str, date_str: str = None) -> int:
+    from datetime import date
+    date_str = date_str or date.today().isoformat()
+    key = _pair_key(a, b)
+    with db_lock:
+        return len(pet_battles_table.search(
+            (Query().date_str == date_str) & (Query().pair == key)))
+
+
+def create_pet_challenge(from_member: str, to_member: str) -> dict:
+    """Invite a sibling. Returns {'challenge'} or {'error'}."""
+    import time
+    import uuid as _uuid
+    if not pet_pvp_enabled():
+        return {'error': 'Battles between people are switched off'}
+    if from_member == to_member:
+        return {'error': 'Pick somebody else'}
+    mine, theirs = get_active_pet(from_member), get_active_pet(to_member)
+    if not mine:
+        return {'error': 'Hatch a critter first'}
+    if not theirs:
+        return {'error': 'They have no critter yet'}
+    with db_lock:
+        open_already = pet_challenges_table.search(
+            (Query().from_member == from_member) & (Query().to_member == to_member)
+            & (Query().state == 'pending'))
+    if open_already:
+        return {'error': 'You already asked them'}
+    ch = {'id': _uuid.uuid4().hex, 'from_member': from_member,
+          'to_member': to_member, 'from_pet': mine['id'], 'to_pet': theirs['id'],
+          'state': 'pending', 'battle_id': None, 'created_at': time.time()}
+    with db_lock:
+        pet_challenges_table.insert(ch)
+    return {'challenge': ch}
+
+
+def get_pet_challenges(member_id: str = None, state: str = 'pending') -> List[dict]:
+    """Everything waiting on somebody. Expired invitations are swept on read
+    rather than by a job -- an invitation from yesterday is not a thing a kid
+    should still be able to trip over."""
+    import time
+    cutoff = time.time() - CHALLENGE_TTL_HOURS * 3600
+    with db_lock:
+        rows = [dict(c) for c in pet_challenges_table.all()]
+        stale = [c['id'] for c in rows
+                 if c.get('state') == 'pending' and (c.get('created_at') or 0) < cutoff]
+        if stale:
+            pet_challenges_table.update({'state': 'expired'},
+                                        Query().id.one_of(stale))
+            for c in rows:
+                if c['id'] in stale:
+                    c['state'] = 'expired'
+    out = [c for c in rows if not state or c.get('state') == state]
+    if member_id:
+        out = [c for c in out if member_id in (c.get('from_member'),
+                                               c.get('to_member'))]
+    out.sort(key=lambda c: c.get('created_at') or 0, reverse=True)
+    return out
+
+
+def respond_pet_challenge(challenge_id: str, accept: bool,
+                          seed: int = None) -> dict:
+    """Yes or no. Declining is free, silent and final -- it is not a forfeit,
+    it is not recorded as a loss, and nothing announces it."""
+    import time
+    from datetime import date
+    from services import pet_battle
+    with db_lock:
+        res = pet_challenges_table.search(Query().id == challenge_id)
+    if not res:
+        return {'error': 'No such challenge'}
+    ch = dict(res[0])
+    if ch.get('state') != 'pending':
+        return {'error': 'Already answered'}
+    if not accept:
+        with db_lock:
+            pet_challenges_table.update({'state': 'declined',
+                                         'decided_at': time.time()},
+                                        Query().id == challenge_id)
+        return {'challenge': dict(ch, state='declined')}
+
+    mine = pet_combatant_for(ch['from_pet'])
+    theirs = pet_combatant_for(ch['to_pet'])
+    if not mine or not theirs:
+        with db_lock:
+            pet_challenges_table.update({'state': 'expired'},
+                                        Query().id == challenge_id)
+        return {'error': 'One of the critters is gone'}
+
+    if seed is None:
+        seed = int.from_bytes(os.urandom(4), 'big')
+    # LEVEL-MATCHED, always, between people. This is the line the whole arc
+    # rests on: the fight is decided by build, typing and luck, never by who
+    # did more chores.
+    replay = pet_battle.resolve(mine, theirs, seed=seed, level_match=True)
+
+    today = date.today().isoformat()
+    pair = _pair_key(ch['from_member'], ch['to_member'])
+    capped = pet_pvp_battles_today(ch['from_member'], ch['to_member'], today) \
+        >= pet_pvp_pair_cap()
+    won_by = ch['from_member'] if replay['winner'] == 'a' else ch['to_member']
+    lost_by = ch['to_member'] if replay['winner'] == 'a' else ch['from_member']
+    awards = {}
+    if not capped:
+        # BOTH sides are paid, and the loser meaningfully. A child who says
+        # yes and loses must not come away with nothing.
+        awards[won_by] = grant_pet_xp(won_by, PET_PVP_WIN_XP, 'battle',
+                                      note='won a family battle')
+        awards[lost_by] = grant_pet_xp(lost_by, PET_PVP_LOSS_XP, 'battle',
+                                       note='fought a family battle')
+
+    import uuid as _uuid
+    row = {'id': _uuid.uuid4().hex, 'member_id': ch['from_member'],
+           'date_str': today, 'pair': pair, 'pet_id': ch['from_pet'],
+           'opponent': ch['to_pet'], 'opponent_name': theirs['name'],
+           'seed': int(seed), 'level_match': True,
+           'a_in': mine, 'b_in': theirs, 'winner': replay['winner'],
+           'won': replay['winner'] == 'a', 'xp': awards.get(ch['from_member'], 0),
+           'capped': bool(capped), 'challenge_id': challenge_id,
+           'created_at': time.time()}
+    with db_lock:
+        pet_battles_table.insert(row)
+        pet_challenges_table.update({'state': 'accepted', 'battle_id': row['id'],
+                                     'decided_at': time.time()},
+                                    Query().id == challenge_id)
+    return {'challenge': dict(ch, state='accepted', battle_id=row['id']),
+            'battle': row, 'replay': replay, 'awards': awards,
+            'capped': bool(capped)}
+
+
 def get_pet_battles(member_id: str = None, limit: int = 20) -> List[dict]:
     with db_lock:
-        rows = [dict(b) for b in (
-            pet_battles_table.search(Query().member_id == member_id)
-            if member_id else pet_battles_table.all())]
+        allrows = [dict(b) for b in pet_battles_table.all()]
+    if member_id:
+        # Both sides of a family battle own it -- the row is filed under the
+        # challenger, but the sibling who accepted was equally there.
+        their_pets = {p['id'] for p in get_pets(member_id, include_retired=True)}
+        rows = [b for b in allrows
+                if b.get('member_id') == member_id
+                or b.get('opponent') in their_pets]
+    else:
+        rows = allrows
     rows.sort(key=lambda r: r.get('created_at') or 0, reverse=True)
     return rows[:limit]
 

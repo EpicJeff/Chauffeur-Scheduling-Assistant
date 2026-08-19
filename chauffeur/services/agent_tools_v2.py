@@ -442,6 +442,53 @@ def adjust_points(member_name: str, delta: int = None, set_to: int = None,
             "message": f"Done — {change} points for {member['name']}. They now have {balance} points."}
 
 
+def challenge_pet_battle(challenger_name: str, opponent_name: str) -> Dict[str, Any]:
+    """Ask somebody for a pet battle, on behalf of a child who said so out loud.
+
+    ASKING IS ALL IT DOES. The agent cannot accept on the other child's
+    behalf, and no amount of asking resolves anything -- consent belongs to
+    the person being challenged, and handing that to an assistant would make
+    it possible to be dragged into a fight by someone talking to a speaker in
+    another room."""
+    from services import storage
+    me = _find_member_fuzzy(challenger_name)
+    them = _find_member_fuzzy(opponent_name)
+    if not me:
+        return {"message": f"I don't know who {challenger_name} is."}
+    if not them:
+        return {"message": f"I don't know who {opponent_name} is."}
+    res = storage.create_pet_challenge(me['id'], them['id'])
+    if res.get('error'):
+        return {"message": res['error']}
+    return {"message": f"Asked {them.get('name')} for a battle. "
+                       f"It's up to them now — and it'll be level-matched."}
+
+
+def get_pet_status(member_name: str = None) -> Dict[str, Any]:
+    """How somebody's critter is doing. Deliberately reports level, element
+    and XP and NOT a win-loss record: there isn't one, and inventing one in a
+    spoken answer would be the ladder this arc refuses to build."""
+    from services import storage
+    from services import pet_catalog
+    lines = []
+    members = ([_find_member_fuzzy(member_name)] if member_name
+               else storage.get_all_members())
+    for m in [x for x in members if x]:
+        pets = storage.get_pets(m['id'])
+        if not pets:
+            continue
+        prog = storage.pet_level_progress(m['id'])
+        for pet in pets:
+            t = pet_catalog.get(pet.get('type')) or {}
+            lines.append(f"{m.get('name')}'s {pet.get('name')} is a level "
+                         f"{prog['level']} {t.get('label', '')} critter"
+                         + (f", {prog['need']} XP from the next level"
+                            if not prog.get('max') else ""))
+    if not lines:
+        return {"message": "Nobody has hatched a critter yet."}
+    return {"message": ". ".join(lines) + "."}
+
+
 def reopen_chore(chore_title: str) -> Dict[str, Any]:
     """Puts a verified or claimed chore back in the pot (open) so it can be
     claimed again this period. Fuzzy title match; 'done' chores are refused
