@@ -288,15 +288,24 @@
 
         <!-- Messages (family chat) -->
         <div id="messages-container" class="flex-1 flex-col min-h-0 relative" style="display: none">
-            <div class="flex items-center justify-between px-4 pt-4 pb-1 shrink-0">
+            <div class="flex items-center justify-between px-4 pt-4 pb-1 shrink-0 relative">
                 <div class="text-lg font-bold text-gray-100">Messages</div>
-                <button onclick="openNewChat()" title="New chat"
-                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 active:bg-blue-700 text-white text-sm font-bold">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path>
-                    </svg>
-                    New chat
-                </button>
+                <div class="flex items-center gap-3">
+                    <!-- Online-now avatar stack (Google-Docs style); tap for the
+                         full roster flyout with offline members dimmed -->
+                    <button id="presence-stack" onclick="togglePresenceFlyout(event)" title="Who's online"
+                        class="flex items-center" style="display:none"></button>
+                    <button onclick="openNewChat()" title="New chat"
+                        class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 active:bg-blue-700 text-white text-sm font-bold">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path>
+                        </svg>
+                        New chat
+                    </button>
+                </div>
+                <div id="presence-flyout"
+                    class="absolute right-4 top-full mt-1 z-30 w-60 rounded-2xl bg-gray-900 border border-gray-700 shadow-xl p-3 space-y-2.5"
+                    style="display:none"></div>
             </div>
             <div id="moments-strip" class="px-4 pb-1 shrink-0" style="display:none">
                 <div class="text-xs font-black uppercase tracking-widest text-pink-300 mb-1.5">📸 Moments</div>
@@ -2375,6 +2384,8 @@
                 // pickers, passenger lists, or the identity switcher; their names
                 // are resolved specially where messages render.
                 membersData = (await res.json()).filter(m => !m.system);
+                // A presence snapshot may have beaten the members list in.
+                if (typeof renderPresence === 'function') renderPresence();
             } catch (e) {
                 console.error("Failed to fetch members", e);
             }
@@ -2553,6 +2564,13 @@
             messagesStream.onmessage = (e) => {
                 try {
                     const data = JSON.parse(e.data);
+                    if (data.presence) {
+                        // Presence-only event: update the avatars, but never
+                        // treat it as channel activity (no refetch).
+                        onlineMemberIds = data.presence;
+                        renderPresence();
+                        return;
+                    }
                     if (data.moment) maybePopMoment(data.moment);
                     if (activeChannelId && data.channel_id === activeChannelId && currentView === 'messages') {
                         refreshThread();
@@ -2580,6 +2598,73 @@
                 ? `<img src="${entity.image}" class="w-full h-full object-cover">`
                 : mfEscape(fallbackText);
         }
+
+        // --- Online presence (who has the app open now) ---
+        // Fed by {presence:[ids]} snapshots on the messages stream. A quiet
+        // ambient signal on purpose: no toasts, no "X came online" — just
+        // avatars in the header and a roster flyout with offline members dim.
+        let onlineMemberIds = [];
+
+        function presenceCircle(m, sizeClass, extra) {
+            return `<div class="${sizeClass} rounded-full overflow-hidden flex items-center justify-center
+                        font-bold text-white shrink-0 ${extra || ''}"
+                        style="background:${m.color_code || '#6b7280'}">${avatarInner(m,
+                            m.avatar || (m.name || '?').charAt(0).toUpperCase())}</div>`;
+        }
+
+        function renderPresence() {
+            const stack = document.getElementById('presence-stack');
+            if (!stack) return;
+            const online = (membersData || []).filter(m => onlineMemberIds.includes(m.id));
+            if (!online.length) {
+                stack.style.display = 'none';
+            } else {
+                stack.style.display = 'flex';
+                stack.innerHTML = online.slice(0, 5).map((m, i) =>
+                    presenceCircle(m, 'w-7 h-7 text-xs', `ring-2 ring-gray-950 ${i ? '-ml-2' : ''}`)
+                ).join('') + (online.length > 5
+                    ? `<div class="w-7 h-7 rounded-full -ml-2 ring-2 ring-gray-950 bg-gray-700 flex items-center
+                          justify-center text-xs font-bold text-gray-200">+${online.length - 5}</div>`
+                    : '');
+            }
+            renderPresenceFlyout();
+        }
+
+        function renderPresenceFlyout() {
+            const fly = document.getElementById('presence-flyout');
+            if (!fly || fly.style.display === 'none') return;
+            const roster = (membersData || []).slice().sort((a, b) => {
+                const ao = onlineMemberIds.includes(a.id), bo = onlineMemberIds.includes(b.id);
+                if (ao !== bo) return ao ? -1 : 1;
+                return (a.name || '').localeCompare(b.name || '');
+            });
+            fly.innerHTML = roster.map(m => {
+                const on = onlineMemberIds.includes(m.id);
+                return `<div class="flex items-center gap-2.5 ${on ? '' : 'opacity-40'}">
+                    ${presenceCircle(m, 'w-8 h-8 text-sm')}
+                    <div class="flex-1 text-sm font-semibold text-gray-100 truncate">${mfEscape(m.name)}${m.id === selectedMemberId ? ' (you)' : ''}</div>
+                    <div class="w-2.5 h-2.5 rounded-full shrink-0 ${on ? 'bg-green-400' : 'bg-gray-600'}"></div>
+                </div>`;
+            }).join('') || '<div class="text-sm text-gray-400">Nobody yet</div>';
+        }
+
+        function togglePresenceFlyout(e) {
+            e.stopPropagation();
+            const fly = document.getElementById('presence-flyout');
+            if (fly.style.display === 'none') {
+                fly.style.display = 'block';
+                renderPresenceFlyout();
+            } else {
+                fly.style.display = 'none';
+            }
+        }
+
+        document.addEventListener('click', (e) => {
+            const fly = document.getElementById('presence-flyout');
+            if (fly && fly.style.display !== 'none' && !fly.contains(e.target)) {
+                fly.style.display = 'none';
+            }
+        });
 
         function channelDisplay(c) {
             if (c.kind === 'family') return { name: 'Family', color: '#3b82f6', avatar: '👨‍👩‍👧‍👦' };

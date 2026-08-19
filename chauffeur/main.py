@@ -6047,6 +6047,25 @@ def ha_test_notify(req: TestNotifyRequest):
 MESSAGE_EVENTS = []  # ring buffer: {'seq', 'channel_id', 'recipients': [member ids] | None (=everyone)}
 _MESSAGE_SEQ = 0
 
+# --- Online presence (chat header avatars) ---
+# Who has the app open RIGHT NOW. The per-member messages stream is the truth:
+# every signed-in PWA holds one open the whole time it's foregrounded, and
+# kiosk panels never open it — so a shared hallway tablet can't count anyone
+# as "online". Deliberately in-memory: presence that survived a restart would
+# report people who aren't there.
+PRESENCE_CONNECTIONS = {}    # member_id -> count of open streams (phone + laptop = 2)
+PRESENCE_LAST_DROP = {}      # member_id -> when their LAST stream closed
+PRESENCE_GRACE_SECONDS = 75  # EventSource reconnect flaps + brief tab switches
+
+
+def online_member_ids():
+    """Members online now: an open stream, or one that closed within grace."""
+    now = time.time()
+    online = {m for m, n in PRESENCE_CONNECTIONS.items() if n > 0}
+    online.update(m for m, ts in PRESENCE_LAST_DROP.items()
+                  if now - ts < PRESENCE_GRACE_SECONDS)
+    return sorted(online)
+
 def _push_message_event(channel_id, recipients, meta=None):
     """meta (optional) rides the SSE payload — e.g. {'moment': {...}} so an
     open app can pop a new moment instead of just bumping a badge."""
@@ -11713,17 +11732,28 @@ def serve_media_file(media_id: str, request: Request):
 @app.get("/api/messages/stream")
 async def stream_messages(member_id: str):
     """Addressed SSE: yields {'channel_id'} whenever a message lands in a
-    channel this member can see. Clients refetch just that channel."""
+    channel this member can see. Clients refetch just that channel.
+
+    Doubles as the presence heartbeat: while this stream is open the member's
+    app is open, and the stream itself carries {'presence': [ids]} snapshots —
+    one immediately on connect, one whenever the online set changes — so the
+    chat header's avatars stay live with no extra polling."""
     import json as _json
 
     async def event_generator():
         last_seq = MESSAGE_EVENTS[-1]['seq'] if MESSAGE_EVENTS else 0
         last_ping = time.time()
+        last_presence = None
+        PRESENCE_CONNECTIONS[member_id] = PRESENCE_CONNECTIONS.get(member_id, 0) + 1
         try:
             while True:
-                await asyncio.sleep(1)
                 now = time.time()
                 sent = False
+                current = online_member_ids()
+                if current != last_presence:
+                    last_presence = current
+                    yield f"data: {_json.dumps({'presence': current})}\n\n"
+                    sent = True
                 for ev in list(MESSAGE_EVENTS):
                     if ev['seq'] <= last_seq:
                         continue
@@ -11739,8 +11769,16 @@ async def stream_messages(member_id: str):
                 elif now - last_ping > 15:
                     yield ": ping\n\n"
                     last_ping = now
+                await asyncio.sleep(1)
         except asyncio.CancelledError:
             pass
+        finally:
+            n = PRESENCE_CONNECTIONS.get(member_id, 1) - 1
+            if n > 0:
+                PRESENCE_CONNECTIONS[member_id] = n
+            else:
+                PRESENCE_CONNECTIONS.pop(member_id, None)
+                PRESENCE_LAST_DROP[member_id] = time.time()
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
