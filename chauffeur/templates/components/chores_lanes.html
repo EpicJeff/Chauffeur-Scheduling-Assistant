@@ -92,7 +92,7 @@
                                                     && openAvatarEditor({ id: b.member_id, name: b.name })">
                                             <img :src="b.figure" class="h-28 drop-shadow-lg" :alt="b.name">
                                             <span x-show="typeof openAvatarEditor !== 'undefined'"
-                                                class="absolute bottom-0 -right-1 w-4 h-4 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[9px]">✏️</span>
+                                                class="absolute top-0 -right-1 w-4 h-4 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[9px]">✏️</span>
                                         </button>
                                     </template>
                                     <template x-if="!(laneShow('figure') && b.figure)">

@@ -419,7 +419,10 @@
                                     <!-- mantelpiece form: the family standing in a row (A5) -->
                                     <span x-show="t.data.figures && m.figure" class="relative">
                                         <img :src="m.figure" class="h-40 drop-shadow-lg group-active:scale-95 transition" :alt="m.name">
-                                        <span class="absolute bottom-1 right-0 w-5 h-5 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[11px]">✏️</span>
+                                        <!-- Top corner, not bottom: the critter stands at
+                                             the figure's feet (v2.301), and a badge pinned
+                                             down there sat directly on the pet. -->
+                                        <span class="absolute top-1 right-0 w-5 h-5 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[11px]">✏️</span>
                                     </span>
                                     <span x-show="!(t.data.figures && m.figure)" class="relative">
                                         <span class="block w-16 h-16 rounded-full overflow-hidden border-2 border-gray-600 group-active:scale-95 transition flex items-center justify-center font-bold text-white text-xl"
@@ -461,8 +464,10 @@
                                         <template x-if="m.kind === 'buy'">
                                             <span class="w-full h-full grid place-items-center text-2xl opacity-70">🛒</span>
                                         </template>
+                                        <!-- Top corner: the critter fills this tile,
+                                             and the badge used to sit on its feet. -->
                                         <span x-show="t.data.interactive"
-                                            class="absolute bottom-0.5 right-0.5 w-5 h-5 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[11px]"
+                                            class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-gray-900 border border-gray-600 grid place-items-center text-[11px]"
                                             x-text="m.pet ? '✏️' : '＋'"></span>
                                     </span>
                                     <span class="text-xs font-semibold text-gray-100 truncate max-w-[6rem]"

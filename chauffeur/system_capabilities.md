@@ -3465,6 +3465,13 @@ the z values rather than trusting anyone to remember the contract.
 **Pets belong to the whole house (v2.301.0).** Four gaps, none of which were
 decisions anybody made.
 
+*(v2.307.0)* The pencil badge on a **standing figure** moved from the bottom
+corner to the **top** corner everywhere (avatar-editor card, pets card tile,
+My Day greeting, chores + routine lanes): v2.301 composited the critter into
+the figure at the person's feet, so a badge pinned down there sat directly on
+the pet. Circle avatars keep the classic bottom-right badge — a circle never
+carries a pet.
+
 **A critter stands with its person.** `avatar_render.effective_figure` now
 composites the member's active pet as a nested `<svg>` hung from the figure's
 own ground line (x=132, 150 units, ground y=582 — knee height, at their right,
