@@ -13,12 +13,22 @@
   `short` is the shelf label — "Shopping & Meals" does not fit under a 32px
   icon, and the shelf is the surface with the least room and the most need to
   be readable across a kitchen.
+
+  NO TWO ITEMS MAY SHARE A `paths` VALUE. Drives and Calendar carried the same
+  path data byte for byte, and they sit next to each other on the shelf: two
+  identical glyphs, two different pages, and nothing in the row to say which
+  one you were about to open. Drives wears the truck now — a vehicle is what a
+  drive is, and it is the only vehicle in this icon family, so it is also the
+  only shape here that cannot be read as a date. Ninety characters of curve
+  data is not something anybody diffs by eye, so a test does it instead:
+  `test_panel_chrome.scenario_no_two_shelf_buttons_wear_the_same_icon`.
 #}
 {% set NAV_ITEMS = [
     {'slug': 'home', 'href': 'home', 'label': 'Home', 'short': 'Home', 'match': '/home',
      'paths': ['M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6']},
     {'slug': 'schedule', 'href': 'dashboard_v2', 'label': 'Schedule', 'short': 'Drives', 'match': 'dashboard_v2',
-     'paths': ['M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z']},
+     'paths': ['M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z',
+               'M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1']},
     {'slug': 'calendar', 'href': 'calendar', 'label': 'Calendar', 'short': 'Calendar', 'match': '/calendar',
      'paths': ['M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z']},
     {'slug': 'errands', 'href': 'errands', 'label': 'Errands', 'short': 'Errands', 'match': '/errands',

@@ -769,6 +769,28 @@ def scenario_the_agent_button_is_not_offered_before_anybody_has_said_who_they_ar
           "button floats over Select Family Member")
 
 
+def scenario_no_two_shelf_buttons_wear_the_same_icon():
+    """Drives and Calendar shipped with the SAME path data, byte for byte, and
+    they sit next to each other on the shelf — two identical glyphs, two
+    different pages, and nothing in the row to tell you which you were about to
+    open. A shelf button is an icon and four small words; when the icon is a
+    duplicate the icon is doing nothing at all.
+
+    Cheap to check and impossible to notice by reading, which is exactly why it
+    survived: the paths are 90 characters of curve data that nobody diffs.
+    """
+    import re
+    tpl = open(os.path.join(TPL, 'nav.html'), encoding='utf-8').read()
+    block = tpl[tpl.index('{% set NAV_ITEMS = ['):tpl.index("] %}")]
+    items = re.findall(r"\{'slug': '([^']+)'.*?'paths': \[(.*?)\]\}", block, re.S)
+    check(len(items) >= 12, "the NAV_ITEMS parse broke — the check itself is wrong")
+    seen = {}
+    for slug, paths in items:
+        seen.setdefault(re.sub(r'\s+', ' ', paths).strip(), []).append(slug)
+    dupes = [v for v in seen.values() if len(v) > 1]
+    check(not dupes, "these destinations share one icon: %s" % dupes)
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
