@@ -82,7 +82,11 @@
     .pb-pop { animation: pb-pop .35s ease-out; }
 </style>
 <script>
-window.openPetBattle = async function (m) {
+// `opts.watch` = a stored battle id to play the moment the arena opens.
+// The "Ben said yes!" push carries one: that notification is the only moment
+// the asker learns their battle happened, so it opens the FIGHT rather than
+// a list to go looking in.
+window.openPetBattle = async function (m, opts) {
     // ONE gate for everything (control_center.chfMemberToken): it
     // remembers, so a child who proved who they were to open one
     // overlay is not asked again by the next.
@@ -91,7 +95,8 @@ window.openPetBattle = async function (m) {
         ? await chfMemberToken(member) : '';
     if (token === null) return;              // asked, and they backed out
     window.dispatchEvent(new CustomEvent('pet-battle-open',
-        { detail: { memberId: member.id, memberName: member.name, token: token || null } }));
+        { detail: { memberId: member.id, memberName: member.name, token: token || null,
+                    watch: (opts && opts.watch) || null } }));
 };
 
 function petBattlePanel() {
@@ -156,6 +161,13 @@ function petBattlePanel() {
                 this.remaining = Math.max(0, (b.cap || 0) - (b.used_today || 0));
                 this.past = b.battles || [];
                 await this.loadChallenges();
+                // Arrived from the "they said yes" push: play it now. The id
+                // is trusted only as far as the server -- an unknown one just
+                // 404s into "That battle is gone."
+                if (detail.watch) {
+                    this.watch((this.past || []).find(x => x.id === detail.watch)
+                               || { id: detail.watch });
+                }
             } catch (e) {
                 showGlobalAlert('Could not reach the arena');
                 this.show = false;

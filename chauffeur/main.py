@@ -7687,17 +7687,22 @@ def _notify_challenge(challenge: dict):
         if family_digest.in_kid_quiet_hours(now, settings) \
                 or family_digest.in_member_quiet_hours(target, now):
             return False
+        # Into the ARENA, where the Fight!/Not now buttons are. This used to
+        # open `/chores` -- the points-admin page -- which is not the arena,
+        # does not mention the invitation, and is not even a child's page. A
+        # notification that does not land on the thing it is about is a
+        # notification the family learns to ignore.
         send_push_to_member(challenge['to_member'],
                             "%s wants a battle!" % who,
                             "Their critter is waiting. Level-matched, as always.",
-                            url="/chores")
+                            url="/app?pet=battle")
         return True
     except Exception as e:
         print(f"[pets] challenge notify failed: {e}")
         return False
 
 
-def _notify_challenge_answered(challenge: dict):
+def _notify_challenge_answered(challenge: dict, battle_id: str = None):
     """Tell the ASKER their invitation became a fight. The battle resolved
     the moment the sibling said yes, on whatever surface the sibling was
     holding -- the challenger was not there for it, and without this ping the
@@ -7708,6 +7713,7 @@ def _notify_challenge_answered(challenge: dict):
     Same quiet-hours rule as the invitation itself -- the battle is saved
     either way, waiting in the arena in the morning."""
     import datetime
+    import urllib.parse
     from services import family_digest
     try:
         target = storage.get_member(challenge['from_member']) or {}
@@ -7717,10 +7723,16 @@ def _notify_challenge_answered(challenge: dict):
         if family_digest.in_kid_quiet_hours(now, settings) \
                 or family_digest.in_member_quiet_hours(target, now):
             return False
+        # Straight to the FIGHT, not merely to the arena: this push is the
+        # only moment the asker learns their battle happened, and making them
+        # hunt for it in a list is most of the original bug over again.
+        url = "/app?pet=battle"
+        if battle_id:
+            url += "&watch=%s" % urllib.parse.quote(str(battle_id))
         send_push_to_member(challenge['from_member'],
                             "%s said yes!" % who,
                             "The battle already happened — watch it in the arena.",
-                            url="/chores")
+                            url=url)
         return True
     except Exception as e:
         print(f"[pets] challenge answered notify failed: {e}")
@@ -7768,7 +7780,8 @@ def respond_pet_challenge_endpoint(challenge_id: str,
     if req.accept:
         # The one who asked gets told -- they were not there for the fight.
         # No 'notified' key at all on a decline: silence, not a False.
-        res['notified'] = _notify_challenge_answered(res.get('challenge') or {})
+        res['notified'] = _notify_challenge_answered(
+            res.get('challenge') or {}, (res.get('battle') or {}).get('id'))
     return res
 
 

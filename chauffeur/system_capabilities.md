@@ -3465,6 +3465,19 @@ the z values rather than trusting anyone to remember the contract.
 **Pets belong to the whole house (v2.301.0).** Four gaps, none of which were
 decisions anybody made.
 
+*(v2.309.0)* **Both battle pushes now land on the battle.** They pointed at
+`/chores` — the points-admin page: not the arena, no mention of the
+invitation, and not even a child's page, so the notification arrived and the
+kid still had to go find the thing. The invite opens `/app?pet=battle`, where
+the Fight!/Not now buttons are; the answer opens
+`/app?pet=battle&watch=<battle_id>` and **plays that fight straight away** —
+that push is the only moment the asker learns their battle happened, so
+handing them a list to search would be most of the original bug again.
+`?pet=battle` gets its own one-shot handler in the PWA beside `?pair` and
+`?arrival`, because the arena is an OVERLAY rather than a view and the
+`?view=` router cannot reach it. Pinned by a test that captures the actual
+push arguments rather than reading the source.
+
 *(v2.308.0)* **The arena has a door back.** The editor has had a ⚔️ into the
 arena since P4 and the arena had none in return — so training, moves and slots,
 the things losing a fight makes you want to change, were reachable only by

@@ -2316,6 +2316,16 @@
             // sheet appears over their first signed-in view. (The flags were
             // read before the restore branch — see earlyParams above.)
             maybeOfferInstall();
+            // Pets (P6): a battle push is the only notification whose subject
+            // lives inside an OVERLAY rather than on a view, so it gets its
+            // own one-shot handler beside ?pair and ?arrival. Both battle
+            // pushes used to point at /chores -- the points-admin page --
+            // which is neither the arena nor a child's page. `?watch=<id>`
+            // plays that stored fight straight away.
+            if (params.get('pet') === 'battle' && selectedMemberId
+                    && typeof openPetBattle === 'function') {
+                openPetBattle(selectedMemberId, { watch: params.get('watch') || null });
+            }
             const openChannelParam = params.get('open_channel');
             if (openChannelParam && selectedMemberId) {
                 setView('messages');

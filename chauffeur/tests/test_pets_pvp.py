@@ -374,6 +374,57 @@ def test_the_one_who_asked_is_told_and_can_watch():
     storage.patch_settings({'kid_quiet_hours_enabled': False})
 
 
+def test_both_battle_pushes_land_on_the_battle():
+    """A notification that does not open the thing it is about is one the
+    family learns to ignore. Both battle pushes pointed at `/chores` -- the
+    points-admin page: not the arena, no mention of the invitation, and not
+    even a child's page. The invite must land where Fight!/Not now are, and
+    the answer must land on the FIGHT ITSELF, because that push is the only
+    moment the asker learns their battle happened."""
+    import os
+    import main
+    reset_db()
+    _pair()
+    sent = []
+    real = main.send_push_to_member
+    main.send_push_to_member = \
+        lambda mid, title, body, url=None: sent.append({'to': mid, 'url': url})
+    try:
+        ch = main.create_pet_challenge_endpoint(
+            main.PetChallengeRequest(from_member="k1", to_member="k2"))['challenge']
+        res = main.respond_pet_challenge_endpoint(
+            ch['id'], main.PetChallengeReplyRequest(accept=True, seed=5))
+    finally:
+        main.send_push_to_member = real
+
+    check(len(sent) == 2, "expected an invite ping and an answer ping, got %d" % len(sent))
+    invite, answer = sent[0], sent[1]
+    check(invite['to'] == "k2" and 'pet=battle' in invite['url'],
+          "the invite does not open the arena: %s" % invite)
+    check(answer['to'] == "k1" and 'pet=battle' in answer['url'],
+          "the answer does not open the arena: %s" % answer)
+    check('watch=' + res['battle']['id'] in answer['url'],
+          "the answer does not open the fight itself: %s" % answer['url'])
+    for p in sent:
+        check('/chores' not in p['url'],
+              "a battle push still points at the points-admin page")
+
+    # The deep link is only real if the app ROUTES it. `?pet=battle` opens the
+    # overlay (it is an overlay, not a view, so it needs its own handler) and
+    # `?watch` is handed through to the player.
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'templates')
+    app = open(os.path.join(base, 'app.html'), encoding='utf-8').read()
+    check("params.get('pet') === 'battle'" in app and 'openPetBattle(selectedMemberId' in app,
+          "the PWA does not route ?pet=battle to the arena")
+    check("watch: params.get('watch')" in app,
+          "the PWA drops the battle id, so the push opens a list instead of the fight")
+    arena = open(os.path.join(base, 'components', 'pet_battle.html'),
+                 encoding='utf-8').read()
+    check('detail.watch' in arena,
+          "the arena ignores the battle it was told to play")
+
+
 def test_the_hand_path_and_both_agent_stacks():
     from services import agent_tools, auth
     base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
