@@ -398,10 +398,25 @@ Christmas. For anything secret, choose the direction whose failure you can survi
 class), **but a closed default is not a grant.** `trips.gallery: all` does not reveal a
 `parents`-audience trip; it means "you may see trips that are yours to see."
 
-**The wall panel is where a surprise leaks**, which is the concrete argument for panels
-carrying their own scope (§— see the panel section). A trip countdown tile on the kitchen wall
-is precisely where Disney gets spoiled, and a panel is a place, not a person: it cannot be
-trusted with `parents` audience just because a parent is standing in front of it.
+**For trips and occasions the wall panel is not one leak among several — it is the only one.**
+Checked 2026-08-20: `templates/app.html` contains **zero** references to trips or occasions, and
+the PWA's seven tabs are chores, drives, family, map, messages, music, myday. There is no trips
+surface on a phone. Both are builtin **board** cards (`services/builtin_boards.json:91`, `:104`)
+and dashboard pages. So a child encounters a trip in exactly one place: the kitchen wall.
+
+That sharpens where the work goes. For these two facets the enforcement that matters is, in
+order: **the board**, then the agent (*"Argyle, when are we going to Disney?"*), then the
+digests, then the dashboard pages. The PWA needs nothing, because there is nothing there yet.
+
+And it is the concrete argument for panels carrying their own scope: **a panel is a place, not
+a person, and cannot hold a `parents` audience just because a parent is standing in front of
+it.** The countdown tile is where Disney gets spoiled.
+
+**A general note this exposed, worth applying to the whole list:** a facet's risk is a function
+of *where it renders*, not only of what it contains. `trips.*` looked like a phone-app
+permission and is really a wall-panel one. Before implementing any facet, check its surfaces —
+a facet nothing renders cannot leak yet, and one that renders only on a shared screen is a
+different problem from one on a personal device.
 
 ### The rule that follows
 
@@ -670,8 +685,9 @@ together are the deliverable.
   rows and nothing of Jack's, across every ◍ facet — one assertion per facet, since the filter
   is one list applied in many assemblers.
 - A `parents`-audience trip is absent from a child's gallery, from a keeping-up adult's, from
-  the agent's answers, from the digest, **and from a wall panel's countdown tile** — asserted
-  per surface, because a surprise leaks at whichever surface was forgotten.
+  the agent's answers, from the digest, and from the dashboard pages — but **the wall panel's
+  countdown tile is the assertion that matters**, since it is the only surface on which a child
+  encounters a trip at all.
 - Sharing that trip with one child reveals it to that child and to nobody else.
 - A list with `shared_with: []` is household-wide; populated, it is those people plus anyone
   with `lists.shopping: all`.
