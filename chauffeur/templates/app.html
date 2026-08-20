@@ -5178,12 +5178,33 @@
 
                 const res = await fetch(url);
                 scheduleData = await res.json();
-                localStorage.setItem('chauffeur_schedule', JSON.stringify(scheduleData));
+                try {
+                    // Its OWN try: a phone hitting the localStorage quota on
+                    // a big blob must not take the render down with it — the
+                    // data is already in memory.
+                    localStorage.setItem('chauffeur_schedule', JSON.stringify(scheduleData));
+                } catch (qe) { console.warn('schedule cache not stored', qe); }
                 buildTimeline();
             } catch (e) {
                 console.error("Failed to fetch schedule", e);
                 if (!hasCachedData) {
-                    document.getElementById('days-container').innerHTML = `<div class="w-full flex items-center justify-center text-red-400">Failed to load data</div>`;
+                    // A phone has no console: say WHAT failed, on screen, and
+                    // offer the retry a dead first fetch used to make
+                    // impossible (the family tab then sat on "Loading..."
+                    // forever with only the day-pager's partial merges).
+                    document.getElementById('days-container').innerHTML =
+                        `<div class="w-full flex flex-col items-center justify-center gap-2 text-red-400 p-6 text-center">Failed to load the schedule
+                            <div class="text-xs text-gray-500 break-all">${(e && e.message) || e}</div>
+                            <button onclick="fetchSchedule(false, true)" class="mt-2 px-4 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 font-bold">Try again</button>
+                        </div>`;
+                    const lbl = document.getElementById('current-day-label');
+                    if (lbl && lbl.textContent.trim() === 'Loading...') lbl.textContent = 'Today';
+                    // One quiet self-retry — a backgrounded phone aborting the
+                    // first big fetch is the common transient.
+                    if (!window._schedRetried) {
+                        window._schedRetried = true;
+                        setTimeout(() => fetchSchedule(false, true), 4000);
+                    }
                 }
             } finally {
                 setTimeout(() => btnSync.classList.remove('animate-spin'), 500);
@@ -7085,6 +7106,21 @@
                             if (!existingErrandIds.has(e.id)) scheduleData.scheduled_errands.push(e);
                         });
                     }
+                    // Rosters and calendar METADATA ride every response but
+                    // were never merged here — a paged-in day whose calendars
+                    // the initial window hadn't seen (or a session whose
+                    // initial fetch never landed) drew literal "Passenger"
+                    // chips and default-blue cards, because familyPaxBadges
+                    // resolves names and colors from calendar_metadata alone.
+                    if (data.calendar_metadata) {
+                        scheduleData.calendar_metadata = Object.assign({},
+                            data.calendar_metadata, scheduleData.calendar_metadata || {});
+                    }
+                    ['members', 'passengers', 'drivers', 'cars'].forEach(k => {
+                        if (data[k] && !(scheduleData[k] && scheduleData[k].length)) {
+                            scheduleData[k] = data[k];
+                        }
+                    });
 
                     buildTimeline();
 

@@ -15651,6 +15651,21 @@ from fastapi import BackgroundTasks
 
 last_bg_refresh = {}
 
+def _json_safe(value):
+    """NaN/Infinity are valid Python floats and INVALID JSON — json.dumps
+    emits them bare, every browser's res.json() then throws, and the client
+    reads it as a dead fetch. A solver edge or a telemetry float is allowed
+    to be NaN; the wire is not. Recursive scrub, None for the offenders."""
+    import math
+    if isinstance(value, float):
+        return None if (math.isnan(value) or math.isinf(value)) else value
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 @app.get("/api/schedule")
 def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None, force_refresh: bool = False,
                  request: Request = None):
@@ -15839,7 +15854,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 if now - last_bg_refresh.get('full_30_days', 0) > 1800:
                     last_bg_refresh['full_30_days'] = now
                     background_tasks.add_task(trigger_background_refresh, None, None, False)
-                return _scope.redact_schedule_blob(cached, _viewer)
+                return _json_safe(_scope.redact_schedule_blob(cached, _viewer))
 
         # Fetch fresh and block if no cache exists or forced
         try:
@@ -15868,7 +15883,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 res["prep_by_event"] = _prep_by_event(res.get("events"))
                 res["prep_confirmed"] = storage.get_confirmed_preps()
                 res["solving_dates"] = schedule_coordinator.get_solving_dates()
-            return _scope.redact_schedule_blob(res, _viewer)
+            return _json_safe(_scope.redact_schedule_blob(res, _viewer))
         except Exception as e:
             import traceback
             return {"error": str(e), "traceback": traceback.format_exc(), "error_debug": str(e)}
