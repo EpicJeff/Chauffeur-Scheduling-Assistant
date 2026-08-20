@@ -3654,6 +3654,16 @@ The helper who drove your kid to the game and stayed is the one holding the came
 
 Tests: `tests/test_family_network.py` scenarios 7–9 (present helper hands over a moment; absent helper fails closed; the sweep asks the helper).
 
+## The scope model, shipped dark (v2.332.0 — family-network S3)
+
+`services/scope.py` holds the whole §5–§9 model from `docs/family_network_design.md` in one place, and NOTHING calls it yet. The slice's deliverable is `tests/test_scope.py` (13 scenarios): the preset table is transcribed twice — module and test, independently — so any drive-by edit to what a person may see fails loudly. That is what makes every later slice (audiences on the board, `sees_people` in assemblers, route facets on the guard) a wiring change instead of a design change.
+
+- **Three axes**: `FACETS` (34 units of enforcement, each `route`/`field`/`instance`-kind, ◍-marked when about people) × `reach()` (`none|own|all`, a set of named steps, not a rank) × `sees_people` (stored as INTENT — `everyone` / `children` / `driven` / chosen ids — expanded at read time so "the children" self-updates when the baby arrives; `driven` computes the kids a helper drives from the same schedule placement S2 trusts).
+- **Presets over switches**: `household_adult` / `keeping_up` / `child` / `helper` / `guest`; role picks one, `member.scope.preset` overrides, `member.scope.overrides` deviates per facet (junk values ignored, never obeyed). Table values `parents` (trips/occasions: all for parents, none for other adults) and `invited` (none at class level, instance membership honoured — the Slack external-guest shape) resolve inside `reach()`/`can_see()`.
+- **Capabilities that are not views**: `chat.initiate` (`none|parents|household|anyone`) and `moments.contribute` (`none|when_present|all` — S2 already enforces `when_present`).
+- **Audiences fail closed** (supersedes `occasion_design.md`'s deny-list): every shareable object may declare `audience: household|parents|shared` (+`shared_with`); type defaults live in `AUDIENCE_DEFAULTS` — trips, occasions and future gift lists default `parents`. Parents always pass; unknown values fail CLOSED; and a facet grant is never an audience grant — both doors must agree.
+- **Stages compose, never merge** (§11): a Navigator with `calendar.events: own` keeps `horizon_days: 13`; neither module consults the other.
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.

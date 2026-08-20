@@ -1,6 +1,6 @@
 # Family Network — Access Scope, and the Household Boundary
 
-Status: **BUILDING — Phase 1 underway.** Written 2026-08-20 to settle a question before code.
+Status: **BUILDING — Phase 1 shipped (S1 v2.330.0, S2 v2.331.0), Phase 2 shipped (S3 v2.332.0).** Written 2026-08-20 to settle a question before code.
 Revised the same day after the first surface list was found too coarse (§5).
 Companions: `docs/auth_design.md` (the tier spine this extends), `docs/kid_support_design.md`
 (stages — the per-member override pattern this copies).
@@ -681,7 +681,7 @@ evidence exists means discovering the panel cannot reach its board on a school m
 
 | Slice | What it is | What it buys |
 |---|---|---|
-| **S3** | `services/scope.py` — facets, presets, `reach()`, `can_see()`, `sees_people`, `audience`. Nothing calls it. | Nothing visible. Buys the tests that prove the presets reproduce today, which is what makes every later slice safe to ship. |
+| **S3** ✅ v2.332.0 | `services/scope.py` — facets, presets, `reach()`, `can_see()`, `sees_people`, `audience`. Nothing calls it. | Nothing visible. Buys the tests that prove the presets reproduce today, which is what makes every later slice safe to ship. |
 
 ### Phase 3 — the three cases that started this
 
