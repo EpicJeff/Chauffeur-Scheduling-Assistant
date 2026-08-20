@@ -765,6 +765,36 @@ def scenario_an_emoji_field_can_be_filled_without_a_keyboard():
           "the board editor has no branch for an emoji option")
 
 
+def scenario_a_fitting_heading_keeps_its_descenders():
+    """Fit measures the CONTENT's box and hands the tile exactly that many
+    pixels, so anything a glyph paints outside its own line box is clipped —
+    and Tailwind pairs `text-5xl` with a line-height of exactly 1, which is
+    less than the em box of any real face. The tail of a g or a y therefore
+    hung below the heading's line box and the tile cut it off. Invisible while
+    a heading had a typed `rows` (a stated height leaves slack under the text)
+    and reported the moment one was set to Fit.
+
+    A line-height, not padding: the measurement reads boxes, so the fix has to
+    be in the box or the paint and the number go on disagreeing.
+    """
+    body = tpl_source.read('components/board_tile_body.html')
+    head = body[body.index("t.type === 'heading'"):]
+    head = head[:head.index('</template>')]
+    check('text-5xl' in head, "the heading scenario is looking at the wrong tile")
+    check('leading-tight' in head or 'leading-' in head,
+          "the heading sets no line-height, so a fitting tile clips its "
+          "descenders")
+    # And the class has to actually exist in the precompiled sheet — a class
+    # Tailwind never generated fails silently, which is the whole hazard of a
+    # built stylesheet.
+    for sheet in ('tailwind.css', 'tailwind-app.css'):
+        css = open(os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'static', sheet), encoding='utf-8').read()
+        check('.leading-tight' in css,
+              f"{sheet} has no .leading-tight rule; rebuild tools/build_tailwind.py")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

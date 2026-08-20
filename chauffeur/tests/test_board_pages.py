@@ -226,11 +226,25 @@ def scenario_an_empty_board_list_never_replaces_a_real_one():
 
     # The client must not produce the payload in the first place. The draft
     # ships with an empty list and only `loadSetup` makes it real.
+    #
+    # And not just the board list. The same draft carries every GLOBAL panel
+    # setting — theme, background, screensaver — with the same placeholder
+    # problem and a worse blast radius: those defaults are plausible values, so
+    # the server has no "obviously wrong" shape to refuse the way it refuses an
+    # empty board list. A save from an unloaded draft therefore has to be
+    # refused wholesale, on the client, before it is built.
     home = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
     check('setupLoaded: false' in home,
           "the editor draft cannot tell a loaded board list from its placeholder")
-    check('this.setupLoaded' in home and '{ panel_pages: this._cleanPages() } : {}' in home,
-          "the board list is still sent unconditionally, placeholder and all")
+    body = home.split('async save() {', 1)
+    check(len(body) == 2, "the board editor's save() has been renamed")
+    guard = body[1].split('fetch(', 1)[0]
+    check('if (!this.setupLoaded)' in guard and 'return;' in guard,
+          "save() still builds a payload out of a draft that never loaded")
+    for key in ('panel_theme', 'panel_background', 'panel_screensaver_enabled',
+                'panel_screensaver_source', 'panel_idle_return_seconds'):
+        check(key not in guard,
+              f"{key} is sent before the unloaded-draft guard runs")
 
 
 def scenario_a_new_board_is_empty_and_stays_empty():

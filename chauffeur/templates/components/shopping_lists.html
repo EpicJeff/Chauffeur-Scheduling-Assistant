@@ -27,6 +27,11 @@
            `checkedItems()`, `setChecked(it, on)`, `byline(it)`. `remove` and
            `clear` are hook expressions — the page passes its own, a card
            passes nothing, and the destructive controls are simply not drawn.
+           ONE LIST per binding, always. The card set to "All" renders this
+           macro once per list against its own `shoppingListPane` scope rather
+           than merging them, because the run groups are shop DATES and two
+           stores collapsed into one "Saturday's shop" is a list you cannot
+           shop from.
 
      Every section is a toggle (`listShow(part)`, absent means shown): the
      conversion paradigm, so zero-config equals the page and a card can be
@@ -469,21 +474,79 @@
     // showing Tuesday's dinner on Wednesday.
     const MEAL_WEEK_POLL_MS = 900000;
 
+    // ── The shopping list card: WHICH lists, and then one pane per list.
+    //
+    // Split in two because the card's picker offers "All", and for a year it
+    // did not mean it: blank fell back to the household's default list, which
+    // on every real install is the groceries. So a board said All and showed
+    // the groceries, a second list somebody made was unreachable from any
+    // board, and the setting looked broken because it was. Reported from a
+    // wall exactly that way.
+    //
+    // The list is a whole drawing — a run split, a cart, an empty state — so
+    // "all of them" is N drawings, not one drawing of N lists merged. Merging
+    // was the other candidate and it is wrong: the run groups are shop DATES,
+    // so a pharmacy list and a grocery list would collapse into one
+    // "Saturday's shop" with no way to tell which store a line belongs to.
+    // Hence a pane per list, each one a complete `shoppingListsLogic` bound to
+    // its own list, each polling itself.
+    const SHOPPING_LISTS_POLL_MS = 300000;
+
     function shoppingListCard(t, apiBase) {
         const cfg = (t && t.data) || {};
+        return {
+            // No `listShow` / `listsInteractive` out here: the PANE owns
+            // both, and a copy on the outer scope is a second answer waiting
+            // to disagree with it.
+            panes: [], gone: '',
+            async startShopping() {
+                await this.loadPanes();
+                // The PANES poll their own items every minute; this catches a
+                // list created or renamed on a phone, which happens rarely
+                // enough that the minute cadence would be wasted on it.
+                setInterval(() => this.loadPanes(), SHOPPING_LISTS_POLL_MS);
+            },
+            async loadPanes() {
+                let all = [];
+                try {
+                    const r = await fetch(apiBase + 'api/shopping/lists');
+                    all = r.ok ? await r.json() : [];
+                } catch (e) { return; }   // keep the panes that are drawn
+                let want = all;
+                if (cfg.list) {
+                    want = all.filter(l => l.id === cfg.list);
+                    // A list somebody deleted since configuring the card. The
+                    // same answer the Lists glance gives, and for the same
+                    // reason: falling back to every list would look like the
+                    // setting doing nothing.
+                    this.gone = want.length ? '' : 'That list is gone.';
+                } else {
+                    this.gone = '';
+                }
+                const next = want.map(l => ({ id: l.id, name: l.name || 'List' }));
+                // Only when it actually CHANGED. `panes` drives a keyed
+                // x-for, and rewriting it every five minutes with an equal
+                // array is five minutes of churn for Alpine to reconcile.
+                if (JSON.stringify(next) !== JSON.stringify(this.panes)) {
+                    this.panes = next;
+                }
+            },
+        };
+    }
+
+    // One list, drawn in full. Everything the macro's contract asks for, plus
+    // the card's toggles — carried explicitly rather than inherited from the
+    // card's scope, because Alpine binds `this` in an x-data method to that
+    // component's own data and `itemSubline` calls `listShow` on it.
+    function shoppingListPane(listId, apiBase, data) {
+        const cfg = data || {};
         const parts = cfg.parts || {};
         return {
             ...shoppingListsLogic(apiBase),
+            activeId: listId,
             listsInteractive: cfg.interactive !== false,
             listShow(part) { return parts[part] !== false; },
-            async startShopping() {
-                await this.loadLists();
-                // A card pinned to one list wins over the household default;
-                // an unknown id falls back rather than showing nothing, the
-                // same rule every other pinned-selection card follows.
-                if (cfg.list && (this.lists || []).some(l => l.id === cfg.list)) {
-                    this.activeId = cfg.list;
-                }
+            async startPane() {
                 this.loadMembers();
                 await this.loadItems();
                 setInterval(() => this.loadItems(true), SHOPPING_POLL_MS);

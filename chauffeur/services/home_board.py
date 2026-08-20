@@ -321,7 +321,11 @@ WIDGETS = [
          _opt('interactive', 'Interactive', 'bool', True,
               help='Tap to add, tap again to undo. Off, the chips only show '
                    'what is already on the list.'),
+         # No `empty` of "All" here, and this is the one shopping option
+         # where blank cannot mean it: a tap puts a LINE somewhere, and
+         # "somewhere" has to be one list.
          _opt('list', 'List', 'select', '', source='lists',
+              empty='The default list',
               help='Which list a tap adds to. Empty uses the default.'),
          _opt('show_hint', 'The line explaining the tap', 'bool', True),
      ]},
@@ -333,8 +337,13 @@ WIDGETS = [
          _opt('interactive', 'Interactive', 'bool', True,
               help='Ticking a line moves it to the cart. Off, the list is a '
                    'display.'),
+         # Blank means EVERY list, and it now does. It used to mean "the
+         # household default", which on every real install is the grocery
+         # list — so a picker reading All showed the groceries and nothing
+         # else, and a second list somebody made was unreachable from a
+         # board. The card draws one section per list instead.
          _opt('list', 'List', 'select', '', source='lists',
-              help='One list, or leave empty for the default.'),
+              help='One list, or leave empty for every list.'),
          _opt('show_runs', 'Split by shop run', 'bool', True),
          _opt('show_cart', 'What is already in the cart', 'bool', True),
          _opt('show_note', 'Notes on a line', 'bool', True),
@@ -598,6 +607,7 @@ WIDGETS = [
      'blurb': "The next trip and how long until it starts.",
      'options': [
          _opt('trip', 'Trip', 'select', '', source='trips',
+              empty='Whatever is next',
               help='One trip, or leave empty for whatever is next.'),
          _opt('count', 'Trips shown', 'int', 4, min=1, max=8,
               help='Ignored when a single trip is pinned.'),

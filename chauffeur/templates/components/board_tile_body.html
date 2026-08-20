@@ -164,9 +164,22 @@
                          page names itself — the text is the tile's own title,
                          which the payload has already resolved into `label`
                          (an untitled one reads "Heading", visibly asking to
-                         be typed into). -->
+                         be typed into).
+
+                         `leading-tight` is not styling, it is the fix for a
+                         clipped descender. Tailwind pairs `text-5xl` with a
+                         line-height of exactly 1, and a font's glyphs do not
+                         fit in one em — the tail of a g or a y hangs below the
+                         line box. It went unnoticed while headings had a typed
+                         height, because a stated `rows` leaves slack under the
+                         text; a heading set to FIT gets measured to its line
+                         box and the tile clips at the descender. Reported from
+                         a wall as "Fit cuts the bottom off the letters".
+                         1.25em contains any face this could be set in, and it
+                         is a real line-height rather than padding so the
+                         measurement and the paint agree. -->
                     <template x-if="t.type === 'heading'">
-                        <div class="font-black panel-text"
+                        <div class="font-black panel-text leading-tight"
                             :class="t.data.size === 'lg' ? 'text-2xl md:text-3xl' : 'text-4xl md:text-5xl'"
                             x-text="t.label || 'Heading'"></div>
                     </template>
@@ -350,10 +363,26 @@
                         </div>
                     </template>
 
+                    <!-- One pane per list. The card's picker offers "All"
+                         and now means it: blank draws every list the household
+                         has, a pinned one draws that one. The name only appears
+                         when there is more than one pane — with a single list
+                         the tile's own heading has already said which, and a
+                         second label under it is the noise the run split
+                         refuses for the same reason. -->
                     <template x-if="t.type === 'shopping_list'">
                         <div x-data="shoppingListCard(t, apiBase)" x-init="startShopping()"
-                            class="min-w-0">
-                            {{ shopping_lists.shopping_items(interactive='listsInteractive') }}
+                            class="min-w-0 space-y-6">
+                            <div x-show="gone" class="text-sm opacity-60" x-text="gone"></div>
+                            <template x-for="p in panes" :key="'sl-' + p.id">
+                                <div x-data="shoppingListPane(p.id, apiBase, t.data)"
+                                    x-init="startPane()" class="min-w-0">
+                                    <div x-show="panes.length > 1" x-cloak
+                                        class="text-xs font-black uppercase tracking-widest panel-dim mb-2"
+                                        x-text="p.name"></div>
+                                    {{ shopping_lists.shopping_items(interactive='listsInteractive') }}
+                                </div>
+                            </template>
                         </div>
                     </template>
 

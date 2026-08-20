@@ -3837,3 +3837,79 @@ The arc in one paragraph: the app is published to the public internet by the clo
 4. **Confirm every member holds a password or a PIN** — the flip refuses and names anyone who doesn't (Decision 9), so this step is enforced, not remembered.
 5. **Evidence window**: reset the audit ("Start a fresh window"), live normally for a few days — panels at 6am, phones, Argyle, the share sheet, the bus map — then read the report. Quiet is the evidence.
 6. **Flip** on Config → People → Enforcement. Then walk the house (step 1's codes appear now if any screen was missed). Anything unexpected: the same switch turns straight back off, refused by nothing.
+
+## Three board settings that did not mean what they said (v2.348.0)
+
+Three reports from the same wall, unrelated in cause and identical in shape: a
+control that stated one thing and did another.
+
+**"All" showed the groceries.** The Shopping List card's list picker offers a
+blank entry the editor draws as **All**, and blank fell through to
+`loadLists()`, which selects the household's DEFAULT list — the groceries, on
+every real install. So a card set to All showed one list, a second list nobody
+could reach from any board, and a setting that looked broken because it was.
+Blank now means every list, and the card draws a **pane per list**
+(`shoppingListPane`, one complete `shoppingListsLogic` bound to one id, polling
+itself) rather than one merged drawing: the run groups are shop DATES, so a
+pharmacy list and a grocery list merged would collapse into a single
+"Saturday's shop" with no way to tell which store a line belongs to. The list
+name appears only when there is more than one pane — with one list the tile's
+own heading has already said which. A pinned list that has since been deleted
+says **"That list is gone."**, the same answer the Lists glance gives and for
+the same reason: falling back to everything would read as the setting doing
+nothing.
+
+- **And blank does not always mean All.** The picker is shared, the meaning is
+  not: a staples tap puts a line on exactly ONE list, and a blank trip means
+  whatever is next. `_opt(..., empty='The default list')` names the blank per
+  option and `board_options.html` renders `o.empty || 'All'`. A picker that
+  reads All and behaves like one specific thing is the bug this arc just fixed;
+  shipping two more of them would have been the same bug wearing a different
+  tile.
+- Tests: `tests/test_shopping_cards.py` — four scenarios that RUN the card in
+  node against a stub `fetch` (blank draws both lists and each pane asks for
+  its own items; a pin wins and never fetches the other list; a deleted pin
+  says so; the card's toggles reach every pane). A source assertion could only
+  have said the code looks right, and the code it replaced looked right.
+
+**Fit clipped the descenders on a Heading.** Tailwind pairs `text-5xl` with a
+line-height of exactly 1, which is smaller than the em box of any real face, so
+the tail of a *g* or a *y* hangs below its line box. Invisible while a heading
+had a typed `rows` — a stated height leaves slack under the text — and reported
+the moment one was set to **Fit**, because fit measures the content's box and
+hands the tile exactly that many pixels. `leading-tight` on the heading, and a
+line-height rather than padding on purpose: the measurement reads boxes, so
+anything that fixes only the paint leaves the number and the picture
+disagreeing. Pinned in `tests/test_fit_to_content.py`, which also asserts the
+class exists in the **precompiled** sheet — a class Tailwind never generated
+fails silently, which is the standing hazard of a built stylesheet.
+
+**The panel's global settings were wiped on every add-on update.** Both board
+editors keep the globals — theme, background, screensaver, idle return — in a
+draft **initialised to the defaults** and only then filled in from the server.
+Every one of those defaults is a plausible value, so the server had nothing to
+refuse: `exclude_unset` protects keys a client omits, and these were not
+omitted, they were sent wrong. The mechanism is the update itself — the
+container stops, an open tab reloads into a 502, the load throws into a silent
+`catch`, the draft stays on defaults, and the next edit posts them over the
+household's settings.
+
+- The board list already refused this shape (an empty `panel_pages` over a real
+  wall, v2.288.0). **Everything beside it needed the same refusal**, and on the
+  CLIENT, before the payload is built: a surface whose draft never loaded has
+  nothing to say about ANY setting. `save()` (home.html) and `savePanel()`
+  (boards_admin.html) now stop at the top and say so out loud — a silent no-op
+  is a household dragging tiles that do not stay dragged.
+- **Refusing is only half an answer**, so the load is retried (exponential
+  backoff to 30s, 8 attempts). An editor that can never save again for the life
+  of the page is its own bug, and a tab left open on a kitchen laptop is
+  exactly where this happens.
+- Tests: `tests/test_settings_partial_save.py`
+  (`scenario_a_surface_never_saves_settings_it_never_loaded`) and
+  `tests/test_board_pages.py`, which now asserts no panel global is even
+  reachable in `save()` before the guard runs.
+
+**The shape worth carrying forward:** a default that is *indistinguishable from
+a choice* cannot be defended server-side. Where a client holds settings it did
+not load, the refusal has to be at the client, and "I have nothing to say"
+has to be expressible — as an omitted key, or as no request at all.

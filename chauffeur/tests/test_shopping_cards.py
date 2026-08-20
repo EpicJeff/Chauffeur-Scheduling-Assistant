@@ -26,8 +26,11 @@ defends:
 
 Run from chauffeur/:  python tests/test_shopping_cards.py
 """
+import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import types
@@ -195,6 +198,174 @@ def scenario_the_shopping_board_is_the_kiosk():
     src = tpl_source.read('home.html')
     for editor in ('openDishPicker', 'saveRule(', 'uploadPhoto('):
         check(editor not in src, f"the planner's {editor} was pulled onto the board")
+
+
+def scenario_all_means_all_and_a_blank_picker_says_what_it_means():
+    """The list card's picker offered "All" and did not mean it.
+
+    Blank fell through to `loadLists`, which selects the household's DEFAULT
+    list — the groceries, on every real install. So a board set to All showed
+    the groceries and nothing else, and a second list somebody made could not
+    be put on a wall at all. Reported from a wall.
+
+    Two halves to the fix and both are defended here. The card draws a PANE per
+    list when nothing is pinned (a merged list would collapse two stores into
+    one "Saturday's shop"); and the blank entry in the editor stops claiming
+    "All" on the pickers where it cannot mean it — a staples tap goes on
+    exactly one list, and a blank trip means whatever is next.
+    """
+    src = tpl_source.read('components/shopping_lists.html')
+    check('function shoppingListPane' in src,
+          "there is no per-list pane, so the card still draws one list")
+    card = src[src.index('function shoppingListCard'):
+               src.index('function shoppingListPane')]
+    # The old fallback, by its shape: the card must not resolve a list itself.
+    check('loadLists()' not in card and 'activeId' not in card,
+          "the list card still picks an active list, which is the default one")
+    check('cfg.list' in card, "the card ignores a pinned list")
+
+    body = tpl_source.read('components/board_tile_body.html')
+    pane = body[body.index("t.type === 'shopping_list'"):]
+    pane = pane[:pane.index('</template>', pane.index('shopping_items'))]
+    check('x-for="p in panes"' in pane and 'shoppingListPane(p.id' in pane,
+          "the card body does not render a pane per list")
+
+    # The blank entry says which blank it is.
+    opts = tpl_source.read('components/board_options.html')
+    check("o.empty || 'All'" in opts,
+          "the editor's blank option is hardcoded to All")
+    by_key = {w['key']: w for w in home_board.WIDGETS}
+    def _list_opt(tile):
+        return next(o for o in by_key[tile]['options'] if o['key'] == 'list')
+    check(_list_opt('shopping_staples').get('empty'),
+          "the staples picker still claims All for a tap that goes on one list")
+    check(not _list_opt('shopping_list').get('empty'),
+          "the list card's blank is All and should stay All — it draws them all")
+    check(not _list_opt('shopping').get('empty'),
+          "the Lists glance already meant All and should still say so")
+
+
+# ── The list card, actually RUN.
+#
+# Which list a board shows is a decision made entirely in the browser, so a
+# source assertion can only say the code LOOKS right — and the bug it is
+# defending against (blank meaning "the default list") was code that looked
+# perfectly right. Same technique as test_home_board_runtime: pull the shared
+# script out of the component, run it in node against a stub `fetch`, and
+# assert on the lists it actually asked for.
+SHOP_HARNESS = r"""
+globalThis.LISTS = LISTS_JSON;
+globalThis.ASKED = [];
+globalThis.setInterval = function () { return 0; };
+globalThis.fetch = async function (url) {
+  ASKED.push(url);
+  if (url.indexOf('api/shopping/lists') >= 0) {
+    return { ok: true, json: async () => LISTS };
+  }
+  if (url.indexOf('api/shopping/items') >= 0) {
+    const id = decodeURIComponent(url.split('list_id=')[1] || '');
+    return { ok: true, json: async () => [{ id: id + '-i1', name: 'thing on ' + id }] };
+  }
+  if (url.indexOf('api/shopping/runs') >= 0) {
+    return { ok: true, json: async () => ({ groups: [] }) };
+  }
+  return { ok: true, json: async () => [] };
+};
+globalThis.showGlobalAlert = function () {};
+"""
+
+SHOP_PROBE = r"""
+(async () => {
+  const card = shoppingListCard({ data: CFG_JSON }, '');
+  await card.startShopping();
+  const panes = [];
+  for (const p of card.panes) {
+    const pane = shoppingListPane(p.id, '', CFG_JSON);
+    await pane.startPane();
+    panes.push({ id: pane.activeId, items: pane.items.map(i => i.name),
+                 interactive: pane.listsInteractive,
+                 runs: pane.listShow('runs') });
+  }
+  console.log(JSON.stringify({ panes: card.panes, gone: card.gone,
+                               drawn: panes, asked: ASKED }));
+})();
+"""
+
+
+def _run_card(cfg, lists):
+    node = shutil.which('node')
+    if not node:
+        print("  skip  node not installed — the list card was not executed")
+        return None
+    src = tpl_source.read('components/shopping_lists.html')
+    body = re.findall(r'<script>(.*?)</script>', src, re.S)
+    body = next((b for b in body if 'function shoppingListCard' in b), None)
+    check(body, "components/shopping_lists.html no longer defines shoppingListCard")
+    js = (SHOP_HARNESS.replace('LISTS_JSON', json.dumps(lists)) + body
+          + SHOP_PROBE.replace('CFG_JSON', json.dumps(cfg)))
+    path = os.path.join(tempfile.gettempdir(), 'chauffeur_shopping_card_probe.js')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(js)
+    proc = subprocess.run([node, path], capture_output=True, text=True, timeout=30)
+    check(proc.returncode == 0,
+          "the list card threw in node:" + chr(10) + proc.stderr[:2000])
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+TWO_LISTS = [{'id': 'groceries', 'name': 'Groceries', 'is_default': True},
+             {'id': 'pharmacy', 'name': 'Pharmacy'}]
+
+
+def scenario_a_blank_picker_draws_every_list():
+    """The report, exactly: "it seems to only ever show the grocery list".
+    Blank fell through to the household DEFAULT, which is the groceries — so a
+    second list was unreachable from any board."""
+    got = _run_card({'parts': {}}, TWO_LISTS)
+    if got is None:
+        return
+    check([p['id'] for p in got['panes']] == ['groceries', 'pharmacy'],
+          f"blank did not draw every list: {got['panes']}")
+    check([p['id'] for p in got['drawn']] == ['groceries', 'pharmacy'],
+          f"a pane drew the wrong list: {got['drawn']}")
+    # Each pane asked for ITS OWN items, which is the half that actually
+    # reaches the wall — two panes both fetching the default list would look
+    # identical to the bug being fixed.
+    check(any('list_id=pharmacy' in u for u in got['asked']),
+          f"nothing ever asked for the second list's items: {got['asked']}")
+
+
+def scenario_a_pinned_list_is_the_only_one_drawn():
+    got = _run_card({'list': 'pharmacy', 'parts': {}}, TWO_LISTS)
+    if got is None:
+        return
+    check([p['id'] for p in got['panes']] == ['pharmacy'],
+          f"a pinned list did not win: {got['panes']}")
+    check(not got['gone'], "a pinned list that exists was reported as gone")
+    check(not any('list_id=groceries' in u for u in got['asked']),
+          f"a card pinned to the pharmacy fetched the groceries: {got['asked']}")
+
+
+def scenario_a_deleted_pin_says_so_instead_of_showing_everything():
+    """The same answer the Lists glance gives. Falling back to every list would
+    read as the setting doing nothing, which is the bug this arc just fixed."""
+    got = _run_card({'list': 'gone-list', 'parts': {}}, TWO_LISTS)
+    if got is None:
+        return
+    check(got['panes'] == [], f"a deleted pin still drew lists: {got['panes']}")
+    check(got['gone'], "a deleted pin drew nothing and said nothing")
+
+
+def scenario_the_card_toggles_reach_every_pane():
+    """The panes carry the card's configuration — `interactive` and the
+    section toggles. A pane that quietly reverted to the defaults would make
+    a read-only board tappable, on a surface every child can reach."""
+    got = _run_card({'interactive': False, 'parts': {'runs': False}}, TWO_LISTS)
+    if got is None:
+        return
+    for pane in got['drawn']:
+        check(pane['interactive'] is False,
+              f"a pane ignored `interactive`: {pane}")
+        check(pane['runs'] is False, f"a pane ignored a section toggle: {pane}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

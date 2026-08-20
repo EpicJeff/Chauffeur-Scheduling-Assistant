@@ -113,6 +113,13 @@ function boardsAdmin() {
         shippedBoards: [],
         savingBoards: false,
         dragKey: null,
+        // Has `loadBoards` actually returned? `panel` below starts on the
+        // DEFAULTS, and `savePanel` posts all of them at once — so a load that
+        // failed (the add-on restarting under an open tab) turned the next
+        // change of any single field into "and the theme is dark, and there is
+        // no background, and the screensaver is stock". The home board's
+        // editor had the same hole and the same fix.
+        panelLoaded: false,
         // Only this tab's keys, never the whole settings object: /api/settings
         // merges with exclude_unset, so a surface that owns some settings posts
         // exactly those and nothing else can be clobbered by it.
@@ -174,6 +181,7 @@ function boardsAdmin() {
                 };
                 all.sort((a, b) => at(a.key) - at(b.key));
                 this.boards = all;
+                this.panelLoaded = true;
             } catch (e) { /* the list stays empty and says Loading… */ }
         },
 
@@ -319,7 +327,18 @@ function boardsAdmin() {
             this.savePanel();
         },
 
-        savePanel() { return this.post({ ...this.panel }); },
+        savePanel() {
+            // Never the defaults. See `panelLoaded`: an unloaded editor has
+            // nothing to say about these settings, and saying the defaults is
+            // how a household lost their wall's theme and background.
+            if (!this.panelLoaded) {
+                showGlobalAlert('The panel settings have not loaded yet — '
+                    + 'nothing was saved. Reload the page and try again.');
+                this.loadBoards();
+                return;
+            }
+            return this.post({ ...this.panel });
+        },
 
         async post(body) {
             this.savingBoards = true;

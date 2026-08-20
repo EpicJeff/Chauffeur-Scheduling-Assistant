@@ -3097,7 +3097,23 @@
                                 .findIndex(p => p.slug === this.pageSlug);
                             if (i >= 0) this.pageIndex = i;
                         }
-                    } catch (e) { /* setup stays on defaults */ }
+                        this._setupTries = 0;
+                    } catch (e) {
+                        // RETRIED, because the one way this fails is the one
+                        // way that matters: the add-on restarting under an
+                        // open tab. `save()` now refuses to write anything
+                        // from an unloaded draft, so a failure here used to
+                        // wipe the panel settings and now merely leaves the
+                        // editor unable to save until the page is reloaded —
+                        // still not good enough for a tab somebody left open
+                        // on a kitchen laptop. Backing off to half a minute so
+                        // a genuinely dead server is not hammered.
+                        this._setupTries = (this._setupTries || 0) + 1;
+                        if (this._setupTries <= 8) {
+                            setTimeout(() => this.loadSetup(),
+                                       Math.min(30000, 1000 * 2 ** this._setupTries));
+                        }
+                    }
                 },
 
                 // Both stored shapes in, instances out. Mirrors
@@ -6473,6 +6489,34 @@
                 },
 
                 async save() {
+                    // NOTHING IS SENT FROM A DRAFT THAT WAS NEVER LOADED.
+                    //
+                    // `draft` starts on the initialiser's defaults — dark
+                    // theme, no background, the stock screensaver — and
+                    // `loadSetup` is what replaces them with the household's.
+                    // When that fetch fails (the add-on restarting under an
+                    // open tab is the way it actually happens: an update stops
+                    // the container, the page reloads into a 502, the catch
+                    // swallows it and the draft stays on defaults) every one
+                    // of those defaults was still posted by the next edit —
+                    // and /api/settings merges what it is SENT, so a save that
+                    // meant "I moved a tile" also meant "the theme is dark,
+                    // there is no background, the screensaver is stock".
+                    // Reported as the wall's settings being wiped every time
+                    // the add-on updated, and that is exactly what it was.
+                    //
+                    // The board list already refused this (a `[]` over a real
+                    // wall). Everything beside it needed the same refusal: an
+                    // unloaded draft has nothing to say about ANY setting, so
+                    // it says nothing at all rather than saying the defaults.
+                    if (!this.setupLoaded) {
+                        // Loudly. A silent no-op here is a household dragging
+                        // tiles that do not stay dragged.
+                        showGlobalAlert('The board settings have not loaded yet '
+                            + '— nothing was saved. Reload the page and try again.');
+                        this.loadSetup();
+                        return;
+                    }
                     this.saving = true;
                     try {
                         const r = await fetch(this.apiBase + 'api/settings', {
@@ -6487,12 +6531,7 @@
                                 // exists to avoid. They stay in settings,
                                 // untouched, as the thing the first page was
                                 // built from.
-                                // Omitted, not emptied, until the boards are
-                                // loaded: the server merges what it is sent,
-                                // so leaving the key out is how a save says
-                                // "I have nothing to tell you about boards".
-                                ...(this.setupLoaded
-                                    ? { panel_pages: this._cleanPages() } : {}),
+                                panel_pages: this._cleanPages(),
                                 panel_tabs: this.draft.panel_tabs,
                                 panel_idle_return_seconds:
                                     Number(this.draft.panel_idle_return_seconds) || 0,

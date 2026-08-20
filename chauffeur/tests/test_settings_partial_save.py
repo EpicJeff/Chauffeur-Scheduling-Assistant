@@ -88,6 +88,55 @@ def scenario_a_deliberate_empty_list_still_travels():
           f"an explicitly emptied list must still be saved, got {dumped}")
 
 
+def scenario_a_surface_never_saves_settings_it_never_loaded():
+    """The other half of "a page may save only its own keys", and the half
+    that cost a household their wall.
+
+    Both board editors keep the panel globals — theme, background, screensaver,
+    idle return — in a draft that is INITIALISED to the defaults and only then
+    filled in from the server. Every one of those defaults is a plausible
+    value, so the server has nothing to refuse: `exclude_unset` protects the
+    keys a client omits, and these were not omitted, they were sent wrong.
+
+    The way it happened is an add-on update. The container stops, an open tab
+    reloads into a 502, the load throws into a silent catch, and the draft
+    stays on defaults — and the next edit posts them over the household's
+    settings. Reported as the panel settings being wiped on every update.
+
+    So the refusal has to be on the client, before the payload is built: a
+    surface with an unloaded draft has nothing to say about ANY setting.
+    """
+    import os
+
+    # The FILES, not `tpl_source.read` — that inlines every include, and three
+    # different components on this page have an `async save()`.
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    read = lambda n: open(os.path.join(tpl, n), encoding='utf-8').read()
+
+    # The home board's editor: one guard at the top of save().
+    home = read('home.html')
+    guard = home.split('async save() {', 1)[1].split('fetch(', 1)[0]
+    check('if (!this.setupLoaded)' in guard,
+          "the board editor builds a payload from a draft that never loaded")
+
+    # And the config page's board admin, which posts the same globals.
+    admin = read(os.path.join('components', 'boards_admin.html'))
+    check('panelLoaded: false' in admin,
+          "the boards admin cannot tell loaded settings from its defaults")
+    save = admin.split('savePanel() {', 1)[1].split(chr(10) + '        },', 1)[0]
+    check('if (!this.panelLoaded)' in save and 'return;' in save,
+          "savePanel posts its defaults over the household's settings")
+
+    # Both retries exist, because refusing the save is only half an answer —
+    # an editor that can never save again is its own bug.
+    check('this.loadSetup();' in guard, "the board editor never retries the load")
+    check('this.loadBoards();' in save, "the boards admin never retries the load")
+    check('_setupTries' in home,
+          "a failed loadSetup is final, so one bad reload disables the editor "
+          "for the life of the page")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

@@ -179,11 +179,24 @@
                                         <!-- One of a live list. The blank entry
                                              is not decoration: "all of them"
                                              has to stay reachable after you
-                                             have picked one. -->
+                                             have picked one.
+                                             …and it does not always MEAN all
+                                             of them. A staples chip adds to
+                                             exactly one list, so blank there is
+                                             "the default list" and never "all";
+                                             a pinned trip falls back to
+                                             "whatever is next". The option says
+                                             which, because a picker that reads
+                                             All and behaves like one specific
+                                             thing is a setting nobody can trust
+                                             — reported from a wall as a
+                                             shopping card that only ever showed
+                                             the groceries. -->
                                         <template x-if="o.type === 'select' && !o.multi">
                                             <select @change="setCfg({{ OW }}, o, $event.target.value)"
                                                 class="w-full ed-input rounded px-2 py-1 text-sm ed-title">
-                                                <option value="" :selected="!cfg({{ OW }}, o)">All</option>
+                                                <option value="" :selected="!cfg({{ OW }}, o)"
+                                                    x-text="o.empty || 'All'"></option>
                                                 <template x-for="c in sourceRows(o)" :key="c.value">
                                                     <option :value="c.value" x-text="c.label"
                                                         :selected="c.value === cfg({{ OW }}, o)"></option>
