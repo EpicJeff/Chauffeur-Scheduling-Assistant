@@ -412,6 +412,42 @@ And it is the concrete argument for panels carrying their own scope: **a panel i
 a person, and cannot hold a `parents` audience just because a parent is standing in front of
 it.** The countdown tile is where Disney gets spoiled.
 
+### Trips: the choice, stated plainly
+
+Because the panel is the only surface a child meets a trip on, the whole question reduces to a
+binary the household put exactly right:
+
+> *"Either trips are private and you mark them public to share them on the panel, or trips are
+> public and you mark them private to hide them from the panel."*
+
+**Recommendation: private by default.** Two reasons, and one real objection that has to be
+answered rather than waved off.
+
+- **Trip creation is rare** — a handful a year. Friction at a rare moment is nearly free,
+  which is what makes a required choice affordable here and not on, say, a shopping item.
+- **The failures are wildly asymmetric.** Forgetting to mark a trip public means the wall does
+  not show a countdown yet: a complaint, fixed with one tap. Forgetting to mark a trip private
+  means Disney is on the kitchen wall at breakfast: unrecoverable, and nobody files it as a bug
+  because the damage is already done.
+
+**The objection, which is this repo's own recurring bug:** a default of private means the
+countdown tile — a feature the family likes — silently shows nothing until somebody remembers
+it exists. This codebase has been burned by exactly that shape more than once (the car
+readiness sweep that never ran for 27 releases; the Alpine dialog that could not open). A
+feature that quietly does nothing is indistinguishable from one that is working.
+
+**So hiding is never silent — to the people allowed to know.** The same rule the calendar
+quarantine already follows (*"skipping is never silent: a skipped calendar is a missing kid"*).
+The trips board card and the `/trips` page both say **"2 trips not shown here"** to a viewer
+whose scope permits trips, so a parent can always see that the wall is holding something back.
+The absence is legible to whoever may know and invisible to everyone else, which is the whole
+trick.
+
+**And the UI says what is actually being chosen.** The create form asks *"Show this on the
+family wall?"* — not an audience enum. `audience` is the model underneath; the wall is the
+decision people are really making, and a label that names the abstraction instead of the
+consequence is how a parent picks the wrong one.
+
 **A general note this exposed, worth applying to the whole list:** a facet's risk is a function
 of *where it renders*, not only of what it contains. `trips.*` looked like a phone-app
 permission and is really a wall-panel one. Before implementing any facet, check its surfaces —
@@ -689,6 +725,8 @@ together are the deliverable.
   countdown tile is the assertion that matters**, since it is the only surface on which a child
   encounters a trip at all.
 - Sharing that trip with one child reveals it to that child and to nobody else.
+- A hidden trip is *counted* on the trips card and the `/trips` page for a viewer who may see
+  trips ("2 trips not shown here"), and produces no trace at all for one who may not.
 - A list with `shared_with: []` is household-wide; populated, it is those people plus anyone
   with `lists.shopping: all`.
 - The four viewer-less reads (§10) refuse or redact for a viewer who should not see them.
