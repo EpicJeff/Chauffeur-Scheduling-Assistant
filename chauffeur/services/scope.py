@@ -372,6 +372,95 @@ def filter_subjects(member: dict, facet: str, rows: list, all_members: list,
     return [r for r in rows if subject_of(r) in allowed]
 
 
+# --- the welded schedule blob (§8.1) ----------------------------------------
+# The ~30-key blob's driving keys, grouped by the facet that owns each. This
+# is THE definition — /api/schedule and /api/home_board both redact through
+# redact_schedule_blob, which is what makes §13's "home_board redacts exactly
+# as /api/schedule does for the same viewer" true by construction.
+
+SCHEDULE_BLOB_FACETS = {
+    'schedule.assignment': ('assignments', 'ghost_assignments', 'ghost_drivers',
+                            'car_assignments', 'assist_assignments'),
+    # the operational picture: edges, chaining, and the live drives
+    'schedule.logistics': ('route_edges', 'initial_edges', 'final_edges',
+                           'completed_drives', 'in_progress_drives'),
+    'schedule.carpool_contacts': ('assist_contacts',),
+    'schedule.driver_calendars': ('driver_events',),
+    # solver reasoning: unassigned causes, conflicts, AI notes, rule matches
+    'schedule.diagnostics': ('diagnostics', 'ai_metadata', 'matched_rules',
+                             'unassigned', 'true_unassigned', 'conflicts',
+                             'lateness_warnings', 'overridden_events',
+                             'no_location', 'solving_dates'),
+}
+
+
+def calendar_event_subjects(ev: dict, members, passengers_by_id) -> set:
+    """Which members a calendar event belongs to — passenger calendar
+    ownership, resolved passenger id, or title hashtag: My Day's binding,
+    minus matched_rules (the §5 grain: events are attributed to people
+    through calendar_ids). One definition for the raw-Google endpoint (S5)
+    and the cached blob (S9)."""
+    from services import family_digest
+    subjects = set()
+    for m in members:
+        p_id = m.get('passenger_id')
+        if not p_id:
+            continue
+        p = passengers_by_id.get(p_id) or {}
+        p_cals = set(p.get('calendar_ids') or [])
+        p_tags = {t.lower() for t in (p.get('hashtags') or [])}
+        if family_digest._kid_event_match(ev, str(ev.get('id') or ''), p_id,
+                                          p_cals, p_tags, {}):
+            subjects.add(m['id'])
+    return subjects
+
+
+def redact_schedule_blob(blob: dict, viewer: Optional[dict]) -> dict:
+    """The §8.1 split, applied where the data is ASSEMBLED (family-network
+    S9). Keys whose facet the viewer does not reach are REMOVED, never
+    emptied — an empty dict reads as "nobody assigned", a missing key reads
+    as "not yours to know". Events narrow by sees_people only for a
+    full-reach viewer whose scope names people (the keeping-up adult); 'own'
+    viewers keep today's payload until S13 teaches the shells to ask for
+    less. No viewer, no change — a panel is a place."""
+    if not viewer or not isinstance(blob, dict):
+        return blob
+    out = dict(blob)
+    for facet, keys in SCHEDULE_BLOB_FACETS.items():
+        if reach(viewer, facet) == NONE:
+            for k in keys:
+                out.pop(k, None)
+    if reach(viewer, 'calendar.events') == ALL:
+        from services import storage
+        members = storage.get_all_members()
+        allowed = sees_people(viewer, members)
+        if allowed is not None:
+            passengers = {p.get('id'): p for p in storage.get_all_passengers()}
+            out['events'] = [e for e in (out.get('events') or [])
+                             if calendar_event_subjects(e, members, passengers)
+                             & allowed]
+    return out
+
+
+def redact_board(data: dict, viewer: Optional[dict]) -> dict:
+    """§13: the board redacts exactly as /api/schedule does for the same
+    viewer — the drives/schedule tiles re-serve the blob as their 'schedule'
+    sub-payload, so each goes through the same redactor. Copy-on-write:
+    build()'s result is cached and shared with the panels, which must keep
+    the unredacted original (a panel's own scope story is the shell's, S13)."""
+    if not viewer or not isinstance(data, dict):
+        return data
+    tiles, changed = [], False
+    for t in data.get('tiles') or []:
+        if isinstance(t, dict) and isinstance(t.get('schedule'), dict):
+            t = {**t, 'schedule': redact_schedule_blob(t['schedule'], viewer)}
+            changed = True
+        tiles.append(t)
+    if not changed:
+        return data
+    return {**data, 'tiles': tiles}
+
+
 # --- audience: per-object secrecy (§7) --------------------------------------
 # Every shareable object may declare an `audience`; each object TYPE declares
 # its default. The four existing allowlists (chores, cars, channels, lists)

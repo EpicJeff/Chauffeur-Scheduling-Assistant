@@ -4016,3 +4016,32 @@ def run_prep_reminders(send, now: datetime.datetime = None) -> list:
                 pass
     storage.set_app_state('prep_reminders_sent', sent)
     return fired
+
+
+def redact_plan_for_viewer(plan: dict, viewer) -> dict:
+    """Family-network S9 (§8.4): the eating plan is a whereabouts feed in
+    disguise — per-member `where` is a location and `away` says who is not
+    in the house. A viewer whose presence.location reach is 'none' keeps the
+    MEAL half — who eats when, how many sittings, the cook window — and
+    loses every place: slot and sitting `where`s and their prose labels, the
+    away list, and the summary lines that would say either. Panels (no
+    viewer) are unchanged; the route guard owns anonymity."""
+    from services import scope
+    if not viewer or scope.reach(viewer, 'presence.location') != scope.NONE:
+        return plan
+
+    def _slot(s):
+        return {**s, 'where': None, 'label': ''}
+
+    out = dict(plan)
+    out['people'] = [{**p,
+                      'slots': [_slot(s) for s in (p.get('slots') or [])],
+                      'first': _slot(p['first']) if p.get('first') else None}
+                     for p in (plan.get('people') or [])]
+    out['no_slot'] = [p for p in out['people'] if not p.get('slots')]
+    out['sittings'] = [{**g, 'where': None,
+                        'label': (g.get('label') or '').split(' ', 1)[0]}
+                       for g in (plan.get('sittings') or [])]
+    out['away'] = []
+    out['lines'] = []
+    return out

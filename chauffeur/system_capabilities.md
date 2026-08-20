@@ -3717,6 +3717,19 @@ Tests: `tests/test_route_facets.py` (5 scenarios).
 
 Tests: `tests/test_list_sharing.py` (4 scenarios).
 
+## The four payloads that answer differently now (v2.339.0 — family-network S9)
+
+The arc's largest slice: the welded payloads take a viewer, with redaction applied where the data is ASSEMBLED so every route inherits it. Everywhere the same shape: a facet the viewer does not reach has its keys **removed, never emptied** (an empty dict reads as "nobody assigned"; a missing key reads as "not yours to know"); `own`-reach viewers keep today's payloads until S13 teaches the shells to ask for less; tokenless callers (panels) are byte-identical to before — a panel is a place.
+
+- **`GET /api/schedule`** finally takes a viewer. `scope.SCHEDULE_BLOB_FACETS` is THE grouping: assignment keys (`assignments`/`ghost_*`/`car_assignments`/`assist_assignments`), logistics (`route_edges`/`initial_edges`/`final_edges` + the live-drive pair), `assist_contacts`, `driver_events`, and diagnostics (`diagnostics`/`matched_rules`/`unassigned`/`conflicts`/`lateness_warnings`/`ai_metadata`…). Events narrow by `sees_people` for full-reach viewers whose scope names people — the keeping-up adult gets the children's events with every driving key absent, asserted key by key. Redaction happens on the way OUT of both cache paths; the stored caches stay whole.
+- **`GET /api/home_board`** runs `scope.redact_board`, which pushes every tile's `schedule` sub-payload through the SAME redactor — §13's "redacts exactly as /api/schedule does" is true by construction. Copy-on-write over the shared build cache, so panels keep the unredacted original.
+- **`GET /api/members/{id}/day`**: rides survive (the calendar is the viewer's) but lose `driver`/`car` per ride and per leg (assignment), `launch` (logistics), `assist` carpool contacts, `due_soon` homework (kid_tasks) and `status_days` per the viewer's facets. Internal callers (briefings/digests) resolve no viewer and are untouched.
+- **`GET /api/meals/plan`** (`meals.redact_plan_for_viewer`): a `presence.location: none` viewer keeps the meal half — who eats when, sittings, cook window — and loses every place: slot/sitting `where`s and labels, the away list, and the summary lines that would say either.
+- **`GET /api/family/locations`**: rows narrow by `sees_people` (the chosen-scope aunt sees Emma's pin and her own, nothing of Jack's); a `presence.location: none` viewer is demoted to the kiosk view while dark (the S7 route guard refuses them outright once enforcing).
+- One definition of "whose event is this": `scope.calendar_event_subjects` (S5's helper now delegates) — the raw-Google endpoint and the cached blob can never disagree about attribution.
+
+Tests: `tests/test_welded_payloads.py` (5 scenarios, §13's key-by-key assertions included).
+
 ## The shelf you snap, the screenshot you already have (v2.338.0, reshaped v2.338.1)
 
 The shopping add-row's photo button carried `capture="environment"`, which mobile obeys by jumping STRAIGHT into the camera — a screenshot already in the gallery was unreachable — while desktop ignores it entirely. v2.338.0 tried a second gallery button; v2.338.1 replaced both with the right shape: **one 📸 button, no `capture`**, so mobile offers its own chooser (camera / photo library / files) and desktop opens the normal dialog. Same `/api/shopping/photo` reader, same staged candidate picker. Images only; the endpoint refuses non-image files (a PDF list would need a converter in front of the vision call — not built).

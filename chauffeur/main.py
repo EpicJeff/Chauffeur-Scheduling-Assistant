@@ -1255,14 +1255,23 @@ def board_page(slug: str, request: Request):
         request=request, name="home.html", context={'board_slug': slug}))
 
 @app.get("/api/home_board")
-def home_board_api(widgets: Optional[str] = None, page: Optional[str] = None):
+def home_board_api(widgets: Optional[str] = None, page: Optional[str] = None,
+                   request: Request = None):
     """The whole board in ONE payload. Six tiles fetching themselves would be
     six requests per tick on a display that runs sixteen hours a day; this is
-    one, cached briefly so a second panel costs nothing."""
-    from services import home_board
-    return home_board.build(
+    one, cached briefly so a second panel costs nothing.
+
+    Family-network S9: a resolved viewer's board redacts its schedule tiles
+    exactly as /api/schedule does for them — same redactor, so the two can
+    never disagree (§13). Copy-on-write over the shared cache; panels keep
+    the whole payload."""
+    from services import home_board, scope as _scope
+    data = home_board.build(
         requested=widgets, page=page,
         kid_digest_fn=lambda: _build_kid_digests(_kid_digest_default_date()))
+    viewer_id = _acting_id(request, None)
+    viewer = storage.get_member(viewer_id) if viewer_id else None
+    return _scope.redact_board(data, viewer)
 
 class BoardPreviewRequest(BaseModel):
     widgets: List[Any] = []
@@ -2976,24 +2985,11 @@ def rebuild_itinerary_api(event_id: str):
 
 
 def _calendar_event_subjects(ev: dict, members, passengers_by_id) -> set:
-    """Which members a raw calendar event belongs to — passenger calendar
-    ownership, resolved passenger id, or title hashtag: My Day's four-way
-    binding minus matched_rules, which a raw Google event cannot carry
-    (family-network S5, the §5 grain: events are attributed to people
-    through calendar_ids)."""
-    from services import family_digest
-    subjects = set()
-    for m in members:
-        p_id = m.get('passenger_id')
-        if not p_id:
-            continue
-        p = passengers_by_id.get(p_id) or {}
-        p_cals = set(p.get('calendar_ids') or [])
-        p_tags = {t.lower() for t in (p.get('hashtags') or [])}
-        if family_digest._kid_event_match(ev, str(ev.get('id') or ''), p_id,
-                                          p_cals, p_tags, {}):
-            subjects.add(m['id'])
-    return subjects
+    """S5's helper, now delegating to the one definition in scope.py — S9's
+    blob redactor narrows events through the same attribution, and two
+    copies of "whose event is this" WILL disagree eventually."""
+    from services import scope
+    return scope.calendar_event_subjects(ev, members, passengers_by_id)
 
 
 @app.get("/api/calendar/events")
@@ -8781,7 +8777,7 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
         print(f"Status resolve failed for {date_str}: {se}")
         status_days = []
 
-    return {
+    payload = {
         'member_id': member_id,
         'name': member.get('name'),
         'date': date_str,
@@ -8790,6 +8786,29 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
         'launch': launch,
         'status_days': status_days,
     }
+    # Family-network S9 (§8.3): the day welds rides, per-leg driver identity,
+    # leave-by, homework and status days — the viewer's field facets shape
+    # the answer. A viewer with full reach (every household role today) is
+    # untouched; internal callers (briefings, digests) pass no request and
+    # resolve no viewer.
+    viewer = storage.get_member(viewer_id) if viewer_id else None
+    if viewer:
+        from services import scope as _scope
+        if _scope.reach(viewer, 'schedule.assignment') == _scope.NONE:
+            payload['rides'] = [
+                {**r, 'driver': None, 'car': None,
+                 'legs': [{**l, 'driver': None, 'car': None}
+                          for l in (r.get('legs') or [])]}
+                for r in payload['rides']]
+        if _scope.reach(viewer, 'schedule.logistics') == _scope.NONE:
+            payload['launch'] = None
+        if _scope.reach(viewer, 'schedule.carpool_contacts') == _scope.NONE:
+            payload['rides'] = [{**r, 'assist': None} for r in payload['rides']]
+        if _scope.reach(viewer, 'lists.kid_tasks') == _scope.NONE:
+            payload['due_soon'] = []
+        if _scope.reach(viewer, 'presence.status') == _scope.NONE:
+            payload['status_days'] = []
+    return payload
 
 # --- Kid tasks (school/deadline list, kid-support arc K4a) ---
 
@@ -9090,16 +9109,23 @@ def clear_checked_shopping(list_id: str, request: Request = None):
     return {"status": "ok", "cleared": n}
 
 @app.get("/api/meals/plan")
-def meals_plan(date: Optional[str] = None, meal: str = 'dinner'):
+def meals_plan(date: Optional[str] = None, meal: str = 'dinner',
+               request: Request = None):
     """The day's eating plan (M2): per-person slots with a modality, the
     household's sittings, the cook window, and — first-class — who has no gap
-    to eat at all. Read-only over solver output; writes nothing."""
+    to eat at all. Read-only over solver output; writes nothing.
+
+    Family-network S9 (§8.4): this was a whereabouts feed wearing a meals
+    label — a viewer whose presence.location is none now gets the meal half
+    with every place withheld."""
     import datetime as _dt
     from services import meals as _meals
     date_str = date or _dt.date.today().isoformat()
     plan = _meals.eating_plan(date_str, meal if meal in _meals.MEAL_WINDOWS else 'dinner')
     plan['lines'] = _meals.plan_summary_lines(plan)
-    return plan
+    viewer_id = _acting_id(request, None)
+    viewer = storage.get_member(viewer_id) if viewer_id else None
+    return _meals.redact_plan_for_viewer(plan, viewer)
 
 class MealRequest(BaseModel):
     name: str
@@ -11051,6 +11077,17 @@ def family_locations(viewer: Optional[str] = None, request: Request = None):
         raise HTTPException(status_code=403, detail="Signed in as somebody else")
     family_eyes = bool(acting.get('member')) \
         and (acting.get('source') == 'token' or not _auth.enforcing())
+    # Family-network S9: the viewer's own scope shapes the map. Reach none
+    # demotes them to the kiosk view (private-stage kids withheld — the route
+    # guard refuses them outright once enforcing); sees_people narrows the
+    # rows to the people whose whereabouts are theirs to see (§5).
+    from services import scope as _scope
+    _viewer_m = acting.get('member')
+    _allowed_subjects = None
+    if _viewer_m:
+        if _scope.reach(_viewer_m, 'presence.location') == _scope.NONE:
+            family_eyes = False
+        _allowed_subjects = _scope.sees_people(_viewer_m, storage.get_all_members())
     driving_by_driver = {}
     try:
         sched = storage.get_cached_schedule() or {}
@@ -11070,6 +11107,8 @@ def family_locations(viewer: Optional[str] = None, request: Request = None):
     for m in storage.get_all_members():
         if m.get('role') == 'helper':
             continue  # outside the family bubble; no HA person entity anyway
+        if _allowed_subjects is not None and m['id'] not in _allowed_subjects:
+            continue  # sees_people: not this viewer's row (§5)
         entry = {
             'member_id': m['id'],
             'name': m.get('name'),
@@ -15505,8 +15544,18 @@ from fastapi import BackgroundTasks
 last_bg_refresh = {}
 
 @app.get("/api/schedule")
-def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None, force_refresh: bool = False):
+def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None, force_refresh: bool = False,
+                 request: Request = None):
+    # Family-network S9 (§8.1): the single largest piece of work in the arc,
+    # reduced to its honest core — this ~30-key blob finally takes a viewer.
+    # Redaction happens on the way OUT (scope.redact_schedule_blob), so the
+    # caches stay whole and shared; a tokenless caller (panel, kiosk) gets
+    # the unredacted blob exactly as before, because a panel is a place and
+    # the route guard owns anonymity.
+    _viewer_id = _acting_id(request, None)
+    _viewer = storage.get_member(_viewer_id) if _viewer_id else None
     try:
+        from services import scope as _scope
         completed = storage.get_completed_drives()
         in_progress = storage.get_in_progress_drives()
         
@@ -15682,7 +15731,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 if now - last_bg_refresh.get('full_30_days', 0) > 1800:
                     last_bg_refresh['full_30_days'] = now
                     background_tasks.add_task(trigger_background_refresh, None, None, False)
-                return cached
+                return _scope.redact_schedule_blob(cached, _viewer)
 
         # Fetch fresh and block if no cache exists or forced
         try:
@@ -15711,7 +15760,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 res["prep_by_event"] = _prep_by_event(res.get("events"))
                 res["prep_confirmed"] = storage.get_confirmed_preps()
                 res["solving_dates"] = schedule_coordinator.get_solving_dates()
-            return res
+            return _scope.redact_schedule_blob(res, _viewer)
         except Exception as e:
             import traceback
             return {"error": str(e), "traceback": traceback.format_exc(), "error_debug": str(e)}
