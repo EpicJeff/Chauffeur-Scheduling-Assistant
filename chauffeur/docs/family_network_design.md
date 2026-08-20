@@ -1,6 +1,6 @@
 # Family Network — Access Scope, and the Household Boundary
 
-Status: **BUILDING — Phases 1–4 SHIPPED (S1–S11, v2.330.0–v2.341.0); Phase 5 underway: S12 v2.342.0, S13 v2.343.0, S14 v2.344.0. Next: S15, then the flip — the household's act.** Written 2026-08-20 to settle a question before code.
+Status: **BUILT — all fifteen slices shipped (S1–S15, v2.330.0–v2.345.0). What remains is THE FLIP, which is the household's act, on evidence, exactly as `auth_enforce` is: while `auth_enforce` is dark, scope is advisory. The two together are the deliverable; either alone is half a door.** Written 2026-08-20 to settle a question before code.
 Revised the same day after the first surface list was found too coarse (§5).
 Companions: `docs/auth_design.md` (the tier spine this extends), `docs/kid_support_design.md`
 (stages — the per-member override pattern this copies).
@@ -708,7 +708,7 @@ evidence exists means discovering the panel cannot reach its board on a school m
 | **S12** ✅ v2.342.0 | Message `context` (`{kind:'drive', event_id, leg_id}`), pre-set from the drive sheet. | "re: Emma's pickup" on the helper's DM — context without a new inbox. Additive: `ChatMessage` already carries `attachment` and `card` dicts. |
 | **S13** ✅ v2.343.0 | The shell, driven by the delivered scope map; `isKeepingUpAdult()` retired. | The app stops guessing at a scope nobody could state. *(One behaviour change by design: a driverless adult no longer gets the keeping-up shell by inference — the preset on the member card states it now.)* |
 | **S14** ✅ v2.344.0 | The editor (§9): presets, grouped disclosure, deviations only. | **The household owns it.** A scope only an agent or a JSON edit can set is not a feature — this is the slice that makes the whole arc real to a person. |
-| **S15** | The `guest` role. | Extended family, at last — meaningful only once everything above exists. |
+| **S15** ✅ v2.345.0 | The `guest` role. | Extended family, at last — meaningful only once everything above exists. |
 | **The flip** | Household's act, on evidence, exactly as `auth_enforce` is. | Advisory becomes enforced. |
 
 **A standing caveat:** while `auth_enforce` is dark and `service_local_grace` is on, **scope is

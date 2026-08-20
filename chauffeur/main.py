@@ -4930,7 +4930,7 @@ def create_member(member: FamilyMember):
     # Family-network S1: PUT enforced the role whitelist, POST didn't — a
     # create could mint a role no preset knows. Same list, same door, and
     # is_child stays in step with role the way PUT keeps it.
-    if data.get('role') not in ('parent', 'adult', 'child', 'helper'):
+    if data.get('role') not in ('parent', 'adult', 'child', 'helper', 'guest'):
         raise HTTPException(status_code=400, detail="Invalid role")
     data['is_child'] = data['role'] == 'child'
     cal_ids = data.pop('calendar_ids', None)
@@ -4949,7 +4949,7 @@ def update_member_endpoint(member_id: str, updates: dict):
     # rewrites the driver/passenger mirrors and drops the schedule caches.
     cal_ids = updates.pop('calendar_ids', None)
     if 'role' in updates:
-        if updates['role'] not in ('parent', 'adult', 'child', 'helper'):
+        if updates['role'] not in ('parent', 'adult', 'child', 'helper', 'guest'):
             raise HTTPException(status_code=400, detail="Invalid role")
         updates['is_child'] = updates['role'] == 'child'
     if updates:

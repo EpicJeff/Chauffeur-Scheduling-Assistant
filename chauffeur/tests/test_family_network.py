@@ -223,6 +223,25 @@ def scenario_capture_prompt_reaches_the_helper():
           "the capture sweep asks the helper holding the camera, not just adults")
 
 
+def scenario_the_guest_role_exists_at_last():
+    """S15: the answer to §1, creatable now that everything it needs exists.
+    The §13 API-level assertion rides the earlier slices: a guest reaches
+    presence.moments and pets (test_route_facets), their channel list is
+    their invited rooms (test_chat_initiate), the moments ping is theirs
+    (test_fanout_scope), and every other facet answers none (test_scope)."""
+    import main
+    from models.schemas import FamilyMember
+    _seed()
+    main.create_member(FamilyMember(id="cousin", name="Cousin", role="guest"))
+    m = storage.get_member("cousin")
+    check(m and m.get('role') == 'guest' and m.get('is_child') is False,
+          "a guest can finally be created through the front door")
+    from services import scope
+    reachable = {f for f in scope.FACETS if scope.reach(m, f) != 'none'}
+    check(reachable == {'presence.moments', 'pets'},
+          f"…and arrives holding exactly the social surfaces: {sorted(reachable)}")
+
+
 SCENARIOS = [
     scenario_dm_read_requires_membership,
     scenario_helper_reads_dms_only,
@@ -233,6 +252,7 @@ SCENARIOS = [
     scenario_present_helper_hands_over_a_moment,
     scenario_absent_helper_is_refused,
     scenario_capture_prompt_reaches_the_helper,
+    scenario_the_guest_role_exists_at_last,
 ]
 
 if __name__ == "__main__":

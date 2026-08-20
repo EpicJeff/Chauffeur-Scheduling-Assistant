@@ -3780,6 +3780,12 @@ The §9 scope editor, on the member card (Config → People): a parent picks a p
 
 Tests: `tests/test_scope.py` scenario `the_editor_draws_from_one_meta` (coverage, labels, §9's own-six, defaults = enforcement).
 
+## Extended family, at last (v2.345.0 — family-network S15; the arc is BUILT)
+
+The `guest` role ships — the §1 answer, creatable through the front door now that everything it needs exists. Role whitelists (POST + PUT `/api/members`) and both Config role selects gain "Guest (extended family)". A guest arrives holding exactly the social surfaces (`presence.moments` + `pets`, everything else `none`), cannot open a conversation (`chat.initiate: none`), can be let into an event thread (S11) or a group (S6), gets the moments ping (S10), and their PWA is the Messages tab — their invited rooms plus the moments strip — with every other tab hidden and Messages as the landing view.
+
+**All fifteen slices are built (v2.330.0–v2.345.0). What remains is the flip — the household's act.** While `auth_enforce` is dark, scope is ADVISORY: token-resolved viewers already get redacted payloads and instance checks, but route-kind facet refusals and the claim fallback's death wait for the switch. Before flipping, read BOTH halves of `GET /api/admin/auth_audit` — the tier rows (auth arc) and the new `scope_would_deny` rows (this arc) — and walk the §12 flip-day checklist. Two consequences the audit will show first: non-parent adults lose the trip/occasion APIs (preset `parents`), and a keeping-up adult loses `/api/family/*` (her Map tab already hides).
+
 ## The shelf you snap, the screenshot you already have (v2.338.0, reshaped v2.338.1)
 
 The shopping add-row's photo button carried `capture="environment"`, which mobile obeys by jumping STRAIGHT into the camera — a screenshot already in the gallery was unreachable — while desktop ignores it entirely. v2.338.0 tried a second gallery button; v2.338.1 replaced both with the right shape: **one 📸 button, no `capture`**, so mobile offers its own chooser (camera / photo library / files) and desktop opens the normal dialog. Same `/api/shopping/photo` reader, same staged candidate picker. Images only; the endpoint refuses non-image files (a PDF list would need a converter in front of the vision call — not built).

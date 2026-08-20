@@ -886,10 +886,15 @@
         function applyRoleTabs() {
             const passenger = isPassengerMode();
             const helper = currentMemberRole() === 'helper';
+            // Family-network S15: a guest's app is messages (their invited
+            // rooms + the moments strip riding that tab) — My Day is an
+            // empty page about a schedule that is not theirs, and every
+            // other door is closed by their scope map anyway.
+            const guest = currentMemberRole() === 'guest';
             const keepingUp = isKeepingUpAdult();
-            document.getElementById('tab-myday').style.display = (passenger && !helper && !keepingUp) ? 'flex' : 'none';
+            document.getElementById('tab-myday').style.display = (passenger && !helper && !guest && !keepingUp) ? 'flex' : 'none';
             document.getElementById('tab-drives').style.display = passenger ? 'none' : 'flex';
-            document.getElementById('tab-family').style.display = ((passenger && !keepingUp) || helper) ? 'none' : 'flex';
+            document.getElementById('tab-family').style.display = ((passenger && !keepingUp) || helper || guest) ? 'none' : 'flex';
             // A keeping-up PARENT keeps chores (they verify and pay out);
             // a keeping-up adult is a spectator there and loses the tab.
             const keepingUpSpectator = keepingUp && currentMemberRole() !== 'parent';
@@ -905,16 +910,20 @@
             document.getElementById('tab-chores').style.display = (helper || keepingUpSpectator || noChores) ? 'none' : 'flex';
             const hiddenNow = helper
                 ? ['family', 'map', 'music', 'myday', 'chores']
-                : keepingUp
-                    ? ['drives', 'myday'].concat(keepingUpSpectator ? ['chores'] : [])
-                    : (passenger ? ['drives', 'family'] : ['myday']);
+                : guest
+                    ? ['drives', 'family', 'map', 'music', 'myday', 'chores']
+                    : keepingUp
+                        ? ['drives', 'myday'].concat(keepingUpSpectator ? ['chores'] : [])
+                        : (passenger ? ['drives', 'family'] : ['myday']);
             if (noMap && !hiddenNow.includes('map')) hiddenNow.push('map');
             if (noMusic && !hiddenNow.includes('music')) hiddenNow.push('music');
             if (noChores && !hiddenNow.includes('chores')) hiddenNow.push('chores');
             if (hiddenNow.includes(currentView)) {
                 // The keeping-up adult LANDS on Family — it is what they
-                // opened the app for.
-                currentView = keepingUp ? 'family'
+                // opened the app for. A guest lands on Messages, for the
+                // same reason.
+                currentView = guest ? 'messages'
+                    : keepingUp ? 'family'
                     : (passenger && !helper ? 'myday' : 'drives');
                 localStorage.setItem('chauffeur_view', currentView);
             }
