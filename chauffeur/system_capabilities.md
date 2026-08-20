@@ -3730,6 +3730,14 @@ The arc's largest slice: the welded payloads take a viewer, with redaction appli
 
 Tests: `tests/test_welded_payloads.py` (5 scenarios, §13's key-by-key assertions included).
 
+## A push not sent is invisible (v2.340.0 — family-network S10)
+
+Scope reaches the things the server sends unprompted. No audit mode is possible for an absence, so each site is pinned by tests instead (`tests/test_fanout_scope.py`, 5 scenarios):
+
+- **`_channel_recipient_members`** asks the same chat facets the channel list reads (S6) — the ping audience and the visibility audience can never disagree. Helpers stay outside family/event pings exactly as the old role check had it; a guest is pinged only for a thread they were explicitly added to; **the weekly digest** posts into the family channel and inherits this audience for free.
+- **`presence.moment_push_audience`** is scope-shaped: whoever `presence.moments` lets see the feed, minus kids (no new pings), minus everyone provably at the event. Helpers fall out via scope; **a guest is IN** — the moments ping is the one thing their preset gives them. A `sees_people`-narrowed viewer is pinged only when one of THEIR people was there: a moment from the adults' anniversary dinner is not the keeping-up grandparent's.
+- **`_notify_member_lanes` gained a `facet=` parameter**: a broad send carrying facet-bound content names it, and a member whose reach is none is skipped — the server must not push what the app would refuse to show. Today's other sends (car sweep, prep, bus, intake, pairing) are self-targeted or parent-only and pass nothing.
+
 ## The shelf you snap, the screenshot you already have (v2.338.0, reshaped v2.338.1)
 
 The shopping add-row's photo button carried `capture="environment"`, which mobile obeys by jumping STRAIGHT into the camera — a screenshot already in the gallery was unreachable — while desktop ignores it entirely. v2.338.0 tried a second gallery button; v2.338.1 replaced both with the right shape: **one 📸 button, no `capture`**, so mobile offers its own chooser (camera / photo library / files) and desktop opens the normal dialog. Same `/api/shopping/photo` reader, same staged candidate picker. Images only; the endpoint refuses non-image files (a PDF list would need a converter in front of the vision call — not built).

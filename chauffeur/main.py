@@ -6189,12 +6189,24 @@ def send_push_to_member(member_id, title, body, url=None):
             print(f"Member push failed for {member_id}: {repr(ex)}")
 
 def _channel_recipient_members(channel):
+    """Family-network S10: a ping may reach exactly whoever may SEE the
+    thread. dm/group stay membership (membership is the work); family and
+    event channels ask the same facets the channel list reads (S6), so the
+    two can never disagree — helpers fall outside exactly as the old role
+    check had it (chat.family/event_threads: none), the weekly digest
+    (posted into the family channel) inherits the audience for free, and a
+    future guest is pinged only for a thread they were explicitly added to.
+    A push not sent is invisible, so this has no audit mode — the tests per
+    site are in tests/test_fanout_scope.py."""
+    from services import scope
     members = storage.get_all_members()
     if channel.get('kind') in ('dm', 'group'):
         ids = set(channel.get('member_ids') or [])
         return [m for m in members if m['id'] in ids]
-    # family + event channels are household-wide; helpers are outside it
-    return [m for m in members if m.get('role') != 'helper']
+    facet = 'chat.event_threads' if channel.get('kind') == 'event' else 'chat.family'
+    return [m for m in members
+            if scope.can_see(m, facet,
+                             instance_member_ids=channel.get('member_ids') or [])]
 
 def _fanout_message_notifications(channel, message):
     """Web push + HA notify to every recipient except the sender. A member
@@ -6767,8 +6779,14 @@ def music_remove_favorite(member_id: str, uri: str):
 # rest of the dashboard), members claim/complete them, VERIFICATION is the
 # integrity gate and requires a parent device token (PIN-backed).
 
-def _notify_member_lanes(member, title, body, path='/app', urgent=False):
+def _notify_member_lanes(member, title, body, path='/app', urgent=False,
+                         facet=None):
     """One member, all lanes: web push + HA companion notify.
+
+    `facet` (family-network S10): a broad send that carries facet-bound
+    content names it, and a member whose reach is none is skipped — the
+    server must not push what the app would refuse to show. Self-targeted
+    sends (your drive, your bus, your chore) pass nothing.
 
     Web push deep links are RELATIVE: the service worker navigates within
     whatever origin the PWA is actually installed on (LAN, ingress, tunnel),
@@ -6784,6 +6802,10 @@ def _notify_member_lanes(member, title, body, path='/app', urgent=False):
     machinery; this window is the adult's own. `notify_lanes` (all|push|ha)
     settles the double-delivery a member with both lanes always had."""
     try:
+        if facet:
+            from services import scope as _scope
+            if _scope.reach(member, facet) == _scope.NONE:
+                return
         from services import family_digest as _fd
         if not urgent and _fd.in_member_quiet_hours(member):
             return

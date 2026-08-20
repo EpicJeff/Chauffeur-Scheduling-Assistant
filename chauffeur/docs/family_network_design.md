@@ -1,6 +1,6 @@
 # Family Network — Access Scope, and the Household Boundary
 
-Status: **BUILDING — Phases 1–3 SHIPPED (S1–S6, v2.330.0–v2.335.0); Phase 4 underway: S7 v2.336.0, S8 v2.337.0, S9 v2.339.0. Next: S10–S11.** Written 2026-08-20 to settle a question before code.
+Status: **BUILDING — Phases 1–3 SHIPPED (S1–S6, v2.330.0–v2.335.0); Phase 4 underway: S7 v2.336.0, S8 v2.337.0, S9 v2.339.0, S10 v2.340.0. Next: S11.** Written 2026-08-20 to settle a question before code.
 Revised the same day after the first surface list was found too coarse (§5).
 Companions: `docs/auth_design.md` (the tier spine this extends), `docs/kid_support_design.md`
 (stages — the per-member override pattern this copies).
@@ -698,7 +698,7 @@ evidence exists means discovering the panel cannot reach its board on a school m
 | **S7** ✅ v2.336.0 | Route-kind facets on `auth.RULES`, guard in audit mode until the record is boring. | Most of the facet list, cheaply. This is the bulk of the enforcement and the least interesting to write. |
 | **S8** ✅ v2.337.0 | Instance grants: `shared_with` on `ShoppingList` (per-list check on `list_id`, already a route parameter). | Share the grocery list with one person without sharing lists in general. |
 | **S9** ✅ v2.339.0 | Field-kind assemblers, one at a time, largest last: `/api/meals/plan` (a whereabouts feed in disguise), `/api/members/{id}/day`, `/api/family/locations`, then `/api/schedule` **with `/api/home_board` in the same slice** because it re-serves the same blob. *(Shipped: all four. `own`-reach viewers keep today's payloads until S13 teaches the shells to ask for less — only `none` redacts, and only sees_people narrows.)* | The calendar-without-driving split at the API, and the end of four payloads that answer without asking who is looking. The largest single piece of work in the arc. |
-| **S10** | Fan-out audiences: `moment_push_audience`, digest and briefing recipients, `get_channels_for_member`, message fan-out, `_notify_member_lanes`. | Scope reaches the things the server sends unprompted. No meaningful audit mode — a push not sent is invisible — so tests per site. |
+| **S10** ✅ v2.340.0 | Fan-out audiences: `moment_push_audience`, digest and briefing recipients, `get_channels_for_member`, message fan-out, `_notify_member_lanes`. | Scope reaches the things the server sends unprompted. No meaningful audit mode — a push not sent is invisible — so tests per site. *(`get_channels_for_member` landed with S6; the digest rides the family-channel fan-out; briefing sends are self-targeted and pass no facet.)* |
 | **S11** | Event-channel membership (`member_ids` on event threads, today `[]` by construction). | A guest can be added to one event thread without seeing the rest. Schema change. |
 
 ### Phase 5 — the surfaces and the people

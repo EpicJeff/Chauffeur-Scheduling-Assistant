@@ -158,18 +158,37 @@ def member_present_at_channel_event(channel, member_id, sched=None) -> bool:
 
 
 def moment_push_audience(channel, sched=None):
-    """Kept-away ADULTS for a moment posted into an event channel: household
-    minus helpers, minus kids (their surfaces carry moments — no new pings),
-    minus everyone the schedule proves was at the event. Falls back to all
-    non-helper adults when the event isn't in the cache (old thread)."""
+    """Kept-away audience for a moment posted into an event channel
+    (scope-shaped, family-network S10): whoever presence.moments lets see
+    the feed, minus kids (their surfaces carry moments — no new pings),
+    minus everyone the schedule proves was at the event. Helpers fall out
+    via scope exactly as the old role filter had them (presence.moments:
+    none); a guest is IN — the moments ping is the one thing the preset
+    gives them. A sees_people-narrowed viewer is pinged only when one of
+    THEIR people was there: a moment from the adults' dinner is not the
+    keeping-up grandparent's. Falls back past the narrowing when the event
+    has left the cache (old thread — nobody's presence is provable)."""
+    from services import scope
     sched = sched or storage.get_cached_schedule() or {}
     ev_id = str(channel.get('event_id') or '')
     ev = next((e for e in sched.get('events', [])
                if _base_event_id(e.get('id')) == _base_event_id(ev_id)), None)
     present_ids = {m['id'] for m in members_at_event(ev, ev_id, sched)} if ev else set()
-    return [m for m in storage.get_all_members()
-            if m.get('role') in ('parent', 'adult') and not m.get('system')
-            and m['id'] not in present_ids]
+    members = storage.get_all_members()
+    out = []
+    for m in members:
+        if m.get('system') or m.get('role') == 'child':
+            continue
+        if m['id'] in present_ids:
+            continue
+        if not scope.can_see(m, 'presence.moments',
+                             instance_member_ids=channel.get('member_ids') or []):
+            continue
+        allowed = scope.sees_people(m, members, sched)
+        if allowed is not None and present_ids and not (allowed & present_ids):
+            continue
+        out.append(m)
+    return out
 
 
 def run_capture_prompts(send, now=None):
