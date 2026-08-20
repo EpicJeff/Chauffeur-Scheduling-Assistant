@@ -123,11 +123,28 @@ def scenario_todays_behaviour_is_reproduced_for_everyone_else():
     _run(body)
 
 
+def scenario_an_empty_hashtag_binds_nothing():
+    """One empty hashtag on a passenger record (a trailing comma in config)
+    substring-matched EVERY title — which read as "the keeping-up adult sees
+    everything" because every event attributed to that kid."""
+    from services import scope
+    members = [{'id': 'emma', 'role': 'child', 'passenger_id': 'p_emma'}]
+    passengers = {'p_emma': {'id': 'p_emma', 'calendar_ids': [],
+                             'hashtags': ['', '#emma']}}
+    poker = {'id': 'e9', 'title': 'Poker night', 'calendar_ids': ['cal_adults']}
+    check(scope.calendar_event_subjects(poker, members, passengers) == set(),
+          "an empty tag must bind nothing")
+    tagged = {'id': 'e10', 'title': 'Swim #emma', 'calendar_ids': []}
+    check(scope.calendar_event_subjects(tagged, members, passengers) == {'emma'},
+          "a real tag still binds")
+
+
 SCENARIOS = [
     scenario_keeping_up_gets_the_kids_calendar_and_nothing_else,
     scenario_a_child_gets_their_own,
     scenario_a_guest_gets_nothing,
     scenario_todays_behaviour_is_reproduced_for_everyone_else,
+    scenario_an_empty_hashtag_binds_nothing,
 ]
 
 if __name__ == "__main__":

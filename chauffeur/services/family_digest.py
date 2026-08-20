@@ -36,7 +36,10 @@ def _kid_event_match(ev, ev_id, p_id, p_cals, p_tags, matched_rules):
     if (cals & p_cals) or (p_id and str(p_id) in cals):
         return True
     title_l = (ev.get('title') or '').lower()
-    if any(t in title_l for t in p_tags):
+    # `'' in anything` is True: one empty hashtag on a passenger record
+    # (a trailing comma in config) silently bound EVERY event to that kid —
+    # across My Day, the digests, and the sees_people narrowing alike.
+    if any(t and t in title_l for t in p_tags):
         return True
     parent_id = ev_id
     for suffix in ('_dropoff', '_pickup'):

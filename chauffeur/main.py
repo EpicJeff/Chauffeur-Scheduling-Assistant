@@ -4887,6 +4887,75 @@ def list_assist_history(contact_id: str = None, limit: int = 200):
         r['contact_name'] = names.get(r.get('contact_id')) or '(removed)'
     return rows
 
+@app.get("/api/debug/event_subjects")
+def debug_event_subjects(viewer_id: Optional[str] = None):
+    """Family-network diagnostics (parents-only via /api/debug/*): for every
+    event in the cached blob, WHO it attributes to and through WHICH of the
+    four bindings — and, given ?viewer_id=<member>, whether that viewer's
+    sees_people admits it. This is how "she seems to see everything" becomes
+    a list of reasons instead of a guess."""
+    from services import scope as _scope
+    sched = storage.get_cached_schedule() or {}
+    members = storage.get_all_members()
+    passengers = {p.get('id'): p for p in storage.get_all_passengers()}
+    rules = sched.get('matched_rules') or {}
+    viewer = storage.get_member(viewer_id) if viewer_id else None
+    allowed = _scope.sees_people(viewer, members) if viewer else None
+    out = []
+    for ev in sched.get('events') or []:
+        cals = {str(c) for c in (ev.get('calendar_ids') or [])}
+        title_l = (ev.get('title') or '').lower()
+        ev_id = str(ev.get('id') or '')
+        parent_id = ev_id
+        for suffix in ('_dropoff', '_pickup'):
+            if parent_id.endswith(suffix):
+                parent_id = parent_id[:-len(suffix)]
+        subs = []
+        for m in members:
+            p_id = m.get('passenger_id')
+            if not p_id:
+                continue
+            p = passengers.get(p_id) or {}
+            p_cals = set(p.get('calendar_ids') or [])
+            p_tags = {str(t).lower() for t in (p.get('hashtags') or [])}
+            why = None
+            if cals & p_cals:
+                why = 'calendar: ' + ', '.join(sorted(cals & p_cals))
+            elif str(p_id) in cals:
+                why = 'resolved passenger id'
+            elif any(t and t in title_l for t in p_tags):
+                why = 'hashtag: ' + ', '.join(sorted(
+                    t for t in p_tags if t and t in title_l))
+            else:
+                for eid in {ev_id, parent_id, parent_id.split('_unrolled_')[0]}:
+                    for r in rules.get(eid, []) or []:
+                        pax = r.get('passenger_ids') if isinstance(r, dict) else None
+                        if pax and str(p_id) in [str(x) for x in pax]:
+                            why = 'matched rule'
+                            break
+                    if why:
+                        break
+            if why:
+                subs.append({'member': m.get('name'), 'id': m['id'],
+                             'role': m.get('role'), 'via': why})
+        row = {'id': ev_id, 'title': ev.get('title'),
+               'calendar_ids': sorted(cals), 'subjects': subs}
+        if allowed is not None:
+            row['visible_to_viewer'] = bool({s['id'] for s in subs} & allowed)
+        out.append(row)
+    result = {'events': out}
+    if viewer:
+        result['viewer'] = viewer.get('name')
+        result['sees_people'] = (sorted(allowed) if allowed is not None
+                                 else 'everyone')
+    bad = [p.get('name') for p in passengers.values()
+           if any(not str(t).strip() for t in (p.get('hashtags') or []))]
+    if bad:
+        result['warning'] = (f"Empty hashtag on passenger(s): {', '.join(bad)}"
+                             " — before v2.345.5 that bound EVERY event to them")
+    return result
+
+
 @app.get("/api/scope/meta")
 def scope_editor_meta():
     """Family-network S14: what the scope editor draws — groups, labels and
