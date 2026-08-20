@@ -1021,10 +1021,18 @@
             connectMessagesStream();
             fetchChannels();
             fetchChores();
+            // The passenger path never fetched the schedule blob — My Day
+            // fetches its own /day payload — which left scheduleData null
+            // for the keeping-up adult whose landing tab (Family) draws
+            // FROM it: blank panes on any device without another member's
+            // cached blob, and a day pager holding nothing. The fetch's own
+            // buildTimeline draws whichever timeline view is current.
+            fetchSchedule();
             if (currentView === 'messages') fetchChannels();
             else if (currentView === 'map') { initFamilyMap(); startFamilyMapPolling(); }
             else if (currentView === 'chores') fetchChores();
-            else renderMyDay();
+            else if (currentView === 'myday') renderMyDay();
+            // 'family' needs nothing here: fetchSchedule above draws it.
         }
 
         let mydayOffset = 0;
@@ -6994,6 +7002,9 @@
             btnNext.disabled = true;
             document.getElementById('current-day-label').textContent = 'Loading...';
 
+            // A pager tap can beat the first schedule fetch — never let a
+            // null blob turn into a crash mid-merge.
+            if (!scheduleData) scheduleData = { events: [] };
             // The anchors are minted by buildTimeline — but a session whose
             // timeline never built (empty schedule, a view the guard skipped)
             // reaches here with undefined, and new Date(undefined)
@@ -7030,6 +7041,7 @@
                     const data = await res.json();
 
                     // Merge events
+                    if (!scheduleData.events) scheduleData.events = [];
                     const existingIds = new Set(scheduleData.events.map(e => e.id));
                     (data.events || []).forEach(e => {
                         if (!existingIds.has(e.id)) scheduleData.events.push(e);
