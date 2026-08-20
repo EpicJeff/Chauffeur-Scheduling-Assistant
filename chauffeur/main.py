@@ -4414,6 +4414,15 @@ def _public_member(m: dict) -> dict:
     out = {k: v for k, v in m.items() if k not in secret}
     out['has_pin'] = bool(m.get('pin_hash'))
     out['has_password'] = bool(m.get('password_hash'))
+    # Family-network S13: the resolved scope rides every member row, so the
+    # shell shapes itself from what the server actually enforces instead of
+    # a client-side guess. Visibility config, not a secret — and never a
+    # reason a roster read should fail.
+    try:
+        from services import scope as _scope
+        out['scope_map'] = _scope.resolved_map(m)
+    except Exception:
+        pass
     # The chip image every template renders. A photo stays a photo; a member
     # without one gets their character (avatar arc A2). Decided server-side so
     # ten templates don't each need an opinion.

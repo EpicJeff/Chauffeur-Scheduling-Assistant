@@ -3759,6 +3759,16 @@ The household's rule, built: *the container is the durable thing; the transient 
 
 Tests: `tests/test_drive_context.py` (2 scenarios).
 
+## The shell stops guessing (v2.343.0 — family-network S13)
+
+Every member row now carries `scope_map` — `scope.resolved_map`: every facet's resolved reach plus `chat_initiate`/`moments_contribute` — and the PWA shapes itself from it via `scopeOf(facet)`.
+
+- **`isKeepingUpAdult()` is retired as a heuristic.** The v2.152 guess (adult, no driver, no passenger) is gone; what survives is the SHAPE, read from the delivered map: full calendar with the driving facet off IS keeping up, however it was configured. **One behaviour change by design**: a driverless adult no longer gets the keeping-up shell by inference — the household states it with the member card's "Sees" preset (S5's hand path). A stale roster with no map reads as today's behaviour; the shell only shapes, the server enforces either way.
+- **The map, music and chores tabs follow the map**: a facet the server would refuse has no tab (the keeping-up adult's Map tab hides — closing the S7 flip-day note), with the current-view redirect handling a tab that vanishes under you.
+- **The redacted blob renders instead of throwing**: `buildFamilyCards` and `buildTimeline` destructure with defaults — a missing key means "not yours to know," never a crash (S9's follow-through in the client).
+
+Tests: `tests/test_scope.py` scenario `the_delivered_map_is_the_resolved_truth`; template JS suite covers the shell edits.
+
 ## The shelf you snap, the screenshot you already have (v2.338.0, reshaped v2.338.1)
 
 The shopping add-row's photo button carried `capture="environment"`, which mobile obeys by jumping STRAIGHT into the camera — a screenshot already in the gallery was unreachable — while desktop ignores it entirely. v2.338.0 tried a second gallery button; v2.338.1 replaced both with the right shape: **one 📸 button, no `capture`**, so mobile offers its own chooser (camera / photo library / files) and desktop opens the normal dialog. Same `/api/shopping/photo` reader, same staged candidate picker. Images only; the endpoint refuses non-image files (a PDF list would need a converter in front of the vision call — not built).

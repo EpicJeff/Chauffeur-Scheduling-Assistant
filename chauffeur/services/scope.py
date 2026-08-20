@@ -316,6 +316,18 @@ def moments_contribute(member: dict) -> str:
     return PRESETS[preset_for(member)]['moments.contribute']
 
 
+def resolved_map(member: dict) -> dict:
+    """The member's whole scope, RESOLVED, for the shell (family-network
+    S13): every facet's reach plus the two capabilities. This is what the
+    client shapes tabs and cards from — the app stops guessing at a scope
+    nobody could state, because the server now states it."""
+    return {
+        'facets': {f: reach(member, f) for f in FACETS},
+        'chat_initiate': chat_initiate(member),
+        'moments_contribute': moments_contribute(member),
+    }
+
+
 # --- sees_people: the WHOSE axis (§5) ---------------------------------------
 # Stored as intent, expanded at read time, so 'the children' self-updates
 # when the family grows. Applies only to subject (◍) facets; household-shaped

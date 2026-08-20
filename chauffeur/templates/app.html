@@ -860,18 +860,27 @@
             return !selectedDriverId && !!selectedMemberId;
         }
 
-        // The keeping-up adult (household's report, 2026-08-17): an adult
-        // or parent with NO driver profile and NO passenger identity — the
-        // grandparent two states away, the adult who doesn't drive. They are
-        // not scheduled, so My Day is an empty page and chores are somebody
-        // else's; they are here to keep up, which is exactly the Family tab
-        // the passenger shell was hiding from them.
+        // Family-network S13: what may the SELECTED member see, as the
+        // server resolved it (scope_map rides every member row). Absent map
+        // (a stale roster mid-upgrade) reads as today's behaviour — the
+        // shell only SHAPES; the server enforces either way.
+        function scopeOf(facet) {
+            const m = membersData.find(x => x.id === selectedMemberId) || {};
+            const map = (m.scope_map || {}).facets || {};
+            return map[facet] || 'all';
+        }
+
+        // S13: the v2.152 heuristic (adult, no driver, no passenger) is
+        // RETIRED — it was guessing at a scope nobody could state, and the
+        // §9 preset now states it on the member card. What survives is the
+        // shape, read from the delivered map: a full calendar with the
+        // driving facet off IS keeping up, however it was configured.
         function isKeepingUpAdult() {
             if (selectedDriverId || !selectedMemberId) return false;
-            const m = membersData.find(x => x.id === selectedMemberId) || {};
-            const role = m.role || 'adult';
+            const role = currentMemberRole();
             if (role === 'child' || role === 'helper') return false;
-            return !m.driver_id && !m.passenger_id;
+            return scopeOf('calendar.events') === 'all'
+                && scopeOf('schedule.assignment') === 'none';
         }
 
         function applyRoleTabs() {
@@ -886,14 +895,22 @@
             const keepingUpSpectator = keepingUp && currentMemberRole() !== 'parent';
             // Helpers (external drivers) get their driving world + parent DMs
             // only: no family agenda, map, or music.
-            document.getElementById('tab-map').style.display = helper ? 'none' : 'flex';
-            document.getElementById('tab-music').style.display = helper ? 'none' : 'flex';
-            document.getElementById('tab-chores').style.display = (helper || keepingUpSpectator) ? 'none' : 'flex';
+            // S13: the map/music/chores doors follow the delivered scope
+            // map too — a facet the server would refuse has no tab.
+            const noMap = scopeOf('presence.location') === 'none';
+            const noMusic = scopeOf('music') === 'none';
+            const noChores = scopeOf('chores.board') === 'none';
+            document.getElementById('tab-map').style.display = (helper || noMap) ? 'none' : 'flex';
+            document.getElementById('tab-music').style.display = (helper || noMusic) ? 'none' : 'flex';
+            document.getElementById('tab-chores').style.display = (helper || keepingUpSpectator || noChores) ? 'none' : 'flex';
             const hiddenNow = helper
                 ? ['family', 'map', 'music', 'myday', 'chores']
                 : keepingUp
                     ? ['drives', 'myday'].concat(keepingUpSpectator ? ['chores'] : [])
                     : (passenger ? ['drives', 'family'] : ['myday']);
+            if (noMap && !hiddenNow.includes('map')) hiddenNow.push('map');
+            if (noMusic && !hiddenNow.includes('music')) hiddenNow.push('music');
+            if (noChores && !hiddenNow.includes('chores')) hiddenNow.push('chores');
             if (hiddenNow.includes(currentView)) {
                 // The keeping-up adult LANDS on Family — it is what they
                 // opened the app for.
@@ -6232,7 +6249,9 @@
         // Rebuilds calendar.html's dedupe: pickup/dropoff/unrolled variants merge
         // back into one base event; background_trip slices merge into one banner.
         function buildFamilyCards() {
-            const { events, assignments, ghost_assignments } = scheduleData;
+            // Defaults matter (S9): a redacted blob OMITS the driving keys —
+            // a missing key means "not yours to know", never a crash.
+            const { events = [], assignments = {}, ghost_assignments = {} } = scheduleData;
             const trueUnassigned = scheduleData.true_unassigned || [];
             const cards = new Map();
 
@@ -6548,7 +6567,8 @@
                 savedPaneScrolls[p.id] = p.scrollTop;
             });
 
-            const { events, assignments, ghost_assignments, route_edges, initial_edges, final_edges } = scheduleData;
+            const { events = [], assignments = {}, ghost_assignments = {},
+                    route_edges = {}, initial_edges = {}, final_edges = {} } = scheduleData;
 
             let localRouteEdges = JSON.parse(JSON.stringify(route_edges || {}));
             let localInitialEdges = JSON.parse(JSON.stringify(initial_edges || {}));

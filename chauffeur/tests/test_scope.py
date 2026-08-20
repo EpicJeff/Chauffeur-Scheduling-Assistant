@@ -192,6 +192,20 @@ def scenario_filter_subjects_only_bites_subject_facets():
           "a household-shaped facet ignores the axis entirely")
 
 
+def scenario_the_delivered_map_is_the_resolved_truth():
+    """S13: the shell shapes itself from resolved_map — so the map must be
+    the same answers reach() gives, every facet, plus the capabilities."""
+    k = _m('adult', 'k', scope={'preset': 'keeping_up'})
+    m = scope.resolved_map(k)
+    check(set(m['facets']) == set(scope.FACETS), "every facet answered")
+    check(m['facets']['calendar.events'] == 'all'
+          and m['facets']['schedule.assignment'] == 'none'
+          and m['facets']['presence.location'] == 'none',
+          "the keeping-up shape the shell keys on is delivered, not guessed")
+    check(m['chat_initiate'] == 'household' and m['moments_contribute'] == 'none',
+          "the two capabilities ride along")
+
+
 def scenario_audience_fails_closed():
     trip = {'id': 't1', 'title': 'Disney'}       # no audience declared
     check(scope.audience_allows(trip, 'trip', _m('parent', 'p')),
@@ -247,6 +261,7 @@ SCENARIOS = [
     scenario_sees_people_intents,
     scenario_sees_people_driven_comes_from_the_schedule,
     scenario_filter_subjects_only_bites_subject_facets,
+    scenario_the_delivered_map_is_the_resolved_truth,
     scenario_audience_fails_closed,
     scenario_sharing_reveals_to_exactly_those_people,
     scenario_a_closed_default_is_not_a_grant,
