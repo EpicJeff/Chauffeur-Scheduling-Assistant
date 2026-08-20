@@ -131,20 +131,60 @@ The nine survive as **groups** (how the editor is organised, §9). The unit of e
 the **facet** below them. `reach` is unchanged: `none | own | all`, a set of named steps and
 not a rank, the same rule `auth.py` holds for tiers.
 
+### And a second question: *whose*
+
+The household's next cut, and it made the model smaller rather than larger:
+
+> *"They want to see the kids' calendar, not the adults'. So really what you want to be able to
+> do is share calendar by person."*
+
+Every facet above answers *what kind of thing*. None answers *about whom* — and for the very
+first preset we designed, "about whom" is the whole point. A grandparent does not want "the
+calendar"; she wants **Emma's and Jack's** calendar.
+
+The tempting build was a subject filter per facet, with computed groups. It is not needed,
+because **this is already the grain of the data**: events are attributed to people through
+`calendar_ids`, and `_kid_members_for_event` (`main.py:10099`) and
+`family_digest._kid_event_match` (`family_digest.py:28`) already resolve which person an event
+belongs to — the same matching My Day uses. It is also the sharing model people already
+understand from Google Calendar: you share a calendar *with* a person.
+
+So scope gains **one list, not twenty-five**:
+
+```
+sees_people: []            # empty = everyone in the household (today's behaviour)
+sees_people: [emma, jack]  # only these people's rows
+```
+
+It applies to the facets that are *about people* — marked ◍ in §6 — and is ignored by the ones
+that are about the household (`meals.repertoire`, `lists.shopping`, `trips.gallery`, `music`).
+The three axes stay orthogonal and each answers one question: **facet** = what kind, **reach** =
+how much, **sees_people** = whose.
+
+It also generalises past the case that prompted it, at no extra cost: a nanny hired for the
+younger child is `sees_people: [jack]`; a co-parent is `sees_people: [their own child]`.
+
+**One operational note:** an explicit list goes stale — a new baby would need adding to every
+grandparent's scope, and a list nobody remembers to update fails silently in the *permissive*
+direction only if we are lucky. The editor should therefore offer "everyone", "the children"
+(computed from `role == 'child'`, so it self-updates) and "choose people…", storing the first
+two as intent rather than as a frozen expansion.
+
 ---
 
 ## 6. The facets
 
 Twenty-five. "Justified by" names the person whose want makes it a line; a facet without one
-should be deleted at review. "Kind" is how it is enforced and is defined in §7.
+should be deleted at review. "Kind" is how it is enforced and is defined in §7. **◍ marks the
+facets that are about people**, and so are also filtered by `sees_people` (§5).
 
 ### Calendar & driving
 
 | Facet | What it is | Kind | Justified by |
 |---|---|---|---|
-| `calendar.events` | what is happening: title, when | **route** | the grandparent — wants to know Emma has volleyball Tuesday |
-| `schedule.assignment` | who drives this event, per leg, in which car | **field** | the grandparent again — she *does* see this today, on the card |
-| `schedule.logistics` | leave-by times, travel durations, the drive list, the day's chaining | **field** | …and has never seen any of it: the operational picture is the driver's |
+| `calendar.events` ◍ | what is happening: title, when | **route** | the grandparent — wants to know Emma has volleyball Tuesday |
+| `schedule.assignment` ◍ | who drives this event, per leg, in which car | **field** | the grandparent again — she *does* see this today, on the card |
+| `schedule.logistics` ◍ | leave-by times, travel durations, the drive list, the day's chaining | **field** | …and has never seen any of it: the operational picture is the driver's |
 | `schedule.diagnostics` | solver reasoning, unassigned causes, AI notes | **field** | nobody but a parent debugging the schedule |
 | `schedule.driver_calendars` | `driver_events` — a driver's own private calendar | **field** | the driver, who never agreed to publish it household-wide |
 | `schedule.carpool_contacts` | `assist_contacts` — outside people's phone numbers | **field** | the other family, who is not a member here at all |
@@ -174,26 +214,26 @@ only), not a view permission.
 | `meals.prep` | prep steps and the run sheet | **route** | — |
 | `lists.shopping` | the shopping lists | **route**, per-list **instance** | **the person who gets the grocery list and no other** |
 | `lists.errands` | errands the solver places | **route** | — |
-| `lists.household_tasks` | the housework ledger | **route** | the outside hand who holds one task |
-| `lists.kid_tasks` | homework and deadlines | **route** | — |
+| `lists.household_tasks` ◍ | the housework ledger | **route** | the outside hand who holds one task |
+| `lists.kid_tasks` ◍ | homework and deadlines | **route** | — |
 
 ### Chores & the points economy
 
 | Facet | What it is | Kind | Justified by |
 |---|---|---|---|
-| `chores.board` | the pot: what needs doing, who claimed it | **route** | — |
-| `routines` | definitions, today's checklist, streaks | **route** | — |
-| `points.balances` | every kid's balance and tier | **route** | the grandparent who should not be shown a scoreboard of children |
-| `points.ledger` | one member's transaction history | **route** | the teenager, whose ledger is theirs |
+| `chores.board` ◍ | the pot: what needs doing, who claimed it | **route** | — |
+| `routines` ◍ | definitions, today's checklist, streaks | **route** | — |
+| `points.balances` ◍ | every kid's balance and tier | **route** | the grandparent who should not be shown a scoreboard of children |
+| `points.ledger` ◍ | one member's transaction history | **route** | the teenager, whose ledger is theirs |
 | `rewards` | catalogue, redemptions, the pool | **route** | — |
 
 ### Presence
 
 | Facet | What it is | Kind | Justified by |
 |---|---|---|---|
-| `presence.location` | live coordinates on the map | **route** + ⚠️ field | everyone; this is the sharpest line in the app |
-| `presence.status` | status protocols and status days | **route** | — |
-| `presence.moments` | the photo/video feed | **route** | the guest — this is the one thing they get |
+| `presence.location` ◍ | live coordinates on the map | **route** + ⚠️ field | everyone; this is the sharpest line in the app |
+| `presence.status` ◍ | status protocols and status days | **route** | — |
+| `presence.moments` ◍ | the photo/video feed | **route** | the guest — this is the one thing they get |
 
 ### Trips, music, pets
 
@@ -319,6 +359,7 @@ Twenty-four facets cannot be twenty-four dropdowns on a member card. Role suppli
 
 | Facet | Household adult | Keeping up | Child | Helper | Guest |
 |---|---|---|---|---|---|
+| **`sees_people`** | everyone | **the children** | everyone | the kids they drive | — |
 | `calendar.events` | all | all | own | own | — |
 | `schedule.assignment` | all | — | own | own | — |
 | `schedule.logistics` | all | — | own | own | — |
@@ -356,8 +397,10 @@ Twenty-four facets cannot be twenty-four dropdowns on a member card. Role suppli
 today's behaviour exactly** — every row is written to match, and where it does not, that is
 either a deliberate fix (§10) or a table error, which audit mode (§11) is how we tell apart.
 Second, **Keeping up is the one preset that deliberately changes what a person sees, and the
-household decided it on 2026-08-20.** The decision: *"they do not need all that driving info —
-they want to see the calendar."*
+household decided it on 2026-08-20.** The decision, in two parts: *"they do not
+need all that driving info — they want to see the calendar"*, and *"they want to see the kids'
+calendar, not the adults'."* So the preset is `calendar.events: all` narrowed by
+`sees_people: the children` (§5), and every driving facet off.
 
 What she sees today, for the record, because this is a removal and removals get written down.
 She has no Drives tab (`isPassengerMode()` is true and `drives` sits in `applyRoleTabs`'s
@@ -478,8 +521,9 @@ together are the deliverable.
 - `calendar.events: all` + `schedule.assignment: none` + `schedule.logistics: none` returns
   titles and times and **no** assignment, edge, car, carpool-contact or driver-calendar key —
   asserted key by key.
-- The **Keeping up** preset renders an agenda card with title, time, location and passengers
-  and **no** driver chip, leg label, car chip or needs-driver warning — the one intentional
+- The **Keeping up** preset returns the children's events only — an adult-only event is
+  absent entirely — and renders each card with title, time, location and passengers and **no**
+  driver chip, leg label, car chip or needs-driver warning — the one intentional
   behaviour change in the table, asserted so it cannot regress by accident in either
   direction.
 - `meals.plan` with `presence.location: none` returns no `where` and no `away_on_trip`.
@@ -487,6 +531,9 @@ together are the deliverable.
 - Denying `chat.event_threads` does not silently leave the photos reachable via
   `/api/presence/event-moments` — the two doors agree.
 - A helper with `chat.event_threads: own` sees the thread for an event they drive and no other.
+- `sees_people: []` is every member (today's behaviour); `sees_people: [emma]` returns Emma's
+  rows and nothing of Jack's, across every ◍ facet — one assertion per facet, since the filter
+  is one list applied in many assemblers.
 - A list with `shared_with: []` is household-wide; populated, it is those people plus anyone
   with `lists.shopping: all`.
 - The four viewer-less reads (§10) refuse or redact for a viewer who should not see them.
@@ -504,10 +551,9 @@ together are the deliverable.
 3. **Does a `guest` belong in `chat.family` at all,** or does the household want a separate
    extended-family thread? The preset says no, because a guest in the family room changes what
    the family says in it. A fifth channel kind is the honest answer if it is ever wanted.
-4. **Whose data, not just which data.** Every facet here answers *what kind*; none answers
-   *about whom*. A co-parent wanting only their own child's calendar needs a subject axis.
-   Deliberately deferred — but `own` is already a degenerate case of it, so the model should
-   not be built in a way that forecloses it.
+4. **Cross-household subjects.** `sees_people` (§5) answers *whose* within this household. It
+   does not answer it across households — a shared grandparent seeing two families' children
+   is the federation question, parked in §3.
 5. **Scope on the agent.** `agent_router` builds the family roster into every prompt and
    `_may_use_family_tools` keys on role. Both should consult scope; a `guest` should reach no
    agent tools at all. Worth its own slice.
