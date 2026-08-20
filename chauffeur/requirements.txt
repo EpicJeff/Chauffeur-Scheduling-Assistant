@@ -18,3 +18,4 @@ websockets
 icalendar
 recurring-ical-events
 pyyaml
+google-search-results

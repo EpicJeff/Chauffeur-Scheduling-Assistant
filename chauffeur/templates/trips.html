@@ -335,14 +335,17 @@
             
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                const res = await fetch(`${apiBase}api/trips`, {
+                // POST /api/trip (singular) — the create endpoint. /api/trips
+                // is the GET-only gallery; posting there 405s, and navigating
+                // on a response with no event_id lands on trip?event_id=undefined.
+                const res = await fetch(`${apiBase}api/trip`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
                 const data = await res.json();
-                if (data.error) {
-                    showGlobalAlert(data.error);
+                if (!res.ok || data.error || !data.event_id) {
+                    showGlobalAlert(data.error || `Trip creation failed (${res.status})`);
                 } else {
                     window.location.href = `trip?event_id=${encodeURIComponent(data.event_id)}${carryParams}`;
                 }

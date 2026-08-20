@@ -2,7 +2,13 @@ import os
 import json
 import re
 from typing import Optional
-from serpapi import GoogleSearch
+# Soft dependency: without the package (or a key) every live lookup returns
+# None and callers fall back to their generic estimates — a missing pip
+# package must never 500 trip creation or pricing.
+try:
+    from serpapi import GoogleSearch
+except ImportError:
+    GoogleSearch = None
 
 class QuotaExceededError(Exception):
     pass
@@ -61,7 +67,7 @@ def check_for_quota_error(results: dict):
 def get_live_flight_price(origin: str, destination: str, departure_date: str, travelers: int = 1) -> Optional[float]:
     """Fetches the lowest available flight price from Google Flights via SerpApi."""
     api_key = get_serpapi_key()
-    if not api_key:
+    if not api_key or GoogleSearch is None:
         return None
         
     origin_iata = extract_iata_code(origin)
@@ -107,7 +113,7 @@ def get_live_flight_price(origin: str, destination: str, departure_date: str, tr
 def get_live_hotel_price(location: str, check_in_date: str, check_out_date: str, travelers: int = 1) -> Optional[float]:
     """Fetches the average hotel price for a location from Google Hotels via SerpApi."""
     api_key = get_serpapi_key()
-    if not api_key:
+    if not api_key or GoogleSearch is None:
         return None
         
     params = {
@@ -159,7 +165,7 @@ def get_live_flight_schedule(origin: str, destination: str, departure_date: str,
     Returns: {"departure_time": "YYYY-MM-DD HH:MM", "arrival_time": "YYYY-MM-DD HH:MM", "duration_mins": int}
     """
     api_key = get_serpapi_key()
-    if not api_key:
+    if not api_key or GoogleSearch is None:
         return None
         
     origin_iata = extract_iata_code(origin)
