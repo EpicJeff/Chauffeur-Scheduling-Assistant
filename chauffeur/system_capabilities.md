@@ -3717,6 +3717,10 @@ Tests: `tests/test_route_facets.py` (5 scenarios).
 
 Tests: `tests/test_list_sharing.py` (4 scenarios).
 
+## The shelf you snap, the screenshot you already have (v2.338.0)
+
+The shopping add-row's photo reader had one door: `capture="environment"` forces the camera picker on mobile, right for "snap the fridge shelf" and wrong for a screenshot or saved image. A second button (🖼️) sits beside 📸 with a capture-free input — same `/api/shopping/photo` reader, same staged candidate picker. Images only either way; the endpoint refuses non-image files (a PDF list would need a converter in front of the vision call — not built).
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.
