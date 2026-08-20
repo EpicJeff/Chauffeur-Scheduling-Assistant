@@ -174,7 +174,7 @@ two as intent rather than as a frozen expansion.
 
 ## 6. The facets
 
-Twenty-six, plus two capabilities that are not views (§6 Chat B and C). "Justified by" names the person whose want makes it a line; a facet without one
+Twenty-seven, plus two capabilities that are not views (§6 Chat B and C). "Justified by" names the person whose want makes it a line; a facet without one
 should be deleted at review. "Kind" is how it is enforced and is defined in §7. **◍ marks the
 facets that are about people**, and so are also filtered by `sees_people` (§5).
 
@@ -331,13 +331,14 @@ event they actually attended.
 | `presence.status` ◍ | status protocols and status days | **route** | — |
 | `presence.moments` ◍ | the photo/video feed | **route** | the guest — this is the one thing they get |
 
-### Trips, music, pets
+### Trips, occasions, music, pets
 
 | Facet | What it is | Kind | Justified by |
 |---|---|---|---|
 | `trips.gallery` | that a trip exists, and when | **route** | the grandparent, who wants to know they are away |
 | `trips.detail` | the itinerary, bookings, prices | **route** | …and does not need the reservation numbers |
 | `trips.planning` | every planning write | **route** | — |
+| `occasions` ◍ | parties and gatherings: guests, menus, attendance | **route** | the parent planning a surprise, same as a trip |
 | `music` | playback, shelves, playlists, room announcements | **route** | the child, who has the Music tab today |
 | `pets` | critters and the arena | **route** | the guest's kid, who is here to battle |
 
@@ -367,6 +368,40 @@ places with one convention (**empty means everyone**): `Chore.eligible_member_id
 (`schemas.py:304`), `Car.allowed_driver_ids`/`allowed_passenger_ids` (`schemas.py:103-104`),
 `ChatChannel.member_ids` (`schemas.py:259`). A shared list is the same shape: `shared_with`
 empty = household-wide (today's behaviour), populated = those people.
+
+**…but the default runs both ways, and secrets must fail closed.** The four existing
+allowlists all mean *empty = open*, which is right for a chore anyone may claim. It is wrong
+for a surprise. So every shareable object declares an `audience`, and each object **type**
+declares its default:
+
+```
+audience:     household | parents | shared
+shared_with:  [member ids]        # the audience when 'shared'
+```
+
+| Type | Default | Because |
+|---|---|---|
+| shopping lists, chores, cars, channels | `household` | being seen is harmless; today's behaviour |
+| **trips** | **`parents`** | *"If I am planning a trip to Disney World, I don't necessarily want the kids seeing that."* |
+| **occasions** | **`parents`** | the household's call: same shape as trips |
+| gift lists, when they exist | **`parents`**, never `household` | see below |
+
+**This supersedes the `hidden_from` proposal in `docs/occasion_design.md`.** That brief
+identified the problem exactly — *"a gift list is the app's first entity that must be hidden
+from specific family members, and getting it wrong is not a bug report"* — but chose a
+**deny-list**, which fails **open**: forget to add one child and the surprise is gone, silently,
+with no error and no way to undo it. An allow-list with a closed default fails **closed**,
+where the worst case is *"I can't see the trip you're planning"* — a complaint, not a ruined
+Christmas. For anything secret, choose the direction whose failure you can survive.
+
+**Instance grants are additive over a facet** (a guest added to one group has it without the
+class), **but a closed default is not a grant.** `trips.gallery: all` does not reveal a
+`parents`-audience trip; it means "you may see trips that are yours to see."
+
+**The wall panel is where a surprise leaks**, which is the concrete argument for panels
+carrying their own scope (§— see the panel section). A trip countdown tile on the kitchen wall
+is precisely where Disney gets spoiled, and a panel is a place, not a person: it cannot be
+trusted with `parents` audience just because a parent is standing in front of it.
 
 ### The rule that follows
 
@@ -486,9 +521,10 @@ Twenty-four facets cannot be twenty-four dropdowns on a member card. Role suppli
 | `presence.location` | all | — | own | — | — |
 | `presence.status` | all | all | all | — | — |
 | `presence.moments` | all | all | all | — | **all** |
-| `trips.gallery` | all | all | all | — | — |
-| `trips.detail` | all | — | all | — | — |
-| `trips.planning` | all | — | — | — | — |
+| `trips.gallery` | **parents** | — | — | — | — |
+| `trips.detail` | **parents** | — | — | — | — |
+| `trips.planning` | **parents** | — | — | — | — |
+| `occasions` | **parents** | — | — | — | — |
 | `music` | all | all | all | — | — |
 | `pets` | all | all | all | — | **all** |
 
@@ -615,7 +651,7 @@ together are the deliverable.
 - For **Household adult, Child and Helper**, the preset reproduces today's behaviour —
   asserted per facet, not in aggregate. **Keeping up** is asserted against its decided new
   behaviour (§9), with the deviation from today named in the test.
-- A `guest` reaches `presence.moments` and `pets` and is refused all twenty-four others, at the
+- A `guest` reaches `presence.moments` and `pets` and is refused all twenty-five others, at the
   API and not merely in the shell.
 - `calendar.events: all` + `schedule.assignment: none` + `schedule.logistics: none` returns
   titles and times and **no** assignment, edge, car, carpool-contact or driver-calendar key —
@@ -633,6 +669,10 @@ together are the deliverable.
 - `sees_people: []` is every member (today's behaviour); `sees_people: [emma]` returns Emma's
   rows and nothing of Jack's, across every ◍ facet — one assertion per facet, since the filter
   is one list applied in many assemblers.
+- A `parents`-audience trip is absent from a child's gallery, from a keeping-up adult's, from
+  the agent's answers, from the digest, **and from a wall panel's countdown tile** — asserted
+  per surface, because a surprise leaks at whichever surface was forgotten.
+- Sharing that trip with one child reveals it to that child and to nobody else.
 - A list with `shared_with: []` is household-wide; populated, it is those people plus anyone
   with `lists.shopping: all`.
 - The four viewer-less reads (§10) refuse or redact for a viewer who should not see them.

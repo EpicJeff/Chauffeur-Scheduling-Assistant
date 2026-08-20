@@ -479,6 +479,16 @@ currently does. Lowest priority in O3, highest compounding value.
   `hidden_from` gets designed first and enforced at storage, on every list
   surface, in the digest, on the kiosk, and in both agent stacks. Do not let
   it arrive as a late "we should also track gifts."
+  **REVISED 2026-08-20 — see `docs/family_network_design.md` §7.** The problem
+  is stated correctly here but the mechanism is the wrong way round.
+  `hidden_from` is a DENY-list and fails OPEN: forget one child and the
+  surprise is gone, silently. The replacement is an `audience`
+  (`household | parents | shared`) with a per-type default, closed
+  (`parents`) for gifts, trips and occasions — an allow-list that fails
+  CLOSED, where the worst case is "I cannot see the thing you are planning"
+  rather than a ruined Christmas. The enforcement list above stands
+  unchanged, and gains the wall panel: a countdown tile is where a surprise
+  actually leaks.
 
 ## Open questions
 
