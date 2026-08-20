@@ -3717,9 +3717,9 @@ Tests: `tests/test_route_facets.py` (5 scenarios).
 
 Tests: `tests/test_list_sharing.py` (4 scenarios).
 
-## The shelf you snap, the screenshot you already have (v2.338.0)
+## The shelf you snap, the screenshot you already have (v2.338.0, reshaped v2.338.1)
 
-The shopping add-row's photo reader had one door: `capture="environment"` forces the camera picker on mobile, right for "snap the fridge shelf" and wrong for a screenshot or saved image. A second button (🖼️) sits beside 📸 with a capture-free input — same `/api/shopping/photo` reader, same staged candidate picker. Images only either way; the endpoint refuses non-image files (a PDF list would need a converter in front of the vision call — not built).
+The shopping add-row's photo button carried `capture="environment"`, which mobile obeys by jumping STRAIGHT into the camera — a screenshot already in the gallery was unreachable — while desktop ignores it entirely. v2.338.0 tried a second gallery button; v2.338.1 replaced both with the right shape: **one 📸 button, no `capture`**, so mobile offers its own chooser (camera / photo library / files) and desktop opens the normal dialog. Same `/api/shopping/photo` reader, same staged candidate picker. Images only; the endpoint refuses non-image files (a PDF list would need a converter in front of the vision call — not built).
 
 ## Security — how the house is locked (auth arc, standing reference)
 

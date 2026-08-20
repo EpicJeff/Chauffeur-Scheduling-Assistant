@@ -1289,20 +1289,17 @@
                     class="px-5 py-3 rounded-xl font-bold bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40 disabled:cursor-not-allowed">
                     Add
                 </button>
-                <button @click="$refs.photo.click()" title="Snap the fridge shelf, a pile of empty packages, or a handwritten list"
+                <button @click="$refs.photo.click()"
+                    title="Snap the fridge shelf or a handwritten list — or upload a photo you already have"
                     class="px-4 py-3 rounded-xl font-bold bg-gray-800 border border-gray-700 text-gray-300 hover:text-white">
                     📸
                 </button>
-                <!-- Two inputs on purpose: `capture` forces the camera, which
-                     is right for "snap the shelf" and wrong for a screenshot
-                     already in the gallery. Same reader either way. -->
-                <button @click="$refs.photoFile.click()" title="Upload a photo or screenshot you already have"
-                    class="px-4 py-3 rounded-xl font-bold bg-gray-800 border border-gray-700 text-gray-300 hover:text-white">
-                    🖼️
-                </button>
-                <input x-ref="photo" type="file" accept="image/*" capture="environment" class="hidden"
-                    @change="uploadPhoto($event)">
-                <input x-ref="photoFile" type="file" accept="image/*" class="hidden"
+                <!-- Deliberately NO `capture` attribute: with it, mobile jumps
+                     straight into the camera and a screenshot already in the
+                     gallery is unreachable; without it, mobile offers the
+                     chooser (camera / photos / files) and desktop opens its
+                     normal dialog. One button, every source. -->
+                <input x-ref="photo" type="file" accept="image/*" class="hidden"
                     @change="uploadPhoto($event)">
             </div>
 
