@@ -42,8 +42,16 @@ def reset_db():
         for name, val in list(vars(storage).items()):
             if name.endswith("_table"):
                 val.truncate()
+    # Kid quiet hours EXPLICITLY DISABLED (`start == end`, the documented
+    # grammar) — the default window is 20:30-07:00, so every scenario that
+    # expects a ping ("the challenger was never told") passed all day and
+    # failed in any evening test run, which reads as flakiness and is really
+    # a fixture that forgot kids have a night. Quiet hours have their own
+    # scenarios here; they patch their own window in.
     storage.patch_settings({'pet_pvp_enabled': True,
-                            'pet_pvp_pair_cap': storage.PET_PVP_PAIR_CAP})
+                            'pet_pvp_pair_cap': storage.PET_PVP_PAIR_CAP,
+                            'kid_quiet_start': '00:00',
+                            'kid_quiet_end': '00:00'})
 
 
 def _pair(xp_a=0, xp_b=0):
