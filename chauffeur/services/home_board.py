@@ -52,7 +52,7 @@ import re
 import time
 from typing import Callable, List, Optional
 
-from services import leave_by, storage
+from services import leave_by, scope, storage
 
 # ── The option vocabulary.
 #
@@ -1913,14 +1913,20 @@ def _tile_routines_lanes(now, config=None, **_):
         return None
 
 
-def _tile_occasions(now, config=None, **_):
+def _tile_occasions(now, config=None, viewer=None, **_):
     try:
         today = now.date()
         count = _cfg_int(config, 'count', 3, 1, 10)
         within = _cfg_int(config, 'within_days', None, 1, 365) \
             if (config or {}).get('within_days') is not None else None
-        rows = []
+        rows, hidden = [], 0
         for o in storage.get_occasions(include_done=False) or []:
+            # Family-network S4: a party being planned is a surprise until
+            # somebody marks it for the wall — same closed default as trips,
+            # applied where the rows are assembled.
+            if not scope.audience_allows(o, 'occasion', viewer):
+                hidden += 1
+                continue
             anchor = o.get('anchor_date') or o.get('window_start')
             try:
                 d = datetime.date.fromisoformat(str(anchor)[:10])
@@ -1932,14 +1938,21 @@ def _tile_occasions(now, config=None, **_):
                 continue
             rows.append({'title': o.get('title') or 'Occasion', 'date': d.isoformat(),
                          'kind': o.get('kind'), 'days': (d - today).days})
+        can_know = viewer is not None \
+            and scope.reach(viewer, 'occasions') != 'none'
         if not rows:
             # Nothing upcoming, but the household clearly uses occasions if any
             # exist at all (including ones already done).
+            if hidden and can_know:
+                return {'occasions': [], 'hidden': hidden}
             if not storage.get_occasions(include_done=True):
                 return None
             return {'empty': "Nothing coming up."}
         rows.sort(key=lambda r: r['days'])
-        return {'occasions': rows[:count]}
+        out = {'occasions': rows[:count]}
+        if hidden and can_know:
+            out['hidden'] = hidden
+        return out
     except Exception as e:
         print(f"[home_board] occasions failed: {e}")
         return None
@@ -2372,7 +2385,7 @@ def _tile_errand_list(now, config=None, **_):
         return None
 
 
-def _trip_rows(now, back_days: int = 0) -> List[dict]:
+def _trip_rows(now, back_days: int = 0, viewer: Optional[dict] = None):
     """Trips this install can know about WITHOUT calling Google, newest-first.
 
     Three sources, because no single one is complete:
@@ -2388,6 +2401,7 @@ def _trip_rows(now, back_days: int = 0) -> List[dict]:
        its POIs are sitting in the schedule cache with real dates on them.
     """
     seen, rows = set(), []
+    hidden = [0]   # trips withheld from THIS viewer (family-network S4)
     # How far back a caller wants to look. The glance tile wants 0 — "the next
     # trip" is not a trip you got home from last week. The GALLERY wants a
     # window, because the trips page has always shown recent trips with a
@@ -2399,6 +2413,20 @@ def _trip_rows(now, back_days: int = 0) -> List[dict]:
             return
         if tid:
             seen.add(tid)
+        # Family-network S4: audience, checked where the data is ASSEMBLED so
+        # every tile inherits it. A trip WITH a metadata record and no
+        # declared audience is closed ('parents' default — a plan is a
+        # surprise until somebody says otherwise); a trip with NO record at
+        # all is 'household', since it exists only as calendar events the
+        # family already sees. The panel is the one surface a child meets a
+        # trip on, and it calls this with viewer=None — a place, not a
+        # person — so a closed trip never reaches the kitchen wall.
+        meta = (storage.get_trip_metadata(tid) or None) if tid else None
+        if not scope.audience_allows(meta if meta is not None
+                                     else {'audience': 'household'},
+                                     'trip', viewer):
+            hidden[0] += 1
+            return
         end = end or start
         # background_url is not always a URL — older trips stored a search
         # phrase ("disney world") in it, which as an <img src> is a broken
@@ -2417,8 +2445,7 @@ def _trip_rows(now, back_days: int = 0) -> List[dict]:
         rows.append({
             'id': tid, 'title': title or 'Trip', 'location': location or None,
             'image': img, 'art': art, 'draft': bool(draft),
-            'poi_count': len(((storage.get_trip_metadata(tid) or {}).get('pois')
-                              or []) if tid else []),
+            'poi_count': len((meta or {}).get('pois') or []),
             'start': start.isoformat(), 'end': end.isoformat(),
             'past': bool(end < now.date()),
             # NEGATIVE days would mean "already started", so an in-progress
@@ -2475,16 +2502,29 @@ def _trip_rows(now, back_days: int = 0) -> List[dict]:
     # at the bottom rather than interleaved by date — a trip you got home from
     # is a memory, not a plan, whatever its start date says.
     rows.sort(key=lambda r: (r['past'], not r['live'], r['start']))
-    return rows
+    return rows, hidden[0]
 
 
-def _tile_trips(now, config=None, **_):
+def _trips_payload(rows, hidden, viewer):
+    """Attach the never-silent counter — to exactly whoever may know (§7).
+
+    A viewer whose scope permits trips sees "N trips not shown here"; anyone
+    else (a viewerless panel above all) gets NO trace, not even a count. The
+    absence is legible to whoever may know and invisible to everyone else."""
+    out = {'trips': rows}
+    if hidden and viewer is not None \
+            and scope.reach(viewer, 'trips.gallery') != 'none':
+        out['hidden'] = hidden
+    return out
+
+
+def _tile_trips(now, config=None, viewer=None, **_):
     try:
         if not (storage.get_all_trip_metadata() or storage.get_cached_trips()):
             return None                       # no trips ever: feature unused
         pinned = _cfg_str(config, 'trip')
         count = _cfg_int(config, 'count', 4, 1, 8)
-        rows = _trip_rows(now)
+        rows, hidden = _trip_rows(now, viewer=viewer)
         if pinned:
             # A trip somebody pinned and has since finished or deleted. Saying
             # so beats silently showing a different trip under a tile the
@@ -2494,7 +2534,12 @@ def _tile_trips(now, config=None, **_):
             if not rows:
                 return {'empty': "That trip is over."}
             return {'trips': rows[:1], 'pinned': True}
-        return {'trips': rows[:count]} if rows else {'empty': "No trips planned."}
+        if not rows:
+            payload = _trips_payload([], hidden, viewer)
+            return payload if payload.get('hidden') \
+                else {'empty': "No trips planned."}
+        payload = _trips_payload(rows[:count], hidden, viewer)
+        return payload
     except Exception as e:
         print(f"[home_board] trips failed: {e}")
         return None
@@ -2517,7 +2562,7 @@ def _tile_trips(now, config=None, **_):
 TRIPS_BACK_DAYS = 365
 
 
-def _tile_trips_gallery(now, config=None, **_):
+def _tile_trips_gallery(now, config=None, viewer=None, **_):
     """The trips page's own gallery, as a card.
 
     Rides the PAYLOAD rather than self-fetching, and that is a rule rather
@@ -2533,13 +2578,16 @@ def _tile_trips_gallery(now, config=None, **_):
             return None                       # no trips ever: feature unused
         show_past = _cfg_bool(config, 'show_past', True)
         count = _cfg_int(config, 'count', 0, 0, 40)
-        rows = _trip_rows(now, back_days=TRIPS_BACK_DAYS if show_past else 0)
+        rows, hidden = _trip_rows(now, back_days=TRIPS_BACK_DAYS if show_past else 0,
+                                  viewer=viewer)
         if not show_past:
             rows = [r for r in rows if not r['past']]
         if not rows:
-            return {'empty': "No trips planned."}
+            payload = _trips_payload([], hidden, viewer)
+            return payload if payload.get('hidden') \
+                else {'empty': "No trips planned."}
         return {
-            'trips': rows[:count] if count else rows,
+            **_trips_payload(rows[:count] if count else rows, hidden, viewer),
             'interactive': _cfg_bool(config, 'interactive', True),
             'tile_width': _cfg_int(config, 'tile_width', 320, 180, 700),
             'show': {

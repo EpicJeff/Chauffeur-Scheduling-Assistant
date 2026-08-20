@@ -2143,10 +2143,19 @@ def pair_dishes(dish_name: str, partner_names: str, exclusive: bool = False,
             "message": f"Got it — {nm} always comes with {names}.{tail}"}
 
 
-def _find_occasion(name: str) -> Optional[dict]:
-    from services import storage
+def _find_occasion(name: str, viewer: dict = None) -> Optional[dict]:
+    """Family-network S4: filtered by audience BEFORE matching, so a kid
+    asking Argyle about a surprise party gets "nothing on the books" — the
+    same answer as a party that does not exist, which is the point (§13: no
+    trace at all for one who may not know). A caller with no identity (admin
+    dashboard, HA voice — identity on voice is the arc's open question #5)
+    keeps today's behaviour."""
+    from services import storage, scope
     low = (name or '').strip().lower()
     rows = storage.get_occasions(include_done=True)
+    if viewer is not None:
+        rows = [o for o in rows
+                if scope.audience_allows(o, 'occasion', viewer)]
     if not low:
         return rows[0] if rows else None
     for o in rows:
@@ -2184,7 +2193,7 @@ def add_occasion(title: str, anchor_date: str, kind: str = "gathering",
 def get_occasion(occasion_name: str = "", acting_member: dict = None) -> Dict[str, Any]:
     """READ: "what's the state of Thanksgiving?", "who's coming to the party?"."""
     from services import occasions as _occ
-    o = _find_occasion(occasion_name)
+    o = _find_occasion(occasion_name, acting_member)
     if not o:
         return {"status": "success",
                 "message": "I don't have any occasions on the books yet."}
@@ -2218,7 +2227,7 @@ def get_occasion_insights(occasion_name: str = "", acting_member: dict = None) -
     plainly. Names an imbalance, never scores it.
     """
     from services import occasions as _occ
-    o = _find_occasion(occasion_name)
+    o = _find_occasion(occasion_name, acting_member)
     if not o:
         return {"status": "success",
                 "message": "I don't have any occasions on the books yet."}
@@ -2242,7 +2251,7 @@ def get_occasion_gaps(occasion_name: str = "", acting_member: dict = None) -> Di
     fourteen presents unbought is fine in October and an emergency on the 23rd.
     """
     from services import occasions as _occ
-    o = _find_occasion(occasion_name)
+    o = _find_occasion(occasion_name, acting_member)
     if not o:
         return {"status": "success",
                 "message": "I don't have any occasions on the books yet."}
@@ -2281,7 +2290,7 @@ def set_occasion_attendance(occasion_name: str, who: str, coming: bool = True,
     every plate in the window.
     """
     from services import storage, occasions as _occ
-    o = _find_occasion(occasion_name)
+    o = _find_occasion(occasion_name, acting_member)
     if not o:
         return {"status": "error",
                 "message": f"I don't have an occasion called '{occasion_name}'."}
@@ -2313,7 +2322,7 @@ def add_occasion_guests(occasion_name: str, who: str, headcount: int = 1,
     all, given this app deliberately does not send invitations.
     """
     from services import occasions as _occ
-    o = _find_occasion(occasion_name)
+    o = _find_occasion(occasion_name, acting_member)
     if not o:
         return {"status": "error",
                 "message": f"I don't have an occasion called '{occasion_name}'."}
@@ -2333,7 +2342,7 @@ def source_for_occasion(occasion_name: str, needed: str,
     """WRITE: "I need party favours for a shark party", "we need decorations
     and paper plates for sixteen"."""
     from services import occasions as _occ
-    o = _find_occasion(occasion_name)
+    o = _find_occasion(occasion_name, acting_member)
     if not o:
         return {"status": "error",
                 "message": f"I don't have an occasion called '{occasion_name}'."}

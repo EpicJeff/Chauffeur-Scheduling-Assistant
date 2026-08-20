@@ -865,6 +865,14 @@
                     </div>
                 </div>
                 <div>
+                    <label class="flex items-start gap-3 bg-gray-900 border border-gray-600 rounded-lg p-3 cursor-pointer">
+                        <input type="checkbox" id="settings-on-wall" class="w-4 h-4 mt-0.5 accent-blue-500">
+                        <span class="text-sm text-gray-300 font-bold">Show on the family wall
+                            <span class="block text-xs text-gray-500 font-normal mt-0.5">Off: only parents see this trip anywhere — surprises stay surprises.</span>
+                        </span>
+                    </label>
+                </div>
+                <div>
                     <label class="block text-gray-400 mb-1 text-sm font-bold">General Notes</label>
                     <textarea id="settings-notes" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500" rows="4"></textarea>
                 </div>
@@ -2567,6 +2575,8 @@
             document.getElementById('settings-budget-max').value = tripData.metadata.budget_max_usd || 20000;
             document.getElementById('settings-flight-prefs').value = tripData.metadata.flight_preferences || '';
             
+            document.getElementById('settings-on-wall').checked =
+                tripData.metadata.audience === 'household';
             renderAttendeesPills();
             updateSettingsBudgetSlider();
             
@@ -2997,6 +3007,7 @@
             const newBudgetMax = parseInt(document.getElementById('settings-budget-max').value) || 0;
             const newFlightPrefs = document.getElementById('settings-flight-prefs').value;
             const newAttendees = getSelectedAttendees();
+            const newOnWall = document.getElementById('settings-on-wall').checked;
             
             let newDraftStartDay = tripData.metadata.draft_start_day;
             let newDraftDuration = tripData.metadata.draft_duration_nights;
@@ -3026,6 +3037,7 @@
                 (tripData.metadata.budget_max_usd || 0) !== newBudgetMax ||
                 (tripData.metadata.flight_preferences || '') !== newFlightPrefs ||
                 !arrEq(tripData.metadata.attendees || [], newAttendees) ||
+                ((tripData.metadata.audience === 'household') !== newOnWall) ||
                 datesChanged;
                 
             if (!hasChanged) {
@@ -3040,7 +3052,8 @@
                 budget_min_usd: newBudgetMin,
                 budget_max_usd: newBudgetMax,
                 flight_preferences: newFlightPrefs,
-                attendees: newAttendees
+                attendees: newAttendees,
+                audience: newOnWall ? 'household' : 'parents'
             };
             
             if (tripData.metadata.is_draft) {

@@ -1434,7 +1434,10 @@ def scenario_a_trip_is_found_without_calling_google():
              'end': (soon + datetime.timedelta(days=2, hours=1)).isoformat()},
         ]}
         storage.get_trip_metadata = lambda tid: {'title': 'Disney'}
-        tile = home_board._tile_trips(datetime.datetime.now())
+        # S4: a trip WITH a metadata record is parents-audience by default, so
+        # the span-derivation itself is asserted through a parent's eyes.
+        tile = home_board._tile_trips(datetime.datetime.now(),
+                                      viewer={'id': 'p', 'role': 'parent'})
         check(tile.get('trips') and tile['trips'][0]['days'] == 6,
               f"span derived from the cached activities, got {tile}")
     finally:

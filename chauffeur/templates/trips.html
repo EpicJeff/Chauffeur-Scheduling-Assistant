@@ -105,6 +105,8 @@
              of its two callers — the Trips BOARD is the other. The grid itself
              is drawn by the component, so the two cannot disagree about what a
              trip card looks like. -->
+        <div id="wall-hidden-note" class="hidden mb-4 bg-gray-800/80 border border-gray-700 text-gray-300 text-sm rounded-xl px-4 py-3">
+        </div>
         <div id="trips-grid" class="hidden"></div>
 
     </main>
@@ -157,6 +159,17 @@
                         <input type="number" id="trip-duration" value="3" min="1" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
                     </div>
                 </div>
+
+                <!-- Family-network S4: the label names the CONSEQUENCE, not the
+                     abstraction — the wall is the decision people are really
+                     making; `audience` is just the model underneath. Unchecked
+                     (the default) means parents-only: surprises stay surprises. -->
+                <label class="flex items-start gap-3 bg-gray-900 border border-gray-600 rounded-lg px-4 py-3 cursor-pointer">
+                    <input type="checkbox" id="trip-on-wall" class="w-4 h-4 mt-0.5 accent-blue-500">
+                    <span class="text-sm text-gray-300 font-bold">Show this on the family wall?
+                        <span class="block text-xs text-gray-500 font-normal mt-0.5">Until you do, only parents see this trip anywhere — the wall says nothing.</span>
+                    </span>
+                </label>
 
                 <div class="mt-4 pt-4 border-t border-gray-700">
                     <h4 class="text-sm font-bold text-gray-300 mb-4">Travel Preferences (Optional)</h4>
@@ -235,6 +248,17 @@
                     tileMin: isKioskTrips ? '340px' : '260px',
                 });
                 grid.classList.remove('hidden');
+                // Family-network S4: a private trip missing from the wall must
+                // be LEGIBLE here, or the countdown tile is a feature that
+                // quietly does nothing — this repo's own recurring bug shape.
+                const offWall = (data.trips || []).filter(t => t.on_wall === false).length;
+                const note = document.getElementById('wall-hidden-note');
+                if (note && offWall && !isKioskTrips) {
+                    note.textContent = offWall === 1
+                        ? '1 trip is hidden from the family wall. Open it and use Trip Settings to share the countdown.'
+                        : offWall + ' trips are hidden from the family wall. Open one and use Trip Settings to share the countdown.';
+                    note.classList.remove('hidden');
+                }
                 
             } catch (err) {
                 console.error(err);
@@ -299,6 +323,7 @@
             document.getElementById('trip-budget-min').value = '0';
             document.getElementById('trip-budget-max').value = '20000';
             document.getElementById('trip-flight-prefs').value = '';
+            document.getElementById('trip-on-wall').checked = false;
             updateBudgetSlider();
             document.getElementById('create-trip-modal').classList.remove('hidden');
             setTripType('exact');
@@ -320,7 +345,10 @@
                 location: loc,
                 budget_min_usd: budgetMin,
                 budget_max_usd: budgetMax,
-                flight_preferences: flightPrefs
+                flight_preferences: flightPrefs,
+                // Explicit both ways — a declared answer beats default drift.
+                audience: document.getElementById('trip-on-wall').checked
+                    ? 'household' : 'parents'
             };
             if (tripType === 'exact') {
                 const start = document.getElementById('trip-start').value;

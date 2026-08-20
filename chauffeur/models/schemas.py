@@ -1835,6 +1835,11 @@ class Occasion(BaseModel):
     # lives elsewhere, a parent away that week, or a helper who IS invited to
     # the party. Attendance is a decision, not a property of the roster.
     attendance: Dict[str, bool] = Field(default_factory=dict)
+    # Family-network S4: same shape as trips, the household's call — a party
+    # being planned is a surprise until somebody says otherwise. None reads
+    # as the type default 'parents' (closed).
+    audience: Optional[str] = None       # household | parents | shared | None
+    shared_with: List[str] = Field(default_factory=list)
     created_at: float = Field(default_factory=time.time)
 
 
@@ -1992,6 +1997,16 @@ class TripMetadata(BaseModel):
     # skiing 27–30). Many-to-one, and the occasion's window spans both — the
     # trip keeps sole ownership of its own dates and its own scheduler.
     occasion_id: Optional[str] = None
+    # Family-network S4 (docs/family_network_design.md §7): who may meet this
+    # trip on a shared surface. None reads as the type default — 'parents',
+    # CLOSED — because for anything secret you pick the failure you can
+    # survive: an unmarked trip missing from the wall is a complaint; an
+    # unmarked surprise ON the wall is a ruined Christmas. 'shared' scopes to
+    # `shared_with`. A trip with no metadata record at all is treated as
+    # 'household' — it exists only as calendar events everyone already sees,
+    # and hiding the tile while the calendar tells would be theatre.
+    audience: Optional[str] = None       # household | parents | shared | None
+    shared_with: List[str] = Field(default_factory=list)
     attendees: List[str] = Field(default_factory=list)
     pois: List[TripPOI] = Field(default_factory=list)
     accommodations: List[TripAccommodation] = Field(default_factory=list)
@@ -2011,3 +2026,6 @@ class CreateTripRequest(BaseModel):
     attendees: List[str] = Field(default_factory=list)
     flight_preferences: Optional[str] = None
     travelers: int = 1
+    # S4: the create form asks "Show this on the family wall?" — the wall is
+    # the decision people are really making; audience is the model under it.
+    audience: Optional[str] = None

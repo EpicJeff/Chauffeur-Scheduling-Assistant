@@ -1085,7 +1085,8 @@ def scenario_the_gallery_rows_carry_what_the_page_shows():
             {'pois': [1, 2, 3]} if tid == 't1' else {})
         storage.get_cached_schedule = lambda: {}
 
-        rows = {r['id']: r for r in home_board._trip_rows(now)}
+        parent = {'id': 'p', 'role': 'parent'}   # S4: full visibility
+        rows = {r['id']: r for r in home_board._trip_rows(now, viewer=parent)[0]}
         check('t2' not in rows,
               "a trip that is over is in the glance tile's rows")
         check(rows['t1']['poi_count'] == 3,
@@ -1100,7 +1101,8 @@ def scenario_the_gallery_rows_carry_what_the_page_shows():
         # The GALLERY asks for a window back, so trips that are over still
         # appear — badged as past, at the bottom, which is what the page does.
         back = {r['id']: r for r in
-                home_board._trip_rows(now, back_days=home_board.TRIPS_BACK_DAYS)}
+                home_board._trip_rows(now, back_days=home_board.TRIPS_BACK_DAYS,
+                                      viewer=parent)[0]}
         check('t2' in back and back['t2']['past'] is True,
               f"the gallery cannot show a trip that is over: {list(back)}")
         check(list(back)[-1] == 't2',
@@ -1110,8 +1112,8 @@ def scenario_the_gallery_rows_carry_what_the_page_shows():
               f"a real photograph was replaced by a search: {back['t2']['art']}")
 
         # And the card honours the toggle both ways.
-        on = home_board._tile_trips_gallery(now, config={})
-        off = home_board._tile_trips_gallery(now, config={'show_past': False})
+        on = home_board._tile_trips_gallery(now, config={}, viewer=parent)
+        off = home_board._tile_trips_gallery(now, config={'show_past': False}, viewer=parent)
         check(any(t['id'] == 't2' for t in on['trips']),
               "the gallery drops past trips the page shows")
         check(not any(t['id'] == 't2' for t in off['trips']),

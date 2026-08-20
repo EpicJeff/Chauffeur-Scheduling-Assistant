@@ -1660,6 +1660,19 @@ def assemble_trips():
             print(f"Error fetching trip {event_id}: {e}")
 
     trips_list = list(trips_map.values())
+    # Family-network S4: every row says whether the WALL may show it, so the
+    # trips page can mark hidden trips and count them ("2 trips hidden from
+    # the family wall") — hiding is never silent to the people allowed to
+    # know. A trip with no metadata record reads as household (it exists only
+    # as calendar events everyone already sees).
+    from services import scope as _scope
+    for t in trips_list:
+        meta = storage.get_trip_metadata(t.get('id')) or None
+        t['audience'] = _scope.audience_of(meta, 'trip') if meta is not None \
+            else 'household'
+        t['on_wall'] = _scope.audience_allows(
+            meta if meta is not None else {'audience': 'household'},
+            'trip', None)
     trips_list.sort(key=lambda x: x['start'] if x['start'] else '')
     # Write it down. A trip's real dates live on its Google event, and this is
     # the only place they are ever assembled — so the home board, which cannot
@@ -1763,6 +1776,10 @@ def create_trip_api(req: CreateTripRequest):
         "budget_max_usd": req.budget_max_usd,
         "flight_preferences": req.flight_preferences,
         "attendees": req.attendees,
+        # S4: the create form asked "Show this on the family wall?". Absent
+        # means the closed default (parents) — never write a guess.
+        "audience": req.audience if req.audience in ('household', 'parents',
+                                                     'shared') else None,
         "travelers": max(1, len(req.attendees)) if req.attendees else 1,
         "pois": [],
         "accommodations": [],
@@ -9837,6 +9854,7 @@ class OccasionRequest(BaseModel):
     dish_tags: List[str] = []
     notes: Optional[str] = None
     cooks: Optional[int] = None
+    audience: Optional[str] = None       # S4: household | parents | shared
 
 class OccasionPatch(BaseModel):
     title: Optional[str] = None
@@ -9848,6 +9866,8 @@ class OccasionPatch(BaseModel):
     notes: Optional[str] = None
     cooks: Optional[int] = None
     status: Optional[str] = None
+    audience: Optional[str] = None       # S4: household | parents | shared
+    shared_with: Optional[List[str]] = None
 
 class GuestRequest(BaseModel):
     name: str
@@ -9873,8 +9893,12 @@ def create_occasion(req: OccasionRequest):
     from services import occasions as _occ
     if not (req.title or '').strip():
         raise HTTPException(status_code=400, detail="An occasion needs a name")
-    return _occ.create(req.title, req.anchor_date, req.kind, req.window_start,
-                       req.window_end, req.dish_tags, req.notes, req.cooks)
+    rec = _occ.create(req.title, req.anchor_date, req.kind, req.window_start,
+                      req.window_end, req.dish_tags, req.notes, req.cooks)
+    if req.audience in ('household', 'parents', 'shared'):
+        storage.update_occasion(rec['id'], {'audience': req.audience})
+        rec = storage.get_occasion(rec['id'])
+    return rec
 
 @app.get("/api/occasions/{occasion_id}")
 def get_occasion_detail(occasion_id: str):

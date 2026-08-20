@@ -383,12 +383,17 @@ def audience_of(obj: dict, obj_type: str) -> str:
     return AUDIENCE_DEFAULTS.get(obj_type, 'household')
 
 
-def audience_allows(obj: dict, obj_type: str, member: dict) -> bool:
+def audience_allows(obj: dict, obj_type: str, member: Optional[dict]) -> bool:
     """May this person see this object? Parents always may — audience hides
     things FROM the household, never from the people planning the surprise.
+    `member=None` is an ANONYMOUS surface — a wall panel is a place, not a
+    person, and cannot hold a 'parents' audience just because a parent is
+    standing in front of it (§7) — so only 'household' passes.
     Note the §7 rule this deliberately does not bend: a facet grant is not an
     audience grant ('trips.gallery: all' does not reveal a parents-audience
     trip), and vice versa — callers check both."""
+    if member is None:
+        return audience_of(obj, obj_type) == 'household'
     if member.get('role') == 'parent':
         return True
     aud = audience_of(obj, obj_type)

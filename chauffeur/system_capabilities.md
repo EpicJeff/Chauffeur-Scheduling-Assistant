@@ -3664,6 +3664,16 @@ Tests: `tests/test_family_network.py` scenarios 7–9 (present helper hands over
 - **Audiences fail closed** (supersedes `occasion_design.md`'s deny-list): every shareable object may declare `audience: household|parents|shared` (+`shared_with`); type defaults live in `AUDIENCE_DEFAULTS` — trips, occasions and future gift lists default `parents`. Parents always pass; unknown values fail CLOSED; and a facet grant is never an audience grant — both doors must agree.
 - **Stages compose, never merge** (§11): a Navigator with `calendar.events: own` keeps `horizon_days: 13`; neither module consults the other.
 
+## Private by default, and hiding is never silent (v2.333.0 — family-network S4)
+
+The Disney case, built. Trips and occasions carry `audience: household | parents | shared` (+`shared_with`); **undeclared means CLOSED** (`parents`) — for anything secret you pick the failure you can survive: an unmarked trip missing from the wall is a complaint, an unmarked surprise ON the wall is a ruined Christmas. One deliberate carve-out: a trip with **no metadata record at all** reads as `household`, because it exists only as calendar events the family already sees, and hiding its tile while the calendar tells would be theatre. **Existing trips and occasions with metadata go dark on the wall at this release** until marked shown — the asymmetry is the argument, and the recovery is one tap.
+
+- **Enforced where the rows are assembled** (`home_board._trip_rows`, `_tile_trips`, `_tile_trips_gallery`, `_tile_occasions`), so every tile inherits it. The panel calls with `viewer=None` — **a place, not a person** — and a closed trip never reaches the kitchen wall, with **no trace, not even a count**.
+- **The counter goes to exactly who may know**: a viewer whose scope permits trips but whom the audience still refuses (the §13 combination — a facet grant is never an audience grant) gets `hidden: N` in the tile payload; the `/trips` page tells parents "N trips are hidden from the family wall"; the occasions page chips every card `📺 On the wall` / `🔒 Parents only` with one-tap flipping.
+- **The agent keeps the secret** (`agent_tools_v2._find_occasion` filters by audience before matching): a kid asking Argyle about a surprise party gets *"I don't have any occasions on the books yet"* — the same answer as a party that does not exist. Identity-less callers (admin dashboard, HA voice) keep today's behaviour; voice identity is the arc's open question #5.
+- **Hand paths**: the trip create form asks **"Show this on the family wall?"** (unchecked default — the label names the consequence, not the abstraction); the standing toggle lives in Trip Settings; occasions flip on their card chip. Digests never surfaced trips or occasions, so there was nothing to redact there (checked).
+- Tests: `tests/test_audience.py` (6 scenarios: panel silence, one-field reveal, counter targeting, share-with-one-child, occasions parity, Argyle secrecy).
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.

@@ -99,6 +99,13 @@
                         <div class="text-lg font-bold text-white truncate" x-text="o.title"></div>
                         <div class="text-[11px] text-gray-500" x-text="whenLine(o)"></div>
                     </button>
+                    <!-- Family-network S4: hidden is the default and never
+                         silent — the chip says which way this one is set, and
+                         one tap flips it. -->
+                    <button @click="toggleWall(o)" class="shrink-0 text-[10px] font-bold px-2 py-1 rounded-full border transition-colors"
+                        :class="o.audience === 'household' ? 'border-emerald-500/50 text-emerald-300' : 'border-gray-600 text-gray-500'"
+                        :title="o.audience === 'household' ? 'Shown on the family wall' : 'Hidden from the family wall — only parents see it'"
+                        x-text="o.audience === 'household' ? '📺 On the wall' : '🔒 Parents only'"></button>
                     <button @click="removeOccasion(o)" class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
                 </div>
 
@@ -595,6 +602,16 @@
                     showGlobalAlert('Could not save that just now.');
                 }
                 this.busy = false;
+            },
+
+            async toggleWall(o) {
+                const next = o.audience === 'household' ? 'parents' : 'household';
+                const r = await fetch(this.apiBase + 'api/occasions/' + o.id, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ audience: next })
+                });
+                if (r.ok) o.audience = next;
             },
 
             async removeOccasion(o) {
