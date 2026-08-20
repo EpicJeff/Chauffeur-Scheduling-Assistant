@@ -1016,6 +1016,9 @@
             document.getElementById('btn-switch-driver').classList.remove('hidden');
 
             applyRoleTabs();
+            // The schedule is the payload; notification/push chrome comes
+            // after and must never stand between a sign-in and the data.
+            fetchSchedule();
             await checkNotificationStatus();
             syncPushSubscription();
             connectMessagesStream();
@@ -1024,10 +1027,7 @@
             // The passenger path never fetched the schedule blob — My Day
             // fetches its own /day payload — which left scheduleData null
             // for the keeping-up adult whose landing tab (Family) draws
-            // FROM it: blank panes on any device without another member's
-            // cached blob, and a day pager holding nothing. The fetch's own
-            // buildTimeline draws whichever timeline view is current.
-            fetchSchedule();
+            // FROM it (fetched above, before the chrome).
             if (currentView === 'messages') fetchChannels();
             else if (currentView === 'map') { initFamilyMap(); startFamilyMapPolling(); }
             else if (currentView === 'chores') fetchChores();
@@ -4565,14 +4565,21 @@
         }
 
         async function checkNotificationStatus() {
-            const pushBtn = document.getElementById('btn-push');
-            if (Notification.permission === 'granted') {
-                pushBtn.classList.add('hidden');
-            } else {
-                if (selectedDriverId || selectedMemberId) {
+            // iOS Safari in a TAB has no Notification global at all — it only
+            // exists installed-to-home-screen (16.4+). Touching it bare threw
+            // ReferenceError, which rejected this await inside BOTH sign-in
+            // paths, and everything after it — fetchSchedule included —
+            // silently never ran: the eternal "Loading..." family tab. This
+            // function must never be able to take a sign-in down with it.
+            try {
+                const pushBtn = document.getElementById('btn-push');
+                if (typeof Notification === 'undefined'
+                        || Notification.permission === 'granted') {
+                    pushBtn.classList.add('hidden');
+                } else if (selectedDriverId || selectedMemberId) {
                     pushBtn.classList.remove('hidden');
                 }
-            }
+            } catch (e) { /* notification chrome, never load-bearing */ }
         }
 
         // The front door decision (auth arc S8, Decision 4). Asked of the
@@ -5078,6 +5085,10 @@
                 showGlobalAlert("Push notifications are not supported by your browser.");
                 return;
             }
+            if (typeof Notification === 'undefined') {
+                showGlobalAlert('Notifications need the installed app — use Share → Add to Home Screen');
+                return;
+            }
             const permission = await Notification.requestPermission();
             if (permission !== 'granted') {
                 showGlobalAlert("Permission not granted.");
@@ -5130,7 +5141,9 @@
         async function syncPushSubscription() {
             try {
                 if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-                if (Notification.permission !== 'granted' || (!selectedDriverId && !selectedMemberId)) return;
+                if (typeof Notification === 'undefined'
+                        || Notification.permission !== 'granted'
+                        || (!selectedDriverId && !selectedMemberId)) return;
                 const reg = await navigator.serviceWorker.register('/sw.js');
                 const response = await fetch(`${apiBase}api/vapid_public_key`);
                 const data = await response.json();
