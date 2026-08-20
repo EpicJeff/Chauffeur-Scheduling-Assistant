@@ -55,6 +55,73 @@ def get_event_passenger_ids(event, passengers):
             result.add(p.id)
     return result
 
+def _car_unavailable_for(c, e):
+    for r in (c.unavailable_ranges or []):
+        r_start = r.get('start') if isinstance(r, dict) else getattr(r, 'start', None)
+        r_end = r.get('end') if isinstance(r, dict) else getattr(r, 'end', None)
+        if r_start and r_end and e.start.date().isoformat() <= r_end and e.end.date().isoformat() >= r_start:
+            return True
+    return False
+
+
+def driver_attends(e, d_id, driver_events):
+    """The driver's own calendar holds this event — the same matching that
+    grants the +50M attendee bonus in the objective."""
+    e_orig = getattr(e, 'original_event_id', None) or e.id
+    for de in (driver_events or {}).get(d_id, []):
+        de_orig = getattr(de, 'original_event_id', None) or de.id
+        if de.id == e.id or de.id == e_orig or de_orig == e_orig or de_orig == e.id:
+            return True
+        if de.start == e.start and de.end == e.end and de.title.strip().lower() == e.title.strip().lower():
+            return True
+    return False
+
+
+def riding_passengers(e, d_id, pids, drivers, driver_events, driver_passenger_map, cars=None):
+    """Passenger ids that actually need a seat when driver d_id drives.
+
+    People behind a wheel don't consume passenger seats. Two exclusions:
+    the assigned driver's own passenger record (seat_capacity already
+    excludes the driver's seat, so counting their passenger record
+    double-books them), and any OTHER driver who ATTENDS the event — they
+    self-transport in a car of their own, which is how a family outing
+    bigger than any single car actually happens: it splits across the
+    drivers who are going anyway, instead of going unassigned. A pooled
+    co-driver only self-transports while the fleet has a spare available
+    car for them (the assigned pooled driver takes one first); a driver on
+    no car keeps the implicit personal car, as everywhere. Deliberately NOT
+    modeled: passengers overflowing into the co-driver's car — passengers
+    ride the assigned car only, so kid-splitting stays a manual call."""
+    riding = set(str(p) for p in pids)
+    dpm = {str(k): str(v) for k, v in (driver_passenger_map or {}).items()}
+    if not dpm:
+        return riding
+    riding.discard(dpm.get(str(d_id), ''))
+    active_cars = [c for c in (cars or []) if not getattr(c, 'is_disabled', False)]
+    pooled = set()
+    for c in active_cars:
+        pooled.update(str(x) for x in (c.allowed_driver_ids or []))
+    avail = [c for c in active_cars if not _car_unavailable_for(c, e)]
+    spare_cars = len(avail) - (1 if str(d_id) in pooled else 0)
+    for d2 in sorted(drivers or [], key=lambda x: str(x.id)):
+        if str(d2.id) == str(d_id):
+            continue
+        pax2 = dpm.get(str(d2.id))
+        if not pax2 or pax2 not in riding:
+            continue
+        if not driver_attends(e, d2.id, driver_events):
+            continue
+        if str(d2.id) in pooled:
+            if spare_cars <= 0:
+                continue
+            if not any(str(d2.id) in set(str(x) for x in (c.allowed_driver_ids or []))
+                       for c in avail):
+                continue
+            spare_cars -= 1
+        riding.discard(pax2)
+    return riding
+
+
 def resolve_passenger_double_bookings(events, passengers):
     """Auto-resolve a passenger double-booked between a SOLO event (they are
     the only attendee) and a co-attended event: drop them from the co-attended
@@ -343,7 +410,8 @@ def solve_schedule(
     theme: dict = None,
     load_balancing: bool = False,
     load_balancing_metric: str = 'occupied_time',
-    cars: List[Car] = None
+    cars: List[Car] = None,
+    driver_passenger_map: Dict[str, str] = None
 ) -> Tuple[Dict[str, str], List[str], Dict[str, str], Dict[str, str]]:
     """
     Solves the driver assignment problem using OR-Tools CP-SAT solver.
@@ -477,13 +545,19 @@ def solve_schedule(
 
     # 2a-cap. Driver-level passenger cap (graduated-licensing laws). Applies
     # with or without cars configured; inert unless max_passengers is set.
+    # Seat need is per-driver: the driver's own passenger record and
+    # self-transporting co-drivers don't ride (riding_passengers).
     for e in assignable_events:
-        n_pax = len(get_event_passenger_ids(e, passengers))
-        if n_pax == 0:
+        pids_e = get_event_passenger_ids(e, passengers)
+        if not pids_e:
             continue
         for d in drivers:
             cap = getattr(d, 'max_passengers', None)
-            if cap is not None and n_pax > cap and (e.id, d.id) not in overridden_pairs:
+            if cap is None or (e.id, d.id) in overridden_pairs:
+                continue
+            n_pax = len(riding_passengers(e, d.id, pids_e, drivers, driver_events,
+                                          driver_passenger_map, cars))
+            if n_pax > cap:
                 model.Add(assign_vars[(e.id, d.id)] == 0)
 
     # 2b. Constraint: A passenger cannot be scheduled for overlapping events at different locations
@@ -699,39 +773,31 @@ def solve_schedule(
         for s in allowed_by_car.values():
             pooled_driver_ids.update(s)
 
-        def car_unavailable_for(c, e):
-            for r in (c.unavailable_ranges or []):
-                r_start = r.get('start') if isinstance(r, dict) else getattr(r, 'start', None)
-                r_end = r.get('end') if isinstance(r, dict) else getattr(r, 'end', None)
-                if r_start and r_end and e.start.date().isoformat() <= r_end and e.end.date().isoformat() >= r_start:
-                    return True
-            return False
-
-        # Cars workable for an event irrespective of driver: capacity, car-seat
-        # passenger restrictions, availability windows.
-        car_ok = {}
+        # Cars available for an event irrespective of driver (unavailability
+        # windows only). Capacity and car-seat checks live in the per-driver
+        # eligibility below, because HOW MANY need seats depends on WHO
+        # drives: the driver's own passenger record holds the wheel, and a
+        # co-attending driver self-transports (riding_passengers).
+        car_avail = {}
         for e in assignable_events:
-            pids = set(str(p) for p in get_event_passenger_ids(e, passengers))
-            ok = []
-            for c in active_cars:
-                if len(pids) > c.seat_capacity:
-                    continue
-                if c.allowed_passenger_ids is not None and not pids <= set(str(p) for p in c.allowed_passenger_ids):
-                    continue
-                if car_unavailable_for(c, e):
-                    continue
-                ok.append(c)
-            car_ok[e.id] = ok
+            car_avail[e.id] = [c for c in active_cars if not _car_unavailable_for(c, e)]
 
         # Channeling: an assigned pooled driver takes exactly one car they may
         # drive that works for the event. A pooled driver with no workable car
         # is banned from the event (manual override escapes, as everywhere).
         eligible_map = {}
         for e in assignable_events:
+            pids = get_event_passenger_ids(e, passengers)
             for d in drivers:
                 if str(d.id) not in pooled_driver_ids:
                     continue
-                elig = [c for c in car_ok[e.id] if str(d.id) in allowed_by_car[c.id]]
+                riding = riding_passengers(e, d.id, pids, drivers, driver_events,
+                                           driver_passenger_map, active_cars)
+                elig = [c for c in car_avail[e.id]
+                        if str(d.id) in allowed_by_car[c.id]
+                        and len(riding) <= c.seat_capacity
+                        and (c.allowed_passenger_ids is None
+                             or riding <= set(str(p) for p in c.allowed_passenger_ids))]
                 eligible_map[(e.id, d.id)] = elig
                 if not elig:
                     if (e.id, d.id) not in overridden_pairs:
@@ -846,18 +912,7 @@ def solve_schedule(
             weight = base_event_weight
             
             # Huge bonus if driver is an attendee of the event
-            e_orig_bonus = getattr(e, 'original_event_id', None) or e.id
-            is_attendee = False
-            for de in driver_events.get(d.id, []):
-                de_orig = getattr(de, 'original_event_id', None) or de.id
-                if de.id == e.id or de.id == e_orig_bonus or de_orig == e_orig_bonus or de_orig == e.id:
-                    is_attendee = True
-                    break
-                if de.start == e.start and de.end == e.end and de.title.strip().lower() == e.title.strip().lower():
-                    is_attendee = True
-                    break
-                    
-            if is_attendee:
+            if driver_attends(e, d.id, driver_events):
                 weight += 50000000
 
             # Group weight
@@ -1825,7 +1880,7 @@ def compute_conflicts(assignments: Dict[str, str], ghost_assignments: Dict[str, 
                 
     return conflicts
 
-def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers: List[Driver], driver_events: dict, assignments: dict, overrides: List[dict], rules: List[Rule], passengers: List[Passenger] = None, trip_metadata: List[dict] = None, cars: List[Car] = None) -> dict:
+def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers: List[Driver], driver_events: dict, assignments: dict, overrides: List[dict], rules: List[Rule], passengers: List[Passenger] = None, trip_metadata: List[dict] = None, cars: List[Car] = None, driver_passenger_map: Dict[str, str] = None) -> dict:
     if passengers is None:
         passengers = []
     if trip_metadata is None:
@@ -2009,7 +2064,12 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
             # hour falls through to the generic reasons below.
             if not reason and (e.id, d.id) not in overridden_pairs:
                 d_cap = getattr(d, 'max_passengers', None)
-                e_pax = set(str(p) for p in get_event_passenger_ids(e, passengers))
+                # Mirror the model's seat math: the driver's own passenger
+                # record and self-transporting co-drivers don't ride, so the
+                # "not enough seats" text must not count them either.
+                e_pax = riding_passengers(e, d.id, get_event_passenger_ids(e, passengers),
+                                          drivers, driver_events, driver_passenger_map,
+                                          active_cars)
                 if d_cap is not None and len(e_pax) > d_cap:
                     reason = {"text": f"Driver is capped at {d_cap} passenger{'s' if d_cap != 1 else ''}; this event has {len(e_pax)}.", "type": "car"}
                 elif active_cars:

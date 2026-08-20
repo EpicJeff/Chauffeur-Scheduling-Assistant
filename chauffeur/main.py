@@ -13616,6 +13616,13 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # are shown and count as busy, but never become ride demand: see
     # `is_member_only` in the event loop below.
     members_data = storage.get_all_members()
+    # Dual-role members link a driver AND a passenger record. The matcher
+    # needs that link for seat math: a driver's own passenger record holds
+    # the wheel (never a passenger seat), and a co-attending driver
+    # self-transports instead of counting as cargo.
+    driver_passenger_map = {str(m['driver_id']): str(m['passenger_id'])
+                            for m in members_data
+                            if m.get('driver_id') and m.get('passenger_id')}
     member_calendar_map = {}
     member_only_calendar_ids = set()
     for m in members_data:
@@ -14408,7 +14415,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             diagnostics = {}
         else:
             diagnostics = matcher.compute_diagnostics(
-                combined_true_unassigned, list(all_events_for_ui.values()), drivers, driver_events_map, combined_assignments, overrides, rules, passengers=passengers, trip_metadata=trip_metadata, cars=cars
+                combined_true_unassigned, list(all_events_for_ui.values()), drivers, driver_events_map, combined_assignments, overrides, rules, passengers=passengers, trip_metadata=trip_metadata, cars=cars, driver_passenger_map=driver_passenger_map
             )
 
         duplicate_groups = []
@@ -14840,7 +14847,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             true_unassigned = unassigned
         else:
             assignments, unassigned, lateness_warnings, car_assignments = matcher.solve_schedule(
-                daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric, cars=cars
+                daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric, cars=cars, driver_passenger_map=driver_passenger_map
             )
             
             unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
