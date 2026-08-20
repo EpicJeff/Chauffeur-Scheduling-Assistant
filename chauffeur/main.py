@@ -4850,6 +4850,12 @@ def get_members(request: Request = None, include_archived: bool = False,
 @app.post("/api/members")
 def create_member(member: FamilyMember):
     data = member.model_dump()
+    # Family-network S1: PUT enforced the role whitelist, POST didn't — a
+    # create could mint a role no preset knows. Same list, same door, and
+    # is_child stays in step with role the way PUT keeps it.
+    if data.get('role') not in ('parent', 'adult', 'child', 'helper'):
+        raise HTTPException(status_code=400, detail="Invalid role")
+    data['is_child'] = data['role'] == 'child'
     cal_ids = data.pop('calendar_ids', None)
     storage.add_member(data)
     if cal_ids:
@@ -8450,7 +8456,7 @@ async def sendspin_relay(websocket: WebSocket):
 # --- Passenger day view API ---
 
 @app.get("/api/members/{member_id}/day")
-def member_day(member_id: str, date: Optional[str] = None):
+def member_day(member_id: str, date: Optional[str] = None, request: Request = None):
     """A passenger-lens day: the member's events from the combined schedule
     cache (matched via their passenger record's calendar_ids/hashtags), each
     with the assigned driver resolved to a member and a drive status."""
@@ -8458,6 +8464,17 @@ def member_day(member_id: str, date: Optional[str] = None):
     member = storage.get_member(member_id)
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
+    # Family-network S1: this payload welds rides, homework and status days,
+    # and never asked who was looking — any member could read any other
+    # member's whole day. A resolved viewer must be the member themselves or
+    # a household adult. Tokenless callers (wall panels, stale sessions) keep
+    # today's behaviour; once auth_enforce flips the route guard requires
+    # sign-in, so anonymity is not a bypass.
+    viewer_id = _acting_id(request, None)
+    if viewer_id and viewer_id != member_id:
+        v = storage.get_member(viewer_id)
+        if v and v.get('role') not in ('parent', 'adult'):
+            raise HTTPException(status_code=403, detail="Not your day to read")
     date_str = date or _dt.date.today().isoformat()
 
     p_id = member.get('passenger_id')
@@ -10893,7 +10910,7 @@ def _leg_event_id(leg_id):
     return s
 
 @app.get("/api/family/locations")
-def family_locations(viewer: Optional[str] = None):
+def family_locations(viewer: Optional[str] = None, request: Request = None):
     """Every member with map-relevant data: HA person state/coords (absent
     for router-based trackers -> zone chip only) plus 'driving' context from
     in-progress drive legs joined to the cached schedule's assignments.
@@ -10905,7 +10922,19 @@ def family_locations(viewer: Optional[str] = None):
     Driving context stays either way: "en route to practice" is the schedule
     speaking, and the kiosk already shows the schedule."""
     from services import ha_api, stages
-    family_eyes = bool(viewer and storage.get_member(viewer))
+    from services import auth as _auth
+    # Family-network S1: `viewer` was CLIENT-ASSERTED — any caller could name
+    # a member id and unmask a private-stage kid's coordinates. The token now
+    # decides (the PWA sends it on every fetch); the bare claim keeps working
+    # only while enforcement is dark, counted the whole time
+    # (auth.record_identity) — the same grace discipline as every S2 site.
+    acting = _auth.acting_member(getattr(request, 'headers', {}) or {},
+                                 getattr(request, 'query_params', {}) or {},
+                                 viewer)
+    if _auth.impersonation_refused(acting):
+        raise HTTPException(status_code=403, detail="Signed in as somebody else")
+    family_eyes = bool(acting.get('member')) \
+        and (acting.get('source') == 'token' or not _auth.enforcing())
     driving_by_driver = {}
     try:
         sched = storage.get_cached_schedule() or {}
@@ -11096,9 +11125,29 @@ def create_event_channel(req: EventChannelRequest):
     return storage.get_or_create_event_channel(req.event_id, req.title, req.event_end)
 
 @app.get("/api/channels/{channel_id}/messages")
-def get_messages(channel_id: str, after_ts: Optional[float] = None, limit: int = 50):
-    if not storage.get_channel(channel_id):
+def get_messages(channel_id: str, after_ts: Optional[float] = None, limit: int = 50,
+                 request: Request = None):
+    # Family-network S1: the read asks who is looking (the write always did).
+    # The PWA attaches X-Member-Token to every same-origin fetch, so a
+    # resolved viewer is the normal case. A tokenless caller still reads —
+    # the route guard owns refusing anonymity once auth_enforce flips — but a
+    # token naming someone OUTSIDE a dm/group can no longer pull that thread
+    # by id, dark or not.
+    channel = storage.get_channel(channel_id)
+    if not channel:
         raise HTTPException(status_code=404, detail="Channel not found")
+    viewer_id = _acting_id(request, None)
+    viewer = storage.get_member(viewer_id) if viewer_id else None
+    if viewer:
+        if channel.get('kind') in ('dm', 'group') \
+                and viewer_id not in (channel.get('member_ids') or []):
+            raise HTTPException(status_code=403, detail="Not a member of this chat")
+        # Helpers' channel list is DMs-only (get_channels_for_member); the
+        # read now agrees — an event thread is family memory, not a work
+        # channel. Their contribution path is a capture upload (S2), which
+        # posts without ever reading.
+        if viewer.get('role') == 'helper' and channel.get('kind') != 'dm':
+            raise HTTPException(status_code=403, detail="Helpers see only their DMs")
     return storage.get_channel_messages(channel_id, after_ts=after_ts, limit=limit)
 
 class SendMessageRequest(BaseModel):
@@ -12698,10 +12747,17 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.get("/api/chat/history")
-def get_chat_history(conversation_id: str = None):
+def get_chat_history(conversation_id: str = None, request: Request = None):
     if not conversation_id:
         return {"history": []}
     conv = storage.get_conversation(conversation_id)
+    # Family-network S1: same door as the list — a voice session is one
+    # person talking to the house, not household reading material.
+    if conv and conv.get('type') == 'voice':
+        viewer_id = _acting_id(request, None)
+        v = storage.get_member(viewer_id) if viewer_id else None
+        if not (v and v.get('role') == 'parent'):
+            raise HTTPException(status_code=403, detail="Voice sessions are parent-only")
     return {"history": conv.get("messages", []) if conv else []}
 
 @app.delete("/api/chat/history")
@@ -12716,8 +12772,17 @@ class CreateConversationPayload(BaseModel):
     context_id: Optional[str] = None
 
 @app.get("/api/chat/conversations")
-def get_conversations():
-    return {"conversations": storage.get_all_conversations()}
+def get_conversations(request: Request = None):
+    # Family-network S1: this returned every Argyle conversation in the
+    # house, voice sessions included. The shared widget thread (type
+    # 'general') stays household-visible — it is all the one UI caller ever
+    # reads — and everything else needs a parent.
+    viewer_id = _acting_id(request, None)
+    v = storage.get_member(viewer_id) if viewer_id else None
+    convs = storage.get_all_conversations()
+    if not (v and v.get('role') == 'parent'):
+        convs = [c for c in convs if (c.get('type') or 'general') == 'general']
+    return {"conversations": convs}
 
 @app.post("/api/chat/conversations")
 def create_conversation(payload: CreateConversationPayload):

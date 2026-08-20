@@ -1,6 +1,6 @@
 # Family Network — Access Scope, and the Household Boundary
 
-Status: **DRAFT — nothing built.** Written 2026-08-20 to settle a question before code.
+Status: **BUILDING — Phase 1 underway.** Written 2026-08-20 to settle a question before code.
 Revised the same day after the first surface list was found too coarse (§5).
 Companions: `docs/auth_design.md` (the tier spine this extends), `docs/kid_support_design.md`
 (stages — the per-member override pattern this copies).
@@ -631,6 +631,7 @@ scope nobody could state. It becomes a preset that says so.
 ## 10. Live holes this closes
 
 All verified 2026-08-20. They are *why* enforcement cannot be layered on afterwards.
+**Closed in S1 (v2.330.0)** — token-resolved viewers refused immediately, tokenless callers on today's grace until the flip (`tests/test_family_network.py`).
 
 1. **`GET /api/channels/{id}/messages` (`main.py:11098-11102`) has no membership check.** It
    verifies the channel exists and returns its messages — any caller with a channel id reads
@@ -673,7 +674,7 @@ evidence exists means discovering the panel cannot reach its board on a school m
 
 | Slice | What it is | What it buys, immediately |
 |---|---|---|
-| **S1** | The five holes (§10) | Closes live leaks: any member can read any DM by id, spoof `viewer` to unmask a private-stage child's coordinates, read anyone's whole day, and read every Argyle conversation in the house. **These are true today and independent of every decision in this document.** |
+| **S1** ✅ v2.330.0 | The five holes (§10) | Closes live leaks: any member can read any DM by id, spoof `viewer` to unmask a private-stage child's coordinates, read anyone's whole day, and read every Argyle conversation in the house. **These are true today and independent of every decision in this document.** |
 | **S2** | Widen the capture-prompt filter | A helper who drove your kid to the game can share a photo from it. One filter line (`role in ('parent','adult')` in `run_capture_prompts`) — the rest of the flow already exists. A real new capability for the cost of an afternoon. |
 
 ### Phase 2 — the model, dark
