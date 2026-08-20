@@ -174,7 +174,7 @@ two as intent rather than as a frozen expansion.
 
 ## 6. The facets
 
-Twenty-five. "Justified by" names the person whose want makes it a line; a facet without one
+Twenty-seven, plus two capabilities that are not views (§6 Chat B and C). "Justified by" names the person whose want makes it a line; a facet without one
 should be deleted at review. "Kind" is how it is enforced and is defined in §7. **◍ marks the
 facets that are about people**, and so are also filtered by `sees_people` (§5).
 
@@ -191,19 +191,96 @@ facets that are about people**, and so are also filtered by `sees_people` (§5).
 | `drives.sheet` | the active-drive cockpit: address, ETA, roll call | **route** | the helper, who needs today's drive and nothing else |
 | `drives.status_writes` | start/arrive/complete, roll-call taps | **route** | same |
 
-### Chat
+### Chat — three questions wearing one word
+
+Chat was the hardest section to get right, and the reason is that **"chat access" is three
+different questions**, which is why every attempt to answer it as one felt confusing:
+
+> **A. Visibility** — which conversations exist for me?
+> **B. Initiation** — may I start one, and with whom?
+> **C. Contribution** — may I give the family something, and does it become family memory?
+
+Every one of the household's rules lands cleanly on exactly one of them, and they stop
+contradicting each other once separated. *"A helper can talk to the parent about the drive"* is
+**A**. *"Guests can be added but can't DM whoever they like"* is **B**. *"But if they're the one
+at the event, they're the one who can share the moments"* is **C** — and it is not a
+contradiction of **A** at all, once you notice they are different questions.
+
+#### A. Visibility
 
 | Facet | What it is | Kind | Justified by |
 |---|---|---|---|
-| `chat.family` | the household room | **field** | the guest, whose presence changes what the family says in it |
-| `chat.groups` | ad-hoc group threads | **field** | — (membership does most of the work; the facet gates joining) |
-| `chat.event_threads` | the thread hanging off one event | **field** + ⚠️ schema | **the helper**, who needs the thread for the event he drives |
+| `chat.family` ◍ | the household room | **field** | the guest, whose presence changes what the family says in it |
+| `chat.groups` | ad-hoc group threads | **field** | — (membership does the work; the facet gates discovery) |
+| `chat.dms` | direct messages | **field** | — (membership does the work; see **B** for who may open one) |
+| `chat.event_threads` ◍ | the thread on an event — **where moments accumulate** | **field** + ⚠️ schema | the helper, who must *not* have it: a family's photo history is not a work channel |
+| `chat.drive_threads` ◍ | one drive's conversation: driver ↔ the passenger's parents | **field** + ⚠️ new kind | **the helper** — "running late", "she left her cleats" |
 | `chat.agent` | Argyle — both the DM and `/api/chat/*` | **route** + field | the guest, who must not reach a tool-holding agent |
 
-**DMs are deliberately not a facet.** A direct message is a two-party relationship, not a
-household view, and it is already instance-scoped by `member_ids`. Making it a facet would let
-a scope edit silently sever a conversation. Who *may* DM whom stays a rule (helpers → parents
-only), not a view permission.
+**The drive is not the event, and that distinction is the whole helper story.** The household's
+words: *"they should be able to have a chat with the parent about the drive to/from the event,
+but not the chat where the moments go — sharing media is a big step beyond saying you're
+running late."* An event thread is a family's memory of an occasion; a drive thread is two
+people coordinating a car. Today only the first exists, which is why the helper had nowhere to
+stand.
+
+`drive` becomes a fifth channel kind: get-or-create per drive leg, **real `member_ids`** (the
+assigned driver plus the passenger's parents, and the passenger where the stage allows),
+auto-archived on completion plus a grace — the same lifecycle event threads already have. And
+one property comes free: `main.py:11248` gates moment creation on `channel.get('kind') ==
+'event'`, so **a drive thread can never produce a moment** without anyone writing a rule.
+
+`invited` in the preset table means `none` at the class level **with instance membership still
+honoured** — you do not discover these conversations, but one you are explicitly added to is
+yours. That is the Slack external-guest shape, and it is why instance grants are additive over
+a facet rather than bounded by it.
+
+#### B. Initiation — `chat.initiate`
+
+Not a view; a capability, and the thing that makes a guest a guest.
+
+```
+chat.initiate:  none | household | anyone
+```
+
+- **`none`** — cannot open any conversation. May be added to one by somebody who can, and may
+  talk freely once inside. The household's model: *"like external people on Slack — someone in
+  the company can add them or message them, but they cannot start a message with anyone."*
+- **`household`** — may open a conversation with household members only, never with guests.
+- **`anyone`** — household and guests.
+
+This replaces a rule that exists today as hardcoded checks in three places (`main.py:11060`,
+`main.py:11084`, `storage.py:4916`) and could not be varied per person.
+
+#### C. Contribution — `moments.contribute`
+
+```
+moments.contribute:  none | when_present | all
+```
+
+**Contribution is not membership**, and that is the sentence that untangles the helper.
+
+The household spotted the apparent contradiction: a helper is barred from event threads, *but
+if they are the adult who actually drove the kid and stayed, they are the one holding the
+camera.* Both are right, because giving the family a photo and reading the family's thread are
+different acts. `when_present` grants the first without the second: the helper may post a
+moment **for an event the schedule places them at**, it lands in that event's thread, the
+family sees it — and the helper never gains read access to the thread, its history, or anyone
+else's messages in it.
+
+**It is an upload tied to the event, not a message typed into a thread** — the household's own
+framing, and the better one. The helper's surface is *"share a photo from Emma's game"*; the
+event thread is merely where it lands.
+
+That flow already exists end to end. `run_capture_prompts` (`services/presence.py`) sweeps
+live events, resolves `members_at_event` — *"the assigned driver plus every passenger-bound
+member"* — and pushes a capture prompt with a deep link. Tap, upload, done; nobody opens a
+thread. **The helper is already in `members_at_event`. They are excluded by one filter on one
+line**: `role in ('parent', 'adult')`. That line becomes a `moments.contribute` check, and the
+capability exists.
+
+So a helper's entire chat surface is one drive thread, and their entire contribution surface is
+a capture prompt. They never open a conversation they were not put in, and never see one.
 
 ### Meals & lists
 
@@ -368,10 +445,14 @@ Twenty-four facets cannot be twenty-four dropdowns on a member card. Role suppli
 | `schedule.carpool_contacts` | all | — | — | — | — |
 | `drives.sheet` | all | — | — | own | — |
 | `drives.status_writes` | all | — | — | own | — |
-| `chat.family` | all | all | all | — | — |
-| `chat.groups` | all | all | all | — | — |
-| `chat.event_threads` | all | all | all | **own** | — |
+| `chat.family` | all | all | all | — | invited |
+| `chat.groups` | all | all | all | — | invited |
+| `chat.dms` | all | all | all | — | invited |
+| `chat.event_threads` | all | all | all | invited | invited |
+| `chat.drive_threads` | all | — | own | **own** | — |
 | `chat.agent` | all | all | all | — | — |
+| **`chat.initiate`** | anyone | household | household | — | **none** |
+| **`moments.contribute`** | all | — | all | **when present** | — |
 | `meals.plan` | all | all | all | — | — |
 | `meals.repertoire` | all | all | all | — | — |
 | `meals.prep` | all | all | all | — | — |
@@ -516,7 +597,7 @@ together are the deliverable.
 - For **Household adult, Child and Helper**, the preset reproduces today's behaviour —
   asserted per facet, not in aggregate. **Keeping up** is asserted against its decided new
   behaviour (§9), with the deviation from today named in the test.
-- A `guest` reaches `presence.moments` and `pets` and is refused all twenty-three others, at the
+- A `guest` reaches `presence.moments` and `pets` and is refused all twenty-five others, at the
   API and not merely in the shell.
 - `calendar.events: all` + `schedule.assignment: none` + `schedule.logistics: none` returns
   titles and times and **no** assignment, edge, car, carpool-contact or driver-calendar key —
