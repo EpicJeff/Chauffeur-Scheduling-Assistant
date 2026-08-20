@@ -4887,6 +4887,14 @@ def list_assist_history(contact_id: str = None, limit: int = 200):
         r['contact_name'] = names.get(r.get('contact_id')) or '(removed)'
     return rows
 
+@app.get("/api/scope/meta")
+def scope_editor_meta():
+    """Family-network S14: what the scope editor draws — groups, labels and
+    preset defaults. Parents-tier in RULES; carries no member's data."""
+    from services import scope as _scope
+    return _scope.editor_meta()
+
+
 @app.get("/api/members")
 def get_members(request: Request = None, include_archived: bool = False,
                 figures: bool = False):

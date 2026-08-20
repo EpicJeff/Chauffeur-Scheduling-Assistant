@@ -3769,6 +3769,17 @@ Every member row now carries `scope_map` — `scope.resolved_map`: every facet's
 
 Tests: `tests/test_scope.py` scenario `the_delivered_map_is_the_resolved_truth`; template JS suite covers the shell edits.
 
+## The household owns it (v2.344.0 — family-network S14)
+
+The §9 scope editor, on the member card (Config → People): a parent picks a preset and, in the overwhelming majority of cases, stops there — an unedited person is one line.
+
+- **Presets first**: the S5 "Sees" select stays the front door (adults: Household adult / Keeping up); every other role's preset comes from the role.
+- **"Whose things"** (adults + helpers): Preset default / Everyone / **The children (self-updating)** / Choose people… with member chips — stored as INTENT, never a frozen expansion, so a new baby needs no list edits (§5's operational note).
+- **Fine-tune access**: a `Fine-tune` disclosure with §6's six groups, each collapsed behind a summary ("5 of 8 visible"); every row shows `Preset: <value>` and stores only DEVIATIONS — setting a row back to the preset forgets it, so a future preset edit flows through. `own` is offered on exactly the §9 six facets. The button wears an amber `· N changed` count.
+- **One source of truth**: `GET /api/scope/meta` (parents-tier, new RULES row) serves groups/labels/own-capable and every preset resolved through `resolved_map` itself — the defaults the editor shows ARE enforcement's answers, so the two can never disagree.
+
+Tests: `tests/test_scope.py` scenario `the_editor_draws_from_one_meta` (coverage, labels, §9's own-six, defaults = enforcement).
+
 ## The shelf you snap, the screenshot you already have (v2.338.0, reshaped v2.338.1)
 
 The shopping add-row's photo button carried `capture="environment"`, which mobile obeys by jumping STRAIGHT into the camera — a screenshot already in the gallery was unreachable — while desktop ignores it entirely. v2.338.0 tried a second gallery button; v2.338.1 replaced both with the right shape: **one 📸 button, no `capture`**, so mobile offers its own chooser (camera / photo library / files) and desktop opens the normal dialog. Same `/api/shopping/photo` reader, same staged candidate picker. Images only; the endpoint refuses non-image files (a PDF list would need a converter in front of the vision call — not built).

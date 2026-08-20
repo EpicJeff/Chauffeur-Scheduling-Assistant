@@ -316,6 +316,90 @@ def moments_contribute(member: dict) -> str:
     return PRESETS[preset_for(member)]['moments.contribute']
 
 
+# --- the editor (§9, S14) ----------------------------------------------------
+# Groups mirror §6's headings — how a parent THINKS about access, which is
+# not the same thing as how it is enforced. Labels name the thing a person
+# sees, not the mechanism. Only six facets offer 'own' in the editor (§9);
+# the model supports it everywhere, but a dropdown nobody needs is noise.
+
+EDITOR_GROUPS = [
+    ('Calendar & driving', ['calendar.events', 'schedule.assignment',
+                            'schedule.logistics', 'schedule.diagnostics',
+                            'schedule.driver_calendars',
+                            'schedule.carpool_contacts',
+                            'drives.sheet', 'drives.status_writes']),
+    ('Chat', ['chat.family', 'chat.groups', 'chat.dms', 'chat.event_threads',
+              'chat.agent']),
+    ('Meals & lists', ['meals.plan', 'meals.repertoire', 'meals.prep',
+                       'lists.shopping', 'lists.errands',
+                       'lists.household_tasks', 'lists.kid_tasks']),
+    ('Chores & points', ['chores.board', 'routines', 'points.balances',
+                         'points.ledger', 'rewards']),
+    ('Presence', ['presence.location', 'presence.status', 'presence.moments']),
+    ('Trips, occasions, music & pets', ['trips.gallery', 'trips.detail',
+                                        'trips.planning', 'occasions',
+                                        'music', 'pets']),
+]
+
+OWN_CAPABLE = {'schedule.assignment', 'schedule.logistics', 'chores.board',
+               'chat.event_threads', 'points.ledger', 'presence.location'}
+
+FACET_LABELS = {
+    'calendar.events': "What's happening (titles & times)",
+    'schedule.assignment': 'Who drives, in which car',
+    'schedule.logistics': 'Leave-by times & the drive list',
+    'schedule.diagnostics': 'Solver reasoning & warnings',
+    'schedule.driver_calendars': "Drivers' own calendars",
+    'schedule.carpool_contacts': 'Carpool contact numbers',
+    'drives.sheet': 'The live drive cockpit',
+    'drives.status_writes': 'Start/arrive/roll-call taps',
+    'chat.family': 'The family room',
+    'chat.groups': 'Group chats',
+    'chat.dms': 'Direct messages',
+    'chat.event_threads': 'Event threads (where moments live)',
+    'chat.agent': 'Argyle',
+    'meals.plan': "What's for dinner",
+    'meals.repertoire': 'The dish library',
+    'meals.prep': 'Prep steps & the run sheet',
+    'lists.shopping': 'Shopping lists',
+    'lists.errands': 'Errands',
+    'lists.household_tasks': 'The housework ledger',
+    'lists.kid_tasks': 'Homework & deadlines',
+    'chores.board': 'The chore board',
+    'routines': 'Routines & streaks',
+    'points.balances': 'Points balances',
+    'points.ledger': 'Points history',
+    'rewards': 'Rewards',
+    'presence.location': 'Live location on the map',
+    'presence.status': 'Status days',
+    'presence.moments': 'The moments feed',
+    'trips.gallery': 'That trips exist',
+    'trips.detail': 'Trip itineraries & bookings',
+    'trips.planning': 'Trip planning',
+    'occasions': 'Parties & gatherings',
+    'music': 'Music & announcements',
+    'pets': 'Critters & the arena',
+}
+
+
+def editor_meta() -> dict:
+    """Everything the §9 editor draws: groups, labels, own-capable facets,
+    and every preset's resolved defaults per relevant role — so the client
+    can show "Preset: all" beside each row and store only DEVIATIONS."""
+    presets = {}
+    for name in PRESETS:
+        role = {'household_adult': 'adult', 'keeping_up': 'adult',
+                'child': 'child', 'helper': 'helper', 'guest': 'guest'}[name]
+        member = {'id': '_', 'role': role, 'scope': {'preset': name}}
+        presets[name] = resolved_map(member)
+    return {
+        'groups': [{'title': t, 'facets': fs} for t, fs in EDITOR_GROUPS],
+        'labels': FACET_LABELS,
+        'own_capable': sorted(OWN_CAPABLE),
+        'presets': presets,
+    }
+
+
 def resolved_map(member: dict) -> dict:
     """The member's whole scope, RESOLVED, for the shell (family-network
     S13): every facet's reach plus the two capabilities. This is what the

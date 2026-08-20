@@ -206,6 +206,24 @@ def scenario_the_delivered_map_is_the_resolved_truth():
           "the two capabilities ride along")
 
 
+def scenario_the_editor_draws_from_one_meta():
+    """S14: groups cover every facet exactly once, labels name them all, and
+    the preset defaults the editor shows beside each row are resolved_map's
+    own answers — the editor can never disagree with enforcement."""
+    meta = scope.editor_meta()
+    grouped = [f for g in meta['groups'] for f in g['facets']]
+    check(sorted(grouped) == sorted(scope.FACETS),
+          "groups cover every facet exactly once")
+    check(set(meta['labels']) == set(scope.FACETS), "every facet has a label")
+    check(set(meta['presets']) == set(scope.PRESETS), "every preset resolved")
+    check(meta['presets']['keeping_up']['facets']['schedule.assignment'] == 'none',
+          "the defaults shown are enforcement's own answers")
+    check(set(meta['own_capable'])
+          == {'schedule.assignment', 'schedule.logistics', 'chores.board',
+              'chat.event_threads', 'points.ledger', 'presence.location'},
+          "own is offered on exactly the §9 six")
+
+
 def scenario_audience_fails_closed():
     trip = {'id': 't1', 'title': 'Disney'}       # no audience declared
     check(scope.audience_allows(trip, 'trip', _m('parent', 'p')),
@@ -262,6 +280,7 @@ SCENARIOS = [
     scenario_sees_people_driven_comes_from_the_schedule,
     scenario_filter_subjects_only_bites_subject_facets,
     scenario_the_delivered_map_is_the_resolved_truth,
+    scenario_the_editor_draws_from_one_meta,
     scenario_audience_fails_closed,
     scenario_sharing_reveals_to_exactly_those_people,
     scenario_a_closed_default_is_not_a_grant,

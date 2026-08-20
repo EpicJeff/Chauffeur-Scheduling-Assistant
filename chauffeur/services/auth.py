@@ -144,6 +144,7 @@ RULES = [
     ('PATCH', '/api/members/*', PARENTS, None),
     ('DELETE', '/api/members/*', PARENTS, None),
     (ANY, '/api/settings/*', PARENTS, None),
+    (ANY, '/api/scope/*', PARENTS, None),   # S14: the editor's metadata
     (ANY, '/api/settings', PARENTS, None),
     (ANY, '/api/ics_feeds/*', PARENTS, None),
     ('GET', '/api/calendar_health', PARENTS, None),   # which calendars are being skipped

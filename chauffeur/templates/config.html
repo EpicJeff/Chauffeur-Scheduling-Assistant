@@ -1557,9 +1557,10 @@
                                                 <option value="helper">Helper (external)</option>
                                             </select>
                                         </div>
-                                        <!-- Family-network S5: the keeping-up adult stops being a
-                                             heuristic and becomes a preset somebody CHOSE. Adults
-                                             only — every other role's preset comes from the role. -->
+                                        <!-- Family-network S14 (§9): the editor. A parent picks a
+                                             preset and, in the overwhelming majority of cases, stops
+                                             there; the disclosure below holds the deviations, so an
+                                             unedited person is one line. -->
                                         <div x-show="memberEdit.role === 'adult'">
                                             <label class="block text-gray-400 mb-1 text-sm">Sees</label>
                                             <select x-model="memberEdit.scope_preset"
@@ -1567,6 +1568,67 @@
                                                 <option value="">Everything (household adult)</option>
                                                 <option value="keeping_up">Keeping up — the kids' calendar, no driving</option>
                                             </select>
+                                        </div>
+                                        <div x-show="['adult', 'helper'].includes(memberEdit.role)">
+                                            <label class="block text-gray-400 mb-1 text-sm">Whose things</label>
+                                            <select x-model="memberEdit.scope_sees_kind"
+                                                class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                                <option value="">Preset default</option>
+                                                <option value="everyone">Everyone</option>
+                                                <option value="children">The children (self-updating)</option>
+                                                <option value="chosen">Choose people…</option>
+                                            </select>
+                                        </div>
+                                        <div x-show="memberEdit.scope_sees_kind === 'chosen'" class="flex flex-wrap gap-1 items-center">
+                                            <template x-for="p in members.filter(x => !x.system && x.id !== member.id)" :key="'sp' + p.id">
+                                                <button @click="toggleSeesId(p.id)"
+                                                    class="px-2 py-1 rounded-full text-xs font-bold border transition-colors"
+                                                    :class="(memberEdit.scope_sees_ids || []).includes(p.id)
+                                                        ? 'bg-blue-500/20 border-blue-400/60 text-blue-200'
+                                                        : 'bg-gray-800 border-gray-700 text-gray-400'"
+                                                    x-text="p.name"></button>
+                                            </template>
+                                        </div>
+                                        <button @click="openScopeTune()"
+                                            class="text-gray-400 hover:text-white bg-gray-800 border border-gray-700 px-3 py-3 rounded-lg font-bold text-sm transition-colors">
+                                            Fine-tune access
+                                            <span x-show="scopeDeviationCount() > 0"
+                                                class="ml-1 text-amber-300"
+                                                x-text="'· ' + scopeDeviationCount() + ' changed'"></span>
+                                        </button>
+                                        <div x-show="scopeTuneOpen" x-cloak class="w-full bg-gray-900/60 border border-gray-700 rounded-xl p-4">
+                                            <div class="text-xs text-gray-500 mb-3">
+                                                Everything starts at the preset. Change a row and only the
+                                                deviation is stored — set it back to the preset to forget it.
+                                            </div>
+                                            <template x-for="g in ((scopeMeta || {}).groups || [])" :key="g.title">
+                                                <div class="mb-2">
+                                                    <button @click="scopeGroupOpen[g.title] = !scopeGroupOpen[g.title]"
+                                                        class="w-full flex items-baseline justify-between text-left py-1.5">
+                                                        <span class="text-sm font-bold text-gray-300"
+                                                            x-text="(scopeGroupOpen[g.title] ? '▾ ' : '▸ ') + g.title"></span>
+                                                        <span class="text-xs text-gray-500" x-text="scopeGroupSummary(g)"></span>
+                                                    </button>
+                                                    <div x-show="scopeGroupOpen[g.title]" x-cloak class="pl-3 flex flex-col gap-1.5 pb-2">
+                                                        <template x-for="f in g.facets" :key="f">
+                                                            <div class="flex items-center justify-between gap-3">
+                                                                <span class="text-sm text-gray-300 min-w-0 truncate"
+                                                                    x-text="((scopeMeta || {}).labels || {})[f] || f"></span>
+                                                                <select :value="(memberEdit.scope_overrides || {})[f] || ''"
+                                                                    @change="setScopeOverride(f, $event.target.value)"
+                                                                    class="bg-gray-900 border rounded p-1.5 text-xs shrink-0"
+                                                                    :class="(memberEdit.scope_overrides || {})[f] ? 'border-amber-500/60 text-amber-200' : 'border-gray-700 text-gray-300'">
+                                                                    <option value="" x-text="'Preset: ' + scopePresetDefault(f)"></option>
+                                                                    <option value="all">all</option>
+                                                                    <option x-show="((scopeMeta || {}).own_capable || []).includes(f)"
+                                                                        value="own">own</option>
+                                                                    <option value="none">none</option>
+                                                                </select>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                            </template>
                                         </div>
                                         <!-- Birthdate is a fact about the PERSON, so it lives here for
                                              everyone — Growing up only ever reads it (for children),
@@ -6081,8 +6143,54 @@
                     await fetch(`${this.apiBase}api/status/days/${d.id}`, { method: 'DELETE' });
                     await this.loadStatusData();
                 },
+                async loadScopeMeta() {
+                    if (this.scopeMeta) return;
+                    try {
+                        const r = await fetch(`${this.apiBase}api/scope/meta`);
+                        if (r.ok) this.scopeMeta = await r.json();
+                    } catch (e) { /* editor simply stays collapsed */ }
+                },
+                openScopeTune() {
+                    this.scopeTuneOpen = !this.scopeTuneOpen;
+                    if (this.scopeTuneOpen) this.loadScopeMeta();
+                },
+                scopePresetName() {
+                    const role = this.memberEdit.role || 'adult';
+                    if (role === 'adult' || role === 'parent')
+                        return this.memberEdit.scope_preset || 'household_adult';
+                    return { child: 'child', helper: 'helper', guest: 'guest' }[role] || 'household_adult';
+                },
+                scopePresetDefault(facet) {
+                    const p = ((this.scopeMeta || {}).presets || {})[this.scopePresetName()];
+                    return ((p || {}).facets || {})[facet] || 'all';
+                },
+                setScopeOverride(facet, val) {
+                    // Storing the preset value as an override would freeze it
+                    // against future preset edits — deviations only (§9).
+                    const ov = { ...(this.memberEdit.scope_overrides || {}) };
+                    if (!val || val === this.scopePresetDefault(facet)) delete ov[facet];
+                    else ov[facet] = val;
+                    this.memberEdit.scope_overrides = ov;
+                },
+                scopeDeviationCount() {
+                    return Object.keys(this.memberEdit.scope_overrides || {}).length;
+                },
+                scopeGroupSummary(g) {
+                    const on = g.facets.filter(f =>
+                        ((this.memberEdit.scope_overrides || {})[f]
+                         || this.scopePresetDefault(f)) !== 'none').length;
+                    return on === g.facets.length ? 'all visible'
+                        : on === 0 ? 'nothing' : `${on} of ${g.facets.length} visible`;
+                },
+                toggleSeesId(id) {
+                    const ids = this.memberEdit.scope_sees_ids || [];
+                    this.memberEdit.scope_sees_ids = ids.includes(id)
+                        ? ids.filter(x => x !== id) : [...ids, id];
+                },
                 startEditMember(member) {
                     this.editMemberId = member.id;
+                    this.scopeTuneOpen = false;
+                    this.scopeGroupOpen = {};
                     this.memberMergeTarget = '';
                     this.testNotifyResult = '';
                     this.newMemberCalendarInput = '';
@@ -6097,6 +6205,11 @@
                         image: member.image || null,
                         role: member.role || 'adult',
                         scope_preset: (member.scope || {}).preset || '',
+                        scope_overrides: { ...((member.scope || {}).overrides || {}) },
+                        scope_sees_kind: (typeof (member.scope || {}).sees_people === 'string')
+                            ? member.scope.sees_people
+                            : (((member.scope || {}).sees_people || {}).kind === 'chosen' ? 'chosen' : ''),
+                        scope_sees_ids: [...((((member.scope || {}).sees_people || {}).ids) || [])],
                         birthdate: member.birthdate || '',
                         ha_person_entity: member.ha_person_entity || '',
                         notify_service: member.notify_service || '',
@@ -6405,11 +6518,22 @@
 
                 async saveMember(member) {
                     const updates = { ...this.memberEdit };
-                    // Preset rides inside scope; spread what is already there
-                    // so a future override survives a card save untouched.
-                    updates.scope = { ...(member.scope || {}),
-                                      preset: updates.scope_preset || null };
+                    // The whole scope, composed: preset + deviations +
+                    // sees_people intent — stored as INTENT, never a frozen
+                    // expansion (§5), so "the children" self-updates.
+                    const seesKind = updates.scope_sees_kind;
+                    updates.scope = {
+                        ...(member.scope || {}),
+                        preset: updates.scope_preset || null,
+                        overrides: { ...(updates.scope_overrides || {}) },
+                        sees_people: seesKind === 'chosen'
+                            ? { kind: 'chosen', ids: updates.scope_sees_ids || [] }
+                            : (seesKind || null),
+                    };
                     delete updates.scope_preset;
+                    delete updates.scope_overrides;
+                    delete updates.scope_sees_kind;
+                    delete updates.scope_sees_ids;
                     updates.avatar = updates.avatar ? updates.avatar.trim() : null;
                     updates.image = updates.image || null;
                     updates.birthdate = updates.birthdate || null;
