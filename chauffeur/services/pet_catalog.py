@@ -223,10 +223,103 @@ def npcs() -> List[Dict]:
 
 
 def npc(key: Optional[str]) -> Optional[Dict]:
+    if str(key or '').startswith('gen:'):
+        return _gen_npc_from_key(key)
     for n in npcs():
         if n['key'] == key:
             return n
     return None
+
+
+# --- generated opponents ----------------------------------------------------
+# The ladder used to be the same six critters forever; now each rung is
+# occupied by a GENERATED one — name, element, body, look and taunt all rolled
+# fresh per roster fetch. The whole identity derives deterministically from
+# the key ('gen:<tier>:<seed8hex>'), so an opponent handed to a client always
+# resolves at battle time with no server state, and the tier spec (level, xp)
+# stays fixed so the ladder itself never moves. Pools live in the catalogue's
+# npc_gen section: adding a name or a taunt is still a JSON edit.
+
+def _gen_spec() -> Dict:
+    return _catalog().get('npc_gen') or {}
+
+
+def _gen_npc_from_key(key: str) -> Optional[Dict]:
+    try:
+        _, tier_s, seed_s = str(key).split(':', 2)
+        return gen_npc(int(tier_s), int(seed_s, 16))
+    except (ValueError, AttributeError):
+        return None
+
+
+def gen_npc(tier: int, seed: int) -> Optional[Dict]:
+    """One generated opponent, whole and reproducible from (tier, seed)."""
+    import random
+    from services import pet_render
+    spec = _gen_spec()
+    t_row = next((t for t in (spec.get('tiers') or [])
+                  if int(t.get('tier', -1)) == int(tier)), None)
+    if not t_row:
+        return None
+    rng = random.Random((int(tier) << 32) ^ (int(seed) & 0xffffffff))
+    type_key = rng.choice(keys())
+    names = (spec.get('names') or {}).get(type_key) or ['Rival']
+    name = rng.choice(names)
+    bodies = sorted((_catalog().get('bodies') or {'blob': {}}).keys())
+    taunts = (spec.get('taunts') or {}).get(type_key) or ['{name} is waiting.']
+
+    def part(slot, fallback, allow_none=False):
+        pool = list(pet_render.parts(slot) or [fallback])
+        if allow_none:
+            pool = [None] + pool
+        return rng.choice(pool)
+
+    colors = sorted(pet_render.BASE_COLORS.keys()) or ['Sky']
+    return {
+        'key': 'gen:%d:%08x' % (int(tier), int(seed) & 0xffffffff),
+        'name': name, 'tier': int(tier),
+        'level': int(t_row['level']), 'xp': int(t_row['xp']),
+        'type': type_key,
+        'species': {'body': rng.choice(bodies), 'top': part('top', 'nub')},
+        'look': {'eyes': part('eyes', 'round'), 'mouth': part('mouth', 'smile'),
+                 'pattern': part('pattern', None, allow_none=True),
+                 'base_color': rng.choice(colors),
+                 'accent_color': rng.choice(colors)},
+        'taunt': rng.choice(taunts).replace('{name}', name),
+    }
+
+
+def gen_roster() -> List[Dict]:
+    """A fresh opponent per rung of the ladder, rolled now.
+
+    Rejection-sampled lightly so a roster usually shows the full elemental
+    spread (the ring is easier to learn when you can see it) and never two
+    rungs wearing the same name. Falls back to the classic six when the
+    catalogue has no npc_gen section — an old catalog file must not empty
+    the arena."""
+    import os as _os
+    spec_tiers = sorted(int(t['tier']) for t in (_gen_spec().get('tiers') or []))
+    if not spec_tiers:
+        return npcs()
+    roster, seen_types, seen_names = [], set(), set()
+    for tier in spec_tiers:
+        pick = None
+        for _ in range(12):
+            cand = gen_npc(tier, int.from_bytes(_os.urandom(4), 'big'))
+            if cand is None:
+                break
+            if pick is None:
+                pick = cand
+            fresh_type = (cand['type'] not in seen_types
+                          or len(seen_types) >= len(keys()))
+            if fresh_type and cand['name'] not in seen_names:
+                pick = cand
+                break
+        if pick:
+            roster.append(pick)
+            seen_types.add(pick['type'])
+            seen_names.add(pick['name'])
+    return roster or npcs()
 
 
 def bundle() -> Dict:

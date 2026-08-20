@@ -7654,10 +7654,12 @@ def pet_xp_endpoint(member_id: str, limit: int = 25):
 @app.get("/api/pets/opponents")
 def pet_opponents_endpoint():
     """The NPC roster, drawn and ready. Tiered so a kid can see the ladder
-    rather than be told about it."""
+    rather than be told about it — but WHO stands on each rung is generated
+    fresh per fetch (pet_catalog.gen_roster), so the arena has new faces
+    every visit instead of the same six forever."""
     from services import pet_render, pet_catalog
     out = []
-    for n in pet_catalog.npcs():
+    for n in pet_catalog.gen_roster():
         cfg = dict(n.get('species') or {})
         cfg.update(n.get('look') or {})
         t = pet_catalog.get(n.get('type')) or {}

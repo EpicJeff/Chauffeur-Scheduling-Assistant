@@ -3334,9 +3334,20 @@ fight in one call and hands back every turn; `components/pet_battle.html` is
 a **replay player**, not a game loop. `pet_battles_table` stores the seed and
 the two combatants and NEVER the frames -- `replay_pet_battle` rebuilds the
 fight from them, so restyling a pet cannot rewrite a battle already watched
-(tested). Six NPCs by tier, each drawn from the same bake. PvP is refused with
-a 400 until P6: a sibling has to be able to consent to a challenge, and there
-is nowhere yet to do it.
+(tested). **The NPC ladder is generated (v2.317.0)**: six rungs with FIXED
+tier/level/xp (3/6/10/15/21/28, paying 15–40 XP — the ladder itself never
+moves), but WHO stands on each rung is rolled fresh on every roster fetch —
+name, element, body, look and taunt from pools in `catalog.json`'s `npc_gen`
+section (still a JSON edit to extend; the classic six names live on in the
+pools). The whole identity derives deterministically from the opponent key
+(`npc:gen:<tier>:<seed8hex>`, `pet_catalog.gen_npc`), so any key ever handed
+to a client resolves at battle time with no server state; replays are safe
+regardless (rows store full combatant inputs). `gen_roster()` lightly
+rejection-samples so a roster usually shows the full elemental ring and never
+repeats a name; a catalog without `npc_gen` falls back to the classic six.
+Classic keys (`npc:pebble`…) still resolve. Tests: `tests/test_pet_npc_gen.py`.
+PvP is refused with a 400 until P6: a sibling has to be able to consent to a
+challenge, and there is nowhere yet to do it.
 
 **The cap does not refuse the fun.** `pet_pve_daily_cap` (Chores → Pet XP,
 default 5) stops the XP and never the fight -- past it the battle still runs,
