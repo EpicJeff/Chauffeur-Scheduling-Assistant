@@ -789,5 +789,13 @@ not a hardcoded host).
 - Parent-voice chore verification via the agent: what stands in for the PIN?
 - Should helpers see event threads for events they drive (currently: no,
   DMs with parents only + kid contact relays through the family channel)?
-- Multi-family/household support if this ever leaves the house: everything
-  assumes one family per install.
+- Multi-family/household support: **ANSWERED 2026-08-20, see
+  `docs/family_network_design.md`.** One family per install is the right
+  assumption and is kept — HA is process-global (`SUPERVISOR_TOKEN`), so a
+  household column would not give a second family a second Home Assistant,
+  and the settings/schedule/trips singletons are truncate-then-insert, which
+  is data loss the moment a tenant exists. What changes instead: a household
+  gains GUESTS, via a per-member scope (surface -> none|own|all). Federating
+  the social layer is parked with an explicit trigger — a second household
+  independently running Chauffeur for its own logistics — because federation
+  is a multiplier, never a reason to adopt.
