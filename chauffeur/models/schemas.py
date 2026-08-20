@@ -284,6 +284,12 @@ class ChatMessage(BaseModel):
     # (avatar precedent, bigger). Video stays out of v1.
     attachment: Optional[dict] = None
     card: Optional[dict] = None  # interactive card (e.g. action_proposal) rendered in chat
+    # Family-network S12 (§6A): {kind:'drive', event_id, leg_id, label}. The
+    # container is the durable thing (the helper↔parent DM persists); a drive
+    # lasts forty minutes — so a drive is never a channel, only CONTEXT on a
+    # run of messages, rendered as a "re: Emma's pickup · 4:00" chip. Same
+    # additive shape as `attachment` and `card`.
+    context: Optional[dict] = None
     # {emoji: [member_id, ...]} — toggled via /api/messages/{id}/react.
     # Reactions never push (the sender at the game is fire-and-forget).
     reactions: Dict[str, List[str]] = Field(default_factory=dict)

@@ -11425,6 +11425,9 @@ class SendMessageRequest(BaseModel):
     # Photo moment (Presence slice): {kind:'photo', data_url, w?, h?}. The
     # PWA downscales client-side (~1280px JPEG); the server just bounds it.
     attachment: Optional[dict] = None
+    # Family-network S12: {kind:'drive', event_id, leg_id, label} — a drive
+    # is context on a run of messages, never a channel of its own.
+    context: Optional[dict] = None
 
 # Photos are persisted as FILES (like clips), so the wire cap only has to be
 # generous enough for the PWA's ~2048px q0.85 rendition — not tight enough to
@@ -11568,10 +11571,19 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
         if not contributing:
             raise HTTPException(status_code=403, detail="Not yours to post in")
 
+    # S12: context is whitelisted, never stored verbatim — a display label
+    # and two ids, nothing a client invents rides into every reader.
+    context = None
+    if isinstance(req.context, dict) and req.context.get('kind') == 'drive':
+        context = {'kind': 'drive',
+                   'event_id': str(req.context.get('event_id') or '')[:80] or None,
+                   'leg_id': str(req.context.get('leg_id') or '')[:80] or None,
+                   'label': str(req.context.get('label') or '')[:80] or None}
     from models.schemas import ChatMessage
     message = ChatMessage(channel_id=channel_id,
                           sender_member_id=req.sender_member_id,
-                          body=body, attachment=attachment).model_dump()
+                          body=body, attachment=attachment,
+                          context=context).model_dump()
     storage.add_chat_message(message)
     # Sender has obviously read their own message.
     storage.set_last_read(channel_id, req.sender_member_id, message['ts'])

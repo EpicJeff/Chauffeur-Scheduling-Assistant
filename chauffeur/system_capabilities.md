@@ -3748,6 +3748,17 @@ Event threads were `member_ids: []` by construction — household-visible with n
 
 Tests: `tests/test_event_membership.py` (5 scenarios).
 
+## A drive is a label, not a room (v2.342.0 — family-network S12)
+
+The household's rule, built: *the container is the durable thing; the transient thing is a label on messages.* `ChatMessage.context` (`{kind:'drive', event_id, leg_id, label}`) — the same additive shape as `attachment` and `card`.
+
+- **The drive sheet's canned lines arrive labelled**: `send_quick_message` stamps the context (label denormalised at send time — "Emma's game · 4:00"; the ids stay the truth), so the parent's DM grows a chip over that run instead of a new inbox.
+- **The thread renders `🚗 re: …`** at the start of each context run; an interruption by ordinary chat re-chips the next run.
+- **The channel endpoint accepts client context, whitelisted never verbatim** — known keys survive, invented ones are dropped, unknown kinds are refused. The moment-gate property is untouched: a DM is not an event channel, so a drive conversation can never produce family memory.
+- Composer pre-set on navigation (drive sheet → open thread) rides with S13's shell work, where thread navigation gains scope-shaped state anyway.
+
+Tests: `tests/test_drive_context.py` (2 scenarios).
+
 ## The shelf you snap, the screenshot you already have (v2.338.0, reshaped v2.338.1)
 
 The shopping add-row's photo button carried `capture="environment"`, which mobile obeys by jumping STRAIGHT into the camera — a screenshot already in the gallery was unreachable — while desktop ignores it entirely. v2.338.0 tried a second gallery button; v2.338.1 replaced both with the right shape: **one 📸 button, no `capture`**, so mobile offers its own chooser (camera / photo library / files) and desktop opens the normal dialog. Same `/api/shopping/photo` reader, same staged candidate picker. Images only; the endpoint refuses non-image files (a PDF list would need a converter in front of the vision call — not built).

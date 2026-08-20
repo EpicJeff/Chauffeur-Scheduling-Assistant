@@ -2976,14 +2976,24 @@
             const wrap = document.getElementById('thread-messages');
             threadMessages = msgs;   // lets the lightbox resolve a moment by id
             let lastDay = null;
+            let lastCtx = null;
             wrap.innerHTML = msgs.map(m => {
                 const mine = m.sender_member_id === selectedMemberId;
                 const sender = membersData.find(x => x.id === m.sender_member_id)
                     || (m.sender_member_id === 'argyle' ? { name: 'Argyle', color_code: '#8b5cf6' } : {});
                 const d = new Date(m.ts * 1000);
                 const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-                const divider = dayKey !== lastDay ? dayDivider(m.ts) : '';
+                let divider = dayKey !== lastDay ? dayDivider(m.ts) : '';
                 lastDay = dayKey;
+                // Family-network S12: a drive is a label on a run of
+                // messages, never a room — the chip marks where a run about
+                // one drive begins, and an interruption re-chips the next.
+                const ctxLabel = (m.context && m.context.kind === 'drive'
+                                  && m.context.label) || null;
+                if (ctxLabel && ctxLabel !== lastCtx) {
+                    divider += `<div class="flex justify-center my-2"><span class="text-[11px] font-bold text-blue-300 bg-blue-500/10 border border-blue-500/30 rounded-full px-3 py-1">🚗 re: ${mfEscape(ctxLabel)}</span></div>`;
+                }
+                lastCtx = ctxLabel;
                 const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 let att = '';
                 if (m.attachment && m.attachment.kind === 'photo') {

@@ -147,7 +147,7 @@ def scenario_a_quick_message_lands_in_the_chat():
     posted = []
     import services.agent_tools_v2 as v2
     with mock.patch.object(v2, "_post_chat_message",
-                           side_effect=lambda ch, s, b, card=None: posted.append((ch["id"], b))):
+                           side_effect=lambda ch, s, b, card=None, context=None: posted.append((ch["id"], b))):
         out = drive_sheet.send_quick_message("init_swim_1", "outside",
                                              storage.get_member("m_jeff"))
     check(out["status"] == "ok", f"the send reports success, got {out}")

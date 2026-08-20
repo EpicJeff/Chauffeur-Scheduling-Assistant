@@ -286,12 +286,27 @@ def send_quick_message(leg_id: str, key: str, sender_member: dict) -> dict:
     audience = _message_audience(leg_id, sched)
     if not audience:
         return {'status': 'error', 'message': 'Nobody to tell about this drive.'}
+    # Family-network S12: the message carries its drive as CONTEXT — the DM
+    # is the durable container, the chip over this run of messages is the
+    # drive. Label denormalised at send time (a chip is display; the ids are
+    # the truth).
+    ctx_label = title or 'this drive'
+    try:
+        st = (_ev or {}).get('start')
+        if st:
+            clock = datetime.datetime.fromisoformat(st).strftime('%I:%M %p').lstrip('0')
+            ctx_label = f"{ctx_label} · {clock}"
+    except (ValueError, TypeError):
+        pass
+    context = {'kind': 'drive',
+               'event_id': str((_ev or {}).get('id') or leg_id),
+               'leg_id': str(leg_id), 'label': ctx_label}
     from services.agent_tools_v2 import _post_chat_message
     sent = []
     for m in audience:
         try:
             dm = storage.get_or_create_dm(sender_member['id'], m['id'])
-            _post_chat_message(dm, sender_member, body)
+            _post_chat_message(dm, sender_member, body, context=context)
             sent.append(m.get('name'))
         except Exception as e:
             print(f"drive sheet message to {m.get('id')} failed: {e}")

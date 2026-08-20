@@ -666,7 +666,8 @@ def _resolve_actor(sender_driver_id: str = None, member_name: str = None):
                   "message": "I need to know who this is from — tell me your name (for example: \"this is Mom\")."}
 
 
-def _post_chat_message(channel: dict, sender: dict, body: str, card: dict = None) -> dict:
+def _post_chat_message(channel: dict, sender: dict, body: str, card: dict = None,
+                       context: dict = None) -> dict:
     """Store a chat message and fire the same SSE + push fan-out as the
     /api/channels POST endpoint. main is lazily imported (it is the running
     app module); in tests it is absent and fan-out is skipped silently.
@@ -674,7 +675,7 @@ def _post_chat_message(channel: dict, sender: dict, body: str, card: dict = None
     from models.schemas import ChatMessage
     from services import storage
     message = ChatMessage(channel_id=channel['id'], sender_member_id=sender['id'],
-                          body=body, card=card).model_dump()
+                          body=body, card=card, context=context).model_dump()
     storage.add_chat_message(message)
     storage.set_last_read(channel['id'], sender['id'], message['ts'])
     try:
