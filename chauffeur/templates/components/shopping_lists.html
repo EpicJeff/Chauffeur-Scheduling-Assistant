@@ -499,6 +499,41 @@
             // both, and a copy on the outer scope is a second answer waiting
             // to disagree with it.
             panes: [], gone: '',
+
+            // ── How many lists go across before the next one wraps.
+            //
+            // One expression, no measurement and no media query, because the
+            // thing this has to track is the TILE's width and not the
+            // viewport's — the same card is three columns wide on a wall and
+            // full width on a phone, and a `md:` breakpoint knows nothing
+            // about either. Percentages inside the track resolve against the
+            // grid's own content box, which is exactly the box in question.
+            //
+            //   auto  -> repeat(auto-fit, minmax(min(100%, 20rem), 1fr))
+            //            as many readable columns as the tile can hold.
+            //   N     -> the track's floor is a whole Nth of the row, so N
+            //            fit exactly and no more; `max(20rem, …)` takes over
+            //            the moment an Nth would be narrower than a list can
+            //            be read at, and auto-fit then places fewer per row.
+            //            So a stated number is a CEILING that degrades, never
+            //            a promise that squeezes four lists into a phone.
+            //
+            // `min(100%, …)` on the outside for the tile narrower than one
+            // column: without it the floor exceeds the container and the
+            // grid overflows its tile.
+            //
+            // Empty tracks collapse under auto-fit, so a card pinned to one
+            // list is full width whatever this says — which is why the option
+            // says it is ignored there rather than pretending to apply.
+            paneGrid() {
+                const n = parseInt(cfg.columns, 10);
+                const col = (n >= 1 && n <= 4)
+                    ? `max(20rem, (100% - ${n - 1} * 1.5rem) / ${n})`
+                    : '20rem';
+                return `grid-template-columns: repeat(auto-fit, `
+                     + `minmax(min(100%, ${col}), 1fr))`;
+            },
+
             async startShopping() {
                 await this.loadPanes();
                 // The PANES poll their own items every minute; this catches a

@@ -3859,6 +3859,28 @@ says **"That list is gone."**, the same answer the Lists glance gives and for
 the same reason: falling back to everything would read as the setting doing
 nothing.
 
+- **The lists go ACROSS a landscape tile (v2.349.0).** Stacked, three lists on
+  a wall were a narrow column of text with a field of empty panel beside it.
+  **Lists per row** (`columns`, default `auto`) wraps them: `auto` fits as many
+  readable columns as the tile holds, a stated 1–4 is a CEILING that degrades
+  rather than a promise that squeezes. One expression, no measurement and no
+  media query, because what it has to track is the TILE's width and not the
+  viewport's — the same card is three columns wide on a wall and full width on
+  a phone, and a `md:` breakpoint knows nothing about either:
+  `repeat(auto-fit, minmax(min(100%, max(20rem, (100% - (N-1) * 1.5rem) / N)), 1fr))`.
+  Percentages inside a track resolve against the grid's own content box, which
+  is exactly the box in question; `max(20rem, …)` takes over the moment an Nth
+  would be narrower than a list can be read at, and `min(100%, …)` keeps a tile
+  narrower than one column from overflowing. Empty tracks collapse under
+  `auto-fit`, so a card pinned to a single list is full width whatever this
+  says — which is why the option's help says it is ignored there rather than
+  pretending to apply.
+  **Measured, not asserted**: jsdom does no layout, so a grid template is
+  exactly the kind of string that is plausible and wrong.
+  `scenario_the_lists_go_across_a_wide_tile_and_never_off_it` drives the real
+  `paneGrid()` through chromium (playwright, skipping when absent) and counts
+  how many blocks share the first row at seven widths — including the case that
+  matters, a stated 4 on a 380px tile becoming 1 and not four 95px lists.
 - **And blank does not always mean All.** The picker is shared, the meaning is
   not: a staples tap puts a line on exactly ONE list, and a blank trip means
   whatever is next. `_opt(..., empty='The default list')` names the blank per

@@ -344,6 +344,23 @@ WIDGETS = [
          # board. The card draws one section per list instead.
          _opt('list', 'List', 'select', '', source='lists',
               help='One list, or leave empty for every list.'),
+         # A list is NARROW and a wall is wide, so several of them stacked
+         # down a landscape tile is a column of text with a field of empty
+         # panel beside it. This is how many go across before the next one
+         # wraps to a new line. `auto` is the default and the honest one: a
+         # board's tiles are all different widths and this one is on a
+         # kitchen wall AND a phone, so "as many as fit" is a better answer
+         # than a number somebody has to re-guess per screen — the same
+         # bargain Fill makes against a typed height. A stated number still
+         # collapses on a tile too narrow to honour it; nothing here can push
+         # a list below being readable.
+         _opt('columns', 'Lists per row', 'choice', 'auto', choices=[
+             {'value': 'auto', 'label': 'As many as fit'},
+             {'value': '1', 'label': 'One'},
+             {'value': '2', 'label': 'Two'},
+             {'value': '3', 'label': 'Three'},
+             {'value': '4', 'label': 'Four'}],
+              help='Ignored when the card is pinned to a single list.'),
          _opt('show_runs', 'Split by shop run', 'bool', True),
          _opt('show_cart', 'What is already in the cart', 'bool', True),
          _opt('show_note', 'Notes on a line', 'bool', True),
@@ -1665,6 +1682,7 @@ def _tile_shopping_list(now, config=None, **_):
             return None
         return {'interactive': _cfg_bool(config, 'interactive', True),
                 'list': _cfg_str(config, 'list'),
+                'columns': _cfg_str(config, 'columns', 'auto') or 'auto',
                 'parts': {p: _cfg_bool(config, f'show_{p}', True)
                           for p in ('runs', 'cart', 'note', 'byline')}}
     except Exception as e:

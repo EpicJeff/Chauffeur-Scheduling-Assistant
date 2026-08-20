@@ -125,10 +125,16 @@ def scenario_the_builders_ship_config_and_never_rows():
               f"a week option did not reach the card: {wk}")
         check(set(st) == {'interactive', 'list', 'parts'},
               f"the staples card ships more than config: {sorted(st)}")
-        check(set(li) == {'interactive', 'list', 'parts'},
+        check(set(li) == {'interactive', 'list', 'columns', 'parts'},
               f"the list card ships more than config: {sorted(li)}")
         check(li['parts']['cart'] is False and li['parts']['runs'] is True,
               f"a section toggle did not reach the card: {li['parts']}")
+        # `columns` is the LAYOUT, and it is resolved in the browser against
+        # the tile's own width — so the builder ships the word and never a
+        # number of pixels. An unset one is 'auto', not blank: the client
+        # would read a blank as a stated column count of nothing.
+        check(li['columns'] == 'auto',
+              f"an unset lists-per-row did not default to auto: {li['columns']}")
         check(st['interactive'] is True and li['interactive'] is True,
               "the shopping cards came up inert by default")
 
@@ -366,6 +372,129 @@ def scenario_the_card_toggles_reach_every_pane():
         check(pane['interactive'] is False,
               f"a pane ignored `interactive`: {pane}")
         check(pane['runs'] is False, f"a pane ignored a section toggle: {pane}")
+
+
+# ── How many lists go across, measured in a real layout engine.
+#
+# jsdom does no layout, so the node probes above can only see the STRING
+# `paneGrid()` builds — and a grid template is exactly the kind of string that
+# is plausible and wrong. The browser is the only place the answer exists, so
+# this one drives the real function through chromium: the component's own
+# script, the real `paneGrid()`, a real grid, and a count of how many blocks
+# share the first row. Skips (rather than fails) when playwright is absent,
+# the same bargain the node scenarios make.
+LAYOUT_PAGE = """
+<style>
+  body { margin: 0; font-size: 16px }
+  .tile { background: #eee }
+  .g > div { background: #ccd; min-width: 0 }
+</style>
+<div id="host"></div>
+"""
+
+LAYOUT_PROBE = r"""
+([tileWidth, columns, lists]) => {   // playwright passes ONE argument
+  const card = shoppingListCard({ data: { columns } }, '');
+  const host = document.getElementById('host');
+  host.innerHTML = '';
+  const tile = document.createElement('div');
+  tile.className = 'tile';
+  tile.style.width = tileWidth + 'px';
+  const g = document.createElement('div');
+  g.className = 'g';
+  g.style.cssText = 'display:grid;gap:1.5rem;align-items:start;' + card.paneGrid();
+  for (let i = 0; i < lists; i++) {
+    const d = document.createElement('div');
+    d.textContent = 'a list';
+    g.appendChild(d);
+  }
+  tile.appendChild(g);
+  host.appendChild(tile);
+  const tops = [...g.children].map(c => Math.round(c.getBoundingClientRect().top));
+  return {
+    perRow: tops.filter(t => t === tops[0]).length,
+    width: Math.round(g.children[0].getBoundingClientRect().width),
+    overflows: g.scrollWidth > Math.round(tile.getBoundingClientRect().width) + 1,
+    // An unapplied template is left verbatim in the computed style; a valid
+    // one has been resolved to pixel tracks. This is what catches a typo in
+    // the calc, which otherwise fails silently as "one column, always".
+    applied: !/repeat|minmax/.test(getComputedStyle(g).gridTemplateColumns),
+  };
+}
+"""
+
+
+def _layout_probe():
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("  skip  playwright not installed — the grid was not laid out")
+        return None
+    src = tpl_source.read('components/shopping_lists.html')
+    body = re.findall(r'<script>(.*?)</script>', src, re.S)
+    body = next((b for b in body if 'function shoppingListCard' in b), None)
+    check(body, "components/shopping_lists.html no longer defines shoppingListCard")
+    return sync_playwright, LAYOUT_PAGE + '<script>' + body + '</script>'
+
+
+def scenario_the_lists_go_across_a_wide_tile_and_never_off_it():
+    """A list is narrow and a wall is landscape, so several of them stacked
+    down a tile is a column of text with a field of empty panel beside it.
+
+    Three properties, and the third is why this is measured rather than
+    asserted: as many as fit when the card says `auto`; AT MOST the stated
+    number when it says one; and never, at any width, a column narrower than a
+    list can be read at or wider than the tile it is in. The last one is the
+    trap — a stated 4 on a phone-width tile has to become 1, and a template
+    that squeezes instead is a wall panel nobody can shop from.
+    """
+    made = _layout_probe()
+    if made is None:
+        return
+    sync_playwright, page = made
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        tab = browser.new_page()
+        tab.set_content(page)
+        run = lambda w, c, n: tab.evaluate(LAYOUT_PROBE, [w, c, n])
+        try:
+            # Wide wall, three lists: `auto` uses the room it has.
+            got = run(1600, 'auto', 3)
+            check(got['applied'], "paneGrid() produced a template the browser rejected")
+            check(got['perRow'] == 3,
+                  f"a 1600px tile stacked its lists instead of spreading them: {got}")
+
+            # A stated number is a CEILING. Two, on the same wall, means two.
+            got = run(1600, '2', 3)
+            check(got['perRow'] == 2, f"`two per row` did not hold at 1600px: {got}")
+
+            # …and it degrades rather than squeezing. Four on a narrow tile is
+            # one, because a 95px shopping list is not a shopping list.
+            for columns in ('auto', '2', '4'):
+                got = run(380, columns, 3)
+                check(got['perRow'] == 1,
+                      f"a 380px tile put {got['perRow']} lists across at "
+                      f"columns={columns}: {got}")
+                check(not got['overflows'],
+                      f"the grid ran off a 380px tile at columns={columns}: {got}")
+
+            # Nothing overflows at any width the board can produce.
+            for width in (2400, 1600, 1000, 700, 520, 380, 280):
+                for columns in ('auto', '1', '2', '3', '4'):
+                    got = run(width, columns, 3)
+                    check(not got['overflows'],
+                          f"columns={columns} overflowed a {width}px tile: {got}")
+
+            # A card pinned to ONE list is full width whatever this says —
+            # empty tracks collapse, which is why the option says it is
+            # ignored there rather than pretending to apply.
+            for columns in ('auto', '3', '4'):
+                got = run(1600, columns, 1)
+                check(got['width'] == 1600,
+                      f"a single list was penned into a column at "
+                      f"columns={columns}: {got}")
+        finally:
+            browser.close()
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

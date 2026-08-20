@@ -372,17 +372,27 @@
                          refuses for the same reason. -->
                     <template x-if="t.type === 'shopping_list'">
                         <div x-data="shoppingListCard(t, apiBase)" x-init="startShopping()"
-                            class="min-w-0 space-y-6">
-                            <div x-show="gone" class="text-sm opacity-60" x-text="gone"></div>
-                            <template x-for="p in panes" :key="'sl-' + p.id">
-                                <div x-data="shoppingListPane(p.id, apiBase, t.data)"
-                                    x-init="startPane()" class="min-w-0">
-                                    <div x-show="panes.length > 1" x-cloak
-                                        class="text-xs font-black uppercase tracking-widest panel-dim mb-2"
-                                        x-text="p.name"></div>
-                                    {{ shopping_lists.shopping_items(interactive='listsInteractive') }}
-                                </div>
-                            </template>
+                            class="min-w-0">
+                            <div x-show="gone" class="text-sm opacity-60 mb-6" x-text="gone"></div>
+                            <!-- Lists go ACROSS a landscape tile, not down it.
+                                 Stacked, three lists on a wall were a narrow
+                                 column of text with a field of empty panel
+                                 beside it; `paneGrid()` wraps them after as
+                                 many as fit, or after the number the card was
+                                 given. `items-start` so a short list does not
+                                 stretch to the height of the longest one in
+                                 its row. -->
+                            <div class="grid gap-6 items-start" :style="paneGrid()">
+                                <template x-for="p in panes" :key="'sl-' + p.id">
+                                    <div x-data="shoppingListPane(p.id, apiBase, t.data)"
+                                        x-init="startPane()" class="min-w-0">
+                                        <div x-show="panes.length > 1" x-cloak
+                                            class="text-xs font-black uppercase tracking-widest panel-dim mb-2"
+                                            x-text="p.name"></div>
+                                        {{ shopping_lists.shopping_items(interactive='listsInteractive') }}
+                                    </div>
+                                </template>
+                            </div>
                         </div>
                     </template>
 
