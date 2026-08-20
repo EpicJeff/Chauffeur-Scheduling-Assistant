@@ -1557,6 +1557,17 @@
                                                 <option value="helper">Helper (external)</option>
                                             </select>
                                         </div>
+                                        <!-- Family-network S5: the keeping-up adult stops being a
+                                             heuristic and becomes a preset somebody CHOSE. Adults
+                                             only — every other role's preset comes from the role. -->
+                                        <div x-show="memberEdit.role === 'adult'">
+                                            <label class="block text-gray-400 mb-1 text-sm">Sees</label>
+                                            <select x-model="memberEdit.scope_preset"
+                                                class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                                <option value="">Everything (household adult)</option>
+                                                <option value="keeping_up">Keeping up — the kids' calendar, no driving</option>
+                                            </select>
+                                        </div>
                                         <!-- Birthdate is a fact about the PERSON, so it lives here for
                                              everyone — Growing up only ever reads it (for children),
                                              and it is what makes birthday tracking possible at all. -->
@@ -6085,6 +6096,7 @@
                         avatar: member.avatar || '',
                         image: member.image || null,
                         role: member.role || 'adult',
+                        scope_preset: (member.scope || {}).preset || '',
                         birthdate: member.birthdate || '',
                         ha_person_entity: member.ha_person_entity || '',
                         notify_service: member.notify_service || '',
@@ -6393,6 +6405,11 @@
 
                 async saveMember(member) {
                     const updates = { ...this.memberEdit };
+                    // Preset rides inside scope; spread what is already there
+                    // so a future override survives a card save untouched.
+                    updates.scope = { ...(member.scope || {}),
+                                      preset: updates.scope_preset || null };
+                    delete updates.scope_preset;
                     updates.avatar = updates.avatar ? updates.avatar.trim() : null;
                     updates.image = updates.image || null;
                     updates.birthdate = updates.birthdate || null;

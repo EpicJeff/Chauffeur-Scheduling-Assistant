@@ -1,6 +1,6 @@
 # Family Network — Access Scope, and the Household Boundary
 
-Status: **BUILDING — Phase 1 shipped (S1 v2.330.0, S2 v2.331.0), Phase 2 shipped (S3 v2.332.0), S4 shipped (v2.333.0).** Written 2026-08-20 to settle a question before code.
+Status: **BUILDING — Phase 1 shipped (S1 v2.330.0, S2 v2.331.0), Phase 2 shipped (S3 v2.332.0), S4 shipped (v2.333.0), S5 shipped (v2.334.0).** Written 2026-08-20 to settle a question before code.
 Revised the same day after the first surface list was found too coarse (§5).
 Companions: `docs/auth_design.md` (the tier spine this extends), `docs/kid_support_design.md`
 (stages — the per-member override pattern this copies).
@@ -688,7 +688,7 @@ evidence exists means discovering the panel cannot reach its board on a school m
 | Slice | What it is | What it buys |
 |---|---|---|
 | **S4** ✅ v2.333.0 | `audience` on trips + occasions, closed default, enforced on the **board card** first, then agent and digests. "N trips not shown here" for those who may know. | **The Disney case.** A surprise trip stops appearing on the kitchen wall. Bounded, because the panel is the only surface a child meets a trip on. |
-| **S5** | `sees_people` on the ◍ facets, plus pointing the keeping-up shell at `/api/calendar/events` (already returns titles and times with no driver data). | **The grandparent case.** She sees Emma's and Jack's calendar — what they are up to, nothing about who drives or when anyone leaves. Needs no work on `/api/schedule`. |
+| **S5** ✅ v2.334.0 | `sees_people` on the ◍ facets, plus pointing the keeping-up shell at `/api/calendar/events` (already returns titles and times with no driver data). *(Shipped: the endpoint is viewer-aware with reach + `sees_people`, the preset has its hand path on the member card, and the keeping-up family card drops every driving chip. The remaining ◍ assemblers pick the filter up with the field-kind work in S9, where their payloads are being reshaped anyway.)* | **The grandparent case.** She sees Emma's and Jack's calendar — what they are up to, nothing about who drives or when anyone leaves. Needs no work on `/api/schedule`. |
 | **S6** | `chat.initiate`, and instance membership honoured over a `none` facet. | **The guest case.** Someone can be added to a conversation and talk freely, and can never start one — the Slack external-guest shape, replacing hardcoded checks in three places. |
 
 ### Phase 4 — the expensive half

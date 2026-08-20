@@ -6329,9 +6329,17 @@
             const timeStr = card.allDay ? 'All Day' : `${formatTime(card.start)} - ${formatTime(card.end)}`;
             const isPast = !card.allDay && new Date(card.end) < now;
             const paxBadges = familyPaxBadges(card.calendarIds);
-            const driverChips = familyDriverChips(card);
+            // Family-network S5 (§9): the same card carries two facets —
+            // calendar.events (title, time, location, passengers) and
+            // schedule.assignment (driver, leg and car chips). A keeping-up
+            // adult keeps the first and loses the second, ⚠ Needs Driver
+            // included: she has no driver record, so a gap she can read is a
+            // gap she cannot close. (S13 drives this from the delivered
+            // scope map; until then the retiring heuristic stands in.)
+            const keepingUpCard = isKeepingUpAdult();
+            const driverChips = keepingUpCard ? '' : familyDriverChips(card);
 
-            const legsData = [...(card.legs || [])]
+            const legsData = keepingUpCard ? [] : [...(card.legs || [])]
                 .sort((a, b) => new Date(a.start) - new Date(b.start))
                 .map(l => ({
                     id: l.id,
@@ -6347,7 +6355,8 @@
                 end: card.end,
                 location: card.location,
                 passengerHtml: paxBadges,
-                driverHtml: driverChips || '<span class="text-gray-500 italic text-sm">Not assigned</span>',
+                driverHtml: keepingUpCard ? ''
+                    : (driverChips || '<span class="text-gray-500 italic text-sm">Not assigned</span>'),
                 isErrand: card.isErrand,
                 dateStr: (card.start || '').split('T')[0],
                 legs: legsData,

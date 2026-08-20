@@ -3674,6 +3674,16 @@ The Disney case, built. Trips and occasions carry `audience: household | parents
 - **Hand paths**: the trip create form asks **"Show this on the family wall?"** (unchecked default — the label names the consequence, not the abstraction); the standing toggle lives in Trip Settings; occasions flip on their card chip. Digests never surfaced trips or occasions, so there was nothing to redact there (checked).
 - Tests: `tests/test_audience.py` (6 scenarios: panel silence, one-field reveal, counter targeting, share-with-one-child, occasions parity, Argyle secrecy).
 
+## The grandparent case (v2.334.0 — family-network S5)
+
+She sees Emma's and Jack's calendar — what they are up to, nothing about who drives or when anyone leaves. Three pieces:
+
+- **`GET /api/calendar/events` is viewer-aware.** It was already the §8 good news — titles and times with no assignment, edge, car, carpool-contact or driver-calendar key — and now it applies the viewer's scope: reach `none` → empty, `own` → their events, `all` narrowed by `sees_people` (a keeping-up adult gets the children's events; an adult-only event is absent entirely). Attribution is My Day's own binding (`_calendar_event_subjects`: passenger calendar ownership, resolved passenger id, title hashtag). Rows gained `calendar_ids` for passenger badges. Tokenless callers (the dashboard trip linker) unchanged.
+- **The preset has a hand path** (Config → People → member card → "Sees", adults only): "Everything (household adult)" or "Keeping up — the kids' calendar, no driving", stored as `member.scope.preset` (spread-preserving future `overrides`). `FamilyMember.scope` is a declared field so round-trips never drop it. The full editor is still S14; this is the minimal path that makes the preset real.
+- **The keeping-up family card drops the driving facet** (§9's line-inside-one-component): no driver chips, no leg labels, no car chip, no ⚠ Needs Driver — a gap she can read is a gap she cannot close. Until S13 delivers the scope map to the shell, the retiring `isKeepingUpAdult()` heuristic stands in as the client-side trigger.
+
+Remaining ◍ assemblers (locations, chores, points, statuses…) pick up `sees_people` in S9, where those payloads are being reshaped anyway. Tests: `tests/test_calendar_scope.py` (4 scenarios).
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.

@@ -130,6 +130,11 @@ class FamilyMember(BaseModel):
     # participation, no admin. child: family + kid lens + points economy.
     # helper: external (hired driver/nanny) — driving surfaces only.
     role: str = 'adult'
+    # Family-network S5: the member's scope — {'preset': ..., 'overrides':
+    # {...}, 'sees_people': ...} — read by services/scope.py. None means the
+    # role's preset with no deviations, which is every member predating the
+    # arc. Declared here so a POST/PUT round-trip can never silently drop it.
+    scope: Optional[dict] = None
     # active | disabled | archived. See storage.MEMBER_STATUSES for the full
     # reasoning; the short version is that they are a ladder — `disabled`
     # revokes ACCESS (no login, no PIN, sessions killed, vouched devices

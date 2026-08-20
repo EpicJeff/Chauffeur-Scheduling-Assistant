@@ -2975,13 +2975,43 @@ def rebuild_itinerary_api(event_id: str):
     return schedule_pois_bulk_api(event_id, {"poi_ids": fuzzy_ids})
 
 
+def _calendar_event_subjects(ev: dict, members, passengers_by_id) -> set:
+    """Which members a raw calendar event belongs to — passenger calendar
+    ownership, resolved passenger id, or title hashtag: My Day's four-way
+    binding minus matched_rules, which a raw Google event cannot carry
+    (family-network S5, the §5 grain: events are attributed to people
+    through calendar_ids)."""
+    from services import family_digest
+    subjects = set()
+    for m in members:
+        p_id = m.get('passenger_id')
+        if not p_id:
+            continue
+        p = passengers_by_id.get(p_id) or {}
+        p_cals = set(p.get('calendar_ids') or [])
+        p_tags = {t.lower() for t in (p.get('hashtags') or [])}
+        if family_digest._kid_event_match(ev, str(ev.get('id') or ''), p_id,
+                                          p_cals, p_tags, {}):
+            subjects.add(m['id'])
+    return subjects
+
+
 @app.get("/api/calendar/events")
-def list_calendar_events_api(start_date: str = None, end_date: str = None):
+def list_calendar_events_api(start_date: str = None, end_date: str = None,
+                             request: Request = None):
     """Raw Google Calendar events in a date range, straight from the calendar —
     for the trip event linker. Deliberately NOT sourced from the solved/cached
     daily schedule (which can be stale and omit an event added after that day was
     last solved — e.g. a dinner booked later shows on every other day but not the
-    one whose cache predates it)."""
+    one whose cache predates it).
+
+    Family-network S5: this is also THE GRANDPARENT ENDPOINT — it returns
+    titles and times with no assignment, edge, car, carpool-contact or
+    driver-calendar key, which is why the keeping-up story needs no work on
+    /api/schedule. A resolved viewer gets their scope's view: reach none is
+    an empty list, own is their own events, and sees_people narrows the rest
+    to the people whose rows they may see. Tokenless callers (the dashboard
+    trip linker) keep today's behaviour."""
     settings = storage.get_settings()
     calendar_ids = settings.get('calendar_ids', [])
     if not calendar_ids or not start_date or not end_date:
@@ -3001,7 +3031,24 @@ def list_calendar_events_api(start_date: str = None, end_date: str = None):
             "event_type": getattr(ev, 'event_type', 'standard'),
             "trip_id": getattr(ev, 'trip_id', None),
             "source_event_ids": getattr(ev, 'source_event_ids', []),
+            # Who the event belongs to, for passenger badges — ids only, the
+            # same attribution signal every calendar surface already carries.
+            "calendar_ids": list(getattr(ev, 'calendar_ids', None) or []),
         })
+    viewer_id = _acting_id(request, None)
+    viewer = storage.get_member(viewer_id) if viewer_id else None
+    if viewer:
+        from services import scope as _scope
+        r = _scope.reach(viewer, 'calendar.events')
+        if r == _scope.NONE:
+            return {"events": []}
+        members = storage.get_all_members()
+        allowed = {viewer['id']} if r == _scope.OWN \
+            else _scope.sees_people(viewer, members)
+        if allowed is not None:
+            passengers = {p.get('id'): p for p in storage.get_all_passengers()}
+            out = [e for e in out
+                   if _calendar_event_subjects(e, members, passengers) & allowed]
     return {"events": out}
 
 
