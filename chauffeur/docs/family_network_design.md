@@ -1,6 +1,6 @@
 # Family Network — Access Scope, and the Household Boundary
 
-Status: **BUILDING — Phases 1–3 SHIPPED: S1 v2.330.0, S2 v2.331.0, S3 v2.332.0, S4 v2.333.0, S5 v2.334.0, S6 v2.335.0. Next: Phase 4 (S7–S11).** Written 2026-08-20 to settle a question before code.
+Status: **BUILDING — Phases 1–3 SHIPPED (S1–S6, v2.330.0–v2.335.0); Phase 4 underway: S7 v2.336.0. Next: S8–S11.** Written 2026-08-20 to settle a question before code.
 Revised the same day after the first surface list was found too coarse (§5).
 Companions: `docs/auth_design.md` (the tier spine this extends), `docs/kid_support_design.md`
 (stages — the per-member override pattern this copies).
@@ -695,7 +695,7 @@ evidence exists means discovering the panel cannot reach its board on a school m
 
 | Slice | What it is | What it buys |
 |---|---|---|
-| **S7** | Route-kind facets on `auth.RULES`, guard in audit mode until the record is boring. | Most of the facet list, cheaply. This is the bulk of the enforcement and the least interesting to write. |
+| **S7** ✅ v2.336.0 | Route-kind facets on `auth.RULES`, guard in audit mode until the record is boring. | Most of the facet list, cheaply. This is the bulk of the enforcement and the least interesting to write. |
 | **S8** | Instance grants: `shared_with` on `ShoppingList` (per-list check on `list_id`, already a route parameter). | Share the grocery list with one person without sharing lists in general. |
 | **S9** | Field-kind assemblers, one at a time, largest last: `/api/meals/plan` (a whereabouts feed in disguise), `/api/members/{id}/day`, `/api/family/locations`, then `/api/schedule` **with `/api/home_board` in the same slice** because it re-serves the same blob. | The calendar-without-driving split at the API, and the end of four payloads that answer without asking who is looking. The largest single piece of work in the arc. |
 | **S10** | Fan-out audiences: `moment_push_audience`, digest and briefing recipients, `get_channels_for_member`, message fan-out, `_notify_member_lanes`. | Scope reaches the things the server sends unprompted. No meaningful audit mode — a push not sent is invisible — so tests per site. |

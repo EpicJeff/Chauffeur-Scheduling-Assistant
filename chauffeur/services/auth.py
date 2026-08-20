@@ -64,26 +64,26 @@ ANY = '*'
 
 RULES = [
     # --- public: the things that must answer before anyone can sign in ------
-    (ANY, '/health', ANYONE),
-    (ANY, '/manifest.json', ANYONE),
-    (ANY, '/sw.js', ANYONE),
-    (ANY, '/api/vapid_public_key', ANYONE),
+    (ANY, '/health', ANYONE, None),
+    (ANY, '/manifest.json', ANYONE, None),
+    (ANY, '/sw.js', ANYONE, None),
+    (ANY, '/api/vapid_public_key', ANYONE, None),
     # Sign-in itself. `/auth` mints the token, so it cannot require one; it is
     # the single most attackable route in the app and S4 gives it persistent,
     # per-IP rate limiting to match.
-    ('POST', '/api/members/{member_id}/auth', ANYONE),
+    ('POST', '/api/members/{member_id}/auth', ANYONE, None),
     # The picker's data (S8, Decision 4 built at last). ANYONE in the TABLE,
     # gated in the HANDLER: `_gate_family_listing` answers a caller with any
     # tier, or anonymous on trusted ground (vouched device / LAN / ingress) —
     # which is the only place the faces picker exists any more. Off trusted
     # ground the front door is the login page, which needs no list. The tier
     # table cannot express "trusted ground", so the handler owns the rest.
-    ('GET', '/api/members', ANYONE),
-    ('GET', '/api/drivers', ANYONE),
+    ('GET', '/api/members', ANYONE, None),
+    ('GET', '/api/drivers', ANYONE, None),
     # "Where am I standing?" — one boolean about the caller's own ground,
     # which is how the PWA picks its front door. Open like this-device: the
     # answer contains nothing the request did not arrive with.
-    ('GET', '/api/account/ground', ANYONE),
+    ('GET', '/api/account/ground', ANYONE, None),
     # Accounts (S3). All public by necessity — every one of these is reached
     # by somebody who has no credential yet, which is the entire point of
     # them. Their protection is the token in the link, not a tier:
@@ -94,88 +94,88 @@ RULES = [
     #     exists, so it leaks nothing to probe.
     # `/api/members/{id}/invite` is NOT here — issuing an account is
     # administration and stays parent-only under the members rules below.
-    (ANY, '/account/set-password', ANYONE),
-    ('GET', '/api/account/link/{token}', ANYONE),
+    (ANY, '/account/set-password', ANYONE, None),
+    ('GET', '/api/account/link/{token}', ANYONE, None),
     # First-run: both are guarded by the INGRESS check inside the handler,
     # not by a tier — the whole point is that they answer to somebody who has
     # no account yet. `/setup` reports only whether a household is claimed and
     # which parents exist by name, and `/claim` closes permanently the moment
     # one parent holds a password.
-    ('GET', '/api/account/setup', ANYONE),
-    ('POST', '/api/account/claim', ANYONE),
+    ('GET', '/api/account/setup', ANYONE, None),
+    ('POST', '/api/account/claim', ANYONE, None),
     # Echoes back only the caller's OWN headers; says nothing about the
     # household. Open so it can answer when nothing else will.
-    ('GET', '/api/account/env', ANYONE),
+    ('GET', '/api/account/env', ANYONE, None),
     # Pairing (S6). The two the DEVICE calls are open by necessity — a screen
     # with no credential is exactly who calls them — and neither grants
     # anything on its own: the request only produces a code somebody still has
     # to approve, and the status poll is keyed on a device id the screen
     # minted and nobody else knows. Approval itself is parent-only, below.
-    ('POST', '/api/account/devices/pair-request', ANYONE),
-    ('GET', '/api/account/devices/pair-status', ANYONE),
+    ('POST', '/api/account/devices/pair-request', ANYONE, None),
+    ('GET', '/api/account/devices/pair-status', ANYONE, None),
     # "What am I called?", answered for the caller's OWN device and nothing
     # else. Open for the same reason as the two above: the id in the header is
     # one the screen minted, so the answer contains nothing it did not arrive
     # with, and a wall panel naming itself to Music Assistant has no
     # credential to offer. Deliberately NOT under /api/account/devices/, which
     # is the parent-only list a lost tablet gets revoked from.
-    ('GET', '/api/account/this-device', ANYONE),
+    ('GET', '/api/account/this-device', ANYONE, None),
     # The device list is where a lost tablet gets revoked, so it is admin —
     # as is saying yes to a screen, and minting Argyle's credential.
-    (ANY, '/api/account/devices', PARENTS),
-    (ANY, '/api/account/devices/*', PARENTS),
-    ('POST', '/api/account/service-token', PARENTS),
-    ('POST', '/api/account/set-password', ANYONE),
-    ('POST', '/api/account/login', ANYONE),
-    ('POST', '/api/account/forgot', ANYONE),
+    (ANY, '/api/account/devices', PARENTS, None),
+    (ANY, '/api/account/devices/*', PARENTS, None),
+    ('POST', '/api/account/service-token', PARENTS, None),
+    ('POST', '/api/account/set-password', ANYONE, None),
+    ('POST', '/api/account/login', ANYONE, None),
+    ('POST', '/api/account/forgot', ANYONE, None),
 
     # --- parent-only: administration and anything that hands over the house --
     # These are the routes where "open" was worth a whole compromise.
-    (ANY, '/api/download_db', PARENTS),
-    (ANY, '/api/debug_db', PARENTS),
-    (ANY, '/api/debug/*', PARENTS),
-    (ANY, '/api/admin/*', PARENTS),
-    (ANY, '/api/test/*', PARENTS),
-    (ANY, '/api/cache/*', PARENTS),
-    (ANY, '/api/members/{member_id}/pin/clear', PARENTS),
-    (ANY, '/api/members/{member_id}/pin', SIGNED_IN),   # own PIN; S4 tightens
-    ('POST', '/api/members/*', PARENTS),                # create/edit members
-    ('PUT', '/api/members/*', PARENTS),
-    ('PATCH', '/api/members/*', PARENTS),
-    ('DELETE', '/api/members/*', PARENTS),
-    (ANY, '/api/settings/*', PARENTS),
-    (ANY, '/api/settings', PARENTS),
-    (ANY, '/api/ics_feeds/*', PARENTS),
-    ('GET', '/api/calendar_health', PARENTS),   # which calendars are being skipped
-    (ANY, '/api/drivers/*', PARENTS),
-    (ANY, '/api/passengers/*', PARENTS),
-    (ANY, '/api/rules/*', PARENTS),
-    (ANY, '/api/priority_rules/*', PARENTS),
-    (ANY, '/api/errand_rules/*', PARENTS),
-    (ANY, '/api/status-tiers/*', PARENTS),
-    (ANY, '/api/stages/*', PARENTS),
-    (ANY, '/api/themes/*', PARENTS),
-    (ANY, '/api/calendars/*', PARENTS),
-    (ANY, '/api/walmart/*', PARENTS),
-    (ANY, '/api/ha_sensors/*', PARENTS),
+    (ANY, '/api/download_db', PARENTS, None),
+    (ANY, '/api/debug_db', PARENTS, None),
+    (ANY, '/api/debug/*', PARENTS, None),
+    (ANY, '/api/admin/*', PARENTS, None),
+    (ANY, '/api/test/*', PARENTS, None),
+    (ANY, '/api/cache/*', PARENTS, None),
+    (ANY, '/api/members/{member_id}/pin/clear', PARENTS, None),
+    (ANY, '/api/members/{member_id}/pin', SIGNED_IN, None),   # own PIN; S4 tightens
+    ('POST', '/api/members/*', PARENTS, None),                # create/edit members
+    ('PUT', '/api/members/*', PARENTS, None),
+    ('PATCH', '/api/members/*', PARENTS, None),
+    ('DELETE', '/api/members/*', PARENTS, None),
+    (ANY, '/api/settings/*', PARENTS, None),
+    (ANY, '/api/settings', PARENTS, None),
+    (ANY, '/api/ics_feeds/*', PARENTS, None),
+    ('GET', '/api/calendar_health', PARENTS, None),   # which calendars are being skipped
+    (ANY, '/api/drivers/*', PARENTS, None),
+    (ANY, '/api/passengers/*', PARENTS, None),
+    (ANY, '/api/rules/*', PARENTS, None),
+    (ANY, '/api/priority_rules/*', PARENTS, None),
+    (ANY, '/api/errand_rules/*', PARENTS, None),
+    (ANY, '/api/status-tiers/*', PARENTS, None),
+    (ANY, '/api/stages/*', PARENTS, None),
+    (ANY, '/api/themes/*', PARENTS, None),
+    (ANY, '/api/calendars/*', PARENTS, None),
+    (ANY, '/api/walmart/*', PARENTS, None),
+    (ANY, '/api/ha_sensors/*', PARENTS, None),
     # The music card's HA lanes, carved out ABOVE the admin prefix below
     # (first hit wins): the board's music card lists players and sends
     # transport commands from a wall, and the artwork proxy is drawn as a bare
     # <img> by panels and the PWA alike — an image request can carry no header,
     # so the token rides the query string (identify() reads it there).
     # Everything else under /api/ha stays administration.
-    ('GET', '/api/ha/media_players', WALL),
-    ('POST', '/api/ha/media_players/{entity_id}/command', WALL),
-    ('GET', '/api/ha/image64/{encoded}', WALL),
-    (ANY, '/api/ha/*', PARENTS),
-    (ANY, '/api/telemetry/*', PARENTS),
-    (ANY, '/api/push_subscriptions/*', PARENTS),
+    ('GET', '/api/ha/media_players', WALL, 'music'),
+    ('POST', '/api/ha/media_players/{entity_id}/command', WALL, 'music'),
+    ('GET', '/api/ha/image64/{encoded}', WALL, 'music'),
+    (ANY, '/api/ha/*', PARENTS, None),
+    (ANY, '/api/telemetry/*', PARENTS, None),
+    (ANY, '/api/push_subscriptions/*', PARENTS, None),
     # NOTE: the admin PAGES are public shells; their DATA is parent-gated
     # above and below. See the shell-vs-data note in the wall section.
-    (ANY, '/config', ANYONE),
-    (ANY, '/dashboard', ANYONE),
-    (ANY, '/dashboard_v2', ANYONE),
-    (ANY, '/settings', ANYONE),
+    (ANY, '/config', ANYONE, None),
+    (ANY, '/dashboard', ANYONE, None),
+    (ANY, '/dashboard_v2', ANYONE, None),
+    (ANY, '/settings', ANYONE, None),
 
     # FastAPI's generated docs. Found UNCLASSIFIED by the S1 test, which is
     # the first thing it caught and on its own worth the file: `/docs` is a
@@ -183,22 +183,22 @@ RULES = [
     # attached, and it has been served to the public internet next to an app
     # with no authentication. Parents-only here; S8 should consider switching
     # them off outright, since nobody in this household reads them.
-    (ANY, '/docs', PARENTS),
-    (ANY, '/docs/*', PARENTS),
-    (ANY, '/redoc', PARENTS),
-    (ANY, '/openapi.json', PARENTS),
+    (ANY, '/docs', PARENTS, None),
+    (ANY, '/docs/*', PARENTS, None),
+    (ANY, '/redoc', PARENTS, None),
+    (ANY, '/openapi.json', PARENTS, None),
 
     # --- Argyle ------------------------------------------------------------
     # NOT robots-only, and the live audit is what said so: the Argyle bar is
     # drawn on member surfaces (the PWA's FAB) and on wall panels, and each of
     # those callers POSTs /api/chat as itself. Anonymous is the only refusal.
-    (ANY, '/api/chat/*', WALL_OR_SERVICE),
+    (ANY, '/api/chat/*', WALL_OR_SERVICE, 'chat.agent'),
     # The bar's read side is an EventSource, which can set no headers — the
     # token rides the query string. /api/v2/converse below stays robots-only:
     # it is the HA Assist webhook, and no browser surface posts it.
-    ('GET', '/api/v2/chat/stream', WALL_OR_SERVICE),
-    (ANY, '/api/v2/*', ROBOTS),
-    (ANY, '/api/announce/*', ROBOTS),
+    ('GET', '/api/v2/chat/stream', WALL_OR_SERVICE, 'chat.agent'),
+    (ANY, '/api/v2/*', ROBOTS, 'chat.agent'),
+    (ANY, '/api/announce/*', ROBOTS, 'music'),
 
     # --- the wall: pages and payloads a panel legitimately draws ------------
     #
@@ -211,108 +211,108 @@ RULES = [
     # and a parent could never reach the box that would sign them in. The
     # templates carry no household data of their own; every one of them
     # fetches what it draws.
-    (ANY, '/', ANYONE),
-    (ANY, '/home', ANYONE),
-    (ANY, '/board/{slug}', ANYONE),
-    (ANY, '/api/home_board/*', WALL),
-    (ANY, '/api/panel/*', WALL),
-    (ANY, '/api/schedule/*', WALL),
-    (ANY, '/api/weather/*', WALL),
-    (ANY, '/api/presence/*', WALL),
-    (ANY, '/api/moments/*', WALL),
-    (ANY, '/api/media/*', WALL),
-    (ANY, '/api/music/*', WALL),
+    (ANY, '/', ANYONE, None),
+    (ANY, '/home', ANYONE, None),
+    (ANY, '/board/{slug}', ANYONE, None),
+    (ANY, '/api/home_board/*', WALL, None),
+    (ANY, '/api/panel/*', WALL, None),
+    (ANY, '/api/schedule/*', WALL, None),
+    (ANY, '/api/weather/*', WALL, None),
+    (ANY, '/api/presence/*', WALL, 'presence.moments'),
+    (ANY, '/api/moments/*', WALL, 'presence.moments'),
+    (ANY, '/api/media/*', WALL, 'presence.moments'),
+    (ANY, '/api/music/*', WALL, 'music'),
     # The panel screen player: the app's one WebSocket. A browser's WebSocket
     # API can set no headers, so the token rides the query string — identify()
     # reads query params for exactly this class of caller.
-    (ANY, '/api/sendspin/ws', WALL),
+    (ANY, '/api/sendspin/ws', WALL, 'music'),
     # Trip backgrounds are CSS/<img> urls drawn by the trip pages AND the trip
     # kiosk; no header is possible there either, so the token rides the query.
-    ('GET', '/api/unsplash/background', WALL),
-    (ANY, '/api/announce', WALL),
+    ('GET', '/api/unsplash/background', WALL, None),
+    (ANY, '/api/announce', WALL, 'music'),
     # Kiosk-capable destinations: a parent opens these in a browser and a panel
     # draws the same page with ?panel=true. Both, therefore, or one of the two
     # is a lie (see property 3 above).
-    (ANY, '/chores', ANYONE),
-    (ANY, '/routines', ANYONE),
-    (ANY, '/shopping', ANYONE),
-    (ANY, '/calendar', ANYONE),
-    (ANY, '/errands', ANYONE),
-    (ANY, '/occasions', ANYONE),
-    (ANY, '/moments', ANYONE),
-    (ANY, '/moment', ANYONE),
-    (ANY, '/map', ANYONE),
-    (ANY, '/music', ANYONE),
-    (ANY, '/trips', ANYONE),
-    (ANY, '/trip', ANYONE),
-    (ANY, '/intake', ANYONE),
-    (ANY, '/app', ANYONE),
+    (ANY, '/chores', ANYONE, None),
+    (ANY, '/routines', ANYONE, None),
+    (ANY, '/shopping', ANYONE, None),
+    (ANY, '/calendar', ANYONE, None),
+    (ANY, '/errands', ANYONE, None),
+    (ANY, '/occasions', ANYONE, None),
+    (ANY, '/moments', ANYONE, None),
+    (ANY, '/moment', ANYONE, None),
+    (ANY, '/map', ANYONE, None),
+    (ANY, '/music', ANYONE, None),
+    (ANY, '/trips', ANYONE, None),
+    (ANY, '/trip', ANYONE, None),
+    (ANY, '/intake', ANYONE, None),
+    (ANY, '/app', ANYONE, None),
     # Interactive board actions — a wall may claim a chore and check a routine;
     # that is the whole point of `interactive` tiles.
-    (ANY, '/api/chores/*', WALL),
-    (ANY, '/api/routines/*', WALL),
+    (ANY, '/api/chores/*', WALL, 'chores.board'),
+    (ANY, '/api/routines/*', WALL, 'routines'),
     # Avatars: a panel may READ a look (boards draw them) but the write is
     # gated a second time inside the endpoint, per-member, by PIN or token.
     # The ledger, not this table, decides what a person may actually wear.
-    ('GET', '/api/avatar/*', WALL),
-    (ANY, '/api/avatar/*', SIGNED_IN),
+    ('GET', '/api/avatar/*', WALL, None),
+    (ANY, '/api/avatar/*', SIGNED_IN, None),
     # Pets, gated exactly like avatars and for the same reasons: a panel READS
     # them because boards draw the family's critters, and every write is gated
     # a second time inside the endpoint, per-member, by PIN or parenthood.
     # Nothing a pets write can reach is earned -- species, look, name and
     # element are free -- so there is nothing here for a tier to protect
     # beyond "this is mine to change".
-    ('GET', '/api/pets', WALL),
-    ('GET', '/api/pets/*', WALL),
-    (ANY, '/api/pets', SIGNED_IN),
-    (ANY, '/api/pets/*', SIGNED_IN),
-    (ANY, '/api/points/*', WALL),
-    (ANY, '/api/rewards/*', WALL),
-    (ANY, '/api/redemptions/*', WALL),
-    (ANY, '/api/shopping/*', WALL),
-    (ANY, '/api/kid-tasks/*', WALL),
-    (ANY, '/api/kids/*', WALL),
-    (ANY, '/api/meals/*', WALL),
-    (ANY, '/api/prep-kits/*', WALL),
-    (ANY, '/api/prep_status/*', WALL),
-    (ANY, '/api/stream/*', WALL),
+    ('GET', '/api/pets', WALL, 'pets'),
+    ('GET', '/api/pets/*', WALL, 'pets'),
+    (ANY, '/api/pets', SIGNED_IN, 'pets'),
+    (ANY, '/api/pets/*', SIGNED_IN, 'pets'),
+    (ANY, '/api/points/*', WALL, 'points.balances'),
+    (ANY, '/api/rewards/*', WALL, 'rewards'),
+    (ANY, '/api/redemptions/*', WALL, 'rewards'),
+    (ANY, '/api/shopping/*', WALL, 'lists.shopping'),
+    (ANY, '/api/kid-tasks/*', WALL, 'lists.kid_tasks'),
+    (ANY, '/api/kids/*', WALL, None),
+    (ANY, '/api/meals/*', WALL, 'meals.plan'),
+    (ANY, '/api/prep-kits/*', WALL, 'meals.prep'),
+    (ANY, '/api/prep_status/*', WALL, 'meals.prep'),
+    (ANY, '/api/stream/*', WALL, None),
 
     # --- signed-in members: the ordinary app ------------------------------
-    (ANY, '/api/messages/*', SIGNED_IN),
-    (ANY, '/api/channels/*', SIGNED_IN),
-    (ANY, '/api/events/*', SIGNED_IN),
-    (ANY, '/api/errands/*', SIGNED_IN),
-    (ANY, '/api/overrides/*', SIGNED_IN),
-    (ANY, '/api/occasions/*', SIGNED_IN),
-    (ANY, '/api/trip/*', SIGNED_IN),
-    (ANY, '/api/trips/*', SIGNED_IN),
-    (ANY, '/api/proposals/*', SIGNED_IN),
-    (ANY, '/api/action-proposals/*', SIGNED_IN),
-    (ANY, '/api/ingest/*', SIGNED_IN),
-    (ANY, '/api/status/*', SIGNED_IN),
-    (ANY, '/api/requests/*', SIGNED_IN),
-    (ANY, '/api/household-tasks/*', SIGNED_IN),
-    (ANY, '/api/household-load/*', SIGNED_IN),
-    (ANY, '/api/commitments/*', SIGNED_IN),
-    (ANY, '/api/assist-contacts/*', SIGNED_IN),
-    (ANY, '/api/assist-coverage/*', SIGNED_IN),
-    (ANY, '/api/assist-history/*', SIGNED_IN),
-    (ANY, '/api/cars/*', SIGNED_IN),
-    (ANY, '/api/places/*', SIGNED_IN),
-    (ANY, '/api/maps/*', SIGNED_IN),
-    (ANY, '/api/calendar/*', SIGNED_IN),
-    (ANY, '/api/school/*', SIGNED_IN),
-    (ANY, '/api/drive_status/*', SIGNED_IN),
-    (ANY, '/api/drive_sheet/*', SIGNED_IN),
-    (ANY, '/api/family/*', SIGNED_IN),
-    (ANY, '/api/unsplash/*', SIGNED_IN),
-    (ANY, '/api/push_subscribe/*', SIGNED_IN),
-    (ANY, '/api/members/*', SIGNED_IN),   # reads; the writes are gated above
-    (ANY, '/api/sendspin/*', SIGNED_IN),
+    (ANY, '/api/messages/*', SIGNED_IN, None),
+    (ANY, '/api/channels/*', SIGNED_IN, None),
+    (ANY, '/api/events/*', SIGNED_IN, 'calendar.events'),
+    (ANY, '/api/errands/*', SIGNED_IN, 'lists.errands'),
+    (ANY, '/api/overrides/*', SIGNED_IN, 'schedule.assignment'),
+    (ANY, '/api/occasions/*', SIGNED_IN, 'occasions'),
+    (ANY, '/api/trip/*', SIGNED_IN, 'trips.detail'),
+    (ANY, '/api/trips/*', SIGNED_IN, 'trips.gallery'),
+    (ANY, '/api/proposals/*', SIGNED_IN, None),
+    (ANY, '/api/action-proposals/*', SIGNED_IN, None),
+    (ANY, '/api/ingest/*', SIGNED_IN, None),
+    (ANY, '/api/status/*', SIGNED_IN, 'presence.status'),
+    (ANY, '/api/requests/*', SIGNED_IN, None),
+    (ANY, '/api/household-tasks/*', SIGNED_IN, 'lists.household_tasks'),
+    (ANY, '/api/household-load/*', SIGNED_IN, None),
+    (ANY, '/api/commitments/*', SIGNED_IN, None),
+    (ANY, '/api/assist-contacts/*', SIGNED_IN, 'schedule.carpool_contacts'),
+    (ANY, '/api/assist-coverage/*', SIGNED_IN, None),
+    (ANY, '/api/assist-history/*', SIGNED_IN, None),
+    (ANY, '/api/cars/*', SIGNED_IN, None),
+    (ANY, '/api/places/*', SIGNED_IN, None),
+    (ANY, '/api/maps/*', SIGNED_IN, None),
+    (ANY, '/api/calendar/*', SIGNED_IN, 'calendar.events'),
+    (ANY, '/api/school/*', SIGNED_IN, 'lists.kid_tasks'),
+    (ANY, '/api/drive_status/*', SIGNED_IN, 'drives.status_writes'),
+    (ANY, '/api/drive_sheet/*', SIGNED_IN, 'drives.sheet'),
+    (ANY, '/api/family/*', SIGNED_IN, 'presence.location'),
+    (ANY, '/api/unsplash/*', SIGNED_IN, None),
+    (ANY, '/api/push_subscribe/*', SIGNED_IN, None),
+    (ANY, '/api/members/*', SIGNED_IN, None),   # reads; the writes are gated above
+    (ANY, '/api/sendspin/*', SIGNED_IN, 'music'),
     # The Android share target. The OS posts it with none of our headers, so
     # it will show up in the audit as a would-deny; S3 decides whether the
     # service worker attaches the token or the route lands on a signed-in page.
-    (ANY, '/share', SIGNED_IN),
+    (ANY, '/share', SIGNED_IN, None),
 ]
 
 
@@ -330,9 +330,21 @@ def resolve(method: str, path_template: str) -> Optional[frozenset]:
     None is not 'deny' and not 'allow' — it means the table has not been
     taught about this route, which is a bug in the table that the test catches
     before it can become a hole in the app."""
-    for rule_method, rule_path, tiers in RULES:
-        if _rule_matches(rule_method, rule_path, method, path_template):
-            return tiers
+    for rule in RULES:
+        if _rule_matches(rule[0], rule[1], method, path_template):
+            return rule[2]
+    return None
+
+
+def resolve_facet(method: str, path_template: str) -> Optional[str]:
+    """The scope facet a route serves, or None — which is EXPLICIT here
+    (family-network S7): every RULES row carries a fourth element, either a
+    facet name from scope.FACETS or None for auth/infra/administration/shells
+    and the welded payloads whose enforcement lives in their assemblers (S9).
+    A test refuses any row that answers neither."""
+    for rule in RULES:
+        if _rule_matches(rule[0], rule[1], method, path_template):
+            return rule[3] if len(rule) > 3 else None
     return None
 
 
@@ -586,13 +598,39 @@ def audit_report() -> dict:
              'last': e['last']}
             for (m, p), e in _AUDIT.items()]
     rows.sort(key=lambda r: -r['count'])
+    scope_rows = [{'method': m, 'path': p, 'facet': f, 'count': e['n'],
+                   'saw': sorted(e['saw']), 'last': e['last']}
+                  for (m, p, f), e in _SCOPE_AUDIT.items()]
+    scope_rows.sort(key=lambda r: -r['count'])
     return {'would_deny': rows, 'routes': len(rows),
             'capped': len(_AUDIT) >= _AUDIT_CAP,
+            'scope_would_deny': scope_rows,
             'identity': dict(_IDENTITY)}
+
+
+_SCOPE_AUDIT = {}    # (method, path_template, facet) -> {'n', 'saw', 'last'}
+
+
+def record_scope(method: str, path_template: str, facet: str, member) -> None:
+    """A person whose scope does not reach this route's facet was here
+    (family-network S7). Same job as record(): evidence for the flip, thrown
+    away after. Every row is a surface some preset will lose at enforcement —
+    quiet is the evidence, and a loud row is either a table error or a shell
+    still showing somebody a door they may not open."""
+    key = (method, path_template, facet)
+    entry = _SCOPE_AUDIT.get(key)
+    if entry is None:
+        if len(_SCOPE_AUDIT) >= _AUDIT_CAP:
+            return
+        entry = _SCOPE_AUDIT[key] = {'n': 0, 'saw': set(), 'last': 0.0}
+    entry['n'] += 1
+    entry['saw'].add((member or {}).get('id') or 'unknown')
+    entry['last'] = time.time()
 
 
 def reset_audit() -> None:
     _AUDIT.clear()
+    _SCOPE_AUDIT.clear()
     _IDENTITY.update(claimed=0, mismatch=0, examples=[])
 
 
@@ -632,13 +670,45 @@ def check_request(method: str, path_template: str, headers, query) -> Optional[d
         return None
 
     if allowed is ANYONE or not allowed:
-        return None
+        return _check_scope(method, path_template, who)
 
     if who.get('tier') in allowed:
-        return None
+        return _check_scope(method, path_template, who)
 
     record(method, path_template, allowed, who.get('tier'))
     if not enforcing():
         return None
     return {'status': 401 if who.get('tier') is None else 403,
             'needs': sorted(allowed), 'saw': who.get('tier')}
+
+
+def _check_scope(method: str, path_template: str, who: dict) -> Optional[dict]:
+    """Family-network S7: the facet check, run only after the tier passes.
+
+    Only a resolved MEMBER has a scope — a panel is a place and Argyle is a
+    robot; tiers already govern them. Only a hard reach of 'none' can refuse,
+    and only for a route-kind facet: field-kind facets are enforced where
+    their data is assembled (S9) and instance-kind ones on the object (S8),
+    so here they are recorded and never denied — a route refusal would break
+    exactly the instance grants §7 promises are additive. Dark until
+    `auth_enforce` flips, same as everything else in this file."""
+    member = who.get('member')
+    if member is None:
+        return None
+    facet = resolve_facet(method, path_template)
+    if not facet:
+        return None
+    try:
+        from services import scope
+        if scope.reach(member, facet) != scope.NONE:
+            return None
+        record_scope(method, path_template, facet, member)
+        if scope.FACETS.get(facet, {}).get('kind') != 'route':
+            return None
+        if not enforcing():
+            return None
+        return {'status': 403, 'needs': [facet], 'saw': who.get('tier'),
+                'facet': facet}
+    except Exception:
+        # Scope must never take the house down.
+        return None

@@ -3696,6 +3696,17 @@ Remaining ◍ assemblers (locations, chores, points, statuses…) pick up `sees_
 
 Tests: `tests/test_chat_initiate.py` (5 scenarios) + `test_messaging.py` unchanged assertions.
 
+## Every route names its facet (v2.336.0 — family-network S7)
+
+All 145 `auth.RULES` rows carry an explicit fourth element: a facet from `scope.FACETS`, or `None` for auth/infra/administration/shells and the welded payloads (`/api/schedule`, `/api/home_board`, `/api/channels`) whose enforcement lives in their assemblers or per-instance checks. A test refuses any row that answers neither — the same drift-proofing the tier column earned in the auth arc.
+
+- **`auth.resolve_facet(method, path)`** answers through the same first-hit-wins wildcards as `resolve()`; **`_check_scope`** runs in `check_request` only AFTER the tier passes, and only for a resolved MEMBER — a panel is a place, Argyle is a robot, tiers already govern them.
+- **Only a hard `none` on a route-kind facet can refuse, and only once `auth_enforce` flips.** Field-kind facets (the welded ones) and instance-kind (`lists.shopping`) are recorded and never denied at the route — a route refusal would break exactly the instance grants §7 promises are additive. A scope failure can never take the house down (whole check wrapped, fail-open).
+- **The audit gained a scope half**: `GET /api/admin/auth_audit` now includes `scope_would_deny` rows `(method, path, facet, count, who)`. Same discipline as the flip: quiet is the evidence; a loud row is a table error or a shell still showing somebody a door they may not open. (The Enforcement panel doesn't chart the new section yet — read it from the endpoint.)
+- **Two flip-day consequences worth knowing, both per the §9 table**: once enforcing, a NON-parent household adult is refused `/api/trip/*`/`/api/trips/*`/`/api/occasions/*` (those preset rows are `parents`), and a keeping-up adult is refused `/api/family/*` (`presence.location: none`) — her Map tab hides at S13; the audit will show both first.
+
+Tests: `tests/test_route_facets.py` (5 scenarios).
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.
