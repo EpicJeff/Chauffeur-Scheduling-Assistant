@@ -5216,6 +5216,11 @@
 
             try {
                 let url = `${apiBase}api/schedule?_cb=` + new Date().getTime();
+                // Say who is asking even when the token is missing or stale:
+                // with no identity the server returns the WHOLE blob, so the
+                // claim can only narrow. Without this, scope silently did not
+                // apply to any session whose token had lapsed.
+                if (selectedMemberId) url += '&viewer=' + encodeURIComponent(selectedMemberId);
                 if (refresh) url += '&force_refresh=true';
 
                 const res = await fetch(url);
@@ -7099,7 +7104,9 @@
             const endStr = queryEnd.toISOString().split('T')[0];
 
             try {
-                const res = await fetch(`${apiBase}api/schedule?start_date=${startStr}&end_date=${endStr}`);
+                const viewerQs = selectedMemberId
+                    ? '&viewer=' + encodeURIComponent(selectedMemberId) : '';
+                const res = await fetch(`${apiBase}api/schedule?start_date=${startStr}&end_date=${endStr}${viewerQs}`);
                 if (res.ok) {
                     const data = await res.json();
 

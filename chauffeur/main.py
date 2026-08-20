@@ -15744,7 +15744,21 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
     # caches stay whole and shared; a tokenless caller (panel, kiosk) gets
     # the unredacted blob exactly as before, because a panel is a place and
     # the route guard owns anonymity.
-    _viewer_id = _acting_id(request, None)
+    # A CLAIM is honoured here, and only here, because of an asymmetry
+    # this endpoint has and the write paths do not: with no identity at all
+    # the answer is the WHOLE blob (a panel is a place). So a claim can only
+    # ever make the answer smaller — it cannot grant anything anonymous did
+    # not already have. That is the mirror of the auth arc's rule that a
+    # claim must never GRANT, and it is what makes scope apply today, before
+    # the flip, on a phone whose token went stale. A real token still wins
+    # (acting_member prefers it), and once enforcing, tokenless is refused by
+    # the guard before it ever reaches here.
+    _claim = None
+    try:
+        _claim = (getattr(request, 'query_params', {}) or {}).get('viewer')
+    except Exception:
+        _claim = None
+    _viewer_id = _acting_id(request, _claim)
     _viewer = storage.get_member(_viewer_id) if _viewer_id else None
     try:
         from services import scope as _scope

@@ -175,12 +175,45 @@ def scenario_the_board_redacts_exactly_as_the_schedule_does():
           "no viewer, no copy — the panel path costs nothing")
 
 
+def scenario_a_claim_narrows_and_can_never_grant():
+    """The lived case: a phone whose token lapsed. With NO identity the blob
+    is whole (a panel is a place), so honouring a claim can only ever make
+    the answer smaller — the mirror of the auth arc's rule that a claim must
+    never GRANT. Without this, scope silently did not apply to any session
+    whose token had gone stale."""
+    import main
+    tok = _seed()
+    storage.set_cached_schedule(_blob())
+
+    class ClaimReq:
+        def __init__(self, viewer=None, token=None):
+            self.headers = {'x-member-token': token} if token else {}
+            self.query_params = {'viewer': viewer} if viewer else {}
+
+    claimed = main.get_schedule(BackgroundTasks(), request=ClaimReq(viewer='gran'))
+    check('assignments' not in claimed,
+          "a tokenless claim still redacts the driving keys")
+    check([e['title'] for e in claimed['events']] == ['Volleyball', 'Karate'],
+          f"…and narrows to her people: {[e['title'] for e in claimed['events']]}")
+
+    bare = main.get_schedule(BackgroundTasks(), request=ClaimReq())
+    check('assignments' in bare,
+          "no claim, no token: the panel's whole blob, unchanged")
+
+    # A claim cannot escalate: the TOKEN wins whenever one is present.
+    both = main.get_schedule(BackgroundTasks(),
+                             request=ClaimReq(viewer='mom', token=tok['gran']))
+    check('assignments' not in both,
+          "claiming to be a parent while holding her token grants nothing")
+
+
 SCENARIOS = [
     scenario_the_meal_plan_stops_saying_where,
     scenario_a_day_read_by_keeping_up_loses_the_driving,
     scenario_the_map_narrows_by_sees_people,
     scenario_the_blob_drops_the_driving_keys_key_by_key,
     scenario_the_board_redacts_exactly_as_the_schedule_does,
+    scenario_a_claim_narrows_and_can_never_grant,
 ]
 
 if __name__ == "__main__":
