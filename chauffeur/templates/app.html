@@ -1010,6 +1010,9 @@
             }
 
             paintIdentityChip(m);
+            // A new identity must not inherit the last one's payload while
+            // its own fetch is in flight.
+            if (previousMemberId !== selectedMemberId) scheduleData = null;
 
             document.getElementById('screen-select-driver').classList.add('hidden');
             document.getElementById('screen-schedule').classList.remove('hidden');
@@ -3895,7 +3898,20 @@
         let redemptionsData = [];
 
         function memberToken() {
-            return localStorage.getItem('chauffeur_member_token') || '';
+            const t = localStorage.getItem('chauffeur_member_token') || '';
+            // The token records WHOSE it is; this used to hand it out without
+            // asking. A stale one from the previous person on this device
+            // authenticated every request as them — the server then scoped
+            // the answer to THEIR reach, which is how a keeping-up adult
+            // could be served a parent's schedule. A known mismatch sends
+            // nothing rather than somebody else's name.
+            const owner = localStorage.getItem('chauffeur_member_token_for');
+            if (t && owner && selectedMemberId && owner !== selectedMemberId) {
+                console.warn('member token belongs to', owner,
+                             '— not sending it as', selectedMemberId);
+                return '';
+            }
+            return t;
         }
 
         // Finish a pairing from the push (auth arc S6).
@@ -5161,11 +5177,24 @@
             }
         }
 
+        // The schedule blob is SCOPED DATA now (family-network S9): what it
+        // contains depends on who asked for it. One shared cache key meant a
+        // browser handed the next member whatever the previous one was
+        // allowed to see — a keeping-up adult rendering a parent's full blob,
+        // driving keys and all, until a fresh fetch happened to land. Keyed
+        // per identity, so a cache can only ever be replayed to its owner.
+        function scheduleCacheKey() {
+            const who = selectedMemberId || selectedDriverId || 'anon';
+            return `chauffeur_schedule::${who}`;
+        }
+
         async function fetchSchedule(refresh = false, skipLocal = false) {
             const container = document.getElementById('days-container');
             const btnSync = document.getElementById('btn-sync');
 
-            const cached = localStorage.getItem('chauffeur_schedule');
+            // The pre-scope global key: another member's payload. Drop it.
+            try { localStorage.removeItem('chauffeur_schedule'); } catch (e) { }
+            const cached = localStorage.getItem(scheduleCacheKey());
             let hasCachedData = false;
             if (cached && !refresh && !skipLocal) {
                 try {
@@ -5195,7 +5224,7 @@
                     // Its OWN try: a phone hitting the localStorage quota on
                     // a big blob must not take the render down with it — the
                     // data is already in memory.
-                    localStorage.setItem('chauffeur_schedule', JSON.stringify(scheduleData));
+                    localStorage.setItem(scheduleCacheKey(), JSON.stringify(scheduleData));
                 } catch (qe) { console.warn('schedule cache not stored', qe); }
                 buildTimeline();
             } catch (e) {
