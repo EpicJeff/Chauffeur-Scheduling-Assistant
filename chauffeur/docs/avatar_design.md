@@ -445,6 +445,31 @@ all):
 - Hair accessories anchor ON the hair (bow/clips y44-78): the face frame is
   translate(76,82), so anything at y82-104 lands on the eyebrows.
 
+## Handing the work out: the body template (2026-08-20)
+
+The geometry contract above is a spec an artist has to read and hold in their
+head. `tools/avatar_body_template.py` turns it into a picture, and writes two
+files:
+
+- `avatar_template.svg` — the rig drawn undressed with every anchor line on it,
+  in a viewBox that is **exactly** the renderer's `0 0 264 600`. A path traced
+  on it pastes into the wardrobe tables verbatim, which is why the guide labels
+  are bare numbers squeezed into the 30 units of margin either side of the arms
+  rather than words in a comfortable gutter: widening the canvas to fit prose
+  would have cost the one property that makes the file worth having. Layered
+  (`rig`, `garment-envelope`, `slot-frames`, `guides`) and headed with an XML
+  comment saying to delete all four.
+- `avatar_authoring_brief.html` — the handout: the same template annotated, the
+  fill vocabulary, the rules below, the slot table, a worked example, and
+  reference figures.
+
+Both are **generated from `avatar_render.py`**, never hand-drawn, so the
+template cannot drift from the rig. Two things learned pointing it at itself:
+the slot `focus` crops are *extents*, so a label on a crop's top edge reads as
+an anchor (`waist` printed up at the armpit) — centre it and spell out the
+range; and near-coincident anchors have to be clustered into one label block,
+because four necklines inside 14 units cannot each carry a 10-unit label.
+
 ## Production art: the rules the contact sheet taught (2026-08-18)
 
 `tools/avatar_contact_sheet.py` is the review gate for wardrobe art: every
