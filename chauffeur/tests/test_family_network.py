@@ -33,7 +33,8 @@ def _seed():
     storage.add_member({"id": "dad", "name": "Dad", "role": "adult", "is_child": False})
     storage.add_member({"id": "emma", "name": "Emma", "role": "child", "is_child": True})
     storage.add_member({"id": "jack", "name": "Jack", "role": "child", "is_child": True})
-    storage.add_member({"id": "nan", "name": "Nanny", "role": "helper", "is_child": False})
+    storage.add_member({"id": "nan", "name": "Nanny", "role": "helper", "is_child": False,
+                        "driver_id": "d_nan"})
     return {mid: storage.create_member_token(mid)
             for mid in ("mom", "dad", "emma", "jack", "nan")}
 
@@ -155,6 +156,73 @@ def scenario_member_create_enforces_the_role_whitelist():
     check(m and m.get('is_child') is True, "is_child stays in step with role on create")
 
 
+# --- S2: moments.contribute = when_present ----------------------------------
+
+_TINY_PNG = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC"
+             "AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+
+
+def _seed_live_event_with_helper_driving():
+    """A 60-minute event that started five minutes ago, driven by the nanny."""
+    import datetime
+    now = datetime.datetime.now()
+    ev = {"id": "ev1", "title": "Emma's game",
+          "start": (now - datetime.timedelta(minutes=5)).isoformat(),
+          "end": (now + datetime.timedelta(minutes=55)).isoformat()}
+    storage.set_cached_schedule({"events": [ev],
+                                 "assignments": {"ev1": "d_nan"},
+                                 "matched_rules": {}})
+
+
+def scenario_present_helper_hands_over_a_moment():
+    import main
+    from fastapi import BackgroundTasks
+    tok = _seed()
+    _seed_live_event_with_helper_driving()
+    ch = storage.get_or_create_event_channel("ev1", "Emma's game")
+
+    photo = main.SendMessageRequest(sender_member_id="nan", body="Great game!",
+                                    attachment={"kind": "photo", "data_url": _TINY_PNG})
+    main.send_message(ch['id'], photo, BackgroundTasks(), request=Req(tok['nan']))
+    msgs = storage.get_channel_messages(ch['id'])
+    check(any(m.get('sender_member_id') == 'nan' and m.get('attachment')
+              for m in msgs),
+          "the helper the schedule placed at the event hands the family a moment")
+
+    text = main.SendMessageRequest(sender_member_id="nan", body="nice weather")
+    check(_denied(main.send_message, ch['id'], text, BackgroundTasks(),
+                  request=Req(tok['nan'])) == 403,
+          "text-only stays barred — the surface is a photo handover, not a seat")
+
+
+def scenario_absent_helper_is_refused():
+    import main
+    from fastapi import BackgroundTasks
+    tok = _seed()
+    _seed_live_event_with_helper_driving()
+    other = storage.get_or_create_event_channel("ev2", "Jack's recital")
+    photo = main.SendMessageRequest(sender_member_id="nan", body="",
+                                    attachment={"kind": "photo", "data_url": _TINY_PNG})
+    check(_denied(main.send_message, other['id'], photo, BackgroundTasks(),
+                  request=Req(tok['nan'])) == 403,
+          "an event the schedule does not place the helper at fails closed")
+
+
+def scenario_capture_prompt_reaches_the_helper():
+    from services import presence
+    _seed()
+    _seed_live_event_with_helper_driving()
+    orig = presence.prompt_worthiness
+    presence.prompt_worthiness = lambda ev, present_ids, d: 'moment'
+    sent = []
+    try:
+        presence.run_capture_prompts(lambda m, title, body, path: sent.append(m['id']))
+    finally:
+        presence.prompt_worthiness = orig
+    check("nan" in sent,
+          "the capture sweep asks the helper holding the camera, not just adults")
+
+
 SCENARIOS = [
     scenario_dm_read_requires_membership,
     scenario_helper_reads_dms_only,
@@ -162,6 +230,9 @@ SCENARIOS = [
     scenario_day_is_self_or_household_adult,
     scenario_voice_sessions_are_not_household_reading,
     scenario_member_create_enforces_the_role_whitelist,
+    scenario_present_helper_hands_over_a_moment,
+    scenario_absent_helper_is_refused,
+    scenario_capture_prompt_reaches_the_helper,
 ]
 
 if __name__ == "__main__":

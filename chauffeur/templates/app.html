@@ -2550,6 +2550,7 @@
         // --- Family messaging ---
         let channelsData = [];
         let activeChannelId = null;
+        let helperShareMode = false;  // family-network S2: contribute, never read
         let messagesStream = null;
         let threadMessages = [];      // last rendered thread, for the lightbox
         let momentsStripData = [];    // 📸 strip rows, for moments not in-thread
@@ -2850,7 +2851,18 @@
                 await fetchChannels();
                 c = channelsData.find(x => x.id === channelId);
             }
-            document.getElementById('thread-title').textContent = c ? channelDisplay(c).name : 'Chat';
+            // Family-network S2: a helper's capture deep link opens an event
+            // thread they may hand a moment TO but never read — contribution
+            // is not membership. Their channel list never contains event
+            // threads, so "helper + a channel we can't see" is that surface.
+            helperShareMode = currentMemberRole() === 'helper' && (!c || c.kind === 'event');
+            document.getElementById('thread-title').textContent =
+                helperShareMode ? 'Share a moment' : (c ? channelDisplay(c).name : 'Chat');
+            if (helperShareMode) {
+                document.getElementById('thread-messages').innerHTML =
+                    '<div class="text-center text-gray-500 text-sm mt-6 px-6">Share a photo or video from the event — it goes straight to the family. The family\'s thread stays theirs, so it isn\'t shown here.</div>';
+                return;
+            }
             document.getElementById('thread-messages').innerHTML =
                 '<div class="text-center text-gray-500 text-sm mt-4">Loading…</div>';
             await refreshThread();
@@ -2861,8 +2873,16 @@
             }
         }
 
+        function noteMomentShared() {
+            // Helper share mode has no thread to refresh — say it landed.
+            if (!helperShareMode) return;
+            const wrap = document.getElementById('thread-messages');
+            if (wrap) wrap.insertAdjacentHTML('beforeend',
+                '<div class="text-center text-emerald-400 text-sm mt-3">✓ Shared with the family</div>');
+        }
+
         async function refreshThread() {
-            if (!activeChannelId) return;
+            if (!activeChannelId || helperShareMode) return;
             try {
                 const res = await fetch(`${apiBase}api/channels/${activeChannelId}/messages?limit=100`);
                 if (!res.ok) return;
@@ -3575,7 +3595,7 @@
                 if (!res.ok) throw new Error('Could not post the moment');
                 dropUploadingBubble(el);
                 // Only refresh if we're still looking at the thread it went to.
-                if (activeChannelId === channelId) await refreshThread();
+                if (activeChannelId === channelId) { await refreshThread(); noteMomentShared(); }
                 else loadMomentsStrip();
             } catch (err) {
                 markBubbleFailed(el, file, body, kind, err.message);
@@ -3590,6 +3610,11 @@
             const file = pendingFile;
             const poster = pendingPoster;
             if ((!body && !attachment && !file) || !activeChannelId || !selectedMemberId) return;
+            if (helperShareMode && !attachment && !file) {
+                showGlobalAlert('Add a photo or video — text goes in your chat with the parents');
+                input.value = body;
+                return;
+            }
             if (file) {
                 input.value = '';
                 clearPendingAttachment();
@@ -3607,6 +3632,7 @@
                 });
                 if (!res.ok) throw new Error('send failed');
                 await refreshThread();
+                noteMomentShared();
             } catch (err) {
                 showGlobalAlert('Failed to send message');
                 input.value = body;
@@ -3633,6 +3659,7 @@
 
         function closeThread() {
             activeChannelId = null;
+            helperShareMode = false;
             clearPendingAttachment();
             document.getElementById('thread-attach-btn').classList.remove('animate-pulse');
             document.getElementById('thread-view').style.display = 'none';

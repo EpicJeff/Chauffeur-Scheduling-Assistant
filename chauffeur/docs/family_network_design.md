@@ -675,7 +675,7 @@ evidence exists means discovering the panel cannot reach its board on a school m
 | Slice | What it is | What it buys, immediately |
 |---|---|---|
 | **S1** ✅ v2.330.0 | The five holes (§10) | Closes live leaks: any member can read any DM by id, spoof `viewer` to unmask a private-stage child's coordinates, read anyone's whole day, and read every Argyle conversation in the house. **These are true today and independent of every decision in this document.** |
-| **S2** | Widen the capture-prompt filter | A helper who drove your kid to the game can share a photo from it. One filter line (`role in ('parent','adult')` in `run_capture_prompts`) — the rest of the flow already exists. A real new capability for the cost of an afternoon. |
+| **S2** ✅ v2.331.0 | Widen the capture-prompt filter | A helper who drove your kid to the game can share a photo from it. One filter line (`role in ('parent','adult')` in `run_capture_prompts`) — the rest of the flow already exists. A real new capability for the cost of an afternoon. |
 
 ### Phase 2 — the model, dark
 

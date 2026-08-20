@@ -143,6 +143,20 @@ def members_at_event(ev, ev_id, sched=None):
     return present
 
 
+def member_present_at_channel_event(channel, member_id, sched=None) -> bool:
+    """Does the schedule place this member at the event behind this event
+    channel? (family-network S2: moments.contribute = when_present.) False
+    when the event has left the cache — contribution fails closed, and an old
+    thread is no longer an event anyone is at anyway."""
+    sched = sched or storage.get_cached_schedule() or {}
+    ev_id = str(channel.get('event_id') or '')
+    ev = next((e for e in sched.get('events', [])
+               if _base_event_id(str(e.get('id') or '')) == _base_event_id(ev_id)), None)
+    if not ev:
+        return False
+    return any(m['id'] == member_id for m in members_at_event(ev, ev_id, sched))
+
+
 def moment_push_audience(channel, sched=None):
     """Kept-away ADULTS for a moment posted into an event channel: household
     minus helpers, minus kids (their surfaces carry moments — no new pings),
@@ -192,8 +206,13 @@ def run_capture_prompts(send, now=None):
             continue
 
         present = members_at_event(ev, ev_id, sched)
-        present_adults = [m for m in present if m.get('role') in ('parent', 'adult')]
-        if not present_adults:
+        # Family-network S2 (moments.contribute = when_present): the person
+        # holding the camera is whoever the schedule placed there — and when
+        # that is the helper who drove, they are the one who can share it.
+        # Kids stay out of the ask; their presence still counts below.
+        contributors = [m for m in present
+                        if m.get('role') in ('parent', 'adult', 'helper')]
+        if not contributors:
             continue
         present_ids = {m['id'] for m in present}
         if prompt_worthiness(ev, present_ids, today) != 'moment':
@@ -213,7 +232,7 @@ def run_capture_prompts(send, now=None):
         channel = storage.get_or_create_event_channel(
             ev_id, title=title, event_end=str(ev.get('end') or '') or None)
         away_names = ', '.join(m.get('name', '?') for m in kept_away[:3])
-        for m in present_adults:
+        for m in contributors:
             send(m, f"📸 You're at {title}",
                  f"Send the family a moment — {away_names} couldn't be there.",
                  f"/app?open_channel={channel['id']}&compose=moment")

@@ -11281,7 +11281,18 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
             and req.sender_member_id not in (channel.get('member_ids') or []):
         raise HTTPException(status_code=403, detail="Not a member of this chat")
     if sender.get('role') == 'helper' and channel.get('kind') != 'dm':
-        raise HTTPException(status_code=403, detail="Helpers can only post in their DMs")
+        # Family-network S2: contribution is not membership. A helper the
+        # schedule places at an event may hand the family a moment — an
+        # upload tied to the event — without ever reading the thread it lands
+        # in (the read endpoint refuses them). Text-only posts stay barred:
+        # the surface is "share a photo", not a seat in the room.
+        from services import presence as _presence
+        contributing = (channel.get('kind') == 'event' and attachment
+                        and _presence.member_present_at_channel_event(
+                            channel, req.sender_member_id))
+        if not contributing:
+            raise HTTPException(status_code=403,
+                                detail="Helpers can only post in their DMs")
 
     from models.schemas import ChatMessage
     message = ChatMessage(channel_id=channel_id,
