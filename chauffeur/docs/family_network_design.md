@@ -135,7 +135,7 @@ not a rank, the same rule `auth.py` holds for tiers.
 
 ## 6. The facets
 
-Twenty-four. "Justified by" names the person whose want makes it a line; a facet without one
+Twenty-five. "Justified by" names the person whose want makes it a line; a facet without one
 should be deleted at review. "Kind" is how it is enforced and is defined in §7.
 
 ### Calendar & driving
@@ -143,7 +143,8 @@ should be deleted at review. "Kind" is how it is enforced and is defined in §7.
 | Facet | What it is | Kind | Justified by |
 |---|---|---|---|
 | `calendar.events` | what is happening: title, when | **route** | the grandparent — wants to know Emma has volleyball Tuesday |
-| `schedule.drives` | who drives, legs, which car, leave-by times | **field** | …and does *not* need "Dad leaves at 3:42 in the Odyssey" |
+| `schedule.assignment` | who drives this event, per leg, in which car | **field** | the grandparent again — she *does* see this today, on the card |
+| `schedule.logistics` | leave-by times, travel durations, the drive list, the day's chaining | **field** | …and has never seen any of it: the operational picture is the driver's |
 | `schedule.diagnostics` | solver reasoning, unassigned causes, AI notes | **field** | nobody but a parent debugging the schedule |
 | `schedule.driver_calendars` | `driver_events` — a driver's own private calendar | **field** | the driver, who never agreed to publish it household-wide |
 | `schedule.carpool_contacts` | `assist_contacts` — outside people's phone numbers | **field** | the other family, who is not a member here at all |
@@ -308,7 +309,7 @@ Twenty-four facets cannot be twenty-four dropdowns on a member card. Role suppli
   in the overwhelming majority of cases stops there.
 - Facets are grouped by §6's headings, collapsed, each showing a summary phrase: *"Calendar &
   driving: calendar only"*, *"Chat: event threads only"*.
-- Expanded, most rows are a toggle; only `schedule.drives`, `chores.board`,
+- Expanded, most rows are a toggle; only `schedule.assignment`, `schedule.logistics`, `chores.board`,
   `chat.event_threads`, `points.ledger` and `presence.location` offer `own`.
 - The card shows **deviations from the preset**, so an unedited person is one line.
 
@@ -319,7 +320,8 @@ Twenty-four facets cannot be twenty-four dropdowns on a member card. Role suppli
 | Facet | Household adult | Keeping up | Child | Helper | Guest |
 |---|---|---|---|---|---|
 | `calendar.events` | all | all | own | own | — |
-| `schedule.drives` | all | — | own | own | — |
+| `schedule.assignment` | all | — | own | own | — |
+| `schedule.logistics` | all | — | own | own | — |
 | `schedule.diagnostics` | all | — | — | — | — |
 | `schedule.driver_calendars` | all | — | — | — | — |
 | `schedule.carpool_contacts` | all | — | — | — | — |
@@ -353,11 +355,37 @@ Twenty-four facets cannot be twenty-four dropdowns on a member card. Role suppli
 **Two constraints on this table.** First, **Household adult, Child and Helper must reproduce
 today's behaviour exactly** — every row is written to match, and where it does not, that is
 either a deliberate fix (§10) or a table error, which audit mode (§11) is how we tell apart.
-Second, **Keeping up is a genuine change**: today a keeping-up adult sees the whole solved
-schedule because the app had nothing narrower to give them. The preset above hands them
-`calendar.events` and takes `schedule.drives` away. That is a removal of something a person
-can currently do, and it is the household's call to make, not this document's — it is called
-out here rather than buried in a table.
+Second, **Keeping up is the one preset that deliberately changes what a person sees, and the
+household decided it on 2026-08-20.** The decision: *"they do not need all that driving info —
+they want to see the calendar."*
+
+What she sees today, for the record, because this is a removal and removals get written down.
+She has no Drives tab (`isPassengerMode()` is true and `drives` sits in `applyRoleTabs`'s
+hidden list, `app.html:867-897`), but the Family tab is *not* a plain agenda:
+`renderFamilyCard` (`app.html:6280`) decorates every event via `familyDriverChips()` — the
+driver's name, per-leg `Dropoff:`/`Pickup:` labels, the assigned car with an amber `⇄` when it
+is not that car's usual driver, and `⚠ Needs Driver`. So today she sees *"Volleyball 4:00–5:30
+· Emma · Dropoff: Dad · Pickup: Mom · 🚗 Odyssey ⇄"*, and after this she sees *"Volleyball
+4:00–5:30 · Emma"*.
+
+Losing `⚠ Needs Driver` with it is correct rather than incidental: a keeping-up adult has no
+driver record — that is the definition of the preset — so a gap she can read is a gap she
+cannot close.
+
+`schedule.logistics` was already effectively `none` for her and stays there, which is why it is
+a separate facet: **`leave_by` appears nowhere in `app.html`** (be-ready times reach people only
+through push and the wall board), and although `route_edges` is destructured in the shared
+`buildTimeline`, the family branch renders through `renderFamilyDay` → `renderFamilyCard`,
+which draws no travel blocks and no durations. Splitting assignment from logistics keeps the
+deliberate change (`assignment`) separate from the invisible tightening (`logistics`, which
+only stops shipping keys her client never drew).
+
+**Note where the line falls: inside one UI component, not between two.** The same card renders
+`calendar.events` (title, time, location, passengers) and `schedule.assignment` (driver, leg
+and car chips). That is the §5 lesson proved from the other direction — a single card carrying
+two facets — and it is why these are field-level in the client as well as the payload. The
+implementation is correspondingly small: with `schedule.assignment` denied,
+`renderFamilyCard` omits `driverChips` and changes nothing else.
 
 `Guest` is the new role and the answer to §1. Note what it is *not*: a "distant adult". A
 grandparent is an adult on the **Keeping up** preset, adjusted to taste. **The preset is a
@@ -443,12 +471,17 @@ together are the deliverable.
 - Every route in `RULES` names a facet or is explicitly marked as having none; a test fails on
   any route naming neither. (Extends the existing unclassified-route test in `tests/test_auth.py`.)
 - For **Household adult, Child and Helper**, the preset reproduces today's behaviour —
-  asserted per facet, not in aggregate. **Keeping up** is asserted against its *intended* new
-  behaviour, with the deviation from today named in the test.
-- A `guest` reaches `presence.moments` and `pets` and is refused all twenty-two others, at the
+  asserted per facet, not in aggregate. **Keeping up** is asserted against its decided new
+  behaviour (§9), with the deviation from today named in the test.
+- A `guest` reaches `presence.moments` and `pets` and is refused all twenty-three others, at the
   API and not merely in the shell.
-- `calendar.events: all` + `schedule.drives: none` returns titles and times and **no**
-  assignment, edge, car, carpool-contact or driver-calendar key — asserted key by key.
+- `calendar.events: all` + `schedule.assignment: none` + `schedule.logistics: none` returns
+  titles and times and **no** assignment, edge, car, carpool-contact or driver-calendar key —
+  asserted key by key.
+- The **Keeping up** preset renders an agenda card with title, time, location and passengers
+  and **no** driver chip, leg label, car chip or needs-driver warning — the one intentional
+  behaviour change in the table, asserted so it cannot regress by accident in either
+  direction.
 - `meals.plan` with `presence.location: none` returns no `where` and no `away_on_trip`.
 - `/api/home_board` redacts exactly as `/api/schedule` does for the same viewer.
 - Denying `chat.event_threads` does not silently leave the photos reachable via
