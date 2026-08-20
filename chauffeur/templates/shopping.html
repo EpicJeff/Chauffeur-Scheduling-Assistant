@@ -1186,6 +1186,38 @@
                     class="px-3 py-1.5 rounded-full text-sm font-bold bg-gray-800 border border-gray-700 text-gray-400 hover:text-white">
                     + List
                 </button>
+                <!-- Family-network S8: share THIS list with somebody who does
+                     not see lists in general (a keeping-up grandparent). The
+                     grant is additive: an empty set means the whole household,
+                     exactly as it always has. -->
+                <div class="relative" x-show="!isKiosk && activeId">
+                    <button @click="toggleShare()"
+                        class="px-3 py-1.5 rounded-full text-sm font-bold border transition-colors"
+                        :class="((activeList() || {}).shared_with || []).length
+                            ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300'
+                            : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-white'"
+                        :title="((activeList() || {}).shared_with || []).length
+                            ? 'Shared beyond the household defaults'
+                            : 'Share this list with someone specific'">
+                        🔗<span x-show="((activeList() || {}).shared_with || []).length"
+                            x-text="' ' + ((activeList() || {}).shared_with || []).length"></span>
+                    </button>
+                    <div x-show="shareOpen" @click.outside="shareOpen = false" x-cloak
+                        class="absolute z-40 mt-2 right-0 bg-gray-800 border border-gray-700 rounded-xl p-3 w-72 shadow-xl">
+                        <div class="text-xs text-gray-400 mb-2">
+                            Everyone in the household already sees this list.
+                            Ticking a person hands it to them even when their
+                            scope hides lists in general.
+                        </div>
+                        <template x-for="m in shareMembers" :key="m.id">
+                            <label class="flex items-center gap-2 py-1 cursor-pointer">
+                                <input type="checkbox" :checked="isSharedWith(m.id)"
+                                    @change="toggleSharedWith(m.id)" class="accent-pink-500">
+                                <span class="text-sm text-gray-200" x-text="m.name"></span>
+                            </label>
+                        </template>
+                    </div>
+                </div>
             </div>
 
             <!-- The trip (M7). A standing list with nothing to attach it to is
@@ -3136,6 +3168,41 @@
                         'Clear')) return;
                     await fetch(this.apiBase + 'api/shopping/lists/' + this.activeId + '/clear-checked', { method: 'POST' });
                     this.loadItems(true);
+                },
+
+                shareOpen: false,
+                shareMembers: [],
+                activeList() {
+                    return (this.lists || []).find(l => l.id === this.activeId) || null;
+                },
+                async toggleShare() {
+                    this.shareOpen = !this.shareOpen;
+                    if (this.shareOpen && !this.shareMembers.length) {
+                        try {
+                            const r = await fetch(this.apiBase + 'api/members');
+                            this.shareMembers = (r.ok ? await r.json() : [])
+                                .filter(m => !m.system);
+                        } catch (e) { this.shareMembers = []; }
+                    }
+                },
+                isSharedWith(id) {
+                    const l = this.activeList();
+                    return !!(l && (l.shared_with || []).includes(id));
+                },
+                async toggleSharedWith(id) {
+                    const l = this.activeList();
+                    if (!l) return;
+                    const cur = new Set(l.shared_with || []);
+                    if (cur.has(id)) cur.delete(id); else cur.add(id);
+                    const r = await fetch(this.apiBase + 'api/shopping/lists/' + l.id, {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: l.name, store: l.store,
+                                               errand_tag: l.errand_tag,
+                                               is_default: !!l.is_default,
+                                               shared_with: [...cur] })
+                    });
+                    if (r.ok) l.shared_with = [...cur];
+                    else showGlobalAlert('Could not update sharing');
                 },
 
                 async newList() {

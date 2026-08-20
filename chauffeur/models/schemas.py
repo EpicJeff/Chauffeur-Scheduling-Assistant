@@ -1323,6 +1323,13 @@ class ShoppingList(BaseModel):
     # an item added to it belongs to the party regardless of which page the
     # parent was standing on — there is no per-item tagging to keep in sync.
     occasion_id: Optional[str] = None
+    # Family-network S8: the instance grant. EMPTY MEANS EVERYONE — the same
+    # open default the other three allowlists use (a list being seen is
+    # harmless; today's behaviour). Populated, it is an ADDITIVE grant: those
+    # people get this list even when their lists.shopping is none — the
+    # grandmother who gets the grocery list and no other. It never narrows
+    # what the household sees; audiences (trips) do closed, this does open.
+    shared_with: List[str] = Field(default_factory=list)
     created_at: float = Field(default_factory=time.time)
 
 class ShoppingItem(BaseModel):

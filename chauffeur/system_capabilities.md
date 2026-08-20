@@ -3707,6 +3707,16 @@ All 145 `auth.RULES` rows carry an explicit fourth element: a facet from `scope.
 
 Tests: `tests/test_route_facets.py` (5 scenarios).
 
+## The grocery list, handed to one person (v2.337.0 — family-network S8)
+
+`ShoppingList.shared_with` — the instance grant, with the OPEN default the other three allowlists use: **empty means everyone** (today's behaviour, a list being seen is harmless), populated is **additive** — those people get this list even when their `lists.shopping` reach is none. It never narrows what the household sees; audiences (trips) do closed, this does open.
+
+- **Enforced on the `list_id` the routes already carry** (`_shopping_list_refused`): list index filtered per viewer; item reads AND writes checked (a grant to see a list is a grant to USE it — adding milk is the point of being handed the grocery list). Bites only a resolved viewer with reach none who holds no grant; tokenless panels pass (the route guard owns them). Member ids are validated on write — a typo never becomes a grant.
+- **Hand path**: the shopping page's list row gains a 🔗 share control (active list, never on a kiosk) — tick a person to hand them this list; the chip counts grants and goes emerald when any exist.
+- The concrete story: a keeping-up grandparent (`lists.shopping: none`) shares nothing → sees no lists; shared the Kroger list → sees the Kroger list and no other, and can add eggs to it.
+
+Tests: `tests/test_list_sharing.py` (4 scenarios).
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.

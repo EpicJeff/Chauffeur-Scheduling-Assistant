@@ -8890,6 +8890,7 @@ class ShoppingListRequest(BaseModel):
     store: Optional[str] = None
     errand_tag: Optional[str] = None
     is_default: bool = False
+    shared_with: Optional[List[str]] = None   # S8: None = leave unchanged
 
 class ShoppingItemRequest(BaseModel):
     name: str
@@ -8914,10 +8915,40 @@ def _touch_stream():
     global LAST_UPDATE_TIME
     LAST_UPDATE_TIME = time.time()
 
+
+def _shopping_list_refused(list_id: str, request):
+    """Family-network S8: the per-list instance check, on the list_id the
+    route already carries. Bites only a resolved viewer whose lists.shopping
+    reach is none AND who is not on the list's shared_with — for everyone in
+    the household it is a no-op, because empty means everyone and their reach
+    is not none. Tokenless callers (panels) pass; the route guard owns them."""
+    viewer_id = _acting_id(request, None)
+    if not viewer_id:
+        return
+    viewer = storage.get_member(viewer_id)
+    if not viewer:
+        return
+    from services import scope
+    lst = storage.get_shopping_list(list_id) if list_id else None
+    if scope.can_see(viewer, 'lists.shopping',
+                     instance_member_ids=(lst or {}).get('shared_with') or []):
+        return
+    raise HTTPException(status_code=403, detail="This list isn't shared with you")
+
 @app.get("/api/shopping/lists")
-def list_shopping_lists():
+def list_shopping_lists(request: Request = None):
     storage.ensure_default_shopping_list()
     lists = storage.get_shopping_lists()
+    # S8: a viewer whose lists.shopping is none sees exactly the lists shared
+    # with them — the grandmother's grocery list, and no other. Household
+    # members (reach all/own) see everything, exactly as today.
+    viewer_id = _acting_id(request, None)
+    viewer = storage.get_member(viewer_id) if viewer_id else None
+    if viewer:
+        from services import scope
+        lists = [l for l in lists
+                 if scope.can_see(viewer, 'lists.shopping',
+                                  instance_member_ids=l.get('shared_with') or [])]
     for l in lists:
         items = storage.get_shopping_items(l['id'])
         l['open_count'] = sum(1 for i in items if not i.get('is_checked'))
@@ -8946,11 +8977,15 @@ def edit_shopping_list(list_id: str, req: ShoppingListRequest):
         for other in storage.get_shopping_lists():
             if other['id'] != list_id and other.get('is_default'):
                 storage.update_shopping_list(other['id'], {'is_default': False})
-    if not storage.update_shopping_list(list_id, {
+    patch = {
             'name': (req.name or '').strip() or 'Groceries',
             'store': (req.store or '').strip() or None,
             'errand_tag': (req.errand_tag or '').strip().lower() or None,
-            'is_default': req.is_default}):
+            'is_default': req.is_default}
+    if req.shared_with is not None:
+        # S8: only ids that are real members; a typo must not become a grant.
+        patch['shared_with'] = [m for m in req.shared_with if storage.get_member(m)]
+    if not storage.update_shopping_list(list_id, patch):
         raise HTTPException(status_code=404, detail="List not found")
     _touch_stream()
     return storage.get_shopping_list(list_id)
@@ -8962,9 +8997,11 @@ def remove_shopping_list(list_id: str):
     return {"status": "ok"}
 
 @app.get("/api/shopping/items")
-def list_shopping_items(list_id: Optional[str] = None, include_checked: bool = True):
+def list_shopping_items(list_id: Optional[str] = None, include_checked: bool = True,
+                        request: Request = None):
     if not list_id:
         list_id = storage.ensure_default_shopping_list()['id']
+    _shopping_list_refused(list_id, request)
     return storage.get_shopping_items(list_id, include_checked)
 
 @app.get("/api/shopping/runs")
@@ -8977,7 +9014,7 @@ def shopping_item_runs(list_id: Optional[str] = None):
     return _shop.item_runs(list_id or storage.ensure_default_shopping_list()['id'])
 
 @app.post("/api/shopping/items")
-def create_shopping_item(req: ShoppingItemRequest):
+def create_shopping_item(req: ShoppingItemRequest, request: Request = None):
     from models.schemas import ShoppingItem
     name = (req.name or '').strip()
     if not name:
@@ -8985,6 +9022,9 @@ def create_shopping_item(req: ShoppingItemRequest):
     list_id = req.list_id or storage.ensure_default_shopping_list()['id']
     if not storage.get_shopping_list(list_id):
         raise HTTPException(status_code=404, detail="List not found")
+    # S8: a grant to see the list is a grant to USE it — adding milk is the
+    # entire point of being handed the grocery list.
+    _shopping_list_refused(list_id, request)
     # Saying "milk" twice must not put milk on the list twice. A re-add after
     # checking off IS a new need, so only unchecked rows dedupe.
     existing = storage.find_open_shopping_item(list_id, name)
@@ -9011,13 +9051,14 @@ def create_shopping_item(req: ShoppingItemRequest):
     return item
 
 @app.patch("/api/shopping/items/{item_id}")
-def patch_shopping_item(item_id: str, req: ShoppingItemPatch):
+def patch_shopping_item(item_id: str, req: ShoppingItemPatch, request: Request = None):
     """The only item write path. Sends only changed fields, so a check tap and
     a qty edit on different items never race — and re-checking an already
     checked item is an idempotent no-op rather than an error."""
     item = storage.get_shopping_item(item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
+    _shopping_list_refused(item.get('list_id'), request)
     patch = {}
     if req.name is not None and req.name.strip():
         patch['name'] = req.name.strip()
@@ -9033,13 +9074,17 @@ def patch_shopping_item(item_id: str, req: ShoppingItemPatch):
     return storage.get_shopping_item(item_id)
 
 @app.delete("/api/shopping/items/{item_id}")
-def remove_shopping_item(item_id: str):
+def remove_shopping_item(item_id: str, request: Request = None):
+    item = storage.get_shopping_item(item_id)
+    if item:
+        _shopping_list_refused(item.get('list_id'), request)
     storage.delete_shopping_item(item_id)
     _touch_stream()
     return {"status": "ok"}
 
 @app.post("/api/shopping/lists/{list_id}/clear-checked")
-def clear_checked_shopping(list_id: str):
+def clear_checked_shopping(list_id: str, request: Request = None):
+    _shopping_list_refused(list_id, request)
     n = storage.clear_checked_shopping_items(list_id)
     _touch_stream()
     return {"status": "ok", "cleared": n}
