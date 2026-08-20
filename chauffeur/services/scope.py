@@ -490,12 +490,15 @@ SCHEDULE_BLOB_FACETS = {
 }
 
 
-def calendar_event_subjects(ev: dict, members, passengers_by_id) -> set:
-    """Which members a calendar event belongs to — passenger calendar
-    ownership, resolved passenger id, or title hashtag: My Day's binding,
-    minus matched_rules (the §5 grain: events are attributed to people
-    through calendar_ids). One definition for the raw-Google endpoint (S5)
-    and the cached blob (S9)."""
+def calendar_event_subjects(ev: dict, members, passengers_by_id,
+                            matched_rules: Optional[dict] = None) -> set:
+    """Which members a calendar event belongs to — the FULL four-way binding
+    My Day uses: passenger calendar ownership, resolved passenger id, title
+    hashtag, and a matched RULE naming the passenger. One definition for the
+    raw-Google endpoint (S5, which passes no rules — a raw event cannot
+    carry them) and the cached blob (S9, which must pass its own
+    matched_rules or every rule-bound kid event silently vanishes from a
+    narrowed viewer's calendar — the keeping-up blank-tab bug)."""
     from services import family_digest
     subjects = set()
     for m in members:
@@ -506,7 +509,7 @@ def calendar_event_subjects(ev: dict, members, passengers_by_id) -> set:
         p_cals = set(p.get('calendar_ids') or [])
         p_tags = {t.lower() for t in (p.get('hashtags') or [])}
         if family_digest._kid_event_match(ev, str(ev.get('id') or ''), p_id,
-                                          p_cals, p_tags, {}):
+                                          p_cals, p_tags, matched_rules or {}):
             subjects.add(m['id'])
     return subjects
 
@@ -532,8 +535,13 @@ def redact_schedule_blob(blob: dict, viewer: Optional[dict]) -> dict:
         allowed = sees_people(viewer, members)
         if allowed is not None:
             passengers = {p.get('id'): p for p in storage.get_all_passengers()}
+            # Attribution reads the ORIGINAL blob's matched_rules — the key
+            # itself may be redacted away (diagnostics), but a rule-bound
+            # kid event is still the kid's event.
+            rules = blob.get('matched_rules') or {}
             out['events'] = [e for e in (out.get('events') or [])
-                             if calendar_event_subjects(e, members, passengers)
+                             if calendar_event_subjects(e, members, passengers,
+                                                        matched_rules=rules)
                              & allowed]
     return out
 

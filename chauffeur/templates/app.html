@@ -6994,6 +6994,19 @@
             btnNext.disabled = true;
             document.getElementById('current-day-label').textContent = 'Loading...';
 
+            // The anchors are minted by buildTimeline — but a session whose
+            // timeline never built (empty schedule, a view the guard skipped)
+            // reaches here with undefined, and new Date(undefined)
+            // .toISOString() throws OUTSIDE the try below: buttons stay
+            // disabled and the label says Loading... forever. Mint them here
+            // exactly as buildTimeline would.
+            if (!window.globalStartDate || !window.globalDaysToShow
+                    || isNaN(new Date(window.globalStartDate).getTime())) {
+                window.globalStartDate = new Date();
+                window.globalStartDate.setHours(0, 0, 0, 0);
+                window.globalDaysToShow = Math.max(currentDates.length, 1);
+            }
+
             let queryStart, queryEnd;
             if (direction === 'next') {
                 queryStart = new Date(window.globalStartDate);

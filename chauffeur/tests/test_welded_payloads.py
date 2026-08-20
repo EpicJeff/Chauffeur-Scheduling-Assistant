@@ -63,6 +63,8 @@ def _blob():
              'start': '2026-08-21T16:00:00', 'end': '2026-08-21T17:30:00'},
             {'id': 'ev2', 'title': 'Poker night', 'calendar_ids': ['cal_adults'],
              'start': '2026-08-21T20:00:00', 'end': '2026-08-21T22:00:00'},
+            {'id': 'ev3', 'title': 'Karate', 'calendar_ids': ['cal_family'],
+             'start': '2026-08-22T10:00:00', 'end': '2026-08-22T11:00:00'},
         ],
         'assignments': {'ev1': 'd_dad'}, 'ghost_assignments': {},
         'ghost_drivers': [], 'car_assignments': {'ev1': 'car1'},
@@ -71,7 +73,11 @@ def _blob():
                                                        'phone': '555'}],
         'route_edges': {'d_dad': {}}, 'initial_edges': {'d_dad': {}},
         'final_edges': {'d_dad': {}}, 'driver_events': {'d_dad': ['ev1']},
-        'diagnostics': {'note': 'x'}, 'matched_rules': {}, 'unassigned': [],
+        'diagnostics': {'note': 'x'}, 'unassigned': [],
+        # A kid event bound by RULE, not calendar — the binding My Day's
+        # fourth way carries. The keeping-up blank-tab bug was this event
+        # vanishing because attribution ignored matched_rules.
+        'matched_rules': {'ev3': [{'passenger_ids': ['p_emma']}]},
         'calendar_metadata': {}, 'drivers': [], 'passengers': [], 'cars': [],
     }
 
@@ -139,8 +145,9 @@ def scenario_the_blob_drops_the_driving_keys_key_by_key():
     check('diagnostics' not in got and 'matched_rules' not in got,
           "solver reasoning is nobody's but a debugging parent's")
     titles = [e['title'] for e in got['events']]
-    check(titles == ['Volleyball'],
-          f"events narrowed to the children's; adult-only absent: {titles}")
+    check(titles == ['Volleyball', 'Karate'],
+          f"events narrowed to the children's — the RULE-bound one included, "
+          f"the adult-only one absent: {titles}")
 
     full = main.get_schedule(BackgroundTasks(), request=Req(tok['mom']))
     for k in DRIVING_KEYS:
