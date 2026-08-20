@@ -664,34 +664,54 @@ is the arc in one sentence.
 
 ---
 
-## 12. Rollout — audit first, same as S1
+## 12. Rollout — ordered by what it buys, not by architecture
 
-- **S1 — the model, dark.** `services/scope.py`: the facet list, the presets, `reach()` and
-  `can_see()`. Nothing calls it. Tests prove the presets reproduce today for the three roles
-  that must.
-- **S2 — the five holes (§10).** Correctness fixes; they do not wait for the rest.
-- **S3 — route-kind facets on `auth.RULES`**, guard consults them in **audit mode**: records
-  what it would have refused, refuses nothing. Runs until the record is boring. This is most
-  of the facet list and it is the cheap half.
-- **S4 — instance grants**: `shared_with` on `ShoppingList`, following the empty-means-everyone
-  idiom, with the per-list check on `list_id` (already a route parameter, so this is clean).
-- **S5 — event-channel membership** (§8.5): real `member_ids` on event threads, derived from
-  attendance and drive assignment, so `chat.event_threads: own` means something. Schema change.
-- **S6 — the field-kind facets, one assembler at a time**, largest last: `/api/meals/plan`,
-  `/api/members/{id}/day`, `/api/family/locations`, then `/api/schedule` with `/api/home_board`
-  in the same slice because it re-serves the same blob.
-- **S7 — fan-out audiences.** `moment_push_audience` (`presence.py:146`), digest and briefing
-  recipients (`family_digest.py`), `get_channels_for_member` (`storage.py:4904`), message
-  fan-out and `_notify_member_lanes`. No meaningful audit mode — a push not sent is invisible —
-  so tests per site.
-- **S8 — the shell**, driven by the delivered scope map; `isKeepingUpAdult()` retired.
-- **S9 — the editor** (§9). **The hand path is the point**: a scope only an agent or a JSON
-  edit can set is not a feature the household owns.
-- **S10 — the `guest` role**, meaningful only once the rest exists.
-- **The flip** stays the household's act, on evidence, exactly as `auth_enforce` does.
+Audit-mode-first throughout, the discipline `auth_design.md` earned: *flipping before the
+evidence exists means discovering the panel cannot reach its board on a school morning.*
 
-While `auth_enforce` is dark and `service_local_grace` is on, **scope is advisory.** The two
-together are the deliverable.
+### Phase 1 — no model required (start here)
+
+| Slice | What it is | What it buys, immediately |
+|---|---|---|
+| **S1** | The five holes (§10) | Closes live leaks: any member can read any DM by id, spoof `viewer` to unmask a private-stage child's coordinates, read anyone's whole day, and read every Argyle conversation in the house. **These are true today and independent of every decision in this document.** |
+| **S2** | Widen the capture-prompt filter | A helper who drove your kid to the game can share a photo from it. One filter line (`role in ('parent','adult')` in `run_capture_prompts`) — the rest of the flow already exists. A real new capability for the cost of an afternoon. |
+
+### Phase 2 — the model, dark
+
+| Slice | What it is | What it buys |
+|---|---|---|
+| **S3** | `services/scope.py` — facets, presets, `reach()`, `can_see()`, `sees_people`, `audience`. Nothing calls it. | Nothing visible. Buys the tests that prove the presets reproduce today, which is what makes every later slice safe to ship. |
+
+### Phase 3 — the three cases that started this
+
+| Slice | What it is | What it buys |
+|---|---|---|
+| **S4** | `audience` on trips + occasions, closed default, enforced on the **board card** first, then agent and digests. "N trips not shown here" for those who may know. | **The Disney case.** A surprise trip stops appearing on the kitchen wall. Bounded, because the panel is the only surface a child meets a trip on. |
+| **S5** | `sees_people` on the ◍ facets, plus pointing the keeping-up shell at `/api/calendar/events` (already returns titles and times with no driver data). | **The grandparent case.** She sees Emma's and Jack's calendar — what they are up to, nothing about who drives or when anyone leaves. Needs no work on `/api/schedule`. |
+| **S6** | `chat.initiate`, and instance membership honoured over a `none` facet. | **The guest case.** Someone can be added to a conversation and talk freely, and can never start one — the Slack external-guest shape, replacing hardcoded checks in three places. |
+
+### Phase 4 — the expensive half
+
+| Slice | What it is | What it buys |
+|---|---|---|
+| **S7** | Route-kind facets on `auth.RULES`, guard in audit mode until the record is boring. | Most of the facet list, cheaply. This is the bulk of the enforcement and the least interesting to write. |
+| **S8** | Instance grants: `shared_with` on `ShoppingList` (per-list check on `list_id`, already a route parameter). | Share the grocery list with one person without sharing lists in general. |
+| **S9** | Field-kind assemblers, one at a time, largest last: `/api/meals/plan` (a whereabouts feed in disguise), `/api/members/{id}/day`, `/api/family/locations`, then `/api/schedule` **with `/api/home_board` in the same slice** because it re-serves the same blob. | The calendar-without-driving split at the API, and the end of four payloads that answer without asking who is looking. The largest single piece of work in the arc. |
+| **S10** | Fan-out audiences: `moment_push_audience`, digest and briefing recipients, `get_channels_for_member`, message fan-out, `_notify_member_lanes`. | Scope reaches the things the server sends unprompted. No meaningful audit mode — a push not sent is invisible — so tests per site. |
+| **S11** | Event-channel membership (`member_ids` on event threads, today `[]` by construction). | A guest can be added to one event thread without seeing the rest. Schema change. |
+
+### Phase 5 — the surfaces and the people
+
+| Slice | What it is | What it buys |
+|---|---|---|
+| **S12** | Message `context` (`{kind:'drive', event_id, leg_id}`), pre-set from the drive sheet. | "re: Emma's pickup" on the helper's DM — context without a new inbox. Additive: `ChatMessage` already carries `attachment` and `card` dicts. |
+| **S13** | The shell, driven by the delivered scope map; `isKeepingUpAdult()` retired. | The app stops guessing at a scope nobody could state. |
+| **S14** | The editor (§9): presets, grouped disclosure, deviations only. | **The household owns it.** A scope only an agent or a JSON edit can set is not a feature — this is the slice that makes the whole arc real to a person. |
+| **S15** | The `guest` role. | Extended family, at last — meaningful only once everything above exists. |
+| **The flip** | Household's act, on evidence, exactly as `auth_enforce` is. | Advisory becomes enforced. |
+
+**A standing caveat:** while `auth_enforce` is dark and `service_local_grace` is on, **scope is
+advisory.** The two together are the deliverable; either alone is half a door.
 
 ---
 
