@@ -11359,13 +11359,65 @@ def get_messages(channel_id: str, after_ts: Optional[float] = None, limit: int =
         if channel.get('kind') in ('dm', 'group') \
                 and viewer_id not in (channel.get('member_ids') or []):
             raise HTTPException(status_code=403, detail="Not a member of this chat")
-        # Helpers' channel list is DMs-only (get_channels_for_member); the
-        # read now agrees — an event thread is family memory, not a work
-        # channel. Their contribution path is a capture upload (S2), which
-        # posts without ever reading.
-        if viewer.get('role') == 'helper' and channel.get('kind') != 'dm':
-            raise HTTPException(status_code=403, detail="Helpers see only their DMs")
+        # Family-network S11: the read asks the same facets the channel list
+        # answers (S6), and an EXPLICIT membership is honoured over a 'none'
+        # class — a helper or guest let into one event thread reads that
+        # thread and no other. An event thread is family memory; outside
+        # hands reach it by invitation, never by default.
+        from services import scope as _scope
+        from services.storage import _CHANNEL_KIND_FACET
+        if not _scope.can_see(viewer,
+                              _CHANNEL_KIND_FACET.get(channel.get('kind') or '',
+                                                      'chat.groups'),
+                              instance_member_ids=channel.get('member_ids') or []):
+            raise HTTPException(status_code=403, detail="Not yours to read")
     return storage.get_channel_messages(channel_id, after_ts=after_ts, limit=limit)
+
+class ChannelMemberRequest(BaseModel):
+    member_id: str
+
+@app.post("/api/channels/{channel_id}/members")
+def add_channel_member_api(channel_id: str, req: ChannelMemberRequest,
+                           request: Request = None):
+    """Family-network S11: let an outside hand into ONE event thread.
+
+    Parent-held (letting somebody into family memory is administration), and
+    event threads only — a DM's pair and a group's roster are fixed at
+    creation, and the family channel is the household by definition. The
+    grant is exactly what §7 promises: additive over the facet, this thread
+    and no other."""
+    actor_id = _acting_id(request, None)
+    actor = storage.get_member(actor_id) if actor_id else None
+    if not (actor and actor.get('role') == 'parent'):
+        raise HTTPException(status_code=403,
+                            detail="Letting someone into a thread is a parent's act")
+    channel = storage.get_channel(channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    if channel.get('kind') != 'event':
+        raise HTTPException(status_code=400,
+                            detail="Membership edits are for event threads")
+    if not storage.get_member(req.member_id):
+        raise HTTPException(status_code=404, detail="Member not found")
+    return storage.add_channel_member(channel_id, req.member_id)
+
+
+@app.delete("/api/channels/{channel_id}/members/{member_id}")
+def remove_channel_member_api(channel_id: str, member_id: str,
+                              request: Request = None):
+    actor_id = _acting_id(request, None)
+    actor = storage.get_member(actor_id) if actor_id else None
+    if not (actor and actor.get('role') == 'parent'):
+        raise HTTPException(status_code=403,
+                            detail="Letting someone into a thread is a parent's act")
+    channel = storage.get_channel(channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    if channel.get('kind') != 'event':
+        raise HTTPException(status_code=400,
+                            detail="Membership edits are for event threads")
+    return storage.remove_channel_member(channel_id, member_id)
+
 
 class SendMessageRequest(BaseModel):
     sender_member_id: str
@@ -11497,19 +11549,24 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
     if channel.get('kind') in ('dm', 'group') \
             and req.sender_member_id not in (channel.get('member_ids') or []):
         raise HTTPException(status_code=403, detail="Not a member of this chat")
-    if sender.get('role') == 'helper' and channel.get('kind') != 'dm':
-        # Family-network S2: contribution is not membership. A helper the
-        # schedule places at an event may hand the family a moment — an
-        # upload tied to the event — without ever reading the thread it lands
-        # in (the read endpoint refuses them). Text-only posts stay barred:
-        # the surface is "share a photo", not a seat in the room.
+    from services import scope as _scope
+    from services.storage import _CHANNEL_KIND_FACET
+    if not _scope.can_see(sender,
+                          _CHANNEL_KIND_FACET.get(channel.get('kind') or '',
+                                                  'chat.groups'),
+                          instance_member_ids=channel.get('member_ids') or []):
+        # Family-network S11: posting asks the same facet the read does, and
+        # explicit membership is honoured over a 'none' class — a helper or
+        # guest let into an event thread talks freely there (§6B). The one
+        # exception stays S2's: contribution is not membership, so a helper
+        # the schedule places at an event may hand the family a moment — an
+        # upload tied to the event — without ever holding the thread.
         from services import presence as _presence
         contributing = (channel.get('kind') == 'event' and attachment
                         and _presence.member_present_at_channel_event(
                             channel, req.sender_member_id))
         if not contributing:
-            raise HTTPException(status_code=403,
-                                detail="Helpers can only post in their DMs")
+            raise HTTPException(status_code=403, detail="Not yours to post in")
 
     from models.schemas import ChatMessage
     message = ChatMessage(channel_id=channel_id,

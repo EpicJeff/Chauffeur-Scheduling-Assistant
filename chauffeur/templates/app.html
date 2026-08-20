@@ -322,6 +322,16 @@
                         </svg>
                     </button>
                     <div id="thread-title" class="font-bold text-gray-100 text-lg truncate">Chat</div>
+                    <!-- Family-network S11: parents can let an outside hand
+                         (helper/guest) into THIS event thread — additive, this
+                         thread and no other. -->
+                    <button id="thread-guests-btn" onclick="toggleThreadGuests()" style="display:none"
+                        class="ml-auto p-2.5 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700"
+                        title="Let a helper or guest into this thread">👥</button>
+                </div>
+                <div id="thread-guests-panel" class="hidden absolute right-3 top-16 z-30 bg-gray-800 border border-gray-700 rounded-xl p-3 w-72 shadow-xl">
+                    <div class="text-xs text-gray-400 mb-2">Someone you let in sees <b>this thread only</b> — the rest of the family's messages stay the family's.</div>
+                    <div id="thread-guests-list" class="flex flex-col gap-1"></div>
                 </div>
                 <div id="thread-messages" class="flex-1 overflow-y-auto p-4 flex flex-col gap-2"></div>
                 <div id="thread-attach-preview" class="px-3 pt-2 bg-gray-900 border-t border-gray-800" style="display:none">
@@ -2550,7 +2560,52 @@
         // --- Family messaging ---
         let channelsData = [];
         let activeChannelId = null;
+        let threadChannel = null;     // the open thread's channel object
         let helperShareMode = false;  // family-network S2: contribute, never read
+
+        // Family-network S11: the thread-guests picker. Lists only OUTSIDE
+        // hands (helpers/guests) — the household already sees event threads,
+        // so ticking a family member would be noise pretending to be a grant.
+        function toggleThreadGuests() {
+            const panel = document.getElementById('thread-guests-panel');
+            if (!panel) return;
+            if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); return; }
+            const outside = membersData.filter(m => ['helper', 'guest'].includes(m.role));
+            const list = document.getElementById('thread-guests-list');
+            if (!outside.length) {
+                list.innerHTML = '<div class="text-sm text-gray-500 py-1">No helpers or guests on the roster.</div>';
+            } else {
+                const held = new Set((threadChannel && threadChannel.member_ids) || []);
+                list.innerHTML = outside.map(m => `
+                    <label class="flex items-center gap-2 py-1 cursor-pointer">
+                        <input type="checkbox" ${held.has(m.id) ? 'checked' : ''}
+                            onchange="toggleThreadGuest('${m.id}', this.checked)"
+                            class="accent-blue-500">
+                        <span class="text-sm text-gray-200">${m.name}</span>
+                        <span class="text-[10px] text-gray-500 uppercase">${m.role}</span>
+                    </label>`).join('');
+            }
+            panel.classList.remove('hidden');
+        }
+
+        async function toggleThreadGuest(memberId, add) {
+            if (!threadChannel) return;
+            try {
+                const res = await fetch(add
+                    ? `${apiBase}api/channels/${threadChannel.id}/members`
+                    : `${apiBase}api/channels/${threadChannel.id}/members/${memberId}`,
+                    add ? { method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ member_id: memberId }) }
+                        : { method: 'DELETE' });
+                if (!res.ok) throw new Error('membership update failed');
+                const c = await res.json();
+                threadChannel.member_ids = c.member_ids || [];
+            } catch (e) {
+                showGlobalAlert('Could not update who can see this thread');
+                toggleThreadGuests(); toggleThreadGuests();  // redraw from truth
+            }
+        }
         let messagesStream = null;
         let threadMessages = [];      // last rendered thread, for the lightbox
         let momentsStripData = [];    // 📸 strip rows, for moments not in-thread
@@ -2856,6 +2911,13 @@
             // is not membership. Their channel list never contains event
             // threads, so "helper + a channel we can't see" is that surface.
             helperShareMode = currentMemberRole() === 'helper' && (!c || c.kind === 'event');
+            threadChannel = c || { id: channelId, kind: null, member_ids: [] };
+            const guestsBtn = document.getElementById('thread-guests-btn');
+            if (guestsBtn) guestsBtn.style.display =
+                (!helperShareMode && currentMemberRole() === 'parent'
+                 && c && c.kind === 'event') ? 'block' : 'none';
+            const guestsPanel = document.getElementById('thread-guests-panel');
+            if (guestsPanel) guestsPanel.classList.add('hidden');
             document.getElementById('thread-title').textContent =
                 helperShareMode ? 'Share a moment' : (c ? channelDisplay(c).name : 'Chat');
             if (helperShareMode) {
@@ -3660,6 +3722,11 @@
         function closeThread() {
             activeChannelId = null;
             helperShareMode = false;
+            threadChannel = null;
+            const gp = document.getElementById('thread-guests-panel');
+            if (gp) gp.classList.add('hidden');
+            const gb = document.getElementById('thread-guests-btn');
+            if (gb) gb.style.display = 'none';
             clearPendingAttachment();
             document.getElementById('thread-attach-btn').classList.remove('animate-pulse');
             document.getElementById('thread-view').style.display = 'none';

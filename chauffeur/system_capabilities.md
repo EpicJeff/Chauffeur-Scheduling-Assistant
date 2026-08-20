@@ -3738,6 +3738,16 @@ Scope reaches the things the server sends unprompted. No audit mode is possible 
 - **`presence.moment_push_audience`** is scope-shaped: whoever `presence.moments` lets see the feed, minus kids (no new pings), minus everyone provably at the event. Helpers fall out via scope; **a guest is IN** — the moments ping is the one thing their preset gives them. A `sees_people`-narrowed viewer is pinged only when one of THEIR people was there: a moment from the adults' anniversary dinner is not the keeping-up grandparent's.
 - **`_notify_member_lanes` gained a `facet=` parameter**: a broad send carrying facet-bound content names it, and a member whose reach is none is skipped — the server must not push what the app would refuse to show. Today's other sends (car sweep, prep, bus, intake, pairing) are self-targeted or parent-only and pass nothing.
 
+## One thread, and no other (v2.341.0 — family-network S11; Phase 4 complete)
+
+Event threads were `member_ids: []` by construction — household-visible with nothing else expressible. Membership is now real and **additive**: `[]` is still the household (today's behaviour untouched), and a populated list only ever lets OUTSIDE hands in — it never narrows what the household sees.
+
+- **`POST/DELETE /api/channels/{id}/members`** — parent-held (letting somebody into family memory is administration), **event threads only**: a DM's pair and a group's roster are fixed at creation, and the family channel is the household by definition.
+- **Read, write and pings all agree.** `GET messages` asks the same facets the channel list reads (S6) with instance membership honoured — the S1 helper hardcode is retired; `send_message` asks the same facet, so somebody let in **talks freely once inside** (§6B), while S2's moment handover stays the one membership-free exception; S10's ping audience already honoured instance grants, so a granted member is pinged for that thread and no other.
+- **Hand path**: the PWA thread header grows a 👥 button (parents, event threads) — a picker of the roster's helpers and guests, tick to let in, untick to close the door. The panel says exactly what the grant is: this thread only.
+
+Tests: `tests/test_event_membership.py` (5 scenarios).
+
 ## The shelf you snap, the screenshot you already have (v2.338.0, reshaped v2.338.1)
 
 The shopping add-row's photo button carried `capture="environment"`, which mobile obeys by jumping STRAIGHT into the camera — a screenshot already in the gallery was unreachable — while desktop ignores it entirely. v2.338.0 tried a second gallery button; v2.338.1 replaced both with the right shape: **one 📸 button, no `capture`**, so mobile offers its own chooser (camera / photo library / files) and desktop opens the normal dialog. Same `/api/shopping/photo` reader, same staged candidate picker. Images only; the endpoint refuses non-image files (a PDF list would need a converter in front of the vision call — not built).

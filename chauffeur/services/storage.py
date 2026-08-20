@@ -4908,6 +4908,38 @@ _CHANNEL_KIND_FACET = {'family': 'chat.family', 'dm': 'chat.dms',
                        'group': 'chat.groups', 'event': 'chat.event_threads'}
 
 
+def add_channel_member(channel_id: str, member_id: str) -> Optional[dict]:
+    """Family-network S11: let somebody into ONE channel. On event threads
+    member_ids stays ADDITIVE — [] is still household-visible, and a
+    populated list only ever grants outside hands, never narrows the
+    household (can_see treats instance membership as additive over the
+    facet, §7)."""
+    with db_lock:
+        res = chat_channels_table.search(Query().id == channel_id)
+        if not res:
+            return None
+        c = dict(res[0])
+        ids = list(c.get('member_ids') or [])
+        if member_id not in ids:
+            ids.append(member_id)
+            chat_channels_table.update({'member_ids': ids},
+                                       Query().id == channel_id)
+            c['member_ids'] = ids
+        return c
+
+
+def remove_channel_member(channel_id: str, member_id: str) -> Optional[dict]:
+    with db_lock:
+        res = chat_channels_table.search(Query().id == channel_id)
+        if not res:
+            return None
+        c = dict(res[0])
+        ids = [i for i in (c.get('member_ids') or []) if i != member_id]
+        chat_channels_table.update({'member_ids': ids}, Query().id == channel_id)
+        c['member_ids'] = ids
+        return c
+
+
 def get_channels_for_member(member_id: str) -> List[dict]:
     """Family channel + this member's DMs/groups + non-archived event threads,
     filtered by the member's chat scope (family-network S6): a helper's list
