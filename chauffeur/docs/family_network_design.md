@@ -148,8 +148,17 @@ to a family of routes in the `auth.RULES` table.
 | `moments` | the photo/video feed and event threads | — |
 | `whereabouts` | family map, live locations, presence & status | — |
 | `trips` | trip planning and trip boards | — |
-| `house` | cars, music, announce, panels and boards | — |
+| `music` | music playback, shelves, playlists, room announcements | — |
 | `pets` | critters and the arena | — |
+
+**A surface is only a surface if one reach value can be right for it.** That is the test
+the list has to pass, and an earlier draft failed it: a `house` surface bundling cars,
+music, announce and panel editing had no defensible setting for a child, who has music
+today (`app.html:878` hides the Music tab from helpers only) but has no business editing
+boards. Music and announce are one surface because they are the same act — sound in a room.
+Car *chips* ride with `schedule`, where they already render in the kid lens ("Dad is driving
+you in the Minivan"); car *management* and board/panel *editing* are administration, keyed
+on role, not scope.
 
 **DMs are deliberately not a surface.** A direct message is a two-party consent question,
 not a household view, and it stays available between members regardless of scope (subject
@@ -168,11 +177,11 @@ administer*.
 Role supplies the bundle; the person overrides it. This is the stages pattern
 (`stage → CAPABILITIES → capability_overrides`) lifted to the household.
 
-| Role | schedule | chores | meals | chat | moments | whereabouts | trips | house | pets |
+| Role | schedule | chores | meals | chat | moments | whereabouts | trips | music | pets |
 |---|---|---|---|---|---|---|---|---|---|
 | `parent` | all | all | all | all | all | all | all | all | all |
 | `adult` | all | all | all | all | all | all | all | all | all |
-| `child` | own | own | all | all | all | own | all | none | all |
+| `child` | own | own | all | all | all | own | all | all | all |
 | `helper` | own | none | none | none | none | none | none | none | none |
 | **`guest`** *(new)* | none | none | none | none | all | none | none | none | all |
 
@@ -283,7 +292,7 @@ model that treated "kiosk" as a blanket exemption would have to choose between b
 kitchen and exposing the guest room.
 
 Panel defaults reproduce today's `WALL` behaviour: `schedule: all`, `chores: all`,
-`meals: all`, `moments: all`, `house: all`, `trips: all`, `chat: all`, `pets: all`,
+`meals: all`, `moments: all`, `music: all`, `trips: all`, `chat: all`, `pets: all`,
 `whereabouts: all`. A parent narrows the ones they care about. **Reproducing today means a
 panel that works this morning still works after the flip** — the failure this arc must not
 cause is a wall going blank on a school day.
@@ -364,6 +373,10 @@ on, scope is advisory.** The two together are the real deliverable.
    separate extended-family thread? The table says `chat: none` because a guest in the
    family channel changes what the family says in it. A second channel kind is the honest
    answer if it is ever wanted.
-4. **Scope on the agent.** `agent_router` builds the family roster into every prompt and
+4. **Is board/panel editing really administration?** Asserted above, not verified. The
+   boards-editor arc put editing *on* the board, which may mean any member at a panel can
+   rearrange it — in which case it is a surface after all. Same verification the whole
+   defaults table needs.
+5. **Scope on the agent.** `agent_router` builds the family roster into every prompt and
    `_may_use_family_tools` keys on role. Both should consult scope, and a `guest` should
    probably reach no agent tools at all. Worth a slice of its own.
