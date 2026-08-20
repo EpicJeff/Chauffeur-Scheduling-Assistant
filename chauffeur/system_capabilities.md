@@ -3684,6 +3684,18 @@ She sees Emma's and Jack's calendar — what they are up to, nothing about who d
 
 Remaining ◍ assemblers (locations, chores, points, statuses…) pick up `sees_people` in S9, where those payloads are being reshaped anyway. Tests: `tests/test_calendar_scope.py` (4 scenarios).
 
+## Added, not opening (v2.335.0 — family-network S6)
+
+`chat.initiate` (`none | parents | household | anyone`) replaces the three hardcoded helper checks — DM creation, group creation, `get_channels_for_member` — with one capability that varies per person. Initiation is what makes a guest a guest: added by somebody who can, talking freely once inside, never opening one (the Slack external-guest shape).
+
+- **DM/group creation** consult `_refuse_initiate(creator, target)`: `parents` is today's helper rule kept (Argyle, role `assistant`, stays out of a helper's reach); `household` never reaches a helper or a guest (a kid still cannot DM the nanny); `none` opens nothing. Adding people to a group IS initiating with each of them. Both endpoints resolve the creator from the token (S1/S2 discipline).
+- **`scope.may_be_added(member, facet)`** is where `none` and `invited` finally differ: a hard `none` (a helper's `chat.groups`) can never sit in an instance; `invited` (a guest) is exactly the addable-but-cannot-discover level.
+- **The channel list reads the same facets** (`get_channels_for_member` + `_CHANNEL_KIND_FACET`): a helper's list is DMs-only exactly as before; a guest's list is exactly the rooms they were let into — instance grants are additive over a `none` class. Membership still does the work for dm/group; the facet only gates discovery.
+- **One documented delta**, straight from the §9 preset table: a household adult (initiate `anyone`) may now open a DM with a helper; the old hardcode refused every helper pairing that wasn't a parent. Kids and helpers keep today's rules exactly.
+- **`scope.preset_for` reads legacy rows the way `ensure_member_roles()` backfills them** (no role → adult/child by `is_child`); an *unknown* role still fails closed to guest — for a novel role, the failure to survive is over-granting.
+
+Tests: `tests/test_chat_initiate.py` (5 scenarios) + `test_messaging.py` unchanged assertions.
+
 ## Security — how the house is locked (auth arc, standing reference)
 
 The arc in one paragraph: the app is published to the public internet by the cloudflared add-on. Identity was client-asserted and 5 of 417 routes checked anything; the arc (S1–S8, v2.247.0–v2.265.0, brief in `docs/auth_design.md`) made **the token the identity everywhere**, behind a default-deny table that shipped dark and flips on evidence.

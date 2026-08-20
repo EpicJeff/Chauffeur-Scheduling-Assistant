@@ -231,11 +231,19 @@ _ROLE_PRESETS = {'parent': 'household_adult', 'adult': 'household_adult',
 
 
 def preset_for(member: dict) -> str:
-    """The preset governing this member: their explicit pick, else role's."""
+    """The preset governing this member: their explicit pick, else role's.
+
+    A record with NO role reads the way ensure_member_roles() would backfill
+    it (is_child → child, else adult) — legacy rows must not quietly become
+    guests. A role this module has never heard of DOES read as guest: for a
+    novel role, the failure to survive is over-granting, not under."""
     chosen = ((member.get('scope') or {}).get('preset') or '').strip()
     if chosen in PRESETS:
         return chosen
-    return _ROLE_PRESETS.get(member.get('role'), 'guest')
+    role = member.get('role')
+    if not role:
+        role = 'child' if member.get('is_child') else 'adult'
+    return _ROLE_PRESETS.get(role, 'guest')
 
 
 def _table_value(member: dict, facet: str) -> str:
@@ -276,6 +284,15 @@ def can_see(member: dict, facet: str,
     if reach(member, facet) != NONE:
         return True
     return bool(instance_member_ids) and member.get('id') in instance_member_ids
+
+
+def may_be_added(member: dict, facet: str) -> bool:
+    """May this person be PUT INTO an instance of this facet (a group, an
+    event thread)? Every level except a hard 'none' qualifies — 'invited' is
+    exactly the addable-but-cannot-discover level. This is where 'none' and
+    'invited' actually differ: a guest is addable and then talks freely; a
+    helper's group chat is never (their channel is a DM with a parent)."""
+    return _table_value(member, facet) != NONE
 
 
 def chat_initiate(member: dict) -> str:

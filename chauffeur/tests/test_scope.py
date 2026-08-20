@@ -137,6 +137,18 @@ def scenario_overrides_deviate_without_replacing_the_preset():
           "a junk override is ignored, never obeyed")
 
 
+def scenario_a_roleless_record_is_not_a_guest():
+    """Legacy rows predate roles; ensure_member_roles() backfills them, and
+    preset_for reads them the same way. An UNKNOWN role stays a guest — for
+    a novel role the failure to survive is over-granting."""
+    check(scope.preset_for({'id': 'x'}) == 'household_adult',
+          "no role reads as the adult backfill")
+    check(scope.preset_for({'id': 'x', 'is_child': True}) == 'child',
+          "no role + is_child reads as the child backfill")
+    check(scope.preset_for({'id': 'x', 'role': 'assistant'}) == 'guest',
+          "a role this module never heard of fails closed")
+
+
 def scenario_sees_people_intents():
     fam = [_m('parent', 'p'), _m('child', 'c1'), _m('child', 'c2')]
     check(scope.sees_people(_m('adult', 'a'), fam) is None,
@@ -231,6 +243,7 @@ SCENARIOS = [
     scenario_invited_honours_instance_membership,
     scenario_keeping_up_is_the_decided_deviation,
     scenario_overrides_deviate_without_replacing_the_preset,
+    scenario_a_roleless_record_is_not_a_guest,
     scenario_sees_people_intents,
     scenario_sees_people_driven_comes_from_the_schedule,
     scenario_filter_subjects_only_bites_subject_facets,

@@ -4901,21 +4901,33 @@ def get_or_create_event_channel(event_id: str, title: str = '',
         chat_channels_table.insert(channel)
         return channel
 
+# Channel kind → the chat facet that gates its DISCOVERY (family-network S6,
+# §6A). Membership still does the work for dm/group — 'all' on chat.dms means
+# "your DMs are yours", never "read everyone's".
+_CHANNEL_KIND_FACET = {'family': 'chat.family', 'dm': 'chat.dms',
+                       'group': 'chat.groups', 'event': 'chat.event_threads'}
+
+
 def get_channels_for_member(member_id: str) -> List[dict]:
-    """Family channel + this member's DMs/groups + non-archived event threads.
-    Helpers (external drivers/nannies) see only their DMs — no family channel,
-    groups, or event threads. Event threads whose event ended >7 days ago are
+    """Family channel + this member's DMs/groups + non-archived event threads,
+    filtered by the member's chat scope (family-network S6): a helper's list
+    is DMs-only exactly as before (chat.family/groups/event_threads: none),
+    and a member whose class level is 'none' still sees a channel they are an
+    EXPLICIT member of — instance grants are additive, the Slack
+    external-guest shape. Event threads whose event ended >7 days ago are
     archived on the way out."""
     from datetime import datetime, timedelta, timezone
+    from services import scope
     member = get_member(member_id)
-    is_helper = bool(member) and member.get('role') == 'helper'
     with db_lock:
         out = []
         for c in chat_channels_table.all():
             c = dict(c)
-            if is_helper and c.get('kind') != 'dm':
-                continue
             if c.get('kind') in ('dm', 'group') and member_id not in (c.get('member_ids') or []):
+                continue  # membership does the work; the facet gates discovery
+            if member is not None and not scope.can_see(
+                    member, _CHANNEL_KIND_FACET.get(c.get('kind') or '', 'chat.groups'),
+                    instance_member_ids=c.get('member_ids') or []):
                 continue
             if c.get('kind') == 'event' and not c.get('archived') and c.get('event_end'):
                 try:

@@ -11140,13 +11140,43 @@ class DmChannelRequest(BaseModel):
     member_id: str
     other_member_id: str
 
+def _refuse_initiate(initiator: dict, target: dict):
+    """Family-network S6 (§6B): may `initiator` OPEN a conversation with
+    `target`? This replaces the hardcoded helper checks — the level now
+    comes from scope.chat_initiate and can vary per person.
+
+    'parents' is today's helper rule kept (and Argyle, role 'assistant',
+    stays out of a helper's reach). 'household' never reaches a helper or a
+    guest — a kid still cannot DM the nanny; relaying through the family
+    channel remains the path. 'none' is the guest: added by somebody who
+    can, talking freely once inside, never opening one. One deliberate
+    delta, straight from the §9 preset table: a household ADULT (initiate:
+    anyone) may now open a DM with a helper — the old hardcode refused
+    every helper pairing that was not a parent."""
+    from services import scope
+    lvl = scope.chat_initiate(initiator)
+    who = initiator.get('name') or 'This member'
+    if lvl == 'none':
+        raise HTTPException(status_code=403,
+                            detail=f"{who} can join conversations they're added to, "
+                                   "but can't start one")
+    if lvl == 'parents' and target.get('role') != 'parent':
+        raise HTTPException(status_code=403,
+                            detail="Helpers can only exchange messages with parents")
+    if lvl == 'household' and target.get('role') in ('helper', 'guest'):
+        raise HTTPException(status_code=403,
+                            detail=f"{who} can't start a conversation outside the household")
+
+
 @app.post("/api/channels/dm")
-def create_dm_channel(req: DmChannelRequest):
+def create_dm_channel(req: DmChannelRequest, request: Request = None):
+    # S6: the opener is whoever the token says (S1/S2 discipline).
+    req.member_id = _acting_id(request, req.member_id)
     if req.member_id == req.other_member_id:
         raise HTTPException(status_code=400, detail="Cannot DM yourself")
     # The assistant is a valid DM peer (created lazily; every message in an
     # Argyle DM routes to the agent — no @mention needed). Helpers still
-    # can't: their DMs are parent-only and Argyle isn't a parent.
+    # can't: their initiate level is 'parents' and Argyle isn't a parent.
     if storage.ARGYLE_MEMBER_ID in (req.member_id, req.other_member_id):
         storage.ensure_argyle_member()
     pair = []
@@ -11155,11 +11185,7 @@ def create_dm_channel(req: DmChannelRequest):
         if not member:
             raise HTTPException(status_code=404, detail=f"Member {mid} not found")
         pair.append(member)
-    # Helpers (external drivers/nannies) may only DM parents.
-    for a, b in ((pair[0], pair[1]), (pair[1], pair[0])):
-        if a.get('role') == 'helper' and b.get('role') != 'parent':
-            raise HTTPException(status_code=403,
-                                detail="Helpers can only exchange messages with parents")
+    _refuse_initiate(pair[0], pair[1])
     return storage.get_or_create_dm(req.member_id, req.other_member_id)
 
 class GroupChannelRequest(BaseModel):
@@ -11168,22 +11194,36 @@ class GroupChannelRequest(BaseModel):
     title: str = ""
 
 @app.post("/api/channels/group")
-def create_group_channel(req: GroupChannelRequest):
+def create_group_channel(req: GroupChannelRequest, request: Request = None):
+    from services import scope
+    # S6: the creator is whoever the token says, and adding people to a
+    # group IS initiating with each of them — the creator's chat.initiate
+    # level bounds who may be in the list.
+    req.member_id = _acting_id(request, req.member_id)
     ids = sorted(set(req.member_ids) | {req.member_id})
     if len(ids) < 3:
         raise HTTPException(status_code=400,
                             detail="Groups need at least 3 people — use a DM instead")
     if storage.ARGYLE_MEMBER_ID in ids:
         storage.ensure_argyle_member()
+    creator = None
+    members = []
     for mid in ids:
         member = storage.get_member(mid)
         if not member:
             raise HTTPException(status_code=404, detail=f"Member {mid} not found")
-        # Helpers stay outside group chats entirely (same reasoning as the
-        # family channel): their channel is a DM with a parent.
-        if member.get('role') == 'helper':
+        # A hard 'none' on chat.groups can never sit in one — helpers, whose
+        # channel is a DM with a parent. 'invited' (a guest) is exactly the
+        # addable-but-cannot-discover level, so it passes here.
+        if not scope.may_be_added(member, 'chat.groups'):
             raise HTTPException(status_code=403,
                                 detail="Helpers can't join group chats — message them directly")
+        members.append(member)
+        if mid == req.member_id:
+            creator = member
+    for member in members:
+        if member['id'] != req.member_id:
+            _refuse_initiate(creator, member)
     return storage.get_or_create_group(ids, req.title.strip())
 
 class EventChannelRequest(BaseModel):
