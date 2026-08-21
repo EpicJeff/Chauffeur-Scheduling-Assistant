@@ -1280,12 +1280,35 @@
             };
         }
 
+        // The item's inside (one level of steps). Drawn only while the item
+        // is still open — a finished backpack does not need its packing list
+        // — and each step is its own tap. The ITEM stays the unit streaks
+        // and XP count; the server completes it when the last step ticks.
+        function kidStepRows(item, interactive) {
+            const steps = item.steps || [];
+            if (!steps.length || item.checked) return '';
+            const done = new Set(item.steps_checked || []);
+            const sh = kidShell();
+            return `
+                <div class="${sh.tight ? 'pl-8 pr-3 pb-2' : 'pl-10 pr-4 pb-3'} space-y-1">
+                    ${steps.map(s => `
+                    <label class="flex items-center gap-2.5 py-1 ${interactive ? 'cursor-pointer active:opacity-70' : 'opacity-70'}">
+                        <input type="checkbox" ${done.has(s.id) ? 'checked' : ''} ${interactive ? '' : 'disabled'}
+                            onchange="toggleRoutineStep('${item.id}', '${s.id}', this.checked)"
+                            class="w-5 h-5 rounded-full shrink-0" style="accent-color:${kidAccent()}">
+                        ${s.emoji ? `<span class="text-base shrink-0">${s.emoji}</span>` : ''}
+                        <span class="text-sm font-bold ${done.has(s.id) ? 'text-gray-500 line-through' : 'text-gray-300'}">${mfEscape(s.title)}</span>
+                    </label>`).join('')}
+                </div>`;
+        }
+
         function kidTaskRow(item, interactive) {
             const sh = kidShell();
             const rowGlyph = KID_GLYPH_ROW[sh.glyph];
             const pad = sh.tight ? 'py-2 px-3' : 'py-3 px-4';
             const box = sh.tight ? 'w-6 h-6' : 'w-8 h-8';
             return `
+                <div>
                 <label class="flex items-center gap-3 ${pad} ${interactive ? 'cursor-pointer active:opacity-70' : 'opacity-70'}">
                     ${rowGlyph ? `<span class="${rowGlyph} text-center shrink-0">${kidGlyph(item)}</span>` : ''}
                     <span class="flex-1 text-[${sh.tight ? 15 : 16}px] font-bold ${item.checked ? 'text-gray-500 line-through' : 'text-gray-100'}">${mfEscape(item.title)}</span>
@@ -1293,7 +1316,34 @@
                     <input type="checkbox" ${item.checked ? 'checked' : ''} ${interactive ? '' : 'disabled'}
                         onchange="toggleRoutine('${item.id}', this.checked)"
                         class="${box} rounded-full shrink-0" style="accent-color:${kidAccent()}">
-                </label>`;
+                </label>
+                ${kidStepRows(item, interactive)}
+                </div>`;
+        }
+
+        async function toggleRoutineStep(routineId, stepId, checked) {
+            try {
+                const res = await fetch(`${apiBase}api/routines/${routineId}/steps/check`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: selectedMemberId,
+                                           step_id: stepId, checked: checked })
+                });
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                if (data.item_checked) {
+                    // The last step finished the ITEM — celebrate exactly as a
+                    // direct tap would have.
+                    maybeCelebrateStatus('routine', data.tier_status);
+                    if (typeof celebrateAvatarUnlocks !== 'undefined') {
+                        const me = members.find(m => m.id === selectedMemberId);
+                        celebrateAvatarUnlocks(me ? me.name : '', data.avatar_unlocked);
+                    }
+                    if (data.streak && data.streak.today_complete) {
+                        showGlobalAlert(`Routine complete! 🔥 ${data.streak.current} day streak`);
+                    }
+                }
+                renderMyDay();
+            } catch (e) { showGlobalAlert('Could not update'); }
         }
 
         function kidBucketSection(bucket, items, interactive) {
@@ -1305,15 +1355,23 @@
             const firstOpen = (interactive && heroPx) ? items.find(i => !i.checked) : null;
             const hero = !firstOpen ? '' : `
                 <div class="rounded-2xl overflow-hidden border border-gray-800 bg-gray-900 mb-2">
-                    <div class="flex items-center justify-center ${sh.tight ? 'py-3' : 'py-6'}" style="background:${kidTint(0.16)}">
+                    ${firstOpen.image_id
+                        // A photo beats any glyph for a pre-reader: THEIR
+                        // backpack, THEIR cleats — drawn where the big glyph
+                        // would have been.
+                        ? `<img src="${apiBase}api/media/${firstOpen.image_id}" alt=""
+                              class="w-full object-cover ${sh.tight ? 'max-h-32' : 'max-h-48'}">`
+                        : `<div class="flex items-center justify-center ${sh.tight ? 'py-3' : 'py-6'}" style="background:${kidTint(0.16)}">
                         <span style="font-size:${heroPx}px;line-height:1">${kidGlyph(firstOpen)}</span>
-                    </div>
+                    </div>`}
                     <label class="flex items-center gap-3 ${sh.tight ? 'p-3' : 'p-4'} cursor-pointer active:opacity-70">
                         <span class="flex-1 ${sh.tight ? 'text-base' : 'text-lg'} font-black text-gray-100">${mfEscape(firstOpen.title)}</span>
                         ${firstOpen.time_of_day ? `<span class="text-xs font-bold text-gray-500">${formatClock(firstOpen.time_of_day)}</span>` : ''}
                         <input type="checkbox" onchange="toggleRoutine('${firstOpen.id}', this.checked)"
                             class="${sh.tight ? 'w-7 h-7' : 'w-9 h-9'} rounded-full shrink-0" style="accent-color:${kidAccent()}">
                     </label>
+                    ${firstOpen.description ? `<div class="px-4 pb-2 -mt-1 text-sm text-gray-400">${mfEscape(firstOpen.description)}</div>` : ''}
+                    ${kidStepRows(firstOpen, interactive)}
                 </div>`;
             const rest = items.filter(i => i !== firstOpen);
             const rows = !rest.length ? '' : `
@@ -4232,6 +4290,8 @@
                 <label class="flex items-center gap-3 py-2.5 px-4 bg-gray-900 border border-gray-800 rounded-xl cursor-pointer active:opacity-70">
                     <input type="checkbox" onchange="houseCheckItem('${i.id}', this.checked)"
                         class="w-6 h-6 rounded-full accent-pink-500 shrink-0">
+                    ${i.image_id ? `<img src="${apiBase}api/media/${i.image_id}" alt=""
+                        class="w-9 h-9 rounded-lg object-cover border border-gray-700 shrink-0">` : ''}
                     <span class="flex-1 text-[15px] font-bold text-gray-100">${mfEscape(i.name)}${i.qty
                         ? ` <span class="text-gray-500 font-normal">(${mfEscape(i.qty)})</span>` : ''}</span>
                 </label>`).join('');

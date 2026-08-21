@@ -7388,6 +7388,39 @@ class RoutineRequest(BaseModel):
     emoji: Optional[str] = None
     time_of_day: Optional[str] = None
     days_of_week: list = []
+    # The item's inside (one level): [{'id'?, 'title', 'emoji'?}] — server
+    # assigns missing ids, so an editor can add rows without inventing them.
+    steps: Optional[list] = None
+    description: Optional[str] = None
+    image_id: Optional[str] = None
+
+_MEDIA_ID_FIELD_RE = re.compile(r'^[0-9a-f]{32}\.[a-z0-9]{2,5}$')
+_MAX_ROUTINE_STEPS = 12   # a kid screen's worth; more is a routine, not a step list
+
+def _clean_media_id(image_id) -> Optional[str]:
+    v = (image_id or '').strip()
+    if not v:
+        return None
+    if not _MEDIA_ID_FIELD_RE.match(v):
+        raise HTTPException(status_code=400, detail="Bad image id")
+    return v
+
+def _clean_routine_steps(steps) -> list:
+    if not steps:
+        return []
+    if len(steps) > _MAX_ROUTINE_STEPS:
+        raise HTTPException(status_code=400,
+                            detail=f"At most {_MAX_ROUTINE_STEPS} steps — more than "
+                                   "that wants to be its own routine")
+    out = []
+    for s in steps:
+        title = ((s or {}).get('title') or '').strip()
+        if not title:
+            continue
+        out.append({'id': ((s or {}).get('id') or '').strip() or _uuid.uuid4().hex[:8],
+                    'title': title,
+                    'emoji': _clean_emoji((s or {}).get('emoji'))})
+    return out
 
 def _validate_routine(req):
     if not (req.title or '').strip():
@@ -7415,7 +7448,10 @@ def create_routine(req: RoutineRequest):
     item = RoutineItem(member_id=req.member_id, title=req.title.strip(),
                        emoji=_clean_emoji(req.emoji),
                        time_of_day=req.time_of_day or None,
-                       days_of_week=sorted(set(req.days_of_week or []))).model_dump()
+                       days_of_week=sorted(set(req.days_of_week or [])),
+                       steps=_clean_routine_steps(req.steps),
+                       description=(req.description or '').strip() or None,
+                       image_id=_clean_media_id(req.image_id)).model_dump()
     storage.add_routine(item)
     return item
 
@@ -7426,7 +7462,10 @@ def edit_routine(routine_id: str, req: RoutineRequest):
             'member_id': req.member_id, 'title': req.title.strip(),
             'emoji': _clean_emoji(req.emoji),
             'time_of_day': req.time_of_day or None,
-            'days_of_week': sorted(set(req.days_of_week or []))}):
+            'days_of_week': sorted(set(req.days_of_week or [])),
+            'steps': _clean_routine_steps(req.steps),
+            'description': (req.description or '').strip() or None,
+            'image_id': _clean_media_id(req.image_id)}):
         raise HTTPException(status_code=404, detail="Routine not found")
     return {"status": "updated"}
 
@@ -7485,6 +7524,12 @@ def copy_routines(req: RoutineCopyRequest):
             emoji=r.get('emoji') or None,
             time_of_day=r.get('time_of_day') or None,
             days_of_week=sorted(set(r.get('days_of_week') or [])),
+            # Content copies whole: the steps, the description, the photo
+            # (a shared media id — same backpack). Checks never copy; step
+            # checks key by the NEW routine id, so histories stay apart.
+            steps=[dict(s) for s in (r.get('steps') or [])],
+            description=r.get('description') or None,
+            image_id=r.get('image_id') or None,
             copied_from=r.get('id')).model_dump())
         created += 1
     return {"created": created, "skipped": skipped}
@@ -7652,10 +7697,37 @@ def check_routine(routine_id: str, req: RoutineCheckRequest):
     date_str = req.date or _dt.date.today().isoformat()
     if not storage.set_routine_check(routine_id, req.member_id, date_str, req.checked):
         raise HTTPException(status_code=403, detail="Not your routine")
+    # Big-motion forgiveness: the parent row carries its steps with it,
+    # both directions.
+    storage.sync_routine_step_rows(routine_id, date_str, req.checked)
     return {'status': 'ok', 'streak': storage.compute_streak(req.member_id),
             'tier_status': status_tiers.compute_member_status(req.member_id, 'routine'),
             # Newly earned wardrobe, so the UI can celebrate it at the tap that
             # earned it. Empty list on an untick -- the ledger never gives back.
+            'avatar_unlocked': _avatar_unlock_payload(
+                req.member_id, storage.sync_avatar_unlocks(req.member_id))}
+
+class RoutineStepCheckRequest(BaseModel):
+    member_id: str
+    step_id: str
+    checked: bool = True
+    date: Optional[str] = None
+
+@app.post("/api/routines/{routine_id}/steps/check")
+def check_routine_step(routine_id: str, req: RoutineStepCheckRequest):
+    """Tick one step inside a routine item. The item completes itself when
+    the last step ticks (XP and streak fire exactly as a direct tap — steps
+    themselves mint nothing) and un-completes when any step unticks."""
+    import datetime as _dt
+    from services import status_tiers
+    date_str = req.date or _dt.date.today().isoformat()
+    res = storage.set_routine_step_check(routine_id, req.member_id, date_str,
+                                         req.step_id, req.checked)
+    if res is None:
+        raise HTTPException(status_code=403, detail="Not your routine (or no such step)")
+    return {'status': 'ok', **res,
+            'streak': storage.compute_streak(req.member_id),
+            'tier_status': status_tiers.compute_member_status(req.member_id, 'routine'),
             'avatar_unlocked': _avatar_unlock_payload(
                 req.member_id, storage.sync_avatar_unlocks(req.member_id))}
 
@@ -9102,12 +9174,14 @@ class ShoppingItemRequest(BaseModel):
     list_id: Optional[str] = None      # omitted -> the default list
     added_by: Optional[str] = None     # member id (attribution only)
     added_via: str = 'manual'
+    image_id: Optional[str] = None     # "buy THIS one" — /api/media/{id}
 
 class ShoppingItemPatch(BaseModel):
     # Every field optional: a PATCH carries only what this caller changed.
     name: Optional[str] = None
     qty: Optional[str] = None
     note: Optional[str] = None
+    image_id: Optional[str] = None     # '' clears, id sets
     is_checked: Optional[bool] = None
     member_id: Optional[str] = None    # who tapped (PWA per-action identity)
 
@@ -9330,7 +9404,8 @@ def create_shopping_item(req: ShoppingItemRequest, request: Request = None):
                         note=(req.note or '').strip() or None,
                         added_by=req.added_by,
                         added_via=req.added_via if req.added_via in _SHOPPING_VIA
-                        else 'manual').model_dump()
+                        else 'manual',
+                        image_id=_clean_media_id(req.image_id)).model_dump()
     storage.add_shopping_item(item)
     _touch_stream()
     return item
@@ -9351,6 +9426,8 @@ def patch_shopping_item(item_id: str, req: ShoppingItemPatch, request: Request =
         patch['qty'] = req.qty.strip() or None
     if req.note is not None:
         patch['note'] = req.note.strip() or None
+    if req.image_id is not None:
+        patch['image_id'] = _clean_media_id(req.image_id)
     if patch:
         storage.update_shopping_item(item_id, patch)
     if req.is_checked is not None:
@@ -12315,6 +12392,19 @@ async def upload_moment_media(media: UploadFile = File(...)):
     if not saved:
         raise HTTPException(status_code=400, detail="Unsupported video format")
     return {'kind': 'video', 'url': saved['url'], 'mime': saved['mime']}
+
+@app.post("/api/media/photo")
+def upload_media_photo(body: dict = Body(default={})):
+    """One photo in as a data URL, one served id out — the small generic
+    pattern for anything that wants a picture attached (routine items,
+    shopping items). Same store the moments photos live in."""
+    data_url = str(body.get('data_url') or '')
+    if len(data_url) > 12 * 1024 * 1024:   # ~8MB of image after base64 overhead
+        raise HTTPException(status_code=413, detail="Image too large (8MB max)")
+    saved = storage.save_photo_data_url(data_url)
+    if not saved:
+        raise HTTPException(status_code=400, detail="Not a usable image")
+    return saved
 
 @app.get("/api/media/{media_id}")
 def serve_media_file(media_id: str, request: Request):

@@ -570,9 +570,10 @@ def scenario_removing_an_item_actually_removes_it():
                 row = page.locator(f'div.group:has-text("{target}")').first
                 check(row.count() == 1, f"{path} never drew {target}")
                 row.hover()
-                # The ✕ is hover-revealed; `title` is what distinguishes it
-                # from the tick beside it.
-                row.locator('button[title]').first.click()
+                # The ✕ is hover-revealed; its `title` is what distinguishes
+                # it from the tick — and from the 📷 attach button, which also
+                # carries a title now.
+                row.locator('button[title^="Remove"]').first.click()
                 page.wait_for_timeout(600)
                 page.locator('button:text-is("Remove")').last.click()
                 page.wait_for_timeout(1500)

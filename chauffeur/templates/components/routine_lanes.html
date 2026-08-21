@@ -132,6 +132,29 @@
                                                     {{ routine_row() }}
                                                 </div>
                                             </template>
+                                            <!-- The item's steps, while it is still open. Each
+                                                 is its own tap on an interactive lane; the item
+                                                 completes itself when the last one ticks (the
+                                                 server owns that — steps mint nothing). -->
+                                            <template x-if="(it.steps || []).length && !it.checked">
+                                                <div class="pl-9 pr-2 pt-1 space-y-1">
+                                                    <template x-for="st in it.steps" :key="'rst-' + it.id + '-' + st.id">
+                                                        <template x-if="{{ interactive }}">
+                                                            <button type="button"
+                                                                @click="toggleRoutineStepCheck(it.id, s.member_id, st.id,
+                                                                        !(it.steps_checked || []).includes(st.id))"
+                                                                class="w-full text-left flex items-center gap-2 py-0.5">
+                                                                <span class="w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 text-[10px] font-bold"
+                                                                    :class="(it.steps_checked || []).includes(st.id) ? 'bg-green-500 border-green-500 text-white' : 'border-gray-600 text-transparent'">✓</span>
+                                                                <span x-show="st.emoji" class="text-sm" x-text="st.emoji"></span>
+                                                                <span class="text-xs font-semibold"
+                                                                    :class="(it.steps_checked || []).includes(st.id) ? 'text-gray-500 line-through' : 'text-gray-300'"
+                                                                    x-text="st.title"></span>
+                                                            </button>
+                                                        </template>
+                                                    </template>
+                                                </div>
+                                            </template>
                                         </div>
                                     </template>
                                     <div x-show="dayItemsFor(s.member_id).length === 0"
@@ -216,6 +239,30 @@
                 await this.loadAllDayItems();
             },
             dayItemsFor(memberId) { return this.dayItems[memberId] || []; },
+
+            async toggleRoutineStepCheck(routineId, memberId, stepId, checked) {
+                const res = await fetch(`${apiBase}api/routines/${routineId}/steps/check`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: memberId, step_id: stepId,
+                                           checked: checked })
+                });
+                if (!res.ok) {
+                    const e = await res.json().catch(() => ({}));
+                    showGlobalAlert(e.detail || 'Could not update');
+                } else {
+                    const data = await res.json().catch(() => ({}));
+                    if (data.item_checked) {
+                        // The last step finished the ITEM — the same moment a
+                        // direct tap makes, so the same hooks fire.
+                        const s = this.streaks.find(x => x.member_id === memberId);
+                        this.lanesOnChecked(memberId, s ? s.name : '', data.tier_status);
+                        if (typeof celebrateAvatarUnlocks !== 'undefined') {
+                            celebrateAvatarUnlocks(s ? s.name : '', data.avatar_unlocked);
+                        }
+                    }
+                }
+                await this.reloadLanes();
+            },
 
             async toggleRoutineCheck(routineId, memberId, checked) {
                 const res = await fetch(`${apiBase}api/routines/${routineId}/check`, {

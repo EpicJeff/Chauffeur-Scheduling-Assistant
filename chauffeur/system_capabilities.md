@@ -4491,3 +4491,40 @@ the opposite of all three:
   sick" — the agent refuses a kid out loud).
 
 Tests: `tests/test_cancellations.py` (10 scenarios).
+
+## A routine item gets an inside (v2.364.0 — steps, descriptions, photos)
+
+"Pack backpack" hiding five real things was the failure mode routines exist
+to prevent: the reminder fired and the water bottle still got forgotten.
+Built as two concrete additions, deliberately NOT a general rich-item
+framework and NOT references to other routines/lists (a graph on a kid
+tablet; and steps must reset with the routine's day, which list items never
+would):
+
+- **Steps** — `RoutineItem.steps` `[{'id','title','emoji'}]`, ONE level,
+  inline, capped at 12. Per-step ticks live in their own
+  `routine_step_checks` table so nothing downstream miscounts. THE ITEM IS
+  THE UNIT: steps mint no XP/points; the last step completes the item
+  through `set_routine_check` (XP, day bonus, streak fire exactly as a
+  direct tap, idempotent); unticking any step un-completes the item while
+  sibling ticks survive; tapping the parent row carries all steps both ways
+  (big-motion forgiveness); a half-stepped item is NOT done. Copy-routine
+  carries steps/description/photo, never ticks.
+- **Descriptions + photos** — `description` and `image_id` on routine items
+  (the kid hero card draws the photo where the big glyph was — a photo of
+  THEIR backpack beats any glyph for a pre-reader — and the description
+  under the title), and `image_id` on shopping items ("buy THIS one": a
+  thumbnail in the aisle, tap for full-size; `note` already carried the text
+  half). `POST /api/media/photo` (data URL in, `{id, url}` out, same store
+  as moments; classified before the media wildcard so it doesn't wear the
+  moments facet).
+- **Hand paths**: the routines editor grew description/photo/steps rows on
+  the item edit panel; kid My Day and the wall-panel routine lanes draw and
+  tick steps (steps show only while the item is open); shopping rows get a
+  hover 📷 attach and a tap-to-enlarge preview (x-if, not x-show — a hidden
+  img with a bound src still fetches).
+- **New endpoint**: `POST /api/routines/{id}/steps/check` — same
+  streak/tier/avatar payload as an item check, plus
+  `{item_checked, steps_checked}`.
+
+Tests: `tests/test_routine_steps.py` (7 scenarios).

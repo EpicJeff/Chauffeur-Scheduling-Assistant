@@ -221,6 +221,10 @@ RULES = [
     (ANY, '/api/weather/*', WALL, None),
     (ANY, '/api/presence/*', WALL, 'presence.moments'),
     (ANY, '/api/moments/*', WALL, 'presence.moments'),
+    # The generic photo-in endpoint (routine items, shopping items) — before
+    # the media wildcard so it does not inherit the moments facet: attaching
+    # a product photo is list work, not a moment.
+    (ANY, '/api/media/photo', WALL, None),
     (ANY, '/api/media/*', WALL, 'presence.moments'),
     (ANY, '/api/music/*', WALL, 'music'),
     # The panel screen player: the app's one WebSocket. A browser's WebSocket

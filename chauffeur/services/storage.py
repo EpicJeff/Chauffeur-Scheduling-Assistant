@@ -414,6 +414,11 @@ with db_lock:
     points_ledger_table = db.table('points_ledger')
     routines_table = db.table('routines')
     routine_checks_table = db.table('routine_checks')
+    # Per-step ticks inside a routine item, keyed (routine_id, step_id,
+    # date_str). Separate from routine_checks on purpose: streaks, day
+    # bonuses and XP all read routine_checks, and a step row must never
+    # count as an item completion.
+    routine_step_checks_table = db.table('routine_step_checks')
     kid_tasks_table = db.table('kid_tasks')
     optional_decisions_table = db.table('optional_decisions')
     # Canceled occurrences. Unlike decisions these are NEVER pruned: the
@@ -3412,6 +3417,7 @@ def delete_routine(routine_id: str):
     with db_lock:
         routines_table.remove(Query().id == routine_id)
         routine_checks_table.remove(Query().routine_id == routine_id)
+        routine_step_checks_table.remove(Query().routine_id == routine_id)
 
 def _routine_scheduled_on(routine: dict, date_obj) -> bool:
     days = routine.get('days_of_week') or []
@@ -3424,8 +3430,14 @@ def routines_for_day(member_id: str, date_str: str) -> List[dict]:
     with db_lock:
         checked = {c['routine_id'] for c in routine_checks_table.search(
             (Query().member_id == member_id) & (Query().date_str == date_str))}
+        step_rows = routine_step_checks_table.search(Query().date_str == date_str)
+    steps_by_routine = {}
+    for s in step_rows:
+        steps_by_routine.setdefault(s['routine_id'], set()).add(s.get('step_id'))
     for r in items:
         r['checked'] = r['id'] in checked
+        if r.get('steps'):
+            r['steps_checked'] = sorted(steps_by_routine.get(r['id'], set()))
     items.sort(key=lambda r: (r.get('time_of_day') is None, r.get('time_of_day') or '', r.get('title', '')))
     return items
 
@@ -3455,6 +3467,57 @@ def set_routine_check(routine_id: str, member_id: str, date_str: str, checked: b
                      ref_id=routine_id, date_str=date_str, once=True)
         _grant_routine_day_bonus(member_id, date_str)
     return True
+
+
+def sync_routine_step_rows(routine_id: str, date_str: str, checked: bool):
+    """The big-motion cascade for a PARENT-row tap: ticking the item ticks
+    every step, unticking it clears them for a fresh start. Deliberately not
+    inside set_routine_check — a single STEP untick also removes the item
+    check (the item is only done when wholly done) and must leave its
+    sibling steps alone."""
+    with db_lock:
+        routine = routines_table.search(Query().id == routine_id)
+        steps = (routine[0].get('steps') or []) if routine else []
+        q = (Query().routine_id == routine_id) & (Query().date_str == date_str)
+        routine_step_checks_table.remove(q)
+        if checked and steps:
+            import time
+            for s in steps:
+                routine_step_checks_table.insert(
+                    {'routine_id': routine_id, 'step_id': s.get('id'),
+                     'date_str': date_str, 'ts': time.time()})
+
+
+def set_routine_step_check(routine_id: str, member_id: str, date_str: str,
+                           step_id: str, checked: bool) -> Optional[dict]:
+    """Tick one step. Returns {'steps_checked', 'item_checked'} or None when
+    the routine/step isn't this member's. The ITEM completes itself when the
+    last step ticks — through set_routine_check, so XP and the day bonus fire
+    exactly as a direct item tap would (idempotent, steps mint nothing of
+    their own) — and un-completes when any step unticks."""
+    import time
+    with db_lock:
+        routine = routines_table.search(Query().id == routine_id)
+        if not routine or routine[0].get('member_id') != member_id:
+            return None
+        steps = routine[0].get('steps') or []
+        step_ids = [s.get('id') for s in steps]
+        if step_id not in step_ids:
+            return None
+        q = ((Query().routine_id == routine_id) & (Query().date_str == date_str)
+             & (Query().step_id == step_id))
+        if checked:
+            routine_step_checks_table.upsert(
+                {'routine_id': routine_id, 'step_id': step_id,
+                 'date_str': date_str, 'ts': time.time()}, q)
+        else:
+            routine_step_checks_table.remove(q)
+        done = {r.get('step_id') for r in routine_step_checks_table.search(
+            (Query().routine_id == routine_id) & (Query().date_str == date_str))}
+    all_done = set(step_ids) <= done
+    set_routine_check(routine_id, member_id, date_str, all_done)
+    return {'steps_checked': sorted(done & set(step_ids)),
+            'item_checked': all_done}
 
 
 def _grant_routine_day_bonus(member_id: str, date_str: str) -> int:

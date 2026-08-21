@@ -376,6 +376,18 @@ class RoutineItem(BaseModel):
     copied_from: Optional[str] = None
     time_of_day: Optional[str] = None      # "HH:MM" -> plotted on My Day
     days_of_week: List[int] = Field(default_factory=list)  # 0=Mon..6=Sun; empty = every day
+    # The item's INSIDE, when one bullet hides several real things ("pack
+    # backpack" = folder, snack, water, laptop). ONE level deep, inline, by
+    # design: steps reset with the routine's day the way references to a list
+    # never would, and a kid tablet has no room for a graph. Steps are
+    # scaffolding — they mint no points and no XP; the ITEM is the unit the
+    # streak counts, and it is done only when it is wholly done.
+    # [{'id', 'title', 'emoji'}]
+    steps: List[Dict[str, Any]] = Field(default_factory=list)
+    description: Optional[str] = None
+    # A photo beats any glyph for a pre-reader: THEIR backpack, THEIR cleats.
+    # A media-store id served at /api/media/{id}.
+    image_id: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
 
 class StatusBeat(BaseModel):
@@ -1374,6 +1386,10 @@ class ShoppingItem(BaseModel):
     # above — an item recording WHY it is here without the list belonging to
     # the thing that caused it.
     occasion_id: Optional[str] = None
+    # "Buy THIS exact one": a photo of the product, shown as a thumbnail in
+    # the aisle. Media-store id served at /api/media/{id}; `note` above
+    # already carries the text half of the same job.
+    image_id: Optional[str] = None
     is_checked: bool = False
     checked_at: Optional[float] = None
     checked_by: Optional[str] = None

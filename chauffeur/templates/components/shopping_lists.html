@@ -171,6 +171,15 @@
                                 :disabled="!({{ interactive }})"
                                 class="w-6 h-6 rounded-md border-2 border-gray-600 hover:border-pink-400 shrink-0"
                                 :aria-label="'Got ' + it.name"></button>
+                            <!-- "Buy THIS one": the item's photo, tap to see it
+                                 big enough to match against a shelf. x-if, not
+                                 x-show — a hidden img with a bound src still
+                                 FETCHES, and 'api/media/null' 404ed per row. -->
+                            <template x-if="it.image_id">
+                                <img :src="apiBase + 'api/media/' + it.image_id"
+                                    @click="imgPreview = it.image_id" alt=""
+                                    class="w-9 h-9 rounded-lg object-cover border border-gray-600 shrink-0 cursor-pointer">
+                            </template>
                             <div class="min-w-0 flex-1">
                                 <div class="font-semibold text-white truncate">
                                     <span x-text="it.name"></span>
@@ -180,6 +189,9 @@
                                     <span x-text="itemSubline(it)"></span>
                                 </div>
                             </div>
+                            <button x-show="!!({{ remove }})" @click="attachItemPhoto(it)"
+                                class="text-gray-600 hover:text-pink-300 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                :title="it.image_id ? 'Replace the photo' : 'Attach a photo (buy THIS one)'">📷</button>
                             <button x-show="!!({{ remove }})" @click="({{ remove }}).call($data, it)"
                                 class="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
                                 title="Remove (not bought — just not wanted)">✕</button>
@@ -188,6 +200,17 @@
                    </div>
                   </template>
                 </div>
+
+                <!-- The photo, big enough to match against a shelf. -->
+                <div x-show="imgPreview" x-cloak @click="imgPreview = null"
+                    class="fixed inset-0 z-[95] bg-black/85 flex items-center justify-center p-6 cursor-pointer">
+                    <template x-if="imgPreview">
+                        <img :src="apiBase + 'api/media/' + imgPreview"
+                            class="max-w-full max-h-full rounded-2xl shadow-2xl">
+                    </template>
+                </div>
+                <input type="file" accept="image/*" class="hidden" x-ref="itemPhotoInput"
+                    @change="itemPhotoPicked($event)">
 
                 <div x-show="listShow('cart') && checkedItems().length" class="mb-10">
                     <div class="flex items-baseline justify-between mb-3">
@@ -365,8 +388,49 @@
         return {
             items: [], lists: [], activeId: null, members: {},
             runs: { groups: [] }, staples: [], stapleBusy: null,
+            imgPreview: null, _photoItemId: null,
+            // Markup bindings (thumbnails, the preview overlay) need the base
+            // the fetches already close over.
+            apiBase: apiBase,
 
             listShow(part) { return true; },
+
+            // "Buy THIS one": attach a product photo to an item. Uploads via
+            // the generic photo endpoint, then PATCHes the item — the same
+            // media store the moments photos live in.
+            attachItemPhoto(it) {
+                this._photoItemId = it.id;
+                this.$refs.itemPhotoInput && this.$refs.itemPhotoInput.click();
+            },
+            async itemPhotoPicked(ev) {
+                const file = ev.target.files && ev.target.files[0];
+                ev.target.value = '';
+                const itemId = this._photoItemId;
+                this._photoItemId = null;
+                if (!file || !itemId) return;
+                const dataUrl = await new Promise((res, rej) => {
+                    const rd = new FileReader();
+                    rd.onload = () => res(rd.result);
+                    rd.onerror = rej;
+                    rd.readAsDataURL(file);
+                }).catch(() => null);
+                if (!dataUrl) { showGlobalAlert('Could not read that image'); return; }
+                const r = await fetch(apiBase + 'api/media/photo', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ data_url: dataUrl })
+                });
+                if (!r.ok) {
+                    const e = await r.json().catch(() => ({}));
+                    showGlobalAlert(e.detail || 'Could not upload the photo');
+                    return;
+                }
+                const saved = await r.json();
+                await fetch(apiBase + 'api/shopping/items/' + itemId, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image_id: saved.id })
+                });
+                this.loadItems(true);
+            },
 
             openItems() { return this.items.filter(i => !i.is_checked); },
             checkedItems() { return this.items.filter(i => i.is_checked); },
