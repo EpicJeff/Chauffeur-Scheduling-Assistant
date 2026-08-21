@@ -126,20 +126,63 @@ def scenario_leave_by_wakes_up_for_a_short_drive():
           "an event at the house grew a leave-by time: %r" % at_home)
 
 
-def scenario_the_between_events_edges_keep_the_solvers_figure():
-    """Deliberate asymmetry, pinned so nobody "fixes" it later: the middle
-    edges feed late_mins, wait_mins and the layover arithmetic, and those have
-    to match what the solver believed. Only the two display-only legs changed.
-    """
+def scenario_every_leg_in_the_picture_is_honest():
+    """No exceptions, and the first cut of this fix made one. It spared the
+    between-events edges on the theory that late_mins, wait_mins and the
+    layover arithmetic had to match what the solver believed -- but nothing in
+    that function feeds back into scheduling; both numbers are read by the
+    timeline templates and nowhere else. The household reported the leg the
+    theory left behind within the hour: a drive home from an event round the
+    corner, drawn as "0M -> home for 15M"."""
     import inspect
     import solver.matcher as matcher
     src = inspect.getsource(matcher.compute_route_edges)
-    initial_and_final, between = src.split('for i in range(len(date_evs) - 1):', 1)
-    check('get_travel_time_minutes(' not in initial_and_final,
-          "an initial/final leg is back on the collapsed travel time")
-    check('travel_for_display(' not in between,
-          "a between-events edge took the uncollapsed time, which moves "
-          "late_mins and the layover away from what the solver planned")
+    check('get_travel_time_minutes(' not in src,
+          "a leg on the sheet is back on the solver's collapsed travel time")
+
+
+def scenario_the_layover_home_leg_is_honest_too():
+    """The exact shape from the report: an event two minutes from the house,
+    a long gap, then somewhere further away. The driver goes home in between,
+    and BOTH halves of that trip are drives."""
+    import solver.matcher as matcher
+    from models.schemas import Event, Driver
+
+    def travel(origin, dest, departure_time=None, return_traffic=False):
+        if not origin or not dest or origin.lower() == dest.lower():
+            return (0, 0) if return_traffic else 0
+        mins = 2 if HOME in (origin, dest) and 'Corner' in (origin + dest) else 10
+        return (mins, 0) if return_traffic else mins
+
+    real = matcher._raw_get_travel_time_minutes
+    try:
+        matcher._raw_get_travel_time_minutes = travel
+        base = datetime.datetime.combine(TODAY, datetime.time(10, 30))
+        near = Event(id='a', title='Meet the teacher', start=base,
+                     end=base + datetime.timedelta(minutes=30),
+                     location='2 Corner Rd', calendar_ids=['cal_lily'],
+                     source_event_ids=['a'])
+        far = Event(id='b', title='Meet the Teacher (6th Grade)',
+                    start=base + datetime.timedelta(hours=1),
+                    end=base + datetime.timedelta(hours=2, minutes=30),
+                    location='9 Far School Rd', calendar_ids=['cal_lily'],
+                    source_event_ids=['b'])
+        d = Driver(id='d1', name='Jeff', color_code='#3b82f6',
+                   home_location=HOME)
+        edges, initial, _final = matcher.compute_route_edges(
+            {'a': 'd1', 'b': 'd1'}, [near, far], [d], home_location=HOME)
+    finally:
+        matcher._raw_get_travel_time_minutes = real
+
+    check((initial.get('d1') or {}).get('a', {}).get('travel_mins') == 2,
+          "no drive to the first event of the day")
+    wp = ((edges.get('d1') or {}).get('a') or {}).get('home_waypoint') or {}
+    check(wp, "the layover home trip vanished: %r" % edges.get('d1'))
+    check(wp.get('to_home_mins') == 2,
+          "the drive home from the near event still reads %r"
+          % wp.get('to_home_mins'))
+    check(wp.get('from_home_mins') == 10,
+          "the drive out to the far event reads %r" % wp.get('from_home_mins'))
 
 
 def scenario_the_timeline_still_gates_on_a_real_drive():

@@ -2666,7 +2666,7 @@ Closes the open design question v2.269.0 recorded, on the household's own framin
 - **A driver marked as ATTENDING is a stay signal too** (v2.356.0), ranked below the explicit split signals and above the 2-hour default; and the **Attendance Mode dropdown** on both event editors is finally read. See "A drive round the corner is still a drive" for the full ladder.
 - Tests: `tests/test_attendance_override.py` (10 scenarios: precedence both directions, attendance in the ladder, the phantom block gone end to end, an explicit split still winning, the dropdown actually read, self-expiry, pins + history mirroring, undo removes only its own pins, ghost never pinned, 404/400).
 
-## A drive round the corner is still a drive (v2.356.0)
+## A drive round the corner is still a drive (v2.356.0, completed v2.357.0)
 
 Three defects, all reported as one sentence from the household: *"I mark the
 driver as attending in the event config. That assigns the event to that driver
@@ -2685,12 +2685,29 @@ why. The between-events edge has no such gate, which is why the same journey
 mid-day drew as a visible "0m" pill; that inconsistency is what the household
 spotted.
 
-`matcher.travel_for_display` is the true figure, and the initial and final legs
-use it. **The between-events edges deliberately keep the collapsed one**: theirs
-feeds `late_mins`, `wait_mins` and the layover arithmetic, which have to agree
-with what the solver believed when it placed the day. The `> 0` gate stays --
-the fix is the NUMBER reaching it honestly, not the gate going away, because
-zero must still mean an event at the driver's own address draws no pill.
+`matcher.travel_for_display` is the true figure and **every leg in
+`compute_route_edges` uses it**. The `> 0` gate stays -- the fix is the NUMBER
+reaching it honestly, not the gate going away, because zero must still mean an
+event at the driver's own address draws no pill.
+
+*The first cut (v2.356.0) spared the between-events edges*, on the theory that
+`late_mins`, `wait_mins` and the layover arithmetic had to agree with what the
+solver believed. **The theory was wrong and unverified**: nothing in that
+function feeds back into scheduling -- both numbers are read by the timeline
+templates and nowhere else -- and the household reported the leg it left behind
+within the hour, a drive home from an event round the corner drawn as
+`0M -> 🏠 FOR 15M -> 10M`. The whole function is a picture of the day, and a
+picture should be true. Corrected in v2.357.0.
+
+The honest consequence, worth knowing before it is reported as a bug: a
+transition the solver waved through because it priced the hop at zero can now
+draw a small *"Arriving 1m Late"*. The collapse means "do not refuse to
+schedule over a two-minute hop", not "the hop is free".
+
+**Deploying it takes a force refresh.** A day whose `events_hash` is unchanged
+is served straight from `daily_schedules` (main.py, the Pass-2 cache branch),
+so an edge-builder change lands only when the events change or something passes
+`force_refresh=true` -- the PWA's ⟳ does, the panel does not.
 
 **2. A driver marked as attending still had the event split.**
 `_attendance_decision` took four inputs -- a day-of override, `#stay`/`#wait`,
@@ -2726,9 +2743,10 @@ lambda that returned a bare int whatever it was asked for, so any test reaching
 real routing died on "cannot unpack non-iterable int object". A mock that does
 not keep the contract is a trap, not a mock.
 
-Tests: `tests/test_short_drives_still_draw.py` (5 scenarios -- the two-minute
-drive draws, the house itself still does not, leave-by wakes up, the middle
-edges keep the solver's figure, the `> 0` gate survives),
+Tests: `tests/test_short_drives_still_draw.py` (6 scenarios -- the two-minute
+drive draws, the house itself still does not, leave-by wakes up, EVERY leg in
+the builder is honest, the reported layover shape end to end, the `> 0` gate
+survives),
 `test_attendance_override` +4 (the ladder with attendance, the phantom gone end
 to end, an explicit split still winning, the dropdown actually read). All of
 them SOLVE A DAY rather than reading source -- see the v2.355.0 note.

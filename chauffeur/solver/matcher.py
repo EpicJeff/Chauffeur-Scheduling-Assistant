@@ -28,9 +28,20 @@ def travel_for_display(origin, dest, departure_time=None):
     the house drew no drive there, no drive home, no leave-by time and no "Time
     to Leave!" push. The event simply appeared, with nothing to set out for.
 
-    Only the initial and final legs use this. The between-events edges keep the
-    collapsed figure: theirs feeds lateness, waits and the layover arithmetic,
-    which have to agree with what the solver believed.
+    EVERY leg in `compute_route_edges` uses this, including the between-events
+    ones and the two halves of a layover home trip. The first cut of this fix
+    spared those on the theory that `late_mins`, `wait_mins` and the layover
+    arithmetic had to agree with what the solver believed -- but nothing in
+    that function feeds back into scheduling. `late_mins` and `wait_mins` are
+    read by the timeline templates and by nothing else, and the household
+    promptly reported the leg the theory left behind: a drive home from an
+    event round the corner, drawn as "0M -> home for 15M". The whole function
+    is a picture of the day, and a picture should be true.
+
+    The visible consequence, and it is the honest one: a transition the solver
+    waved through because it priced the hop at zero can now draw a small
+    "Arriving 1m Late". The solver's collapse means "do not refuse to schedule
+    over a two-minute hop", not "the hop is free".
     """
     return _raw_get_travel_time_minutes(origin, dest, departure_time, True)
 
@@ -1759,7 +1770,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                     if e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower():
                         drive_from_pickup, delay_from = 0, 0
                     else:
-                        drive_from_pickup, delay_from = get_travel_time_minutes(e1.location, e2.location, departure_time=int(dep_time), return_traffic=True)
+                        drive_from_pickup, delay_from = travel_for_display(e1.location, e2.location, departure_time=int(dep_time))
                     
                     pickup_waypoint = None
                     travel = drive_from_pickup
@@ -1788,8 +1799,8 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                             pickup_location = pax_home if pax_home else driver_home_at_dep
                             pickup_title = "Home"
                             
-                        drive_to_pickup, delay_to = get_travel_time_minutes(e1.location, pickup_location, departure_time=int(dep_time), return_traffic=True)
-                        drive_from_pickup, delay_from = get_travel_time_minutes(pickup_location, e2.location, departure_time=int(dep_time + drive_to_pickup*60), return_traffic=True)
+                        drive_to_pickup, delay_to = travel_for_display(e1.location, pickup_location, departure_time=int(dep_time))
+                        drive_from_pickup, delay_from = travel_for_display(pickup_location, e2.location, departure_time=int(dep_time + drive_to_pickup*60))
                         
                         # A zero-minute leg means the pickup point is e1 or e2 itself
                         # (e.g. split pickup events) - show a single drive instead.
@@ -1804,7 +1815,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         delay = delay_to + delay_from
                     else:
                         dep_time = min(e1.end.timestamp(), e2.start.timestamp())
-                        drive_mins, delay_mins = get_travel_time_minutes(e1.location, e2.location, departure_time=int(dep_time), return_traffic=True)
+                        drive_mins, delay_mins = travel_for_display(e1.location, e2.location, departure_time=int(dep_time))
                         travel = drive_mins
                         delay = delay_mins
                 
@@ -1825,8 +1836,8 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                     
                 driver_home_at_layover = get_active_home_local(f'driver_{d_id}', dep_time, driver_default_home)
                 if (travel_gap > 45 or wait > 15) and driver_home_at_layover and driver_home_at_layover.strip() != "":
-                    travel_to_home, to_delay = get_travel_time_minutes(e1.location, driver_home_at_layover, departure_time=int(dep_time), return_traffic=True)
-                    travel_from_home, from_delay = get_travel_time_minutes(driver_home_at_layover, next_dest, departure_time=int(dep_time + travel_to_home*60), return_traffic=True)
+                    travel_to_home, to_delay = travel_for_display(e1.location, driver_home_at_layover, departure_time=int(dep_time))
+                    travel_from_home, from_delay = travel_for_display(driver_home_at_layover, next_dest, departure_time=int(dep_time + travel_to_home*60))
                     
                     extra_drive = pickup_waypoint["from_pickup_mins"] if pickup_waypoint else 0
                     layover = travel_gap - travel_to_home - travel_from_home - extra_drive - 5
