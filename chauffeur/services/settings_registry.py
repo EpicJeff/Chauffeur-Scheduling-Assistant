@@ -193,62 +193,62 @@ ENTRIES: List[dict] = [
     # --- meals & shopping
     _e('car_dining', 'meals', 'Eating in the car',
        'Whether this family eats full meals, handheld food, snacks or nothing in the car.',
-       page='shopping', anchor='dining'),
+       page='meals', anchor='dining'),
     _e('venue_dining', 'meals', 'Eating at a venue',
        'The same question for sitting at a practice or a game.',
-       page='shopping', anchor='dining'),
+       page='meals', anchor='dining'),
     _e('grocery_weekday', 'meals', 'Shop day',
        'The day the big grocery run happens. Unset means work it out from the schedule.',
-       page='shopping', anchor='planning'),
+       page='meals', anchor='planning'),
     _e('household_headcount', 'meals', 'Cooking for',
        'How many people a normal dinner feeds. Decides how far a dish stretches '
        'and whether it makes a second night. Override any single night on the plate.',
-       page='shopping', anchor='plate'),
+       page='meals', anchor='plate'),
     _e('grocery_plan_lead_days', 'meals', 'Plan ahead by',
        'How many days before the shop to ask "how does this look?".',
-       page='shopping', anchor='planning'),
+       page='meals', anchor='planning'),
     _e('grocery_cadence_days', 'meals', 'Days between shops',
        'How many nights one grocery run has to cover. Seven for most families; '
        'set it longer and the plan covers the extra nights instead of leaving '
        'them unbought.',
-       page='shopping', anchor='planning'),
+       page='meals', anchor='planning'),
     _e('meal_week_enabled', 'meals', 'Plan the week',
        'Propose the whole span the next grocery run has to buy for.',
-       page='shopping', anchor='planning'),
+       page='meals', anchor='planning'),
     _e('propose_shopping_errands', 'meals', 'Offer a shopping trip',
        'Suggest an errand for a list that has no trip attached.',
-       page='shopping', anchor='planning'),
+       page='meals', anchor='planning'),
     _e('prep_reminders_enabled', 'meals', 'Prep reminders',
        'Remind about soaking, thawing and marinating that happens outside the cook window.',
-       page='shopping', anchor='prep'),
+       page='meals', anchor='prep'),
     _e('prep_reminder_time', 'meals', 'Night-before reminder',
        'When the evening prep nudge goes out.',
-       page='shopping', anchor='prep'),
+       page='meals', anchor='prep'),
     _e('prep_morning_time', 'meals', 'Morning reminder', 'When the morning-of prep nudge goes out.',
-       page='shopping', anchor='prep'),
+       page='meals', anchor='prep'),
     _e('walmart_store_id', 'meals', 'Walmart store',
        'Localises cart links and prices to your store.',
-       page='shopping', anchor='walmart'),
+       page='meals', anchor='walmart'),
     _e('walmart_impact_publisher_id', 'meals', 'Walmart affiliate publisher',
        'Only needed if the household has onboarded as an affiliate. The plain cart link needs none of it.',
-       page='shopping', anchor='walmart'),
+       page='meals', anchor='walmart'),
     _e('walmart_impact_ad_id', 'meals', 'Walmart affiliate ad id',
        'Part of the same affiliate trio; leave blank unless you have onboarded.',
-       page='shopping', anchor='walmart'),
+       page='meals', anchor='walmart'),
     _e('walmart_impact_campaign_id', 'meals', 'Walmart affiliate campaign',
        'Part of the same affiliate trio; leave blank unless you have onboarded.',
-       page='shopping', anchor='walmart'),
+       page='meals', anchor='walmart'),
 
     # --- the kitchen (owned by the meals surface, not the config page)
     _e('kitchen_ovens', 'kitchen', 'Ovens',
        'How many ovens the kitchen has. Two dishes at different temperatures cannot share one.',
-       page='shopping', anchor='kitchen'),
+       page='meals', anchor='kitchen'),
     _e('kitchen_burners', 'kitchen', 'Burners',
        'How many rings the hob has. A dish holds its ring while somebody stands at it.',
-       page='shopping', anchor='kitchen'),
+       page='meals', anchor='kitchen'),
     _e('kitchen_cooks', 'kitchen', 'Usually cooking',
        'How many pairs of hands normally cook. Hands-on work divides between them.',
-       page='shopping', anchor='kitchen'),
+       page='meals', anchor='kitchen'),
 
     # --- kids & school
     _e('kid_digest_enabled', 'kids', 'Kid evening digest',
@@ -541,9 +541,17 @@ def audit_ui(templates_dir: str = None) -> dict:
             body += _read(inc, seen)
         return body
 
+    # `page` is the ROUTE a setting is linked to (`meals#planning`), and for
+    # most destinations the template is that word plus `.html`. Not for all of
+    # them: /meals and /lists are one template with two modes (see the header
+    # of shopping.html), so the audit has to be told where to read. Kept as a
+    # map of exceptions rather than importing main.py's routing table, which
+    # would drag the whole app into a test that only wants to read files.
+    PAGE_TEMPLATES = {'meals': 'shopping.html', 'lists': 'shopping.html'}
+
     def _text(page):
         if page not in cache:
-            cache[page] = _read(f'{page}.html', set())
+            cache[page] = _read(PAGE_TEMPLATES.get(page, f'{page}.html'), set())
         return cache[page]
 
     missing = []

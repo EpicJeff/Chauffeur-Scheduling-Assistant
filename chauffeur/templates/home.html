@@ -1912,8 +1912,12 @@
                 // Where a tile takes you. Slugs match the nav, so the shelf and
                 // the board agree about what each word means.
                 PAGES: {
-                    drives: 'dashboard_v2', calendar: 'calendar', meals: 'shopping',
-                    shopping: 'shopping', chores: 'chores', routines: 'routines',
+                    drives: 'dashboard_v2', calendar: 'calendar', meals: 'meals',
+                    // The Lists GLANCE ("how much is open on each list") counts
+                    // every list, so its tap goes to the page that owns every
+                    // list but one. The grocery half of it is one click away
+                    // from there and named on the page.
+                    lists: 'lists', chores: 'chores', routines: 'routines',
                     occasions: 'occasions', errands: 'errands', trips: 'trips',
                     map: 'map', moments: 'moments', intake: 'intake',
                     weather: 'calendar', kids: 'routines',
@@ -1924,10 +1928,10 @@
                     // A tile type absent from BOTH this map and PAGELESS falls
                     // through to its own name, which is not a page — tapping
                     // the week's dinners went to /meals_week and 404'd. The
-                    // week is drawn by the shopping page's planner, so that is
-                    // where the tap belongs; household tasks live on the
+                    // week is drawn by the Meals & Groceries planner, so that
+                    // is where the tap belongs; household tasks live on the
                     // errands page beside the driving they are not.
-                    meals_week: 'shopping', tasks: 'errands'
+                    meals_week: 'meals', tasks: 'errands'
                 },
 
                 link(key) {

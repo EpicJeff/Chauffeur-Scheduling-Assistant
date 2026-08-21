@@ -555,6 +555,22 @@
                     // reason: falling back to every list would look like the
                     // setting doing nothing.
                     this.gone = want.length ? '' : 'That list is gone.';
+                } else if (cfg.scope === 'default') {
+                    // The MAIN list — the household default, which is the
+                    // grocery list on every real install. A shipped board
+                    // cannot name it by id (it is a different id in every
+                    // house), and this is the app's own word for it.
+                    want = all.filter(l => l.is_default);
+                    this.gone = want.length ? ''
+                        : 'No main list yet — the first thing added makes one.';
+                } else if (cfg.scope === 'others') {
+                    want = all.filter(l => !l.is_default);
+                    // NOT "that list is gone": nothing is missing here, the
+                    // household simply keeps one list. Saying so is what stops
+                    // a Shopping & Lists board reading as broken on day one.
+                    this.gone = want.length ? ''
+                        : 'Only the grocery list so far. Any other list you '
+                          + 'make — the pharmacy, the hardware store — shows up here.';
                 } else {
                     this.gone = '';
                 }

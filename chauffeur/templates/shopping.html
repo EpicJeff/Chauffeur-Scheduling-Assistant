@@ -1,11 +1,32 @@
 {% import 'components/shopping_lists.html' as shopping_lists %}
+{#
+  TWO DESTINATIONS, ONE TEMPLATE. `page_mode` (set by the route in main.py)
+  is either:
+
+    'meals'  -> /meals, Meals & Groceries: the planner, and the household's
+                MAIN list — the standing one a grocery run empties.
+    'lists'  -> /lists, Shopping & Lists: every OTHER list a family keeps,
+                and none of the meals machinery.
+
+  One template on purpose. A list is one entity with one drawing, and the
+  surest way for two lists pages to disagree about what a list looks like is
+  to give them two files — the same reasoning that put the list, the staples
+  and the week into components/shopping_lists.html in the first place. What
+  the mode changes is SCOPE (which lists this page owns) and what `init`
+  fetches: /lists asks for no week, no repertoire, no plate, no rules and no
+  categories, so the meals machinery costs it nothing.
+
+  The old `/shopping` address redirects to `/meals` (307), which is what keeps
+  a bookmarked wall panel, a push sent last night and a link in a chat message
+  landing where they meant to.
+#}
 <!DOCTYPE html>
 <html lang="en" class="dark">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shopping &amp; Meals</title>
+    <title>{% if page_mode == 'lists' %}Shopping &amp; Lists{% else %}Meals &amp; Groceries{% endif %}</title>
     <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
     {% include 'ha_theme.html' %}
     <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
@@ -41,7 +62,7 @@
             <div class="panel-page mx-auto p-6 lg:p-10 w-full" :class="isKiosk ? 'max-w-none' : 'max-w-6xl'">
 
             <header class="mb-8" x-show="!hideTitle">
-                <h2 class="panel-page-title">Shopping &amp; Meals</h2>
+                <h2 class="panel-page-title">{% if page_mode == 'lists' %}Shopping &amp; Lists{% else %}Meals &amp; Groceries{% endif %}</h2>
             </header>
 
             <!-- ===== KIOSK BOARD (K1) =====
@@ -53,7 +74,7 @@
                  designed first —
                  it is day one for everyone and forever for anyone without an
                  Unsplash key, so it has to look deliberate rather than broken. -->
-            <section x-show="isKiosk" class="mb-10">
+            <section x-show="isKiosk && !isLists" class="mb-10">
                 {{ shopping_lists.week_board() }}
             </section>
 
@@ -62,7 +83,7 @@
                  family is eating decides what has to be bought. The page read
                  as "shopping, with meals wedged in" when the list blurb sat
                  above this. -->
-            <section class="mb-10" x-show="!isKiosk">
+            <section class="mb-10" x-show="!isKiosk && !isLists">
                 <div class="flex items-baseline justify-between mb-3 gap-3">
                     <h3 class="text-lg font-bold text-white">Meals</h3>
                     <!-- One drawer for everything that configures or maintains
@@ -889,8 +910,8 @@
                  dish list stays collapsed there because the vertical budget
                  that made it a problem is exactly what a phone has least of. -->
             <div class="grid gap-6 items-start mb-10"
-                :class="isKiosk ? '' : 'lg:grid-cols-2'">
-                <div class="min-w-0" x-show="!isKiosk">
+                :class="isKiosk || isLists ? '' : 'lg:grid-cols-2'">
+                <div class="min-w-0" x-show="!isKiosk && !isLists">
                     <div class="flex items-baseline justify-between mb-3 gap-3">
                         <h3 class="text-lg font-bold text-white">Our meals</h3>
                         <button @click="showRepertoire = !showRepertoire"
@@ -1161,18 +1182,25 @@
 
                 <div class="min-w-0">
 
-            <!-- ===== SHOPPING LISTS ===== -->
+            <!-- ===== THE LISTS ===== -->
             <section x-show="!isKiosk" class="mb-2">
-                <h3 class="text-lg font-bold text-white mb-1">Shopping Lists</h3>
-                <p class="text-gray-400 mb-4">
-                    Anyone can add — say it to Argyle, snap the shelf, or type it here. Whoever the
-                    solver sends to the store gets the list.
+                <h3 class="text-lg font-bold text-white mb-1"
+                    x-text="isLists ? 'Your lists' : 'The grocery list'"></h3>
+                <p class="text-gray-400 mb-4" x-show="!isLists">
+                    What the week's dinners need, plus whatever anyone adds — say it to Argyle,
+                    snap the shelf, or type it here. Whoever the solver sends to the store gets it.
+                </p>
+                <p class="text-gray-400 mb-4" x-show="isLists">
+                    Every list except the groceries, which lives on
+                    <a href="meals" class="text-pink-300 hover:text-pink-200 font-semibold">Meals &amp; Groceries</a>.
+                    Anyone can add — say it to Argyle, snap the shelf, or type it here.
                 </p>
             </section>
 
             <!-- ===== List switcher (stores) ===== -->
-            <div class="flex items-center gap-2 mb-5 flex-wrap" x-show="lists.length > 1 || !isKiosk">
-                <template x-for="l in lists" :key="l.id">
+            <div class="flex items-center gap-2 mb-5 flex-wrap"
+                x-show="shownLists().length > 1 || (!isKiosk && isLists)">
+                <template x-for="l in shownLists()" :key="l.id">
                     <button @click="selectList(l.id)"
                         class="px-3 py-1.5 rounded-full text-sm font-bold transition-colors border"
                         :class="l.id === activeId
@@ -1182,7 +1210,10 @@
                         <span class="opacity-60" x-show="l.open_count" x-text="' · ' + l.open_count"></span>
                     </button>
                 </template>
-                <button x-show="!isKiosk" @click="newList()"
+                <!-- Making a list belongs to the page that OWNS the other
+                     lists. Meals & Groceries has exactly one and does not
+                     offer to make a second one it would then not show. -->
+                <button x-show="!isKiosk && isLists" @click="newList()"
                     class="px-3 py-1.5 rounded-full text-sm font-bold bg-gray-800 border border-gray-700 text-gray-400 hover:text-white">
                     + List
                 </button>
@@ -1232,7 +1263,7 @@
                         x-text="trip ? ' at ' + trip.time_label + ' · ' + (trip.errand || {}).location : ''"></span>
                 </div>
                 <div x-show="trip && trip.errand && !trip.scheduled" class="text-gray-400">
-                    🛒 <span x-text="(trip.errand || {}).title"></span>
+                    🛒 <span x-text="((trip && trip.errand) || {}).title"></span>
                     <span class="text-gray-500"> — not placed in the week yet</span>
                 </div>
                 <div x-show="!trip" class="flex items-center gap-2 flex-wrap">
@@ -1264,7 +1295,7 @@
                  to a list is cheap and reversible, which is why this is safe on
                  a panel the kids can reach. Anything not in the grid is one
                  sentence to Argyle, whose bar is already on this page. -->
-            <div x-show="isKiosk && staples.length" class="mb-8">
+            <div x-show="isKiosk && !isLists && staples.length" class="mb-8">
                 <h3 class="text-xs font-black uppercase tracking-widest opacity-60 mb-1">
                     🛒 Drop in the cart
                 </h3>
@@ -1584,6 +1615,22 @@
     {% include 'components/shopping_lists.html' %}
 
     <script>
+        // A blank frequency rule. Module scope, and that is the fix rather
+        // than the tidy-up: this shape existed TWICE — once as `blankRule()`
+        // and once inlined in the state literal below — and the literal was
+        // missing `tags`, `dish_ids`, `exclude_dish_ids` and `whole_meals`.
+        // `ruleWouldMatch` reads `d.dish_ids.length` unconditionally, so every
+        // single load of this page threw an Alpine expression error before
+        // anybody opened the rule form. Silent (Alpine logs and carries on),
+        // which is why it survived a year: the form itself works, because
+        // opening it calls `blankRule()` and replaces the broken literal.
+        function blankMealRule() {
+            return { id: null, kind: 'frequency_cap', name: '', tags: '',
+                     dish_ids: [], exclude_dish_ids: [], takeout: false,
+                     whole_meals: false,
+                     max_servings: 1, window_days: 7, dwell_days: 3 };
+        }
+
         function shoppingPage() {
             const params = new URLSearchParams(window.location.search);
             // trailing-slash URLs need to climb one level (HA ingress)
@@ -1598,6 +1645,17 @@
                 // from this page.
                 ...mealWeekLogic(base),
                 ...shoppingListsLogic(base),
+                // Which destination this is. Rendered by the route rather
+                // than read off the URL, so the answer survives a wall panel
+                // reaching the page through an HA ingress path.
+                pageMode: '{{ page_mode|default("meals") }}',
+                get isLists() { return this.pageMode === 'lists'; },
+                // A list pinned by the URL — `occasions` links to one this
+                // way, and an occasion's list can be ANY of them. It is shown
+                // whatever the page's scope says, because a link that lands on
+                // a page which then refuses to show the thing it linked to is
+                // worse than either page owning it.
+                pinnedList: (params.get('list') || '').trim(),
                 isKiosk: ['true', '1', 'yes'].includes((params.get('kiosk') || '').toLowerCase()),
                 hideTitle: ['none', 'off', '0', 'false', 'hide'].includes(
                     (params.get('title') || '').toLowerCase()),
@@ -1624,9 +1682,7 @@
                 // rulesLoaded distinguishes "read the table, it was empty" from
                 // "never got an answer" — the empty state may not conflate them.
                 rulesLoaded: false, rulesError: '',
-                ruleDraft: { id: null, kind: 'frequency_cap', name: '', applies: '',
-                             takeout: false, max_servings: 1, window_days: 7,
-                             dwell_days: 3 },
+                ruleDraft: blankMealRule(),
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 showOccasionDishes: false,
                 runSheet: null, runSheetBusy: false,
@@ -1671,21 +1727,31 @@
                     });
                     await this.loadMembers();
                     await this.loadLists();
+                    this.pickList();
                     await this.loadItems();
-                    this.loadPlate();   // non-blocking: derived, may take a beat
-                    this.loadRepertoire();
-                    this.loadWeek();
                     this.loadTrip();
                     this.loadWalmart();
-                    this.loadKitchen();
-                    this.loadCategories();
-                    this.openFromHash();
+                    // EVERYTHING BELOW IS THE MEALS MACHINERY, and Shopping &
+                    // Lists fetches none of it. The two destinations share a
+                    // template, which is what stops them drawing a list two
+                    // ways; they must not also share a payload, or opening the
+                    // pharmacy list on a phone would compose a week, derive a
+                    // plate and read the whole dish repertoire to draw four
+                    // ticks.
+                    if (!this.isLists) {
+                        this.loadPlate();   // non-blocking: derived, may take a beat
+                        this.loadRepertoire();
+                        this.loadWeek();
+                        this.loadKitchen();
+                        this.loadCategories();
+                        this.openFromHash();
+                    }
                     // Open the dish list where there is room for it. Collapsing
                     // it was only ever about the shopping list being pushed off
                     // the bottom; in two columns nothing is pushed anywhere. A
                     // phone has the least vertical room of anything, so below
                     // the breakpoint it stays shut.
-                    if (window.matchMedia('(min-width: 1024px)').matches) {
+                    if (!this.isLists && window.matchMedia('(min-width: 1024px)').matches) {
                         this.showRepertoire = true;
                     }
                     if (this.isKiosk) this.loadStaples();
@@ -1703,7 +1769,9 @@
                         // The board must roll over on its own: a wall panel
                         // nobody touches would otherwise still show Tuesday's
                         // dinner on Wednesday.
-                        setInterval(() => { this.loadWeek(); this.loadStaples(); }, 900000);
+                        if (!this.isLists) {
+                            setInterval(() => { this.loadWeek(); this.loadStaples(); }, 900000);
+                        }
                     }
                 },
 
@@ -1759,12 +1827,7 @@
                     }
                 },
 
-                blankRule() {
-                    return { id: null, kind: 'frequency_cap', name: '', tags: '',
-                             dish_ids: [], exclude_dish_ids: [], takeout: false,
-                             whole_meals: false,
-                             max_servings: 1, window_days: 7, dwell_days: 3 };
-                },
+                blankRule() { return blankMealRule(); },
 
                 draftDishes(field) {
                     return (this.ruleDraft[field] || [])
@@ -3138,6 +3201,42 @@
                 },
 
 
+
+                // ── WHICH LISTS THIS PAGE OWNS.
+                //
+                // Meals & Groceries owns the MAIN list — `is_default`, which
+                // is the app's own word for the list every capture path falls
+                // back to, and the grocery list on every real install. It owns
+                // exactly one, so it has no switcher: a page named for the
+                // groceries with a chip row offering the pharmacy is the split
+                // this arc exists to undo.
+                //
+                // Shopping & Lists owns every OTHER list, and is where they
+                // are made, named, shared and deleted.
+                //
+                // …plus `?list=<id>` on either, always. An occasion's shopping
+                // drain links straight to a list and that list can be any of
+                // them; a link that lands on a page which then refuses to show
+                // the thing it linked to is worse than either page owning it.
+                shownLists() {
+                    return (this.lists || []).filter(l =>
+                        l.id === this.pinnedList
+                        || (this.isLists ? !l.is_default : !!l.is_default));
+                },
+                // The list this page opens ON. `loadLists` has already put the
+                // household default in `activeId` — right for Meals, exactly
+                // wrong for Lists, where it is the one list that page does not
+                // own.
+                pickList() {
+                    const mine = this.shownLists();
+                    if (this.pinnedList && mine.some(l => l.id === this.pinnedList)) {
+                        this.activeId = this.pinnedList;
+                        return;
+                    }
+                    if (!mine.some(l => l.id === this.activeId)) {
+                        this.activeId = mine.length ? mine[0].id : null;
+                    }
+                },
 
                 // Page-only: a card is pinned to one list by its config, and
                 // there is no list switcher on a wall.

@@ -355,7 +355,7 @@
                     </div>
                     <div class="space-y-1.5">
                         <template x-for="l in ((detail[o.id] || {}).lists || [])" :key="l.id">
-                            <a :href="'shopping?list=' + l.id"
+                            <a :href="'lists?list=' + l.id"
                                 class="block bg-gray-900 rounded-xl border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:border-pink-400/60">
                                 <span x-text="l.name"></span>
                                 <span class="text-gray-600 text-[11px]" x-show="l.store" x-text="' · ' + l.store"></span>

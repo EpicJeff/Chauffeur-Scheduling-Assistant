@@ -3492,7 +3492,7 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "source_for_occasion",
-            "description": "Turns what an occasion needs into a real shopping list, scaled to the headcount: I need party favours for a shark party, we need decorations and paper plates. The list belongs to the occasion and goes to a cart from the Shopping page.",
+            "description": "Turns what an occasion needs into a real shopping list, scaled to the headcount: I need party favours for a shark party, we need decorations and paper plates. The list belongs to the occasion and goes to a cart from the Shopping & Lists page.",
             "parameters": {
                 "type": "object",
                 "properties": {

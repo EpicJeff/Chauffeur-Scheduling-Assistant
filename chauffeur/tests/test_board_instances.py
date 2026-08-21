@@ -139,7 +139,7 @@ def scenario_a_configured_tile_is_still_the_tile_it_was():
     before it existed. A tile that quietly shows six rows where it used to show
     five is a redesign of every board in the wild, delivered as a bug fix."""
     was = {'chores': 6, 'routines': 6, 'occasions': 3, 'errands': 5,
-           'tasks': 6, 'moments': 6, 'trips': 4, 'weather': 5, 'shopping': 12}
+           'tasks': 6, 'moments': 6, 'trips': 4, 'weather': 5, 'lists': 12}
     for type_, expected in was.items():
         opts = {o['key']: o for w in home_board.WIDGETS if w['key'] == type_
                 for o in w['options']}
@@ -171,7 +171,7 @@ def scenario_a_tile_is_named_for_the_page_it_summarises():
     """
     by_key = {w['key']: w for w in home_board.WIDGETS}
     for key, name in (('drives', 'Driving schedule'), ('calendar', 'Calendar'),
-                      ('map', 'Map'), ('meals', 'Meals'), ('shopping', 'Lists'),
+                      ('map', 'Map'), ('meals', 'Meals'), ('lists', 'Lists'),
                       ('chores', 'Chores'), ('routines', 'Routines'),
                       ('moments', 'Moments'), ('ha', 'Entities'),
                       ('ha_image', 'Camera or image'),
@@ -203,7 +203,7 @@ def scenario_the_wall_says_the_title_and_blank_means_blank():
           f"a configured title was not printed: {board['tiles'][0]['label']!r}")
     # The wall sentences still exist — they are what the migration writes
     # into a v<3 board's title fields, so they must stay sensible.
-    shopping = next(w for w in home_board.WIDGETS if w['key'] == 'shopping')
+    shopping = next(w for w in home_board.WIDGETS if w['key'] == 'lists')
     check(shopping.get('heading', shopping['label']) == 'Lists',
           "the lists tile's backfill is something other than its own name")
 

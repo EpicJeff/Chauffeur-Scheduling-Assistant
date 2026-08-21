@@ -386,8 +386,8 @@ def scenario_the_shipped_boards_actually_ship():
     import subprocess
     check(os.path.exists(home_board._BUILTIN_PATH),
           f"the shipped boards file is missing: {home_board._BUILTIN_PATH}")
-    check(len(home_board.BUILTIN_PAGES) == 11,
-          f"the loader found {len(home_board.BUILTIN_PAGES)} boards, not eleven "
+    check(len(home_board.BUILTIN_PAGES) == 12,
+          f"the loader found {len(home_board.BUILTIN_PAGES)} boards, not twelve "
           f"— an unreadable file degrades to an empty dict on purpose, so this "
           f"is what that looks like from the outside")
     try:

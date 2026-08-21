@@ -510,7 +510,7 @@ async def push_notification_loop():
                     # urgent: prep deliberately ignores quiet hours — the
                     # evening prep time is late on purpose, and a family that
                     # set 20:30 has asked to be told at 20:30.
-                    _notify_member_lanes(member, title, body, '/shopping', urgent=True)
+                    _notify_member_lanes(member, title, body, '/meals', urgent=True)
 
                 fired = await asyncio.to_thread(_prep_svc.run_prep_reminders, _prep_push)
                 if fired:
@@ -1180,7 +1180,8 @@ def _no_store(response):
     return response
 
 
-def _page_or_board(request: Request, slug: str, name: str):
+def _page_or_board(request: Request, slug: str, name: str,
+                   context: dict = None):
     """The admin page in a browser; the BOARD on a wall panel.
 
     Every shelf button used to open the page — the errands page with its two
@@ -1204,7 +1205,13 @@ def _page_or_board(request: Request, slug: str, name: str):
     if request.query_params.get('panel') == 'true' and slug in _hb.BUILTIN_PAGES:
         return _no_store(templates.TemplateResponse(
             request=request, name="home.html", context={'board_slug': slug}))
-    return _no_store(templates.TemplateResponse(request=request, name=name))
+    # `context` for the destinations that share a template and differ by MODE:
+    # /meals and /lists are one drawing of one entity with two scopes, and two
+    # templates is how they would start disagreeing about what a list looks
+    # like. The board branch above needs none of it — a board is composed of
+    # cards that carry their own config.
+    return _no_store(templates.TemplateResponse(request=request, name=name,
+                                                context=context or {}))
 
 
 # --- UI Routes ---
@@ -1489,9 +1496,47 @@ def settings_page(request: Request):
 def chores_page(request: Request):
     return _page_or_board(request, "chores", "chores.html")
 
+@app.get("/meals")
+def meals_page(request: Request):
+    """Meals & Groceries — the planner, and the household's MAIN list.
+
+    Was `/shopping`, and the rename is the honest one: nothing on it was ever
+    about shopping in general. It plans dinners, works out what those dinners
+    need, and keeps the one standing list that the grocery run empties. Every
+    other list a family keeps — the pharmacy, the hardware store — lives on
+    `/lists` now, which is what "Shopping" actually means.
+    """
+    return _page_or_board(request, "meals", "shopping.html",
+                          context={'page_mode': 'meals'})
+
+@app.get("/lists")
+def lists_page(request: Request):
+    """Shopping & Lists — every list EXCEPT the household's main one.
+
+    The same template as `/meals`, deliberately: it is the same drawing of the
+    same entity, and the surest way for two lists pages to disagree about what
+    a list looks like is to give them two templates. What differs is scope and
+    what is loaded — the meals machinery is not fetched here at all.
+    """
+    return _page_or_board(request, "lists", "shopping.html",
+                          context={'page_mode': 'lists'})
+
 @app.get("/shopping")
-def shopping_page(request: Request):
-    return _page_or_board(request, "shopping", "shopping.html")
+def shopping_page_moved(request: Request):
+    """The old address. A permanent redirect rather than a second copy of the
+    page: a wall panel bookmarked on `/shopping?panel=true`, a push notification
+    sent last night and a link somebody put in a chat message all have to keep
+    landing on the thing they meant, and the query string is what carries
+    `?panel=true` / `?kiosk=true` / `?list=`.
+
+    307, not 301: a browser that cached a permanent redirect keeps it forever,
+    and this address is one we may well want back the day "shopping" means
+    something else again.
+    """
+    # RELATIVE, like the root redirect above: an absolute "/meals" is wrong
+    # inside a Home Assistant ingress path, which is most of this app's traffic.
+    q = request.url.query
+    return RedirectResponse(url="meals" + (f"?{q}" if q else ""), status_code=307)
 
 @app.get("/intake")
 def intake_page(request: Request):

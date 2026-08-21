@@ -103,7 +103,7 @@ def scenario_the_kitchen_points_at_the_page_that_owns_it():
     reverts, the decentralisation stopped."""
     for k in ('kitchen_ovens', 'kitchen_burners', 'kitchen_cooks'):
         own = reg.owner(k)
-        check(own['page'] == 'shopping' and own['anchor'] == 'kitchen',
+        check(own['page'] == 'meals' and own['anchor'] == 'kitchen',
               f"{k} should live with the meals, got {own}")
 
 

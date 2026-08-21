@@ -22,6 +22,13 @@
   only shape here that cannot be read as a date. Ninety characters of curve
   data is not something anybody diffs by eye, so a test does it instead:
   `test_panel_chrome.scenario_no_two_shelf_buttons_wear_the_same_icon`.
+
+  Meals & Groceries keeps the CART. Shopping & Lists — its sibling, and the
+  one it is most likely to be confused with from across a kitchen — wears a
+  clipboard with RULED LINES; Errands already wears a clipboard with a TICK,
+  so the two differ in the mark rather than in the board. No comments inside
+  the list below: it is a Jinja EXPRESSION, and `{#` in there is a syntax
+  error rather than a note.
 #}
 {% set NAV_ITEMS = [
     {'slug': 'home', 'href': 'home', 'label': 'Home', 'short': 'Home', 'match': '/home',
@@ -33,8 +40,11 @@
      'paths': ['M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z']},
     {'slug': 'errands', 'href': 'errands', 'label': 'Errands', 'short': 'Errands', 'match': '/errands',
      'paths': ['M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4']},
-    {'slug': 'shopping', 'href': 'shopping', 'label': 'Shopping & Meals', 'short': 'Meals', 'match': '/shopping',
+    {'slug': 'meals', 'href': 'meals', 'label': 'Meals & Groceries', 'short': 'Meals', 'match': '/meals',
      'paths': ['M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z']},
+    {'slug': 'lists', 'href': 'lists', 'label': 'Shopping & Lists', 'short': 'Lists', 'match': '/lists',
+     'paths': ['M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2',
+               'M9 12h6M9 16h4']},
     {'slug': 'occasions', 'href': 'occasions', 'label': 'Occasions', 'short': 'Occasions', 'match': '/occasions',
      'paths': ['M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7']},
     {'slug': 'chores', 'href': 'chores', 'label': 'Chores', 'short': 'Chores', 'match': '/chores',
@@ -671,7 +681,7 @@
         // each card's own config channel (params propagate across links).
         //   ?tabs=none                -> no nav bar at all (pure card)
         //   ?tabs=schedule,chores     -> only those tabs, shelved in that order
-        // Slugs: home, schedule, calendar, errands, shopping, occasions,
+        // Slugs: home, schedule, calendar, errands, meals, lists, occasions,
         // chores, routines, intake, trips, map, moments. Unknown values are
         // ignored.
         const tabsParam = urlParams.get('tabs');

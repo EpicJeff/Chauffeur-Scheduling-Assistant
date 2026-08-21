@@ -125,7 +125,7 @@ def scenario_the_builders_ship_config_and_never_rows():
               f"a week option did not reach the card: {wk}")
         check(set(st) == {'interactive', 'list', 'parts'},
               f"the staples card ships more than config: {sorted(st)}")
-        check(set(li) == {'interactive', 'list', 'columns', 'parts'},
+        check(set(li) == {'interactive', 'list', 'scope', 'columns', 'parts'},
               f"the list card ships more than config: {sorted(li)}")
         check(li['parts']['cart'] is False and li['parts']['runs'] is True,
               f"a section toggle did not reach the card: {li['parts']}")
@@ -135,6 +135,13 @@ def scenario_the_builders_ship_config_and_never_rows():
         # would read a blank as a stated column count of nothing.
         check(li['columns'] == 'auto',
               f"an unset lists-per-row did not default to auto: {li['columns']}")
+        # Same rule for the scope, and it is the one a shipped board depends
+        # on: `all` is what an unconfigured card has always meant.
+        check(li['scope'] == 'all',
+              f"an unset scope did not default to every list: {li['scope']}")
+        bad = home_board._tile_shopping_list(None, config={'scope': 'nonsense'})
+        check(bad['scope'] == 'all',
+              f"a scope outside the vocabulary was trusted: {bad['scope']}")
         check(st['interactive'] is True and li['interactive'] is True,
               "the shopping cards came up inert by default")
 
@@ -190,7 +197,10 @@ def scenario_nothing_shared_is_a_getter():
 
 
 def scenario_the_shopping_board_is_the_kiosk():
-    page = home_board.builtin_page('shopping', {})
+    # `meals` since v2.351.0: the board is Meals & Groceries now, and its list
+    # card is pinned to the household's MAIN list — every other list has its
+    # own board.
+    page = home_board.builtin_page('meals', {})
     # Chrome dropped before comparing: shipped boards open with a heading now,
     # and what this defends is the order of the three drawings.
     types_ = [w['type'] for w in page['widgets']
@@ -247,7 +257,7 @@ def scenario_all_means_all_and_a_blank_picker_says_what_it_means():
           "the staples picker still claims All for a tap that goes on one list")
     check(not _list_opt('shopping_list').get('empty'),
           "the list card's blank is All and should stay All — it draws them all")
-    check(not _list_opt('shopping').get('empty'),
+    check(not _list_opt('lists').get('empty'),
           "the Lists glance already meant All and should still say so")
 
 

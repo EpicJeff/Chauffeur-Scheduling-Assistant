@@ -131,6 +131,18 @@ def _cfg_str(config, key, default=''):
     return default if v is None else str(v).strip()
 
 
+def _cfg_choice(config, key, allowed, default):
+    """A `choice` option's value, refused rather than trusted.
+
+    Stored config is data a household typed into `?widgets=` or an older build
+    wrote — the screensaver's `folder` is the standing lesson, where one side
+    stored a word the other had never heard of and the feature silently fell
+    back forever. A value outside the vocabulary is the default, and the
+    vocabulary lives beside the option that declares it."""
+    v = _cfg_str(config, key)
+    return v if v in allowed else default
+
+
 def _cfg_ids(config, key):
     """A multi-select's value. EMPTY MEANS EVERYONE, always, on every tile that
     takes one — the alternative is a tile that shows nothing until you have
@@ -279,7 +291,7 @@ WIDGETS = [
          _opt('offset', 'Starting', 'int', 0, min=0, max=7,
               help='0 is today, 1 is tomorrow.'),
      ]},
-    {'key': 'shopping', 'icon': '🛒', 'label': 'Lists',
+    {'key': 'lists', 'icon': '🛒', 'label': 'Lists',
      'heading': 'Lists',
      'blurb': "How much is open on each shopping list.",
      'options': [
@@ -343,7 +355,23 @@ WIDGETS = [
          # else, and a second list somebody made was unreachable from a
          # board. The card draws one section per list instead.
          _opt('list', 'List', 'select', '', source='lists',
-              help='One list, or leave empty for every list.'),
+              help='One list, or leave empty for every list in the scope '
+                   'below.'),
+         # WHY a scope and not just the picker above: a shipped board cannot
+         # name a household's list. "The grocery list" is a different id in
+         # every install, and the two boards this app ships need exactly that
+         # distinction — Meals & Groceries owns the main list, Shopping &
+         # Lists is every OTHER one. `is_default` is the app's own word for
+         # "the list every capture path falls back to", which on every real
+         # install is the groceries, so it is the one household-independent
+         # way to say which.
+         _opt('scope', 'Which lists', 'choice', 'all', choices=[
+             {'value': 'all', 'label': 'Every list'},
+             {'value': 'default', 'label': 'The main list only'},
+             {'value': 'others', 'label': 'Everything except the main list'}],
+              help='The main list is the household default — the grocery list '
+                   'the Meals & Groceries page owns. Ignored when a single '
+                   'list is pinned above.'),
          # A list is NARROW and a wall is wide, so several of them stacked
          # down a landscape tile is a column of text with a field of empty
          # panel beside it. This is how many go across before the next one
@@ -930,7 +958,7 @@ BARE_TILES = ('clock', 'hero', 'heading')
 # prunes itself to what this family uses, so the honest default is everything.
 # `intake` is the one exclusion — it is an admin surface and stays opt-in.
 DEFAULT_WIDGETS = ['drives', 'calendar', 'kids', 'meals', 'map', 'chores',
-                   'routines', 'shopping', 'errands', 'occasions', 'trips',
+                   'routines', 'lists', 'errands', 'occasions', 'trips',
                    'weather', 'moments']
 
 # Long enough to collapse several panels onto one build, short enough that
@@ -1682,6 +1710,8 @@ def _tile_shopping_list(now, config=None, **_):
             return None
         return {'interactive': _cfg_bool(config, 'interactive', True),
                 'list': _cfg_str(config, 'list'),
+                'scope': _cfg_choice(config, 'scope',
+                                     ('all', 'default', 'others'), 'all'),
                 'columns': _cfg_str(config, 'columns', 'auto') or 'auto',
                 'parts': {p: _cfg_bool(config, f'show_{p}', True)
                           for p in ('runs', 'cart', 'note', 'byline')}}
@@ -3651,7 +3681,7 @@ def _build_tile(inst, now, **kw):
 _BUILDERS: dict = {
     'clock': _tile_clock, 'hero': _tile_hero, 'heading': _tile_heading,
     'drives': _tile_drives, 'kids': _tile_kids, 'meals': _tile_meals,
-    'shopping': _tile_shopping, 'chores': _tile_chores,
+    'lists': _tile_shopping, 'chores': _tile_chores,
     'meals_week': _tile_meals_week, 'shopping_staples': _tile_shopping_staples,
     'shopping_list': _tile_shopping_list,
     'chores_lanes': _tile_chores_lanes, 'chores_rewards': _tile_chores_goals,
@@ -3876,6 +3906,12 @@ def _instance_id(type_: str, taken: set) -> str:
     return f'{type_}-{n}'
 
 
+# A tile type this app used to answer to. Same bargain as `SLUG_ALIASES`, and
+# the same reason: the vocabulary changed, the households' stored boards did
+# not, and the failure mode of a word one side never heard of is silence.
+TILE_ALIASES = {'shopping': 'lists'}
+
+
 def normalize_instances(raw, settings: dict = None) -> List[dict]:
     """A board is a list of INSTANCES, and this is the only place that decides
     what one is.
@@ -3901,6 +3937,13 @@ def normalize_instances(raw, settings: dict = None) -> List[dict]:
         if not isinstance(item, dict):
             continue
         type_ = str(item.get('type') or item.get('key') or '').strip().lower()
+        # The Lists glance was keyed `shopping` until v2.351.0, when the page
+        # it opens stopped being called that. ALIASED here rather than migrated
+        # in the database, because this is the one function that decides what a
+        # stored tile IS — an unknown type is DROPPED two lines down, so a
+        # household's board would simply lose the tile, on the next boot, with
+        # nothing anywhere saying why.
+        type_ = TILE_ALIASES.get(type_, type_)
         if type_ not in known:
             continue
         wanted = str(item.get('id') or '').strip()
@@ -4579,8 +4622,14 @@ def resolve_widgets(requested: Optional[str] = None, settings: dict = None) -> L
 # something else is a vocabulary with an exception to explain forever. It
 # stays on the desktop nav, where admin lives; if a kiosk-shaped intake is
 # ever designed, it joins the shipped boards like everything else.
-NAV_SLUGS = ['home', 'schedule', 'calendar', 'errands', 'shopping', 'occasions',
-             'chores', 'routines', 'trips', 'map', 'moments', 'music']
+# `shopping` became `meals` in v2.351.0 and `lists` joined it. The page named
+# Shopping was never about shopping in general — it plans dinners and keeps the
+# one standing list a grocery run empties — so it is Meals & Groceries now, and
+# Shopping & Lists is every OTHER list a family keeps. Stored shelves are
+# rewritten by `migrate_shopping_slug_v2351`; `/shopping` still redirects.
+NAV_SLUGS = ['home', 'schedule', 'calendar', 'errands', 'meals', 'lists',
+             'occasions', 'chores', 'routines', 'trips', 'map', 'moments',
+             'music']
 # Every destination except the admin one. An earlier six-slug default put more
 # than half the app out of reach from the panel, which is not a shelf, it is a
 # bookmark bar. The shelf measures itself and moves whatever does not fit into
@@ -4588,8 +4637,20 @@ NAV_SLUGS = ['home', 'schedule', 'calendar', 'errands', 'shopping', 'occasions',
 # constraint that has to be guessed here. Intake stays off: it is an admin
 # surface (mail approvals, IMAP settings) and the kiosk rule has always been to
 # keep it off shared screens.
-DEFAULT_TABS = ['home', 'schedule', 'calendar', 'chores', 'routines', 'shopping',
-                'errands', 'occasions', 'trips', 'map', 'moments', 'music']
+DEFAULT_TABS = ['home', 'schedule', 'calendar', 'chores', 'routines', 'meals',
+                'lists', 'errands', 'occasions', 'trips', 'map', 'moments',
+                'music']
+
+
+# A slug this app used to answer to. ALIASED rather than dropped, which is the
+# screensaver's `folder` lesson (v2.235.1): one side stored a word the other
+# side had never heard of, and the feature silently fell back forever with
+# nothing anywhere saying so. A stored shelf is rewritten once by
+# `migrate_shopping_slug_v2351`, but a `?tabs=` on a bookmarked wall panel is
+# not ours to rewrite — and an unknown slug in that list VANISHES, so without
+# this the Meals button would simply stop existing on the screen most likely to
+# be carrying an old URL.
+SLUG_ALIASES = {'shopping': 'meals'}
 
 
 def resolve_tabs(requested: Optional[str] = None, settings: dict = None) -> List[str]:
@@ -4614,6 +4675,7 @@ def resolve_tabs(requested: Optional[str] = None, settings: dict = None) -> List
         out = []
         for k in seq or []:
             k = str(k).strip().lower()
+            k = SLUG_ALIASES.get(k, k)
             if k in known and k not in out:
                 out.append(k)
         return out
@@ -5001,7 +5063,8 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
 
 TAB_LABELS = {
     'home': 'Home', 'schedule': 'Drives', 'calendar': 'Calendar',
-    'errands': 'Errands', 'shopping': 'Meals', 'occasions': 'Occasions',
+    'errands': 'Errands', 'meals': 'Meals', 'lists': 'Lists',
+    'occasions': 'Occasions',
     'chores': 'Chores', 'routines': 'Routines', 'intake': 'Intake',
     'trips': 'Trips', 'map': 'Map', 'moments': 'Moments',
 }

@@ -313,9 +313,13 @@
                         </div>
                     </template>
 
-                    <!-- lists: the THINGS, as chips. "Groceries — 12" tells you
-                         nothing you can act on walking past. -->
-                    <template x-if="t.type === 'shopping' && !t.data.empty">
+                    <!-- The Lists GLANCE — how much is open on each list, as
+                         the THINGS rather than a count: "Groceries — 12" tells
+                         you nothing you can act on walking past. Keyed
+                         `shopping` until v2.351.0, when the page it opens
+                         stopped being called that; a stored board still saying
+                         the old word is aliased in `normalize_instances`. -->
+                    <template x-if="t.type === 'lists' && !t.data.empty">
                         <div class="space-y-3">
                             <template x-for="l in t.data.lists" :key="l.id || l.name">
                                 <div>

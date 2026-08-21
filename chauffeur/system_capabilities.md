@@ -3935,3 +3935,78 @@ household's settings.
 a choice* cannot be defended server-side. Where a client holds settings it did
 not load, the refusal has to be at the client, and "I have nothing to say"
 has to be expressible — as an omitted key, or as no request at all.
+
+## Shopping became two destinations (v2.351.0)
+
+`/shopping` was never about shopping in general. It plans dinners, works out
+what those dinners need, and keeps the ONE standing list a grocery run empties.
+Everything else a family writes down — the pharmacy, the hardware store — was
+reachable only through a chip row on a page named after the meals.
+
+- **`/meals` — Meals & Groceries.** The planner, and the household's MAIN list
+  (`is_default`, the app's own word for the list every capture path falls back
+  to). No chip row and no "+ List": a page named for the groceries offering the
+  pharmacy is the conflation being undone.
+- **`/lists` — Shopping & Lists.** Every OTHER list, and where they are made,
+  named, shared and deleted.
+- **One template, two modes.** Both routes render `shopping.html` with
+  `page_mode`. A list is one entity with one drawing, and two templates is how
+  two lists pages start disagreeing about what a list looks like — the same
+  reasoning that put the list, the staples and the week into
+  `components/shopping_lists.html`. What the mode changes is SCOPE and what
+  `init` fetches: `/lists` composes no week, derives no plate and reads no
+  repertoire, so opening the pharmacy list on a phone costs nothing.
+- **`shownLists()` is the seam**, and the two predicates are exact complements
+  — a list neither page shows is a list that can still be written to by voice
+  and never read by a person, which is the one failure of this split that loses
+  something rather than merely looking wrong. `?list=<id>` overrides the scope
+  on BOTH pages: an occasion's shopping drain links straight to a list and that
+  list can be any of them.
+
+**The card grew a `scope`** (`all` | `default` | `others`, default `all`) beside
+its list picker, because a SHIPPED board cannot name a household's list — "the
+grocery list" is a different id in every install. The Meals & Groceries board
+pins `default`, Shopping & Lists pins `others` at two lists per row. Values
+outside the vocabulary fall back to `all` (`_cfg_choice`), which is the
+screensaver's `folder` lesson written down as a helper.
+
+**What a rename actually costs, and it is all in the stored vocabulary.** The
+redirect is the easy half:
+
+- `GET /shopping` → 307 to `meals`, **relative** (an absolute `/meals` is wrong
+  behind an HA ingress path) and **with the query string**, which is what
+  carries `?panel=true`, `?kiosk=true` and `?list=`. 307 rather than 301: a
+  browser that cached a permanent redirect keeps it forever.
+- `migrate_shopping_slug_v2351` rewrites `panel_tabs`, `panel_board_order`,
+  `panel_board_hidden` and `panel_shipped_backgrounds`. An unknown slug
+  **vanishes** from a shelf rather than erroring, so without this a wall's Meals
+  button silently disappears — and the hidden set is worse than the order: a
+  board somebody deliberately took off the shelf comes back.
+- `SLUG_ALIASES = {'shopping': 'meals'}` in `resolve_tabs` catches what is not
+  ours to rewrite: a `?tabs=` on a bookmarked wall panel URL.
+- `TILE_ALIASES = {'shopping': 'lists'}` in `normalize_instances`. The Lists
+  glance tile was keyed `shopping`; that function DROPS a type it does not
+  recognise, so the rename without an alias would have deleted the tile off
+  every board that had one, on the next boot, silently.
+- `settings_registry` gained `PAGE_TEMPLATES`: `page` is a ROUTE (it builds the
+  deep link `meals#planning`), and for these two it is not the template's name.
+
+Tests: `tests/test_meals_lists_split.py` (7 scenarios — the redirect keeps its
+query string, the shelf and the boards survive, the two pages own disjoint
+lists, `/lists` fetches no meals machinery, the shelf buttons differ). The
+disjointness one SERVES both pages in chromium and reads the visible chips,
+because `x-show` leaves hidden text in the DOM and a source assertion here
+passes vacuously.
+
+**Two silent Alpine errors fixed on the way past**, both pre-existing and both
+thrown on every single load of this page:
+
+- `ruleDraft` was declared twice — once as `blankRule()` and once inlined in
+  the state literal, and the literal was missing `dish_ids`, `tags`,
+  `exclude_dish_ids` and `whole_meals`. `ruleWouldMatch` reads
+  `d.dish_ids.length` unconditionally. One `blankMealRule()` at module scope
+  now, which is the actual fix: two literals of one shape is the bug.
+- `x-text="(trip.errand || {}).title"` where `trip` is null until one is found.
+  Alpine evaluates an `x-text` whatever its sibling `x-show` says. Latent while
+  the page always showed a list that had a trip; it fires on every list that
+  does not, which is most of them on `/lists`.

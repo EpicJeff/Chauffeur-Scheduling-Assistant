@@ -236,7 +236,9 @@ RULES = [
     # is a lie (see property 3 above).
     (ANY, '/chores', ANYONE, None),
     (ANY, '/routines', ANYONE, None),
-    (ANY, '/shopping', ANYONE, None),
+    (ANY, '/meals', ANYONE, None),
+    (ANY, '/lists', ANYONE, None),
+    (ANY, '/shopping', ANYONE, None),   # redirects to /meals
     (ANY, '/calendar', ANYONE, None),
     (ANY, '/errands', ANYONE, None),
     (ANY, '/occasions', ANYONE, None),

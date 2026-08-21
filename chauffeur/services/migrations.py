@@ -340,6 +340,68 @@ async def migrate_chore_owner_v21730():
         logger.info(f"v2.173.0 chores: {moved} assignment(s) became owners")
 
 
+async def migrate_shopping_slug_v2351():
+    """`shopping` became `meals`, and every stored SHELF still says the old word.
+
+    The page named Shopping was never about shopping in general — it plans
+    dinners and keeps the one standing list a grocery run empties — so it is
+    Meals & Groceries now, and Shopping & Lists is every other list a family
+    keeps. `/shopping` still redirects, which covers bookmarks and pushes; what
+    a redirect cannot reach is the household's own stored vocabulary:
+
+      * `panel_tabs` / `panel_board_order` — the shelf, in the order somebody
+        dragged it. An unknown slug is DROPPED by `resolve_tabs`, so without
+        this a wall's Meals button silently disappears and reappears at the end
+        of the shelf in the default order.
+      * `panel_board_hidden` — a board somebody deliberately took OFF the
+        shelf. Missing this is worse than the order: the board comes back.
+      * `panel_shipped_backgrounds` — the photograph chosen for that board,
+        keyed by slug.
+
+    Keyed on app state and idempotent. The old keys are REMOVED rather than
+    left beside the new ones: a shelf carrying both would draw two Meals
+    buttons the moment `shopping` became a real slug again.
+    """
+    if storage.get_app_state('shopping_slug_meals_v2351'):
+        return
+    settings = storage.get_settings() or {}
+    touched = []
+
+    def _rename(seq):
+        out, seen = [], set()
+        for k in seq or []:
+            k = 'meals' if k == 'shopping' else k
+            if k not in seen:
+                seen.add(k)
+                out.append(k)
+        return out
+
+    for key in ('panel_tabs', 'panel_board_order', 'panel_board_hidden'):
+        before = settings.get(key)
+        if not isinstance(before, list) or 'shopping' not in before:
+            continue
+        settings[key] = _rename(before)
+        touched.append(key)
+
+    shipped = settings.get('panel_shipped_backgrounds')
+    if isinstance(shipped, dict) and 'shopping' in shipped:
+        # `setdefault`, so a household that has somehow already chosen a
+        # picture for `meals` keeps the one they chose most recently.
+        shipped.setdefault('meals', shipped.pop('shopping'))
+        shipped.pop('shopping', None)
+        settings['panel_shipped_backgrounds'] = shipped
+        touched.append('panel_shipped_backgrounds')
+
+    # The marker is set whether or not anything moved: a household with no
+    # stored shelf has nothing to migrate and must not be re-checked on every
+    # boot for the rest of the install's life.
+    storage.set_app_state('shopping_slug_meals_v2351', time.time())
+    if touched:
+        storage.update_settings(settings)
+        logger.info("v2.351.0 shelf: `shopping` became `meals` in "
+                    + ", ".join(touched))
+
+
 async def run_all_migrations():
     """Runs all data migrations in the background after startup"""
     await asyncio.sleep(5) # Let the app start up completely
@@ -376,3 +438,7 @@ async def run_all_migrations():
         await migrate_tile_columns_v21212()
     except Exception as e:
         logger.error(f"Error running tile column migration: {e}")
+    try:
+        await migrate_shopping_slug_v2351()
+    except Exception as e:
+        logger.error(f"Error running shopping slug migration: {e}")
