@@ -42,6 +42,7 @@ os.environ.setdefault('CHAUFFEUR_DATA_DIR',
                       tempfile.mkdtemp(prefix='chauffeur_split_'))
 
 import tpl_source  # noqa: E402
+from live_app import live_app  # noqa: E402
 from services import home_board  # noqa: E402
 
 TPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -252,51 +253,25 @@ def scenario_the_shelf_tells_the_two_apart():
 # failure being defended is a list NOBODY can reach, and the only place that is
 # visible is a running app.
 def _serve(lists):
-    """The app on a port, seeded, with playwright pointed at it. Returns None
-    (and says so) when either half is unavailable, the same bargain the node
-    probes elsewhere make."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        print("  skip  playwright not installed — the pages were not served")
-        return None
-    import socket
-    import threading
-    import time as _time
+    """Seed these lists, then serve the app with a browser pointed at it.
+    Returns None (having said why) when playwright is missing — `live_app`
+    owns that bargain now, and the remove-an-item scenarios share it."""
     from services import storage
     from models.schemas import ShoppingList, ShoppingItem
-
     made = {}
-    for name, default in lists:
-        lid = storage.add_shopping_list(
-            ShoppingList(name=name, is_default=default).model_dump())
-        storage.add_shopping_item(
-            ShoppingItem(list_id=lid, name=name.lower() + ' thing').model_dump())
-        made[name] = lid
 
-    import uvicorn
-    import main
-    sock = socket.socket()
-    sock.bind(('127.0.0.1', 0))
-    port = sock.getsockname()[1]
-    sock.close()
-    server = uvicorn.Server(uvicorn.Config(main.app, host='127.0.0.1',
-                                           port=port, log_level='error'))
-    threading.Thread(target=server.run, daemon=True).start()
-    for _ in range(200):
-        if server.started:
-            break
-        _time.sleep(0.25)
-    check(server.started, "the app never came up")
-    return sync_playwright, port, made, server
+    def seed():
+        for name, default in lists:
+            lid = storage.add_shopping_list(
+                ShoppingList(name=name, is_default=default).model_dump())
+            storage.add_shopping_item(ShoppingItem(
+                list_id=lid, name=name.lower() + ' thing').model_dump())
+            made[name] = lid
+
+    served = live_app(seed)
+    return None if served is None else (served, made)
 
 
-# Every VISIBLE button's label, whitespace collapsed and the open-count suffix
-# dropped. Two things that are not cosmetic. Collapsing: a chip is multi-line
-# markup, so a raw textContent equals nothing and every assertion here passes
-# vacuously. Visibility: `x-show` hides with `display: none` and leaves the
-# text in the DOM, so "this page does not offer + List" is only a real claim
-# about a button somebody can actually press.
 CHIPS = """() => [...document.querySelectorAll('button')]
     .filter(b => b.offsetParent !== null)
     .map(b => (b.textContent || '').replace(/\s+/g, ' ').trim()
@@ -312,37 +287,32 @@ def scenario_neither_page_can_strand_a_list():
     made = _serve([('Groceries', True), ('Pharmacy', False), ('Hardware', False)])
     if made is None:
         return
-    sync_playwright, port, ids, server = made
+    served, ids = made
     try:
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch()
-            def chips(path):
-                pg = browser.new_page()
-                pg.goto(f'http://127.0.0.1:{port}/{path}', wait_until='networkidle')
-                pg.wait_for_timeout(1800)
-                got = set(pg.evaluate(CHIPS))
-                pg.close()
-                return got
+        def chips(path):
+            with served.browser() as page:
+                page.goto(served.url(path), wait_until='networkidle')
+                page.wait_for_timeout(1800)
+                return set(page.evaluate(CHIPS))
 
-            meals, lists_ = chips('meals'), chips('lists')
-            check('Pharmacy' not in meals and 'Hardware' not in meals,
-                  f"Meals & Groceries is still offering the other lists: {meals}")
-            check({'Pharmacy', 'Hardware'} <= lists_,
-                  f"Shopping & Lists did not draw the household's lists: {lists_}")
-            check('Groceries' not in lists_,
-                  f"the grocery list is on both pages: {lists_}")
-            # Making a list belongs to the page that owns them.
-            check('+ List' in lists_ and '+ List' not in meals,
-                  "the wrong page offers to make a list")
+        meals, lists_ = chips('meals'), chips('lists')
+        check('Pharmacy' not in meals and 'Hardware' not in meals,
+              f"Meals & Groceries is still offering the other lists: {meals}")
+        check({'Pharmacy', 'Hardware'} <= lists_,
+              f"Shopping & Lists did not draw the household's lists: {lists_}")
+        check('Groceries' not in lists_,
+              f"the grocery list is on both pages: {lists_}")
+        # Making a list belongs to the page that owns them.
+        check('+ List' in lists_ and '+ List' not in meals,
+              "the wrong page offers to make a list")
 
-            # `?list=` beats the scope on BOTH, or an occasion's shopping drain
-            # links to a list the page it lands on refuses to show.
-            pinned = chips('meals?list=' + ids['Pharmacy'])
-            check('Pharmacy' in pinned,
-                  f"a linked-to list was refused by the page it linked to: {pinned}")
-            browser.close()
+        # `?list=` beats the scope on BOTH, or an occasion's shopping drain
+        # links to a list the page it lands on refuses to show.
+        pinned = chips('meals?list=' + ids['Pharmacy'])
+        check('Pharmacy' in pinned,
+              f"a linked-to list was refused by the page it linked to: {pinned}")
     finally:
-        server.should_exit = True
+        served.stop()
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

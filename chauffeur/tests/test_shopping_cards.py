@@ -44,6 +44,7 @@ TPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    'templates')
 
 import tpl_source  # noqa: E402
+from live_app import live_app  # noqa: E402
 from services import home_board  # noqa: E402
 
 
@@ -505,6 +506,107 @@ def scenario_the_lists_go_across_a_wide_tile_and_never_off_it():
                       f"columns={columns}: {got}")
         finally:
             browser.close()
+
+
+def scenario_a_hook_is_called_with_the_scope_it_was_written_in():
+    """Reported as "removing items from lists is not working — they just stay
+    there", and it had been true since v2.218.0.
+
+    Alpine compiles an expression inside `with(scope)`, and a `with`-scoped
+    call — `removeItem(it)` written literally in markup — sets `this` to the
+    scope. That is why every ordinary handler in these components works. The
+    moment the list markup became a MACRO, the page's destructive controls
+    started arriving through a Jinja parameter and being invoked as
+    `({{ remove }})(it)` — a plain call, so `this` was the global object:
+    `this.apiBase` undefined (the fetch went to `/undefinedapi/…` and 404'd)
+    and `this.loadItems` not a function.
+
+    Both throws land in Alpine's own catch, which logs and carries on. So the
+    row stayed, the server never heard, and nothing on screen said why — a
+    broken button is indistinguishable from a button nobody pressed. That is
+    the whole reason this scenario drives a real browser and then asserts
+    against the SERVER's rows rather than the screen's.
+    """
+    src = tpl_source.read('components/shopping_lists.html')
+    for name in ('components/shopping_lists.html', 'components/errand_lists.html'):
+        body = open(os.path.join(TPL, *name.split('/')), encoding='utf-8').read()
+        bare = re.findall(r'\(\{\{\s*\w+\s*\}\}\)\(', body)
+        check(not bare,
+              f"{name} invokes a hook without binding the scope: {bare} — "
+              f"use ({{{{ hook }}}}).call($data, …)")
+        check('.call($data' in body,
+              f"{name} no longer binds its hooks to the component scope")
+
+
+def scenario_removing_an_item_actually_removes_it():
+    """The runtime half, on BOTH destinations, and asserted against storage —
+    the screen redraws from a fetch, so a row vanishing locally would prove
+    nothing about whether the line is gone."""
+    from services import storage
+    from models.schemas import ShoppingList, ShoppingItem
+    ids = {}
+
+    def seed():
+        for name, default, items in (('Groceries', True, ['milk', 'eggs', 'bread']),
+                                     ('Pharmacy', False, ['plasters', 'toothpaste'])):
+            lid = storage.add_shopping_list(
+                ShoppingList(name=name, is_default=default).model_dump())
+            ids[name] = lid
+            for it in items:
+                storage.add_shopping_item(
+                    ShoppingItem(list_id=lid, name=it).model_dump())
+
+    served = live_app(seed)
+    if served is None:
+        return
+    try:
+        for path, listname, target, rest in (
+                ('meals', 'Groceries', 'eggs', ['bread', 'milk']),
+                ('lists', 'Pharmacy', 'plasters', ['toothpaste'])):
+            handle = served.browser()
+            with handle as page:
+                page.goto(served.url(path), wait_until='networkidle')
+                page.wait_for_timeout(1800)
+                row = page.locator(f'div.group:has-text("{target}")').first
+                check(row.count() == 1, f"{path} never drew {target}")
+                row.hover()
+                # The ✕ is hover-revealed; `title` is what distinguishes it
+                # from the tick beside it.
+                row.locator('button[title]').first.click()
+                page.wait_for_timeout(600)
+                page.locator('button:text-is("Remove")').last.click()
+                page.wait_for_timeout(1500)
+
+                left = sorted(i['name'] for i in storage.get_shopping_items(ids[listname]))
+                check(target not in left,
+                      f"{path}: {target} is still on the list server-side: {left}")
+                # EXACTLY the rest, because "remove one line" is a claim about
+                # the lines it did not touch as much as the one it did.
+                check(left == rest,
+                      f"{path}: removing {target} did not leave {rest}: {left}")
+                check(not handle.errors,
+                      f"{path}: the remove threw rather than working: {handle.errors[:3]}")
+
+        # And the cart's Clear, which is the same hook one row down.
+        handle = served.browser()
+        with handle as page:
+            page.goto(served.url('meals'), wait_until='networkidle')
+            page.wait_for_timeout(1800)
+            for name in ('milk', 'bread'):
+                page.locator(f'div.group:has-text("{name}")').first.locator(
+                    'button[aria-label^="Got"]').first.click()
+                page.wait_for_timeout(500)
+            page.locator('button:text-is("Clear")').first.click()
+            page.wait_for_timeout(500)
+            page.locator('button:text-is("Clear")').last.click()
+            page.wait_for_timeout(1500)
+            left = sorted(i['name'] for i in storage.get_shopping_items(ids['Groceries']))
+            check(left == [],
+                  f"Clear the cart left the checked lines behind: {left}")
+            check(not handle.errors,
+                  f"Clear the cart threw: {handle.errors[:3]}")
+    finally:
+        served.stop()
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

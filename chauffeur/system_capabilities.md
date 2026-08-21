@@ -4010,3 +4010,55 @@ thrown on every single load of this page:
   Alpine evaluates an `x-text` whatever its sibling `x-show` says. Latent while
   the page always showed a list that had a trip; it fires on every list that
   does not, which is most of them on `/lists`.
+
+## A hook was called with the wrong receiver, so removing a line did nothing (v2.352.0)
+
+Reported as "removing items from lists is not working — they just stay there",
+and true since v2.218.0, when the list markup became a shared macro.
+
+Alpine compiles an expression inside `with(scope)`, and a `with`-scoped call —
+`removeItem(it)` written literally in markup — sets `this` to the scope. That
+is why every ordinary handler in these components works, and why nothing looked
+wrong. The moment the list became a macro, the page's destructive controls
+started arriving through a Jinja parameter (`remove='(isKiosk ? null :
+removeItem)'`) and being invoked as `({{ remove }})(it)` — a PLAIN call, so
+`this` was the global object. Two consequences, both silent:
+
+- `this.apiBase` was `undefined`, so the request went to
+  `DELETE /undefinedapi/shopping/items/<id>` and 404'd;
+- `this.loadItems` was not a function, so the redraw threw.
+
+Both throws land in **Alpine's own catch**, which logs to the console and
+carries on — so the row stayed, the server never heard, and nothing on screen
+said why. A broken button is indistinguishable from a button nobody pressed.
+
+**Fixed in the MACRO, not in the callers**: `({{ hook }}).call($data, …)` hands
+the hook the same scope the literal form would have had. A contract that is
+only safe when four separate templates each remember to wrap their function in
+an arrow is not a contract. Same treatment for `components/errand_lists.html`,
+whose four hook sites had the same shape and got away with it only because the
+errands page passes module-level functions that never look at `this`.
+
+Affected: the ✕ on a line and Clear-the-cart on Meals & Groceries and Shopping
+& Lists. Not affected: the tick (`setChecked` is written literally in the macro
+and always bound), voice, and every board card (a card passes no hooks — a wall
+panel has no destructive controls by design).
+
+- **`tests/live_app.py`** is new: seed, serve the app on a free port, hand back
+  a chromium page that also **collects console errors**. That last part is the
+  point — this class of bug is invisible to jsdom (no layout, no real event
+  dispatch) and invisible to a source assertion (the template reads perfectly),
+  and the failure mode is a logged exception rather than a raised one. Skips
+  when playwright is absent, like the node probes.
+- Pinned two ways in `tests/test_shopping_cards.py`: a source guard that no
+  shared macro invokes a hook unbound, and a runtime scenario that clicks the ✕
+  on both pages and asserts against **storage**, not the screen. Mutation-checked
+  in both directions — restoring `(hook)(it)` fails the guard, and
+  `.call(window, it)` (which the guard cannot see) fails the runtime scenario.
+
+**Unrelated, found while running the suite**: `test_fanout_scope`'s facet
+scenario was clock-dependent. `_notify_member_lanes` drops a non-urgent send
+inside a member's quiet hours, and a member with no settings is inside the
+default window all evening — so the test passed in the afternoon and failed
+after about nine at night. It now stubs the quiet-hour gate: the facet gate is
+what it is testing, and the quiet-hour gate is `test_kid_pushes`' business.

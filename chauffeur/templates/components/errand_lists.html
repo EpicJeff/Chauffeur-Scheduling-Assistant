@@ -70,7 +70,7 @@
                                     <span class="text-teal-300" x-text="t.assigned_to_name"></span>
                                 </template>
                                 <template x-if="listShow('owner') && !t.assigned_to_name && !!({{ edit }})">
-                                    <button @click="({{ edit }})(t)"
+                                    <button @click="({{ edit }}).call($data, t)"
                                         class="text-gray-500 hover:text-teal-300 underline decoration-dotted">nobody yet</button>
                                 </template>
                                 <template x-if="listShow('owner') && !t.assigned_to_name && !({{ edit }})">
@@ -81,7 +81,7 @@
                                 </template>
                             </span>
                             <template x-if="!!({{ edit }})">
-                                <button @click="({{ edit }})(t)" title="Edit"
+                                <button @click="({{ edit }}).call($data, t)" title="Edit"
                                     class="text-gray-600 hover:text-teal-300 text-xs shrink-0">✎</button>
                             </template>
                             <!-- Deleting is a HAND path, not a wall one. The
@@ -90,7 +90,7 @@
                                  disabled — a wall panel is reachable by every
                                  child in the house. -->
                             <template x-if="!!({{ remove }})">
-                                <button @click="({{ remove }})(t)" title="Delete"
+                                <button @click="({{ remove }}).call($data, t)" title="Delete"
                                     class="text-gray-600 hover:text-red-400 text-xs shrink-0">✕</button>
                             </template>
                         </div>
@@ -132,7 +132,7 @@
                                 </div>
                             </div>
                             <template x-if="!!({{ edit }})">
-                                <button @click="({{ edit }})(e)" title="Edit"
+                                <button @click="({{ edit }}).call($data, e)" title="Edit"
                                     class="text-gray-600 hover:text-blue-300 text-xs shrink-0">✎</button>
                             </template>
                         </div>

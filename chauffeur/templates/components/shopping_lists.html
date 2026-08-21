@@ -43,6 +43,22 @@
      expression whose result is a function, so a bare name would call the hook
      once per row while the page was still drawing itself.
 
+     …and it is CALLED as `(expr).call($data, …)`, never as `(expr)(…)`, which
+     is the other half of the same fact and cost this feature two releases of
+     silently doing nothing. Alpine compiles an expression inside `with(scope)`,
+     and a `with`-scoped call — `removeItem(it)` written literally in markup —
+     sets `this` to the scope, which is why every ordinary handler in this file
+     works. Pulling the function out through a Jinja parameter first turns it
+     into a PLAIN call: `this` is the global object, `this.apiBase` is
+     undefined, the fetch goes to `/undefinedapi/…` and 404s, and the reload
+     that would have redrawn the row throws `this.loadItems is not a function`
+     — into Alpine's handler, which logs and carries on. So the row stays,
+     nothing on screen says why, and the page looks like it ignored the tap.
+     `.call($data, …)` hands the hook the same scope the literal form would
+     have had. Binding here rather than asking every caller to pass an arrow:
+     a contract that is only safe when four separate templates each remember
+     to wrap their function is not a contract.
+
      Jinja `import` renders none of this file, so the scripts at the bottom are
      emitted by `include` exactly once per page. -->
 
@@ -164,7 +180,7 @@
                                     <span x-text="itemSubline(it)"></span>
                                 </div>
                             </div>
-                            <button x-show="!!({{ remove }})" @click="({{ remove }})(it)"
+                            <button x-show="!!({{ remove }})" @click="({{ remove }}).call($data, it)"
                                 class="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
                                 title="Remove (not bought — just not wanted)">✕</button>
                         </div>
@@ -178,7 +194,7 @@
                         <h3 class="text-xs font-black uppercase tracking-widest text-gray-500">
                             In the cart · <span x-text="checkedItems().length"></span>
                         </h3>
-                        <button x-show="!!({{ clear }})" @click="({{ clear }})()"
+                        <button x-show="!!({{ clear }})" @click="({{ clear }}).call($data)"
                             class="text-xs font-bold text-gray-500 hover:text-white">Clear</button>
                     </div>
                     <div class="space-y-2">

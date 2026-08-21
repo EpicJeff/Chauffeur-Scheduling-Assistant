@@ -94,6 +94,15 @@ def scenario_a_named_facet_gates_the_send():
     sent = []
     real = main.send_push_to_member
     main.send_push_to_member = lambda mid, *a, **k: sent.append(mid)
+    # QUIET HOURS OFF, explicitly. `_notify_member_lanes` drops a non-urgent
+    # send inside them, and a member with no settings is inside the default
+    # window all evening — so this scenario passed in the afternoon and failed
+    # after about nine at night, which is exactly the shape of a test nobody
+    # trusts. What is under test here is the FACET gate; the quiet-hour gate is
+    # `test_kid_pushes`' business and must not be able to answer for it.
+    from services import family_digest as _fd
+    real_quiet = _fd.in_member_quiet_hours
+    _fd.in_member_quiet_hours = lambda *a, **k: False
     try:
         gran = storage.get_member('gran')
         main._notify_member_lanes(gran, "Drives", "…", facet='schedule.logistics')
@@ -106,6 +115,7 @@ def scenario_a_named_facet_gates_the_send():
                                         "are untouched")
     finally:
         main.send_push_to_member = real
+        _fd.in_member_quiet_hours = real_quiet
 
 
 SCENARIOS = [
