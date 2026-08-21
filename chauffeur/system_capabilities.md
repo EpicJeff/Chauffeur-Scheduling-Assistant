@@ -4094,6 +4094,19 @@ what it is testing, and the quiet-hour gate is `test_kid_pushes`' business.
 
 ## The philosophy / bios / solver-themes arc is gone (v2.353.0)
 
+> **The leftover that broke every solve (v2.355.0).** The removal stripped
+> `ai_status` from `storage.save_cached_daily_schedule` but the refresh had
+> TWO calls to it -- the first marking the row `'evaluating'` while the
+> background LLM pass ran, the second writing the result. The second was
+> cleaned up; the first kept passing `ai_status` and made every solve die on a
+> `TypeError`. It shipped because `refresh_schedule_logic` catches `Exception`
+> and returns `{'error': ...}` rather than raising, and because NOTHING in the
+> suite ran the refresh -- the two tests that mention it both only read its
+> source with `inspect.getsource`. `scenario_a_day_actually_solves` in
+> `tests/test_no_solver_themes.py` now seeds a household, stubs the calendar
+> fetch with one ordinary event, solves a day, and asserts no error came back
+> and a schedule was cached. Any fatal on that path fails the suite now.
+
 The idea: describe your family in prose ("How this family works"), add a bio per
 driver and passenger, and an LLM would synthesise scheduling rules **and** a set
 of *solver themes* — multiplier sets that reweighted the CP-SAT objective. The

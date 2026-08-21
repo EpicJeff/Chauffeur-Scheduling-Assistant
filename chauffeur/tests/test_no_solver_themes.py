@@ -158,6 +158,63 @@ def scenario_the_word_theme_still_means_the_panel_one():
           "follow-the-sun theming went with the solver themes")
 
 
+def scenario_a_day_actually_solves():
+    """THE ONE THAT MATTERS. Every other scenario here reads source; none of
+    them RUN the thing, and the removal proved what that costs: it stripped
+    `ai_status` from save_cached_daily_schedule and left a call still passing
+    it, so every refresh died on a TypeError -- through a 137-file sweep, an
+    add-on build and a device, because `refresh_schedule_logic` catches
+    Exception and returns {'error': ...} rather than raising.
+
+    So: seed a household, hand the fetch one real event, and solve a day. The
+    assertion is that nothing came back as an error and a schedule was cached.
+    Calendars are the only outside thing, and they are stubbed."""
+    import datetime
+    from services import calendar as cal_svc
+    from services import storage
+    from models.schemas import Event
+    import main
+
+    for t in ('drivers_table', 'passengers_table', 'members_table',
+              'daily_schedules_table', 'custom_schedules_table',
+              'settings_table', 'events_table'):
+        tbl = getattr(storage, t, None)
+        if tbl is not None:
+            tbl.truncate()
+    storage.settings_table.insert({'calendar_ids': ['cal_house'],
+                                   'days_to_build': 1})
+    storage.add_driver({'id': 'd1', 'name': 'Jeff', 'color_code': '#3b82f6',
+                        'group': 'primary', 'priority_index': 1,
+                        'calendar_ids': []})
+    storage.add_passenger({'id': 'p1', 'name': 'Lily', 'calendar_ids': [],
+                           'hashtags': []})
+    storage.add_member({'id': 'm1', 'name': 'Lily', 'role': 'child',
+                        'passenger_id': 'p1'})
+
+    day = datetime.date.today()
+    start = datetime.datetime.combine(day, datetime.time(16, 0))
+    ev = Event(id='ev1', title='Practice', start=start,
+               end=start + datetime.timedelta(hours=1),
+               location='Rec Center', description='',
+               calendar_ids=['cal_house'], source_event_ids=['ev1'])
+
+    real = cal_svc.fetch_upcoming_events
+    try:
+        cal_svc.fetch_upcoming_events = lambda *a, **k: [ev]
+        res = main.refresh_schedule_logic(day.isoformat(), day.isoformat(),
+                                          force_refresh=True)
+    finally:
+        cal_svc.fetch_upcoming_events = real
+
+    check(isinstance(res, dict) and not res.get('error'),
+          "a refresh of one ordinary day failed: %s" % (res or {}).get('error'))
+    cached = storage.get_cached_daily_schedule(day.isoformat())
+    check(cached and 'schedule' in cached,
+          "the day solved but nothing was cached, so no screen can draw it")
+    check('ai_status' not in (cached or {}),
+          "the removed ai_status is being written again")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

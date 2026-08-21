@@ -15302,8 +15302,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # rescheduled the user's itinerary on every refresh).
 
         encoded_schedule = jsonable_encoder(daily_schedule)
-        storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash, ai_status='evaluating')
-
+        # One save. There were two: the first marked the row 'evaluating'
+        # while the themed-alternatives LLM pass ran in the background, and
+        # the second wrote the result. That pass went in v2.353.0 and took the
+        # `ai_status` parameter with it -- but not this call, which kept
+        # passing it and made EVERY solve die on a TypeError.
         storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash)
 
         # Day finished, remove it from solving list and save combined!
