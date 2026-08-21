@@ -248,6 +248,15 @@
                     </div>
 
                     <div class="mt-8 flex justify-end space-x-4">
+                        <!-- Cancel the OCCURRENCE: recorded with a reason,
+                             mirrored to Google (CANCELED + Free), driver and
+                             kids pushed. Never a delete — the record is what
+                             lets it be rescheduled, and what keeps an ICS
+                             re-add canceled. -->
+                        <button id="cancel-event-btn" onclick="cancelActiveEvent()"
+                            class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-200 font-bold shadow-md transition-colors flex items-center">
+                            ❌ <span id="cancel-event-btn-label" class="ml-2">Cancel Event</span>
+                        </button>
                         <button id="remove-override-btn" onclick="removeOverride(activeEventId)"
                             class="hidden px-5 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold shadow-md transition-colors flex items-center">
                             <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1011,10 +1020,18 @@
             if (!ev) return;
 
             // Populate View Mode
-            document.getElementById('view-title').textContent = ev.title;
+            const titleEl = document.getElementById('view-title');
+            titleEl.textContent = ev.title;
+            titleEl.classList.toggle('line-through', !!ev.canceled);
+            titleEl.classList.toggle('opacity-60', !!ev.canceled);
+            const cancelLabel = document.getElementById('cancel-event-btn-label');
+            if (cancelLabel) {
+                cancelLabel.textContent = ev.canceled ? 'Restore Event' : 'Cancel Event';
+            }
             const dateStr = formatDateStr(ev.start);
             const timeStr = `${formatTime(ev.start)} - ${formatTime(ev.end)}`;
-            document.getElementById('view-time').textContent = `${dateStr} • ${timeStr}`;
+            document.getElementById('view-time').textContent = `${dateStr} • ${timeStr}`
+                + (ev.canceled ? ` • CANCELED${ev.cancel_reason ? ' — ' + ev.cancel_reason : ''}` : '');
 
             const locEl = document.getElementById('view-location');
             locEl.innerHTML = ev.location ? ev.location : '<span class="italic text-gray-500">No location</span>';
@@ -2129,6 +2146,43 @@
             } finally {
                 document.getElementById('schedule-container').classList.remove('opacity-50', 'pointer-events-none');
             }
+        }
+
+        async function cancelActiveEvent() {
+            const ev = currentEventsMap[activeEventId];
+            if (!ev) return;
+            let body = {};
+            let path;
+            if (ev.canceled) {
+                if (!await promptConfirm('Restore event',
+                    `Put "${ev.title}" back on the schedule? Everyone will be told it's happening after all.`,
+                    'Restore')) return;
+                path = `api/events/${encodeURIComponent(activeEventId)}/restore`;
+            } else {
+                const reason = await promptInput('Cancel this event',
+                    `Cancel "${ev.title}" for this date only. The driver and the kids get told, ` +
+                    'and the Google event is marked CANCELED (not deleted).',
+                    { placeholder: 'Reason (optional) — e.g. coach is sick' });
+                if (reason === null || reason === undefined) return;
+                path = `api/events/${encodeURIComponent(activeEventId)}/cancel`;
+                body = { reason: (reason || '').trim() };
+            }
+            closeEventModal();
+            try {
+                const r = await fetch(path, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                if (!r.ok) {
+                    let msg = 'Could not update the event';
+                    try { msg = (await r.json()).detail || msg; } catch (e) {}
+                    showGlobalAlert(msg);
+                    return;
+                }
+                const res = await r.json();
+                showGlobalAlert(res.message || 'Done');
+                fetchSchedule();
+            } catch (e) { showGlobalAlert('Could not update the event'); }
         }
 
         async function removeOverride(eventId) {

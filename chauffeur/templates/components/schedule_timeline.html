@@ -945,7 +945,13 @@
                         const evDecision = ev.optional_decision || null;
                         let badgeHtml = '';
                         let borderClass = 'border-gray-700 hover:border-gray-500';
-                        if (evOptional && evDecision === 'skip') {
+                        if (ev.canceled) {
+                            // Canceled: out of the solve like a skip, drawn
+                            // struck-through with its reason — the record IS
+                            // the point (never silently vanished).
+                            borderClass = 'border-gray-600 hover:border-gray-500 opacity-60';
+                            badgeHtml = `<div class="absolute -top-2 -right-2 bg-gray-700 text-gray-200 text-[9px] font-bold px-1.5 py-0.5 rounded shadow-lg uppercase tracking-wider z-10" title="${(ev.cancel_reason || '').replace(/"/g, '&quot;')}">Canceled</div>`;
+                        } else if (evOptional && evDecision === 'skip') {
                             // Decided 'skip': excluded from the solve entirely
                             // (never in `unassigned`) — worn calmly as skipped.
                             borderClass = 'border-purple-500/60 hover:border-purple-400';

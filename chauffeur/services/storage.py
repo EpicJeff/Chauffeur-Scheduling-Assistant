@@ -416,6 +416,11 @@ with db_lock:
     routine_checks_table = db.table('routine_checks')
     kid_tasks_table = db.table('kid_tasks')
     optional_decisions_table = db.table('optional_decisions')
+    # Canceled occurrences. Unlike decisions these are NEVER pruned: the
+    # record is the reschedule memory ("canceled, coach sick") and the
+    # tombstone that keeps a resurrected ICS event canceled. Restoring sets
+    # restored_at rather than deleting — the history is the point.
+    event_cancellations_table = db.table('event_cancellations')
     shopping_lists_table = db.table('shopping_lists')
     shopping_items_table = db.table('shopping_items')
     meals_table = db.table('meals')
@@ -2327,6 +2332,69 @@ def prune_optional_decisions(before_date: str):
     next week's occurrence."""
     with db_lock:
         optional_decisions_table.remove(Query().date < before_date)
+
+# --- Event cancellations ---
+# Same keying as optional decisions (instance google id first, series id as
+# fallback, plus the occurrence date) — but rows are HISTORY, not state that
+# expires: an active row (restored_at None) is the tombstone that keeps a
+# canceled occurrence out of the solve and suppresses the ICS resurrection;
+# a restored row is the paper trail.
+
+def get_event_cancellations(active_only: bool = False) -> List[dict]:
+    with db_lock:
+        rows = [dict(r) for r in event_cancellations_table.all()]
+    if active_only:
+        rows = [r for r in rows if not r.get('restored_at')]
+    rows.sort(key=lambda r: (r.get('date') or '', r.get('ts') or 0), reverse=True)
+    return rows
+
+def get_event_cancellation(google_ids, date: str) -> Optional[dict]:
+    """The ACTIVE cancellation for one occurrence, first candidate id wins —
+    mirrors get_optional_decision."""
+    ids = [str(g) for g in google_ids if g]
+    with db_lock:
+        rows = [dict(r) for r in event_cancellations_table.search(Query().date == date)]
+    for gid in ids:
+        for r in rows:
+            if r.get('google_id') == gid and not r.get('restored_at'):
+                return r
+    return None
+
+def any_event_cancellation(google_ids, date: str) -> Optional[dict]:
+    """Active OR restored — the feed detector must not re-cancel an
+    occurrence a person deliberately restored."""
+    ids = [str(g) for g in google_ids if g]
+    with db_lock:
+        rows = [dict(r) for r in event_cancellations_table.search(Query().date == date)]
+    for gid in ids:
+        for r in rows:
+            if r.get('google_id') == gid:
+                return r
+    return None
+
+def add_event_cancellation(rec: dict) -> dict:
+    import time as _time
+    rec = dict(rec)
+    rec.setdefault('ts', _time.time())
+    rec.setdefault('restored_at', None)
+    with db_lock:
+        event_cancellations_table.insert(rec)
+    return rec
+
+def restore_event_cancellation(google_ids, date: str) -> Optional[dict]:
+    """Mark the active row restored (never delete — the record is the point).
+    Returns the row that was restored, or None."""
+    import time as _time
+    rec = get_event_cancellation(google_ids, date)
+    if not rec:
+        return None
+    q = Query()
+    with db_lock:
+        event_cancellations_table.update(
+            {'restored_at': _time.time()},
+            (q.google_id == rec['google_id']) & (q.date == date))
+    rec['restored_at'] = _time.time()
+    return rec
 
 # --- Outside hands (load arc A1) ---
 # Contacts who do work for this household without holding the app, and the

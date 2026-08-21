@@ -47,6 +47,13 @@ class Event(BaseModel):
     # Set by the refresh when every passenger on the event is away on a
     # background trip: excluded from solving but still shown on the calendar.
     trip_suppressed: bool = False
+    # Cancellations: this OCCURRENCE was called off — out of the solve like a
+    # skip, still drawn (struck through), with the reason riding along.
+    # Stamped each refresh from storage.event_cancellations
+    # (services/cancellations.py); the record is what makes a canceled ICS
+    # event STAY canceled when the feed re-adds it.
+    canceled: bool = False
+    cancel_reason: Optional[str] = None
     # THE WHOLE TRIP, carried on every daily slice of it.
     #
     # A background trip is cut into one event per day for the UI and the

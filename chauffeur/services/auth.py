@@ -284,6 +284,9 @@ RULES = [
     (ANY, '/api/messages/*', SIGNED_IN, None),
     (ANY, '/api/channels/*', SIGNED_IN, None),
     (ANY, '/api/events/*', SIGNED_IN, 'calendar.events'),
+    # The cancellation record: what was called off, when, why — the
+    # reschedule memory. Calendar-shaped, so it wears the calendar facet.
+    (ANY, '/api/cancellations', SIGNED_IN, 'calendar.events'),
     (ANY, '/api/errands/*', SIGNED_IN, 'lists.errands'),
     (ANY, '/api/overrides/*', SIGNED_IN, 'schedule.assignment'),
     (ANY, '/api/occasions/*', SIGNED_IN, 'occasions'),

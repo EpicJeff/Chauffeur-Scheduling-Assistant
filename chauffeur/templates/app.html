@@ -6427,6 +6427,20 @@
                 mapBtn.style.display = 'none';
             }
 
+            // Cancel/restore: parents and adults, on real calendar events.
+            const cancelBtn = document.getElementById('em-cancel-btn');
+            if (cancelBtn) {
+                const role = currentMemberRole();
+                const mayCancel = !ev.isErrand && ev.id
+                    && (role === 'parent' || role === 'adult');
+                cancelBtn.style.display = mayCancel ? 'flex' : 'none';
+                if (mayCancel) {
+                    document.getElementById('em-cancel-label').textContent =
+                        ev.canceled ? 'Restore this event' : 'Cancel this event';
+                    cancelBtn.onclick = () => cancelEventFromModal(ev);
+                }
+            }
+
             const discussBtn = document.getElementById('em-discuss-btn');
             if (discussBtn) {
                 if (!ev.isErrand && ev.id && selectedMemberId) {
@@ -6490,6 +6504,41 @@
                 modal.classList.add('hidden');
                 modal.style.display = 'none';
             }, 300);
+        }
+
+        async function cancelEventFromModal(ev) {
+            const baseId = String(ev.id).replace(/_(dropoff|pickup)$/, '');
+            let path, body = { member_id: selectedMemberId };
+            if (ev.canceled) {
+                if (!await promptConfirm('Restore event',
+                    `Put "${ev.title}" back on? Everyone gets told it's happening after all.`,
+                    'Restore')) return;
+                path = `${apiBase}api/events/${encodeURIComponent(baseId)}/restore`;
+            } else {
+                const reason = await promptInput('Cancel this event',
+                    `Cancels "${ev.title}" for this date only — the driver and the kids get told, and the Google event is marked CANCELED (not deleted).`,
+                    { placeholder: 'Reason (optional) — e.g. coach is sick' });
+                if (reason === null || reason === undefined) return;
+                path = `${apiBase}api/events/${encodeURIComponent(baseId)}/cancel`;
+                body.reason = (reason || '').trim();
+            }
+            closeEventModal();
+            try {
+                const r = await fetch(path, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Member-Token': memberToken() },
+                    body: JSON.stringify(body)
+                });
+                if (!r.ok) {
+                    let msg = 'Could not update the event';
+                    try { msg = (await r.json()).detail || msg; } catch (e) {}
+                    showGlobalAlert(msg);
+                    return;
+                }
+                showGlobalAlert(((await r.json()) || {}).message || 'Done');
+                buildTimeline();
+                renderMyDay();
+            } catch (e) { showGlobalAlert('Could not update the event'); }
         }
 
         function renderLegPill(timeStr, title, mins, delayMins, actionArgs, colorTheme = 'blue', subtitleHtml = '', legId = null, isPast = false, lateMins = 0) {
@@ -7561,6 +7610,12 @@
                 <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">Location</p>
                 <p id="em-location" class="text-gray-300 text-sm break-words"></p>
             </div>
+            <!-- Cancel/restore the occurrence: a parent/adult act, phone-first
+                 because that's where the "coach just texted" moment happens. -->
+            <button id="em-cancel-btn" style="display: none"
+                class="w-full flex items-center justify-center gap-3 py-3 rounded-xl bg-gray-800 border border-gray-700 active:bg-gray-700 text-gray-200 font-bold shadow-md mb-3">
+                ❌ <span id="em-cancel-label">Cancel this event</span>
+            </button>
             <button id="em-map-btn"
                 class="w-full flex items-center justify-center gap-3 py-3 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold shadow-md mb-3">
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">

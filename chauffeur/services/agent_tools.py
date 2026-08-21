@@ -806,6 +806,21 @@ class SetEventOptionalTool(BaseModel):
     scope: Optional[str] = Field("series", description="series (default) = every occurrence; instance = only the one on target_date.")
     target_date: Optional[str] = Field("today", description="A date the event occurs on, used to find it.")
 
+class CancelEventTool(BaseModel):
+    """
+    Cancels ONE occurrence of a calendar event ("practice is canceled", "call off swim tomorrow — coach is sick"). Records it with the reason, marks the Google event CANCELED, and pushes the assigned driver and the kids. Nothing is deleted — the event stays on the calendar struck through, and can be restored. Parents/adults only.
+    """
+    event_name: str = Field(..., description="The name of the event or a substring of it.")
+    target_date: Optional[str] = Field("today", description="The date of the occurrence, YYYY-MM-DD or relative ('today', 'tomorrow').")
+    reason: Optional[str] = Field(None, description="Why it was canceled ('coach is sick') — rides the pushes and the record.")
+
+class RestoreEventTool(BaseModel):
+    """
+    Un-cancels a previously canceled event occurrence ("practice is back on") — restores the Google title, re-plans the drive, tells everyone it is happening after all. Parents/adults only.
+    """
+    event_name: str = Field(..., description="The name of the event or a substring of it.")
+    target_date: Optional[str] = Field("today", description="The date of the occurrence.")
+
 # A unified schema registry
 TOOL_SCHEMAS = {
     "start_drive": StartDriveTool.model_json_schema(),
@@ -854,6 +869,8 @@ TOOL_SCHEMAS = {
     "get_drive_digest": GetDriveDigestTool.model_json_schema(),
     "decide_optional_event": DecideOptionalEventTool.model_json_schema(),
     "set_event_optional": SetEventOptionalTool.model_json_schema(),
+    "cancel_event": CancelEventTool.model_json_schema(),
+    "restore_event": RestoreEventTool.model_json_schema(),
     "get_kid_tasks": GetKidTasksTool.model_json_schema(),
     "add_kid_task": AddKidTaskTool.model_json_schema(),
     "complete_kid_task": CompleteKidTaskTool.model_json_schema(),
@@ -2253,6 +2270,20 @@ def handle_set_event_optional(args: dict) -> dict:
                                              bool(args.get("optional", True)),
                                              args.get("scope") or "series")
 
+def handle_cancel_event(args: dict) -> dict:
+    # This stack serves the admin dashboard and HA voice — parent surfaces,
+    # no resolved member — so the parent/adult gate passes on None.
+    from services import cancellations
+    return cancellations.cancel_by_title(args.get("event_name") or "",
+                                         args.get("target_date") or "today",
+                                         reason=args.get("reason") or "")
+
+def handle_restore_event(args: dict) -> dict:
+    from services import cancellations
+    return cancellations.cancel_by_title(args.get("event_name") or "",
+                                         args.get("target_date") or "today",
+                                         restore=True)
+
 TOOL_HANDLERS = {
     "start_drive": handle_start_drive,
     "update_drive_status": handle_update_drive_status,
@@ -2300,6 +2331,8 @@ TOOL_HANDLERS = {
     "get_drive_digest": handle_get_drive_digest,
     "decide_optional_event": handle_decide_optional_event,
     "set_event_optional": handle_set_event_optional,
+    "cancel_event": handle_cancel_event,
+    "restore_event": handle_restore_event,
     "get_kid_tasks": handle_get_kid_tasks,
     "add_kid_task": handle_add_kid_task,
     "complete_kid_task": handle_complete_kid_task,

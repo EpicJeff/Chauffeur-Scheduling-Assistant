@@ -4447,3 +4447,47 @@ PWA is vanilla JS on purpose — Alpine there animates only the avatar
 editor).
 
 Tests: `test_chores.scenario_the_house_tab_carries_lists_into_the_pwa`.
+
+## An event is called off, not deleted (v2.363.0 — cancellations)
+
+The old workflow — delete the event in Google Calendar — failed three ways:
+no record survives (nothing to reschedule from), an ICS-fed event silently
+resurrects on the next sync, and nobody counting on the event hears anything.
+A cancellation (`services/cancellations.py`, `event_cancellations` table) is
+the opposite of all three:
+
+- **A record**: occurrence-keyed (instance google id first, series id
+  fallback, plus the date — cancel THIS Tuesday, never next Tuesday's),
+  carrying reason, who, when. Restoring marks the row `restored_at`, never
+  deletes it — the history is the reschedule memory.
+  `GET /api/cancellations` lists it.
+- **A tombstone**: `stamp_cancellations` runs every refresh beside the
+  optional-decision stamp — however many times the feed re-adds the
+  occurrence, it re-arrives canceled. Solver-side a canceled occurrence
+  leaves exactly like a decided skip: not assignable, not unassigned, nobody
+  chased; still drawn, struck through with a Canceled badge and the reason.
+- **An announcement**: the assigned driver and the kids on the event get
+  lanes-pushes at cancel/restore time (same-day = urgent, escapes quiet
+  hours), and the canceled event's lost assignment is SUPPRESSED from the
+  buffered schedule-change push — the cancel push already said more.
+- **Google agrees**: for writable events the mirror writes `CANCELED
+  <title>` + availability Free (the convention league systems already use);
+  restore puts both back (`original_title` kept on the record). Source ids
+  are instance-level, so a recurring occurrence patch never renames its
+  siblings; a read-only ICS calendar just fails the patch and the tombstone
+  carries it.
+- **The convention reads inbound too**: `detect_feed_cancellations` (before
+  the stamp, every refresh) turns an arriving `CANCELED`/`Cancelled:`-titled
+  occurrence into a feed-sourced cancellation — pushes included, for
+  cancellations nobody typed here — and restores a feed-sourced record whose
+  title came back clean. People outrank titles both ways: a manual cancel
+  never auto-restores, a deliberate restore is never re-canceled by a stale
+  title. Loop-safe: our own mirror's prefix meets its existing record.
+- **Parents/adults only**, everywhere: `POST /api/events/{id}/cancel` /
+  `/restore` (403 for child/helper/guest tokens; tokenless admin surfaces
+  pass, route-guard discipline), dashboard event modal (Cancel/Restore with
+  reason prompt), PWA event modal (parent/adult), and `cancel_event` /
+  `restore_event` in BOTH agent stacks ("practice is canceled, coach is
+  sick" — the agent refuses a kid out loud).
+
+Tests: `tests/test_cancellations.py` (10 scenarios).

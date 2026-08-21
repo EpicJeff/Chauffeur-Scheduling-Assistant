@@ -803,6 +803,10 @@ def _collect_assignment_changes(old_cache, new_payload, overrides):
             ev = new_events.get(ev_id)
             if ev is None or ev_id not in old_event_ids:
                 continue
+            # A canceled event losing its driver is not a schedule change —
+            # the cancellation already sent the richer push, with the reason.
+            if ev.get('canceled'):
+                continue
             try:
                 start = _dt.datetime.fromisoformat(ev["start"])
                 if start.replace(tzinfo=None) < now:
@@ -13013,6 +13017,68 @@ def set_optional_decision_api(event_id: str, body: dict = Body(default={})):
     trigger_background_refresh()
     return res
 
+def _resolve_cached_event(event_id: str) -> dict:
+    """One cached-schedule event by id, tolerating the _dropoff/_pickup leg
+    suffix the drive surfaces append."""
+    base = re.sub(r'_(dropoff|pickup)$', '', str(event_id))
+    sched = storage.get_cached_schedule() or {}
+    ev = next((e for e in sched.get('events', [])
+               if str(e.get('id')) in (str(event_id), base)), None)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found in the current schedule.")
+    return ev
+
+def _cancel_actor_refused(request, claimed: Optional[str]) -> Optional[dict]:
+    """Calling an event off (or back on) is a parent/adult act. A resolved
+    child/helper/guest is refused; tokenless surfaces (admin dashboard)
+    pass — the route guard owns anonymity, same discipline as everywhere."""
+    actor_id = _acting_id(request, claimed)
+    actor = storage.get_member(actor_id) if actor_id else None
+    if actor and actor.get('role') in ('child', 'helper', 'guest'):
+        raise HTTPException(status_code=403,
+                            detail="Only a parent or adult can cancel an event")
+    return actor
+
+@app.post("/api/events/{event_id}/cancel")
+def cancel_event_api(event_id: str, body: dict = Body(default={}),
+                     request: Request = None):
+    """Cancel ONE occurrence: record with reason, Google mirror (CANCELED
+    prefix + Free), pushes to the driver and the kids. The record is also
+    the tombstone that keeps an ICS-fed copy canceled when the feed re-adds
+    it — which deleting in Google never managed."""
+    from services import cancellations
+    actor = _cancel_actor_refused(request, body.get('member_id'))
+    ev = _resolve_cached_event(event_id)
+    res = cancellations.cancel_occurrence(
+        ev, reason=body.get('reason') or '',
+        canceled_by=(actor or {}).get('id') or body.get('member_id'))
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    trigger_background_refresh()
+    return res
+
+@app.post("/api/events/{event_id}/restore")
+def restore_event_api(event_id: str, body: dict = Body(default={}),
+                      request: Request = None):
+    from services import cancellations
+    actor = _cancel_actor_refused(request, body.get('member_id'))
+    ev = _resolve_cached_event(event_id)
+    res = cancellations.restore_occurrence(
+        ev, restored_by=(actor or {}).get('id') or body.get('member_id'))
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    trigger_background_refresh()
+    return res
+
+@app.get("/api/cancellations")
+def list_cancellations(days: int = 60, include_restored: bool = True):
+    """The record the old delete-it workflow never kept: what was called
+    off, when, why, by whom — the reschedule memory."""
+    import datetime as _dt
+    floor = (_dt.date.today() - _dt.timedelta(days=max(0, days))).isoformat()
+    rows = storage.get_event_cancellations(active_only=not include_restored)
+    return [r for r in rows if (r.get('date') or '') >= floor]
+
 # --- Settings API ---
 @app.get("/api/settings")
 def get_settings():
@@ -14445,6 +14511,15 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     from services import optional_events as _opt
     _opt.stamp_decisions(events)
 
+    # Cancellations: detect feed-announced ones first (a "CANCELED …" title
+    # arriving from a league system becomes a record + pushes, and a
+    # feed-sourced record whose title came back clean restores itself), then
+    # stamp every canceled occurrence — the stamp is what keeps a
+    # resurrected ICS event canceled, every refresh, forever.
+    from services import cancellations as _cx
+    _cx.detect_feed_cancellations(events)
+    _cx.stamp_cancellations(events)
+
     # Unroll events for passenger-specific times
     unrolled_events = []
     from collections import defaultdict
@@ -15261,6 +15336,12 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         if skipped_optional:
             daily_events_to_solve = [e for e in daily_events_to_solve
                                      if getattr(e, 'optional_decision', None) != 'skip']
+
+        # A canceled occurrence leaves the same way: nobody drives to a
+        # called-off practice, nobody is chased about it. Still drawn,
+        # struck through, wearing its reason.
+        daily_events_to_solve = [e for e in daily_events_to_solve
+                                 if not getattr(e, 'canceled', False)]
 
         # Else, solve for this day!
         daily_locations = set()

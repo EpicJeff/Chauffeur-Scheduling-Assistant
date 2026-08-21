@@ -238,6 +238,29 @@ def set_event_optional(event_name: str, target_date: str, optional: bool = True,
                                              bool(optional), scope or 'series')
 
 
+def cancel_event(event_name: str, target_date: str = 'today', reason: str = '',
+                 acting_member: dict = None) -> Dict[str, Any]:
+    """
+    Cancels ONE occurrence of an event: recorded with the reason, mirrored to
+    Google (CANCELED prefix + Free), driver and kids pushed. Parent/adult only.
+    """
+    from services import cancellations
+    return cancellations.cancel_by_title(event_name, target_date, reason=reason,
+                                         acting_member=acting_member)
+
+
+def restore_event(event_name: str, target_date: str = 'today',
+                  acting_member: dict = None) -> Dict[str, Any]:
+    """
+    Un-cancels an occurrence: the record stays as history, the Google title
+    and availability are restored, everyone is told it is back on.
+    """
+    from services import cancellations
+    return cancellations.cancel_by_title(event_name, target_date,
+                                         acting_member=acting_member,
+                                         restore=True)
+
+
 # ==============================================================================
 # TRIP TOOLS
 # ==============================================================================
@@ -2879,6 +2902,31 @@ def get_available_tools() -> List[Dict]:
                     "target_date": {"type": "string", "description": "A date the event occurs on, YYYY-MM-DD or relative ('today', 'Thursday'), used to find it. Default today."},
                     "optional": {"type": "boolean", "description": "true to mark optional (default), false to make it a firm commitment again."},
                     "scope": {"type": "string", "enum": ["series", "instance"], "description": "series (default) = every occurrence; instance = only the one on target_date."}
+                },
+                "required": ["event_name"]
+            }
+        },
+        {
+            "name": "cancel_event",
+            "description": "Cancels ONE occurrence of a calendar event ('practice is canceled', 'call off swim tomorrow — coach is sick'). Records it with the reason, marks the Google event CANCELED, and pushes the assigned driver and the kids. Nothing is deleted — the event stays on the calendar struck through, and can be restored. Parents/adults only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_name": {"type": "string", "description": "The name of the event or a substring of it."},
+                    "target_date": {"type": "string", "description": "The date of the occurrence, YYYY-MM-DD or relative ('today', 'tomorrow'). Default today."},
+                    "reason": {"type": "string", "description": "Why it was canceled ('coach is sick', 'field flooded') — rides the pushes and the record."}
+                },
+                "required": ["event_name"]
+            }
+        },
+        {
+            "name": "restore_event",
+            "description": "Un-cancels a previously canceled event occurrence ('practice is back on') — restores the Google title, re-plans the drive, tells everyone it is happening after all. Parents/adults only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_name": {"type": "string", "description": "The name of the event or a substring of it."},
+                    "target_date": {"type": "string", "description": "The date of the occurrence. Default today."}
                 },
                 "required": ["event_name"]
             }
