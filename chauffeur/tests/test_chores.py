@@ -406,7 +406,36 @@ def scenario_reopen():
     check(res["status"] == "error", "unknown chore errors")
 
 
+def scenario_the_house_tab_carries_lists_into_the_pwa():
+    """Lists had no phone surface at all — the /lists page hangs off nav.html,
+    which the PWA shell never includes, so a family member's only list screen
+    was a wall panel. The chores tab is House now: chores + lists as one
+    household-upkeep story, with jump anchors up top (the kid My Day shape)
+    and room for future sections. Asserted from the shell source the way the
+    admin-page scenario above does."""
+    import os
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    page = open(os.path.join(tpl, 'app.html'), encoding='utf-8').read()
+    check('>House</span>' in page and 'house-anchors' in page
+          and 'house-lists' in page,
+          "the tab exists, renamed, with an anchor row and a lists section")
+    check('fetchHouseLists' in page and 'api/shopping/lists' in page,
+          "lists come from the scope+audience-filtered endpoint — the shell "
+          "draws what the server hands it, nothing else")
+    check('houseCheckItem' in page and 'houseAddItem' in page,
+          "seeing a list is using it: check off and add, right on the phone")
+    check('houseMaybeRevealForLists' in page,
+          "a member whose chores door is closed but who holds lists gets the "
+          "tab back — lists half only, the chores decision stays closed")
+    check("=== 'private'" in page and '🔒' in page,
+          "a private list is marked as such")
+    check('houseJump' in page and 'scrollIntoView' in page,
+          "the anchors actually jump")
+
+
 SCENARIOS = [
+    scenario_the_house_tab_carries_lists_into_the_pwa,
     scenario_verification_is_reachable_from_the_admin_page,
     scenario_a_reward_cannot_be_approved_into_the_red,
     scenario_lifecycle_and_points,

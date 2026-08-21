@@ -377,9 +377,14 @@
             <div id="myday-content" class="p-4 space-y-3 pb-8"></div>
         </div>
 
-        <!-- Chores -->
+        <!-- House: the household-upkeep tab. Chores and lists share one
+             story — work the house needs done, things the house needs
+             bought — under an anchor row of big jump buttons (the kid
+             My Day shape) that leaves room for future sections. -->
         <div id="chores-container" class="flex-1 flex-col min-h-0 overflow-y-auto" style="display: none">
-            <div id="chores-content" class="p-4 space-y-3 pb-8"></div>
+            <div id="house-anchors" class="px-4 pt-3"></div>
+            <div id="chores-content" class="p-4 space-y-3 pb-4" style="scroll-margin-top: 76px"></div>
+            <div id="house-lists" class="p-4 pt-0 space-y-3 pb-8" style="scroll-margin-top: 76px"></div>
         </div>
 
         <!-- Bottom Tab Bar -->
@@ -423,9 +428,9 @@
                 class="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors relative">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round"
-                        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+                        d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
                 </svg>
-                <span class="text-xs font-bold tracking-wide">Chores</span>
+                <span class="text-xs font-bold tracking-wide">House</span>
                 <span id="tab-chores-badge"
                     class="absolute top-1 right-1/2 translate-x-5 min-w-[20px] h-[20px] px-1 rounded-full bg-amber-500 text-black text-xs font-bold items-center justify-center"
                     style="display: none">0</span>
@@ -784,6 +789,7 @@
                 renderMyDay();
             } else if (view === 'chores') {
                 fetchChores();
+                fetchHouseLists();
             } else if (view === 'music') {
                 if (musicWidgetStarted && typeof mwRefresh === 'function') mwRefresh();
             } else {
@@ -917,7 +923,14 @@
             const noChores = scopeOf('chores.board') === 'none';
             document.getElementById('tab-map').style.display = (helper || noMap) ? 'none' : 'flex';
             document.getElementById('tab-music').style.display = (helper || noMusic) ? 'none' : 'flex';
-            document.getElementById('tab-chores').style.display = (helper || keepingUpSpectator || noChores) ? 'none' : 'flex';
+            const choresHiddenByRules = (helper || keepingUpSpectator || noChores);
+            houseRevealListsOnly = false;
+            document.getElementById('tab-chores').style.display = choresHiddenByRules ? 'none' : 'flex';
+            // The House tab is chores AND lists now: a member whose chores
+            // door is closed but who holds lists (granted, or their own
+            // private one) gets the tab back with only the lists half —
+            // asynchronously, from what the server actually returned.
+            if (choresHiddenByRules && !helper) houseMaybeRevealForLists();
             const hiddenNow = helper
                 ? ['family', 'map', 'music', 'myday', 'chores']
                 : guest
@@ -4108,19 +4121,162 @@
             } catch (e) { console.error('Failed to fetch chores', e); }
         }
 
+        function houseChoresAttention() {
+            const role = currentMemberRole();
+            if (role === 'parent') {
+                return choresData.filter(c => c.state === 'done').length + redemptionsData.length
+                    + rewardsData.filter(rw => rw.pooled && rw.pool && rw.pool.funded).length;
+            }
+            return choresData.filter(c => c.state === 'open' && choreEligibleForMe(c)).length;
+        }
+
         function updateChoresBadge() {
             const badge = document.getElementById('tab-chores-badge');
             if (!badge) return;
-            const role = currentMemberRole();
-            let n = 0;
-            if (role === 'parent') {
-                n = choresData.filter(c => c.state === 'done').length + redemptionsData.length
-                    + rewardsData.filter(rw => rw.pooled && rw.pool && rw.pool.funded).length;
-            } else {
-                n = choresData.filter(c => c.state === 'open' && choreEligibleForMe(c)).length;
-            }
+            const n = houseChoresAttention();
             badge.textContent = n > 99 ? '99+' : n;
             badge.style.display = n > 0 ? 'flex' : 'none';
+            renderHouseAnchors();
+        }
+
+        // --- House tab: the lists half ---
+        // Same vanilla-render idiom as chores above; the server owns every
+        // visibility decision (scope + audience — a private list simply never
+        // arrives for the wrong member, because the fetch wrapper sends
+        // X-Member-Token). The shell only draws what it was handed.
+        let houseLists = [], houseItems = [], houseActiveListId = null;
+        // True when the tab exists ONLY because lists arrived for a member
+        // whose chores door is closed (the granted grandparent): the chores
+        // half stays hidden so the reveal never widens the S13 decision that
+        // closed it.
+        let houseRevealListsOnly = false;
+
+        async function fetchHouseLists() {
+            if (!selectedMemberId) return;
+            try {
+                const r = await fetch(`${apiBase}api/shopping/lists`);
+                houseLists = r.ok ? await r.json() : [];
+            } catch (e) { houseLists = []; }
+            if (!houseLists.some(l => l.id === houseActiveListId)) {
+                const def = houseLists.find(l => l.is_default) || houseLists[0];
+                houseActiveListId = def ? def.id : null;
+            }
+            houseItems = [];
+            if (houseActiveListId) {
+                try {
+                    const r = await fetch(`${apiBase}api/shopping/items?list_id=${houseActiveListId}`);
+                    houseItems = r.ok ? await r.json() : [];
+                } catch (e) { houseItems = []; }
+            }
+            renderHouseAnchors();
+            renderHouseLists();
+        }
+
+        // A member whose scope closes chores may still hold lists (an
+        // instance grant, or a private list of their own). The server already
+        // said yes by returning them — the shell only re-opens the door, and
+        // only to the lists half.
+        async function houseMaybeRevealForLists() {
+            await fetchHouseLists();
+            if (!houseLists.length) return;
+            const tab = document.getElementById('tab-chores');
+            if (tab && tab.style.display === 'none') {
+                houseRevealListsOnly = true;
+                tab.style.display = 'flex';
+                renderHouseAnchors();
+                renderHouseLists();
+            }
+        }
+
+        function houseJump(id) {
+            const el = document.getElementById(id);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function renderHouseAnchors() {
+            const wrap = document.getElementById('house-anchors');
+            if (!wrap) return;
+            const openItems = houseLists.reduce((s, l) => s + (l.open_count || 0), 0);
+            const btn = (emoji, label, count, target) => `
+                <button onclick="houseJump('${target}')"
+                    class="flex-1 flex flex-col items-center gap-1 py-3 rounded-2xl bg-gray-900 border border-gray-800 active:bg-gray-800">
+                    <span class="relative text-3xl leading-none">${emoji}${count ? `
+                        <span class="absolute -top-1.5 -right-4 min-w-[20px] h-[20px] px-1 rounded-full bg-amber-500 text-black text-[11px] font-bold flex items-center justify-center">${count > 99 ? '99+' : count}</span>` : ''}</span>
+                    <span class="text-xs font-bold tracking-wide text-gray-300">${label}</span>
+                </button>`;
+            const parts = [];
+            if (!houseRevealListsOnly) parts.push(btn('🧹', 'Chores', houseChoresAttention(), 'chores-content'));
+            if (houseLists.length) parts.push(btn('🛒', 'Lists', openItems, 'house-lists'));
+            // One section is not a story yet: the row earns its pixels only
+            // when there are at least two places to jump between.
+            wrap.innerHTML = parts.length > 1 ? `<div class="flex gap-2">${parts.join('')}</div>` : '';
+        }
+
+        function renderHouseLists() {
+            const wrap = document.getElementById('house-lists');
+            if (!wrap) return;
+            const cc = document.getElementById('chores-content');
+            if (cc) cc.style.display = houseRevealListsOnly ? 'none' : '';
+            if (!houseLists.length) { wrap.innerHTML = ''; return; }
+            const chips = houseLists.length > 1 ? houseLists.map(l => `
+                <button onclick="houseSelectList('${l.id}')"
+                    class="px-3 py-1.5 rounded-full text-sm font-bold border ${l.id === houseActiveListId
+                        ? 'bg-pink-500/20 border-pink-400/60 text-pink-200'
+                        : 'bg-gray-900 border-gray-700 text-gray-300 active:bg-gray-800'}">
+                    ${l.audience === 'private' ? '🔒 ' : ''}${mfEscape(l.name)}${l.open_count ? ` · ${l.open_count}` : ''}
+                </button>`).join('') : '';
+            const active = houseLists.find(l => l.id === houseActiveListId) || {};
+            const open = houseItems.filter(i => !i.is_checked);
+            const inCart = houseItems.length - open.length;
+            const rows = open.map(i => `
+                <label class="flex items-center gap-3 py-2.5 px-4 bg-gray-900 border border-gray-800 rounded-xl cursor-pointer active:opacity-70">
+                    <input type="checkbox" onchange="houseCheckItem('${i.id}', this.checked)"
+                        class="w-6 h-6 rounded-full accent-pink-500 shrink-0">
+                    <span class="flex-1 text-[15px] font-bold text-gray-100">${mfEscape(i.name)}${i.qty
+                        ? ` <span class="text-gray-500 font-normal">(${mfEscape(i.qty)})</span>` : ''}</span>
+                </label>`).join('');
+            wrap.innerHTML = `
+                <div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">
+                    🛒 ${houseLists.length > 1 ? 'Lists' : mfEscape(active.name || 'List')}</div>
+                ${chips ? `<div class="flex gap-2 flex-wrap">${chips}</div>` : ''}
+                <form onsubmit="houseAddItem(event)" class="flex gap-2">
+                    <input id="house-add-input" type="text" placeholder="Add something…" autocomplete="off"
+                        class="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-[15px] text-gray-100 placeholder-gray-600">
+                    <button type="submit" class="px-4 rounded-xl bg-pink-600 text-white font-bold active:bg-pink-700">Add</button>
+                </form>
+                ${rows || '<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4">Nothing needed — nice 🎉</div>'}
+                ${inCart ? `<div class="text-xs text-gray-500 font-bold">${inCart} in the cart</div>` : ''}`;
+        }
+
+        function houseSelectList(id) {
+            houseActiveListId = id;
+            fetchHouseLists();
+        }
+
+        async function houseCheckItem(id, checked) {
+            try {
+                await fetch(`${apiBase}api/shopping/items/${id}`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_checked: checked, member_id: selectedMemberId }),
+                });
+            } catch (e) { /* the refetch below shows the truth either way */ }
+            fetchHouseLists();
+        }
+
+        async function houseAddItem(ev) {
+            ev.preventDefault();
+            const input = document.getElementById('house-add-input');
+            const name = (input && input.value || '').trim();
+            if (!name || !houseActiveListId) return;
+            input.value = '';
+            try {
+                await fetch(`${apiBase}api/shopping/items`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, list_id: houseActiveListId,
+                                           added_by: selectedMemberId }),
+                });
+            } catch (e) { showGlobalAlert('Could not add that'); }
+            fetchHouseLists();
         }
 
         // --- Status-tier badges + celebration ------------------------------

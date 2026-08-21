@@ -4412,3 +4412,38 @@ surfaces (wall panels, `viewer=None`) never pass.
 Tests: `tests/test_list_sharing.py` grew to 8 scenarios (no parent bypass, no
 anonymous read, runs/edit/delete refusals, default-list guards, never-empty,
 agent unfindability for both anonymous and off-list speakers).
+
+## The chores tab becomes House, and lists reach the phone (v2.362.0)
+
+Lists had NO surface in the PWA: `/lists` hangs off nav.html's shelf, which
+app.html never includes, so a family member's only list screen was a wall
+panel — and a private list (v2.361.0), which panels never draw by design, was
+visible nowhere at all for a phone-only member.
+
+Rather than an eighth tab, the chores tab widened into **House** (working
+name): chores and lists as one household-upkeep story — work the house needs
+done, things the house needs bought — both kid-writable by design. Shape
+follows the kid My Day pattern: an anchor row of large jump buttons up top
+(🧹 Chores / 🛒 Lists, with attention/open counts) that `scrollIntoView`s
+between sections and leaves room for future sections. The row only draws with
+two or more places to jump.
+
+- **The lists half is the same vanilla-render idiom as chores**
+  (`fetchHouseLists`/`renderHouseLists` in app.html): list chips (🔒-marked
+  when private), check-off taps, an add box. The server owns every visibility
+  decision — the PWA fetch wrapper sends `X-Member-Token`, so scope AND
+  audience filtering arrive pre-applied; private lists appear exactly for
+  their members.
+- **A granted member gets the tab back, lists half only**
+  (`houseMaybeRevealForLists`): a member whose `chores.board` door is closed
+  (keeping-up spectator, guest) but who holds lists — an instance grant or a
+  private list of their own — sees House with the chores section hidden, so
+  the reveal never widens the S13 decision that closed chores.
+- Helpers stay excluded entirely, as everywhere.
+
+Deliberately NOT in v1: share/private editing from the phone (view + use
+only; management stays on `/shopping` and `/lists`), no board-card embed (the
+PWA is vanilla JS on purpose — Alpine there animates only the avatar
+editor).
+
+Tests: `test_chores.scenario_the_house_tab_carries_lists_into_the_pwa`.
