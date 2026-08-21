@@ -2666,6 +2666,49 @@ Closes the open design question v2.269.0 recorded, on the household's own framin
 - **A driver marked as ATTENDING is a stay signal too** (v2.356.0), ranked below the explicit split signals and above the 2-hour default; and the **Attendance Mode dropdown** on both event editors is finally read. See "A drive round the corner is still a drive" for the full ladder.
 - Tests: `tests/test_attendance_override.py` (10 scenarios: precedence both directions, attendance in the ladder, the phantom block gone end to end, an explicit split still winning, the dropdown actually read, self-expiry, pins + history mirroring, undo removes only its own pins, ghost never pinned, 404/400).
 
+## A card that goes looking, not told (v2.359.0)
+
+Reported against two of the household's own cards (`custom:ai-media-router-card`
+and `custom:ai-media-matrix-card`): both DISPLAYED, and every part of them that
+lists speakers or TVs was empty. Nothing errored, because nothing was wrong
+with the cards.
+
+`ha_cards.entity_ids()` walks a card's config and ships exactly the entities it
+NAMES as `hass.states`. That is right for every card that is told what to show
+and wrong for one that DISCOVERS — the matrix card builds its cast list with
+`Object.values(hass.states).filter(s => s.entity_id.startsWith('media_player.')
+&& !s.entity_id.startsWith('media_player.ai_media_'))`, and was enumerating an
+empty house:
+
+| card | ids in YAML | states sent | device list |
+|---|---|---|---|
+| router (`layout: auto`) | none | **0** | empty |
+| matrix | 1 room | **1**, and the filter excludes that prefix | empty |
+
+- **"Also send these entities"** on the Card tile (`entities`): ids and whole
+  domains (`media_player.*`), resolved against live states by
+  `ha_cards.expand_patterns`. Opt-in, because everything named travels on every
+  board refresh. A plain id that matches nothing is NOT dropped — it reaches
+  `missing`, where the tile names it, because swallowing a typo is how somebody
+  spends an evening wondering why one device never appears.
+- **A card sent zero entities now says so** (`note`, drawn under the tile). An
+  empty device list is indistinguishable from a working card in a house with no
+  devices, and nothing else on the tile would ever tell the household which one
+  they are looking at.
+- Tests: `test_ha_cards` +7, including both real card shapes and a reproduction
+  of the actual cast-list filter.
+
+**Why the slice exists at all, measured** (the old comment claimed "several
+hundred kilobytes" without ever checking): 25 media players with realistic
+attribute bags is **29.5 KB of JSON, which gzips to 1.0 KB**. The cost is not
+the states — it is that the board POLLS (once a minute), re-sending the whole
+slice unchanged every tick, embedded PER TILE, with **no compression anywhere
+in the app** (`main.py` installs no middleware at all). Home Assistant pays for
+the same data once per page load over a WebSocket and then ships only
+`state_changed` deltas, with every card on the dashboard sharing one `hass`
+object by reference. Ours is a polling cost, not a payload cost. See the
+open note below.
+
 ## A drive round the corner is still a drive (v2.356.0–v2.358.0)
 
 Three defects, all reported as one sentence from the household: *"I mark the

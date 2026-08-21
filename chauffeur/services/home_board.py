@@ -894,7 +894,8 @@ WIDGETS = [
     {'key': 'ha_card', 'icon': '🃏', 'label': 'Card',
      'heading': 'A Home Assistant card',
      'blurb': "Paste any card's YAML. Custom cards run for real; the common "
-              "built-in ones are drawn in the panel's own colours.",
+              "built-in ones are drawn in the panel's own colours. A card that "
+              "builds its own device list needs those entities named below.",
      'options': [
          _opt('config', 'Card YAML', 'yaml', '',
               help='The same text Home Assistant shows you under "Show code '
@@ -904,6 +905,17 @@ WIDGETS = [
          _opt('resource', 'Card file', 'text', '',
               help='Usually found on its own. Fill this in only if the card '
                    'lives somewhere unusual, e.g. /local/my-card.js'),
+         # A card is normally handed exactly the entities its YAML names, and
+         # that covers every card that is TOLD what to show. A card that goes
+         # LOOKING -- one that builds its own list of speakers, or TVs, or
+         # lights -- walks the whole of hass.states, and one handed four
+         # states finds four devices. It draws an empty list rather than an
+         # error, which reads as a working card on an empty house.
+         _opt('entities', 'Also send these entities', 'text', '',
+              help='For cards that build their own device lists. '
+                   'media_player.* sends every media player; single ids work '
+                   'too. Leave blank unless a list in the card is empty — '
+                   'every entity here travels on every refresh.'),
          # Same default and the same reason as the entity tile's: a display
          # does not change what it is displaying, and a card that can call
          # services is a control surface somebody added by accident.
@@ -3345,7 +3357,8 @@ def _tile_ha_card(now, config=None, **_):
         return {'empty': "Paste a card's YAML in board setup."}
     try:
         from services import ha_cards
-        prepared = ha_cards.prepare(raw, _cfg_str(config, 'resource'))
+        prepared = ha_cards.prepare(raw, _cfg_str(config, 'resource'),
+                                    _cfg_str(config, 'entities'))
     except Exception as e:
         print(f"[home_board] ha_card prepare failed: {e}")
         return {'empty': "That card could not be read."}
