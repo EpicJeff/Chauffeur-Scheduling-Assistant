@@ -588,14 +588,18 @@ AUDIENCE_DEFAULTS = {
 
 def audience_of(obj: dict, obj_type: str) -> str:
     aud = obj.get('audience')
-    if aud in ('household', 'parents', 'shared'):
+    if aud in ('household', 'parents', 'shared', 'private'):
         return aud
     return AUDIENCE_DEFAULTS.get(obj_type, 'household')
 
 
 def audience_allows(obj: dict, obj_type: str, member: Optional[dict]) -> bool:
     """May this person see this object? Parents always may — audience hides
-    things FROM the household, never from the people planning the surprise.
+    things FROM the household, never from the people planning the surprise —
+    with ONE exception: 'private' means the shared_with list IS the audience,
+    parents included or not as listed, because the person a private list hides
+    a gift from may themselves be a parent. 'shared' keeps the parent bypass:
+    it widens a parents-default object, it never narrows past the planners.
     `member=None` is an ANONYMOUS surface — a wall panel is a place, not a
     person, and cannot hold a 'parents' audience just because a parent is
     standing in front of it (§7) — so only 'household' passes.
@@ -604,9 +608,11 @@ def audience_allows(obj: dict, obj_type: str, member: Optional[dict]) -> bool:
     trip), and vice versa — callers check both."""
     if member is None:
         return audience_of(obj, obj_type) == 'household'
+    aud = audience_of(obj, obj_type)
+    if aud == 'private':
+        return member.get('id') in (obj.get('shared_with') or [])
     if member.get('role') == 'parent':
         return True
-    aud = audience_of(obj, obj_type)
     if aud == 'household':
         return True
     if aud == 'shared':

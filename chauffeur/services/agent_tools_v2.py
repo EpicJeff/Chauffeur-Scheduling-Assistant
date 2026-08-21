@@ -1656,14 +1656,27 @@ def complete_kid_task(task_title: str, member_name: str = "",
 # including kids — an item costs the family nothing, so approval would be
 # friction with no gate (docs/meal_design.md principle 4).
 
-def _resolve_shopping_list(list_name: str = "") -> tuple:
+def _visible_shopping_lists(acting_member: dict = None) -> list:
+    """Every list this speaker may know exists. Private lists (audience
+    'private') belong only to their shared_with — and a caller with NO
+    resolved member (HA voice satellite, admin dashboard chat) is a shared
+    surface, which must not find the gift list either. Household lists pass
+    for everyone: voice adds stay deliberately ungated (module note)."""
+    from services import storage, scope
+    return [l for l in storage.get_shopping_lists()
+            if scope.audience_allows(l, 'shopping_list', acting_member)]
+
+
+def _resolve_shopping_list(list_name: str = "", acting_member: dict = None) -> tuple:
     """(list, error_message). Falls back to the default list, which is created
-    on first use so a fresh install never fails a voice add."""
+    on first use so a fresh install never fails a voice add. Resolution runs
+    over the lists the SPEAKER may see — a private list is unfindable, and
+    unmentionable in the error text, for anybody off it."""
     from services import storage
     low = (list_name or '').strip().lower()
     if not low:
         return storage.ensure_default_shopping_list(), None
-    lists = storage.get_shopping_lists()
+    lists = _visible_shopping_lists(acting_member)
     hits = [l for l in lists if low == (l.get('name') or '').lower()
             or low == (l.get('store') or '').lower()]
     if not hits:
@@ -1685,7 +1698,7 @@ def add_shopping_items(items: str, list_name: str = "",
     import re
     from services import storage
     from models.schemas import ShoppingItem
-    lst, err = _resolve_shopping_list(list_name)
+    lst, err = _resolve_shopping_list(list_name, acting_member)
     if err:
         return {"status": "error", "message": err}
     raw = [p.strip() for p in re.split(r',|\band\b|\n', items or '') if p.strip()]
@@ -1715,7 +1728,7 @@ def get_shopping_list_items(list_name: str = "",
                             acting_member: dict = None) -> Dict[str, Any]:
     """READ: what's still open on a shopping list."""
     from services import storage
-    lst, err = _resolve_shopping_list(list_name)
+    lst, err = _resolve_shopping_list(list_name, acting_member)
     if err:
         return {"status": "error", "message": err}
     items = storage.get_shopping_items(lst['id'], include_checked=False)
@@ -1750,7 +1763,7 @@ def check_off_shopping_item(item_name: str, list_name: str = "",
                             acting_member: dict = None) -> Dict[str, Any]:
     """Check something off — the in-the-aisle path. Fuzzy match on open items."""
     from services import storage
-    lst, err = _resolve_shopping_list(list_name)
+    lst, err = _resolve_shopping_list(list_name, acting_member)
     if err:
         return {"status": "error", "message": err}
     items = storage.get_shopping_items(lst['id'], include_checked=False)
@@ -1778,7 +1791,7 @@ def remove_shopping_item_by_name(item_name: str, list_name: str = "",
                                  acting_member: dict = None) -> Dict[str, Any]:
     """Take something off the list entirely (changed our mind, not bought)."""
     from services import storage
-    lst, err = _resolve_shopping_list(list_name)
+    lst, err = _resolve_shopping_list(list_name, acting_member)
     if err:
         return {"status": "error", "message": err}
     items = storage.get_shopping_items(lst['id'], include_checked=False)
@@ -1919,7 +1932,7 @@ def add_meal_ingredients_to_list(meal_name: str, list_name: str = "",
     if not meal:
         return {"status": "error",
                 "message": f"I don't have '{meal_name}' in the repertoire."}
-    lst, err = _resolve_shopping_list(list_name)
+    lst, err = _resolve_shopping_list(list_name, acting_member)
     if err:
         return {"status": "error", "message": err}
     res = meals.ingredients_to_shopping(meal, lst['id'],
@@ -1970,7 +1983,7 @@ def schedule_shopping_trip(store: str = "", list_name: str = "",
     from services import storage, shopping
     lst = None
     if list_name:
-        lst = next((l for l in storage.get_shopping_lists()
+        lst = next((l for l in _visible_shopping_lists(acting_member)
                     if (l.get('name') or '').strip().lower() == list_name.strip().lower()),
                    None)
         if not lst:
@@ -1988,7 +2001,7 @@ def get_shopping_trip(list_name: str = "", acting_member: dict = None) -> Dict[s
     from services import storage, shopping
     lst = None
     if list_name:
-        lst = next((l for l in storage.get_shopping_lists()
+        lst = next((l for l in _visible_shopping_lists(acting_member)
                     if (l.get('name') or '').strip().lower() == list_name.strip().lower()),
                    None)
     lst = lst or storage.ensure_default_shopping_list()

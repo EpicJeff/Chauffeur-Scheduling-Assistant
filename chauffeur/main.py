@@ -9087,6 +9087,9 @@ class ShoppingListRequest(BaseModel):
     errand_tag: Optional[str] = None
     is_default: bool = False
     shared_with: Optional[List[str]] = None   # S8: None = leave unchanged
+    # None = leave unchanged. 'household' (open) or 'private' (shared_with IS
+    # the audience — only those people, no parent bypass, no panels).
+    audience: Optional[str] = None
 
 class ShoppingItemRequest(BaseModel):
     name: str
@@ -9112,22 +9115,40 @@ def _touch_stream():
     LAST_UPDATE_TIME = time.time()
 
 
+def _shopping_list_visible(lst: Optional[dict], viewer: Optional[dict]) -> bool:
+    """One answer for every read path: may this viewer see this list?
+    Audience first (a private list is only its shared_with, parents and all —
+    scope.audience_allows), then the S8 instance grant for a resolved viewer.
+    `viewer=None` is an anonymous surface: household lists pass (the route
+    guard owns anonymity), private lists never do — a wall panel must not
+    show the gift list to the person it hides from."""
+    from services import scope
+    if not scope.audience_allows(lst or {}, 'shopping_list', viewer):
+        return False
+    if viewer is None:
+        return True
+    return scope.can_see(viewer, 'lists.shopping',
+                         instance_member_ids=(lst or {}).get('shared_with') or [])
+
+
 def _shopping_list_refused(list_id: str, request):
     """Family-network S8: the per-list instance check, on the list_id the
-    route already carries. Bites only a resolved viewer whose lists.shopping
+    route already carries. Bites a resolved viewer whose lists.shopping
     reach is none AND who is not on the list's shared_with — for everyone in
-    the household it is a no-op, because empty means everyone and their reach
-    is not none. Tokenless callers (panels) pass; the route guard owns them."""
-    viewer_id = _acting_id(request, None)
-    if not viewer_id:
-        return
-    viewer = storage.get_member(viewer_id)
-    if not viewer:
-        return
+    the household that half is a no-op, because empty means everyone and their
+    reach is not none — and EVERYBODY off a private list's shared_with,
+    parents included. Tokenless callers (panels) pass for household lists
+    (the route guard owns them) and are refused private ones outright."""
     from services import scope
     lst = storage.get_shopping_list(list_id) if list_id else None
-    if scope.can_see(viewer, 'lists.shopping',
-                     instance_member_ids=(lst or {}).get('shared_with') or []):
+    viewer_id = _acting_id(request, None)
+    viewer = storage.get_member(viewer_id) if viewer_id else None
+    if viewer is None:
+        if scope.audience_of(lst or {}, 'shopping_list') != 'private':
+            return
+        raise HTTPException(status_code=403,
+                            detail="This list isn't shared with you")
+    if _shopping_list_visible(lst, viewer):
         return
     raise HTTPException(status_code=403, detail="This list isn't shared with you")
 
@@ -9137,28 +9158,63 @@ def list_shopping_lists(request: Request = None):
     lists = storage.get_shopping_lists()
     # S8: a viewer whose lists.shopping is none sees exactly the lists shared
     # with them — the grandmother's grocery list, and no other. Household
-    # members (reach all/own) see everything, exactly as today.
+    # members (reach all/own) see everything, exactly as today. Private lists
+    # narrow further for EVERY caller: only their shared_with, and never an
+    # anonymous surface — the filter runs with viewer=None too, so a wall
+    # panel keeps today's household lists and never draws a gift list.
     viewer_id = _acting_id(request, None)
     viewer = storage.get_member(viewer_id) if viewer_id else None
-    if viewer:
-        from services import scope
-        lists = [l for l in lists
-                 if scope.can_see(viewer, 'lists.shopping',
-                                  instance_member_ids=l.get('shared_with') or [])]
+    lists = [l for l in lists if _shopping_list_visible(l, viewer)]
     for l in lists:
         items = storage.get_shopping_items(l['id'])
         l['open_count'] = sum(1 for i in items if not i.get('is_checked'))
         l['checked_count'] = len(items) - l['open_count']
     return lists
 
+def _private_audience_guard(req: 'ShoppingListRequest', current: Optional[dict],
+                            shared_with: Optional[List[str]], request) -> Optional[str]:
+    """Validate a private-audience write; returns the audience to store, or
+    None to leave it untouched. Two hard rules and one act of self-defence:
+    the default list is every capture path's fallback and can never go
+    private; a private list with nobody on it would be a list NOBODY sees; and
+    the person flipping the switch is added to shared_with automatically —
+    locking yourself out must not be one careless tap away."""
+    if req.audience is None:
+        return None
+    if req.audience not in ('household', 'private'):
+        raise HTTPException(status_code=400, detail="Audience must be 'household' or 'private'")
+    if req.audience == 'private':
+        if req.is_default or (current or {}).get('is_default'):
+            raise HTTPException(
+                status_code=400,
+                detail="The household's default list can't be private")
+        if shared_with is None:
+            shared_with = list((current or {}).get('shared_with') or [])
+        actor_id = _acting_id(request, None)
+        if actor_id and storage.get_member(actor_id) \
+                and actor_id not in shared_with:
+            shared_with.append(actor_id)
+        if not shared_with:
+            raise HTTPException(
+                status_code=400,
+                detail="A private list needs at least one person on it")
+        req.shared_with = shared_with
+    return req.audience
+
 @app.post("/api/shopping/lists")
-def create_shopping_list(req: ShoppingListRequest):
+def create_shopping_list(req: ShoppingListRequest, request: Request = None):
     from models.schemas import ShoppingList
     if not (req.name or '').strip():
         raise HTTPException(status_code=400, detail="A list needs a name")
+    if req.shared_with is not None:
+        # S8: only ids that are real members; a typo must not become a grant.
+        req.shared_with = [m for m in req.shared_with if storage.get_member(m)]
+    audience = _private_audience_guard(req, None, req.shared_with, request)
     lst = ShoppingList(name=req.name.strip(), store=(req.store or '').strip() or None,
                        errand_tag=(req.errand_tag or '').strip().lower() or None,
-                       is_default=req.is_default).model_dump()
+                       is_default=req.is_default,
+                       shared_with=req.shared_with or [],
+                       audience=audience).model_dump()
     if req.is_default:
         for other in storage.get_shopping_lists():
             if other.get('is_default'):
@@ -9168,7 +9224,18 @@ def create_shopping_list(req: ShoppingListRequest):
     return lst
 
 @app.put("/api/shopping/lists/{list_id}")
-def edit_shopping_list(list_id: str, req: ShoppingListRequest):
+def edit_shopping_list(list_id: str, req: ShoppingListRequest,
+                       request: Request = None):
+    current = storage.get_shopping_list(list_id)
+    if not current:
+        raise HTTPException(status_code=404, detail="List not found")
+    # Editing a list you cannot see is the same refusal as reading it — a
+    # private list's name, membership and privacy are its members' business.
+    _shopping_list_refused(list_id, request)
+    if req.is_default and req.audience != 'household' \
+            and (current.get('audience') == 'private' or req.audience == 'private'):
+        raise HTTPException(status_code=400,
+                            detail="The household's default list can't be private")
     if req.is_default:
         for other in storage.get_shopping_lists():
             if other['id'] != list_id and other.get('is_default'):
@@ -9180,14 +9247,30 @@ def edit_shopping_list(list_id: str, req: ShoppingListRequest):
             'is_default': req.is_default}
     if req.shared_with is not None:
         # S8: only ids that are real members; a typo must not become a grant.
-        patch['shared_with'] = [m for m in req.shared_with if storage.get_member(m)]
+        req.shared_with = [m for m in req.shared_with if storage.get_member(m)]
+    audience = _private_audience_guard(req, current, req.shared_with, request)
+    # A membership edit that would leave a private list with NOBODY on it is
+    # the same lock-out the guard refuses at the flip — refuse it here too.
+    effective = audience if audience is not None else current.get('audience')
+    if effective == 'private' and req.shared_with is not None \
+            and not req.shared_with:
+        raise HTTPException(status_code=400,
+                            detail="A private list needs at least one person on it")
+    # The guard may have extended membership (self-inclusion on going
+    # private), including when the caller sent no shared_with at all.
+    if req.shared_with is not None:
+        patch['shared_with'] = req.shared_with
+    if audience is not None:
+        patch['audience'] = audience
     if not storage.update_shopping_list(list_id, patch):
         raise HTTPException(status_code=404, detail="List not found")
     _touch_stream()
     return storage.get_shopping_list(list_id)
 
 @app.delete("/api/shopping/lists/{list_id}")
-def remove_shopping_list(list_id: str):
+def remove_shopping_list(list_id: str, request: Request = None):
+    if storage.get_shopping_list(list_id):
+        _shopping_list_refused(list_id, request)
     storage.delete_shopping_list(list_id)
     _touch_stream()
     return {"status": "ok"}
@@ -9201,13 +9284,15 @@ def list_shopping_items(list_id: Optional[str] = None, include_checked: bool = T
     return storage.get_shopping_items(list_id, include_checked)
 
 @app.get("/api/shopping/runs")
-def shopping_item_runs(list_id: Optional[str] = None):
+def shopping_item_runs(list_id: Optional[str] = None, request: Request = None):
     """The open list, split by which shop run each item is for — so a mid-week
     dash for tonight's re-planned dinner does not arrive carrying all of
     Saturday, and so the rest is still one tap away while you are standing in
     a store."""
     from services import shopping as _shop
-    return _shop.item_runs(list_id or storage.ensure_default_shopping_list()['id'])
+    list_id = list_id or storage.ensure_default_shopping_list()['id']
+    _shopping_list_refused(list_id, request)
+    return _shop.item_runs(list_id)
 
 @app.post("/api/shopping/items")
 def create_shopping_item(req: ShoppingItemRequest, request: Request = None):
@@ -10394,7 +10479,7 @@ def meal_suggestions(date: Optional[str] = None, limit: int = 5):
 
 @app.post("/api/shopping/photo")
 async def shopping_photo(photo: UploadFile = File(...), caption: str = Form(''),
-                         list_id: str = Form('')):
+                         list_id: str = Form(''), request: Request = None):
     """Photo → staged shopping candidates (fridge shelf, empty packages, a
     handwritten list). Candidates are RETURNED, not added: a shelf photo
     yields a dozen guesses and the family picks. That is a picker, not an
@@ -10410,6 +10495,7 @@ async def shopping_photo(photo: UploadFile = File(...), caption: str = Form(''),
     if not mime.startswith('image/'):
         raise HTTPException(status_code=400, detail="Only images are supported")
     target = list_id or storage.ensure_default_shopping_list()['id']
+    _shopping_list_refused(target, request)
     res = _shopping.extract_items_from_photo(
         base64.b64encode(data).decode('ascii'), mime, (caption or '').strip())
     res['candidates'] = _shopping.already_on_list(target, res.get('candidates') or [])
@@ -10417,15 +10503,22 @@ async def shopping_photo(photo: UploadFile = File(...), caption: str = Form(''),
     return res
 
 @app.get("/api/shopping/for-errand/{errand_id}")
-def shopping_for_errand(errand_id: str):
+def shopping_for_errand(errand_id: str, request: Request = None):
     """The binding that makes this Chauffeur and not a list app: whoever the
     solver assigned the grocery errand gets the standing list. Matched by TAG,
     so it survives the errand regenerating on its next recurrence."""
     errand = next((e for e in storage.get_all_errands() if e.get('id') == errand_id), None)
     if not errand:
         raise HTTPException(status_code=404, detail="Errand not found")
+    viewer_id = _acting_id(request, None)
+    viewer = storage.get_member(viewer_id) if viewer_id else None
     out = []
     for l in storage.find_shopping_lists_for_errand(errand):
+        # A private list bound to the errand rides along only for its own
+        # people — the assigned driver standing in the store included, if and
+        # only if they are on it.
+        if not _shopping_list_visible(l, viewer):
+            continue
         items = storage.get_shopping_items(l['id'], include_checked=False)
         out.append({**l, 'items': items, 'open_count': len(items)})
     return {"errand_id": errand_id, "errand_title": errand.get('title'), "lists": out}

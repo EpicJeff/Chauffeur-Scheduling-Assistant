@@ -54,6 +54,32 @@
 
 <body class="flex flex-col h-screen overflow-hidden">
     {% include 'nav.html' %}
+    <script>
+    // Private lists need the server to know WHO is asking on this standalone
+    // page too (the PWA shell has its own wrapper; nav's only carries the
+    // device). Member token when one is stored — a panel stores none, so on
+    // the wall this is a no-op and private lists stay unserved.
+    (function attachMemberToken() {
+        if (typeof window === 'undefined' || typeof window.fetch !== 'function'
+            || typeof localStorage === 'undefined') return;
+        const _fetch = window.fetch.bind(window);
+        window.fetch = function (input, init) {
+            try {
+                const url = typeof input === 'string' ? input : (input && input.url) || '';
+                const foreign = /^[a-z]+:\/\//i.test(url) && !url.startsWith(window.location.origin);
+                const token = localStorage.getItem('chauffeur_member_token') || '';
+                if (!foreign && token) {
+                    init = init || {};
+                    const h = new Headers(init.headers
+                        || (typeof input === 'object' && input.headers) || {});
+                    if (!h.has('X-Member-Token')) h.set('X-Member-Token', token);
+                    init.headers = h;
+                }
+            } catch (e) { /* auth plumbing must never break a fetch */ }
+            return _fetch(input, init);
+        };
+    })();
+    </script>
 
     <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="shoppingPage()" x-init="init()" x-cloak>
         <!-- 3xl (768px) was right for a single column and wastes half a wide
@@ -1224,21 +1250,31 @@
                 <div class="relative" x-show="!isKiosk && activeId">
                     <button @click="toggleShare()"
                         class="px-3 py-1.5 rounded-full text-sm font-bold border transition-colors"
-                        :class="((activeList() || {}).shared_with || []).length
-                            ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300'
-                            : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-white'"
-                        :title="((activeList() || {}).shared_with || []).length
-                            ? 'Shared beyond the household defaults'
-                            : 'Share this list with someone specific'">
-                        🔗<span x-show="((activeList() || {}).shared_with || []).length"
+                        :class="isPrivate()
+                            ? 'bg-amber-500/15 border-amber-500/50 text-amber-300'
+                            : (((activeList() || {}).shared_with || []).length
+                                ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300'
+                                : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-white')"
+                        :title="isPrivate()
+                            ? 'Private — only the people on it see this list'
+                            : (((activeList() || {}).shared_with || []).length
+                                ? 'Shared beyond the household defaults'
+                                : 'Share this list with someone specific')">
+                        <span x-text="isPrivate() ? '🔒' : '🔗'"></span><span
+                            x-show="((activeList() || {}).shared_with || []).length"
                             x-text="' ' + ((activeList() || {}).shared_with || []).length"></span>
                     </button>
                     <div x-show="shareOpen" @click.outside="shareOpen = false" x-cloak
                         class="absolute z-40 mt-2 right-0 bg-gray-800 border border-gray-700 rounded-xl p-3 w-72 shadow-xl">
-                        <div class="text-xs text-gray-400 mb-2">
+                        <div class="text-xs text-gray-400 mb-2" x-show="!isPrivate()">
                             Everyone in the household already sees this list.
                             Ticking a person hands it to them even when their
                             scope hides lists in general.
+                        </div>
+                        <div class="text-xs text-amber-300/90 mb-2" x-show="isPrivate()">
+                            Private: only the people ticked below see this
+                            list — nobody else, parents included. Panels never
+                            show it.
                         </div>
                         <template x-for="m in shareMembers" :key="m.id">
                             <label class="flex items-center gap-2 py-1 cursor-pointer">
@@ -1247,6 +1283,15 @@
                                 <span class="text-sm text-gray-200" x-text="m.name"></span>
                             </label>
                         </template>
+                        <!-- The default list is every capture path's fallback
+                             and can never go private; the server refuses it
+                             too, this just keeps the switch honest. -->
+                        <label class="flex items-center gap-2 py-1 mt-2 pt-2 border-t border-gray-700 cursor-pointer"
+                            x-show="!(activeList() || {}).is_default">
+                            <input type="checkbox" :checked="isPrivate()"
+                                @change="togglePrivate()" class="accent-amber-500">
+                            <span class="text-sm font-bold text-gray-200">🔒 Private list</span>
+                        </label>
                     </div>
                 </div>
             </div>
@@ -3294,20 +3339,42 @@
                     const l = this.activeList();
                     return !!(l && (l.shared_with || []).includes(id));
                 },
-                async toggleSharedWith(id) {
-                    const l = this.activeList();
-                    if (!l) return;
-                    const cur = new Set(l.shared_with || []);
-                    if (cur.has(id)) cur.delete(id); else cur.add(id);
+                isPrivate() {
+                    return ((this.activeList() || {}).audience || '') === 'private';
+                },
+                async _putSharing(l, body) {
                     const r = await fetch(this.apiBase + 'api/shopping/lists/' + l.id, {
                         method: 'PUT', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ name: l.name, store: l.store,
                                                errand_tag: l.errand_tag,
                                                is_default: !!l.is_default,
-                                               shared_with: [...cur] })
+                                               ...body })
                     });
-                    if (r.ok) l.shared_with = [...cur];
-                    else showGlobalAlert('Could not update sharing');
+                    if (r.ok) {
+                        // The server may have widened the answer (it adds the
+                        // person flipping a list private), so take ITS list.
+                        const fresh = await r.json();
+                        l.shared_with = fresh.shared_with || [];
+                        l.audience = fresh.audience || null;
+                        return true;
+                    }
+                    let msg = 'Could not update sharing';
+                    try { msg = (await r.json()).detail || msg; } catch (e) {}
+                    showGlobalAlert(msg);
+                    return false;
+                },
+                async toggleSharedWith(id) {
+                    const l = this.activeList();
+                    if (!l) return;
+                    const cur = new Set(l.shared_with || []);
+                    if (cur.has(id)) cur.delete(id); else cur.add(id);
+                    await this._putSharing(l, { shared_with: [...cur] });
+                },
+                async togglePrivate() {
+                    const l = this.activeList();
+                    if (!l) return;
+                    await this._putSharing(l,
+                        { audience: this.isPrivate() ? 'household' : 'private' });
                 },
 
                 async newList() {

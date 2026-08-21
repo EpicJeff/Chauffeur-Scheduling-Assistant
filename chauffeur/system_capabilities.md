@@ -3881,7 +3881,7 @@ Tests: `tests/test_family_network.py` scenarios 7–9 (present helper hands over
 - **Three axes**: `FACETS` (34 units of enforcement, each `route`/`field`/`instance`-kind, ◍-marked when about people) × `reach()` (`none|own|all`, a set of named steps, not a rank) × `sees_people` (stored as INTENT — `everyone` / `children` / `driven` / chosen ids — expanded at read time so "the children" self-updates when the baby arrives; `driven` computes the kids a helper drives from the same schedule placement S2 trusts).
 - **Presets over switches**: `household_adult` / `keeping_up` / `child` / `helper` / `guest`; role picks one, `member.scope.preset` overrides, `member.scope.overrides` deviates per facet (junk values ignored, never obeyed). Table values `parents` (trips/occasions: all for parents, none for other adults) and `invited` (none at class level, instance membership honoured — the Slack external-guest shape) resolve inside `reach()`/`can_see()`.
 - **Capabilities that are not views**: `chat.initiate` (`none|parents|household|anyone`) and `moments.contribute` (`none|when_present|all` — S2 already enforces `when_present`).
-- **Audiences fail closed** (supersedes `occasion_design.md`'s deny-list): every shareable object may declare `audience: household|parents|shared` (+`shared_with`); type defaults live in `AUDIENCE_DEFAULTS` — trips, occasions and future gift lists default `parents`. Parents always pass; unknown values fail CLOSED; and a facet grant is never an audience grant — both doors must agree.
+- **Audiences fail closed** (supersedes `occasion_design.md`'s deny-list): every shareable object may declare `audience: household|parents|shared|private` (+`shared_with`); type defaults live in `AUDIENCE_DEFAULTS` — trips, occasions and future gift lists default `parents`. Parents always pass — with the one exception of `private` (v2.361.0), where `shared_with` IS the audience and there is no parent bypass, because the person a private list hides a gift from may be a parent. Unknown values fail CLOSED; and a facet grant is never an audience grant — both doors must agree.
 - **Stages compose, never merge** (§11): a Navigator with `calendar.events: own` keeps `horizon_days: 13`; neither module consults the other.
 
 ## Private by default, and hiding is never silent (v2.333.0 — family-network S4)
@@ -3935,7 +3935,7 @@ Tests: `tests/test_route_facets.py` (5 scenarios).
 - **Hand path**: the shopping page's list row gains a 🔗 share control (active list, never on a kiosk) — tick a person to hand them this list; the chip counts grants and goes emerald when any exist.
 - The concrete story: a keeping-up grandparent (`lists.shopping: none`) shares nothing → sees no lists; shared the Kroger list → sees the Kroger list and no other, and can add eggs to it.
 
-Tests: `tests/test_list_sharing.py` (4 scenarios).
+Tests: `tests/test_list_sharing.py` (8 scenarios — 4 here, 4 more when v2.361.0 added private lists, the closed counterpart).
 
 ## The four payloads that answer differently now (v2.339.0 — family-network S9)
 
@@ -4375,3 +4375,40 @@ was rewritten on the way past: it compared the Boards pane's nesting DEPTH
 against its siblings, which passed only because the Themes pane sat at the same
 shallow level, and started failing on markup that renders perfectly. It asserts
 the real property now — no ancestor of the pane hides itself.
+
+## A list only its people can see (v2.361.0 — private shopping lists)
+
+S8 could hand a list to somebody EXTRA (`shared_with`, additive, empty means
+everyone) but nothing could ever narrow one: no way to keep a list private to
+specific people. Now `ShoppingList.audience: 'private'` flips the same
+`shared_with` field from additive grant into the WHOLE audience — only the
+people on it see the list. The gift-list case is why there is **no parent
+bypass** (`scope.audience_allows` treats `'private'` as the one audience where
+parents pass only if listed — the gift may be FOR a parent) and why anonymous
+surfaces (wall panels, `viewer=None`) never pass.
+
+- **Every read path filters**: the list index, item reads/writes
+  (`_shopping_list_refused`, now audience-aware — tokenless callers keep
+  household lists and are refused private ones outright), the runs split
+  (`/api/shopping/runs`, previously unchecked), the drive-sheet binding
+  (`/api/shopping/for-errand/{id}`, previously unchecked — a private list
+  bound to an errand rides along only for its own people), the photo intake's
+  target list, list edit and list delete (editing/deleting is seeing).
+- **Both agent stacks**: `_resolve_shopping_list` / `_visible_shopping_lists`
+  filter by speaker — a private list is unfindable AND unmentionable in error
+  text for anybody off it; a caller with no resolved member (HA satellite,
+  admin dashboard chat) is a shared surface and finds nothing private.
+- **Guard rails**: the default list can never go private (every capture path
+  falls back to it), a private list can never become the default, the flip
+  auto-adds the person flipping (locking yourself out is not one tap away),
+  and no write may leave a private list with nobody on it (400, fail-safe
+  over fail-secret).
+- **Hand path**: the 🔗 share popover on `/shopping` gains a "🔒 Private
+  list" switch (amber chip when private; hidden on the default list); the
+  standalone page now attaches `X-Member-Token` to its fetches like the PWA
+  shell, so the server knows who is asking — panels store no member token and
+  keep drawing exactly the household lists.
+
+Tests: `tests/test_list_sharing.py` grew to 8 scenarios (no parent bypass, no
+anonymous read, runs/edit/delete refusals, default-list guards, never-empty,
+agent unfindability for both anonymous and off-list speakers).

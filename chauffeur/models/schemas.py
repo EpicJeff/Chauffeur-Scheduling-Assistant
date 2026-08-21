@@ -1320,6 +1320,13 @@ class ShoppingList(BaseModel):
     # grandmother who gets the grocery list and no other. It never narrows
     # what the household sees; audiences (trips) do closed, this does open.
     shared_with: List[str] = Field(default_factory=list)
+    # The closed counterpart. None/'household' is the open default above,
+    # where shared_with only ever ADDS people. 'private' flips the same field
+    # into the whole audience: ONLY the people on shared_with see the list —
+    # no parent bypass, no panels — because the point of a private list is a
+    # gift list the recipient (who may be a parent) must not find. Guarded at
+    # the write path: never on the default list, never with nobody on it.
+    audience: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
 
 class ShoppingItem(BaseModel):
