@@ -116,7 +116,13 @@
                                                 x-text="b.status.emoji + ' ' + b.status.name"></span>
                                         </template>
                                     </div>
-                                    <div class="font-black text-blue-400 text-xl shrink-0" x-text="b.balance + ' ⭐'"></div>
+                                    <!-- Stage shell (R1): points stop LEADING at
+                                         Navigator — the ledger keeps counting, the
+                                         big blue number just stops being the first
+                                         thing. An adult lane (no shell) is untouched. -->
+                                    <div class="font-black shrink-0"
+                                        :class="shellPoints(b) ? 'text-blue-400 text-xl' : 'text-gray-500 text-sm'"
+                                        x-text="b.balance + ' ⭐'"></div>
                                 </div>
                                 </template>
 
@@ -189,10 +195,17 @@
                                     <div class="space-y-2">
                                         <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">My chores</div>
                                         <template x-for="c in myChoresFor(b.member_id)" :key="'mine-' + b.member_id + '-' + c.id">
-                                            <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between gap-2">
-                                                <div class="min-w-0">
-                                                    <div class="text-white font-bold text-sm truncate"><span class="mr-1" x-text="kidGlyph(c)"></span><span x-text="c.title"></span></div>
-                                                    <div class="text-[11px] text-gray-500" x-text="'+' + c.points + ' pts'"></div>
+                                            <div class="bg-gray-900 border border-gray-800 rounded-xl flex items-center justify-between gap-2"
+                                                :class="shellXl(b) ? 'p-4' : 'p-3'">
+                                                <div class="min-w-0 flex items-center gap-2">
+                                                    <span class="shrink-0" :class="shellXl(b) ? 'text-3xl' : ''" x-text="kidGlyph(c)"></span>
+                                                    <div class="min-w-0">
+                                                        <div class="text-white truncate"
+                                                            :class="shellXl(b) ? 'font-black text-base' : 'font-bold text-sm'"
+                                                            x-text="c.title"></div>
+                                                        <div class="text-[11px] text-gray-500" x-show="shellPoints(b)"
+                                                            x-text="'+' + c.points + ' pts'"></div>
+                                                    </div>
                                                 </div>
                                                 <div class="flex gap-2 shrink-0">
                                                     <template x-if="{{ interactive }} && c.state === 'claimed'">
@@ -217,14 +230,22 @@
                                 <div class="space-y-2">
                                     <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">Available</div>
                                     <template x-for="c in availableChoresFor(b.member_id)" :key="'avail-' + b.member_id + '-' + c.id">
-                                        <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between gap-2">
-                                            <div class="min-w-0">
-                                                <div class="text-white font-bold text-sm truncate"><span class="mr-1" x-text="kidGlyph(c)"></span><span x-text="c.title"></span></div>
-                                                <div class="text-[11px] text-gray-500" x-text="'+' + c.points + ' pts'"></div>
+                                        <div class="bg-gray-900 border border-gray-800 rounded-xl flex items-center justify-between gap-2"
+                                            :class="shellXl(b) ? 'p-4' : 'p-3'">
+                                            <div class="min-w-0 flex items-center gap-2">
+                                                <span class="shrink-0" :class="shellXl(b) ? 'text-3xl' : ''" x-text="kidGlyph(c)"></span>
+                                                <div class="min-w-0">
+                                                    <div class="text-white truncate"
+                                                        :class="shellXl(b) ? 'font-black text-base' : 'font-bold text-sm'"
+                                                        x-text="c.title"></div>
+                                                    <div class="text-[11px] text-gray-500" x-show="shellPoints(b)"
+                                                        x-text="'+' + c.points + ' pts'"></div>
+                                                </div>
                                             </div>
                                             <template x-if="{{ interactive }}">
                                                 <button @click="kioskClaim(c.id, b.member_id)"
-                                                    class="text-[12px] font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700 shrink-0">Claim</button>
+                                                    class="font-bold rounded-lg bg-blue-600 text-white active:bg-blue-700 shrink-0"
+                                                    :class="shellXl(b) ? 'text-sm px-4 py-3' : 'text-[12px] px-3 py-2'">Claim</button>
                                             </template>
                                         </div>
                                     </template>
@@ -259,6 +280,12 @@
             // Which parts of a lane draw. The page shows everything; a card
             // overrides this with its own configuration.
             laneShow(part) { return true; },
+
+            // --- Stage shell (R1): per-lane presentation from the server's
+            // resolved capabilities. No shell (an adult, or a stale payload)
+            // draws exactly as before.
+            shellXl(b) { return !!(b && b.shell && b.shell.glyph_scale === 'xl'); },
+            shellPoints(b) { return b && b.shell ? !!b.shell.show_points : true; },
 
             async loadBalances() {
                 try {

@@ -185,6 +185,20 @@ def capabilities(member: dict) -> dict:
     return caps
 
 
+def lane_shell(member: dict):
+    """The presentation half of a child's capabilities, for SHARED surfaces
+    (wall-panel lanes). The PWA has read the full switch list since A4; the
+    lanes never asked, so a Sprout and a Navigator got the identical row.
+    None for adults — an adult lane is not staged and draws as today."""
+    caps = capabilities(member)
+    if not caps:
+        return None
+    return {'stage': caps['stage'],
+            'glyph_scale': caps['glyph_scale'], 'density': caps['density'],
+            'show_points': caps['show_points'],
+            'show_streaks': caps['show_streaks']}
+
+
 def can(member: dict, capability: str) -> bool:
     """Ask for a capability by name. Adults are not staged and simply can."""
     if not member or member.get('role') != 'child':

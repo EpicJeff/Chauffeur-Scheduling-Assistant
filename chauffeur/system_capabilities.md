@@ -4528,3 +4528,29 @@ would):
   `{item_checked, steps_checked}`.
 
 Tests: `tests/test_routine_steps.py` (7 scenarios).
+
+## The wall learns what stage you're in (v2.365.0 — runway arc R1)
+
+Stages (A4) shaped the PWA from day one; the wall-panel lanes never asked —
+a Sprout and a Navigator got the identical row on the one surface the little
+ones actually use. R1, foundation for the Morning & Bedtime Runway:
+
+- `stages.lane_shell(member)` — the presentation half of the resolved
+  capabilities ({stage, glyph_scale, density, show_points, show_streaks}) —
+  rides `/api/routines/streaks` and `/api/points` rows; None for adults.
+  Pinned overrides resolve server-side, as everywhere.
+- **Routine lanes** draw per lane: Sprout rows are xl and photo/glyph-LED
+  (v2.364.0 item photos slot in at hero size), Navigator rows shrink the
+  glyph, Copilot drops it; the streak flame follows `show_streaks` (Sprout
+  and Navigator lanes hide it; adult lanes keep it).
+- **Chores lanes**: xl rows/glyphs/Claim buttons for Sprout; points stop
+  LEADING at Navigator (balance de-emphasized, "+N pts" sublines hidden) —
+  the ledger untouched, presentation only, per the A4 contract.
+- No shell (adult, or a stale payload mid-upgrade) draws exactly as before.
+
+NEXT (planned): R2 runway flag on routine items (`runway: morning|bedtime`,
+explicit toggle, never text-inference) + runway rendering anchored to item
+times, tightened by be-ready-at when the solver has one; R3 single calm
+satellite cue when genuinely behind pace; R4 (deferred) HA lighting.
+
+Tests: `tests/test_stage_lanes.py` (3 scenarios).

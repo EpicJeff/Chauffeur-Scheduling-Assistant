@@ -33,11 +33,25 @@
    a <div> when it cannot, and two hand-copied insides is how a glyph ends up
    in one of them and not the other. #}
 {% macro routine_row() %}
-                                            <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 text-sm font-bold"
-                                                :class="it.checked ? 'bg-green-500 border-green-500 text-white' : 'border-gray-600 text-transparent'">✓</div>
+                                            <div class="rounded-full border-2 flex items-center justify-center shrink-0 font-bold"
+                                                :class="[it.checked ? 'bg-green-500 border-green-500 text-white' : 'border-gray-600 text-transparent',
+                                                         shellOf(s).glyph_scale === 'xl' ? 'w-9 h-9 text-lg' : 'w-6 h-6 text-sm']">✓</div>
                                             <span class="text-blue-400 font-bold text-xs w-14 shrink-0" x-text="formatClock(it.time_of_day)"></span>
-                                            <span class="text-xl shrink-0" x-text="kidGlyph(it)"></span>
-                                            <span class="font-semibold" :class="it.checked ? 'text-gray-400 line-through' : 'text-white'" x-text="it.title"></span>
+                                            <!-- Stage shell (R1): a Sprout row is photo- or
+                                                 glyph-LED at hero size; a Navigator's glyph
+                                                 shrinks; a Copilot's disappears — the same
+                                                 A4 scale the PWA has always drawn. -->
+                                            <template x-if="it.image_id && shellBig(s)">
+                                                <img :src="rlApiBase + 'api/media/' + it.image_id" alt=""
+                                                    class="rounded-lg object-cover shrink-0"
+                                                    :class="shellOf(s).glyph_scale === 'xl' ? 'w-12 h-12' : 'w-8 h-8'">
+                                            </template>
+                                            <template x-if="!(it.image_id && shellBig(s)) && shellOf(s).glyph_scale !== 'none'">
+                                                <span class="shrink-0" :class="shellGlyphClass(s)" x-text="kidGlyph(it)"></span>
+                                            </template>
+                                            <span :class="[it.checked ? 'text-gray-400 line-through' : 'text-white',
+                                                           shellOf(s).glyph_scale === 'xl' ? 'font-black text-lg' : 'font-semibold']"
+                                                x-text="it.title"></span>
 {% endmacro %}
 
 {% macro lane_grid(interactive='true') %}
@@ -82,8 +96,12 @@
                                                 x-text="s.status.emoji + ' ' + s.status.name"></span>
                                         </template>
                                     </div>
+                                    <!-- The A4 rule reaches the wall: a Sprout's lane
+                                         hides streaks (they don't land yet), a
+                                         Navigator's hides them too (babyish now).
+                                         An adult lane (no shell) keeps them. -->
                                     <div class="font-black text-orange-400 text-lg shrink-0"
-                                        x-show="routineShow('streak')">
+                                        x-show="routineShow('streak') && (s.shell ? s.shell.show_streaks : true)">
                                         <span x-text="s.streak.current"></span>🔥
                                     </div>
                                 </div>
@@ -121,14 +139,16 @@
                                             <template x-if="{{ interactive }}">
                                                 <button type="button"
                                                     @click="toggleRoutineCheck(it.id, s.member_id, !it.checked)"
-                                                    class="w-full text-left border rounded-xl p-3 flex items-center gap-3 transition-colors"
-                                                    :class="it.checked ? 'border-green-600/60 bg-green-900/20' : 'border-gray-800 bg-gray-900'">
+                                                    class="w-full text-left border rounded-xl flex items-center gap-3 transition-colors"
+                                                    :class="[it.checked ? 'border-green-600/60 bg-green-900/20' : 'border-gray-800 bg-gray-900',
+                                                             shellOf(s).glyph_scale === 'xl' ? 'p-4' : 'p-3']">
                                                     {{ routine_row() }}
                                                 </button>
                                             </template>
                                             <template x-if="!({{ interactive }})">
-                                                <div class="w-full text-left border rounded-xl p-3 flex items-center gap-3"
-                                                    :class="it.checked ? 'border-green-600/60 bg-green-900/20' : 'border-gray-800 bg-gray-900'">
+                                                <div class="w-full text-left border rounded-xl flex items-center gap-3"
+                                                    :class="[it.checked ? 'border-green-600/60 bg-green-900/20' : 'border-gray-800 bg-gray-900',
+                                                             shellOf(s).glyph_scale === 'xl' ? 'p-4' : 'p-3']">
                                                     {{ routine_row() }}
                                                 </div>
                                             </template>
@@ -179,8 +199,24 @@
             streaks: [],
             dayItems: {},          // memberId -> today's checklist
             use24h: false,
+            // Markup bindings (item photos) need the base the fetches close over.
+            rlApiBase: apiBase,
 
             routineShow(part) { return true; },
+
+            // --- Stage shell (R1): per-LANE presentation from the server's
+            // resolved capabilities. An adult lane has no shell and draws
+            // exactly as before; absent data (a stale payload mid-upgrade)
+            // reads as Explorer-ish defaults, never as broken.
+            shellOf(s) { return (s && s.shell) || { glyph_scale: 'lg' }; },
+            shellBig(s) {
+                const g = this.shellOf(s).glyph_scale;
+                return g === 'xl' || g === 'lg';
+            },
+            shellGlyphClass(s) {
+                const g = this.shellOf(s).glyph_scale;
+                return g === 'xl' ? 'text-4xl' : (g === 'sm' ? 'text-base' : 'text-xl');
+            },
             // Hooks a mount overrides. The page fires the status celebration
             // from both of these; a card does not, because the celebration is
             // a full-screen overlay and a wall showing one per tile is not a
