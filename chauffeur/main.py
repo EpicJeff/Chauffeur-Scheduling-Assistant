@@ -7712,6 +7712,18 @@ def avatar_bundle_endpoint():
     return avatar_render.bundle()
 
 
+def _pet_door(member_id: str) -> dict:
+    """`pet_id` / `pet_name` for whoever this is, or empty. Never raises: a
+    missing critter must not cost somebody their dressing-up box."""
+    try:
+        pet = storage.get_active_pet(member_id)
+    except Exception:
+        pet = None
+    if not pet:
+        return {'pet_id': None, 'pet_name': None}
+    return {'pet_id': pet.get('id'), 'pet_name': pet.get('name')}
+
+
 @app.get("/api/avatar/{member_id}")
 def get_avatar_endpoint(member_id: str):
     """Sync on read, so somebody who earned a piece while the app was closed --
@@ -7729,7 +7741,11 @@ def get_avatar_endpoint(member_id: str):
             'avatar_kind': m.get('avatar_kind'),
             'has_photo': bool(m.get('image')),
             'photo': m.get('image'),
-            'avatar_emoji': m.get('avatar') or (m.get('name') or '?')[:1].upper()}
+            'avatar_emoji': m.get('avatar') or (m.get('name') or '?')[:1].upper(),
+            # The critter, because the editor's control bar carries the door
+            # to it and that door should BE the creature (or the egg, before
+            # there is one). One lookup, no art -- the SVG is a separate GET.
+            **_pet_door(member_id)}
 
 
 class AvatarConfigRequest(BaseModel):

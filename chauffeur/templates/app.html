@@ -147,8 +147,18 @@
                  exactly what a built-in feature needs. -->
             <button id="btn-pet" type="button"
                 onclick="if (selectedMemberId && typeof openPetEditor === 'function') openPetEditor(selectedMemberId)"
-                class="p-3 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors relative"
-                title="Your critter">🐾
+                class="w-11 h-11 shrink-0 grid place-items-center rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors relative"
+                title="Your critter" aria-label="Your critter">
+                <!-- THE DOOR IS THE CREATURE. A paw print stood here and named
+                     a thing none of the critters have -- they are blobs, with
+                     no feet -- and it said the same thing to a child who has
+                     hatched one as to a child who never has. The face is the
+                     answer to both: your own critter once it exists, an EGG
+                     before it does, which is the same invitation the board
+                     card and My Day already make. Painted by updatePetBadge;
+                     the egg is the honest default while the roster loads. -->
+                <span id="pet-face"
+                    class="w-11 h-11 rounded-full overflow-hidden grid place-items-center text-xl leading-none">🥚</span>
                 <!-- The balance rides the button, because a currency nobody
                      can see is not a reward. The DOT lights only when it can
                      actually buy something -- a badge that is always on stops
@@ -992,6 +1002,10 @@
             const color = (m && m.color_code) || fallbackColor || '#3b82f6';
             el.style.borderColor = color;
             el.style.color = color;
+            // The pet door is part of the identity, not part of My Day: an
+            // adult has no My Day at all, and used to see a badge that never
+            // updated and a paw print that was never theirs.
+            if (typeof updatePetBadge === 'function') updatePetBadge(m);
         }
 
         async function selectPassengerMember(memberId) {
@@ -1332,13 +1346,16 @@
             // is already looking at their own day.
             updatePetBadge(m);
             const petHtml = `
-                <div class="flex gap-1.5 mt-1.5">
+                <div class="flex flex-wrap gap-1.5 mt-1.5">
                     <button onclick="typeof openPetEditor === 'function' && openPetEditor(selectedMemberId)"
-                        class="px-2.5 py-1 rounded-full text-[11px] font-bold bg-gray-800 border border-gray-700 text-gray-200">
-                        ${m.pet_name ? '\u{1F43E} ' + mfEscape(m.pet_name) : '\u{1F95A} Hatch a critter'}
+                        class="shrink-0 max-w-full pr-2.5 py-1 rounded-full text-[11px] font-bold bg-gray-800 border border-gray-700 text-gray-200 inline-flex items-center gap-1 ${m.pet_id ? 'pl-1' : 'pl-2.5'}">
+                        ${m.pet_id
+                            ? `<img src="${petFaceSrc(m.pet_id)}" alt="" class="w-5 h-5 shrink-0 rounded-full object-cover">`
+                              + `<span class="truncate">${mfEscape(m.pet_name || 'Your critter')}</span>`
+                            : '\u{1F95A} Hatch a critter'}
                     </button>
                     ${m.pet_name ? `<button onclick="typeof openPetBattle === 'function' && openPetBattle(selectedMemberId)"
-                        class="px-2.5 py-1 rounded-full text-[11px] font-bold bg-gray-800 border border-gray-700 text-gray-200">\u2694\uFE0F Battle</button>` : ''}
+                        class="shrink-0 px-2.5 py-1 rounded-full text-[11px] font-bold bg-gray-800 border border-gray-700 text-gray-200">\u2694\uFE0F Battle</button>` : ''}
                 </div>`;
             return `
             <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4 flex items-center justify-between mb-1">
@@ -1364,6 +1381,7 @@
         // Day at all, and the header is the only surface they share with the
         // kids.
         function updatePetBadge(m) {
+            paintPetFace(m);
             const badge = document.getElementById('pet-xp-badge');
             const dot = document.getElementById('pet-xp-dot');
             if (!badge || !dot) return;
@@ -1372,8 +1390,49 @@
             else { badge.classList.add('hidden'); }
             dot.classList.toggle('hidden', !(m && m.pet_hint));
             const btn = document.getElementById('btn-pet');
-            if (btn) btn.title = (m && m.pet_hint) ? ('You can ' + m.pet_hint) : 'Your critter';
+            if (!btn) return;
+            // The hint still wins the tooltip when there is something to
+            // spend on -- that is the only time the button has news. Failing
+            // that the button says WHO it opens, which a paw print never did.
+            const label = (m && m.pet_hint) ? ('You can ' + m.pet_hint)
+                : (m && m.pet_name) ? m.pet_name
+                : (m && m.pet_id) ? 'Your critter' : 'Hatch a critter';
+            btn.title = label;
+            btn.setAttribute('aria-label', label);
         }
+
+        // Bumped when a critter is hatched, redressed or retired, so the
+        // one-minute cache on the art cannot hand back yesterday's face.
+        let _petArtVersion = 0;
+
+        function petFaceSrc(petId) {
+            return `${apiBase}api/pets/${encodeURIComponent(petId)}/svg?crop=chip&amp;size=88&amp;v=${_petArtVersion}`;
+        }
+
+        // The header door, drawn as the creature behind it -- or the egg that
+        // stands for the one not hatched yet. Cheap to call: the src is
+        // compared before anything is written, so repainting the identity
+        // chip on every screen change neither reloads the art nor flickers.
+        function paintPetFace(m) {
+            const face = document.getElementById('pet-face');
+            if (!face) return;
+            const src = (m && m.pet_id) ? petFaceSrc(m.pet_id) : '';
+            if (face.dataset.petSrc === src) return;
+            face.dataset.petSrc = src;
+            if (src) face.innerHTML = `<img src="${src}" alt="" class="w-full h-full object-cover">`;
+            else face.textContent = '\u{1F95A}';
+        }
+
+        // Hatching, redressing or retiring changes the door it was opened
+        // FROM. The roster is what carries pet_id/pet_name, so refetch it and
+        // repaint rather than guessing the new art out of the event.
+        window.addEventListener('pet-saved', async () => {
+            _petArtVersion++;
+            if (typeof fetchMembers !== 'function') return;
+            await fetchMembers();
+            updatePetBadge(membersData.find(x => x.id === selectedMemberId));
+            if (currentView === 'myday') renderMyDay();
+        });
 
         async function renderMyDay() {
             const wrap = document.getElementById('myday-content');

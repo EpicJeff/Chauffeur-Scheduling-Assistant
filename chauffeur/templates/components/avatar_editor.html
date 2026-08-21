@@ -129,6 +129,8 @@ function avatarEditor(config) {
         // around the app show for this member. The showcase figure is never
         // gated by it.
         kind: null, hasPhoto: false, photo: null, avatarEmoji: null,
+        // The critter next door, so the button that opens it can show it.
+        petId: null, petName: null,
 
         // Called by the window event. Resets per-member state; the art bundle
         // survives across opens (it never changes between members).
@@ -175,6 +177,8 @@ function avatarEditor(config) {
                 this.photo = mine.photo || null;
                 this.avatarEmoji = mine.avatar_emoji || null;
                 this.kind = mine.avatar_kind || (mine.has_photo ? 'photo' : 'character');
+                this.petId = mine.pet_id || null;
+                this.petName = mine.pet_name || null;
                 this.tab = this.groupTabs('me')[0];
             } catch (e) {
                 this.error = 'Could not load the dressing-up box.';
@@ -696,8 +700,17 @@ function avatarEditor(config) {
              makes pets reachable from all of them at once. -->
         <button type="button" x-show="typeof openPetEditor !== 'undefined'"
             @click="close && close(); openPetEditor(memberId)"
-            class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-200"
-            title="Your critter">🐾</button>
+            class="w-11 h-11 rounded-xl bg-gray-800 border border-gray-600 text-gray-200 overflow-hidden grid place-items-center"
+            :title="petName || (petId ? 'Your critter' : 'Hatch a critter')"
+            :aria-label="petName || (petId ? 'Your critter' : 'Hatch a critter')">
+            <!-- The door is the creature. An egg before there is one, which
+                 is the same invitation the board card makes. -->
+            <template x-if="petId">
+                <img :src="apiBase() + 'api/pets/' + petId + '/svg?crop=chip&amp;size=88'"
+                     alt="" class="w-full h-full object-cover">
+            </template>
+            <template x-if="!petId"><span class="text-xl leading-none">🥚</span></template>
+        </button>
             <span class="flex-1 text-xs text-red-300 truncate" x-text="error"></span>
             <button type="button" @click="save()" :disabled="saving || !dirty"
                     class="px-5 h-11 rounded-xl bg-blue-500 text-white font-semibold disabled:opacity-40"

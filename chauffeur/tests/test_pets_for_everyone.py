@@ -37,6 +37,10 @@ from services import avatar_catalog as cat  # noqa: E402
 from services import avatar_render  # noqa: E402
 
 
+PAW = chr(0x1F43E)   # what the pet doors used to show
+EGG = chr(0x1F95A)   # what they show before a critter exists
+
+
 def check(cond, msg):
     if not cond:
         raise AssertionError(msg)
@@ -310,6 +314,57 @@ def test_the_pwa_has_a_way_in_for_every_role():
     check('openPetEditor' in editor,
           "the avatar editor -- reachable from every showcase surface -- has "
           "no door to the critter standing next to the figure")
+
+
+def test_the_door_to_a_pet_is_the_pet():
+    """A paw print named an anatomy none of the critters have -- they are
+    blobs -- and it said the same thing to a child who has hatched one as to
+    a child who never has. The button shows the creature now, and an EGG
+    before there is one: the invitation the board card already makes."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    app = open(os.path.join(here, 'templates', 'app.html'), encoding='utf-8').read()
+    head = app[:app.index('</header>')]
+    check(PAW not in head, "the header still shows a paw print")
+    check('pet-face' in head and EGG in head,
+          "the header door draws neither the critter nor an egg")
+    check('petFaceSrc' in app and '/svg?crop=chip' in app,
+          "nothing in the PWA fetches the critter's art for the door")
+    check('paintPetFace' in app, "the door is never painted")
+    # The whole of paintIdentityChip, which every identity change runs
+    # through -- driver, passenger, restore-on-open and avatar-saved alike.
+    chip = app[app.index('function paintIdentityChip'):]
+    chip = chip[:chip.index('async function')]
+    check('updatePetBadge' in chip,
+          "the door is painted only from My Day, which no adult ever sees")
+    check("addEventListener('pet-saved'" in app,
+          "hatching or redressing leaves the door showing the old creature")
+    myday = app[app.index('function kidHeader'):app.index('function updatePetBadge')]
+    check(PAW not in myday, "My Day still labels the critter with a paw print")
+    check('petFaceSrc' in myday, "My Day's chip does not draw the critter")
+
+    editor = open(os.path.join(here, 'templates', 'components',
+                               'avatar_editor.html'), encoding='utf-8').read()
+    check(PAW not in editor, "the avatar editor still shows a paw print")
+    check('petId' in editor and EGG in editor,
+          "the avatar editor's door draws neither the critter nor an egg")
+
+
+def test_the_editor_is_told_which_critter_to_draw():
+    """The avatar editor holds a door to the pet but knew nothing about it.
+    One lookup on a payload it already fetches -- not a second round trip."""
+    import main
+    reset_db()
+    _member("k1", "Ada")
+    before = main.get_avatar_endpoint("k1")
+    check('pet_id' in before and before['pet_id'] is None,
+          "a member with no critter gets no honest empty answer")
+    storage.create_pet("k1", "Rocket", {}, {}, 'ember')
+    after = main.get_avatar_endpoint("k1")
+    check(after.get('pet_id'), "the avatar payload does not name the critter")
+    check(after.get('pet_name') == 'Rocket',
+          "the avatar payload cannot label the door")
+    svg = main.pet_svg_endpoint(after['pet_id'], crop='chip')
+    check(b'<svg' in svg.body, "the door's art does not render")
 
 
 # --- the balance is visible, and it says what it is for -------------------

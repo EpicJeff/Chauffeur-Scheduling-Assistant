@@ -3549,10 +3549,39 @@ separate colour, because the two currencies must never look like one control
 — and `award_pet_xp` in both agent stacks. Taking XP back lowers a balance and
 never a level.
 
-**The doors.** The PWA header carries a 🐾 on **every view for every role**;
-My Day's pet buttons only ever served children, and adults have no My Day at
-all. The avatar editor also links to the pet editor, which makes pets
+**The doors.** The PWA header carries the pet door on **every view for every
+role**; My Day's pet buttons only ever served children, and adults have no My
+Day at all. The avatar editor also links to the pet editor, which makes pets
 reachable from every surface the figure appears on.
+
+**The door IS the creature (v2.354.0).** Those doors used to show a 🐾, which
+named an anatomy none of the critters have -- they are blobs, with no feet --
+and said the same thing to a child who has hatched one as to a child who never
+has. All three now draw the critter's own `chip` art, and an **egg** before
+there is one, which is the invitation the pets board card already made:
+
+- **PWA header** (`#pet-face`): `paintPetFace(m)` swaps in
+  `<img src=api/pets/{pet_id}/svg?crop=chip>` when the roster row has a
+  `pet_id`, else 🥚. Called from `updatePetBadge`, which is now called from
+  **`paintIdentityChip`** -- so every identity change paints it (driver,
+  passenger, restore-on-open, avatar-saved), not just My Day, which no adult
+  ever sees. The XP badge and the affordability dot still ride the button.
+  The tooltip/aria-label is the hint when there is one, else the pet's NAME,
+  else "Hatch a critter".
+- **My Day's chip** carries the same art beside the name; the row wraps rather
+  than clipping the name behind the Battle button.
+- **The avatar editor's control bar** draws it from `pet_id`/`pet_name`, which
+  `GET /api/avatar/{member_id}` now returns (`_pet_door` -- one lookup on a
+  payload the editor already fetches, never a second round trip, and never
+  raising: a broken critter must not cost somebody their dressing-up box).
+
+`_petArtVersion` is bumped on the `pet-saved` event and rides the src as `v=`,
+because the SVG is served with `max-age=60` and a redressed critter must not
+leave yesterday's face on the door; the same listener refetches the roster so
+the door that was opened FROM updates too. `paintPetFace` compares the src
+before writing, so repainting the identity chip on every screen change neither
+reloads the art nor flickers. The catalog icon for the pets board CARD and the
+guide's title icon are still 🐾 -- those label the feature, not your critter.
 
 **The balance is visible, and it says what it is for (v2.302.0).** Pet XP was
 readable in exactly one place -- the Moves tab of the editor -- and everywhere
