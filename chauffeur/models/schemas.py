@@ -75,7 +75,6 @@ class Driver(BaseModel):
     preferred_maps_provider: str = 'google'
     phone_number: Optional[str] = None
     cell_carrier: Optional[str] = None
-    bio: Optional[str] = ""
     max_passengers: Optional[int] = None  # graduated-licensing cap, independent of car
 
 class Passenger(BaseModel):
@@ -84,7 +83,6 @@ class Passenger(BaseModel):
     calendar_ids: List[str] = Field(default_factory=list)
     hashtags: List[str] = Field(default_factory=list)
     requires_attendance: bool = False
-    bio: Optional[str] = ""
 
 class CarUnavailableRange(BaseModel):
     start: str                      # ISO date, inclusive
@@ -972,12 +970,10 @@ class Settings(BaseModel):
     # starts at 11-turning-12, so a fixed 12 puts a sixth grader in the wrong
     # stage for half the year).
     stage_cutoffs: List[int] = Field(default_factory=lambda: [6, 12, 15])
-    family_philosophy: str = ""
     enable_standard_rules: bool = True
     enable_ai_rules: bool = True
     enable_standard_priority_rules: bool = True
     enable_ai_priority_rules: bool = True
-    enable_ai_themes: bool = True
     # Car alerts (C2/C3, docs/car_telemetry_design.md): warn thresholds, the
     # family's home gas station (fuel-stop errand placement fallback), and
     # auto-approve for fuel-stop proposals. services/cars.py reads these off
@@ -1242,18 +1238,6 @@ class TelemetryEvent(BaseModel):
     action: str  # e.g., 'pickup', 'dropoff', 'arrived'
     timestamp: float = Field(default_factory=time.time)
     details: Optional[str] = None
-
-class Theme(BaseModel):
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    name: str
-    description: str
-    unassigned_penalty_multiplier: float = 1.0
-    stickiness_bonus_multiplier: float = 1.0
-    travel_time_penalty_multiplier: float = 1.0
-    primary_driver_bonus_multiplier: float = 1.0
-    same_location_bonus_multiplier: float = 1.0
-    is_ai_generated: bool = False
-    is_enabled: bool = True
 
 class Errand(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

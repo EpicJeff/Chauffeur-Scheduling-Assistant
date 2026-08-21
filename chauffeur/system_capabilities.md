@@ -8,12 +8,12 @@ The solver formulates the schedule by assigning drivers to events in a way that 
 
 ### Baseline Event Weights & Penalties
 When evaluating whether to assign an event to a driver or leave it unassigned:
-- **Base Assignment Reward:** `1,000,000` (modified by `unassigned_penalty_multiplier` in Theme settings).
+- **Base Assignment Reward:** `1,000,000`.
   - *Leaving an event unassigned scores `0`. If a driver's total score drops below 0 for an event, the solver will refuse to assign them and leave the event unassigned instead.*
   - *This value is deliberately large so that assigning an event at all outweighs routing preferences. Compare bonuses against each other, not against this base — it is identical for every driver on the same event and therefore cancels out when choosing between drivers.*
 - **Priority Scaling Bonus:** `+150` points per rank. (e.g., Priority 1 driver gets `+1350`, Priority 10 gets `+0`).
 - **Driver in Event (Attendee):** `+50,000,000` (Massive bonus if the driver is also attending the event. This is the largest term in the model apart from manual overrides, and in practice it decides the assignment on its own.)
-- **Primary Driver Bonus:** `+2000` (modified by `primary_driver_bonus_multiplier`).
+- **Primary Driver Bonus:** `+2000`.
 - **Manual Override:** `+100,000,000` (plus the override's `created_at` epoch seconds, so newer overrides win). Dominates every other objective term, including the saturated load-balancing penalty (≤1.44M at its cap). Every hard ban in the model also carries an `overridden_pairs` escape — `unavailable` rules, `required`-rule bans on other drivers, driver personal-event overlaps, the passenger-overlap constraint, and the trip-assignment bans — so a drag-and-drop override always sticks regardless of any other setting. Before creating the override, the dashboard dry-runs the pair through `POST /api/overrides/check` (`matcher.explain_assignment_conflicts`): if the solver would normally refuse it (driver away on a trip, passengers away on a trip, unavailable/avoid/required-elsewhere rules, the driver's own calendar event at that time, preferred-hours violation), a confirmation dialog lists the human-readable reasons and asks "Override anyway?" — informed consent, never a silent block. The check reads trip windows/entities from `trip_metadata` persisted in the combined schedule cache.
 - **Group Bonus:** `+1000` when both events of a `group` rule go to the same driver.
 - **Stickiness Bonus:** `+5` points if they drove the same event in the previous run.
@@ -23,7 +23,7 @@ When evaluating whether to assign an event to a driver or leave it unassigned:
 **Penalties:**
 - **Travel Time:** Scaled heavy penalty (approx `-600` points per 10 minutes) of driving from the previous event's location to the next. This penalty *only* applies if the gap between events is 1 hour or less, to avoid unfairly penalizing drivers for taking completely independent trips separated by long layovers at home.
 - **Tolerance Overlap:** Heavy dynamic penalty (`-50,000`) if an event relies on a tolerance rule to be feasible for a primary driver. The penalty comfortably overcomes the primary driver bonus (`+2000`) and group bonus (`+1000`) combined, so the solver prefers a clean secondary driver over a primary driver who has to be late. It does **not** overcome the attendee bonus or a manual override, and it exactly ties the maximum passenger-continuity bonus (`+50,000`) — so at a near-zero travel gap, continuity can cancel it out.
-- **Preferred Hours Violation:** `-2,000,000` points if an event falls outside the driver's preferred working hours. At default settings this drives the score below 0 (`1,000,000 - 2,000,000`) so the event stays unassigned. It does **not** hold if the driver is an attendee (`+50,000,000` swamps it) or if `unassigned_penalty_multiplier >= 2.0`.
+- **Preferred Hours Violation:** `-2,000,000` points if an event falls outside the driver's preferred working hours. At default settings this drives the score below 0 (`1,000,000 - 2,000,000`) so the event stays unassigned. It does **not** hold if the driver is an attendee (`+50,000,000` swamps it).
 - **Soft Buffer Violation:** `-2,000` points if an event slightly overlaps a buffer zone.
 
 ### Load Balancing Mode (optional)
@@ -558,7 +558,7 @@ Whoever IS at an activity posts a photo/clip moment into the event's chat (the e
 ## Optional Events (v2.153.0)
 - **The concept**: standing recurring things — open gym, drop-in swim — that the family attends when the day allows and drops without ceremony when it doesn't. Before this, every event was a must-route: the solver would contest a driver for open gym against a real commitment, the watcher sirened about it when dropped, and every surface asserted attendance as fact.
 - **The flag lives on the event config** (`is_optional`, `api/events/config/{google_id}`), set via a checkbox on BOTH event modals (dashboard edit mode and the calendar's config modal — keep the two forms in sync). The existing "Entire Series / This Instance" save prompt gives series-level defaults with per-instance override for free (instance config is looked up before series config).
-- **Solver** (`solver/matcher.py` objective): an optional event's base assignment reward drops from 1M to **100k** (× `unassigned_penalty_multiplier`) — still positive and far above routing-preference noise, so a free day drives it like anything else; but on any real conflict it is the FIRST thing left unassigned (losing 100k always beats losing another event's 1M). Priority rules still apply on top.
+- **Solver** (`solver/matcher.py` objective): an optional event's base assignment reward drops from 1M to **100k** — still positive and far above routing-preference noise, so a free day drives it like anything else; but on any real conflict it is the FIRST thing left unassigned (losing 100k always beats losing another event's 1M). Priority rules still apply on top.
 - **Watcher** (`watchers._unassigned_findings`): a dropped optional gets one calm ⏭️ "didn't fit — skipped, say so if they should still go" line (dedup key `optional_skip:{id}:{date}`), never the 🚨 unassigned siren.
 - **Surfaces**: timeline cards wear a purple "Opt" chip; an unassigned optional shows "Skipped · optional" (purple) instead of the red "No Driver" badge. My Day ride payloads carry `optional`; a driverless optional card says "Optional — not planned today" instead of "⚠ Needs a driver".
 - **Per-occurrence decisions (phase 2, v2.154.0, `services/optional_events.py`)**: what the family chose about ONE occurrence — `attend` | `skip` | undecided (the default, needing no answer: goes if it fits). Decisions live in their OWN table (`storage.optional_decisions`, keyed google_id + date), NEVER the event config: a config is what the event IS, a decision is what the family chose that day — and a programmatic instance-config write would replace the series config wholesale (the lookup never merges), silently dropping passengers/attendance. Keying mirrors the config lookup (occurrence's own google id first, series id fallback), so "skip today" never touches recurring siblings. Decisions expire with the day (pruned each refresh sweep).
@@ -4062,3 +4062,83 @@ inside a member's quiet hours, and a member with no settings is inside the
 default window all evening — so the test passed in the afternoon and failed
 after about nine at night. It now stubs the quiet-hour gate: the facet gate is
 what it is testing, and the quiet-hour gate is `test_kid_pushes`' business.
+
+## The philosophy / bios / solver-themes arc is gone (v2.353.0)
+
+The idea: describe your family in prose ("How this family works"), add a bio per
+driver and passenger, and an LLM would synthesise scheduling rules **and** a set
+of *solver themes* — multiplier sets that reweighted the CP-SAT objective. The
+day was then solved several ways, a second LLM call picked one, and a dashboard
+banner offered you the alternatives with a feedback box.
+
+**Removed on the household's own report**: it always returned schedules that
+were identical to the standard solver's, and their install had zero AI-generated
+rules — never used, never missed. Two independent reasons it could not have
+delivered, and both are worth writing down because the second is not obvious:
+
+1. **The search space is small.** A household has a handful of drivers and a
+   handful of events, so most reweightings land on the same assignment. This is
+   the dominant reason in practice and the family's own diagnosis.
+2. **The multipliers could not reach the terms that decide anything.** The
+   driver-is-attending bonus is `+50,000,000` and was **not** multiplied by
+   anything. The largest theme-controllable term was the primary-driver bonus at
+   `2,000` — four orders of magnitude below. No multiplier in a sane range could
+   move an outcome on any event a driver attends, which is the common case.
+
+The generator's own prompt had also drifted badly out of step with the engine it
+was describing: it told the model the unassigned penalty was `100` (actually
+`1,000,000`), travel time `1`/min (actually `60`), stickiness `5` (the term that
+dominates is `50,000 × decay`). Any theme it produced was reasoning about
+numbers off by up to 10,000×, and `generate_ai_rules` truncated the themes table
+before inserting — so pressing that button handed the household's global solver
+weighting to an LLM-invented row nobody looked at.
+
+**What replaced it, and why that is better**: rules are authored by asking. *"Have
+Jeff always take Lily to Warriors events"* becomes one routing rule — required
+driver Jeff, keyword Warriors, passenger Lily — that you can read, edit and
+delete. Incremental, inspectable, reversible, and arrived at when the need
+actually comes up. A bulk synthesis from a prose blob is none of those.
+
+Removed: `Theme` and its five multipliers (`solver/matcher.py`), the whole
+`/api/themes` CRUD, `generate_ai_rules`, `refine_text`, `ai_feedback`, the
+`if False:` multi-schedule block, `generate_rules_from_philosophy` /
+`evaluate_schedule_options` / `refine_scheduling_text` (472 lines of
+`services/llm.py`), the Themes config tab, the philosophy textarea, the driver
+and passenger bio fields, the dashboard's suggestion banner and chooser modal,
+and the `options` / `ai_status` / `selected_index` / `llm_reasoning` fields on a
+cached daily schedule. ~1,100 lines.
+
+**Kept, deliberately:**
+
+- **The LLM connection settings** (provider, key, Test Connection). Argyle is
+  configured there and neither agent stack ever read the philosophy or a bio —
+  checked `agent_tools_v2`, `agent_router` and `agentic_chat_loop`, no hits.
+- **`enable_ai_rules` / `enable_ai_priority_rules`.** They gate
+  `is_ai_generated` rules in the solver and still have a producer.
+- **`panel_theme` and everything around it.** This codebase used "theme" for two
+  unrelated things and only one was dead; the wall panel's light/dark is on
+  every board and kiosk page. `test_no_solver_themes` asserts the panel one
+  survives, which is the guard against a future sweep taking it.
+
+**Two findings surfaced by the removal, neither acted on:**
+
+- **`theme` was smuggling `home_location`.** Six reads inside the solver did
+  `theme.get('home_location')`, and nothing ever put that key into a theme —
+  `Theme` had five multiplier fields and no such field — so all six have been
+  `None` for the life of the feature. It is now an explicit
+  `home_location: Optional[str] = None` parameter: same value, visible seam.
+  **Wiring it up changes switch travel times and therefore assignments**, so it
+  is a deliberate change made while looking at a re-solved week, not a side
+  effect of a deletion. Pinned by a test that asserts the default.
+- **`/api/rules/analyze-overrides`** (learn rules from manual overrides, via
+  `identify_override_patterns` / `deduce_rules_from_context`) has no caller in
+  any template. Same era, same shape, different feature — left alone because it
+  was not part of what was reported.
+
+Tests: `tests/test_no_solver_themes.py` (7 scenarios) is a regrowth guard — the
+failure mode of a partial revert is silent, so it asserts each symbol's absence
+by name. `test_board_instances.scenario_the_boards_tab_is_where_the_other_tabs_are`
+was rewritten on the way past: it compared the Boards pane's nesting DEPTH
+against its siblings, which passed only because the Themes pane sat at the same
+shallow level, and started failing on markup that renders perfectly. It asserts
+the real property now — no ancestor of the pane hides itself.

@@ -35,7 +35,7 @@ def reset_db():
 
 
 def scenario_migration_links_drivers_and_passengers():
-    storage.drivers_table.insert({"id": "jeff", "name": "Jeff", "color_code": "#ff0000", "bio": "dad"})
+    storage.drivers_table.insert({"id": "jeff", "name": "Jeff", "color_code": "#ff0000"})
     storage.drivers_table.insert({"id": "amy", "name": "Amy", "color_code": "#00ff00", "is_disabled": True})
     storage.passengers_table.insert({"id": "p-amy", "name": "amy "})  # name-merges onto Amy
     storage.passengers_table.insert({"id": "p-ben", "name": "Ben"})   # passenger-only -> child default
@@ -46,7 +46,9 @@ def scenario_migration_links_drivers_and_passengers():
 
     jeff = storage.get_member_by_driver_id("jeff")
     check(jeff and jeff["name"] == "Jeff" and jeff["can_drive"], "driver member carries name + can_drive")
-    check(jeff["color_code"] == "#ff0000" and jeff["bio"] == "dad", "driver color/bio copied")
+    # `bio` left with the philosophy arc (v2.353.0): a driver has no such
+    # field any more, and a member is seeded without one.
+    check(jeff["color_code"] == "#ff0000", "driver colour copied")
     check(jeff["passenger_id"] is None, "Jeff has no passenger link")
 
     amy = storage.get_member_by_driver_id("amy")

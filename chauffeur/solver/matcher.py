@@ -407,7 +407,18 @@ def solve_schedule(
     driver_events: Dict[str, List[Event]] = None,
     passengers: List[Passenger] = None,
     trip_metadata: List[dict] = None,
-    theme: dict = None,
+    # WHERE HOME IS, for the leg between two events a driver cannot chain
+    # directly. Named, and always None today — which is the point.
+    #
+    # This arrived through the `theme` dict (v2.351.0 and earlier), and nothing
+    # anywhere ever put `home_location` INTO a theme: `Theme` had five
+    # multiplier fields and no such key, so all six reads inside this function
+    # have been None for the life of the feature. Removing the dict would have
+    # buried that; a named parameter with the same value leaves the seam
+    # visible and wire-uppable. Do not connect it without re-solving a real
+    # week and looking at the diff — it changes switch travel times, which
+    # changes assignments.
+    home_location: Optional[str] = None,
     load_balancing: bool = False,
     load_balancing_metric: str = 'occupied_time',
     cars: List[Car] = None,
@@ -432,15 +443,6 @@ def solve_schedule(
         driver_events = {}
     if passengers is None:
         passengers = []
-    if theme is None:
-        theme = {}
-        
-    unassigned_penalty_mult = theme.get('unassigned_penalty_multiplier', 1.0)
-    stickiness_bonus_mult = theme.get('stickiness_bonus_multiplier', 1.0)
-    travel_time_penalty_mult = theme.get('travel_time_penalty_multiplier', 1.0)
-    primary_driver_bonus_mult = theme.get('primary_driver_bonus_multiplier', 1.0)
-    same_loc_bonus_mult = theme.get('same_location_bonus_multiplier', 1.0)
-        
     # Resolve effective overrides (instance overrides take precedence over series overrides)
     effective_overrides_list = []
     # Sort descending by created_at to ensure newer overrides take precedence if duplicate
@@ -472,7 +474,7 @@ def solve_schedule(
     # Default missing event locations to home_location to prevent 0-minute teleportation
     for e in events:
         if not getattr(e, 'location', None) or str(e.location).strip() == "":
-            e.location = theme.get('home_location') if theme else None
+            e.location = home_location
 
     # Pre-calculate requires_attendance per event
     req_att_cals = set(cal for p in passengers if p.requires_attendance for cal in p.calendar_ids)
@@ -654,7 +656,7 @@ def solve_schedule(
                         objective_terms.append(both * -50)
                                 
             # Driver Conflict Logic
-            travel_time_mins = get_switch_travel_time(e1, e2, events, home_location=theme.get('home_location') if theme else None)
+            travel_time_mins = get_switch_travel_time(e1, e2, events, home_location=home_location)
             min_needed_seconds = (travel_time_mins) * 60
             desired_needed_seconds = min_needed_seconds + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
             gap_seconds = (e2.start - e1.end).total_seconds()
@@ -664,7 +666,7 @@ def solve_schedule(
                     gap_seconds = float('inf')
             attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
             if not attendance_conflict and e1.location and e2.location:
-                req_d1_d2 = get_switch_travel_time(e1, e2, events, home_location=theme.get('home_location') if theme else None) * 60
+                req_d1_d2 = get_switch_travel_time(e1, e2, events, home_location=home_location) * 60
                 late_drop_e2 = max(0, req_d1_d2 - (e2.start - e1.start).total_seconds())
                 
                 # In profile overlap checks, we use min_needed_seconds strictly since it's already tight
@@ -839,7 +841,7 @@ def solve_schedule(
         # e2.loc. The same driver chaining events keeps the same physical car
         # (and cannot chain into an event their current car can't serve).
         # Midday non-home handoffs are deliberately unmodeled (design doc §2).
-        home_loc = theme.get('home_location') if theme else None
+        home_loc = home_location
         for i in range(len(sorted_events)):
             for j in range(i + 1, len(sorted_events)):
                 e1 = sorted_events[i]
@@ -892,7 +894,7 @@ def solve_schedule(
 
     for e in assignable_events:
         # Calculate dynamic base weight for the event
-        base_event_weight = int(1000000 * unassigned_penalty_mult)
+        base_event_weight = 1000000
         # Optional events (event config `is_optional`, series or instance):
         # still worth driving on a free day — 100k stays far above the
         # routing-preference noise (bonuses are in the thousands) — but the
@@ -903,7 +905,7 @@ def solve_schedule(
         # solver — those events are excluded upstream, like assist coverage.)
         if (getattr(e, 'app_config', None) or {}).get('is_optional') \
                 and getattr(e, 'optional_decision', None) != 'attend':
-            base_event_weight = int(100000 * unassigned_penalty_mult)
+            base_event_weight = 100000
         for pr in priority_rules:
             if does_event_match_rule(e, pr, passengers):
                 base_event_weight += pr.weight_modifier
@@ -917,7 +919,7 @@ def solve_schedule(
 
             # Group weight
             if d.group == 'primary':
-                weight += int(2000 * primary_driver_bonus_mult)
+                weight += 2000
             elif d.group == 'secondary':
                 weight += 0
                 
@@ -940,7 +942,7 @@ def solve_schedule(
             
             # Stickiness
             if previous_assignments.get(e.id) == d.id:
-                weight += int(5 * stickiness_bonus_mult)
+                weight += 5
                 
             # Apply Driver Rules
             is_avoided = False
@@ -1005,14 +1007,14 @@ def solve_schedule(
                             if (e2.start - e1.end).total_seconds() > 3600:
                                 travel_mins = 99
                             else:
-                                travel_mins = get_switch_travel_time(e1, e2, events, home_location=theme.get('home_location') if theme else None, trip_metadata=trip_metadata, passengers=passengers)
+                                travel_mins = get_switch_travel_time(e1, e2, events, home_location=home_location, trip_metadata=trip_metadata, passengers=passengers)
                         
                         gap_seconds = (e2.start - e1.end).total_seconds()
                         if gap_seconds >= 0:
                             if shares_passenger:
                                 # Estimate if a layover home trip would occur. If it does, we zero out the continuity bonus.
                                 # For estimating, we use the global home_location as a proxy for the driver's home.
-                                global_home = theme.get('home_location') if theme else None
+                                global_home = home_location
                                 active_driver_home = get_active_home(f"driver_{d.id}", e2.start.timestamp(), global_home, trip_metadata) if trip_metadata and global_home else global_home
                                 threshold_seconds = 7200 # default to 2 hours if we can't estimate
                                 if active_driver_home and e1.location and e2.location:
@@ -1026,18 +1028,18 @@ def solve_schedule(
                                 # This aligns perfectly with the threshold where a driver typically has enough time to go home for a layover.
                                 decay = max(0.0, 1.0 - (gap_seconds / max(1.0, threshold_seconds)))
                                 if decay > 0:
-                                    objective_terms.append(both_assigned * int(50000 * decay * stickiness_bonus_mult))
+                                    objective_terms.append(both_assigned * int(50000 * decay))
                                     
                             if gap_seconds < 10800: # 3 hours
                                 if (travel_mins == 0 and e1.location and e2.location) or ((travel_mins <= 5) and shares_passenger):
                                     # Higher bonus for doing things at the exact same location (reduces travel)
                                     decay_loc = max(0.0, 1.0 - (gap_seconds / 10800.0))
-                                    objective_terms.append(both_assigned * int(5000 * decay_loc * same_loc_bonus_mult))
+                                    objective_terms.append(both_assigned * int(5000 * decay_loc))
                                     
                                 # Penalize travel time only if the gap is small enough that the driver wouldn't go home
                                 # If the gap is > 1 hour (3600s), travel_mins is set to 99 to skip API. In this case, there is no direct travel penalty because they went home.
                                 if gap_seconds <= 3600:
-                                    objective_terms.append(both_assigned * (-int(travel_mins * 60 * travel_time_penalty_mult)))
+                                    objective_terms.append(both_assigned * (-int(travel_mins * 60)))
                     
     # 4c. Mutually Exclusive Event Groups
 
@@ -1117,7 +1119,7 @@ def solve_schedule(
             'occupied_time': (1, 600),
         }
         coef, cap = metric_params.get(load_balancing_metric, metric_params['occupied_time'])
-        global_home = theme.get('home_location') if theme else None
+        global_home = home_location
         for d in drivers:
             if d.id == 'unassigned_ghost':
                 continue

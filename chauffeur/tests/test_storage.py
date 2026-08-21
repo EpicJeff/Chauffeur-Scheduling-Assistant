@@ -229,17 +229,6 @@ def scenario_errand_rules():
     check(storage.get_all_errand_rules() == [], "errand rule deleted")
 
 
-def scenario_themes():
-    tid = storage.add_theme({"name": "default", "primary_driver_bonus_multiplier": 1.0})
-    themes = storage.get_all_themes()
-    check(len(themes) == 1 and themes[0]["doc_id"] == tid, "theme inserted")
-    storage.update_theme(tid, {"name": "fast"})
-    t = storage.get_all_themes()[0]
-    check(t["name"] == "fast" and t["primary_driver_bonus_multiplier"] == 1.0, "theme update merges")
-    storage.delete_theme(tid)
-    check(storage.get_all_themes() == [], "theme deleted")
-
-
 def scenario_overrides():
     oid = storage.add_override({"event_id": "ev1", "driver_name": "Alice"})
     check(len(storage.get_all_overrides()) == 1, "override added")
@@ -466,26 +455,25 @@ def scenario_custom_schedules():
 
 def scenario_daily_schedules():
     check(storage.get_cached_daily_schedule("2026-03-01") is None, "miss -> None")
-    storage.save_cached_daily_schedule(
-        "2026-03-01", {"legs": [1]}, "h1",
-        options=[{"o": 1}], ai_status="done", selected_index=1, llm_reasoning="because")
+    storage.save_cached_daily_schedule("2026-03-01", {"legs": [1]}, "h1")
     d = storage.get_cached_daily_schedule("2026-03-01")
-    check(d["schedule"] == {"legs": [1]} and d["options"] == [{"o": 1}]
-          and d["ai_status"] == "done" and d["selected_index"] == 1
-          and d["llm_reasoning"] == "because", f"full roundtrip, got {d}")
+    check(d["schedule"] == {"legs": [1]} and d["events_hash"] == "h1",
+          f"full roundtrip, got {d}")
 
-    # same hash + defaulted args: existing options/ai fields are preserved
+    # A day holds ONE schedule. It used to hold several — an `options` list and
+    # the model's verdict on them — and the same-hash path existed to preserve
+    # that verdict across a re-save. The themed-alternatives arc went in
+    # v2.353.0 and the preservation went with it: a save is now just a save.
     storage.save_cached_daily_schedule("2026-03-01", {"legs": [2]}, "h1")
     d = storage.get_cached_daily_schedule("2026-03-01")
     check(d["schedule"] == {"legs": [2]}, "schedule payload updated")
-    check(d["options"] == [{"o": 1}] and d["ai_status"] == "done" and d["selected_index"] == 1
-          and d["llm_reasoning"] == "because", "same-hash save preserves options and AI verdict")
+    check('options' not in d and 'ai_status' not in d,
+          f"a schedule still carries the removed AI verdict: {d}")
 
-    # different hash: options/ai state reset
     storage.save_cached_daily_schedule("2026-03-01", {"legs": [3]}, "h2")
     d = storage.get_cached_daily_schedule("2026-03-01")
-    check(d["options"] == [] and d["ai_status"] == "evaluating" and d["selected_index"] == 0
-          and d["llm_reasoning"] == "", "new-hash save resets AI state")
+    check(d["schedule"] == {"legs": [3]} and d["events_hash"] == "h2",
+          f"a new hash replaces the day, got {d}")
     check(len(storage.daily_schedules_table.all()) == 1, "per-date upsert")
 
     # saving a daily schedule invalidates custom range caches
@@ -690,15 +678,6 @@ def scenario_errands():
     check(storage.get_all_errands() == [], "deleted")
 
 
-def scenario_ai_feedback():
-    with mock.patch("time.time", side_effect=[100.0, 200.0, 300.0]):
-        storage.add_ai_feedback("first")
-        storage.add_ai_feedback("second")
-        storage.add_ai_feedback("third")
-    fb = storage.get_recent_ai_feedback(limit=2)
-    check([f["context"] for f in fb] == ["third", "second"], "desc order + limit")
-    check(len(storage.get_recent_ai_feedback()) == 3, "default limit returns all three")
-
 
 # --- cache maintenance helpers -------------------------------------------------
 
@@ -828,7 +807,6 @@ SCENARIOS = [
     scenario_migrate_passengers_from_settings,
     scenario_priority_rules,
     scenario_errand_rules,
-    scenario_themes,
     scenario_overrides,
     scenario_conversations,
     scenario_telemetry,
@@ -849,7 +827,6 @@ SCENARIOS = [
     scenario_event_configs,
     scenario_trip_metadata,
     scenario_errands,
-    scenario_ai_feedback,
     scenario_cache_maintenance,
     scenario_fix_corrupted_db,
     scenario_table_api_contract,

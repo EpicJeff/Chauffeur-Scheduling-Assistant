@@ -75,8 +75,6 @@ ENTRIES: List[dict] = [
     _e('time_format_24h', 'daily', '24-hour clock', 'Show times as 14:30 rather than 2:30pm.'),
     _e('home_location', 'household', 'Home address',
        'The address every route starts and ends at. Re-saving forces a fresh geocode.'),
-    _e('family_philosophy', 'household', 'How this family works',
-       'Free text the assistant reads for tone and standing preferences.'),
     _e('trip_hashtags', 'household', 'Trip hashtags',
        'Event hashtags that mark something as a trip rather than a normal day.'),
     _e('route_cache_duration_mins', 'household', 'Route cache',
@@ -396,7 +394,6 @@ ENTRIES: List[dict] = [
        'Offer example prompts on each page.'),
     _e('enable_ai_rules', 'ai', 'AI scheduling rules', 'Let the assistant author solver rules.'),
     _e('enable_ai_priority_rules', 'ai', 'AI priority rules', 'The same for driver priority.'),
-    _e('enable_ai_themes', 'ai', 'AI themes', 'Let the assistant restyle the dashboard.'),
     _e('suggested_routes_enabled', 'ai', 'Suggested routes',
        'Offer route ideas alongside the solved schedule.'),
 

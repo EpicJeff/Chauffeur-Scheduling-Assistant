@@ -79,18 +79,6 @@
                         </button>
                     </li>
                     <li>
-                        <button @click="activeTab = 'themes'"
-                            :class="activeTab === 'themes' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
-                            class="whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
-                            <svg class="w-5 h-5 mr-2 md:mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01">
-                                </path>
-                            </svg>
-                            Themes
-                        </button>
-                    </li>
-                    <li>
                         <!-- Boards. Foundational enough to be a tab here rather
                              than a route of its own: from a household's side
                              there is no difference, and inventing a page to
@@ -554,8 +542,9 @@
                             AI Scheduling Assistant
                         </h3>
                         <p class="text-gray-400 text-sm mb-6">
-                            Translate your natural language family driving rules and philosophy, along with individual
-                            driver and passenger biographies, into structured constraints automatically.
+                            Where Argyle's brain is configured. Rules are authored by asking for
+                            them in plain language — "have Jeff always take Lily to Warriors
+                            events" — not synthesised in bulk from a description of the family.
                         </p>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -568,40 +557,11 @@
                             </div>
                         </div>
 
-                        <div class="mb-6">
-                            <div class="flex justify-between items-center mb-2">
-                                <label class="block text-gray-400 font-semibold text-sm uppercase tracking-wider">Family
-                                    Philosophy & Rules</label>
-                                <button @click.prevent="refineText('philosophy')"
-                                    :disabled="!llmProvider || refiningPhilosophy"
-                                    class="text-xs px-2.5 py-1 bg-purple-900/40 hover:bg-purple-800/60 disabled:opacity-50 text-purple-300 border border-purple-800/60 rounded-lg font-bold flex items-center gap-1 transition-all shadow-sm">
-                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M13 10V3L4 14h7v7l9-11h-7z" x-show="!refiningPhilosophy"></path>
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3 3L22 4"
-                                            x-show="refiningPhilosophy" class="animate-spin"></path>
-                                    </svg>
-                                    <span x-text="refiningPhilosophy ? 'Improving...' : 'Improve with AI'"></span>
-                                </button>
-                            </div>
-                            <textarea x-model="familyPhilosophy" @change="saveSettings()" rows="4"
-                                placeholder="Describe your scheduling priorities in plain English (e.g. 'Lorena always drives Nate to his soccer practices on Mondays. Lorena needs 10 minutes buffer before and after events. Jeff is preferred for swim events. Ignore all events with the keyword private.')"
-                                class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white text-sm"></textarea>
-                            <p class="text-gray-500 text-xs mt-1">Include general guidelines, driver preferences, and
-                                routine patterns.</p>
-                        </div>
-
                         <!-- Action Buttons -->
                         <div class="flex flex-wrap gap-4 items-center mb-6">
                             <button @click="testLLMConnection()" :disabled="!llmProvider"
                                 class="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white font-bold px-4 py-2.5 rounded-lg transition-colors flex items-center shadow-md">
                                 Test Connection
-                            </button>
-                            <button @click="generateAIRules()"
-                                :disabled="!llmProvider || !familyPhilosophy.trim() || aiRulesGenerating"
-                                class="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold px-4 py-2.5 rounded-lg transition-colors flex items-center shadow-md">
-                                <span x-text="aiRulesGenerating ? 'Synthesizing...' : 'Synthesize AI Rules'"></span>
                             </button>
                         </div>
 
@@ -609,12 +569,6 @@
                         <div x-show="llmTestResult" x-cloak class="p-4 rounded-lg mb-4 text-sm font-medium border"
                             :class="llmTestSuccess ? 'bg-green-900/30 border-green-500/50 text-green-300' : 'bg-red-900/30 border-red-500/50 text-red-300'">
                             <span x-text="llmTestResult"></span>
-                        </div>
-
-                        <!-- AI Synthesis Result Message -->
-                        <div x-show="aiRulesResult" x-cloak class="p-4 rounded-lg text-sm font-medium border"
-                            :class="aiRulesSuccess ? 'bg-green-900/30 border-green-500/50 text-green-300' : 'bg-red-900/30 border-red-500/50 text-red-300'">
-                            <span x-text="aiRulesResult"></span>
                         </div>
                     </div>
 
@@ -1047,27 +1001,6 @@
                                         </template>
                                     </div>
                                 </div>
-                            </div>
-                            <div class="w-full mt-4">
-                                <div class="flex justify-between items-center mb-2">
-                                    <label class="block text-gray-400 font-semibold text-sm">Bio / Context (e.g. "Jeff
-                                        does not drive after 8 PM")</label>
-                                    <button @click.prevent="refineText('driver_bio')"
-                                        :disabled="!llmProvider || refiningDriverBio"
-                                        class="text-xs px-2.5 py-1 bg-purple-900/40 hover:bg-purple-800/60 disabled:opacity-50 text-purple-300 border border-purple-800/60 rounded-lg font-bold flex items-center gap-1 transition-all shadow-sm">
-                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                                d="M13 10V3L4 14h7v7l9-11h-7z" x-show="!refiningDriverBio"></path>
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3 3L22 4"
-                                                x-show="refiningDriverBio" class="animate-spin"></path>
-                                        </svg>
-                                        <span x-text="refiningDriverBio ? 'Improving...' : 'Improve with AI'"></span>
-                                    </button>
-                                </div>
-                                <textarea x-model="newDriver.bio" rows="2"
-                                    placeholder="Enter custom driver notes, philosophy, or specific details for AI scheduling..."
-                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm focus:outline-none focus:border-blue-500"></textarea>
                             </div>
                             <div class="w-full mt-2 flex items-center space-x-3">
                                 <label class="relative inline-flex items-center cursor-pointer">
@@ -2967,27 +2900,6 @@
                             <p class="text-xs text-gray-500">Subscribed ICS feeds moved to the person —
                                 <b>People → Identity → 📅 Google Calendars</b>, where the calendars they land on are set.</p>
                         </div>
-                        <div class="w-full mt-4">
-                            <div class="flex justify-between items-center mb-2">
-                                <label class="block text-gray-400 font-semibold text-sm">Bio / Context (e.g. "Ben gets
-                                    anxious after soccer and prefers riding with Mom")</label>
-                                <button @click.prevent="refineText('passenger_bio')"
-                                    :disabled="!llmProvider || refiningPassengerBio"
-                                    class="text-xs px-2.5 py-1 bg-purple-900/40 hover:bg-purple-800/60 disabled:opacity-50 text-purple-300 border border-purple-800/60 rounded-lg font-bold flex items-center gap-1 transition-all shadow-sm">
-                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M13 10V3L4 14h7v7l9-11h-7z" x-show="!refiningPassengerBio"></path>
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3 3L22 4"
-                                            x-show="refiningPassengerBio" class="animate-spin"></path>
-                                    </svg>
-                                    <span x-text="refiningPassengerBio ? 'Improving...' : 'Improve with AI'"></span>
-                                </button>
-                            </div>
-                            <textarea x-model="newPassenger.bio" rows="2"
-                                placeholder="Enter custom passenger notes, preferences, or specific routines for AI scheduling..."
-                                class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm focus:outline-none focus:border-blue-500"></textarea>
-                        </div>
                         <div
                             class="mt-6 p-4 bg-gray-900/50 rounded-lg border border-gray-600 flex items-center justify-between">
                             <div>
@@ -4239,91 +4151,6 @@
                     </div>
                 </div>
             </div>
-                <!-- Themes -->
-                <div x-show="activeTab === 'themes'" x-cloak x-transition.opacity
-                    class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
-                    <h2 class="text-3xl font-bold mb-6 text-blue-300">Dashboard Themes</h2>
-
-                    <div class="flex flex-col sm:flex-row gap-6 mb-8 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                        <div class="flex items-center space-x-3">
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" x-model="enableAiThemes" @change="saveSettings()"
-                                    class="sr-only peer">
-                                <div
-                                    class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
-                                </div>
-                            </label>
-                            <span class="font-bold text-gray-300">Enable AI Themes</span>
-                        </div>
-                    </div>
-                    <div class="space-y-4">
-                        <template x-for="theme in themes">
-                            <div class="bg-gray-900 p-5 rounded-xl flex flex-col border border-gray-700 transition-opacity"
-                                :class="theme.is_enabled === false || !enableAiThemes ? 'opacity-50 grayscale' : ''">
-                                <div class="flex items-start justify-between">
-                                    <div class="flex items-center gap-4">
-                                        <label class="relative inline-flex items-center cursor-pointer mt-1">
-                                            <input type="checkbox" :checked="theme.is_enabled !== false"
-                                                @change="toggleTheme(theme)" class="sr-only peer">
-                                            <div
-                                                class="w-11 h-6 bg-gray-600 rounded-full peer peer-checked:bg-blue-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full">
-                                            </div>
-                                        </label>
-                                        <div>
-                                            <h3 class="font-bold text-white" x-text="theme.theme_name || theme.name">
-                                            </h3>
-                                            <p class="text-sm text-gray-400" x-text="theme.description"></p>
-                                        </div>
-                                    </div>
-                                    <button @click="deleteTheme(theme.doc_id)"
-                                        class="text-red-500 hover:text-red-400 transition-colors ml-4 shrink-0">
-                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16">
-                                            </path>
-                                        </svg>
-                                    </button>
-                                </div>
-                                <div class="mt-4 grid grid-cols-2 md:grid-cols-5 gap-4 border-t border-gray-700 pt-4">
-                                    <div>
-                                        <label class="block text-xs font-bold text-gray-400 mb-1">Travel Time
-                                            Multiplier</label>
-                                        <input type="number" step="0.1" x-model.number="theme.travel_time_penalty_multiplier"
-                                            @change="updateTheme(theme)"
-                                            class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm">
-                                    </div>
-                                    <div>
-                                        <label class="block text-xs font-bold text-gray-400 mb-1">Unassigned
-                                            Multiplier</label>
-                                        <input type="number" step="0.1" x-model.number="theme.unassigned_penalty_multiplier"
-                                            @change="updateTheme(theme)"
-                                            class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm">
-                                    </div>
-                                    <div>
-                                        <label class="block text-xs font-bold text-gray-400 mb-1">Stickiness Bonus</label>
-                                        <input type="number" step="0.1" x-model.number="theme.stickiness_bonus_multiplier"
-                                            @change="updateTheme(theme)"
-                                            class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm">
-                                    </div>
-                                    <div>
-                                        <label class="block text-xs font-bold text-gray-400 mb-1">Primary Driver Bonus</label>
-                                        <input type="number" step="0.1"
-                                            x-model.number="theme.primary_driver_bonus_multiplier"
-                                            @change="updateTheme(theme)"
-                                            class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm">
-                                    </div>
-                                    <div>
-                                        <label class="block text-xs font-bold text-gray-400 mb-1">Same Loc Bonus</label>
-                                        <input type="number" step="0.1"
-                                            x-model.number="theme.same_location_bonus_multiplier"
-                                            @change="updateTheme(theme)"
-                                            class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm">
-                                    </div>
-                                </div>
-                            </div>
-                        </template>
-                    </div>
-                </div>
 
                 {% include 'components/boards_admin.html' %}
             </div>
@@ -4433,7 +4260,6 @@
                 rules: [],
                 priorityRules: [],
                 errandRules: [],
-                themes: [],
 
                 // AI assistant LLM settings
                 llmProvider: '',
@@ -4441,14 +4267,12 @@
                 llmGeminiModel: 'gemini-3.5-flash-lite',
                 llmOllamaUrl: 'http://localhost:11434',
                 llmOllamaModel: 'qwen2.5:7b',
-                familyPhilosophy: '',
 
                 // Rule Toggles
                 enableStandardRules: true,
                 enableAiRules: true,
                 enableStandardPriorityRules: true,
                 enableAiPriorityRules: true,
-                enableAiThemes: true,
                 loadBalancingEnabled: false,
                 loadBalancingMetric: 'occupied_time',
                 carBatteryWarnPct: 30,
@@ -4484,18 +4308,12 @@
                 kidQuietEnd: '07:00',
                 llmTestResult: null,
                 llmTestSuccess: null,
-                aiRulesGenerating: false,
-                aiRulesResult: null,
-                aiRulesSuccess: null,
-                refiningPhilosophy: false,
-                refiningDriverBio: false,
-                refiningPassengerBio: false,
                 matchedEventsByRule: {},
 
-                newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '', bio: '' },
+                newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' },
                 newDriverCalendarInput: '',
                 newDriverHashtagInput: '',
-                newPassenger: { name: '', hashtags: [], calendar_ids: [], requires_attendance: false, bio: '' },
+                newPassenger: { name: '', hashtags: [], calendar_ids: [], requires_attendance: false },
                 cars: [],
                 showCarForm: false,
                 editCarId: null,
@@ -4609,7 +4427,6 @@
                     await this.loadRules();
                     await this.loadPriorityRules();
                     await this.loadErrandRules();
-                    await this.loadThemes();
                     this.loadMatchedEvents();
                     console.log("configApp init complete");
                 },
@@ -4898,13 +4715,11 @@
                     this.llmGeminiModel = data.llm_gemini_model || 'gemini-3.5-flash-lite';
                     this.llmOllamaUrl = data.llm_ollama_url || 'http://localhost:11434';
                     this.llmOllamaModel = data.llm_ollama_model || 'qwen2.5:7b';
-                    this.familyPhilosophy = data.family_philosophy || '';
 
                     this.enableStandardRules = data.enable_standard_rules !== false;
                     this.enableAiRules = data.enable_ai_rules !== false;
                     this.enableStandardPriorityRules = data.enable_standard_priority_rules !== false;
                     this.enableAiPriorityRules = data.enable_ai_priority_rules !== false;
-                    this.enableAiThemes = data.enable_ai_themes !== false;
                     this.loadBalancingEnabled = data.load_balancing_enabled === true;
                     this.loadBalancingMetric = data.load_balancing_metric || 'occupied_time';
                     this.carBatteryWarnPct = data.car_battery_warn_pct != null ? data.car_battery_warn_pct : 30;
@@ -5064,12 +4879,10 @@
                             llm_gemini_model: this.llmGeminiModel,
                             llm_ollama_url: this.llmOllamaUrl,
                             llm_ollama_model: this.llmOllamaModel,
-                            family_philosophy: this.familyPhilosophy,
                             enable_standard_rules: this.enableStandardRules,
                             enable_ai_rules: this.enableAiRules,
                             enable_standard_priority_rules: this.enableStandardPriorityRules,
                             enable_ai_priority_rules: this.enableAiPriorityRules,
-                            enable_ai_themes: this.enableAiThemes,
                             load_balancing_enabled: this.loadBalancingEnabled,
                             load_balancing_metric: this.loadBalancingMetric,
                             car_battery_warn_pct: parseFloat(this.carBatteryWarnPct) || 30,
@@ -5168,7 +4981,6 @@
                             preferred_maps_provider: this.newDriver.preferred_maps_provider || 'google',
                             phone_number: this.newDriver.phone_number || null,
                             cell_carrier: this.newDriver.cell_carrier || null,
-                            bio: this.newDriver.bio || ''
                         };
                         if (this.editDriverId) {
                             await fetch(`${this.apiBase}api/drivers/${this.editDriverId}`, { method: 'DELETE' });
@@ -5219,7 +5031,6 @@
                         preferred_maps_provider: d.preferred_maps_provider || 'google',
                         phone_number: d.phone_number || '',
                         cell_carrier: d.cell_carrier || '',
-                        bio: d.bio || ''
                     };
                     this.newDriverCalendarInput = '';
                     this.newDriverHashtagInput = '';
@@ -5227,7 +5038,7 @@
                 cancelEditDriver() {
                     this.editDriverId = null;
                     this.showDriverForm = false;
-                    this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', home_location: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '', bio: '' };
+                    this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', home_location: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' };
                     this.newDriverCalendarInput = '';
                     this.newDriverHashtagInput = '';
                 },
@@ -6715,7 +6526,7 @@
                                 body: JSON.stringify(payload)
                             });
                         }
-                        this.newPassenger = { name: '', hashtags: [], calendar_ids: [], requires_attendance: false, bio: '' };
+                        this.newPassenger = { name: '', hashtags: [], calendar_ids: [], requires_attendance: false };
                         this.showPassengerForm = false;
                         await this.loadPassengers();
                         await this.loadMembers();
@@ -6725,12 +6536,12 @@
                 },
 
                 editPassenger(passenger) {
-                    this.newPassenger = { name: passenger.name, hashtags: passenger.hashtags || [], calendar_ids: passenger.calendar_ids || [], requires_attendance: passenger.requires_attendance || false, bio: passenger.bio || '' };
+                    this.newPassenger = { name: passenger.name, hashtags: passenger.hashtags || [], calendar_ids: passenger.calendar_ids || [], requires_attendance: passenger.requires_attendance || false };
                     this.editPassengerId = passenger.doc_id;
                 },
 
                 cancelEditPassenger() {
-                    this.newPassenger = { name: '', hashtags: [], calendar_ids: [], requires_attendance: false, bio: '' };
+                    this.newPassenger = { name: '', hashtags: [], calendar_ids: [], requires_attendance: false };
                     this.editPassengerId = null;
                     this.showPassengerForm = false;
                 },
@@ -7074,34 +6885,6 @@
                     }
                 },
 
-                async loadThemes() {
-                    try {
-                        const res = await fetch(`${this.apiBase}api/themes`);
-                        const data = await res.json();
-                        this.themes = Array.isArray(data) ? data : [];
-                    } catch (e) {
-                        console.error("Failed to load themes", e);
-                        this.themes = [];
-                    }
-                },
-                async updateTheme(theme) {
-                    await fetch(`${this.apiBase}api/themes/${theme.doc_id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(theme) });
-                },
-                async toggleTheme(theme) {
-                    const newStatus = theme.is_enabled === false ? true : false;
-                    const payload = { ...theme, is_enabled: newStatus };
-                    theme.is_enabled = newStatus;
-                    await fetch(`${this.apiBase}api/themes/${theme.doc_id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                    await this.loadThemes();
-                },
-                async deleteTheme(doc_id) {
-                    if (await promptConfirm('Delete this theme?',
-                                            'Its weights and penalties are removed from the solver.', 'Delete')) {
-                        await fetch(`${this.apiBase}api/themes/${doc_id}`, { method: 'DELETE' });
-                        await this.loadThemes();
-                    }
-                },
-
                 getDriverName(id) {
                     if (id === 'any') return 'Any Driver';
                     const d = this.drivers.find(x => x.id === id);
@@ -7206,92 +6989,6 @@
                         this.syncingMapbox = false;
                     }
                 },
-                async generateAIRules() {
-                    if (!await promptConfirm('Synthesize rules?',
-                            'Every existing AI-generated rule is replaced. Rules you created by hand are preserved.',
-                            'Synthesize')) {
-                        return;
-                    }
-                    this.aiRulesGenerating = true;
-                    this.aiRulesResult = 'Generating rules...';
-                    this.aiRulesSuccess = null;
-                    try {
-                        // First save settings to ensure LLM config and philosophy are up-to-date
-                        await this.saveSettings();
-
-                        const res = await fetch(`${this.apiBase}api/settings/generate_ai_rules`, {
-                            method: 'POST'
-                        });
-                        const data = await res.json();
-                        this.aiRulesSuccess = data.success;
-                        this.aiRulesResult = data.message;
-
-                        if (data.success) {
-                            showGlobalAlert("AI Rules Synthesized Successfully!");
-                            await this.loadRules();
-                            await this.loadPriorityRules();
-                            await this.loadThemes();
-                        } else {
-                            throw new Error(data.message);
-                        }
-                    } catch (e) {
-                        this.aiRulesSuccess = false;
-                        this.aiRulesResult = `Error: ${e.message}`;
-                    } finally {
-                        this.aiRulesGenerating = false;
-                    }
-                },
-                async refineText(contextType) {
-                    let targetText = '';
-                    if (contextType === 'philosophy') {
-                        targetText = this.familyPhilosophy;
-                        this.refiningPhilosophy = true;
-                    } else if (contextType === 'driver_bio') {
-                        targetText = this.newDriver.bio;
-                        this.refiningDriverBio = true;
-                    } else if (contextType === 'passenger_bio') {
-                        targetText = this.newPassenger.bio;
-                        this.refiningPassengerBio = true;
-                    }
-
-                    if (!targetText || !targetText.trim()) {
-                        showGlobalAlert('Please enter some text first before attempting to refine it.');
-                        this.refiningPhilosophy = false;
-                        this.refiningDriverBio = false;
-                        this.refiningPassengerBio = false;
-                        return;
-                    }
-
-                    try {
-                        const res = await fetch(`${this.apiBase}api/settings/refine_text`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                text: targetText,
-                                context_type: contextType
-                            })
-                        });
-                        const data = await res.json();
-                        if (data.success) {
-                            if (contextType === 'philosophy') {
-                                this.familyPhilosophy = data.refined_text;
-                                await this.saveSettings();
-                            } else if (contextType === 'driver_bio') {
-                                this.newDriver.bio = data.refined_text;
-                            } else if (contextType === 'passenger_bio') {
-                                this.newPassenger.bio = data.refined_text;
-                            }
-                        } else {
-                            showGlobalAlert(`Failed to refine text: ${data.message}`);
-                        }
-                    } catch (e) {
-                        showGlobalAlert(`Error refining text: ${e.message}`);
-                    } finally {
-                        this.refiningPhilosophy = false;
-                        this.refiningDriverBio = false;
-                        this.refiningPassengerBio = false;
-                    }
-                }
             }
         }
     </script>

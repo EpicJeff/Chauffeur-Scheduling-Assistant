@@ -12757,29 +12757,6 @@ def delete_priority_rule(doc_id: int, background_tasks: BackgroundTasks):
     background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
-# --- Themes API ---
-@app.get("/api/themes")
-def get_themes():
-    return storage.get_all_themes()
-
-@app.post("/api/themes")
-def create_theme(theme_data: dict, background_tasks: BackgroundTasks):
-    doc_id = storage.add_theme(theme_data)
-    background_tasks.add_task(refresh_schedule_logic)
-    return {"doc_id": doc_id, "status": "created"}
-
-@app.put("/api/themes/{doc_id}")
-def update_theme(doc_id: int, theme_data: dict, background_tasks: BackgroundTasks):
-    storage.update_theme(doc_id, theme_data)
-    background_tasks.add_task(refresh_schedule_logic)
-    return {"status": "updated"}
-
-@app.delete("/api/themes/{doc_id}")
-def delete_theme(doc_id: int, background_tasks: BackgroundTasks):
-    storage.delete_theme(doc_id)
-    background_tasks.add_task(refresh_schedule_logic)
-    return {"status": "deleted"}
-
 # --- Overrides API ---
 @app.get("/api/overrides")
 def get_overrides():
@@ -13244,128 +13221,6 @@ def test_llm(payload: LLMTestPayload):
         model=payload.model
     )
     return {"success": success, "message": message}
-
-@app.post("/api/settings/generate_ai_rules")
-def generate_ai_rules(background_tasks: BackgroundTasks):
-    from services.llm import generate_rules_from_philosophy
-    
-    settings = storage.get_settings()
-    provider = settings.get('llm_provider', '')
-    if not provider:
-        return {"success": False, "message": "AI Assistant is not configured. Please select a provider first."}
-        
-    url = settings.get('llm_ollama_url', 'http://localhost:11434')
-    api_key = settings.get('llm_gemini_api_key', '')
-    if provider == 'gemini':
-        # Heavy tier: philosophy -> rules is a rare, quality-critical generation.
-        from services import model_pools
-        model = model_pools.resolve_model('heavy', settings)
-    else:
-        model = settings.get('llm_ollama_model', 'qwen2.5:7b')
-    philosophy = settings.get('family_philosophy', '')
-    
-    if not philosophy.strip():
-        return {"success": False, "message": "Family Philosophy is empty. Please enter your scheduling philosophy first."}
-        
-    drivers = storage.get_all_drivers()
-    passengers = storage.get_all_passengers()
-    
-    try:
-        feedback_docs = storage.get_recent_ai_feedback(limit=15)
-        recent_feedback = [f.get('context', '') for f in feedback_docs if f.get('context')]
-
-        rules, priority_rules, themes, raw_log = generate_rules_from_philosophy(
-            provider=provider,
-            url=url,
-            api_key=api_key,
-            model=model,
-            philosophy=philosophy,
-            drivers=drivers,
-            passengers=passengers,
-            feedback=recent_feedback
-        )
-        
-        # Save to database
-        with storage.db_lock:
-            # 1. Remove all old AI generated rules
-            from tinydb import Query
-            storage.rules_table.remove(Query().is_ai_generated == True)
-            storage.priority_rules_table.remove(Query().is_ai_generated == True)
-            storage.themes_table.truncate()
-            
-            # 2. Insert new ones
-            for r in rules:
-                storage.rules_table.insert(r)
-            for pr in priority_rules:
-                storage.priority_rules_table.insert(pr)
-            for t in themes:
-                storage.themes_table.insert(t)
-                
-            # 3. Clear schedule caches so solver reruns on next fetch
-            storage.custom_schedules_table.truncate()
-            storage.mark_all_daily_schedules_dirty()
-            storage.cache_table.truncate()
-            
-        # Trigger background schedule solve
-        background_tasks.add_task(trigger_background_refresh)
-        
-        msg = f"Successfully generated {len(rules)} rules, {len(priority_rules)} priority rules, and {len(themes)} themes!"
-        if len(themes) < 2:
-            msg = f"WARNING: Generated {len(rules)} rules, but only {len(themes)} themes! The AI evaluation requires at least 2 themes to compare options."
-        return {
-            "success": True if len(themes) > 0 else False, 
-            "message": msg,
-            "rules_count": len(rules),
-            "priority_rules_count": len(priority_rules),
-            "themes_count": len(themes)
-        }
-    except Exception as e:
-        logger.error(f"AI Rule generation failed: {e}", exc_info=True)
-        return {"success": False, "message": str(e)}
-
-class LLMRefinePayload(BaseModel):
-    text: str
-    context_type: str
-
-@app.post("/api/settings/refine_text")
-def refine_text(payload: LLMRefinePayload):
-    from services.llm import refine_scheduling_text
-    
-    settings = storage.get_settings()
-    provider = settings.get('llm_provider', '')
-    if not provider:
-        return {"success": False, "message": "AI Assistant is not configured. Please select a provider in settings first."}
-        
-    url = settings.get('llm_ollama_url', 'http://localhost:11434')
-    api_key = settings.get('llm_gemini_api_key', '')
-    if provider == 'gemini':
-        # Interactive tier: the user is waiting on the refine button.
-        from services import model_pools
-        model = model_pools.resolve_model('interactive', settings)
-    else:
-        model = settings.get('llm_ollama_model', 'qwen2.5:7b')
-
-    try:
-        refined = refine_scheduling_text(
-            provider=provider,
-            url=url,
-            api_key=api_key,
-            model=model,
-            text=payload.text,
-            context_type=payload.context_type
-        )
-        return {"success": True, "refined_text": refined}
-    except Exception as e:
-        logger.error(f"AI Text refinement failed: {e}", exc_info=True)
-        return {"success": False, "message": str(e)}
-
-class AIFeedbackPayload(BaseModel):
-    context: str
-
-@app.post("/api/settings/ai_feedback")
-def submit_ai_feedback(payload: AIFeedbackPayload):
-    storage.add_ai_feedback(payload.context)
-    return {"status": "saved"}
 
 @app.delete("/api/cache")
 def clear_caches():
@@ -14834,7 +14689,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         combined_true_unassigned = []
         combined_conflicts = []
         combined_scheduled_errands = []
-        combined_ai_metadata = {}
         
         def merge_edges(target, source):
             if not source: return
@@ -14867,14 +14721,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 combined_true_unassigned.extend(sched.get('true_unassigned', []))
                 combined_conflicts.extend(sched.get('conflicts', []))
                 combined_scheduled_errands.extend(sched.get('scheduled_errands', []))
-                
-                if 'ai_status' in daily_cache:
-                    combined_ai_metadata[d_str] = {
-                        'ai_status': daily_cache.get('ai_status'),
-                        'selected_index': daily_cache.get('selected_index'),
-                        'llm_reasoning': daily_cache.get('llm_reasoning'),
-                        'options': daily_cache.get('options', [])
-                    }
+
 
         if not calendar_metadata:
             calendar_metadata = calendar.get_calendar_metadata(all_cals_to_fetch)
@@ -15035,7 +14882,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "members": _calendar_legend_members(),
             "drivers": _identity_driver_colors(drivers),
             "solving_dates": schedule_coordinator.get_solving_dates(),
-            "ai_metadata": combined_ai_metadata,
             # Persisted so /api/overrides/check can explain trip conflicts
             # without re-deriving trip entities outside the refresh
             "trip_metadata": trip_metadata
@@ -15200,18 +15046,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # Save the initial combined cache immediately with the solving_dates list populated
     compile_and_save_combined()
 
-    enable_ai_themes = settings.get("enable_ai_themes", True)
-    all_themes = storage.get_all_themes()
-    themes = []
-    for t in all_themes:
-        if not t.get('is_enabled', True): continue
-        if t.get('is_ai_generated', False) and not enable_ai_themes: continue
-        themes.append(t)
-        
-    default_theme = next((t for t in themes if "default" in (t.get('name') or '').lower() or "standard" in (t.get('name') or '').lower()), {})
-    if not default_theme and themes:
-        default_theme = themes[0]
-
     load_balancing = settings.get("load_balancing_enabled", False)
     load_balancing_metric = settings.get("load_balancing_metric", "occupied_time")
     suggested_routes_enabled = settings.get("suggested_routes_enabled", True)
@@ -15342,7 +15176,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             true_unassigned = unassigned
         else:
             assignments, unassigned, lateness_warnings, car_assignments = matcher.solve_schedule(
-                daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric, cars=cars, driver_passenger_map=driver_passenger_map
+                daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric, cars=cars, driver_passenger_map=driver_passenger_map
             )
             
             unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
@@ -15454,71 +15288,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         encoded_schedule = jsonable_encoder(daily_schedule)
         storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash, ai_status='evaluating')
 
-        # Background Evaluation (Disabled to save tokens/quota)
-        other_themes = [t for t in themes if t.get('doc_id') != default_theme.get('doc_id')]
-        provider = settings.get('llm_provider', '')
-        if False:  # Disabled: AI multi-schedule evaluation disabled to save tokens/quota
-            url = settings.get('llm_ollama_url', 'http://localhost:11434')
-            api_key = settings.get('llm_gemini_api_key', '')
-            model = settings.get('llm_gemini_model', 'gemini-3.5-flash') if provider == 'gemini' else settings.get('llm_ollama_model', 'qwen2.5:7b')
-            philosophy = settings.get('family_philosophy', '')
-
-            def bg_eval(d_str, d_hash, def_sched, def_theme, o_themes, d_evs, drvs, rls, prls, ovr, prev, d_map, paxs, meta, home_loc, p_events_ids, prov, ur, ak, mod, phil):
-                options = [{
-                    "theme_name": def_theme.get('name', 'Default'),
-                    "schedule": def_sched,
-                    "assignments_summary": ", ".join(f"{k}: {v}" for k,v in def_sched['assignments'].items()),
-                    "unassigned_summary": ", ".join(def_sched['unassigned'])
-                }]
-                
-                for t in o_themes:
-                    a, u, lw, _ca = matcher.solve_schedule(d_evs, drvs, rls, prls, overrides=ovr, previous_assignments=prev, driver_events=d_map, passengers=paxs, trip_metadata=meta, theme=t, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric)
-                    ue = [e for e in d_evs if e.id in u]
-                    ae = [e for e in d_evs if e.id in a]
-                    ga, gd = matcher.solve_ghost_routes(ue, ae, rls, paxs, trip_metadata=meta) if suggested_routes_enabled else ({}, [])
-                    all_a = {**a, **ga}
-                    re, ie, fe = matcher.compute_route_edges(all_a, d_evs, drvs, home_location=home_loc, trip_metadata=meta, driver_attendances=p_events_ids, rules=rls, passengers=paxs)
-                    tu = [e.id for e in ue if e.id not in ga]
-                    c = matcher.compute_conflicts(a, ga, d_evs)
-                    
-                    ds = {
-                        "assignments": a,
-                        "unassigned": u,
-                        "lateness_warnings": lw,
-                        "ghost_assignments": ga,
-                        "ghost_drivers": gd,
-                        "route_edges": re,
-                        "initial_edges": ie,
-                        "final_edges": fe,
-                        "events": [e.dict() if hasattr(e, 'dict') else e for e in d_evs],
-                        "true_unassigned": tu,
-                        "conflicts": c
-                    }
-                    options.append({
-                        "theme_name": t.get('name', 'Alternative'),
-                        "schedule": jsonable_encoder(ds),
-                        "assignments_summary": ", ".join(f"{k}: {v}" for k,v in a.items()),
-                        "unassigned_summary": ", ".join(u)
-                    })
-                
-                from services.llm import evaluate_schedule_options
-                import json
-                feedback_docs = storage.get_recent_ai_feedback(limit=15)
-                recent_feedback = [f.get('context', '') for f in feedback_docs if f.get('context')]
-                
-                sel_idx, reasoning = evaluate_schedule_options(prov, ur, ak, mod, phil, [d.dict() if hasattr(d, 'dict') else d for d in drvs], options, recent_feedback)
-                
-                ai_status = 'suggests_alternative' if sel_idx > 0 else 'approved_default'
-                
-                storage.save_cached_daily_schedule(d_str, options[sel_idx]["schedule"], d_hash, options=options, ai_status=ai_status, selected_index=sel_idx, llm_reasoning=reasoning)
-                
-                global LAST_UPDATE_TIME
-                LAST_UPDATE_TIME = time.time()
-                
-            import threading
-            threading.Thread(target=bg_eval, args=(date_str, daily_hash, encoded_schedule, default_theme, other_themes, daily_events_to_solve, drivers, rules, priority_rules, overrides, previous_assignments, driver_events_map, passengers, trip_metadata, home_location, driver_events_ids, provider, url, api_key, model, philosophy)).start()
-        else:
-            storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash, ai_status=None)
+        storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash)
 
         # Day finished, remove it from solving list and save combined!
         schedule_coordinator.finish_solving(date_str)
@@ -15572,7 +15342,6 @@ def debug_push_subscriptions():
 def debug_db():
     return {
         "db_path": storage.DB_PATH,
-        "themes_count": len(storage.themes_table.all()),
         "rules_count": len(storage.rules_table.all())
     }
 
@@ -15940,7 +15709,6 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                                 "home_location": global_cache.get("home_location", ""),
                                 "overridden_events": global_cache.get("overridden_events", []),
                                 "passenger_calendar_ids": global_cache.get("passenger_calendar_ids", []),
-                                "ai_metadata": global_cache.get("ai_metadata", {}),
                                 "drivers": [d.dict() if hasattr(d, 'dict') else d for d in storage.get_all_drivers() if not d.get('is_disabled')],
                                 "passengers": storage.get_all_passengers(),
                                 "cars": [c for c in storage.get_all_cars() if not c.get('is_disabled')],

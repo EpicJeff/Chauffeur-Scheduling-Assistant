@@ -258,33 +258,50 @@ def scenario_the_boards_tab_is_where_the_other_tabs_are():
 
     The Boards pane first shipped inside the Mapbox sync modal, because it was
     inserted at the last matching run of closing tags before the page's script
-    rather than at the end of the pane it belongs beside. Depth is the check
-    that catches it: every `activeTab` pane is a sibling of the others.
+    rather than at the end of the pane it belongs beside.
+
+    This used to compare NESTING DEPTH against the other panes, which was only
+    ever a proxy — and a proxy that quietly expired. Boards sits one level
+    shallower than General/People/Rules, and the check passed because the
+    Themes pane happened to sit at that same shallow level; when Themes was
+    removed in v2.353.0 the assertion started failing on markup that renders
+    perfectly (verified in a browser — the pane paints ~2300px tall). A test
+    that fails when an unrelated tab is deleted is testing the wrong thing.
+
+    So it asserts the ACTUAL property instead: no ancestor of the Boards pane
+    hides itself. That is what "buried in the Mapbox modal" meant, it is what
+    makes the tab open on nothing, and it does not care how many wrappers
+    anybody nests a pane inside.
     """
     import re
     # Include-expanded: the pane itself lives in components/boards_admin.html,
     # and where it ENDS UP is the whole question.
     cfg = tpl_source.read('config.html')
-    depths, seen = {}, 0
+    stack, ancestors, found = [], None, False
     for m in re.finditer(r'<div\b[^>]*?>|</div>', cfg, re.S):
         tag = m.group(0)
         if tag.startswith('</'):
-            seen -= 1
+            if stack:
+                stack.pop()
             continue
-        pane = re.search(r'x-show="activeTab === \'(\w+)\'"', tag)
-        if pane and pane.group(1) not in depths:
-            depths[pane.group(1)] = seen
-        seen += 1
-    check('boards' in depths, "there is no Boards tab pane at all")
-    others = {k: v for k, v in depths.items() if k != 'boards'}
-    check(others, "no other tab panes to compare against")
-    # Shares a nesting level with a real pane. Not "all panes are equal" —
-    # a couple sit inside an extra wrapper — but a pane buried in a modal is
-    # deeper than every one of them.
-    check(depths['boards'] in set(others.values()),
-          f"the Boards pane is nested somewhere the other tabs are not "
-          f"({depths}) — a tab that opens on a blank page and says nothing "
-          f"about why, which is exactly how it first shipped")
+        pane = re.search(r"""x-show="activeTab === '(\w+)'\"""", tag)
+        if pane and pane.group(1) == 'boards' and not found:
+            found, ancestors = True, list(stack)
+        if not tag.rstrip().endswith('/>'):
+            stack.append(tag)
+    check(found, "there is no Boards tab pane at all")
+    # An ancestor that hides itself hides the pane with it. `x-show` on a MODAL
+    # is the shape that shipped; `hidden` is the same thing spelled in CSS. The
+    # pane's own x-show is not in this list — `stack` holds what was already
+    # open when it was reached.
+    # `(?<![-\w])hidden` rather than `\bhidden\b`: Tailwind's `overflow-hidden`
+    # is on half the wrappers on this page and is not a visibility class.
+    buried = [a[:90] for a in ancestors
+              if re.search(r'x-show=|class="[^"]*(?<![-\w])hidden(?![-\w])', a)]
+    check(not buried,
+          f"the Boards pane is inside something that hides itself: {buried} — "
+          f"a tab that opens on a blank page and says nothing about why, "
+          f"which is exactly how it first shipped")
 
     # And it must be able to SEE `activeTab`, which lives on the body scope.
     check('x-data="boardsAdmin()"' in cfg or 'boardsAdmin()' in cfg,

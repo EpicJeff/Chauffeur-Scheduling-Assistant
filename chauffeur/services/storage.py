@@ -366,8 +366,6 @@ with db_lock:
     drivers_table = db.table('drivers')
     rules_table = db.table('rules')
     priority_rules_table = db.table('priority_rules')
-    themes_table = db.table('themes')
-    ai_feedback_table = db.table('ai_feedback')
     overrides_table = db.table('overrides')
     cache_table = db.table('schedule_cache')
     # Trips as /api/trips last computed them. That endpoint reads Google live,
@@ -616,7 +614,6 @@ def ensure_members():
                 new_member(
                     name or d_id,
                     color_code=d.get('color_code') or '#3b82f6',
-                    bio=d.get('bio') or '',
                     can_drive=not d.get('is_disabled', False),
                     driver_id=d_id,
                 )
@@ -635,8 +632,7 @@ def ensure_members():
                 members_table.update({'passenger_id': p_id}, Query().id == existing['id'])
                 existing['passenger_id'] = p_id
             else:
-                new_member(name or p_id, is_child=True, passenger_id=p_id,
-                           bio=p.get('bio') or '')
+                new_member(name or p_id, is_child=True, passenger_id=p_id)
             linked_passengers.add(p_id)
 
 ensure_members()
@@ -5724,40 +5720,6 @@ def delete_errand_rule(doc_id: int):
         cache_table.truncate()
         errand_rules_table.remove(doc_ids=[doc_id])
 
-# Themes CRUD
-def get_all_themes() -> List[dict]:
-    with db_lock:
-        themes = []
-        for t in themes_table.all():
-            doc = dict(t)
-            doc['doc_id'] = t.doc_id
-            themes.append(doc)
-        return themes
-
-def add_theme(theme_data: dict) -> int:
-    with db_lock:
-        return themes_table.insert(theme_data)
-
-def delete_theme(doc_id: int):
-    with db_lock:
-        themes_table.remove(doc_ids=[doc_id])
-
-def update_theme(doc_id: int, theme_data: dict):
-    with db_lock:
-        themes_table.update(theme_data, doc_ids=[doc_id])
-
-# AI Feedback
-def get_recent_ai_feedback(limit: int = 20) -> List[dict]:
-    with db_lock:
-        feedback = ai_feedback_table.all()
-        feedback.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
-        return feedback[:limit]
-
-def add_ai_feedback(context: str):
-    import time
-    with db_lock:
-        ai_feedback_table.insert({'timestamp': time.time(), 'context': context})
-
 def invalidate_daily_schedule_cache_for_event(event_id: str):
     with db_lock:
         cache_docs = cache_table.all()
@@ -5914,27 +5876,17 @@ def get_all_scheduled_errands() -> dict:
                 errand_schedules[se.get('id')] = se.get('start')
         return errand_schedules
 
-def save_cached_daily_schedule(date_str: str, schedule_data: dict, events_hash: str, options: list = None, ai_status: str = 'evaluating', selected_index: int = 0, llm_reasoning: str = ""):
+def save_cached_daily_schedule(date_str: str, schedule_data: dict, events_hash: str):
+    """One schedule per day. There used to be several — an `options` list, an
+    `ai_status`, a `selected_index` and the model's `llm_reasoning`, from the
+    themed-alternatives arc that was switched off in June 2026 and removed in
+    v2.353.0. Rows written before then still carry those keys; nothing reads
+    them, and they cost a few bytes until the day's hash changes."""
     with db_lock:
-        existing = daily_schedules_table.get(Query().date_str == date_str)
-        
-        # If we are only updating options/ai_status, keep existing options if not provided
-        if existing and existing.get('events_hash') == events_hash:
-            if options is None:
-                options = existing.get('options', [])
-            if not llm_reasoning and ai_status == 'evaluating':
-                ai_status = existing.get('ai_status', 'evaluating')
-                selected_index = existing.get('selected_index', 0)
-                llm_reasoning = existing.get('llm_reasoning', '')
-                
         daily_schedules_table.upsert({
             'date_str': date_str,
             'schedule': schedule_data,
             'events_hash': events_hash,
-            'options': options or [],
-            'ai_status': ai_status,
-            'selected_index': selected_index,
-            'llm_reasoning': llm_reasoning
         }, Query().date_str == date_str)
         
         # Invalidate any custom range caches that might have relied on old daily data
