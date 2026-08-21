@@ -2663,7 +2663,75 @@ Closes the open design question v2.269.0 recorded, on the household's own framin
 - **Declaring 'split' PINS both slices to the driver already on the event** (manual overrides, `source: 'retro_split'`) so a mid-day re-solve cannot hand the afternoon to somebody else as a side effect of one honest declaration. Ghost drivers are never pinned — a ghost is a gap, and pinning one would freeze it. `'stay'` (the undo) removes only its own slice pins, never a manual override somebody placed on the base event.
 - **Drive history survives the rename** (`_mirror_drive_rows`): the re-solve turns `init_art` into `init_art_dropoff`, and status rows key on leg ids — without mirroring, the drive the driver JUST finished would draw as never-driven and the arrival machinery would lose its ETA mid-flight. Rows are copied with their fields, never moved (the old schedule may still be on a screen for one more poll), and mirror back on the undo.
 - **The UI is two real buttons on the drive action sheet** ("Not Staying — Schedule Pick-up" / "Staying — Cancel Pick-up", amber-bordered in the house button style with flat stroke icons — corner-return and undo arrows, no emoji), placed in the order a driver would use them: Start Drive, Mark as Completed, then these, with Cancel separate at the bottom; the mid-drive maps state carries the same pair in the same position (v2.270.1, per the household's review — the first cut was bare text sitting below Cancel, and consistency is king). Drawn only where they mean something: an inbound leg of the SELECTED driver's own event — unsplit offers the split, already-split offers the undo, `final_` legs and other people's drives offer nothing. Reachable from any leg pill, including completed ones, which covers the realized-at-3pm-from-the-couch case. The declared window also becomes genuinely free in the solve, which is exactly where the errand scheduler already looks — "I'm running an errand" needed no new concept.
-- Tests: `tests/test_attendance_override.py` (6 scenarios: precedence both directions, self-expiry, pins + history mirroring, undo removes only its own pins, ghost never pinned, 404/400).
+- **A driver marked as ATTENDING is a stay signal too** (v2.356.0), ranked below the explicit split signals and above the 2-hour default; and the **Attendance Mode dropdown** on both event editors is finally read. See "A drive round the corner is still a drive" for the full ladder.
+- Tests: `tests/test_attendance_override.py` (10 scenarios: precedence both directions, attendance in the ladder, the phantom block gone end to end, an explicit split still winning, the dropdown actually read, self-expiry, pins + history mirroring, undo removes only its own pins, ghost never pinned, 404/400).
+
+## A drive round the corner is still a drive (v2.356.0)
+
+Three defects, all reported as one sentence from the household: *"I mark the
+driver as attending in the event config. That assigns the event to that driver
+but it causes there to be no driving leg to the event."*
+
+**1. Sub-three-minute drives drew nothing at all.** THE REPORTED ONE.
+`matcher.get_travel_time_minutes` rounds anything under three minutes down to
+zero so CP-SAT does not fuss over a hop the length of a driveway. That collapse
+leaked into `compute_route_edges`, where zero already meant something else
+entirely -- SAME PLACE -- and every consumer reads it that way: the Drives
+timeline draws an initial/final leg only when `travel_mins > 0`, and
+`leave_by.travel_into` returns None at zero. So a school two minutes from the
+house produced an event on the sheet with **no drive to it, no drive home, no
+leave-by/be-ready-at time and no "Time to Leave!" push** -- and nothing said
+why. The between-events edge has no such gate, which is why the same journey
+mid-day drew as a visible "0m" pill; that inconsistency is what the household
+spotted.
+
+`matcher.travel_for_display` is the true figure, and the initial and final legs
+use it. **The between-events edges deliberately keep the collapsed one**: theirs
+feeds `late_mins`, `wait_mins` and the layover arithmetic, which have to agree
+with what the solver believed when it placed the day. The `> 0` gate stays --
+the fix is the NUMBER reaching it honestly, not the gate going away, because
+zero must still mean an event at the driver's own address draws no pill.
+
+**2. A driver marked as attending still had the event split.**
+`_attendance_decision` took four inputs -- a day-of override, `#stay`/`#wait`,
+`#dropoff`/`#pickup`, and the ≥2-hour default -- and driver attendance was not
+one of them. So marking somebody as attending a three-hour event still cut it
+into Dropoff/Pickup slices; the legs attached to the SLICES, and the base event
+(kept in `all_events_for_ui` so the UI can draw driver_events blocks) drew as a
+dashed block with **no drive to it**. Its id is not in `compute_route_edges`'
+`event_map` after a split, so it can never receive an edge. Marking somebody as
+attending made the sheet worse than leaving it alone.
+
+Attendance is now a stay signal ranked **below the explicit split signals and
+above the two-hour line** (the household's call): one parent can be at the game
+while another drops the kid off, and saying "Drop off and Pick up" on the event
+is how a family says so -- but the two-hour line is a guess about whether anyone
+waits in a parking lot, and when somebody has told us they are there, it is a
+guess we no longer have to make.
+
+**3. The Attendance Mode dropdown was dead.** Both event editors (dashboard and
+calendar) have saved `driver_attendance_mode` -- *Let scheduler decide / Drop
+off and Pick up / **Stay for entire event*** -- since the feature shipped, and
+**nothing in Python has ever read it**. A control that saves and does nothing is
+worse than a missing one: the family believes they have said something. It now
+joins the hashtags and the rules at the same precedence -- three ways of saying
+one planned thing, one ladder.
+
+**The precedence ladder, complete:** day-of override → planned stay (`#stay`,
+stay rule, mode `stay`) → planned split (`#dropoff`, dropoff_pickup rule, mode
+`dropoff_pickup`) → **a driver attends** → the ≥2-hour default.
+
+Also fixed: `tests/harness.py` stubbed `maps.get_travel_time_minutes` with a
+lambda that returned a bare int whatever it was asked for, so any test reaching
+real routing died on "cannot unpack non-iterable int object". A mock that does
+not keep the contract is a trap, not a mock.
+
+Tests: `tests/test_short_drives_still_draw.py` (5 scenarios -- the two-minute
+drive draws, the house itself still does not, leave-by wakes up, the middle
+edges keep the solver's figure, the `> 0` gate survives),
+`test_attendance_override` +4 (the ladder with attendance, the phantom gone end
+to end, an explicit split still winning, the dropdown actually read). All of
+them SOLVE A DAY rather than reading source -- see the v2.355.0 note.
 
 ## The header chip drew an initial for every driver (v2.293.0)
 

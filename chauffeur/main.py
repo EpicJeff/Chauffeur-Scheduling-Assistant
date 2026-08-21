@@ -11116,17 +11116,29 @@ def delete_status_day_endpoint(day_id: str, background_tasks: BackgroundTasks):
     return {"status": "success"}
 
 def _attendance_decision(override_action, planned_stay, planned_split,
-                         duration_seconds) -> bool:
+                         duration_seconds, driver_attending=False) -> bool:
     """Does this event split into dropoff/pickup slices?
 
     Precedence, and the reasoning: a DAY-OF override from the person in the
     car outranks everything planned, because they know their afternoon
     better than a rule written last month; then the planned signals
-    (#stay/#wait hashtags and stay rules beat split ones, as they always
-    have); then the default — two hours is longer than anyone waits in a
-    parking lot. The override is the retro-split lever on the drive sheet:
-    the household's own framing is that the systems exist but nobody
-    pre-plans everything, so the app provides real-time opt-in instead."""
+    (#stay/#wait hashtags, stay rules and an Attendance Mode of "Stay for
+    entire event" beat the split ones, as they always have); then a driver
+    marked as ATTENDING; then the default — two hours is longer than anyone
+    waits in a parking lot. The override is the retro-split lever on the
+    drive sheet: the household's own framing is that the systems exist but
+    nobody pre-plans everything, so the app provides real-time opt-in
+    instead.
+
+    Attendance ranks BELOW the explicit split signals on purpose. One parent
+    can be at the game while another drops the kid off, and saying "Drop off
+    and Pick up" on the event is how you say so. But it ranks ABOVE the
+    two-hour line, because that line is a GUESS about whether anybody waits
+    in a parking lot — and when somebody has told us they are at the event,
+    it is a guess we no longer have to make. Without this, marking a driver
+    as attending a three-hour event still split it, the drive legs attached
+    to the slices, and the event itself drew as a block with no drive to it.
+    """
     if override_action == 'split':
         return True
     if override_action == 'stay':
@@ -11135,6 +11147,8 @@ def _attendance_decision(override_action, planned_stay, planned_split,
         return False
     if planned_split:
         return True
+    if driver_attending:
+        return False
     return duration_seconds >= 7200
 
 
@@ -14559,13 +14573,29 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             has_stay_rule = any(((r.constraint_type == 'attendance' and (r.attendance_action == 'stay' or r.attendance_action is None)) or r.constraint_type == 'no_split') and matcher.does_event_match_rule(e, r, passengers) for r in rules)
             has_split_rule = any(r.constraint_type == 'attendance' and r.attendance_action == 'dropoff_pickup' and matcher.does_event_match_rule(e, r, passengers) for r in rules)
 
+            # The Attendance Mode dropdown on the event editor. It has been
+            # saved by both config surfaces since the feature shipped and read
+            # by NOTHING: "Stay for entire event" was a control that did
+            # nothing at all. It belongs with the hashtags and the rules —
+            # three ways of saying the same planned thing, one precedence.
+            _conf = getattr(e, 'app_config', None) or {}
+            _mode = _conf.get('driver_attendance_mode') or 'scheduler'
+
+            # Somebody is AT this event. Matched through driver_attends so an
+            # unrolled copy resolves back to the row its attendance was
+            # recorded against.
+            driver_attending = any(
+                matcher.driver_attends(e, _d_id, driver_events_map)
+                for _d_id in driver_events_map)
+
             should_split = False
             if e.event_type != 'background_trip':
                 should_split = _attendance_decision(
                     (attendance_overrides.get(str(e.id)) or {}).get('action'),
-                    has_stay_hashtag or has_stay_rule,
-                    has_split_hashtag or has_split_rule,
-                    duration_seconds)
+                    has_stay_hashtag or has_stay_rule or _mode == 'stay',
+                    has_split_hashtag or has_split_rule or _mode == 'dropoff_pickup',
+                    duration_seconds,
+                    driver_attending=driver_attending)
 
             if getattr(e, 'needs_triage', False):
                 continue

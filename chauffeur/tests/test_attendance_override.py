@@ -59,6 +59,117 @@ def scenario_the_override_outranks_every_planned_signal():
     check(d(None, False, False, 7199) is False, "a shade under stays whole")
 
 
+def scenario_a_driver_who_is_attending_is_staying():
+    """Marking a driver as attending an event is a statement that they will
+    be AT it, so the two-hour line -- a guess about whether anybody waits in
+    a parking lot -- no longer has to be guessed. It ranks below the explicit
+    split signals on purpose: one parent can be at the game while another
+    drops the kid off, and "Drop off and Pick up" on the event says so."""
+    import main
+    d = main._attendance_decision
+    check(d(None, False, False, 3 * 3600) is True,
+          "the two-hour default no longer splits a long event")
+    check(d(None, False, False, 3 * 3600, driver_attending=True) is False,
+          "a driver marked as attending a long event still has it split")
+    check(d(None, False, True, 3 * 3600, driver_attending=True) is True,
+          "an explicit split no longer outranks attendance")
+    check(d('split', False, False, 600, driver_attending=True) is True,
+          "the day-of declaration stopped outranking attendance")
+    check(d(None, True, False, 600, driver_attending=True) is False,
+          "stay and attending disagree, which they cannot")
+
+
+def _solve_one_day(config, hours=3):
+    """Seed a household with one event and actually solve the day. Returns
+    the cached schedule. The calendar is the only outside thing and it is
+    stubbed; everything else is the real refresh."""
+    import datetime
+    import main
+    from services import calendar as cal_svc
+    from models.schemas import Event
+    for t in ('drivers_table', 'passengers_table', 'members_table',
+              'daily_schedules_table', 'custom_schedules_table',
+              'settings_table', 'event_configs_table', 'rules_table',
+              'overrides_table'):
+        tbl = getattr(storage, t, None)
+        if tbl is not None:
+            tbl.truncate()
+    storage.settings_table.insert({'calendar_ids': ['cal_house'],
+                                   'days_to_build': 1,
+                                   'home_location': '1 Home St'})
+    storage.add_driver({'id': 'd1', 'name': 'Jeff', 'color_code': '#3b82f6',
+                        'group': 'primary', 'priority_index': 1,
+                        'calendar_ids': [], 'home_location': '1 Home St'})
+    storage.add_passenger({'id': 'p1', 'name': 'Lily',
+                           'calendar_ids': ['cal_lily'], 'hashtags': []})
+    storage.add_member({'id': 'm1', 'name': 'Lily', 'role': 'child',
+                        'passenger_id': 'p1'})
+    storage.event_configs_table.insert(dict(config, google_id='gev1'))
+
+    start = datetime.datetime.combine(TODAY, datetime.time(16, 0))
+    proto = dict(id='gev1', title='Soccer practice', start=start,
+                 end=start + datetime.timedelta(hours=hours),
+                 location='9 Rec Center Rd', description='',
+                 calendar_ids=['cal_lily'], source_event_ids=['gev1'])
+    real = cal_svc.fetch_upcoming_events
+    try:
+        cal_svc.fetch_upcoming_events = lambda *a, **k: [Event(**proto)]
+        res = main.refresh_schedule_logic(TODAY.isoformat(), TODAY.isoformat(),
+                                          force_refresh=True)
+    finally:
+        cal_svc.fetch_upcoming_events = real
+    check(not res.get('error'), "the day did not solve: %s" % res.get('error'))
+    return res
+
+
+def scenario_the_attended_event_gets_the_drive_not_a_phantom():
+    """The bug this pins, end to end. A driver marked as attending a
+    three-hour event still had it split into Dropoff/Pickup slices; the drive
+    legs attached to the SLICES, and the event itself -- the block carrying
+    its real name -- drew with no drive to it at all. Marking somebody as
+    attending made the schedule worse than leaving it alone."""
+    got = _solve_one_day({'passenger_ids': ['p1'], 'driver_ids': ['d1']})
+    ids = [e['id'] if isinstance(e, dict) else e.id for e in got.get('events', [])]
+    check('gev1_dropoff' not in ids and 'gev1_pickup' not in ids,
+          "an event its driver is attending was still split: %s" % ids)
+    check(got.get('assignments', {}).get('gev1') == 'd1',
+          "the attended event is not the thing that got assigned")
+    legs = (got.get('initial_edges', {}) or {}).get('d1', {})
+    check('gev1' in legs and legs['gev1'].get('travel_mins', 0) > 0,
+          "there is still no driving leg TO the event: %s" % legs)
+
+
+def scenario_an_explicit_split_still_beats_attendance():
+    """One parent at the game, another dropping the kid off. Saying "Drop off
+    and Pick up" on the event is how a family says so, and attendance must
+    not quietly overrule it."""
+    got = _solve_one_day({'passenger_ids': ['p1'], 'driver_ids': ['d1'],
+                          'driver_attendance_mode': 'dropoff_pickup'})
+    ids = [e['id'] if isinstance(e, dict) else e.id for e in got.get('events', [])]
+    check('gev1_dropoff' in ids and 'gev1_pickup' in ids,
+          "an explicit Drop off and Pick up was overruled by attendance: %s" % ids)
+
+
+def scenario_the_attendance_mode_dropdown_is_actually_read():
+    """It was saved by both config editors and read by NOTHING — "Stay for
+    entire event" was a control that did nothing at all. A dead control is
+    worse than a missing one: the family believes they have said something."""
+    ids = lambda got: [e['id'] if isinstance(e, dict) else e.id
+                       for e in got.get('events', [])]
+    stayed = _solve_one_day({'passenger_ids': ['p1'],
+                             'driver_attendance_mode': 'stay'})
+    check('gev1_dropoff' not in ids(stayed),
+          "Stay for entire event still splits: %s" % ids(stayed))
+    split = _solve_one_day({'passenger_ids': ['p1'],
+                            'driver_attendance_mode': 'dropoff_pickup'},
+                           hours=1)
+    check('gev1_dropoff' in ids(split),
+          "Drop off and Pick up does not split a short event: %s" % ids(split))
+    plain = _solve_one_day({'passenger_ids': ['p1']}, hours=1)
+    check('gev1_dropoff' not in ids(plain),
+          "the scheduler's own decision changed: %s" % ids(plain))
+
+
 def scenario_overrides_expire_on_their_own():
     _reset()
     storage.set_attendance_override('art', 'split')

@@ -17,7 +17,23 @@ from services import storage, maps  # noqa: E402
 
 # --- offline mocks ----------------------------------------------------------
 storage.get_settings = lambda: {"calendar_ids": ["primary"]}
-maps.get_travel_time_minutes = lambda a, b, *args, **kw: 0 if (a or "").lower() == (b or "").lower() else 10
+
+
+def _mock_travel(a, b, *args, **kw):
+    """Ten minutes between two places, nothing between a place and itself.
+
+    Honours `return_traffic`, positionally or by keyword. The stub used to
+    return a bare int whatever it was asked for, so every caller that wanted
+    the traffic pair -- `matcher.get_travel_time_minutes` unpacks one -- blew
+    up with "cannot unpack non-iterable int object" the moment a test reached
+    real routing. A mock that does not keep the contract is a trap, not a mock.
+    """
+    mins = 0 if (a or "").lower() == (b or "").lower() else 10
+    want_traffic = kw.get('return_traffic', args[1] if len(args) > 1 else False)
+    return (mins, 0) if want_traffic else mins
+
+
+maps.get_travel_time_minutes = _mock_travel
 maps.get_timezone = lambda addr: "America/New_York"
 
 ET = zoneinfo.ZoneInfo("America/New_York")

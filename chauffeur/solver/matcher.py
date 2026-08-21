@@ -15,6 +15,26 @@ def get_travel_time_minutes(origin, dest, departure_time=None, return_traffic=Fa
             return 0
         return t
 
+
+def travel_for_display(origin, dest, departure_time=None):
+    """The TRUE minutes, without the solver's sub-three-minute collapse.
+
+    `get_travel_time_minutes` above rounds anything under three minutes down
+    to zero so the model does not fuss over a hop around the corner. That is
+    right for the solve and wrong for the sheet, because on a display leg zero
+    already means something else: SAME PLACE. Every consumer reads it that way
+    -- the timeline draws an initial/final leg only when `travel_mins > 0`, and
+    `leave_by.travel_into` returns None at zero -- so a school two minutes from
+    the house drew no drive there, no drive home, no leave-by time and no "Time
+    to Leave!" push. The event simply appeared, with nothing to set out for.
+
+    Only the initial and final legs use this. The between-events edges keep the
+    collapsed figure: theirs feeds lateness, waits and the layover arithmetic,
+    which have to agree with what the solver believed.
+    """
+    return _raw_get_travel_time_minutes(origin, dest, departure_time, True)
+
+
 from datetime import datetime, time, timedelta
 import math
 
@@ -1642,8 +1662,8 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                                 break
                             
                 if is_passenger_ev and pax_home and driver_home != pax_home:
-                    travel_to_pickup, delay_to_pickup = get_travel_time_minutes(driver_home, pax_home, departure_time=int(start_ts), return_traffic=True)
-                    travel_to_ev, delay_to_ev = get_travel_time_minutes(pax_home, first_ev.location, departure_time=int(start_ts), return_traffic=True)
+                    travel_to_pickup, delay_to_pickup = travel_for_display(driver_home, pax_home, departure_time=int(start_ts))
+                    travel_to_ev, delay_to_ev = travel_for_display(pax_home, first_ev.location, departure_time=int(start_ts))
                     initial_edges[d_id][first_ev.id] = {
                         "to_event": first_ev.id,
                         "travel_mins": travel_to_pickup + travel_to_ev,
@@ -1662,7 +1682,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                             "driver_home_location": driver_home
                         }
                 else:
-                    travel, delay = get_travel_time_minutes(driver_home, first_ev.location, departure_time=int(start_ts), return_traffic=True)
+                    travel, delay = travel_for_display(driver_home, first_ev.location, departure_time=int(start_ts))
                     initial_edges[d_id][first_ev.id] = {
                         "to_event": first_ev.id,
                         "travel_mins": travel,
@@ -1689,8 +1709,8 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                             break
                             
                 if is_last_passenger_ev and pax_home and driver_home_at_end != pax_home:
-                    travel_to_dropoff, delay_to_dropoff = get_travel_time_minutes(last_ev.location, pax_home, departure_time=int(end_ts), return_traffic=True)
-                    travel_to_home, delay_to_home = get_travel_time_minutes(pax_home, driver_home_at_end, departure_time=int(end_ts + travel_to_dropoff*60), return_traffic=True)
+                    travel_to_dropoff, delay_to_dropoff = travel_for_display(last_ev.location, pax_home, departure_time=int(end_ts))
+                    travel_to_home, delay_to_home = travel_for_display(pax_home, driver_home_at_end, departure_time=int(end_ts + travel_to_dropoff*60))
                     final_edges[d_id][last_ev.id] = {
                         "from_event": last_ev.id,
                         "travel_mins": travel_to_dropoff + travel_to_home,
@@ -1708,7 +1728,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                             "driver_home_location": driver_home_at_end
                         }
                 else:
-                    travel_home, delay_home = get_travel_time_minutes(last_ev.location, driver_home_at_end, departure_time=int(end_ts), return_traffic=True)
+                    travel_home, delay_home = travel_for_display(last_ev.location, driver_home_at_end, departure_time=int(end_ts))
                     final_edges[d_id][last_ev.id] = {
                         "from_event": last_ev.id,
                         "travel_mins": travel_home,
