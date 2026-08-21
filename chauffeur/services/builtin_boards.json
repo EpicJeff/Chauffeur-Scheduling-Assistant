@@ -371,7 +371,7 @@
     "config": {
      "title": "",
      "scope": "others",
-     "columns": "2"
+     "columns": "4"
     },
     "require": true
    }
