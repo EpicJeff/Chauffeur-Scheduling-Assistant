@@ -608,6 +608,15 @@
 
                 // --- Timeline Constants & Logic ---
                 const PIXELS_PER_MINUTE = 1.3;
+                // A leg pill needs vertical room or it lands on the event block.
+                // This used to be written as `distance > 10`, which QUIETLY DROPPED
+                // the pill: at 1.3px/min a two-minute drive plus the standard
+                // five-minute buffer is 9.1px, so every drive under about three
+                // minutes drew nothing at all and the event appeared with no way
+                // to have got there. It is a LAYOUT floor, not a test of whether
+                // the drive exists -- so short legs now draw at this height and
+                // reach up over the gap instead of vanishing.
+                const MIN_LEG_PILL_PX = 26;
                 const GAP_HEIGHT = 15; // 40px height for the "..." condensed gap
 
                 // Helper: floor to hour
@@ -1175,10 +1184,11 @@
                                     `;
                                 }
 
-                                if (distance > 10) {
+                                const initDrawPx = Math.max(distance, MIN_LEG_PILL_PX);
+                                if (distance > 0) {
                                     colEventsHtml += `
                                         <div class="absolute left-1/2 transform -translate-x-1/2 flex flex-col items-center justify-end pb-1.5 z-20 pointer-events-none"
-                                             style="top: ${departureY}px; height: ${distance}px; width: 100%;">
+                                             style="top: ${startY - initDrawPx}px; height: ${initDrawPx}px; width: 100%;">
                                             <div class="w-px h-full bg-blue-500/30 absolute top-0 z-0"></div>
                                             <div class="flex flex-col gap-0.5 items-center z-10 relative">
                                                 <span class="text-[9px] text-gray-400 font-bold uppercase drop-shadow-sm">Leave at ${departureStr}</span>
@@ -1386,10 +1396,11 @@
                                     `;
                                 }
 
-                                if (distance > 10) {
+                                const finalDrawPx = Math.max(distance, MIN_LEG_PILL_PX);
+                                if (distance > 0) {
                                     colEventsHtml += `
                                         <div class="absolute left-1/2 transform -translate-x-1/2 flex flex-col items-center justify-start pt-1.5 z-20 pointer-events-none"
-                                             style="top: ${endY}px; height: ${distance}px; width: 100%;">
+                                             style="top: ${endY}px; height: ${finalDrawPx}px; width: 100%;">
                                             <div class="w-px h-full bg-blue-500/30 absolute top-0 z-0"></div>
                                             <div class="flex flex-col gap-0.5 items-center z-10 relative">
                                                 <div class="flex items-center">

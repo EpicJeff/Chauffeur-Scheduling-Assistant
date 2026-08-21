@@ -2666,7 +2666,7 @@ Closes the open design question v2.269.0 recorded, on the household's own framin
 - **A driver marked as ATTENDING is a stay signal too** (v2.356.0), ranked below the explicit split signals and above the 2-hour default; and the **Attendance Mode dropdown** on both event editors is finally read. See "A drive round the corner is still a drive" for the full ladder.
 - Tests: `tests/test_attendance_override.py` (10 scenarios: precedence both directions, attendance in the ladder, the phantom block gone end to end, an explicit split still winning, the dropdown actually read, self-expiry, pins + history mirroring, undo removes only its own pins, ghost never pinned, 404/400).
 
-## A drive round the corner is still a drive (v2.356.0, completed v2.357.0)
+## A drive round the corner is still a drive (v2.356.0–v2.358.0)
 
 Three defects, all reported as one sentence from the household: *"I mark the
 driver as attending in the event config. That assigns the event to that driver
@@ -2707,7 +2707,22 @@ schedule over a two-minute hop", not "the hop is free".
 **Deploying it takes a force refresh.** A day whose `events_hash` is unchanged
 is served straight from `daily_schedules` (main.py, the Pass-2 cache branch),
 so an edge-builder change lands only when the events change or something passes
-`force_refresh=true` -- the PWA's ⟳ does, the panel does not.
+`force_refresh=true` -- the PWA's ⟳ does, the panel does not. (Editing an
+event's config re-solves that day, which is how the household saw the PWA fix
+land without touching sync.)
+
+**And the data fix alone was not enough for the admin/panel timeline
+(v2.358.0).** `schedule_timeline.html` places every leg pill in the vertical
+gap ahead of its event and skipped drawing it unless `distance > 10` px. At
+`PIXELS_PER_MINUTE = 1.3` a two-minute drive plus the standard five-minute pad
+is **9.1px**, so a LAYOUT guard was deciding whether a drive existed -- which
+is why the PWA started showing the leg and the admin page did not. It is a
+floor now (`MIN_LEG_PILL_PX`), not a gate: a short leg draws at a minimum
+height and reaches up over the gap instead of vanishing. The between-events
+pill already had the more forgiving rule (`distance > 0 && !(travel_mins === 0
+&& distance < 20)`), which is why the layover pill was the one thing that did
+draw. Pinned by a live-browser scenario -- jsdom does no layout, and a source
+assertion cannot see a pill that was never emitted.
 
 **2. A driver marked as attending still had the event split.**
 `_attendance_decision` took four inputs -- a day-of override, `#stay`/`#wait`,
@@ -2743,10 +2758,10 @@ lambda that returned a bare int whatever it was asked for, so any test reaching
 real routing died on "cannot unpack non-iterable int object". A mock that does
 not keep the contract is a trap, not a mock.
 
-Tests: `tests/test_short_drives_still_draw.py` (6 scenarios -- the two-minute
+Tests: `tests/test_short_drives_still_draw.py` (7 scenarios -- the two-minute
 drive draws, the house itself still does not, leave-by wakes up, EVERY leg in
 the builder is honest, the reported layover shape end to end, the `> 0` gate
-survives),
+survives, and the admin timeline actually drawing the pill in a real browser),
 `test_attendance_override` +4 (the ladder with attendance, the phantom gone end
 to end, an explicit split still winning, the dropdown actually read). All of
 them SOLVE A DAY rather than reading source -- see the v2.355.0 note.

@@ -11,9 +11,21 @@ something else entirely -- SAME PLACE -- and every consumer reads it that way:
 
 So a school two minutes from the house produced an event on the sheet with no
 drive to it, no drive home, no leave-by and no push -- and nothing anywhere
-said why. The between-events edges keep the collapsed figure on purpose:
-theirs feeds lateness, waits and the layover arithmetic, which have to agree
-with what the solver believed when it placed the day.
+said why.
+
+It took three passes, and the two corrections are the useful part:
+
+  1. The first cut spared the between-events edges, on the theory that
+     `late_mins`, `wait_mins` and the layover arithmetic had to agree with what
+     the solver believed. Nothing in `compute_route_edges` feeds back into
+     scheduling -- both numbers are read by the timeline templates and nowhere
+     else -- so the theory was wrong and the household reported the leg it left
+     behind: `0M -> home FOR 15M -> 10M`.
+  2. Fixing the DATA was still not enough for the admin/panel timeline, which
+     places each pill in the vertical gap ahead of its event and skipped it
+     unless `distance > 10`. At 1.3px per minute a two-minute drive plus the
+     five-minute pad is 9.1px -- a layout floor deciding whether a drive
+     existed. It is a floor now, not a gate.
 
 Run from chauffeur/:  python tests/test_short_drives_still_draw.py
 """
@@ -192,6 +204,99 @@ def scenario_the_timeline_still_gates_on_a_real_drive():
     app = open(os.path.join(ROOT, 'templates', 'app.html'), encoding='utf-8').read()
     check(len(re.findall(r'travel_mins > 0', app)) >= 2,
           "the timeline no longer distinguishes a drive from no drive")
+
+
+def scenario_the_admin_timeline_draws_a_short_leg():
+    """The half of this the data fix could not reach, and the household found
+    it after the PWA had started drawing the leg: the admin/panel timeline
+    positions each leg pill in the vertical gap ahead of its event and used to
+    skip it entirely when `distance > 10` was false. At 1.3px per minute a
+    two-minute drive plus the standard five-minute buffer is 9.1px -- so a
+    layout floor was quietly deciding whether a drive existed.
+
+    A browser, because that is the only place a layout bug is real: jsdom does
+    no layout and a source assertion cannot see a pill that was never emitted.
+    """
+    import datetime as _dt
+    from live_app import live_app
+    from services import calendar as cal_svc
+    from services import maps
+    from models.schemas import Event
+    import solver.matcher as matcher
+    import main
+
+    def travel(o, d, departure_time=None, return_traffic=False):
+        if not o or not d or o.lower() == d.lower():
+            return (0, 0) if return_traffic else 0
+        mins = 2 if 'Corner' in (o + d) else 10
+        return (mins, 0) if return_traffic else mins
+
+    base = _dt.datetime.combine(TODAY, _dt.time(10, 30))
+    near = dict(id='a', title='Meet the teacher', start=base,
+                end=base + _dt.timedelta(minutes=30), location='2 Corner Rd',
+                description='', calendar_ids=['cal_lily'], source_event_ids=['a'])
+    far = dict(id='b', title='Meet the Teacher (6th Grade, N-Z)',
+               start=base + _dt.timedelta(hours=1),
+               end=base + _dt.timedelta(hours=2, minutes=30),
+               location='9 Far School Rd', description='',
+               calendar_ids=['cal_lily'], source_event_ids=['b'])
+
+    real_fetch = cal_svc.fetch_upcoming_events
+    real_raw = matcher._raw_get_travel_time_minutes
+    real_maps = maps.get_travel_time_minutes
+
+    def seed():
+        for t in ('drivers_table', 'passengers_table', 'members_table',
+                  'daily_schedules_table', 'custom_schedules_table',
+                  'settings_table', 'event_configs_table', 'rules_table',
+                  'overrides_table'):
+            tbl = getattr(storage, t, None)
+            if tbl is not None:
+                tbl.truncate()
+        storage.settings_table.insert({'calendar_ids': ['cal_house'],
+                                       'days_to_build': 1, 'home_location': HOME})
+        storage.add_driver({'id': 'd1', 'name': 'Jeff', 'color_code': '#4ade80',
+                            'group': 'primary', 'priority_index': 1,
+                            'calendar_ids': [], 'home_location': HOME})
+        storage.add_passenger({'id': 'p1', 'name': 'Lily',
+                               'calendar_ids': ['cal_lily'], 'hashtags': []})
+        storage.add_member({'id': 'm1', 'name': 'Lily', 'role': 'child',
+                            'passenger_id': 'p1'})
+        for g in ('a', 'b'):
+            storage.event_configs_table.insert({'google_id': g,
+                                                'passenger_ids': ['p1']})
+        cal_svc.fetch_upcoming_events = lambda *a, **k: [Event(**near), Event(**far)]
+        matcher._raw_get_travel_time_minutes = travel
+        maps.get_travel_time_minutes = travel
+        main.refresh_schedule_logic(TODAY.isoformat(), TODAY.isoformat(),
+                                    force_refresh=True)
+
+    try:
+        served = live_app(seed)
+        if served is None:
+            return
+        try:
+            with served.browser() as page:
+                page.set_viewport_size({'width': 1320, 'height': 950})
+                page.goto(served.url('dashboard_v2'), wait_until='networkidle')
+                page.wait_for_timeout(4000)
+                labels = page.evaluate(
+                    '() => [...document.querySelectorAll("span")]'
+                    '.filter(s => /LEAVE AT|ARRIVE AT/i.test(s.textContent || ""))'
+                    '.map(s => (s.textContent || "").trim())')
+        finally:
+            served.stop()
+    finally:
+        cal_svc.fetch_upcoming_events = real_fetch
+        matcher._raw_get_travel_time_minutes = real_raw
+        maps.get_travel_time_minutes = real_maps
+
+    # 10:30 start, 2 minutes of driving, the standard 5-minute pad.
+    check(any('10:23' in x for x in labels),
+          "the two-minute drive to the first event draws no pill on the "
+          "admin timeline: %s" % labels)
+    check(any('01:10' in x or '1:10' in x for x in labels),
+          "the drive home draws no pill: %s" % labels)
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
