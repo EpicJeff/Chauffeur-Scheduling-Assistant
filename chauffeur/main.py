@@ -1054,6 +1054,14 @@ async def _auth_guard(conn: HTTPConnection):
 app = FastAPI(title="Family Driver Graph Scheduler", lifespan=lifespan,
               dependencies=[Depends(_auth_guard)])
 
+# Gzip, selectively. Single-shot texty responses compress (~97% off state
+# JSON, measured); anything streaming — the SSE and ndjson endpoints — passes
+# through untouched BY CONSTRUCTION, because gzip buffering a live event
+# stream is a messaging outage. See services/http_compress.py for why
+# Starlette's GZipMiddleware is not the thing to reach for here.
+from services.http_compress import SelectiveGzipMiddleware
+app.add_middleware(SelectiveGzipMiddleware)
+
 @app.middleware("http")
 async def slow_request_logger(request, call_next):
     """Log any request that takes >1s so slowness reports come with data."""

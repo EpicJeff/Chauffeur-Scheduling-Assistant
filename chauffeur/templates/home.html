@@ -2659,6 +2659,11 @@
                 // the board's tiles behind it.
                 syncCards() {
                     if (!window.ChauffeurHaCards) return;
+                    // The whole-house pool, refreshed per poll so a
+                    // discovering card's device lists stay live. Absent
+                    // (null) on boards with no custom card, which
+                    // setStates treats as empty.
+                    window.ChauffeurHaCards.setStates(this.board && this.board.ha_states);
                     const live = new Set();
                     for (const tile of this.drawnTiles()
                         .filter(t => t.type === 'ha_card' && t.data && !t.data.empty)) {

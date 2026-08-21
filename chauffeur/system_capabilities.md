@@ -2666,7 +2666,7 @@ Closes the open design question v2.269.0 recorded, on the household's own framin
 - **A driver marked as ATTENDING is a stay signal too** (v2.356.0), ranked below the explicit split signals and above the 2-hour default; and the **Attendance Mode dropdown** on both event editors is finally read. See "A drive round the corner is still a drive" for the full ladder.
 - Tests: `tests/test_attendance_override.py` (10 scenarios: precedence both directions, attendance in the ladder, the phantom block gone end to end, an explicit split still winning, the dropdown actually read, self-expiry, pins + history mirroring, undo removes only its own pins, ghost never pinned, 404/400).
 
-## A card that goes looking, not told (v2.359.0)
+## A card that goes looking, not told (v2.359.0, superseded by the pool in v2.360.0)
 
 Reported against two of the household's own cards (`custom:ai-media-router-card`
 and `custom:ai-media-matrix-card`): both DISPLAYED, and every part of them that
@@ -2708,6 +2708,53 @@ the same data once per page load over a WebSocket and then ships only
 `state_changed` deltas, with every card on the dashboard sharing one `hass`
 object by reference. Ours is a polling cost, not a payload cost. See the
 open note below.
+
+## The whole house, once per board, compressed (v2.360.0)
+
+The v2.359.0 "Also send these entities" box worked and put the burden of
+knowing a card's internals on the person pasting YAML. The household asked for
+a solution that needs no such knowledge, and measurement said it was
+affordable, so the box is RETIRED (option, parser and sent-no-entities note
+all removed — `test_ha_cards` pins the removal so a partial revert cannot
+bring back half of it). Two mechanisms replace it:
+
+**1. The shared state pool.** `ha_cards.states_all()` — every entity in the
+house, shaped exactly like `states_for` rows (one `_shape`, so the two can
+never drift) — attached ONCE per board payload as `ha_states`, and only when
+the board actually hosts a custom card (host-mode tile, or a native stack
+carrying host cells). `home.html` hands it to the host
+(`ChauffeurHaCards.setStates`) before each `syncCards`, and `makeHass` merges
+it UNDER each card's own named states — named rows win a collision, because
+they are what `missing` was computed against. A discovering card now walks a
+full house; per-tile `states` stays the named slice, so the amber
+"not in Home Assistant" warning still names a config typo the pool cannot
+contain. Boards with no custom card pay nothing.
+
+**2. Selective gzip, app-wide** (`services/http_compress.py`, installed in
+`main.py`). The app had NO compression anywhere; 29.5 KB of state JSON gzips
+to 1.0 KB. Starlette's `GZipMiddleware` was deliberately NOT used: it
+compresses streaming responses, and gzip buffering a live SSE stream is a
+messaging outage. The rule here is structural, not an allowlist — a
+single-shot response (one body frame: every JSONResponse and rendered
+template) compresses when the client accepts gzip, the content-type is texty
+and the body clears 500 bytes; anything sending more than one frame (SSE,
+ndjson, FileResponse chunks — so static files too, which are versioned and
+browser-cached anyway) passes through untouched by construction. Correct
+`Content-Length` recomputation, `Vary: Accept-Encoding`, no double-encoding.
+
+Worth stating: when a custom card is on a board, that board's payload now
+carries the whole house's states to whoever can view it. The framed dashboard
+tile always exposed at least as much, and putting a custom card on a wall is
+the household's own act — but it is a wider slice than the named-ids default,
+and it travels only on boards that made that choice.
+
+Tests: `test_ha_cards` (pool shape, discovery end to end against the real
+cast-list filter, typo still named, the three-part hand path, the box's
+removal), `test_ha_card_host_runtime` (the merge in real JS under node —
+pool under named states), `test_http_compress` (6 scenarios: fat JSON
+shrinks round-trippably, an event stream is never buffered or altered,
+no-gzip clients and small/binary/pre-encoded bodies untouched, and the
+middleware is actually installed).
 
 ## A drive round the corner is still a drive (v2.356.0–v2.358.0)
 

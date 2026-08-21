@@ -55,6 +55,10 @@ window.fetch = globalThis.fetch = function (url, opts) {
 };
 
 const states = { 'sensor.a': { entity_id: 'sensor.a', state: '3300' } };
+// The board's shared pool: what lets a card that DISCOVERS its devices by
+// walking hass.states find the house. Named states must win a collision.
+H.setStates({ 'media_player.tv': { entity_id: 'media_player.tv', state: 'off' },
+              'sensor.a': { entity_id: 'sensor.a', state: 'stale-pool-copy' } });
 const ro = H._makeHass({ states: states, interactive: false, apiBase: '' });
 const rw = H._makeHass({ states: states, interactive: true, apiBase: '' });
 
@@ -67,6 +71,8 @@ Promise.allSettled([
     theme: H._theme,
     fixed: H._themeFixed,
     statesPassThrough: ro.states['sensor.a'].state,
+    poolMergedUnder: ro.states['media_player.tv'].state === 'off'
+                     && ro.states['sensor.a'].state === '3300',
     readOnlyRejected: r[0].status === 'rejected',
     interactiveAllowed: r[1].status === 'fulfilled',
     statisticsRejected: r[2].status === 'rejected',
@@ -176,6 +182,18 @@ def scenario_what_we_cannot_do_fails_fast():
     # settles leaves a spinner on the wall forever.
     check(got['statisticsRejected'],
           "a statistics subscription must be refused, not left hanging")
+
+
+def scenario_the_pool_reaches_a_discovering_card():
+    """`setStates` (the board's whole-house pool) merges UNDER a card's own
+    named states: a card walking `hass.states` finds the house, and a row the
+    card named beats the pool's copy of the same row."""
+    out = _run()
+    if out is None:
+        print("  skip  node is not installed")
+        return
+    check(out['poolMergedUnder'],
+          "the pool is missing from hass.states, or it shadowed a named row")
 
 
 def scenario_the_hass_shape_is_complete_enough_to_index_into():

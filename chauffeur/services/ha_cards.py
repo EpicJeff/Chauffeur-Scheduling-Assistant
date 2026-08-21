@@ -59,11 +59,6 @@ RESOURCE_PREFIXES = ('/hacsfiles/', '/local/', '/community_plugin/')
 # arbitrary strings from a config into a lookup.
 _ENTITY_RE = re.compile(r'^[a-z_]{2,}\.[a-z0-9_]+$')
 
-# The same thing, plus a whole domain: `media_player.*`. Only ever typed by
-# hand into the tile's own box — never scraped out of a card config, where a
-# bare `*` would be somebody's template rather than a request for the house.
-_PATTERN_RE = re.compile(r'^[a-z_]{2,}\.(?:[a-z0-9_]+|\*)$')
-
 _MDI_LOCK = threading.Lock()
 _MDI_ICONS = {}          # 'solar-power' -> 'M11.45,2v6.55...'
 _MDI_MISSING = set()     # asked for, not found — never ask twice
@@ -142,48 +137,39 @@ def entity_ids(config):
     return found
 
 
-def parse_entity_patterns(raw):
-    """The tile's "also send these" box, as a list of ids and domain globs.
+def _shape(s):
+    """One HA state row, in the shape `hass.states` carries it."""
+    return {
+        'entity_id': s.get('entity_id'),
+        'state': s.get('state'),
+        'attributes': s.get('attributes') or {},
+        'last_changed': s.get('last_changed'),
+        'last_updated': s.get('last_updated'),
+        # Cards compare these by identity to decide whether to re-render.
+        # Ours are rebuilt each poll, so the comparison always says
+        # "changed" — correct, if slightly eager.
+        'context': {'id': None, 'parent_id': None, 'user_id': None},
+    }
 
-    Cards that DISCOVER their entities rather than being told them are the
-    reason this exists. `entity_ids` below reads a card's config, which is the
-    right default and covers every card that names what it needs — but a card
-    that builds its own list of speakers, or TVs, or lights does it by walking
-    `hass.states`, and a card handed four states finds four devices. It does
-    not draw "unavailable" and it does not error; it draws an EMPTY LIST, which
-    looks like a card working perfectly on a house with nothing in it.
 
-    Whitespace or commas, because it is a box a person types into.
+def states_all():
+    """The WHOLE house, for the board's shared pool.
+
+    Exists because a card that DISCOVERS its entities — builds its own list
+    of speakers, or TVs, or lights by walking `hass.states` — cannot be
+    served by any slice chosen from its config: it names nothing, that is
+    the point of it. The first fix for that was a per-tile "also send these
+    entities" box, which worked and put the burden of knowing a card's
+    internals on the person pasting YAML. Measurement retired it: a full
+    house of states gzips to a few KB, and compression plus ONE copy per
+    board payload (not one per tile) costs less than the box cost in
+    explanation. The pool travels only when a board actually has a custom
+    card on it — home_board attaches it, the host merges it under every
+    card's own named states.
     """
-    out, seen = [], set()
-    for chunk in re.split(r'[\s,]+', str(raw or '')):
-        p = chunk.strip().lower()
-        if p and p not in seen and _PATTERN_RE.match(p):
-            seen.add(p)
-            out.append(p)
-    return out
-
-
-def expand_patterns(patterns):
-    """Domain globs resolved against what Home Assistant actually has.
-
-    A plain id passes through unresolved on purpose: an id that matches
-    nothing has to survive as far as `missing`, where it is NAMED. Silently
-    dropping a typo here is how somebody spends an evening wondering why one
-    device never appears.
-    """
-    plain = [p for p in (patterns or []) if not p.endswith('.*')]
-    domains = {p[:-1] for p in (patterns or []) if p.endswith('.*')}
-    if not domains:
-        return plain
     from services import ha_api
-    out, seen = list(plain), set(plain)
-    for st in ha_api.get_states(ttl=10) or []:
-        eid = st.get('entity_id') or ''
-        if eid not in seen and any(eid.startswith(d) for d in domains):
-            seen.add(eid)
-            out.append(eid)
-    return out
+    return {s['entity_id']: _shape(s)
+            for s in ha_api.get_states(ttl=10) or [] if s.get('entity_id')}
 
 
 def states_for(ids):
@@ -201,17 +187,7 @@ def states_for(ids):
     for s in ha_api.get_states(ttl=10) or []:
         eid = s.get('entity_id')
         if eid in wanted:
-            out[eid] = {
-                'entity_id': eid,
-                'state': s.get('state'),
-                'attributes': s.get('attributes') or {},
-                'last_changed': s.get('last_changed'),
-                'last_updated': s.get('last_updated'),
-                # Cards compare these by identity to decide whether to
-                # re-render. Ours are rebuilt each poll, so the comparison
-                # always says "changed" — correct, if slightly eager.
-                'context': {'id': None, 'parent_id': None, 'user_id': None},
-            }
+            out[eid] = _shape(s)
     return out
 
 
@@ -445,33 +421,22 @@ def _resolve_hosts(hosts, states):
     return out
 
 
-def _merge_ids(*groups):
-    """Ids from every source, in order, once each."""
-    out, seen = [], set()
-    for g in groups:
-        for e in (g or []):
-            if e not in seen:
-                seen.add(e)
-                out.append(e)
-    return out
-
-
-def prepare(raw_config, resource_override='', extra_entities=''):
+def prepare(raw_config, resource_override=''):
     """Everything the browser needs to run one card, or an `error` sentence.
 
     Assembled server-side and shipped inside the board payload rather than
     fetched by the tile, because the board is ONE request per tick by design
     (home_board rule 2) and a card's states are just more board data.
 
-    `extra_entities` widens the slice of `hass.states` this card is handed,
-    for the cards that go looking rather than being told. See
-    `parse_entity_patterns`.
+    The states here are only the ids the config NAMES — enough for the
+    native converter and the `missing` warning. A hosted card additionally
+    receives the board's shared `states_all` pool in the browser, so a card
+    that discovers its own devices sees the house without anyone having to
+    know which parts of it the card walks.
     """
     config, error = parse_config(raw_config)
     if error:
         return {'error': error}
-
-    extra = expand_patterns(parse_entity_patterns(extra_entities))
 
     tag = card_tag(config)
     if not tag:
@@ -481,7 +446,7 @@ def prepare(raw_config, resource_override='', extra_entities=''):
         from services import ha_card_convert
         kind = str(config.get('type') or '').strip().lower()
         if kind in ha_card_convert.NATIVE_CARDS:
-            ids = _merge_ids(ha_card_convert.entity_ids(config), extra)
+            ids = ha_card_convert.entity_ids(config)
             states = states_for(ids)
             hosts = {}
             card = ha_card_convert.convert(config, states, hosts=hosts)
@@ -515,7 +480,7 @@ def prepare(raw_config, resource_override='', extra_entities=''):
         return {'error': "A card's file has to live under /hacsfiles/, /local/ "
                          "or /community_plugin/ on Home Assistant."}
 
-    ids = _merge_ids(entity_ids(config), extra)
+    ids = entity_ids(config)
     states = states_for(ids)
     return {
         'mode': 'host',
@@ -529,12 +494,4 @@ def prepare(raw_config, resource_override='', extra_entities=''):
         # plausible-looking diagram with a hole in it, and the household needs
         # to be told which.
         'missing': [e for e in ids if e not in states],
-        # A card that can see NOTHING is running against an empty house, and
-        # an empty house draws as a card that works and has found no devices.
-        # Nothing else on the tile would ever say so, which is how this cost
-        # somebody an evening: the card displayed, and its lists were blank.
-        'note': ("This card was sent no entities. If parts of it are blank, "
-                 "name what it should see in “Also send these "
-                 "entities” — e.g. media_player.*")
-                if not states and not extra else '',
     }

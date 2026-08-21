@@ -272,14 +272,23 @@ def scenario_an_icon_name_is_never_trusted():
 # Reported from the household against two cards of their own (an AI-Media
 # router card and a matrix card). Both DISPLAYED, and the parts of them that
 # list speakers and TVs were empty. Neither errored, because nothing was wrong
-# with either card: `hass.states` is built from the ids a config NAMES, so a
-# card that discovers devices by walking it was walking an empty house.
+# with either card: a hosted card used to be handed only the entities its
+# config NAMES, so a card that discovers devices by walking `hass.states` was
+# walking an empty house.
 #
 #   type: custom:ai-media-router-card   -> names nothing at all -> 0 states
 #   type: custom:ai-media-matrix-card   -> names one room       -> 1 state,
 #       and its cast list filters out exactly that kind of id, so: nothing.
 #
-# The real card builds that list with
+# The answer is the board's shared pool: `states_all()` — the WHOLE house —
+# attached ONCE to a board payload that hosts any custom card, merged under
+# each card's named states in the browser. Nobody has to know which parts of
+# the house a card walks. Affordable because the payload gzips (~97% off,
+# measured) and because it is one copy per board, not one per tile. The
+# first fix was a per-tile "also send these entities" box; it worked and it
+# put a card's internals on the person pasting YAML, so the pool retired it.
+#
+# The real matrix card builds its list with
 #   Object.values(hass.states).filter(s => s.entity_id.startsWith(
 #       'media_player.') && !s.entity_id.startsWith('media_player.ai_media_'))
 # which `_cast_targets` below reproduces.
@@ -302,15 +311,15 @@ _HOUSE = [
 ]
 
 
-def _prep(raw, extra=''):
-    """`prepare` against a plausible house and a resolvable card file."""
+def _with_house(fn):
+    """Run `fn` against a plausible house and a resolvable card file."""
     from services import ha_api
     real_states, real_resolve = ha_api.get_states, ha_cards.resolve_resource
     try:
         ha_api.get_states = lambda *a, **k: _HOUSE
         ha_cards.resolve_resource = lambda tag: {
             'url': '/hacsfiles/x/%s.js' % tag, 'type': 'module'}
-        return ha_cards.prepare(raw, extra_entities=extra)
+        return fn()
     finally:
         ha_api.get_states = real_states
         ha_cards.resolve_resource = real_resolve
@@ -322,96 +331,107 @@ def _cast_targets(states):
                   and not e.startswith('media_player.ai_media_'))
 
 
-def scenario_a_discovering_card_sees_nothing_by_default():
-    """Not a regression -- the documented default, pinned so the fix below
-    cannot be mistaken for the whole story. Naming what a card needs stays
-    right for every card that names it, and shipping the whole house on every
-    board tick is what the default exists to avoid."""
-    router = _prep(ROUTER)
-    check(router.get('states') == {},
-          "a card naming no entities was sent some anyway: %r" % router.get('states'))
-    matrix = _prep(MATRIX)
-    check(list(matrix.get('states') or {}) == ['media_player.ai_media_living_room'],
-          "the matrix card got more than the room it names: %r" % matrix.get('states'))
-    check(_cast_targets(matrix.get('states') or {}) == [],
-          "this scenario is meant to reproduce the EMPTY device list")
-
-
-def scenario_naming_a_domain_fills_the_list():
-    """The fix. One box on the tile, whole domains allowed, opt-in because
-    every entity in it travels on every board refresh."""
-    for label, raw in (('router', ROUTER), ('matrix', MATRIX)):
-        got = _prep(raw, extra='media_player.*')
-        check(_cast_targets(got.get('states') or {})
+def scenario_the_pool_is_the_house_and_feeds_a_discovering_card():
+    """End to end at the data level: what the browser merges (pool under the
+    card's named states) lets the real cast-list filter find real devices —
+    for the card that names nothing AND for the one whose only named id is
+    excluded by its own filter."""
+    pool = _with_house(ha_cards.states_all)
+    check(set(pool) == {s['entity_id'] for s in _HOUSE},
+          "the pool is not the whole house: %r" % sorted(pool))
+    for raw in (ROUTER, MATRIX):
+        prepared = _with_house(lambda: ha_cards.prepare(raw))
+        merged = dict(pool)
+        merged.update(prepared.get('states') or {})
+        check(_cast_targets(merged)
               == ['media_player.den_tv', 'media_player.kitchen_speaker'],
-              "the %s card still cannot build its device list: %r"
-              % (label, sorted(got.get('states') or {})))
-        check('light.kitchen' not in (got.get('states') or {}),
-              "a domain nobody asked for travelled anyway")
+              "a discovering card still cannot build its device list: %r"
+              % sorted(merged))
 
 
-def scenario_the_box_takes_ids_and_domains_and_ignores_nonsense():
-    check(ha_cards.parse_entity_patterns('media_player.*, light.kitchen')
-          == ['media_player.*', 'light.kitchen'], "commas or spaces, both")
-    check(ha_cards.parse_entity_patterns('media_player.*\nlight.kitchen')
-          == ['media_player.*', 'light.kitchen'], "a line each, as people type")
-    check(ha_cards.parse_entity_patterns('MEDIA_PLAYER.*') == ['media_player.*'],
-          "entity ids are lower case wherever they were typed")
-    for junk in ('*', '.*', 'media_player', 'drop table x', '{{ states }}', ''):
-        check(ha_cards.parse_entity_patterns(junk) == [],
-              "%r reached the state lookup as a pattern" % junk)
+def scenario_the_pool_rows_are_shaped_like_hass_states():
+    """Cards index into these exactly as they would into HA's own object, so
+    the pool and the named slice must be the same shape — one `_shape`, not
+    two hand-kept copies that drift."""
+    pool = _with_house(ha_cards.states_all)
+    named = _with_house(
+        lambda: ha_cards.states_for(['media_player.den_tv']))
+    check(pool['media_player.den_tv'] == named['media_player.den_tv'],
+          "the pool and the named slice disagree about the same entity")
+    row = pool['light.kitchen']
+    for key in ('entity_id', 'state', 'attributes', 'last_changed',
+                'last_updated', 'context'):
+        check(key in row, "a pool row is missing %r" % key)
 
 
-def scenario_a_typo_survives_as_far_as_the_warning():
-    """A plain id that matches nothing must NOT be quietly dropped -- it has
-    to reach `missing`, where the tile names it. Swallowing a typo here is how
-    somebody spends an evening wondering why one device never appears."""
-    got = _prep(ROUTER, extra='media_player.den_tv media_player.nosuch')
-    check('media_player.nosuch' in (got.get('missing') or []),
-          "a typed id that does not exist was dropped instead of named: %r" % got)
-    check('media_player.den_tv' in (got.get('states') or {}),
-          "the id that DOES exist did not travel")
+def scenario_per_card_states_still_only_carry_what_is_named():
+    """The pool did not turn every TILE into a copy of the house. The board
+    attaches the pool once at payload level; each card's own `states` stays
+    the named slice `missing` is computed against."""
+    prepared = _with_house(lambda: ha_cards.prepare(MATRIX))
+    check(list(prepared.get('states') or {})
+          == ['media_player.ai_media_living_room'],
+          "a card's own slice grew beyond what its config names: %r"
+          % sorted(prepared.get('states') or {}))
+    router = _with_house(lambda: ha_cards.prepare(ROUTER))
+    check(router.get('states') == {},
+          "a card naming nothing was handed per-tile states anyway")
 
 
-def scenario_a_card_that_can_see_nothing_says_so():
-    """The half of this that is not a setting. An empty list looks exactly
-    like a working card in a house with no devices, and nothing else on the
-    tile would ever tell the household which one they are looking at."""
-    blind = _prep(ROUTER)
-    check('Also send these entities' in (blind.get('note') or ''),
-          "a card sent nothing at all explains nothing: %r" % blind.get('note'))
-    seeing = _prep(ROUTER, extra='media_player.*')
-    check(not seeing.get('note'),
-          "the note stayed up after the card could see: %r" % seeing.get('note'))
-    named = _prep(MATRIX)
-    check(not named.get('note'),
-          "a card that names its own entities was told it had none")
+def scenario_a_named_typo_is_still_named_not_drowned():
+    """`missing` must survive the pool: a config naming an entity that does
+    not exist still gets the amber warning, because the pool cannot contain
+    the thing that is missing and the card will draw a hole."""
+    raw = ("type: custom:ai-media-matrix-card\n"
+           "rooms:\n"
+           "  - entity: media_player.nosuch\n")
+    prepared = _with_house(lambda: ha_cards.prepare(raw))
+    check('media_player.nosuch' in (prepared.get('missing') or []),
+          "a typo in the config was quietly drowned by the pool: %r" % prepared)
 
 
-def scenario_the_tile_offers_the_box_and_passes_it_on():
-    """A hand path, not an agent one: the option exists on the tile AND the
-    builder hands it to `prepare`. Without the second half the setting saves
-    and does nothing, which this codebase has shipped before."""
+def scenario_the_board_attaches_the_pool_and_the_host_merges_it():
+    """The hand path, in three parts, because any one of them missing makes
+    the other two dead code: home_board attaches `ha_states` to the payload
+    (only when a custom card is on the board), home.html hands it to the
+    host before mounting, and the host merges it under the card's own
+    states."""
     import inspect
+    import os as _os
+    from services import home_board
+    src = inspect.getsource(home_board)
+    check("'ha_states': ha_states" in src and 'states_all()' in src,
+          "the board payload never carries the pool")
+    check("t['data'].get('mode') == 'host'" in src,
+          "the pool travels on boards with no custom card on them")
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    host = open(_os.path.join(root, 'static', 'ha_card_host.js'),
+                encoding='utf-8').read()
+    check('setStates' in host and 'statesPool' in host,
+          "the host has nowhere to put the pool")
+    check(host.index('for (k in statesPool)')
+          < host.index("for (k in (spec.states || {}))"),
+          "the pool must merge UNDER the named states, not over them")
+    home = open(_os.path.join(root, 'templates', 'home.html'),
+                encoding='utf-8').read()
+    check('setStates(this.board && this.board.ha_states)' in home,
+          "the board never hands the pool to the host")
+
+
+def scenario_the_entities_box_is_gone_with_its_job():
+    """The v2.359.0 box put a card's internals on the person pasting YAML.
+    The pool does its job without the knowledge, so the box, its parser and
+    the sent-no-entities note are all retired — pinned so a partial revert
+    cannot bring back half of it."""
     from services import home_board
     entry = next(c for c in home_board.WIDGETS if c['key'] == 'ha_card')
-    opt = next((o for o in entry['options'] if o['key'] == 'entities'), None)
-    check(opt, "the Card tile has no way to widen what a card can see")
-    check('media_player.*' in (opt.get('help') or ''),
-          "the box does not say what to type into it")
-    src = inspect.getsource(home_board._tile_ha_card)
-    check("'entities'" in src and 'prepare(' in src,
-          "the setting is saved and never reaches prepare()")
-
-
-def scenario_the_tile_shows_the_note():
-    """Server-side text nothing renders is text nobody reads."""
-    import os as _os
-    tpl = _os.path.join(_os.path.dirname(_os.path.dirname(
-        _os.path.abspath(__file__))), 'templates', 'components',
-        'board_tile_body.html')
-    body = open(tpl, encoding='utf-8').read()
-    check('t.data.note' in body, "the card tile never draws the note")
+    check(not any(o['key'] == 'entities' for o in entry['options']),
+          "the Card tile still offers the superseded entities box")
+    for gone in ('parse_entity_patterns', 'expand_patterns'):
+        check(not hasattr(ha_cards, gone), "ha_cards still exposes %s" % gone)
+    blind = _with_house(lambda: ha_cards.prepare(ROUTER))
+    check('note' not in blind,
+          "prepare still emits the sent-no-entities note the pool obsoleted")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

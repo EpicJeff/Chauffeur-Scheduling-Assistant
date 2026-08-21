@@ -1506,14 +1506,6 @@
                             <div x-show="(t.data.missing || []).length"
                                 class="text-xs text-amber-400/80 mt-2 shrink-0 truncate"
                                 x-text="'not in Home Assistant: ' + (t.data.missing || []).join(', ')"></div>
-                            <!-- A card handed no entities at all. It draws as
-                                 a working card that has found no devices,
-                                 which is indistinguishable from a working
-                                 card on an empty house -- so the tile says
-                                 which it is. -->
-                            <div x-show="t.data.note"
-                                class="text-xs text-gray-500 mt-2 shrink-0"
-                                x-text="t.data.note"></div>
                         </div>
                     </template>
 

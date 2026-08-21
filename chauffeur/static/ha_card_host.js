@@ -327,9 +327,25 @@
     // Rebuilt on every board poll rather than mutated, because a Lit card
     // decides whether to re-render by comparing the old object with the new
     // one. Mutating in place is how an embedded card goes quietly stale.
+    // The board's shared pool: the whole house, attached to the payload once
+    // when a board hosts any custom card, so a card that DISCOVERS its
+    // devices by walking `hass.states` finds them without anyone having to
+    // know which parts of the house it walks. Set by the board before each
+    // sync; empty on pages that never set it.
+    var statesPool = {};
+
+    function setStates(pool) { statesPool = pool || {}; }
+
     function makeHass(spec) {
+        // Named states win over the pool: they carry the same rows, and if
+        // the two ever disagree the per-card slice is the one `missing` was
+        // computed against.
+        var states = {};
+        var k;
+        for (k in statesPool) states[k] = statesPool[k];
+        for (k in (spec.states || {})) states[k] = (spec.states || {})[k];
         return {
-            states: spec.states || {},
+            states: states,
             // Enough of the shape that a card reading these does not throw.
             // Empty-string localize is HA's own behaviour for an unknown key,
             // and cards written against it use `|| fallback`.
@@ -636,6 +652,7 @@
 
     window.ChauffeurHaCards = {
         mount: mount,
+        setStates: setStates,
         mountEditor: mountEditor,
         discover: discover,
         unmount: unmount,
