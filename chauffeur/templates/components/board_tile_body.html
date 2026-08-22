@@ -147,12 +147,12 @@
                                         <template x-if="(hero.kids_parts || {}).figure !== false
                                                         && !(hero.kids_parts || {}).figure_compact
                                                         && k.figure">
-                                            <img :src="k.figure" class="absolute top-2 left-2 h-16 drop-shadow-lg" :alt="k.name">
+                                            <img :src="k.figure" class="absolute top-4 left-2 h-24 drop-shadow-lg" :alt="k.name">
                                         </template>
-                                        <div class="text-sm font-black mb-1 truncate"
+                                        <div class="text-xs font-black mb-1 truncate"
                                             :style="'color:' + tone(k.color_code, '#6366f1')" x-text="k.name"></div>
                                         <template x-for="(line, i) in k.lines.slice(0, 4)" :key="i">
-                                            <div class="text-sm panel-dim truncate" x-text="line"></div>
+                                            <div class="text-xs panel-dim truncate" x-text="line"></div>
                                         </template>
                                     </a>
                                 </template>
