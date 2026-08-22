@@ -7398,6 +7398,8 @@ class RoutineRequest(BaseModel):
     steps: Optional[list] = None
     description: Optional[str] = None
     image_id: Optional[str] = None
+    # Runway membership (R2): 'morning' | 'bedtime' | None (not part of one).
+    runway: Optional[str] = None
 
 _MEDIA_ID_FIELD_RE = re.compile(r'^[0-9a-f]{32}\.[a-z0-9]{2,5}$')
 _MAX_ROUTINE_STEPS = 12   # a kid screen's worth; more is a routine, not a step list
@@ -7434,6 +7436,8 @@ def _validate_routine(req):
         raise HTTPException(status_code=400, detail="time_of_day must be HH:MM")
     if any(not isinstance(d, int) or d < 0 or d > 6 for d in (req.days_of_week or [])):
         raise HTTPException(status_code=400, detail="days_of_week must be 0-6 (Mon-Sun)")
+    if req.runway and req.runway not in ('morning', 'bedtime'):
+        raise HTTPException(status_code=400, detail="runway must be morning or bedtime")
 
 @app.get("/api/routines")
 def list_routines(member_id: Optional[str] = None):
@@ -7456,7 +7460,8 @@ def create_routine(req: RoutineRequest):
                        days_of_week=sorted(set(req.days_of_week or [])),
                        steps=_clean_routine_steps(req.steps),
                        description=(req.description or '').strip() or None,
-                       image_id=_clean_media_id(req.image_id)).model_dump()
+                       image_id=_clean_media_id(req.image_id),
+                       runway=req.runway or None).model_dump()
     storage.add_routine(item)
     return item
 
@@ -7470,7 +7475,8 @@ def edit_routine(routine_id: str, req: RoutineRequest):
             'days_of_week': sorted(set(req.days_of_week or [])),
             'steps': _clean_routine_steps(req.steps),
             'description': (req.description or '').strip() or None,
-            'image_id': _clean_media_id(req.image_id)}):
+            'image_id': _clean_media_id(req.image_id),
+            'runway': req.runway or None}):
         raise HTTPException(status_code=404, detail="Routine not found")
     return {"status": "updated"}
 
@@ -7535,6 +7541,7 @@ def copy_routines(req: RoutineCopyRequest):
             steps=[dict(s) for s in (r.get('steps') or [])],
             description=r.get('description') or None,
             image_id=r.get('image_id') or None,
+            runway=r.get('runway') or None,
             copied_from=r.get('id')).model_dump())
         created += 1
     return {"created": created, "skipped": skipped}
@@ -7546,11 +7553,15 @@ def routines_day(member_id: str, date: Optional[str] = None):
     date_str = date or _dt.date.today().isoformat()
     if not storage.get_member(member_id):
         raise HTTPException(status_code=404, detail="Member not found")
+    from services import runway as _runway
     return {
         'date': date_str,
         'items': storage.routines_for_day(member_id, date_str),
         'streak': storage.compute_streak(member_id),
         'status': status_tiers.compute_member_status(member_id, 'routine'),
+        # R2: the runway lens — flagged items, fill units, the real end
+        # anchor, window and behind flags. Empty when nothing is flagged.
+        'runways': _runway.runways_for(member_id, date_str),
     }
 
 @app.get("/api/routines/streaks")

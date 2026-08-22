@@ -151,6 +151,8 @@
                                                 class="text-purple-300/80 text-xs font-bold"
                                                 x-text="(r.steps || []).length + ' steps'"></span>
                                             <span x-show="r.image_id" class="text-xs">📷</span>
+                                            <span x-show="r.runway" class="text-xs"
+                                                x-text="r.runway === 'morning' ? '🌅' : '🌙'"></span>
                                             <div class="ml-auto flex gap-2 shrink-0">
                                                 <button @click="startEditItem(r)"
                                                     class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">Edit</button>
@@ -244,6 +246,23 @@
                                                     <button @click="editItem.steps.push({ id: '', title: '', emoji: '' })"
                                                         class="text-xs font-bold px-3 py-1.5 rounded bg-gray-900 border border-gray-600 text-gray-300 hover:text-white">
                                                         + Add step</button>
+                                                </div>
+                                                <!-- Runway membership (R2): explicit, never
+                                                     inferred from text. Flagged items are what
+                                                     the wall's runway tracks; the item's own
+                                                     time is its target. -->
+                                                <div>
+                                                    <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Runway</label>
+                                                    <div class="flex gap-1.5">
+                                                        <template x-for="opt in [['', 'Not on one'], ['morning', '🌅 Morning'], ['bedtime', '🌙 Bedtime']]" :key="opt[0]">
+                                                            <button type="button" @click="editItem.runway = opt[0]"
+                                                                class="text-xs font-bold px-3 py-1.5 rounded border"
+                                                                :class="(editItem.runway || '') === opt[0]
+                                                                    ? 'bg-blue-600/30 border-blue-500 text-blue-200'
+                                                                    : 'bg-gray-900 border-gray-700 text-gray-400 hover:text-white'"
+                                                                x-text="opt[1]"></button>
+                                                        </template>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
@@ -718,6 +737,7 @@
                         description: r.description || '',
                         image_id: r.image_id || '',
                         steps: (r.steps || []).map(s => ({ ...s })),
+                        runway: r.runway || '',
                     };
                 },
                 async uploadItemPhoto(ev) {
@@ -756,6 +776,7 @@
                             .filter(s => (s.title || '').trim())
                             .map(s => ({ id: s.id || null, title: s.title.trim(),
                                          emoji: (s.emoji || '').trim() || null })),
+                        runway: this.editItem.runway || null,
                     };
                     const res = await fetch(`${this.apiBase}api/routines/${this.editItemId}`, {
                         method: 'PUT', headers: { 'Content-Type': 'application/json' },

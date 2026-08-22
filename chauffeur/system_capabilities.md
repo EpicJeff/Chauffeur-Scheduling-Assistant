@@ -4548,9 +4548,38 @@ ones actually use. R1, foundation for the Morning & Bedtime Runway:
   the ledger untouched, presentation only, per the A4 contract.
 - No shell (adult, or a stale payload mid-upgrade) draws exactly as before.
 
-NEXT (planned): R2 runway flag on routine items (`runway: morning|bedtime`,
-explicit toggle, never text-inference) + runway rendering anchored to item
-times, tightened by be-ready-at when the solver has one; R3 single calm
-satellite cue when genuinely behind pace; R4 (deferred) HA lighting.
-
 Tests: `tests/test_stage_lanes.py` (3 scenarios).
+
+## The runway itself (v2.366.0 — runway arc R2)
+
+The vocal-alarm-clock problem, answered with a PULL: during a live window
+the routine lane leads with a progress vehicle that fills as flagged items
+and their steps tick off — a rocket on a track for a Sprout/Explorer lane, a
+slim honest bar for everyone older.
+
+- **Explicit membership**: `RoutineItem.runway: morning|bedtime|None` — a
+  toggle on the routines editor (🌅/🌙 badges on rows), never inferred from
+  text. No flagged items, no runway. Copy-routine carries the flag.
+- **Anchors** (`services/runway.py`): bedtime ends at the flagged items'
+  last `time_of_day`; morning does too UNLESS the solver has a real
+  departure for this kid — the earliest leave-at (assigned drive, from-home
+  edge) or be-ready-at (covered ride) among today's events, found via
+  `calendar_event_subjects` over the cached schedule, cache-only reads —
+  which TIGHTENS the end (`tightened_by: 'schedule'`). School days compress
+  automatically; Saturdays run on item times alone.
+- **A lens, never a writer**: fill reads the same checks/step ticks
+  everything else writes (steps subdivide — five backpack ticks, five
+  notches); nothing mints XP; complete closes the window and the lane draws
+  as before. Window: 45 min before the first timed item to 90 min past the
+  end, live day only.
+- **"Behind" is honest**: a flagged TIMED item unticked past its time + 10
+  min grace — never raw idle. It tints the bar amber, calmly; it is also
+  the flag R3's single satellite cue will read.
+- Rides the `/api/routines/day` payload as `runways`; the lanes (page and
+  board card alike) draw it per lane.
+
+NEXT (planned): R3 the single calm satellite cue on `behind` (announce-arc
+room mapping, settings_registry, per-child off switch, one cue per stall
+episode, never repeating); R4 (deferred) HA lighting.
+
+Tests: `tests/test_runway.py` (7 scenarios).

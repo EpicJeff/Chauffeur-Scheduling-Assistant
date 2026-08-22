@@ -120,6 +120,49 @@
                                 </div>
                                 </template>
 
+                                <!-- The runway (R2): while a flagged window is
+                                     live, the lane leads with the vehicle — a
+                                     rocket on a track for a Sprout/Explorer, a
+                                     slim honest bar for everyone older. Fill =
+                                     flagged items and their steps; the end is
+                                     the items' own times, tightened by a real
+                                     departure when the solver has one. Behind
+                                     tints amber, calmly — never a siren. -->
+                                <template x-if="activeRunways(s.member_id).length">
+                                <div class="space-y-2">
+                                    <template x-for="rw in activeRunways(s.member_id)" :key="'rwy-' + s.member_id + '-' + rw.kind">
+                                        <div class="rounded-xl border p-3"
+                                            :class="rw.behind ? 'border-amber-500/60 bg-amber-900/10' : 'border-gray-700 bg-gray-900'">
+                                            <div class="flex items-center justify-between gap-2 mb-1.5">
+                                                <span class="font-black"
+                                                    :class="shellBig(s) ? 'text-base text-white' : 'text-[10px] uppercase tracking-widest text-gray-400'"
+                                                    x-text="(rw.kind === 'morning' ? '🌅 Morning' : '🌙 Bedtime') + ' runway'"></span>
+                                                <span class="text-xs font-bold shrink-0"
+                                                    :class="rw.behind ? 'text-amber-300' : 'text-gray-400'"
+                                                    x-text="rw.units_done + '/' + rw.units_total
+                                                        + (rw.end_label ? ' · done by ' + rw.end_label : '')"></span>
+                                            </div>
+                                            <div class="relative bg-gray-950 rounded-full overflow-hidden"
+                                                :class="shellBig(s) ? 'h-5' : 'h-2'">
+                                                <div class="h-full rounded-full transition-all duration-700"
+                                                    :class="rw.behind ? 'bg-amber-500' : 'bg-emerald-500'"
+                                                    :style="'width:' + runwayPct(rw) + '%'"></div>
+                                                <span x-show="shellBig(s)"
+                                                    class="absolute top-1/2 -translate-y-1/2 text-lg transition-all duration-700"
+                                                    :style="'left: max(0%, calc(' + runwayPct(rw) + '% - 24px))'">🚀</span>
+                                            </div>
+                                            <div x-show="shellBig(s) && rw.next_up"
+                                                class="mt-1.5 font-bold text-gray-300"
+                                                :class="shellOf(s).glyph_scale === 'xl' ? 'text-base' : 'text-sm'"
+                                                x-text="rw.next_up ? ('Next: '
+                                                    + (rw.next_up.emoji ? rw.next_up.emoji + ' ' : '')
+                                                    + rw.next_up.title
+                                                    + (rw.next_up.time_of_day ? ' · ' + formatClock(rw.next_up.time_of_day) : '')) : ''"></div>
+                                        </div>
+                                    </template>
+                                </div>
+                                </template>
+
                                 <!-- Today's checklist. A row is a BUTTON only
                                      where it can be tapped: an inert card
                                      drawing disabled buttons reads as broken
@@ -198,6 +241,7 @@
         return {
             streaks: [],
             dayItems: {},          // memberId -> today's checklist
+            dayRunways: {},        // memberId -> {morning?, bedtime?} (R2)
             use24h: false,
             // Markup bindings (item photos) need the base the fetches close over.
             rlApiBase: apiBase,
@@ -263,18 +307,28 @@
                         const res = await fetch(`${apiBase}api/routines/day?member_id=`
                             + encodeURIComponent(s.member_id));
                         const data = await res.json();
-                        return [s.member_id, data.items || []];
-                    } catch (e) { return [s.member_id, []]; }
+                        return [s.member_id, data.items || [], data.runways || {}];
+                    } catch (e) { return [s.member_id, [], {}]; }
                 }));
-                const map = {};
-                for (const [id, items] of entries) map[id] = items;
+                const map = {}, runways = {};
+                for (const [id, items, rw] of entries) { map[id] = items; runways[id] = rw; }
                 this.dayItems = map;
+                this.dayRunways = runways;
             },
             async reloadLanes() {
                 await this.loadStreaks();
                 await this.loadAllDayItems();
             },
             dayItemsFor(memberId) { return this.dayItems[memberId] || []; },
+            // R2: the live runway windows for a lane (usually zero or one).
+            activeRunways(memberId) {
+                return Object.values(this.dayRunways[memberId] || {})
+                    .filter(r => r.window_active);
+            },
+            runwayPct(rw) {
+                return Math.round(100 * (rw.units_done || 0)
+                    / Math.max(1, rw.units_total || 1));
+            },
 
             async toggleRoutineStepCheck(routineId, memberId, stepId, checked) {
                 const res = await fetch(`${apiBase}api/routines/${routineId}/steps/check`, {

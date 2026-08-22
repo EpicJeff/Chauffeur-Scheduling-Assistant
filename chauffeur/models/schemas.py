@@ -384,6 +384,11 @@ class RoutineItem(BaseModel):
     # streak counts, and it is done only when it is wholly done.
     # [{'id', 'title', 'emoji'}]
     steps: List[Dict[str, Any]] = Field(default_factory=list)
+    # Runway membership (R2): 'morning' | 'bedtime' | None. An EXPLICIT
+    # toggle, never inferred from text — a flag is a fact the editor shows,
+    # the way is_optional already works. Flagged items are what the wall's
+    # runway tracks and paces; the item's own time_of_day is its target.
+    runway: Optional[str] = None
     description: Optional[str] = None
     # A photo beats any glyph for a pre-reader: THEIR backpack, THEIR cleats.
     # A media-store id served at /api/media/{id}.
