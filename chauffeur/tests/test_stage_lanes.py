@@ -79,6 +79,14 @@ def scenario_the_lanes_actually_ask():
           "a Sprout/Explorer row is photo-led where a photo exists")
     check("s.shell ? s.shell.show_streaks : true" in lanes,
           "the streak flame respects the stage, adults keep it")
+    # Steps wear the same shell as their item — one level down, same rule.
+    step_block = lanes[lanes.index('rst-'):]
+    check("shellOf(s).glyph_scale === 'xl' ? 'w-7 h-7" in step_block,
+          "a Sprout's step ticks are big taps, not fine print")
+    app = open(os.path.join(os.path.dirname(tpl), 'app.html'),
+               encoding='utf-8').read()
+    check("const xl = sh.glyph === 'xl'" in app,
+          "kid My Day steps scale with the stage shell too")
     chores = open(os.path.join(tpl, 'chores_lanes.html'), encoding='utf-8').read()
     check('shellXl(b)' in chores and 'shellPoints(b)' in chores,
           "chores lanes scale rows and stop leading with points per stage")

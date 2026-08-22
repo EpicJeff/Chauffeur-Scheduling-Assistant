@@ -1289,15 +1289,22 @@
             if (!steps.length || item.checked) return '';
             const done = new Set(item.steps_checked || []);
             const sh = kidShell();
+            // Steps wear the SAME stage shell as their item: a Sprout's
+            // packing list is big taps and big glyphs, not fine print
+            // under a giant row.
+            const xl = sh.glyph === 'xl';
+            const box = xl ? 'w-7 h-7' : (sh.glyph === 'lg' ? 'w-6 h-6' : 'w-5 h-5');
+            const glyph = xl ? 'text-2xl' : 'text-base';
+            const title = xl ? 'text-base font-black' : 'text-sm font-bold';
             return `
-                <div class="${sh.tight ? 'pl-8 pr-3 pb-2' : 'pl-10 pr-4 pb-3'} space-y-1">
+                <div class="${sh.tight ? 'pl-8 pr-3 pb-2' : 'pl-10 pr-4 pb-3'} ${xl ? 'space-y-1.5' : 'space-y-1'}">
                     ${steps.map(s => `
-                    <label class="flex items-center gap-2.5 py-1 ${interactive ? 'cursor-pointer active:opacity-70' : 'opacity-70'}">
+                    <label class="flex items-center gap-2.5 ${xl ? 'py-1.5' : 'py-1'} ${interactive ? 'cursor-pointer active:opacity-70' : 'opacity-70'}">
                         <input type="checkbox" ${done.has(s.id) ? 'checked' : ''} ${interactive ? '' : 'disabled'}
                             onchange="toggleRoutineStep('${item.id}', '${s.id}', this.checked)"
-                            class="w-5 h-5 rounded-full shrink-0" style="accent-color:${kidAccent()}">
-                        ${s.emoji ? `<span class="text-base shrink-0">${s.emoji}</span>` : ''}
-                        <span class="text-sm font-bold ${done.has(s.id) ? 'text-gray-500 line-through' : 'text-gray-300'}">${mfEscape(s.title)}</span>
+                            class="${box} rounded-full shrink-0" style="accent-color:${kidAccent()}">
+                        ${s.emoji ? `<span class="${glyph} shrink-0">${s.emoji}</span>` : ''}
+                        <span class="${title} ${done.has(s.id) ? 'text-gray-500 line-through' : 'text-gray-300'}">${mfEscape(s.title)}</span>
                     </label>`).join('')}
                 </div>`;
         }

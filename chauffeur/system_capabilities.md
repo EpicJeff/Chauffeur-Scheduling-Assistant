@@ -4608,3 +4608,12 @@ siblings; revisit per-room opt-in only if the family asks.
 
 Tests: `tests/test_runway.py` (10 scenarios — single-and-calm, dead-speaker
 no-retry, hand paths included).
+
+## Steps wear their item's stage too (v2.368.0)
+
+R1 scaled routine ITEMS by stage and left their steps at fixed small sizes,
+so a Sprout's packing list was fine print under a giant row — the exact
+thing the stage shell exists to prevent, one level down. Steps now take the
+same shell in both surfaces: xl lanes get 28px tick circles, 2xl glyphs and
+roomier rows; lg keeps mid sizes; sm/none stay tight. Kid My Day
+(`kidStepRows`) reads `kidShell()` the same way.

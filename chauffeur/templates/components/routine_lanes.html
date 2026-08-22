@@ -199,19 +199,30 @@
                                                  is its own tap on an interactive lane; the item
                                                  completes itself when the last one ticks (the
                                                  server owns that — steps mint nothing). -->
+                                            <!-- Steps wear the SAME stage shell as their item
+                                                 (the R1 rule, reaching one level down): a
+                                                 Sprout's packing list is big taps and big
+                                                 glyphs, not fine print under a giant row. -->
                                             <template x-if="(it.steps || []).length && !it.checked">
-                                                <div class="pl-9 pr-2 pt-1 space-y-1">
+                                                <div class="pr-2 pt-1"
+                                                    :class="shellOf(s).glyph_scale === 'xl' ? 'pl-12 space-y-1.5' : 'pl-9 space-y-1'">
                                                     <template x-for="st in it.steps" :key="'rst-' + it.id + '-' + st.id">
                                                         <template x-if="{{ interactive }}">
                                                             <button type="button"
                                                                 @click="toggleRoutineStepCheck(it.id, s.member_id, st.id,
                                                                         !(it.steps_checked || []).includes(st.id))"
-                                                                class="w-full text-left flex items-center gap-2 py-0.5">
-                                                                <span class="w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 text-[10px] font-bold"
-                                                                    :class="(it.steps_checked || []).includes(st.id) ? 'bg-green-500 border-green-500 text-white' : 'border-gray-600 text-transparent'">✓</span>
-                                                                <span x-show="st.emoji" class="text-sm" x-text="st.emoji"></span>
-                                                                <span class="text-xs font-semibold"
-                                                                    :class="(it.steps_checked || []).includes(st.id) ? 'text-gray-500 line-through' : 'text-gray-300'"
+                                                                class="w-full text-left flex items-center gap-2"
+                                                                :class="shellOf(s).glyph_scale === 'xl' ? 'py-1.5' : 'py-0.5'">
+                                                                <span class="rounded-full border-2 flex items-center justify-center shrink-0 font-bold"
+                                                                    :class="[(it.steps_checked || []).includes(st.id) ? 'bg-green-500 border-green-500 text-white' : 'border-gray-600 text-transparent',
+                                                                             shellOf(s).glyph_scale === 'xl' ? 'w-7 h-7 text-sm'
+                                                                                 : (shellBig(s) ? 'w-5 h-5 text-[11px]' : 'w-4 h-4 text-[10px]')]">✓</span>
+                                                                <span x-show="st.emoji" class="shrink-0"
+                                                                    :class="shellOf(s).glyph_scale === 'xl' ? 'text-2xl' : (shellBig(s) ? 'text-base' : 'text-sm')"
+                                                                    x-text="st.emoji"></span>
+                                                                <span :class="[(it.steps_checked || []).includes(st.id) ? 'text-gray-500 line-through' : 'text-gray-300',
+                                                                               shellOf(s).glyph_scale === 'xl' ? 'text-base font-bold'
+                                                                                   : (shellBig(s) ? 'text-sm font-semibold' : 'text-xs font-semibold')]"
                                                                     x-text="st.title"></span>
                                                             </button>
                                                         </template>
