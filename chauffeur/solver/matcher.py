@@ -257,6 +257,14 @@ def arrival_lead_mins(event) -> int:
     drive that would make the warm-up impossible is a conflict rather than a
     surprise.
 
+    **An arrival target is a GOAL; the event's own start is the COMMITMENT.**
+    Wanting to be there for the warm-up may make a pairing less preferred; it
+    must never make an event unschedulable, and it must never be reported as
+    lateness for the event itself. Nobody skips a game because they would
+    miss the warm-up — they turn up at kick-off — and the model has to behave
+    the way the family would. So every HARD feasibility test in this module
+    uses travel time alone, and buffers only ever move the objective.
+
     See services/arrive_by.py and docs/arrive_by_design.md.
     """
     ab = getattr(event, 'arrive_by', None)
@@ -807,13 +815,21 @@ def solve_schedule(
                     travel = get_travel_time_minutes(e.location, de.location)
                 else:
                     travel = 20
-                needed_secs_e_to_de = (travel) * 60 + e_buffer_after.get(e.id, 0) * 60
-                needed_secs_de_to_e = (travel) * 60 + e_buffer_before.get(e.id, 0) * 60
-                
-                # Check for overlap, allowing for tolerance
-                e_before_de = (de.start - e.end).total_seconds() + (e_tolerances.get(e.id, {}).get('departure', 0) * 60) >= needed_secs_e_to_de
-                de_before_e = (e.start - de.end).total_seconds() + (e_tolerances.get(e.id, {}).get('arrival', 0) * 60) >= needed_secs_de_to_e
-                
+                # HARD feasibility is the DRIVE, and only the drive. A buffer
+                # is a wish to be early; a family whose warm-up collides with
+                # a work meeting goes to the game anyway, and a model that
+                # drops the ride instead is not modelling this household.
+                hard_e_to_de = (travel) * 60
+                hard_de_to_e = (travel) * 60
+                # What we would LIKE: the drive plus the early arrival.
+                want_e_to_de = hard_e_to_de + e_buffer_after.get(e.id, 0) * 60
+                want_de_to_e = hard_de_to_e + e_buffer_before.get(e.id, 0) * 60
+
+                gap_e_to_de = (de.start - e.end).total_seconds() + (e_tolerances.get(e.id, {}).get('departure', 0) * 60)
+                gap_de_to_e = (e.start - de.end).total_seconds() + (e_tolerances.get(e.id, {}).get('arrival', 0) * 60)
+                e_before_de = gap_e_to_de >= hard_e_to_de
+                de_before_e = gap_de_to_e >= hard_de_to_e
+
                 # True physical overlap in time
                 if e.start < de.end and e.end > de.start:
                     if (e.id, d.id) not in overridden_pairs:
@@ -821,8 +837,13 @@ def solve_schedule(
                 else:
                     # Transit overlap
                     if not e_before_de and not de_before_e:
-                        # Transit impossible. Severely penalize instead of banning so least-bad driver is picked if forced
+                        # The DRIVE itself does not fit. Severely penalize instead of banning so least-bad driver is picked if forced
                         objective_terms.append(assign_vars[(e.id, d.id)] * -2000000)
+                    elif (gap_e_to_de < want_e_to_de) or (gap_de_to_e < want_de_to_e):
+                        # Only the early arrival is squeezed. A preference, at
+                        # the same weight as any other eaten buffer — never
+                        # anywhere near the assignment reward.
+                        objective_terms.append(assign_vars[(e.id, d.id)] * -2000)
 
     # 3d. Car dimension (C1, docs/car_entity_design.md). Entirely inert when no
     # cars are configured: no variables, no constraints — the pre-car model is
@@ -1279,22 +1300,33 @@ def solve_schedule(
                 
                 if d1_id and d2_id:
                     shares_passenger = bool(get_event_passenger_ids(e1, passengers).intersection(get_event_passenger_ids(e2, passengers)))
+                    # LATE means late for the EVENT. Folding the buffer in
+                    # here made "will be 15m late" mean "will miss the
+                    # warm-up", which is a different sentence and a much
+                    # smaller problem — and reading it as lateness is what
+                    # makes a family stop believing lateness warnings.
                     if shares_passenger:
                         travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
-                        total_needed_seconds = (travel_time_mins) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
+                        drive_seconds = (travel_time_mins) * 60 + e_buffer_after.get(e1.id, 0) * 60
+                        want_seconds = drive_seconds + e_buffer_before.get(e2.id, 0) * 60
                         gap_seconds = (e2.start - e1.end).total_seconds()
-                        if gap_seconds < total_needed_seconds:
-                            mins_late = int((total_needed_seconds - gap_seconds) / 60)
+                        if gap_seconds < drive_seconds:
+                            mins_late = int((drive_seconds - gap_seconds) / 60)
                             # We attach the warning to e2 since it's the one they are arriving late to
                             lateness_warnings[e2.id] = f"Passenger will be {mins_late}m late (arriving from {e1.title})"
+                        elif gap_seconds < want_seconds:
+                            lateness_warnings[e2.id] = f"Will make the start but miss the early arrival (coming from {e1.title})"
                     elif d1_id == d2_id:
                         travel_time_mins = get_switch_travel_time(e1, e2, events)
-                        total_needed_seconds = (travel_time_mins) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
+                        drive_seconds = (travel_time_mins) * 60 + e_buffer_after.get(e1.id, 0) * 60
+                        want_seconds = drive_seconds + e_buffer_before.get(e2.id, 0) * 60
                         gap_seconds = (e2.start - e1.end).total_seconds()
-                        if gap_seconds < total_needed_seconds:
-                            mins_late = int((total_needed_seconds - gap_seconds) / 60)
+                        if gap_seconds < drive_seconds:
+                            mins_late = int((drive_seconds - gap_seconds) / 60)
                             if e2.id not in lateness_warnings: # Prioritize passenger warning if both exist
                                 lateness_warnings[e2.id] = f"Driver will be {mins_late}m late (arriving from {e1.title})"
+                        elif gap_seconds < want_seconds and e2.id not in lateness_warnings:
+                            lateness_warnings[e2.id] = f"Will make the start but miss the early arrival (coming from {e1.title})"
     else:
         # If infeasible (rare with soft assignments), all are unassigned
         unassigned = [e.id for e in events]
@@ -1445,8 +1477,9 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
                     first, second = e, ae
                 else:
                     first, second = ae, e
-                total_needed_seconds = (travel_time_mins) * 60 + e_buffer_after.get(first.id, 0) * 60 + e_buffer_before.get(second.id, 0) * 60    
-                if (second.start - first.end).total_seconds() < total_needed_seconds:
+                # Travel only: "could anyone have covered this?" is a question
+                # about roads, not about warm-ups.
+                if (second.start - first.end).total_seconds() < (travel_time_mins) * 60:
                     is_impossible = True
                     break
                     
@@ -1502,18 +1535,19 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
                 
             shares_passenger = bool(get_event_passenger_ids(e1, passengers).intersection(get_event_passenger_ids(e2, passengers)))
             
+            # Both tests are travel-only for the same reason as above: these
+            # are HARD exclusions, and a buffer must never make an event
+            # impossible to cover.
             if shares_passenger:
                 travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
-                total_needed_seconds = (travel_time_mins) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
-                if (e2.start - e1.end).total_seconds() < total_needed_seconds:
+                if (e2.start - e1.end).total_seconds() < (travel_time_mins) * 60:
                     # Passenger conflict
                     is_assigned_e1 = sum(assign_vars[(e1.id, g_id)] for g_id in ghost_ids)
                     is_assigned_e2 = sum(assign_vars[(e2.id, g_id)] for g_id in ghost_ids)
                     model.Add(is_assigned_e1 + is_assigned_e2 <= 1)
             else:
                 travel_time_mins = get_switch_travel_time(e1, e2, events)
-                total_needed_seconds = (travel_time_mins) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
-                if (e2.start - e1.end).total_seconds() < total_needed_seconds:
+                if (e2.start - e1.end).total_seconds() < (travel_time_mins) * 60:
                     # Driver conflict
                     for g_id in ghost_ids:
                         model.AddImplication(assign_vars[(e1.id, g_id)], assign_vars[(e2.id, g_id)].Not())

@@ -5201,3 +5201,48 @@ Tests: `tests/test_arrive_by.py` gains
 `scenario_leave_plus_drive_equals_be_there` — the invariant asserted with
 real objects at 15 minutes (parsed, no rule) and at 30 (rule wins), plus proof
 that an ordinary event pays nothing for any of it.
+
+## A warm-up is a goal, not a commitment (v2.381.0)
+
+The family's rule, in their words: *"Not scheduling an event because of a
+buffer or warmup arrival time isn't how it would happen in real life — and
+that is what we are trying to model."* Nobody skips a game because they would
+miss the warm-up. They turn up at kick-off.
+
+**So: a buffer may make a pairing LESS PREFERRED. It must never make an event
+unschedulable.** Stated on `matcher.arrival_lead_mins` as the module's rule —
+every HARD feasibility test uses travel time alone, and buffers only ever move
+the objective.
+
+The buffer was **already soft** in the main driver and passenger conflict
+constraints (`min_needed_seconds` is travel alone; `desired_needed_seconds`
+only costs objective points, −50 and −2000 against a +1,000,000 assignment
+reward). It was **hard in three other places**, all now travel-only:
+
+- **The driver's own calendar** (§3c). Failing the check applied **−2,000,000**
+  — twice the assignment reward, so a ban in all but name. A parent whose
+  meeting ran into the warm-up window was disqualified from a drive they could
+  comfortably make, and with no other driver the ride went unassigned. Now the
+  hard test is the DRIVE; a squeezed early arrival is a −2000 preference like
+  any other eaten buffer.
+- **The ghost-route eligibility scan** — "could anyone have covered this?" is
+  a question about roads, not warm-ups.
+- **The ghost-route model's** passenger and driver exclusions.
+
+**And "late" means late for the EVENT.** Lateness warnings folded the buffer
+in, so "will be 45m late" meant "will miss the warm-up" — a different sentence
+and a much smaller problem, and reading it as lateness is how a family stops
+believing lateness warnings. A squeezed arrival now reads *"Will make the
+start but miss the early arrival (coming from X)"*.
+
+Tests: `tests/test_arrive_by_soft.py` (5 scenarios that SOLVE rather than read
+source, since every one of these paths sits inside a solver that returns
+"unassigned" rather than raising) — the game still gets a driver, the driver
+with a colliding meeting is still eligible, ghost coverage is unaffected,
+lateness is not claimed, **and** the buffer still shapes the choice between two
+otherwise equal drivers, so the fix is a softening and not a deletion.
+
+**Trap recorded**: `does_event_match_rule` matches NOTHING when a rule states
+no criteria at all, so a bare `Rule(constraint_type='buffer', ...)` in a test
+is silently inert. The first cut of this file passed identically with and
+without the fix; every buffer rule in a test needs a keyword or a passenger.
