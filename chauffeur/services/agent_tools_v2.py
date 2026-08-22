@@ -2208,7 +2208,12 @@ def add_occasion(title: str, anchor_date: str, kind: str = "gathering",
                  window_start: str = "", window_end: str = "",
                  dish_tags: str = "", acting_member: dict = None) -> Dict[str, Any]:
     """WRITE: "Thanksgiving is on the 26th and my parents are here from the
-    25th to the 29th", "Ellie's birthday party is on the 14th"."""
+    25th to the 29th", "Ellie's birthday party is on the 14th".
+
+    kind='invited' is for a party the family is GOING to rather than hosting
+    ("Ellie's been invited to Jack's party on Saturday") — it asks about the
+    present instead of the cooking, and keeps its gift list off the kids'
+    screens."""
     from services import occasions as _occ
     if not (title or '').strip():
         return {"status": "error", "message": "What should I call it?"}

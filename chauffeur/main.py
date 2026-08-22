@@ -554,6 +554,13 @@ async def push_notification_loop():
                                                        now_dt)
                         if sres.get("status") == "proposed":
                             print(f"Shopping trip proposed for {len(sres['lists'])} list(s)")
+                        # A4: a party-shaped event with a kid riding and no
+                        # present tracked. Proposes, never creates.
+                        from services import occasions as _occ_svc
+                        ires2 = await asyncio.to_thread(_occ_svc.propose_invitations,
+                                                        now_dt)
+                        if ires2.get("status") == "proposed":
+                            print(f"Invitation proposed for {len(ires2['events'])} party/parties")
                         # K1: trickle-fill the kiosk board's pictures. A few per
                         # sweep, never on render — the board must not stall
                         # fetching images, and a family with a key configured

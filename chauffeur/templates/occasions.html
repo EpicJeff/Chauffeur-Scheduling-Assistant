@@ -403,7 +403,10 @@
             gaps: {}, insights: {}, answerDraft: {},
             menus: {}, dishDraft: {}, showPool: {}, dishBusy: false,
             loading: true, busy: false, sourcing: false, showNew: false,
-            kinds: ['thanksgiving', 'christmas', 'easter', 'birthday', 'party', 'gathering'],
+            // 'invited' is the inverse of the rest: somebody else is hosting and
+            // the only work is a present. A4, docs/supply_intake_design.md.
+            kinds: ['thanksgiving', 'christmas', 'easter', 'birthday', 'party',
+                    'gathering', 'invited'],
             draft: { title: '', kind: 'gathering', anchor_date: '', tags: '',
                      window_start: '', window_end: '' },
 

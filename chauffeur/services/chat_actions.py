@@ -80,6 +80,7 @@ ADMIN_ACTIONS = {
     "add_car_stop",
     "approve_week_plan",
     "add_shopping_errand",
+    "add_invited_occasion",
 }
 
 # Human-friendly label shown as the card's action badge.
@@ -98,6 +99,7 @@ ACTION_LABELS = {
     "add_car_stop": "Car stop",
     "approve_week_plan": "Week of dinners",
     "add_shopping_errand": "Shopping trip",
+    "add_invited_occasion": "Track a present",
 }
 
 
@@ -249,6 +251,11 @@ def _execute(action_type: str, payload: dict) -> dict:
             payload.get('list_id'), payload.get('weekday'),
             payload.get('duration_mins'), payload.get('location'),
             payload.get('recurring', True))
+    if action_type == "add_invited_occasion":
+        from services import occasions as _occ
+        return _occ.accept_invitation(
+            payload.get('event_id'), payload.get('title'),
+            payload.get('anchor_date'), payload.get('member_ids'))
     if action_type in agent_tools.TOOL_HANDLERS:
         return agent_tools.execute_tool(action_type, payload)
     return {"status": "error", "message": f"Unknown action type '{action_type}'."}

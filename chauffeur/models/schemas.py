@@ -871,6 +871,11 @@ class Settings(BaseModel):
     grocery_cadence_days: int = 7
     meal_week_enabled: bool = True
     propose_shopping_errands: bool = True   # offer a trip for a list that has none
+    # Supply intake A4: a party-shaped event with a child riding gets a card
+    # offering to track the present. Proposes, never creates — a title is a
+    # guess, and "Ellie's birthday" (ours) reads exactly like "Jack's
+    # birthday party" (an invitation).
+    propose_invitations: bool = True
     # Prep reminders (M8). "The night before" is a human moment, not an
     # offset — this is when the household is still up and can start a soak.
     prep_reminders_enabled: bool = True

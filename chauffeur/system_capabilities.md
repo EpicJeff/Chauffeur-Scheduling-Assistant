@@ -4753,3 +4753,57 @@ Tests: `tests/test_supply_duplicates.py` (9 scenarios — the unchanged skip,
 the fresh-supply card, the repeat-flyer filter incl. checked items, list-read
 failure, both target guards, the no-op, route exclusion, run-loop counting,
 both hand paths).
+
+## The occasion you were invited to (v2.372.0)
+
+Supply intake **A4** (`docs/supply_intake_design.md`). Every occasion
+template that shipped before this one is host-side — `thanksgiving`,
+`christmas`, `birthday`, `party`, `gathering` all ask headcount and cooking
+hands and offer to tidy the house. Being invited to somebody else's is the
+inverse: one child, no kitchen, somewhere that is not home, and the only work
+is a present and getting there.
+
+- **`kind='invited'`** joins `KINDS`, with its own template and **no
+  `_COMMON`** — no headcount, no cooking hands. That is not tidiness:
+  answering headcount cascades into scaling every plate in the window
+  (`_apply_headcount`), so asking it here would have the app cook for twelve
+  because a child was invited to a party. Three questions only: whose party,
+  their age, the gift budget.
+- **The checklist is `gift` (a LIST line at anchor−3) and `wrapping` (a note
+  at anchor−1).** The present is deliberately NOT an errand — an errand needs
+  a location nobody knows yet, while a dated item on a list is exactly what
+  A2 already notices and offers a trip for. Wrapping paper and a card get
+  their own line because that is the thing actually forgotten.
+- **Nobody attends by default.** `attends_by_default(member, kind)` inverts
+  for `invited`: the household is not hosting, so the roster starts empty and
+  the parent taps who was actually asked. Otherwise the app would report six
+  people at a classmate's party and feed a meaningless headcount downstream.
+  Hosting kinds are untouched.
+- **A generated list is PRIVATE** (`_gift_visibility`): `audience='private'`
+  plus every active parent/adult on `shared_with` — the allow-list that
+  shipped with family-network S8, with no parent bypass and no panel bypass,
+  so the worst case is "I cannot see what you are planning" instead of a
+  ruined surprise. A hosting occasion's list stays household-visible (party
+  supplies are not secret, and locking everything teaches the family to
+  ignore the lock), and with **no** grown-ups on the roster no lock is
+  applied at all — a private list with nobody on it is the one failure worse
+  than an open one.
+- **It PROPOSES, never creates.** `invitation_candidates()` finds
+  party-shaped titles (`birthday|bday|party|sleepover`) in the next 21 days
+  with a **child riding** — that passenger is what separates a real
+  invitation from the end-of-quarter party on a work calendar — and skips any
+  event already tracked (`answers.source_event_id`). A title cannot tell
+  "Ellie's birthday" (ours, host-side) from "Jack's birthday party" (an
+  invitation), which is exactly why the parent gets a card.
+  `propose_invitations()` fires once per event, **marker set FIRST**, from
+  the same 30-minute sweep as the shopping-trip offer. Approving runs
+  `accept_invitation()` via the new `add_invited_occasion` action type:
+  a real occasion, the source event recorded, the invited children marked in.
+- **Hand paths**: `invited` in the occasions-page kind picker, the
+  `add_occasion` agent tool documents it, and `propose_invitations` (Settings)
+  has a visible toggle on the shopping page beside the trip offer.
+
+Tests: `tests/test_invited_occasions.py` (8 scenarios — no host questions,
+the checklist and its non-errand, empty-by-default attendance vs hosting,
+private list, the nobody-on-it guard, candidate filtering, once-per-event
+plus the accept path, switch and action registration).

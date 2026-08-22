@@ -22,13 +22,19 @@ Two rules hold the design together (docs/occasion_design.md):
 """
 
 import datetime
+import re
 import time
 import uuid
 from typing import List, Optional
 
 from services import storage
 
-KINDS = ('thanksgiving', 'christmas', 'easter', 'birthday', 'party', 'gathering')
+KINDS = ('thanksgiving', 'christmas', 'easter', 'birthday', 'party', 'gathering',
+         # Supply intake A4: the INVERSE of every kind above. Those are all
+         # host-side — headcount, cooking hands, tidy the house. Being invited
+         # to somebody else's is one child, no kitchen, and somewhere that is
+         # not home; the only work is a present and getting there.
+         'invited')
 
 
 def _today() -> datetime.date:
@@ -128,7 +134,7 @@ def find_prior(kind: str, title: str, anchor: datetime.date) -> Optional[dict]:
     return best
 
 
-def attends_by_default(member: dict) -> bool:
+def attends_by_default(member: dict, kind: str = None) -> bool:
     """Whether a household member is assumed in until somebody says otherwise.
 
     Role is the only signal the app has: `helper` is external by definition (a
@@ -140,7 +146,14 @@ def attends_by_default(member: dict) -> bool:
     What role cannot tell us is who lives elsewhere: an `adult` grandparent
     five hundred miles away looks exactly like a resident adult. That is
     precisely why every member is individually togglable rather than derived.
+
+    **A4 inverts it for `invited`**: the household is not hosting, so nobody
+    is in until somebody says who was asked. Defaulting the whole family in
+    would report six people going to a classmate's party and would feed a
+    meaningless headcount to everything downstream.
     """
+    if kind == 'invited':
+        return False
     return (member.get('role') or 'adult') != 'helper'
 
 
@@ -155,7 +168,7 @@ def attendance(occasion_id: str) -> List[dict]:
     saved = o.get('attendance') or {}
     out = []
     for m in storage.get_all_members():
-        default = attends_by_default(m)
+        default = attends_by_default(m, o.get('kind'))
         decided = m['id'] in saved
         out.append({'member_id': m['id'], 'name': m.get('name') or 'Someone',
                     'role': m.get('role') or 'adult',
@@ -295,6 +308,13 @@ _ASK = {
     'cake': ("Is there a cake?", None),
     'gifts': ("Are there presents to buy?", None),
     'theme': ("Does it have a theme?", "Sharks, dinosaurs, whatever it is."),
+    # A4. Deliberately three questions and no more: an invitation is a small
+    # thing and an interview that outlasts the event is worse than no help.
+    'whose_party': ("Whose party is it?", "The birthday child's name."),
+    'their_age': ("How old are they turning?",
+                  "Roughly is fine — it decides what a good present is."),
+    'gift_budget': ("What's the budget for the present?",
+                    "A number in dollars. It filters what gets suggested."),
 }
 
 _COMMON = [
@@ -372,6 +392,34 @@ TEMPLATES = {
         'checklist': [
             {'key': 'food_shop', 'label': 'Shop for the food', 'type': 'errand',
              'offset_days': -2, 'location': 'Grocery', 'duration_mins': 60},
+        ],
+    },
+    # A4 — the one template that is not about hosting.
+    #
+    # No `_COMMON`, and that is the whole point: headcount and cooking hands
+    # are host questions, and answering headcount CASCADES into scaling every
+    # plate in the window (`_apply_headcount`). Asking them here would have
+    # the app cook for twelve because a child was invited to a party.
+    #
+    # The gift is a LIST line and not an errand, which departs from the brief
+    # on purpose: an errand needs a location the app does not have (nobody
+    # knows yet which shop), while a dated item on a list is exactly what A2
+    # now notices and offers a trip for. The machinery that shipped two
+    # slices ago is a better answer than a made-up "Home" errand.
+    'invited': {
+        'dish_tags': [],
+        'questions': [
+            {'key': 'whose_party', 'ask': 'whose_party', 'kind': 'text'},
+            {'key': 'their_age', 'ask': 'their_age', 'kind': 'number'},
+            {'key': 'gift_budget', 'ask': 'gift_budget', 'kind': 'number'},
+        ],
+        'checklist': [
+            {'key': 'gift', 'label': 'A present', 'type': 'list',
+             'offset_days': -3, 'sourcing': 'a birthday present'},
+            # Its own line because it is the thing actually forgotten — the
+            # present gets bought and then handed over in the shop bag.
+            {'key': 'wrapping', 'label': 'Wrapping paper and a card',
+             'type': 'note', 'offset_days': -1},
         ],
     },
 }
@@ -1015,6 +1063,12 @@ def generate_list(occasion_id: str, request: str, list_name: str = None,
 
     lst = ShoppingList(name=(list_name or raw)[:60], store=store,
                        occasion_id=occasion_id).model_dump()
+    # A4: a list generated for an occasion the household is INVITED to is a
+    # gift list, and a gift list the recipient can read is not a gift list.
+    # `private` is an allow-list (only `shared_with` sees it, with no parent
+    # bypass and no panel bypass) rather than a deny-list, so the worst case
+    # is "I cannot see what you are planning" instead of a ruined surprise.
+    lst.update(_gift_visibility(o))
     storage.add_shopping_list(lst)
     added, seen = [], set()
     for it in (res.get('items') or [])[:25]:
@@ -1031,6 +1085,164 @@ def generate_list(occasion_id: str, request: str, list_name: str = None,
         storage.add_shopping_item(rec)
         added.append(rec)
     return {'list': lst, 'items': added, 'headcount': n}
+
+
+# --- A4: noticing an invitation the family already put on the calendar ------
+#
+# The party is usually on the calendar before anybody thinks about the
+# present — somebody types "Jack's party 2pm" the day the invitation comes
+# home, and the gift is remembered on the Saturday morning. That gap is the
+# whole reason this exists.
+#
+# It PROPOSES and never creates. A party-shaped title is a guess, and an app
+# that silently mints occasions off a keyword would fill the list with
+# birthdays that were actually work meetings.
+
+_PARTY_WORDS = re.compile(
+    r"\b(birthday|bday|b-day|party|sleepover)\b", re.I)
+
+
+def _party_shaped(title: str) -> bool:
+    """A title that reads like a child being invited somewhere.
+
+    Deliberately narrow, and deliberately blind to possessives — "Ellie's
+    birthday" is OUR child's and is a `birthday` occasion (host-side), while
+    "Jack's birthday party" is an invitation. The app cannot tell those apart
+    from a title, which is exactly why the parent gets a card instead of a
+    fait accompli.
+    """
+    return bool(_PARTY_WORDS.search(title or ''))
+
+
+def invitation_candidates(now: datetime.datetime = None, ahead_days: int = 21) -> List[dict]:
+    """Party-shaped events with a CHILD riding, and no occasion yet.
+
+    The child is the load-bearing signal: an adult's birthday drink is not a
+    thing that needs a wrapped present bought in a week, and requiring a kid
+    passenger is what keeps every 'end of quarter party' off the list.
+    """
+    now = now or datetime.datetime.now()
+    today = now.date()
+    kids = {m['id'] for m in storage.get_all_members()
+            if (m.get('role') or '') == 'child'}
+    if not kids:
+        return []
+    known = {(o.get('answers') or {}).get('source_event_id')
+             for o in storage.get_occasions(include_done=True)}
+    out = []
+    for ev in (storage.get_cached_schedule() or {}).get('events', []):
+        gid = str(ev.get('id') or '')
+        if not gid or gid in known or not _party_shaped(ev.get('title')):
+            continue
+        try:
+            day = datetime.datetime.fromisoformat(str(ev.get('start'))).date()
+        except (TypeError, ValueError):
+            continue
+        if day < today or (day - today).days > ahead_days:
+            continue
+        riding = [p for p in (ev.get('passenger_ids') or []) if p in kids]
+        if not riding:
+            continue
+        out.append({'event_id': gid, 'title': ev.get('title') or 'A party',
+                    'date': day.isoformat(), 'member_ids': riding})
+    return out
+
+
+def propose_invitations(now: datetime.datetime = None, deliver=None) -> dict:
+    """Offer to track the present for a party already on the calendar.
+
+    Fires once per event, marker set FIRST — the same discipline every sweep
+    in the app follows, so an unreachable delivery never turns into a weekly
+    re-offer for the same party.
+    """
+    now = now or datetime.datetime.now()
+    settings = storage.get_settings() or {}
+    if not settings.get('propose_invitations', True):
+        return {'status': 'disabled'}
+    seen = dict(storage.get_app_state('invitation_proposed') or {})
+    cutoff = (now.date() - datetime.timedelta(days=60)).isoformat()
+    seen = {k: v for k, v in seen.items() if str(v) >= cutoff}
+
+    offered = []
+    for cand in invitation_candidates(now):
+        if cand['event_id'] in seen:
+            continue
+        seen[cand['event_id']] = now.date().isoformat()          # marker FIRST
+        who = ', '.join(
+            (storage.get_member(m) or {}).get('name') or 'Someone'
+            for m in cand['member_ids'])
+        when = datetime.date.fromisoformat(cand['date'])
+        summary = f"Track the present for {cand['title']}"
+        body = (f"🎁 {who} has '{cand['title']}' on {when.strftime('%A %d %B')}. "
+                f"Want me to track it as an invitation — a present to buy, "
+                f"wrapping paper, and a reminder before the day? "
+                f"I'll keep the gift list off everyone else's screens.")
+        payload = {'event_id': cand['event_id'], 'title': cand['title'],
+                   'anchor_date': cand['date'], 'member_ids': cand['member_ids']}
+        (deliver or _deliver_invitation_proposal)(summary, payload, body)
+        offered.append(cand['event_id'])
+    storage.set_app_state('invitation_proposed', seen)
+    return {'status': 'proposed' if offered else 'nothing_to_offer',
+            'events': offered}
+
+
+def _deliver_invitation_proposal(summary: str, payload: dict, body: str):
+    """Family channel + approvals banner, the same path the shopping trip and
+    the car stop already use."""
+    from services import chat_actions
+    res = chat_actions.create_action_proposal('add_invited_occasion', summary, payload)
+    if res.get('status') != 'success':
+        return None
+    pid = res['proposal_id']
+    try:
+        fam = storage.get_family_channel()
+        if fam:
+            storage.update_action_proposal(pid, {'channel_id': fam['id']})
+            argyle = storage.ensure_argyle_member()
+            from services.agent_tools_v2 import _post_chat_message
+            _post_chat_message(fam['id'], argyle['id'], body, proposal_id=pid)
+    except Exception as e:
+        print(f"[occasions] invitation proposal delivery failed: {e}")
+    return pid
+
+
+def accept_invitation(event_id: str = None, title: str = None,
+                      anchor_date: str = None, member_ids: List[str] = None) -> dict:
+    """Turn an approved invitation card into a real `invited` occasion.
+
+    The source event id is recorded in `answers` so the same party is never
+    offered twice, and the invited children are marked attending — which for
+    this kind is the only way anybody is (see `attends_by_default`).
+    """
+    day = _d(anchor_date) or _today()
+    o = create(title or 'A party', day.isoformat(), 'invited')
+    answers = dict(o.get('answers') or {})
+    if event_id:
+        answers['source_event_id'] = str(event_id)
+    storage.update_occasion(o['id'], {'answers': answers})
+    for mid in (member_ids or []):
+        set_attendance(o['id'], mid, True)
+    return {'status': 'success', 'occasion_id': o['id'],
+            'message': f"Tracking {o['title']} on {day.strftime('%A %d %B')}. "
+                       f"Ask me for present ideas whenever you're ready."}
+
+
+def _gift_visibility(occasion: dict) -> dict:
+    """Who may see a list generated for this occasion (A4).
+
+    Only `invited` closes, and only when there is somebody to close it TO: a
+    private list with nobody on it is a list NOBODY sees, which is the one
+    failure worse than an open one. With no adults on the roster it stays
+    household-visible and honest about it rather than disappearing.
+    """
+    if (occasion or {}).get('kind') != 'invited':
+        return {}
+    grown = [m['id'] for m in storage.get_all_members()
+             if (m.get('role') or '') in ('parent', 'adult')
+             and (m.get('status') or 'active') == 'active']
+    if not grown:
+        return {}
+    return {'audience': 'private', 'shared_with': grown}
 
 
 def set_status(occasion_id: str, status: str) -> bool:

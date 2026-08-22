@@ -768,6 +768,15 @@
                                             @change="saveMealCfg()" class="accent-pink-500 w-4 h-4">
                                         Offer a trip for a list with no errand
                                     </label>
+                                    <!-- A4: a party-shaped event with a child riding gets a
+                                         card offering to track the present. Proposes, never
+                                         creates — a title cannot tell "Ellie's birthday"
+                                         (ours) from "Jack's birthday party" (an invitation). -->
+                                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                                        <input type="checkbox" x-model="mealCfg.propose_invitations"
+                                            @change="saveMealCfg()" class="accent-pink-500 w-4 h-4">
+                                        Notice party invitations and offer to track the present
+                                    </label>
                                 </div>
                                 <!-- The choice has to be arguable, not asserted:
                                      real free blocks from the schedule, ranked by
@@ -1740,7 +1749,7 @@
                     household_headcount: 0,
                     car_dining: 'full', venue_dining: 'full',
                     grocery_weekday: '', grocery_plan_lead_days: 2, grocery_cadence_days: 7,
-                    meal_week_enabled: true, propose_shopping_errands: true,
+                    meal_week_enabled: true, propose_shopping_errands: true, propose_invitations: true,
                     prep_reminders_enabled: true, prep_reminder_time: '20:30',
                     prep_morning_time: '08:00', walmart_store_id: '',
                     walmart_impact_publisher_id: '', walmart_impact_ad_id: '',
@@ -2864,6 +2873,7 @@
                         c.grocery_cadence_days = d.grocery_cadence_days || 7;
                         c.meal_week_enabled = d.meal_week_enabled !== false;
                         c.propose_shopping_errands = d.propose_shopping_errands !== false;
+                        c.propose_invitations = d.propose_invitations !== false;
                         c.prep_reminders_enabled = d.prep_reminders_enabled !== false;
                         c.prep_reminder_time = d.prep_reminder_time || '20:30';
                         c.prep_morning_time = d.prep_morning_time || '08:00';
@@ -2904,6 +2914,7 @@
                             grocery_cadence_days: Math.max(1, parseInt(c.grocery_cadence_days, 10) || 7),
                             meal_week_enabled: !!c.meal_week_enabled,
                             propose_shopping_errands: !!c.propose_shopping_errands,
+                            propose_invitations: !!c.propose_invitations,
                             prep_reminders_enabled: !!c.prep_reminders_enabled,
                             prep_reminder_time: c.prep_reminder_time || '20:30',
                             prep_morning_time: c.prep_morning_time || '08:00',
