@@ -459,6 +459,20 @@ async def push_notification_loop():
             except Exception as we:
                 print(f"Watcher sweep error: {we}")
 
+            # --- Runway cues (runway arc R3) ---
+            # The single calm satellite sentence when a kid's runway is
+            # genuinely behind. Every 2 min; the service is idempotent per
+            # (member, kind, item, day) with its marker set FIRST, so this
+            # cadence sets pace, never repetition.
+            try:
+                last_rc = float(storage.get_app_state("runway_cues_swept") or 0)
+                if time.time() - last_rc >= 120:
+                    storage.set_app_state("runway_cues_swept", time.time())
+                    from services import runway as _runway_svc
+                    await asyncio.to_thread(_runway_svc.sweep_cues)
+            except Exception as rce:
+                print(f"Runway cue sweep error: {rce}")
+
             # --- Unanswered requests (load arc A3) ---
             # A request is ALWAYS answered. One that nobody touched expires
             # LOUDLY — to the asker, who otherwise learns nothing, and to

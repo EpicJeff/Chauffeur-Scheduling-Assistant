@@ -178,6 +178,103 @@ def scenario_the_flag_round_trips_and_the_lanes_draw():
           "the editor's toggle is the explicit hand path")
 
 
+def scenario_the_cue_is_single_and_calm():
+    """R3: the push half is a whisper. One cue per (member, kind, item, day),
+    marker set FIRST (an unreachable speaker fails once, never retries into
+    nagging), no cue room = no cues, global switch kills all of it."""
+    _seed()
+    storage.set_app_state(runway.CUE_STATE_KEY, {})
+    storage.set_app_state("runway_cues_swept", 0)
+    _item("r1", "Get dressed", "07:00")
+    spoken = []
+    import services.announce as announce_mod
+    real = announce_mod.announce
+    announce_mod.announce = lambda room, msg: spoken.append((room, msg)) or {'status': 'success'}
+    try:
+        late = datetime.datetime.combine(DAY, datetime.time(7, 20))
+        check(runway.sweep_cues(now=late) == 0 and not spoken,
+              "no cue room on the child means NO cues — the per-child off switch")
+
+        storage.update_member("tot", {"runway_cue_room": "Kids Room"})
+        check(runway.sweep_cues(now=late) == 1 and len(spoken) == 1,
+              f"one genuinely-behind item speaks once: {spoken}")
+        check(spoken[0][0] == "Kids Room" and "Get dressed" in spoken[0][1]
+              and "Tot" in spoken[0][1],
+              f"in the child's room, kid-worded, naming the thing: {spoken[0]}")
+        for _ in range(3):
+            check(runway.sweep_cues(now=late) == 0,
+                  "the same stall NEVER speaks twice — repetition is the "
+                  "thing being eliminated")
+        check(len(spoken) == 1, f"still exactly one: {spoken}")
+
+        # A second item stalling later is a NEW episode — one more cue.
+        _item("r2", "Breakfast", "07:30")
+        later = datetime.datetime.combine(DAY, datetime.time(7, 45))
+        check(runway.sweep_cues(now=later) == 1 and len(spoken) == 2,
+              f"a new stalled item earns its own single cue: {spoken}")
+
+        # The global switch kills everything. (The harness pins get_settings
+        # to a fixed dict, so the switch is stubbed at the read.)
+        real_settings = storage.get_settings
+        storage.get_settings = lambda: {"runway_cues_enabled": False}
+        _item("r3", "Shoes on", "07:50")
+        latest = datetime.datetime.combine(DAY, datetime.time(8, 10))
+        try:
+            check(runway.sweep_cues(now=latest) == 0 and len(spoken) == 2,
+                  "runway_cues_enabled off silences the house")
+        finally:
+            storage.get_settings = real_settings
+
+        # Inside the window but on pace: silence.
+        spoken.clear()
+        storage.set_app_state(runway.CUE_STATE_KEY, {})
+        for rid in ("r1", "r2", "r3"):
+            storage.set_routine_check(rid, "tot", DATE, True)
+        check(runway.sweep_cues(now=latest) == 0 and not spoken,
+              "a runway that is merely RUNNING is silent — pull, not push")
+    finally:
+        announce_mod.announce = real
+
+
+def scenario_the_cue_marker_survives_a_dead_speaker():
+    """The marker goes down BEFORE the speaker call, so a broken HA setup
+    costs one failed attempt, not a retry loop."""
+    _seed()
+    storage.set_app_state(runway.CUE_STATE_KEY, {})
+    _item("r1", "Get dressed", "07:00")
+    storage.update_member("tot", {"runway_cue_room": "Kids Room"})
+    import services.announce as announce_mod
+    real = announce_mod.announce
+    calls = []
+    def boom(room, msg):
+        calls.append(1)
+        raise RuntimeError("HA is down")
+    announce_mod.announce = boom
+    try:
+        late = datetime.datetime.combine(DAY, datetime.time(7, 20))
+        runway.sweep_cues(now=late)
+        runway.sweep_cues(now=late)
+        check(len(calls) == 1,
+              "the failed cue is marked fired and never retried into nagging")
+    finally:
+        announce_mod.announce = real
+
+
+def scenario_the_cue_hand_paths_exist():
+    import os
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    editor = open(os.path.join(tpl, 'routines.html'), encoding='utf-8').read()
+    check('setCueRoom' in editor and 'No cue room (cues off)' in editor
+          and 'api/announce/rooms' in editor,
+          "the per-child cue room is picked on the Routines page")
+    from services import settings_registry
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'services', 'settings_registry.py'), encoding='utf-8').read()
+    check('runway_cues_enabled' in src,
+          "the global switch is a registered setting")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

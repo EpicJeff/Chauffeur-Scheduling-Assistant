@@ -4578,8 +4578,33 @@ slim honest bar for everyone older.
 - Rides the `/api/routines/day` payload as `runways`; the lanes (page and
   board card alike) draw it per lane.
 
-NEXT (planned): R3 the single calm satellite cue on `behind` (announce-arc
-room mapping, settings_registry, per-child off switch, one cue per stall
-episode, never repeating); R4 (deferred) HA lighting.
+Tests: `tests/test_runway.py`.
 
-Tests: `tests/test_runway.py` (7 scenarios).
+## The one calm sentence (v2.367.0 — runway arc R3)
+
+The push half, kept to a whisper — the rocket does the work; this speaks
+only when a flagged, TIMED item is genuinely behind (past its own time +
+grace, window live):
+
+- **One cue per (member, kind, item, day), never repeating** — repetition is
+  the thing being eliminated, not relocated. A second item stalling later is
+  a new episode and earns its own single sentence. At most one cue per
+  runway per 2-minute sweep.
+- **Marker set FIRST** (`runway_cues_fired` app state, today's keys only):
+  an unreachable speaker fails once and is never retried into nagging —
+  the same discipline every sweep in the main loop follows.
+- **Delivery**: `announce.announce(room, …)` — the announce arc's satellite
+  ladder (pin → satellite → playing player), Argyle's own voice. Kid-worded
+  canned phrases ("Tot, shoes on time — the rocket's waiting!").
+- **Switches**: per-child cue ROOM picked on the Routines page (🔊 select
+  per member block, populated from `/api/announce/rooms`; no room = no cues
+  for that child; no HA = no control at all, graceful). House-wide
+  `runway_cues_enabled` in Settings (registry, kids group).
+- Runs from the main 30s loop on a 2-minute marker cadence
+  (`runway_cues_swept`).
+
+R4 (HA ambient lighting) stays DEFERRED: shared-room effects punish
+siblings; revisit per-room opt-in only if the family asks.
+
+Tests: `tests/test_runway.py` (10 scenarios — single-and-calm, dead-speaker
+no-retry, hand paths included).

@@ -32,6 +32,7 @@ from typing import Optional
 from services import storage
 
 GRACE_MINS = 10          # a timed item is "behind" this long after its time
+CUE_STATE_KEY = 'runway_cues_fired'   # {date_str: ['member:kind:item', ...]}
 WINDOW_LEAD_MINS = 45    # the runway takes over the lane this long before
                          # its first timed item
 WINDOW_TAIL_MINS = 90    # and lets go this long after its end
@@ -166,3 +167,71 @@ def runways_for(member_id: str, date_str: str,
             'behind': behind,
         }
     return out
+
+
+# --- R3: the single calm cue -------------------------------------------------
+# The push half, kept to a whisper: the runway's whole point is that the PULL
+# (the rocket) does the work. When a flagged, timed item is genuinely behind
+# — past its own time plus grace, window live — the kid's room hears ONE
+# short sentence through the announce-arc speaker, once per (member, kind,
+# item, day), never repeating. Repetition is the thing being eliminated, not
+# relocated. Per-child off switch: no cue room on the member, no cues.
+
+def _overdue_items(member_id: str, date_str: str, kind: str,
+                   now: datetime.datetime) -> list:
+    out = []
+    for r in storage.routines_for_day(member_id, date_str):
+        if r.get('runway') != kind or r.get('checked') or not r.get('time_of_day'):
+            continue
+        t = _hhmm_to_dt(date_str, r['time_of_day'])
+        if t and now > t + datetime.timedelta(minutes=GRACE_MINS):
+            out.append(r)
+    return out
+
+
+def _cue_phrase(member: dict, item: dict, kind: str) -> str:
+    name = (member.get('name') or '').split(' ')[0] or 'Hey'
+    title = item.get('title') or 'the next thing'
+    if kind == 'morning':
+        return f"{name}, {title} time — the rocket's waiting!"
+    return f"{name}, time for {title}."
+
+
+def sweep_cues(now: datetime.datetime = None) -> int:
+    """Runs from the main loop every couple of minutes. Marker set FIRST —
+    an unreachable speaker must fail once, not retry itself into exactly the
+    nagging this feature exists to end. At most one cue per child's runway
+    per sweep (a second overdue item waits for the next pass). Returns how
+    many cues were spoken."""
+    settings = storage.get_settings() or {}
+    if not settings.get('runway_cues_enabled', True):
+        return 0
+    now = now or datetime.datetime.now()
+    date_str = now.date().isoformat()
+    state = storage.get_app_state(CUE_STATE_KEY)
+    fired = set((state or {}).get(date_str) or []) if isinstance(state, dict) else set()
+    sent = 0
+    for m in storage.get_all_members():
+        if m.get('role') != 'child':
+            continue
+        room = (m.get('runway_cue_room') or '').strip()
+        if not room:
+            continue
+        for kind, rw in runways_for(m['id'], date_str, now=now).items():
+            if not rw['window_active'] or not rw['behind']:
+                continue
+            for r in _overdue_items(m['id'], date_str, kind, now):
+                key = f"{m['id']}:{kind}:{r['id']}"
+                if key in fired:
+                    continue
+                fired.add(key)
+                # Today's keys only — old dates prune themselves on write.
+                storage.set_app_state(CUE_STATE_KEY, {date_str: sorted(fired)})
+                try:
+                    from services import announce
+                    announce.announce(room, _cue_phrase(m, r, kind))
+                except Exception as ex:
+                    print(f"Runway cue failed (not retried): {ex}")
+                sent += 1
+                break   # one cue per runway per sweep — the calmest pace
+    return sent

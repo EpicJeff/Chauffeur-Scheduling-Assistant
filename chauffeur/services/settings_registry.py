@@ -373,6 +373,12 @@ ENTRIES: List[dict] = [
        'Navigator to Copilot — roughly preschool, elementary, middle and high '
        'school. Change them to match your schools.',
        page=_CONFIG, anchor='growing-up'),
+    _e('runway_cues_enabled', 'kids', 'Runway voice cues',
+       'When a morning or bedtime runway falls genuinely behind, the child\'s '
+       'room hears one short sentence through its speaker — once per stalled '
+       'item, never repeating. Each child also needs a cue room picked on the '
+       'Routines page; no room means no cues for that child.',
+       page='routines', anchor='runway'),
     _e('assist_ready_buffer_mins', 'household', 'Be-ready buffer for covered rides',
        'When somebody outside the house drives, the wall says "be ready at" — '
        'the start time minus the drive from here minus these minutes. How '

@@ -1032,6 +1032,11 @@ class Settings(BaseModel):
     # notifies exactly once, delivered as ONE consolidated Argyle DM per
     # parent; quiet hours 21:00-08:00.
     proactive_watchers_enabled: bool = True
+    # Runway voice cues (runway arc R3): the ONE calm sentence a child's
+    # room speaks when their morning/bedtime runway is genuinely behind.
+    # Per-child cue rooms live on the member record; this is the house-wide
+    # kill switch.
+    runway_cues_enabled: bool = True
     # Customizable kid status tiers — two independent single-metric ladders.
     # None = built-in defaults (status_tiers.DEFAULT_CHORE_TIERS /
     # DEFAULT_ROUTINE_TIERS). In the model so config-page saves (a strict-

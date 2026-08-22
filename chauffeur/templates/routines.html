@@ -33,6 +33,15 @@
                         each member's My Day. No points — streaks instead. Optional time of day; leave days unchecked
                         for every day.</p>
                 </div>
+                <!-- Runway voice cues (R3): the house-wide switch, on the page
+                     that owns runways. Per-child rooms are on each member
+                     block below. -->
+                <label id="runway" x-show="!isKiosk"
+                    class="flex items-center gap-2 text-sm font-bold text-gray-300 cursor-pointer bg-gray-800/60 border border-gray-700 rounded-lg px-3 py-2.5 self-center">
+                    <input type="checkbox" x-model="runwayCues" @change="saveRunwayCues()"
+                        class="w-4 h-4 accent-blue-500">
+                    🔊 Runway voice cues
+                </label>
                 <!-- New routine: only members with no routine yet -->
                 <div x-show="!isKiosk && availableMembers().length > 0" class="flex items-center gap-2">
                     <select x-model="newRoutineMemberId"
@@ -128,6 +137,22 @@
                                             </button>
                                         </div>
                                     </template>
+                                    <!-- Runway cues (R3): which room speaks the ONE
+                                         calm sentence when this child's runway is
+                                         genuinely behind. No room = no cues for
+                                         them; no HA rooms at all = no control. -->
+                                    <div x-show="member.role === 'child' && cueRooms.length"
+                                        class="flex items-center gap-1.5">
+                                        <span class="text-xs">🔊</span>
+                                        <select :value="cueRoomFor(member.id)"
+                                            @change="setCueRoom(member.id, $event.target.value)"
+                                            class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-xs font-bold text-gray-300">
+                                            <option value="">No cue room (cues off)</option>
+                                            <template x-for="rm in cueRooms" :key="rm.id">
+                                                <option :value="rm.name" x-text="rm.name"></option>
+                                            </template>
+                                        </select>
+                                    </div>
                                     <button @click="deleteBlock(member)"
                                         class="text-red-500/70 hover:text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">
                                         Delete routine
@@ -581,6 +606,43 @@
                         return;
                     }
                     await Promise.all([this.loadMembers(), this.loadRoutines(), this.loadStreaks(), this.loadPrepKits()]);
+                    this.loadCueRooms();     // non-blocking; empty when HA is absent
+                    this.loadRunwayCues();
+                },
+
+                // --- Runway cues (R3): the hand paths. ---
+                runwayCues: true,
+                async loadRunwayCues() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/settings`);
+                        if (r.ok) this.runwayCues = (await r.json()).runway_cues_enabled !== false;
+                    } catch (e) { /* default on */ }
+                },
+                async saveRunwayCues() {
+                    const r = await fetch(`${this.apiBase}api/settings`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ runway_cues_enabled: !!this.runwayCues })
+                    });
+                    if (!r.ok) showGlobalAlert('Could not save the cue switch');
+                },
+                cueRooms: [],
+                async loadCueRooms() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/announce/rooms`);
+                        this.cueRooms = r.ok ? await r.json() : [];
+                    } catch (e) { this.cueRooms = []; }
+                },
+                cueRoomFor(memberId) {
+                    return (this.members.find(m => m.id === memberId) || {}).runway_cue_room || '';
+                },
+                async setCueRoom(memberId, room) {
+                    const r = await fetch(`${this.apiBase}api/members/${memberId}`, {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ runway_cue_room: room || null })
+                    });
+                    if (!r.ok) { showGlobalAlert('Could not save the cue room'); return; }
+                    const m = this.members.find(x => x.id === memberId);
+                    if (m) m.runway_cue_room = room || null;
                 },
 
                 // The celebration is this page's, not the shared logic's: it is
