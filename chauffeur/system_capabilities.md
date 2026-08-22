@@ -4707,3 +4707,49 @@ Tests: `tests/test_supply_deadlines.py` (9 scenarios — met vs missed runs,
 no-trip, placement-beats-guess incl. the stale placement, one verdict across
 both endpoints, the never-late top-up, the deadline-earned trip offer, the
 watcher, both hand paths).
+
+## A duplicate that wants things is not a skip (v2.371.0)
+
+Supply intake **A3** (`docs/supply_intake_design.md`). Reminder emails
+outnumber announcement emails, so this branch carries most of the real
+traffic. A reminder for an event already on the calendar was stored
+`status: 'duplicate'` and rendered as a skip — correct when all it carried
+was the event, wrong the moment it can carry supplies (A1). "Already on the
+calendar, but it wants three things" is a proposal.
+
+- **`mark_duplicate(prop, match)`** is now the one place the skip decision is
+  made, shared by the email and photo loops. It always writes the
+  `duplicate_of`/`_start`/`_source`/`_rule` record (the skip stays auditable
+  and restorable either way) and then decides.
+- **Only FRESH supplies keep it alive.** `_supplies_needing_a_home()` filters
+  against what is already OPEN on any list — reusing the notion the photo
+  picker greys candidates out with rather than inventing a second one. A
+  reminder repeating the whole flyer therefore offers nothing and stays a
+  silent skip; a checked-off item does not count as covered (it was bought,
+  and next term's fair needs another). A list-read failure costs a re-offer,
+  never the item.
+- **It lands in the QUEUE, not the skip drawer**: status stays `'proposed'`
+  with `supplies_only: True`, plus `supplies_event_id` — the id of the event
+  already on the calendar, which becomes the supplies' `source_event_id`.
+- **Exactly one target, enforced server-side.** `calendar_id='supplies'`
+  writes only the supplies and resolves the card; any other target on a
+  `supplies_only` proposal is a 400, and `'supplies'` on an ordinary proposal
+  is a 400. A client that ignored the flag would otherwise create the very
+  duplicate event dedupe just avoided. Unticking everything is an honest
+  no-op ("Nothing ticked — nothing added"), not a failure.
+- **`'supplies'` is never learned as a sender route** (`learned_route`
+  excludes it alongside `'errand'`): it is not a routing preference, and
+  prefilling it would point ordinary proposals at a target that refuses them.
+- **Counted honestly**: `summary['supplies_only']`, and the ingest log row
+  says "N already on the calendar but needing supplies" rather than folding
+  them into the skip count.
+- **Both hand paths** set the target rather than offering it — a card that
+  offers a calendar it must refuse is a trap. Both show "📅 Already on the
+  calendar as 'X' — it wants N things", hide the editor, and exclude
+  `'supplies'` from `isCalTarget` so no attendee chips or location editor
+  appear.
+
+Tests: `tests/test_supply_duplicates.py` (9 scenarios — the unchanged skip,
+the fresh-supply card, the repeat-flyer filter incl. checked items, list-read
+failure, both target guards, the no-op, route exclusion, run-loop counting,
+both hand paths).

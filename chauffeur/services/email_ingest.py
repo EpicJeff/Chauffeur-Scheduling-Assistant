@@ -519,21 +519,83 @@ def _is_duplicate(prop: dict, existing: list, sched_events: list):
             rule = _rule(other)
             if rule:
                 return {'title': other.get('title') or '', 'start': other.get('start') or '',
-                        'source': source, 'rule': rule}
+                        'source': source, 'rule': rule,
+                        # A3: what a supply hangs off when the thing it is for
+                        # is ALREADY on the calendar. Best effort — a match
+                        # against a prior proposal only has an id once that
+                        # proposal was approved, and a supply with no id is
+                        # still a supply.
+                        'id': other.get('id') or other.get('created_event_id') or None}
     return None
+
+
+def _supplies_needing_a_home(supplies: list) -> list:
+    """The supplies not already sitting open on some list (A3).
+
+    A reminder email repeats the whole flyer, so the second one asks for the
+    same tri-fold board. Filtering against what is already on a list is what
+    keeps "already on the calendar, but it wants three things" from becoming
+    a weekly card for the same three things — and it reuses the check the
+    photo picker already greys candidates out with, rather than inventing a
+    second notion of "we have this covered".
+    """
+    if not supplies:
+        return []
+    open_names = set()
+    try:
+        for l in storage.get_shopping_lists():
+            for i in storage.get_shopping_items(l['id'], include_checked=False):
+                open_names.add((i.get('name') or '').strip().lower())
+    except Exception as e:
+        # Never fatal: not knowing costs a re-offer, and losing the item to
+        # an exception costs the family the board.
+        print(f"[intake] could not read lists for supply dedupe: {e}")
+    return [s for s in supplies
+            if (s.get('name') or '').strip().lower() not in open_names]
+
+
+def mark_duplicate(prop: dict, match: dict) -> str:
+    """Record what this proposal duplicates — and decide whether it is a SKIP.
+
+    Reminder emails outnumber announcement emails, so this branch carries most
+    of the real traffic. A duplicate with nothing to offer is a skip, exactly
+    as before. **A duplicate carrying supplies nobody has yet is not** (A3):
+    "already on the calendar, but it wants three things" is a proposal, and
+    rendering it as a skip is how the tri-fold board gets lost on the second
+    email after surviving the first.
+
+    Returns the status it set, so the caller can count it honestly.
+    """
+    prop.update({'duplicate_of': match['title'],
+                 'duplicate_start': match['start'],
+                 'duplicate_source': match['source'],
+                 'duplicate_rule': match['rule']})
+    fresh = _supplies_needing_a_home(prop.get('supplies'))
+    if not fresh:
+        prop['status'] = 'duplicate'
+        return 'duplicate'
+    # Stays 'proposed' so it lands in the queue the parent actually reads;
+    # the flag is what stops the card offering a calendar (and what makes the
+    # approve endpoint refuse one — a supplies-only card must never be able
+    # to create the duplicate event dedupe just avoided).
+    prop.update({'status': 'proposed', 'supplies_only': True,
+                 'supplies': fresh, 'supplies_event_id': match.get('id')})
+    return 'supplies_only'
 
 
 def learned_route(from_addr: str, kind: str):
     """Deterministic learned prior (intake phase-2 (a)): the target a parent
     last APPROVED for this sender, recorded by main._record_intake_feedback.
     Explicit sender defaults still win. 'errand' targets are never prefilled
-    (they need per-proposal location/duration), and a kid's task list only
-    prefills for kind='task'."""
+    (they need per-proposal location/duration), 'supplies' never is either
+    (A3 — it is not a routing choice at all but what was LEFT of a duplicate,
+    and prefilling it would point ordinary proposals at a target that refuses
+    them), and a kid's task list only prefills for kind='task'."""
     if not from_addr:
         return None
     routes = storage.get_app_state('intake_learned_routes') or {}
     target = (routes.get(from_addr.lower()) or {}).get('target')
-    if not target or target == 'errand':
+    if not target or target in ('errand', 'supplies'):
         return None
     if target.startswith('tasks:') and kind != 'task':
         return None
@@ -615,7 +677,7 @@ def run_photo_ingest(image_b64: str, mime: str, caption: str = '') -> dict:
 
     existing = storage.get_proposals()
     sched_events = (storage.get_cached_schedule() or {}).get('events', [])
-    dropped = duped = 0
+    dropped = duped = supplies_only = 0
     for item in items:
         prop = normalize_item(item)
         if prop is None:
@@ -633,24 +695,28 @@ def run_photo_ingest(image_b64: str, mime: str, caption: str = '') -> dict:
         # already on the calendar is recorded and restorable, not dropped.
         match = _is_duplicate(prop, existing, sched_events)
         if match:
-            prop.update({'status': 'duplicate', 'duplicate_of': match['title'],
-                         'duplicate_start': match['start'],
-                         'duplicate_source': match['source'],
-                         'duplicate_rule': match['rule']})
+            status = mark_duplicate(prop, match)
             storage.add_proposal(prop)
             existing.append(prop)
-            duped += 1
+            if status == 'duplicate':
+                duped += 1
+            else:
+                summary['proposed'] += 1
+                supplies_only += 1
             continue
         prop.pop('duplicate_of', None)
         storage.add_proposal(prop)
         existing.append(prop)
         summary['proposed'] += 1
     summary['duplicates'] = duped
+    summary['supplies_only'] = supplies_only
 
     n = summary['proposed']
     bits = []
     if duped:
         bits.append(f'{duped} skipped as duplicate')
+    if supplies_only:
+        bits.append(f'{supplies_only} already on the calendar but needing supplies')
     if dropped:
         bits.append(f'{dropped} dropped as low-confidence')
     detail = f' ({", ".join(bits)})' if bits else ''
@@ -729,7 +795,7 @@ def _run_ingest_locked() -> dict:
             storage.add_ingest_log({**log, 'outcome': f'error: extraction failed ({e})'})
             continue
 
-        proposed_here = dropped = duped = 0
+        proposed_here = dropped = duped = supplies_only = 0
         for item in items:
             prop = normalize_item(item)
             if prop is None:
@@ -759,18 +825,20 @@ def _run_ingest_locked() -> dict:
                 # already on the calendar is still recorded, still shown, and
                 # still restorable — an omitted one would simply never exist.
                 match = {'title': str(prop['duplicate_of'])[:200], 'start': '',
-                         'source': 'llm', 'rule': 'llm'}
+                         'source': 'llm', 'rule': 'llm', 'id': None}
             if match:
                 # Recorded, not dropped. A skipped duplicate that leaves no
                 # trace is indistinguishable from mail that never arrived, and
-                # that is the failure the whole hedge exists to prevent.
-                prop.update({'status': 'duplicate', 'duplicate_of': match['title'],
-                             'duplicate_start': match['start'],
-                             'duplicate_source': match['source'],
-                             'duplicate_rule': match['rule']})
+                # that is the failure the whole hedge exists to prevent. A3:
+                # and one carrying supplies nobody has yet is not a skip at
+                # all — see mark_duplicate.
+                if mark_duplicate(prop, match) == 'duplicate':
+                    duped += 1
+                else:
+                    proposed_here += 1
+                    supplies_only += 1
                 storage.add_proposal(prop)
                 existing.append(prop)
-                duped += 1
                 continue
             prop.pop('duplicate_of', None)
             storage.add_proposal(prop)
@@ -779,9 +847,12 @@ def _run_ingest_locked() -> dict:
 
         summary['proposed'] += proposed_here
         summary['duplicates'] += duped
+        summary['supplies_only'] = summary.get('supplies_only', 0) + supplies_only
         bits = []
         if duped:
             bits.append(f'{duped} skipped as duplicate')
+        if supplies_only:
+            bits.append(f'{supplies_only} already on the calendar but needing supplies')
         if dropped:
             bits.append(f'{dropped} dropped as low-confidence')
         detail = f' ({", ".join(bits)})' if bits else ''

@@ -62,6 +62,12 @@
                                         <span class="text-xs text-gray-500"
                                             x-text="Math.round((p.confidence || 0) * 100) + '% sure'"></span>
                                     </div>
+                                    <!-- A3. Reminders outnumber announcements, so this is
+                                         where most of the real traffic is: the event was
+                                         already known and would have been a silent skip,
+                                         but the flyer wants things nobody has bought. -->
+                                    <p x-show="p.supplies_only" class="text-sm text-teal-300 font-semibold"
+                                        x-text="'📅 Already on the calendar' + (p.duplicate_of ? ' as \'' + p.duplicate_of + '\'' : '') + ' — it wants ' + (p.supplies || []).length + ' thing' + ((p.supplies || []).length === 1 ? '' : 's')"></p>
                                     <p class="text-sm text-gray-300" x-text="whenLabel(p)"></p>
                                     <p class="text-sm text-gray-400" x-show="p.location" x-text="'📍 ' + p.location"></p>
                                     <p class="text-sm text-gray-400" x-show="p.member_name"
@@ -173,16 +179,21 @@
                                     </div>
                                 </div>
                                 <div class="flex flex-col gap-2 shrink-0 md:w-72">
-                                    <button @click="p._editing = !p._editing"
+                                    <button x-show="!p.supplies_only" @click="p._editing = !p._editing"
                                         class="text-xs font-bold text-gray-400 hover:text-white text-left transition-colors"
                                         x-text="p._editing ? '▾ Hide edits' : '✎ Edit details'"></button>
-                                    <select x-model="p._target" @change="onTargetChange(p)"
+                                    <select x-show="!p.supplies_only" x-model="p._target" @change="onTargetChange(p)"
                                         class="bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-sm w-full">
                                         <option value="" x-text="p.kind === 'task' ? 'Onto a list or calendar?' : 'Onto whose calendar?'"></option>
                                         <template x-for="opt in targetsFor(p)" :key="opt.id + opt.label">
                                             <option :value="opt.id" x-text="opt.label"></option>
                                         </template>
                                     </select>
+                                    <!-- A3: nothing to choose. The thing is already on the
+                                         calendar; only its supplies are new. -->
+                                    <p x-show="p.supplies_only" class="text-xs text-teal-300/80 bg-teal-500/10 border border-teal-500/30 rounded-lg p-2">
+                                        Already on the calendar — approving adds only the ticked things.
+                                    </p>
                                     <!-- Errand target: the two fields an errand needs beyond the proposal -->
                                     <div class="flex flex-col gap-2" x-show="p._target === 'errand'">
                                         <div class="relative" @click.outside="locSuggest.items = []">
@@ -563,7 +574,10 @@
                                 _description: old._description, _recurrence: old._recurrence,
                                 _recurUntil: old._recurUntil, _pax: old._pax, _drv: old._drv,
                                 _supplies: old._supplies, _supplyList: old._supplyList };
-                            const fresh = { ...p, ...this.initEditFields(p), _target: p.calendar_id || '' };
+                            // A3: a supplies-only card has exactly one target
+                            // and no choice to make, so it is set, not offered.
+                            const fresh = { ...p, ...this.initEditFields(p),
+                                _target: p.supplies_only ? 'supplies' : (p.calendar_id || '') };
                             if (fresh._target) this.onTargetChange(fresh);   // sender default → pre-check its kid
                             return fresh;
                         });
@@ -604,7 +618,8 @@
                 },
                 isCalTarget(p) {
                     const t = p._target || '';
-                    return !!t && t !== 'errand' && t !== 'household_task' && !t.startsWith('tasks:');
+                    return !!t && t !== 'errand' && t !== 'household_task'
+                        && t !== 'supplies' && !t.startsWith('tasks:');
                 },
                 // --- Mapbox place search on the location fields -----------
                 // A session token spans suggest→retrieve (that is how Mapbox

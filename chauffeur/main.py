@@ -4172,6 +4172,34 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
     end = req.end or prop['end']
     all_day = req.all_day if req.all_day is not None else bool(prop.get('all_day'))
 
+    # A3: a supplies-only card is what is LEFT of a duplicate — the thing is
+    # already on the calendar and only its supplies are new. It has exactly
+    # one target, enforced here and not only in the two UIs: a client that
+    # ignored the flag would otherwise create the very duplicate event that
+    # dedupe just avoided.
+    if prop.get('supplies_only') and (req.calendar_id or '') != 'supplies':
+        raise HTTPException(
+            status_code=400,
+            detail=f"\"{prop.get('duplicate_of') or prop['title']}\" is already on "
+                   "the calendar — this card can only add its supplies.")
+    if (req.calendar_id or '') == 'supplies':
+        if not prop.get('supplies_only'):
+            raise HTTPException(status_code=400,
+                                detail="That proposal is not a supplies-only card.")
+        n = _write_intake_supplies(prop, req, prop.get('supplies_event_id'),
+                                   (start or '')[:10])
+        storage.update_proposal(proposal_id, {
+            'status': 'approved', 'calendar_id': 'supplies', 'supplies_added': n})
+        # No sender routing learned here: the parent picked no target, so
+        # there is no preference to remember. Only the ignore streak resets.
+        _record_intake_feedback(prop, 'supplies')
+        if not n:
+            return {"status": "approved", "supplies_added": 0,
+                    "message": "Nothing ticked — nothing added."}
+        return {"status": "approved", "supplies_added": n,
+                "message": ' — '.join([f'"{prop["title"]}" is already on the calendar']
+                                      + _supplies_note(n))}
+
     # Intake phase-2 (c): the 'errand' target turns a proposal into a DRIVE
     # ERRAND the solver schedules ("buy poster board by Thursday") instead of
     # a calendar event. The parent supplies the two things a proposal lacks —

@@ -2083,7 +2083,8 @@
 
         function proposalIsCalTarget(p) {
             const t = p._target || '';
-            return !!t && t !== 'errand' && t !== 'household_task' && !t.startsWith('tasks:');
+            return !!t && t !== 'errand' && t !== 'household_task'
+                && t !== 'supplies' && !t.startsWith('tasks:');
         }
 
         // Picking a kid's calendar answers "who's going" for the usual case —
@@ -2111,7 +2112,10 @@
                         _recurUntil: old._recurUntil, _pax: old._pax || [], _drv: old._drv || [],
                         _paxInit: old._paxInit,
                         _supplies: old._supplies || [], _supplyList: old._supplyList || '' };
-                    return { ...p, ...initProposalEditFields(p), _target: p.calendar_id || '' };
+                    // A3: a supplies-only card has exactly one target and no
+                    // choice to make, so it is set rather than offered.
+                    return { ...p, ...initProposalEditFields(p),
+                        _target: p.supplies_only ? 'supplies' : (p.calendar_id || '') };
                 });
             } catch (e) { proposalsData = []; }
             if (proposalsData.length && !proposalTargets) await fetchProposalTargets();
@@ -2260,10 +2264,11 @@
                     <div class="flex items-center gap-2 flex-wrap">
                         <span class="px-1.5 py-0.5 rounded text-xs font-bold uppercase ${p.kind === 'task' ? 'bg-amber-900/60 text-amber-300' : 'bg-teal-900/60 text-teal-300'}">${p.kind === 'task' ? 'To-do' : 'Event'}</span>
                         <span class="font-bold text-gray-100 text-sm flex-1 min-w-0 truncate">${escProp(p.title)}</span>
-                        <button data-role="edit" class="text-xs font-bold text-gray-500 active:text-gray-100 shrink-0">${p._editing ? '▾ hide' : '✎ edit'}</button>
+                        <button data-role="edit" class="text-xs font-bold text-gray-500 active:text-gray-100 shrink-0 ${p.supplies_only ? 'hidden' : ''}">${p._editing ? '▾ hide' : '✎ edit'}</button>
                     </div>
                     <div class="text-xs text-gray-400 mt-1">${escProp(proposalWhen(p))}${p.location ? ' · 📍 ' + escProp(p.location) : ''}${p.member_name ? ' · 👤 ' + escProp(p.member_name) : ''}</div>
                     <div class="text-xs text-gray-500 truncate mt-0.5">${p.source === 'photo' ? '📸' : '✉️'} ${escProp(p.source_subject || p.source_from || '')}</div>
+                    ${p.supplies_only ? `<div class="text-xs text-teal-300 font-bold mt-0.5">📅 Already on the calendar${p.duplicate_of ? ` as '${escProp(p.duplicate_of)}'` : ''} — it wants ${(p.supplies || []).length} thing${(p.supplies || []).length === 1 ? '' : 's'}</div>` : ''}
                     ${p.sender_ignores ? `<div class="text-xs text-amber-400/80 mt-0.5">🤔 You've ignored the last ${p.sender_ignores} from this sender</div>` : ''}
                     <div data-role="edit-panel" class="grid grid-cols-2 gap-1.5 mt-2 ${p._editing ? '' : 'hidden'}">
                         <input data-role="f-title" type="text" placeholder="Title" value="${escProp(p._title || '')}" class="col-span-2 ${inputCls}">
@@ -2322,9 +2327,12 @@
                         </div>` : ''}
                     </div>
                     <div class="flex gap-2 mt-2">
-                        <select class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-[16px]" data-role="target">
+                        ${p.supplies_only
+                            ? `<div class="flex-1 min-w-0 text-xs text-teal-300/90 bg-teal-500/10 border border-teal-500/30 rounded-lg px-2 py-2">Already on the calendar — approving adds only the ticked things.</div>
+                               <select data-role="target" class="hidden"><option value="supplies" selected>supplies</option></select>`
+                            : `<select class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-[16px]" data-role="target">
                             <option value="">Whose calendar?</option>${extraOpt}${opts}
-                        </select>
+                        </select>`}
                         <button data-role="approve" class="bg-green-600 active:bg-green-700 disabled:opacity-40 text-white font-bold text-xs px-3 rounded-lg shrink-0">✓ Approve</button>
                         <button data-role="ignore" class="bg-gray-700 active:bg-gray-600 text-gray-100 font-bold text-xs px-3 rounded-lg shrink-0">✗</button>
                     </div>`;
