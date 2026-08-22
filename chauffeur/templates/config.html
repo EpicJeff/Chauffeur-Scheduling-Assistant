@@ -3066,6 +3066,17 @@
                                         <input type="number" x-model.number="newRule.buffer_after_mins" min="0"
                                             class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                                     </div>
+                                    <!-- Arrive-by V1: this is what turns a chip into a
+                                         sentence. "Arrive 10:00 - warm-up" is something a
+                                         parent can act on; "arrive 10:00 (buffer)" is the
+                                         app talking about itself. -->
+                                    <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'buffer'">
+                                        <label class="block text-gray-400 mb-1 text-sm">Reason</label>
+                                        <input type="text" x-model="newRule.buffer_reason" maxlength="40"
+                                            placeholder="Warm-up"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white placeholder-gray-600">
+                                        <p class="text-[11px] text-gray-500 mt-1">Shown wherever the early arrival is.</p>
+                                    </div>
                                     <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'duplicate'">
                                         <label class="block text-gray-400 mb-1 text-sm">Action</label>
                                         <select x-model="newRule.duplicate_action"
@@ -4331,7 +4342,7 @@
                 icsSyncingId: null,
                 newPassengerHashtagInput: '',
                 newPassengerCalendarInput: '',
-                newRule: { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '', filter_sets: [], buffer_before_mins: 0, buffer_after_mins: 0, attendance_action: 'stay' },
+                newRule: { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '', filter_sets: [], buffer_before_mins: 0, buffer_after_mins: 0, buffer_reason: '', attendance_action: 'stay' },
                 newRuleKeywordInput: '',
                 newPriorityRule: { weight_modifier: 100, keywords: [], passenger_ids: [], days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '' },
                 newPriorityRuleKeywordInput: '',
@@ -6618,6 +6629,7 @@
                         tolerance_mins: rule.tolerance_mins || 0,
                         tolerance_type: rule.tolerance_type || 'both',
                         buffer_before_mins: rule.buffer_before_mins || 0,
+                        buffer_reason: rule.buffer_reason || '',
                         buffer_after_mins: rule.buffer_after_mins || 0,
                         grouping_period: rule.grouping_period || 'daily',
                         keywords: [...(rule.keywords || [])],
@@ -6642,7 +6654,7 @@
                 resetRuleForm() {
                     this.editRuleId = null;
                     this.newRuleKeywordInput = '';
-                    this.newRule = { driver_id: '', constraint_type: 'required', duplicate_action: 'schedule_one', attendance_action: 'stay', tolerance_mins: 0, tolerance_type: 'both', buffer_before_mins: 0, buffer_after_mins: 0, grouping_period: 'daily', keywords: [], keywords_match_all: false, passenger_ids: [], passengers_match_all: false, days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '', filter_sets: [] };
+                    this.newRule = { driver_id: '', constraint_type: 'required', duplicate_action: 'schedule_one', attendance_action: 'stay', tolerance_mins: 0, tolerance_type: 'both', buffer_before_mins: 0, buffer_after_mins: 0, buffer_reason: '', grouping_period: 'daily', keywords: [], keywords_match_all: false, passenger_ids: [], passengers_match_all: false, days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '', filter_sets: [] };
                 },
                 cancelEditRule() {
                     this.resetRuleForm();

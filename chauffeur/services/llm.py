@@ -302,7 +302,7 @@ Constraints & rules details:
 - 'passenger_ids' is a list of calendar IDs/Passenger IDs.
 - 'location' is a substring match for the event location field.
 - For 'tolerance' rules, you must set 'tolerance_mins' (integer) and 'tolerance_type' ('arrival', 'departure', or 'both').
-- For 'buffer' rules, you must set 'buffer_before_mins' and/or 'buffer_after_mins' (integers).
+- For 'buffer' rules, you must set 'buffer_before_mins' and/or 'buffer_after_mins' (integers). Set 'buffer_reason' to WHY they need to be there early in the family's own words ('Warm-up', 'Check-in', 'Sound check') when they said it, or null. It is shown to them, so never invent a reason they did not give.
 - For 'duplicate' rules, you must set 'duplicate_action' ('schedule_one' or 'schedule_all').
 - For 'attendance' rules, you must set 'attendance_action' (e.g. 'ignore', 'require').
 - All rules must include 'is_ai_generated': true.
@@ -327,6 +327,7 @@ You MUST respond with a single valid JSON object of the following exact structur
       "tolerance_type": "both",
       "buffer_before_mins": 0,
       "buffer_after_mins": 0,
+      "buffer_reason": null,
       "duplicate_action": null,
       "attendance_action": null,
       "is_ai_generated": true

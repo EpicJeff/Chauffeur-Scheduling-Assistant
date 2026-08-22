@@ -4958,3 +4958,70 @@ Tests: `tests/test_walmart_serpapi.py` (8 scenarios — backend choice, the
 response mapping, sponsored/out-of-stock, the budget in the query, counting
 and caching, an exhausted allowance, the setting in all five combinations,
 and the paste-link path including the slug-less URL form).
+
+## Arrive By — the time you have to be standing there (v2.376.0)
+
+**V1** of `docs/arrive_by_design.md`. A buffer routing rule has worked and
+been invisible since it shipped: the solver spaces conflicts by it
+(`matcher.py`, `e_buffer_before`) and the drive plan leaves earlier for it,
+and no surface in the app ever said so out loud. A constraint the family
+cannot see is one they cannot trust, check, or correct.
+
+The fix is not "show the buffer" — it is to name the thing a buffer is one
+way of answering. **Three times per event, and they are not
+interchangeable:**
+
+| | means | side |
+|---|---|---|
+| `leave_by` / `ready_at` | get in the car now | home (shipped) |
+| **`arrive_by`** | be standing there | destination (**new**) |
+| `start` | the whistle blows | the event itself |
+
+- **`services/arrive_by.py`** — `derive(event, rules, passengers, config)` →
+  `{arrive_at, arrive_label, lead_mins, source, reason}` or **None**, which is
+  the common answer and stays cheap to say. `depart_after()` mirrors it for
+  `buffer_after_mins` ("you are not leaving yet" is a different sentence, so
+  it is a separate call). `annotate()` stamps a whole day in one pass.
+- **The earliest arrival wins — MAX, not precedence.** A household that set a
+  30-minute rule set it *because* clubs say 15 and they want more;
+  precedence would silently undo the reason the rule exists. Max never makes
+  anybody later than a source said.
+- **A typed override replaces everything** (`event_config.arrive_lead_mins` /
+  `arrive_reason`): a person overruling the app must not be argued with. An
+  override of 0 is a real answer — "no, we do not go early" — not a
+  fall-through.
+- **The matching is the SOLVER'S OWN** `does_event_match_rule`, via a small
+  attribute shim, and the refresh passes its own already-filtered rule list —
+  so a chip can never claim a buffer the solver ignored. Disabled rules and
+  non-`buffer` rules produce nothing; one malformed rule never costs the chip.
+- **Silence beats a guess**: no location (no arriving to do), all-day (no
+  minute to be early to), no matching rule → no chip. A missed arrival costs
+  a rule typed once; an invented one costs trust in every chip after it.
+  Leads clamp to 240 minutes — a rule asking for half a day is a typo.
+- **`Rule.buffer_reason`** ships here, before any calendar question, because
+  it is what turns a chip into a sentence: *"arrive 10:00 — warm-up"* beats
+  *"arrive 10:00 (buffer)"*. Default "Warm-up". Reachable by hand (Config →
+  the buffer rule editor) and known to the rule-writing prompt, which is told
+  never to invent a reason the family did not give.
+- **Stamped once** onto the events in the cached daily schedule, so every
+  surface reads one derivation and two of them cannot disagree. Derived,
+  never stored: a rule change must not leave a stale arrival behind.
+- **The start time is never replaced** — the module returns an arrival
+  ALONGSIDE the start, and V2's contract is that every surface shows both,
+  start dominant. If the app says 10:00 and means warm-up, running late at
+  10:05 feels like missing a game that has not started, which is the specific
+  anxiety this feature exists to remove.
+
+Still to come: **V2** renders the chip everywhere (drive sheet, event detail,
+digest, wall, PWA); **V3** parses the club's own words out of the event
+description — already synced from ICS by `ics_sync`, currently unread;
+**V4** (deferred, opt-in) would write a "Warm-up" shadow calendar event.
+Shifting the real event's start time is **cut**: it destroys the answer to
+"when does the game actually start", and ics_sync would fight the edit on
+every sync.
+
+Tests: `tests/test_arrive_by.py` (10 scenarios — max-wins and order
+independence, the override incl. an explicit zero, all four silences,
+delegated matching incl. weekday/location/disabled/wrong-type, a broken rule,
+clamping, the after-buffer mirror, one-pass annotation leaving events
+otherwise untouched, and both authoring paths for the reason).

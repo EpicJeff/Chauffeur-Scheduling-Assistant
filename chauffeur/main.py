@@ -14425,6 +14425,7 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh
         return {"error": "Fatal Error: " + str(e), "traceback": traceback.format_exc()}
 
 def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_refresh=False, draft=False, ignore_overrides=False):
+    from services import arrive_by as _arrive_by
     settings = storage.get_settings()
     calendar_ids = settings.get("calendar_ids", [])
     
@@ -15808,7 +15809,18 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "route_edges": route_edges,
             "initial_edges": initial_edges,
             "final_edges": final_edges,
-            "events": [e.dict() if hasattr(e, 'dict') else e for e in ui_events_for_day],
+            # Arrive-by V1: stamped HERE, once, on the payload every surface
+            # reads — so the drive sheet, the wall, the digest and the PWA
+            # cannot disagree about when to be at the pitch. Derived, never
+            # stored on the event: a rule change must not leave a stale
+            # arrival time behind (docs/arrive_by_design.md).
+            # The solve's OWN rule list is passed in, not re-read: these are
+            # the rules the matcher actually applied (enabled, and past the
+            # AI/standard toggles), so the chip can never claim a buffer the
+            # solver ignored.
+            "events": _arrive_by.annotate(
+                [e.dict() if hasattr(e, 'dict') else e for e in ui_events_for_day],
+                rules=rules, passengers=passengers),
             "true_unassigned": base['true_unassigned'],
             "conflicts": base['conflicts'],
             "scheduled_errands": scheduled_errands

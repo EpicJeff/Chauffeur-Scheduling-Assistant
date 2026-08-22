@@ -27,6 +27,7 @@ class AddRoutingRuleTool(BaseModel):
     tolerance_type: str = Field(default="both", description="For 'tolerance' rules: 'arrival', 'departure', 'both'.")
     buffer_before_mins: int = Field(default=0, description="For 'buffer' rules: minutes before event.")
     buffer_after_mins: int = Field(default=0, description="For 'buffer' rules: minutes after event.")
+    buffer_reason: Optional[str] = Field(default=None, description="For 'buffer' rules: why they arrive early, in the family's words ('Warm-up'). Shown to them, so never invented.")
     duplicate_action: str = Field(default="", description="For 'duplicate' rules: 'schedule_one' or 'schedule_all'.")
     grouping_period: str = Field(default="daily", description="For 'duplicate' rules: 'daily', 'weekly', 'monthly'.")
 
@@ -1044,6 +1045,7 @@ def handle_add_routing_rule(args: dict) -> dict:
     args.setdefault('filter_sets', [])
     args.setdefault('buffer_before_mins', 0)
     args.setdefault('buffer_after_mins', 0)
+    args.setdefault('buffer_reason', None)
     args.setdefault('attendance_action', 'stay')
     
     rule_id = storage.add_rule(args)

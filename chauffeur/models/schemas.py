@@ -597,6 +597,12 @@ class Rule(BaseModel):
     grouping_period: str = 'daily'
     buffer_before_mins: int = 0
     buffer_after_mins: int = 0
+    # WHY the family wants to be there early — "Warm-up", "Check-in",
+    # "Sound check". It exists so a chip can be a sentence instead of a
+    # number: "arrive 10:00 — warm-up" is something a parent can act on,
+    # "arrive 10:00 (buffer)" is the app talking about itself.
+    # See docs/arrive_by_design.md.
+    buffer_reason: Optional[str] = None
     attendance_action: Optional[str] = None
     keywords: List[str] = Field(default_factory=list)
     keywords_match_all: bool = False
