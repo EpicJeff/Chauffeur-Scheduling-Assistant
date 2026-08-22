@@ -137,7 +137,7 @@
                                 x-show="(hero.kids || []).length"
                                 :style="'grid-template-columns: repeat(' + Math.min((hero.kids||[]).length, 4) + ', minmax(0, 1fr))'">
                                 <template x-for="k in (hero.kids || [])" :key="k.name">
-                                    <a :href="link('routines')" class="block px-4 py-3 min-w-0 panel-card relative"
+                                    <a :href="link('routines')" class="block px-4 py-4 min-w-0 panel-card relative"
                                         :class="(hero.kids_parts || {}).figure !== false
                                                 && !(hero.kids_parts || {}).figure_compact
                                                 && k.figure ? 'pl-14' : ''">
