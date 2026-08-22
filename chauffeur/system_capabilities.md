@@ -4662,3 +4662,48 @@ approval card, and written as real `ShoppingItem`s.
 Tests: `tests/test_supply_intake.py` (8 scenarios — normalization, garbled
 entries, the prompt's own rules, all four approval branches, tick
 authority, list routing, failure isolation, both hand paths).
+
+## The run that misses the deadline says so (v2.370.0)
+
+Supply intake **A2**, the deadline spine (`docs/supply_intake_design.md`).
+A1 gave items a `needed_by`; this is what makes it worth having. Both halves
+of the arc share it — the school supply and the birthday gift ask the same
+question of the same machinery.
+
+- **`shopping.run_dates(list_id)`** returns the weekday guess AND the
+  solver's placement, because both are true at different moments: the guess
+  is all there is until the trip is scheduled, the placement is the honest
+  answer once it is. `next` prefers the placement, but only forward — a trip
+  the solver put in the past says nothing about the shop that is coming.
+- **`deadline_state(item, run_date)`** → `{needed_by, days_left, run_date,
+  late, missed}`, or **None** for the overwhelming majority of rows that have
+  no deadline (they gain no key, no chip, no nagging). `late` means the run
+  lands after the deadline; **no run at all is late by definition**.
+- **`annotate_deadlines()` is the one implementation**, called by
+  `item_runs()` (the shopping page) and by `GET /api/shopping/items` (the PWA
+  House tab). Two surfaces disagreeing about whether the poster board is
+  going to make it is worse than neither saying anything. `item_runs` also
+  returns a top-level `late` roll-up naming the ITEMS.
+- **The `now` group is never late**: the top-up IS the go-today trip, and
+  flagging its rows would be the app arguing with a decision already made.
+- **`lists_needing_a_trip()` gained a second reason.** Weight (5+ items) was
+  the only way a list could get a trip offered; a dated item now qualifies a
+  list on its own, because one tri-fold board needed Friday never reaches
+  five and is the more urgent case. `propose_shopping_errands` leads with the
+  thing and the day instead of quoting "1 thing waiting".
+- **Watcher finding** `_supply_deadline_findings` (`supply_late:{item_id}`,
+  one per late item — "2 things are late" is the completion bar in another
+  costume). Any failure skips silently so a shopping problem never costs the
+  sweep its other findings.
+- **Both list surfaces** show a chip (`by Fri`, amber `⚠ by Fri`, `was due
+  Fri`) plus a line saying WHICH way it is late — "the run is Sat" or "no
+  trip scheduled for this list" — because "late" alone does not tell a parent
+  whether to move the trip or grab it on the way home. The reason line sits
+  OUTSIDE the note/byline toggles. No percentage and no completion count
+  anywhere: three of eight unbought is fine on Monday and an emergency on
+  Thursday.
+
+Tests: `tests/test_supply_deadlines.py` (9 scenarios — met vs missed runs,
+no-trip, placement-beats-guess incl. the stale placement, one verdict across
+both endpoints, the never-late top-up, the deadline-earned trip offer, the
+watcher, both hand paths).

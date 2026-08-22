@@ -169,20 +169,115 @@ def item_runs(list_id: str = None, today: datetime.date = None) -> dict:
             now.append(it)
         else:
             later.setdefault(when, []).append(it)
+    # §A2: the run each group actually happens on, which is what a deadline
+    # is measured against. The `now` group IS the go-today trip, so it is
+    # never late; `next` takes the solver's placement over the weekday guess
+    # when there is one; a `later` run is its own date.
+    runs = run_dates(list_id, today)
     groups = []
     if now:
-        groups.append({'key': 'now', 'date': None, 'items': now,
+        groups.append({'key': 'now', 'date': None,
+                       'items': annotate_deadlines(now, today=today,
+                                                   run_date=today.isoformat()),
                        'label': 'Needed before ' + nxt.strftime('%A')})
-    groups.append({'key': 'next', 'date': shop, 'items': nxt_items,
+    groups.append({'key': 'next', 'date': shop,
+                   'items': annotate_deadlines(nxt_items, today=today,
+                                               run_date=runs['next']),
                    'label': nxt.strftime('%A') + "'s shop"})
     for when in sorted(later):
         d = datetime.date.fromisoformat(when)
         # Not %-d / %#d: those are platform-specific and this runs on both a
         # Windows dev box and an Alpine add-on container.
-        groups.append({'key': 'later', 'date': when, 'items': later[when],
+        groups.append({'key': 'later', 'date': when,
+                       'items': annotate_deadlines(later[when], today=today,
+                                                   run_date=when),
                        'label': f"{d.strftime('%b')} {d.day}"})
-    return {'shop_date': shop, 'groups': groups,
+    late = [i for g in groups for i in g['items'] if (i.get('deadline') or {}).get('late')]
+    return {'shop_date': shop, 'groups': groups, 'runs': runs,
+            'late': [{'id': i['id'], 'name': i['name'],
+                      'needed_by': i['deadline']['needed_by']} for i in late],
             'top_up': bool(now), 'counts': {g['key']: len(g['items']) for g in groups}}
+
+
+def run_dates(list_id: str = None, today: datetime.date = None) -> dict:
+    """When the family will actually be in a shop — guess AND decision.
+
+    `meals.shop_date()` is a weekday setting: a guess made from average free
+    time. A scheduled errand is a decision made against the real week. Both
+    are returned because both are true at different moments — the guess is
+    all there is until the solver has placed the trip, and the placement is
+    the honest answer once it has.
+    """
+    from services import meals as _meals
+    today = today or datetime.date.today()
+    settings = storage.get_settings() or {}
+    guess, _, _ = _meals.shop_date(settings, today)
+    out = {'guess': guess.isoformat(), 'scheduled': None, 'next': guess.isoformat(),
+           'has_trip': False}
+    if not list_id:
+        return out
+    e = errand_for_list(list_id)
+    out['has_trip'] = bool(e)
+    nxt = next_scheduled_shop(list_id) if e else None
+    if nxt and nxt.get('date'):
+        out['scheduled'] = nxt['date']
+        # The solver's placement wins — but only forward. A trip scheduled
+        # for a day already gone says nothing about the shop that is coming.
+        if nxt['date'] >= today.isoformat():
+            out['next'] = nxt['date']
+    return out
+
+
+def deadline_state(item: dict, run_date: str, today: datetime.date = None) -> dict:
+    """Does the run that will buy this thing land before it is needed?
+
+    Supply intake §A2, and the reason `needed_by` exists at all. "Add poster
+    board to the list" is worth almost nothing; "the fair is Friday and your
+    shop run is Saturday" is the whole feature.
+
+    Returns None for an item with no deadline — which is nearly all of them,
+    and they must stay ordinary rows. No percentage and no completion count
+    anywhere downstream (occasions §O2): three of eight supplies unbought is
+    fine on Monday and an emergency on Thursday, and one number cannot say
+    both.
+    """
+    needed = (item or {}).get('needed_by')
+    if not needed:
+        return None
+    today = today or datetime.date.today()
+    try:
+        due = datetime.date.fromisoformat(str(needed))
+    except (TypeError, ValueError):
+        return None
+    days_left = (due - today).days
+    # No run date at all (nowhere to shop) is LATE by definition — a thing
+    # with a deadline and no trip is exactly the quiet failure this catches.
+    late = (not run_date) or str(run_date) > needed
+    return {'needed_by': needed, 'days_left': days_left,
+            'run_date': run_date or None, 'late': late,
+            'missed': days_left < 0}
+
+
+def annotate_deadlines(items: list, list_id: str = None, today: datetime.date = None,
+                       run_date: str = None) -> list:
+    """One implementation of the verdict, for every surface that shows items.
+
+    Which run an item belongs to is already answered server-side rather than
+    re-derived per page (see `item_runs`), and whether that run is in time is
+    the same kind of question — a list page and a watcher disagreeing about
+    whether the poster board is late is worse than neither saying anything.
+    """
+    today = today or datetime.date.today()
+    if run_date is None:
+        run_date = run_dates(list_id, today)['next']
+    out = []
+    for it in items:
+        row = dict(it)
+        state = deadline_state(row, run_date, today)
+        if state:
+            row['deadline'] = state
+        out.append(row)
+    return out
 
 
 def errand_for_list(list_id: str) -> dict:
@@ -275,19 +370,63 @@ def create_errand_for_list(list_id: str = None, weekday: int = None,
                        f"'{lst['name']}'. The solver will fit it into the week."}
 
 
-def lists_needing_a_trip(min_items: int = 5) -> list:
+def lists_needing_a_trip(min_items: int = 5, today: datetime.date = None) -> list:
     """Lists carrying real weight with nowhere to happen.
 
     Deliberately not a nag on every list: a list with two things on it is not a
     trip, and a list nobody is adding to does not need one either.
+
+    §A2 adds the second reason, which weight cannot express: **a deadline with
+    no trip to meet it**. One tri-fold board needed Friday on a list with
+    nowhere to happen is a real failure and would never reach five items — so
+    a dated item qualifies a list on its own, and the offer says which thing
+    is driving it rather than quoting a count that is not the point.
     """
+    today = today or datetime.date.today()
     out = []
     for l in storage.get_shopping_lists():
         if errand_for_list(l['id']):
             continue
         open_items = storage.get_shopping_items(l['id'], include_checked=False)
-        if len(open_items) >= min_items:
-            out.append({'list': l, 'open_count': len(open_items)})
+        # No trip means no run date, so every dated item here is late by
+        # definition — the soonest one is the one worth naming.
+        dated = sorted((i for i in open_items if i.get('needed_by')),
+                       key=lambda i: str(i['needed_by']))
+        soonest = dated[0] if dated else None
+        if len(open_items) >= min_items or soonest:
+            out.append({'list': l, 'open_count': len(open_items),
+                        'because': 'deadline' if soonest else 'weight',
+                        'deadline_item': soonest})
+    return out
+
+
+def deadline_findings(today: datetime.date = None) -> list:
+    """(key, line) pairs for the watcher sweep — one per late item.
+
+    Deliberately per ITEM and not per list: "2 things are late" is the
+    percentage failure in another costume. The parent needs to know it is the
+    poster board, because that is what tells them whether it matters.
+    """
+    today = today or datetime.date.today()
+    out = []
+    for l in storage.get_shopping_lists():
+        run = run_dates(l['id'], today)
+        items = storage.get_shopping_items(l['id'], include_checked=False)
+        for it in annotate_deadlines(items, today=today, run_date=run['next']):
+            d = it.get('deadline')
+            if not d or not d['late']:
+                continue
+            when = datetime.date.fromisoformat(d['needed_by'])
+            if d['missed']:
+                tail = f"was needed {when.strftime('%A')}"
+            elif not run['has_trip']:
+                tail = (f"needed {when.strftime('%A')} and '{l['name']}' has no "
+                        f"trip scheduled")
+            else:
+                shop = datetime.date.fromisoformat(d['run_date'])
+                tail = (f"needed {when.strftime('%A')}, and the "
+                        f"'{l['name']}' run is {shop.strftime('%A')}")
+            out.append((f"supply_late:{it['id']}", f"🛒 {it['name']} — {tail}"))
     return out
 
 
@@ -307,18 +446,33 @@ def propose_shopping_errands(now=None, deliver=None, min_items: int = 5) -> dict
     seen = {k: v for k, v in seen.items() if str(v) >= cutoff}
 
     offered = []
-    for row in lists_needing_a_trip(min_items):
+    for row in lists_needing_a_trip(min_items, now.date()):
         lst, n = row['list'], row['open_count']
         if lst['id'] in seen:
             continue
         seen[lst['id']] = now.date().isoformat()          # marker FIRST
         store = (lst.get('store') or '').strip()
-        summary = f"A weekly trip for '{lst['name']}' ({n} things waiting)"
-        body = (f"🛒 '{lst['name']}' has {n} things on it and no trip scheduled — "
-                f"it only exists in someone's head right now. Want me to add a "
-                f"weekly {DEFAULT_SHOP_MINS}-minute run"
-                + (f" to {store}" if store else "")
-                + " and let the solver fit it into the week?")
+        due = row.get('deadline_item')
+        if due:
+            # Lead with the dated thing, not the count: a list of one is the
+            # normal shape of this case and quoting "1 thing waiting" reads
+            # as trivial when it is the opposite.
+            when = datetime.date.fromisoformat(str(due['needed_by']))
+            summary = (f"A trip for '{lst['name']}' — {due['name']} is needed "
+                       f"{when.strftime('%A')}")
+            body = (f"🛒 {due['name']} is needed by {when.strftime('%A')} and "
+                    f"'{lst['name']}' has no trip scheduled — there is nowhere "
+                    f"for it to be bought. Want me to add a weekly "
+                    f"{DEFAULT_SHOP_MINS}-minute run"
+                    + (f" to {store}" if store else "")
+                    + " and let the solver fit it into the week?")
+        else:
+            summary = f"A weekly trip for '{lst['name']}' ({n} things waiting)"
+            body = (f"🛒 '{lst['name']}' has {n} things on it and no trip scheduled — "
+                    f"it only exists in someone's head right now. Want me to add a "
+                    f"weekly {DEFAULT_SHOP_MINS}-minute run"
+                    + (f" to {store}" if store else "")
+                    + " and let the solver fit it into the week?")
         if not store:
             body += ("\n(I don't know where you shop for this — approving will "
                      "ask for the store.)")

@@ -184,6 +184,19 @@
                                 <div class="font-semibold text-white truncate">
                                     <span x-text="it.name"></span>
                                     <span class="text-gray-400 font-normal" x-show="it.qty" x-text="' · ' + it.qty"></span>
+                                    <!-- §A2: when a thing is needed BY a day, say so on the
+                                         row. Amber only when the run will miss it — a
+                                         deadline that is going to be met is information,
+                                         not an alarm. No count and no percentage anywhere:
+                                         three of eight unbought is fine on Monday and an
+                                         emergency on Thursday. -->
+                                    <template x-if="it.deadline">
+                                        <span class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold align-middle"
+                                            :class="it.deadline.late
+                                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                                : 'bg-gray-700 text-gray-400'"
+                                            x-text="deadlineChip(it.deadline)"></span>
+                                    </template>
                                 </div>
                                 <div class="text-[11px] text-gray-500" x-show="itemSubline(it)">
                                     <span x-text="itemSubline(it)"></span>
@@ -448,9 +461,33 @@
             // than assembling it out of three x-shows that can disagree.
             itemSubline(it) {
                 const bits = [];
+                // The deadline reason is NOT behind the note/byline toggles:
+                // a family who turned notes off has not asked to stop being
+                // told the run will miss the science fair.
+                const why = this.deadlineWhy(it);
+                if (why) bits.push(why);
                 if (this.listShow('note') && it.note) bits.push(it.note);
                 if (this.listShow('byline') && this.byline(it)) bits.push(this.byline(it));
                 return bits.join(' · ');
+            },
+            _dayName(iso) {
+                try {
+                    return new Date(iso + 'T00:00:00')
+                        .toLocaleDateString(undefined, { weekday: 'short' });
+                } catch (e) { return iso; }
+            },
+            deadlineChip(d) {
+                if (!d) return '';
+                if (d.missed) return 'was due ' + this._dayName(d.needed_by);
+                return (d.late ? '⚠ by ' : 'by ') + this._dayName(d.needed_by);
+            },
+            // Says WHICH way it is late, because "late" alone does not tell a
+            // parent whether to move the trip or just grab it on the way home.
+            deadlineWhy(it) {
+                const d = it.deadline;
+                if (!d || !d.late || d.missed) return '';
+                if (!d.run_date) return 'no trip scheduled for this list';
+                return 'the run is ' + this._dayName(d.run_date);
             },
 
             async loadMembers() {

@@ -139,6 +139,21 @@ def _errand_findings():
     return out
 
 
+def _supply_deadline_findings(now: datetime.datetime):
+    """Supply intake §A2: a thing with a deadline the shop run will not meet.
+
+    A surface you have to open is one you do not open, which is why this is a
+    watcher and not only a badge on the list. Any failure skips silently —
+    the sweep's other findings must not be lost to a shopping problem.
+    """
+    try:
+        from services import shopping as _shop
+        return _shop.deadline_findings(now.date())
+    except Exception as e:
+        print(f"[watchers] supply deadline check failed: {e}")
+        return []
+
+
 def _prep_kit_findings(now_ts: float):
     """WEEKLY: one background-tier LLM pass proposing prep kits for recurring
     events that have none. Any problem (no key, no events, pool error) skips
@@ -219,6 +234,7 @@ def collect_findings(now: datetime.datetime = None):
     findings += chore
     findings += _redemption_findings(now_ts)
     findings += _errand_findings()
+    findings += _supply_deadline_findings(now)
     findings += _occasion_findings(now)
     findings += _household_task_findings(now)
     findings += _stage_findings(now)

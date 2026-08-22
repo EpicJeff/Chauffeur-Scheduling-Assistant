@@ -4327,6 +4327,33 @@
             wrap.innerHTML = parts.length > 1 ? `<div class="flex gap-2">${parts.join('')}</div>` : '';
         }
 
+        // §A2: the same verdict the shopping page shows, from the same server
+        // field — the two surfaces must never disagree about whether the
+        // poster board is going to make it. Amber only when the run will miss
+        // it; a deadline being met is information, not an alarm.
+        function houseDeadlineBits(i) {
+            const d = i.deadline;
+            if (!d) return '';
+            const day = iso => {
+                try {
+                    return new Date(iso + 'T00:00:00')
+                        .toLocaleDateString(undefined, { weekday: 'short' });
+                } catch (e) { return iso; }
+            };
+            const chipCls = d.late
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                : 'bg-gray-800 text-gray-400 border border-gray-700';
+            const label = d.missed ? `was due ${day(d.needed_by)}`
+                : `${d.late ? '⚠ ' : ''}by ${day(d.needed_by)}`;
+            let why = '';
+            if (d.late && !d.missed) {
+                why = d.run_date ? `the run is ${day(d.run_date)}`
+                                 : 'no trip scheduled for this list';
+            }
+            return `<span class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${chipCls}">${mfEscape(label)}</span>`
+                + (why ? `<span class="block text-[11px] text-gray-500 font-normal">${mfEscape(why)}</span>` : '');
+        }
+
         function renderHouseLists() {
             const wrap = document.getElementById('house-lists');
             if (!wrap) return;
@@ -4349,8 +4376,9 @@
                         class="w-6 h-6 rounded-full accent-pink-500 shrink-0">
                     ${i.image_id ? `<img src="${apiBase}api/media/${i.image_id}" alt=""
                         class="w-9 h-9 rounded-lg object-cover border border-gray-700 shrink-0">` : ''}
-                    <span class="flex-1 text-[15px] font-bold text-gray-100">${mfEscape(i.name)}${i.qty
-                        ? ` <span class="text-gray-500 font-normal">(${mfEscape(i.qty)})</span>` : ''}</span>
+                    <span class="flex-1 min-w-0 text-[15px] font-bold text-gray-100">${mfEscape(i.name)}${i.qty
+                        ? ` <span class="text-gray-500 font-normal">(${mfEscape(i.qty)})</span>` : ''}
+                        ${houseDeadlineBits(i)}</span>
                 </label>`).join('');
             wrap.innerHTML = `
                 <div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">

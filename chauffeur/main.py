@@ -9465,7 +9465,12 @@ def list_shopping_items(list_id: Optional[str] = None, include_checked: bool = T
     if not list_id:
         list_id = storage.ensure_default_shopping_list()['id']
     _shopping_list_refused(list_id, request)
-    return storage.get_shopping_items(list_id, include_checked)
+    from services import shopping as _shop
+    # §A2: the same verdict `item_runs` serves, so a surface that reads items
+    # directly (the PWA House tab) cannot disagree with one that reads runs
+    # (the shopping page) about whether a dated thing is going to make it.
+    return _shop.annotate_deadlines(
+        storage.get_shopping_items(list_id, include_checked), list_id)
 
 @app.get("/api/shopping/runs")
 def shopping_item_runs(list_id: Optional[str] = None, request: Request = None):
