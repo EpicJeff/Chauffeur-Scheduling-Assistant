@@ -4807,3 +4807,55 @@ Tests: `tests/test_invited_occasions.py` (8 scenarios — no host questions,
 the checklist and its non-errand, empty-by-default attendance vs hosting,
 private list, the nobody-on-it guard, candidate filtering, once-per-event
 plus the accept path, switch and action registration).
+
+## The gift shortlist that never invents a product (v2.373.0)
+
+Supply intake **A5** (`docs/supply_intake_design.md`). The rule this slice
+exists to enforce: **the model never names a product.** Asked for gift ideas
+an LLM returns "LEGO Friends Beach House, $34.99" with an invented SKU and a
+price from its training data, and a parent cannot tell that from a real one
+until they are standing in a shop. The precedent shipped twice already —
+trips are LLM-proposes → Mapbox-verifies, intake is LLM-extracts → family
+approves. Here:
+
+> LLM emits **search queries** → `walmart.search()` returns real itemIds and
+> real prices → the budget filters **Walmart's response** → survivors are
+> **staged** for a pick.
+
+- **`_GIFT_QUERY_SYSTEM`** asks for 5–8 genuinely different search terms
+  ("kids art set 7 year old"), spells out that a product name or a price is
+  forbidden, and gives a bad example alongside every good one. The budget is
+  **deliberately not in the prompt**: telling the model about one only
+  invites it to quote one.
+- **`gift_ideas(occasion_id, extra)`** runs the searches and filters. An item
+  the API returned **no price for is DROPPED**, not assumed cheap —
+  "probably under $25" is the exact guess this design refuses. Out-of-stock
+  dropped, duplicates by itemId dropped, over-budget counted. Sorted
+  **cheapest first**: a parent scanning a gift shortlist is deciding what is
+  enough, not what is best. One query erroring never kills the shortlist.
+- **No credentials → no products.** The honest degradation is the queries
+  themselves as *things to look for*, `searched: False`, with a note saying
+  so. A plausible invented gift is worse than none: the parent has to
+  evaluate it either way and now has to discover it is fake.
+- **`add_gifts(occasion_id, picks)`** takes WHOLE candidates, not ids — the
+  itemId, title and price the parent actually saw — so a fresh search a
+  fortnight later cannot swap the product underneath them. Picks land on one
+  private list per party (`occasion_key='gift'`, `_gift_visibility`) with
+  `needed_by = anchor − gift_lead_days()` (3 by default, A6 makes it a
+  setting), which is exactly what A2's spine reads.
+- **Cart-ready with no new cart code**: each pick also writes
+  `walmart.set_mapping(name → itemId)`, so `cart_for_list()` carts the exact
+  product chosen rather than whatever a search turns up later.
+- **API**: `POST /api/occasions/{id}/gift-ideas`, `POST
+  /api/occasions/{id}/gift-picks`.
+- **Hand path is the PRIMARY path** — the 🎁 section on an `invited`
+  occasion: a free-text "anything they're into?", a candidate grid with
+  thumbnails and real prices, tap to pick, one button to add. The agent tool
+  `suggest_gift_ideas` (both stacks) *suggests* and hands the choosing back,
+  because a present is not a thing to have chosen for you by a chat message.
+
+Tests: `tests/test_gift_shortlist.py` (7 scenarios — the prompt's own rules
+and the budget never reaching it, the price filter incl. missing prices and
+out-of-stock, the unconfigured degradation, a dead search, private +
+cart-ready picks with the mapping proved through `cart_for_list`, both
+stacks, the hand path).

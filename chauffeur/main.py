@@ -10684,6 +10684,43 @@ def source_for_occasion(occasion_id: str, req: SourcingRequest):
     _touch_stream()
     return res
 
+class GiftIdeasRequest(BaseModel):
+    extra: Optional[str] = None
+
+class GiftPicksRequest(BaseModel):
+    # Whole candidate objects, not ids: the itemId, the title and the price
+    # the parent actually SAW are what gets stored and mapped, so a fresh
+    # search two weeks later cannot quietly swap the product underneath them.
+    picks: List[Dict[str, Any]] = []
+    added_by: Optional[str] = None
+
+@app.post("/api/occasions/{occasion_id}/gift-ideas")
+def occasion_gift_ideas(occasion_id: str, req: GiftIdeasRequest):
+    """A5: LLM emits SEARCH QUERIES, Walmart returns real products and real
+    prices, the budget filters that response. The model never names a
+    product, and nothing is added — these are staged for a pick."""
+    from services import occasions as _occ
+    if not storage.get_occasion(occasion_id):
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    res = _occ.gift_ideas(occasion_id, req.extra)
+    if res.get('error') and not res.get('queries'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    return res
+
+@app.post("/api/occasions/{occasion_id}/gift-picks")
+def occasion_gift_picks(occasion_id: str, req: GiftPicksRequest):
+    """The picked ones onto the occasion's PRIVATE gift list, with the
+    name→itemId mapping recorded so the existing cart rails carry the exact
+    product that was chosen."""
+    from services import occasions as _occ
+    if not storage.get_occasion(occasion_id):
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    res = _occ.add_gifts(occasion_id, req.picks, req.added_by)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    _touch_stream()
+    return res
+
 @app.post("/api/meals/migrate-dishes")
 def migrate_dishes():
     """One-shot: type M4's dishes and retire the slot-meals they belonged to."""

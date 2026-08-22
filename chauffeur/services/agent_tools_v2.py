@@ -2400,6 +2400,46 @@ def source_for_occasion(occasion_name: str, needed: str,
                        "Shopping page — check it over and it'll go to a cart."}
 
 
+def suggest_gift_ideas(occasion_name: str, extra: str = "",
+                       acting_member: dict = None) -> Dict[str, Any]:
+    """READ: "what should we get Jack for his party?", "any present ideas for
+    Saturday?"
+
+    Never names a product on its own authority — it searches, and reports what
+    a real shop actually stocks under the budget. Suggesting only; picking is
+    a tap on the occasion page, because a present is not a thing to have
+    chosen for you by a chat message.
+    """
+    from services import occasions as _occ
+    o = _find_occasion(occasion_name, acting_member)
+    if not o:
+        return {"status": "error",
+                "message": f"I don't have an occasion called '{occasion_name}'."}
+    res = _occ.gift_ideas(o['id'], extra)
+    if res.get('error') and not res.get('queries'):
+        return {"status": "error", "message": "I couldn't think of anything useful."}
+    if not res.get('searched'):
+        ideas = ', '.join(q['query'] for q in res.get('queries', [])[:5])
+        return {"status": "success",
+                "message": f"No shop search is set up, so these are things to look "
+                           f"for rather than real products: {ideas}."}
+    cands = res.get('candidates') or []
+    if not cands:
+        budget = res.get('budget')
+        tail = f" under ${budget:g}" if budget else ""
+        return {"status": "success",
+                "message": f"I searched and found nothing good{tail}. "
+                           "Worth raising the budget or telling me what they're into."}
+    lines = '; '.join(
+        f"{c['title']}" + (f" (${c['price']:g})" if c.get('price') else "")
+        for c in cands[:4])
+    more = f" and {len(cands) - 4} more" if len(cands) > 4 else ""
+    return {"status": "success",
+            "message": f"Found {len(cands)} for {o['title']}: {lines}{more}. "
+                       "They're on the occasion page — pick the ones you like "
+                       "and they'll go on a private list ready for a cart."}
+
+
 def get_run_sheet(target_date: str = "today", serve_at: str = "",
                   acting_member: dict = None) -> Dict[str, Any]:
     """READ: "when do I need to start cooking on Thursday?", "what time does
@@ -3566,6 +3606,18 @@ def get_available_tools() -> List[Dict]:
                     "needed": {"type": "string", "description": "What they need, in their words."}
                 },
                 "required": ["occasion_name", "needed"]
+            }
+        },
+        {
+            "name": "suggest_gift_ideas",
+            "description": "Finds present ideas for a party the family was INVITED to, by searching a real shop and reporting what it actually stocks under the budget: what should we get Jack, any present ideas for Saturday. Never makes up a product or a price. Suggests only — picking happens on the occasion page.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "occasion_name": {"type": "string", "description": "Which party."},
+                    "extra": {"type": "string", "description": "Anything the parent knows about the child, e.g. they are into dinosaurs."}
+                },
+                "required": ["occasion_name"]
             }
         },
         {

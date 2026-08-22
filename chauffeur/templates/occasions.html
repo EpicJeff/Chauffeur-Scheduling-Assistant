@@ -206,6 +206,70 @@
                         </div>
                     </div>
 
+                    <!-- A5: the present, for a party the family is GOING to.
+                         The model never names a product — it writes SEARCH
+                         QUERIES, Walmart answers with real items and real
+                         prices, and the budget filters that answer. Staged,
+                         never auto-added; picking puts them on a PRIVATE list
+                         the birthday child's friends' parents (and our own
+                         kids) cannot see. -->
+                    <div x-show="o.kind === 'invited'" class="mb-4">
+                        <div class="text-xs font-black uppercase tracking-widest text-amber-200 mb-2">
+                            🎁 The present
+                            <span class="text-gray-500 font-bold normal-case tracking-normal ml-1"
+                                x-text="giftBudgetLabel(o)"></span>
+                        </div>
+                        <div class="bg-gray-900 rounded-xl border border-gray-700 p-4">
+                            <div class="flex gap-2 mb-3">
+                                <input type="text" x-model="giftExtra[o.id]"
+                                    placeholder="Anything they're into? (optional)"
+                                    class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white">
+                                <button @click="findGifts(o)" :disabled="giftBusy === o.id"
+                                    class="px-3 py-2 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-200 text-sm font-bold disabled:opacity-40"
+                                    x-text="giftBusy === o.id ? 'Looking…' : 'Find ideas'"></button>
+                            </div>
+                            <p x-show="(gifts[o.id] || {}).note" class="text-xs text-gray-500 mb-2"
+                                x-text="(gifts[o.id] || {}).note"></p>
+                            <!-- Unverified: categories to look for, never products
+                                 anybody is claiming exist at a price. -->
+                            <div x-show="(gifts[o.id] || {}).queries && !(gifts[o.id] || {}).searched"
+                                class="flex flex-wrap gap-1.5">
+                                <template x-for="q in ((gifts[o.id] || {}).queries || [])" :key="'q-' + q.query">
+                                    <span class="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-gray-800 border border-gray-700 text-gray-300"
+                                        x-text="q.query"></span>
+                                </template>
+                            </div>
+                            <div x-show="(gifts[o.id] || {}).searched && !((gifts[o.id] || {}).candidates || []).length"
+                                class="text-sm text-gray-400">
+                                Nothing in the shop under that budget. Worth raising it, or
+                                telling me what they're into.
+                            </div>
+                            <div class="grid grid-cols-2 md:grid-cols-3 gap-2"
+                                x-show="((gifts[o.id] || {}).candidates || []).length">
+                                <template x-for="c in ((gifts[o.id] || {}).candidates || [])" :key="'g-' + c.item_id">
+                                    <button @click="toggleGift(o, c)"
+                                        class="text-left rounded-xl border p-2 transition-colors"
+                                        :class="giftPicked(o, c)
+                                            ? 'bg-amber-500/15 border-amber-400/60'
+                                            : 'bg-gray-800 border-gray-700 hover:border-gray-500'">
+                                        <img x-show="c.thumbnail" :src="c.thumbnail" alt=""
+                                            class="w-full h-24 object-contain rounded-lg bg-white/5 mb-1.5">
+                                        <div class="text-[11px] text-gray-200 font-semibold line-clamp-2"
+                                            x-text="c.title"></div>
+                                        <div class="text-[11px] text-amber-200 font-bold"
+                                            x-show="c.price !== null && c.price !== undefined"
+                                            x-text="'$' + c.price"></div>
+                                        <div class="text-[10px] text-gray-500 italic line-clamp-1" x-text="c.why"></div>
+                                    </button>
+                                </template>
+                            </div>
+                            <button x-show="(giftPicks[o.id] || []).length"
+                                @click="saveGifts(o)" :disabled="giftBusy === o.id"
+                                class="mt-3 w-full py-2 rounded-lg bg-amber-500 text-gray-900 font-bold text-sm disabled:opacity-40"
+                                x-text="'Add ' + (giftPicks[o.id] || []).length + ' to a private list'"></button>
+                        </div>
+                    </div>
+
                     <!-- The menu. Curated ahead, in isolation from the everyday
                          list: dishes added here are born occasion-only, so a
                          Thanksgiving menu never puts turkey in the list the
@@ -402,6 +466,9 @@
             occasions: [], detail: {}, sourceDraft: {},
             gaps: {}, insights: {}, answerDraft: {},
             menus: {}, dishDraft: {}, showPool: {}, dishBusy: false,
+            // A5: staged candidates, the parent's picks, and the free-text
+            // hint. Per occasion because two parties can be open at once.
+            gifts: {}, giftPicks: {}, giftExtra: {}, giftBusy: null,
             loading: true, busy: false, sourcing: false, showNew: false,
             // 'invited' is the inverse of the rest: somebody else is hosting and
             // the only work is a present. A4, docs/supply_intake_design.md.
@@ -543,6 +610,63 @@
                     showGlobalAlert('Could not add those just now.');
                 }
                 this.dishBusy = false;
+            },
+
+            // --- A5: the present -------------------------------------
+            // Picks carry the WHOLE candidate, not an id: the itemId, title
+            // and price the parent actually saw are what get stored and
+            // mapped, so a fresh search a fortnight later cannot quietly
+            // swap the product underneath them.
+            giftBudgetLabel(o) {
+                const b = ((o.answers || {}).gift_budget);
+                return b ? `under $${b}` : 'no budget set';
+            },
+            giftPicked(o, c) {
+                return (this.giftPicks[o.id] || []).some(p => p.item_id === c.item_id);
+            },
+            toggleGift(o, c) {
+                const on = this.giftPicks[o.id] || [];
+                this.giftPicks[o.id] = this.giftPicked(o, c)
+                    ? on.filter(p => p.item_id !== c.item_id) : [...on, c];
+            },
+            async findGifts(o) {
+                this.giftBusy = o.id;
+                try {
+                    const r = await fetch(`${this.apiBase}api/occasions/${o.id}/gift-ideas`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ extra: this.giftExtra[o.id] || '' })
+                    });
+                    if (r.ok) {
+                        this.gifts[o.id] = await r.json();
+                        this.giftPicks[o.id] = [];
+                    } else {
+                        showGlobalAlert((await r.json()).detail || "Couldn't look that up.");
+                    }
+                } catch (e) {
+                    showGlobalAlert("Couldn't look that up.");
+                }
+                this.giftBusy = null;
+            },
+            async saveGifts(o) {
+                this.giftBusy = o.id;
+                try {
+                    const r = await fetch(`${this.apiBase}api/occasions/${o.id}/gift-picks`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ picks: this.giftPicks[o.id] || [] })
+                    });
+                    if (r.ok) {
+                        const res = await r.json();
+                        this.giftPicks[o.id] = [];
+                        this.gifts[o.id] = {};
+                        showGlobalAlert(`On '${res.list.name}' — only the grown-ups can see it. `
+                            + `Needed by ${res.needed_by}.`);
+                    } else {
+                        showGlobalAlert((await r.json()).detail || "Couldn't save those.");
+                    }
+                } catch (e) {
+                    showGlobalAlert("Couldn't save those.");
+                }
+                this.giftBusy = null;
             },
 
             insightIcon(kind) {

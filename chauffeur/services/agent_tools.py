@@ -638,6 +638,13 @@ class SourceForOccasionTool(BaseModel):
     occasion_name: str = Field(..., description="Which occasion.")
     needed: str = Field(..., description="What they need, in their words.")
 
+class SuggestGiftIdeasTool(BaseModel):
+    """
+    Finds present ideas for a party the family was INVITED to by searching a real shop, and reports what it actually stocks under the budget ("what should we get Jack?"). Never invents a product or a price.
+    """
+    occasion_name: str = Field(..., description="Which party.")
+    extra: str = Field("", description="Anything known about the child, e.g. they are into dinosaurs.")
+
 class GetRunSheetTool(BaseModel):
     """
     Works out when to start cooking and what goes on when, counting back from when the family eats ("when do I need to start on Thursday?", "what time does the turkey go in?"). Accounts for one oven at two temperatures and for how many people are cooking.
@@ -911,6 +918,7 @@ TOOL_SCHEMAS = {
     "add_occasion_guests": AddOccasionGuestsTool.model_json_schema(),
     "set_occasion_attendance": SetOccasionAttendanceTool.model_json_schema(),
     "source_for_occasion": SourceForOccasionTool.model_json_schema(),
+    "suggest_gift_ideas": SuggestGiftIdeasTool.model_json_schema(),
     "set_dish_prep": SetDishPrepTool.model_json_schema(),
     "clear_dish_prep": ClearDishPrepTool.model_json_schema(),
     "get_prep_ahead": GetPrepAheadTool.model_json_schema(),
@@ -2139,6 +2147,11 @@ def handle_add_occasion_guests(args: dict) -> dict:
                                int(args.get("headcount") or 1),
                                args.get("cannot_eat") or "")
 
+def handle_suggest_gift_ideas(args: dict) -> dict:
+    from services.agent_tools_v2 import suggest_gift_ideas
+    return suggest_gift_ideas(args.get("occasion_name") or "",
+                              args.get("extra") or "")
+
 def handle_source_for_occasion(args: dict) -> dict:
     from services.agent_tools_v2 import source_for_occasion
     return source_for_occasion(args.get("occasion_name") or "",
@@ -2373,6 +2386,7 @@ TOOL_HANDLERS = {
     "add_occasion_guests": handle_add_occasion_guests,
     "set_occasion_attendance": handle_set_occasion_attendance,
     "source_for_occasion": handle_source_for_occasion,
+    "suggest_gift_ideas": handle_suggest_gift_ideas,
     "set_dish_prep": handle_set_dish_prep,
     "clear_dish_prep": handle_clear_dish_prep,
     "get_prep_ahead": handle_get_prep_ahead,

@@ -837,6 +837,10 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.source_for_occasion(
                             args.get("occasion_name", "") or "",
                             args.get("needed", "") or "", acting_member=actor)
+                    elif func_name == "suggest_gift_ideas":
+                        res = _atv2.suggest_gift_ideas(
+                            args.get("occasion_name", "") or "",
+                            args.get("extra", "") or "", acting_member=actor)
                     elif func_name == "get_run_sheet":
                         res = _atv2.get_run_sheet(
                             args.get("target_date", "today") or "today",

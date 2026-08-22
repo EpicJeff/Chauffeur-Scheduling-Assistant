@@ -1245,6 +1245,223 @@ def _gift_visibility(occasion: dict) -> dict:
     return {'audience': 'private', 'shared_with': grown}
 
 
+# --- A5: the gift shortlist -------------------------------------------------
+#
+# THE RULE THIS SLICE EXISTS TO ENFORCE: the model never names a product.
+#
+# Asked for gift ideas an LLM returns "LEGO Friends Beach House, $34.99" with
+# an invented SKU and a price from its training data, and a parent cannot tell
+# that from a real one until they are standing in a shop. The precedent for
+# the fix already shipped twice — trips are LLM-proposes → Mapbox-verifies,
+# and intake is LLM-extracts → the family approves. Here it is:
+#
+#     LLM emits SEARCH QUERIES → walmart.search() returns real itemIds and
+#     real prices → the budget cap filters WALMART'S RESPONSE → survivors are
+#     STAGED for a pick.
+#
+# The budget is applied to the retailer's answer, never to the model's
+# imagination, and nothing is ever auto-added.
+
+_GIFT_QUERY_SYSTEM = (
+    "You help a parent find a present for another child's birthday party. "
+    "Reply with STRICT JSON only, no prose, no code fences.\n\n"
+    "Schema: {\"queries\": [{\"query\": str, \"why\": str}]}\n\n"
+    "CRITICAL: `query` is what you would TYPE INTO A SHOP'S SEARCH BOX — a "
+    "category plus the qualifiers that matter. NEVER a specific product, "
+    "NEVER a brand's exact product name, NEVER a price. You do not know what "
+    "any shop stocks or what anything costs; a real search answers that.\n"
+    "  good: \"kids art set 7 year old\", \"dinosaur building blocks\", "
+    "\"beginner science kit\"\n"
+    "  bad:  \"LEGO Friends Beach House 41709\", \"Crayola Inspiration Art "
+    "Case $29.99\"\n\n"
+    "- 5 to 8 queries, genuinely DIFFERENT from each other — art, building, "
+    "outdoor, science, books, games. One idea five ways is a bad shortlist.\n"
+    "- Match the age you are told. A 4-year-old and a 10-year-old share "
+    "almost nothing.\n"
+    "- Use the party's theme or the child's interests when you are given "
+    "them, but do not invent interests you were not told.\n"
+    "- `why` is ONE short phrase a parent would find useful ('always a safe "
+    "bet at this age'). Never a sales pitch.\n"
+    "- Nothing consumable, nothing that needs sizing (clothes, shoes), "
+    "nothing that needs another purchase to work."
+)
+
+MAX_GIFT_CANDIDATES = 12
+_PER_QUERY = 4
+
+
+def _gift_context(occasion: dict) -> dict:
+    answers = occasion.get('answers') or {}
+    try:
+        budget = float(answers.get('gift_budget'))
+    except (TypeError, ValueError):
+        budget = None
+    try:
+        age = int(answers.get('their_age'))
+    except (TypeError, ValueError):
+        age = None
+    return {'who': str(answers.get('whose_party') or '').strip() or None,
+            'age': age, 'budget': budget if budget and budget > 0 else None}
+
+
+def gift_ideas(occasion_id: str, extra: str = None) -> dict:
+    """A shortlist of REAL products under the budget, staged for a pick.
+
+    Degrades honestly. With no Walmart credentials there is no search, so
+    there are no products — and the answer is the QUERIES as things to go and
+    look for, explicitly marked unverified. It is never a made-up product
+    list, because a plausible invented gift is worse than no suggestion: the
+    parent has to evaluate it either way and now has to discover it is fake.
+    """
+    from services import model_pools, walmart
+    o = storage.get_occasion(occasion_id)
+    if not o:
+        return {'error': 'no such occasion'}
+    settings = storage.get_settings() or {}
+    api_key = settings.get('llm_gemini_api_key', '')
+    if not api_key:
+        return {'error': 'no LLM API key configured'}
+
+    ctx = _gift_context(o)
+    bits = [f"The party is {o['title']}."]
+    if ctx['who']:
+        bits.append(f"It is for {ctx['who']}.")
+    bits.append(f"They are turning {ctx['age']}." if ctx['age']
+                else "Their age is unknown — keep the ideas broad.")
+    if (extra or '').strip():
+        bits.append(f"The parent adds: {extra.strip()}")
+    # The budget is deliberately NOT in the prompt. It is a filter on real
+    # prices; telling the model about it only invites it to quote one.
+    try:
+        res = model_pools.call_pool_json(
+            'interactive', api_key, _GIFT_QUERY_SYSTEM, ' '.join(bits),
+            temperature=0.6, timeout_s=45, settings=settings)
+        if not isinstance(res, dict) or res.get('error'):
+            raise RuntimeError(res.get('error') if isinstance(res, dict) else 'bad response')
+    except Exception as e:
+        print(f"[occasions] gift ideas failed for {occasion_id}: {e}")
+        return {'error': 'could not think of anything'}
+
+    queries, seen_q = [], set()
+    for q in (res.get('queries') or [])[:8]:
+        if not isinstance(q, dict):
+            continue
+        text = str(q.get('query') or '').strip()[:80]
+        if not text or text.lower() in seen_q:
+            continue
+        seen_q.add(text.lower())
+        queries.append({'query': text,
+                        'why': str(q.get('why') or '').strip()[:100] or None})
+
+    out = {'occasion_id': occasion_id, 'budget': ctx['budget'],
+           'queries': queries, 'candidates': [], 'searched': False,
+           'over_budget': 0}
+    if not queries:
+        out['error'] = 'could not think of anything'
+        return out
+    if not walmart.is_configured():
+        # Honest, and still useful: these are CATEGORIES to go and look for,
+        # not products anybody is claiming exist at a price.
+        out['note'] = ('No shop search is configured, so these are things to '
+                       'look for rather than real products.')
+        return out
+
+    out['searched'] = True
+    seen_ids = set()
+    for q in queries:
+        try:
+            found = walmart.search(q['query'], limit=_PER_QUERY)
+        except Exception as e:
+            print(f"[occasions] gift search failed for {q['query']!r}: {e}")
+            continue
+        for it in found:
+            iid = str(it.get('item_id') or '')
+            if not iid or iid in seen_ids or not it.get('available', True):
+                continue
+            price = it.get('price')
+            # The cap bites on WALMART'S price. An item whose price the API
+            # did not return is not silently assumed cheap — it is dropped,
+            # because "probably under $25" is the exact guess this design
+            # refuses to make.
+            if ctx['budget'] is not None:
+                if price is None:
+                    continue
+                try:
+                    if float(price) > ctx['budget']:
+                        out['over_budget'] += 1
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            seen_ids.add(iid)
+            out['candidates'].append({
+                'item_id': iid, 'title': it.get('title'), 'price': price,
+                'thumbnail': it.get('thumbnail'), 'url': it.get('url'),
+                'brand': it.get('brand'), 'query': q['query'], 'why': q['why'],
+            })
+    # Cheapest first: a parent scanning a gift shortlist is deciding what is
+    # enough, not what is best, and the price is the axis they are on.
+    out['candidates'].sort(key=lambda c: (c['price'] is None, c['price'] or 0))
+    out['candidates'] = out['candidates'][:MAX_GIFT_CANDIDATES]
+    return out
+
+
+def gift_lead_days() -> int:
+    """How long before the party the present has to be in hand.
+
+    A6 makes this a setting; until then three days is the honest default —
+    enough for a pickup order, and it is the offset the invited template
+    already stamps its gift line at.
+    """
+    try:
+        return max(0, int((storage.get_settings() or {}).get('gift_lead_days') or 3))
+    except (TypeError, ValueError):
+        return 3
+
+
+def add_gifts(occasion_id: str, picks: List[dict], added_by: str = None) -> dict:
+    """Picked candidates → the occasion's PRIVATE gift list, cart-ready.
+
+    Two things happen per pick and the second is what makes this worth doing:
+    the row lands on a list, and `walmart.set_mapping` records name → itemId,
+    so `cart_for_list` carts the exact product that was chosen rather than
+    whatever a fresh search would turn up in a fortnight.
+    """
+    from models.schemas import ShoppingList, ShoppingItem
+    from services import walmart
+    o = storage.get_occasion(occasion_id)
+    if not o:
+        return {'error': 'no such occasion'}
+    picks = [p for p in (picks or []) if isinstance(p, dict) and p.get('title')]
+    if not picks:
+        return {'error': 'nothing picked'}
+
+    lst = next((l for l in storage.get_shopping_lists()
+                if l.get('occasion_id') == occasion_id
+                and l.get('occasion_key') == 'gift'), None)
+    if not lst:
+        lst = ShoppingList(name=f"{o['title']} — present"[:60],
+                           occasion_id=occasion_id, occasion_key='gift').model_dump()
+        lst.update(_gift_visibility(o))
+        storage.add_shopping_list(lst)
+
+    anchor = _d(o.get('anchor_date')) or _today()
+    needed = (anchor - datetime.timedelta(days=gift_lead_days())).isoformat()
+    added = []
+    for p in picks:
+        name = str(p['title']).strip()[:80]
+        rec = ShoppingItem(list_id=lst['id'], name=name,
+                           note=str(p.get('why') or '').strip()[:120] or None,
+                           added_by=added_by, added_via='agent',
+                           source_event_id=occasion_id, needed_by=needed,
+                           occasion_id=occasion_id).model_dump()
+        storage.add_shopping_item(rec)
+        if p.get('item_id'):
+            walmart.set_mapping(name, p['item_id'], title=name,
+                                price=p.get('price'), thumbnail=p.get('thumbnail'))
+        added.append(rec)
+    return {'list': lst, 'items': added, 'needed_by': needed}
+
+
 def set_status(occasion_id: str, status: str) -> bool:
     return storage.update_occasion(
         occasion_id, {'status': 'done' if status == 'done' else 'planning'})
