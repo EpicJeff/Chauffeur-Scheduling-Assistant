@@ -1368,7 +1368,7 @@ class ShoppingItem(BaseModel):
     qty: Optional[str] = None          # FREE TEXT ("2 lbs") — never parsed
     note: Optional[str] = None
     added_by: Optional[str] = None     # member id (attribution, not a gate)
-    added_via: str = 'manual'          # manual|voice|photo|meal|barcode
+    added_via: str = 'manual'          # manual|voice|photo|meal|barcode|intake
     source_meal_id: Optional[str] = None   # M3 entries that drained here
     # EVERY night that wants this row, not just the first one to ask.
     # `source_meal_id` above records one dish, which is all a single drain
@@ -1396,6 +1396,19 @@ class ShoppingItem(BaseModel):
     # above — an item recording WHY it is here without the list belonging to
     # the thing that caused it.
     occasion_id: Optional[str] = None
+    # Supply intake A1: the dated thing that WANTS this — a calendar event id,
+    # an errand id, or a household/kid task id, whichever the parent approved
+    # the proposal onto. Third sibling of `source_meal_id` and `occasion_id`
+    # above, and deliberately distinct from both: a science fair is an EVENT,
+    # not an occasion, and minting an occasion for it would be exactly the
+    # empty-container failure docs/occasion_design.md exists to avoid.
+    source_event_id: Optional[str] = None
+    # The LATEST run that still works (ISO date) — the input half of the pair
+    # `buy_on` completes. `buy_on` says which run this item rides; this says
+    # when it stops being useful, which is what lets the app notice that the
+    # science fair is Friday and the shop run is Saturday. See
+    # docs/supply_intake_design.md §A2.
+    needed_by: Optional[str] = None
     # "Buy THIS exact one": a photo of the product, shown as a thumbnail in
     # the aisle. Media-store id served at /api/media/{id}; `note` above
     # already carries the text half of the same job.

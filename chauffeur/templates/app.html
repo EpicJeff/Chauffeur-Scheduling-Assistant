@@ -2051,6 +2051,7 @@
         let proposalsData = [];
         let proposalTargets = null;  // [{id, label}] lazily fetched once
         let proposalTaskTargets = [];  // K4b: kid school-list targets for To-do proposals
+        let proposalLists = [];      // A1: shopping lists a ticked supply can land on
         let proposalPaxChips = [];   // approve-as-configure: who rides
         let proposalDrvChips = [];   // ...and which driver is going too
 
@@ -2073,7 +2074,11 @@
             return { _editing: false, _title: p.title, _date: date, _startTime: startTime,
                      _endTime: endTime, _errandLocation: p.location || '', _errandMins: 30,
                      _location: p.location || '', _description: p.notes || '',
-                     _recurrence: '', _recurUntil: '', _pax: [], _drv: [], _paxInit: false };
+                     _recurrence: '', _recurUntil: '', _pax: [], _drv: [], _paxInit: false,
+                     // Supply intake A1, pre-ticked: the extraction already
+                     // filtered, so this is a confirmation and not the work
+                     // done a second time.
+                     _supplies: (p.supplies || []).map(s => s.name), _supplyList: '' };
         }
 
         function proposalIsCalTarget(p) {
@@ -2104,7 +2109,8 @@
                         _errandMins: old._errandMins, _location: old._location,
                         _description: old._description, _recurrence: old._recurrence,
                         _recurUntil: old._recurUntil, _pax: old._pax || [], _drv: old._drv || [],
-                        _paxInit: old._paxInit };
+                        _paxInit: old._paxInit,
+                        _supplies: old._supplies || [], _supplyList: old._supplyList || '' };
                     return { ...p, ...initProposalEditFields(p), _target: p.calendar_id || '' };
                 });
             } catch (e) { proposalsData = []; }
@@ -2157,6 +2163,12 @@
                 if ((p._pax || []).length) body.passenger_ids = p._pax;
                 if ((p._drv || []).length) body.driver_ids = p._drv;
             }
+            // Names, not indexes: a quiet refresh must not be able to shift
+            // which box a tick belonged to.
+            if ((p._supplies || []).length) {
+                body.supplies = p._supplies;
+                if (p._supplyList) body.supplies_list_id = p._supplyList;
+            }
             return body;
         }
 
@@ -2183,6 +2195,14 @@
                     .filter(m => m.role === 'child')
                     .map(m => ({ id: 'tasks:' + m.id, label: `📚 ${m.name}'s list` }));
             } catch (e) { proposalTargets = []; proposalTaskTargets = []; }
+            // Supply intake A1: where a ticked supply lands. Fetched with the
+            // targets (both are lazy — only when there are proposals at all)
+            // rather than off the House tab, which a parent approving from
+            // the intake card may never have opened.
+            try {
+                const r = await fetch(`${apiBase}api/shopping/lists`);
+                proposalLists = r.ok ? await r.json() : [];
+            } catch (e) { proposalLists = []; }
         }
 
         function proposalWhen(p) {
@@ -2274,6 +2294,23 @@
                         </div>
                         <input data-role="f-emins" type="number" min="5" step="5" value="${escProp(p._errandMins || 30)}" class="w-16 ${inputCls}">
                     </div>
+                    ${(p.supplies || []).length ? `<div class="mt-2 bg-gray-800/60 border border-gray-700 rounded-xl p-2">
+                        <div class="text-xs font-bold text-gray-400 mb-1">🛒 Needs buying</div>
+                        ${(p.supplies || []).map(s => {
+                            const on = (p._supplies || []).includes(s.name);
+                            return `<button data-supply="${escProp(s.name)}" class="flex items-start gap-1.5 text-left w-full px-1 py-0.5 rounded active:bg-gray-700/60">
+                                <span class="text-sm shrink-0">${on ? '☑' : '☐'}</span>
+                                <span class="text-sm ${on ? 'text-gray-200' : 'text-gray-500 line-through'}">${escProp(s.name)}${s.qty ? ` · ${escProp(s.qty)}` : ''}${s.why ? `<span class="block text-xs text-gray-500 italic">${escProp(s.why)}</span>` : ''}</span>
+                            </button>`;
+                        }).join('')}
+                        <div class="flex items-center gap-1.5 mt-1.5 ${(p._supplies || []).length ? '' : 'hidden'}">
+                            <span class="text-xs text-gray-500 shrink-0">onto</span>
+                            <select data-role="f-supplylist" class="flex-1 min-w-0 ${inputCls}">
+                                <option value="">Default list</option>
+                                ${(proposalLists || []).map(l => `<option value="${escProp(l.id)}">${escProp(l.name)}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>` : ''}
                     <div data-role="pax-panel" class="mt-2 ${calTarget && proposalPaxChips.length ? '' : 'hidden'}">
                         <div class="flex flex-wrap gap-1.5 items-center">
                             <span class="text-xs font-bold text-gray-500">Going:</span>
@@ -2337,6 +2374,19 @@
                         btn.className = propChipCls((p._drv || []).includes(btn.dataset.drvId), 'sky');
                     };
                 });
+                card.querySelectorAll('[data-supply]').forEach(btn => {
+                    btn.onclick = () => {
+                        const name = btn.dataset.supply, on = p._supplies || [];
+                        p._supplies = on.includes(name) ? on.filter(n => n !== name)
+                                                        : [...on, name];
+                        renderProposals();
+                    };
+                });
+                const supplyList = card.querySelector('[data-role="f-supplylist"]');
+                if (supplyList) {
+                    supplyList.value = p._supplyList || '';
+                    supplyList.onchange = () => { p._supplyList = supplyList.value; };
+                }
                 approveBtn.onclick = () => approveProposal(p.id);
                 card.querySelector('[data-role="ignore"]').onclick = () => ignoreProposal(p.id);
                 wrap.appendChild(card);

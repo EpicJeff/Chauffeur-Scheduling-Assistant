@@ -4617,3 +4617,48 @@ thing the stage shell exists to prevent, one level down. Steps now take the
 same shell in both surfaces: xl lanes get 28px tick circles, 2xl glyphs and
 roomier rows; lg keeps mid sizes; sm/none stay tight. Kid My Day
 (`kidStepRows`) reads `kidShell()` the same way.
+
+## Supplies ride intake proposals (v2.369.0)
+
+Supply intake **A1** (`docs/supply_intake_design.md`). A flyer that says
+"science fair Friday, bring a tri-fold board" used to lose the board: it
+survived only as prose in the proposal's notes, which nobody re-reads in a
+shop. Supplies are now a first-class array on the extraction, ticked on the
+approval card, and written as real `ShoppingItem`s.
+
+- **A supply is an ATTRIBUTE, not a fifth target.** `EXTRACTION_SYSTEM`
+  gained `supplies: [{name, qty, why}]` on each item, so the poster board
+  rides the science fair rather than competing with it — and the
+  which-event-does-this-belong-to matching problem never arises. Both entry
+  points get it at once: email polling and 📸 flyer capture share the prompt.
+- **Costs zero extra LLM requests.** Same call, one more field — the same
+  economics that let `known_events_block()` do semantic dedupe for free.
+- **Strict extraction rules, because precision is the product.** Buyable
+  physical objects only: money is not a supply ("$5 for pizza day" stays in
+  notes), nor is clothing the family owns ("wear team colours"), nor is
+  anything the school provides. Quantities are never invented. `[]` is the
+  expected answer for most items and is stated as such in the prompt.
+- **Malformed entries drop individually** (`_clean_supplies`, cap 8,
+  case-insensitive dedupe): the date is the load-bearing half of a proposal
+  and a garbled supply line must never cost the family the event.
+- **Every approval branch writes them** (`_write_intake_supplies`) — calendar
+  event, drive errand, household task, kid school task — with
+  `ShoppingItem.source_event_id` recording whichever id that branch made and
+  `needed_by` carrying the item's own day. New `ShoppingItem` fields:
+  `source_event_id`, `needed_by`; `added_via` gains `'intake'`. `needed_by`
+  is the input half of the pair `buy_on` completes and is what A2 will diff
+  against the next shop run.
+- **The parent's ticks are authoritative.** `ProposalApprove.supplies` is the
+  list of NAMES still ticked (names, not indexes, so a quiet refresh cannot
+  shift which box a tick belonged to); absent means write nothing, and a name
+  not on the proposal writes nothing. `supplies_list_id` routes the list —
+  the model never does, and a stale list id falls back to the default rather
+  than losing an approval that already wrote a calendar event.
+- **Never fatal.** A storage failure writes zero supplies and keeps the
+  event; the approval response carries `supplies_added`.
+- **Both hand paths**: the `/intake` card and the PWA Family-tab card both
+  show the 🛒 Needs buying section, pre-ticked, with the list picker.
+
+Tests: `tests/test_supply_intake.py` (8 scenarios — normalization, garbled
+entries, the prompt's own rules, all four approval branches, tick
+authority, list routing, failure isolation, both hand paths).

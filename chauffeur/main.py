@@ -3824,6 +3824,12 @@ class ProposalApprove(BaseModel):
     recurrence_until: Optional[str] = None    # YYYY-MM-DD, inclusive
     passenger_ids: Optional[List[str]] = None
     driver_ids: Optional[List[str]] = None
+    # Supply intake A1: the supply NAMES still ticked on the card, and which
+    # list they go on. Names rather than indexes so an edited or re-fetched
+    # proposal cannot silently shift which box a tick belonged to. Absent
+    # means write nothing — never "write them all".
+    supplies: Optional[List[str]] = None
+    supplies_list_id: Optional[str] = None
 
 # The four cadences a family actually types; the weekday/monthday ride on
 # DTSTART, so the rules stay minimal and Google fills in the rest.
@@ -4096,6 +4102,62 @@ def _record_intake_feedback(prop: dict, approved_target: str = None):
     except Exception as e:
         print(f"Intake feedback recording failed: {e}")
 
+
+def _write_intake_supplies(prop: dict, req, source_id: str, needed_by: str = None):
+    """Supply intake A1: the things this item needs, onto a real list.
+
+    Supplies are NOT a fifth approval target — they ride whichever target the
+    parent picked, because a poster board is an attribute of the science fair
+    and not a thing that competes with it. Every branch of approval therefore
+    calls this, and `source_event_id` records whichever id that branch made.
+
+    The parent's checkboxes are authoritative: `req.supplies` is the list of
+    names still ticked on the card, so unticking one is how it does not get
+    bought. Nothing is written when the array is absent — an older client, or
+    an item that had no supplies, must not silently create rows.
+
+    Never fatal. A failure here must not undo an event that was already
+    written to Google Calendar; the family gets the event and a log line.
+    """
+    names = getattr(req, 'supplies', None)
+    if not names:
+        return 0
+    wanted = {str(n).strip().lower() for n in names if str(n or '').strip()}
+    if not wanted:
+        return 0
+    try:
+        from models.schemas import ShoppingItem
+        list_id = (getattr(req, 'supplies_list_id', None) or '').strip()
+        if not list_id or not storage.get_shopping_list(list_id):
+            list_id = storage.ensure_default_shopping_list()['id']
+        written = 0
+        for s in (prop.get('supplies') or []):
+            name = str(s.get('name') or '').strip()
+            if not name or name.lower() not in wanted:
+                continue
+            why = (s.get('why') or '').strip()
+            item = ShoppingItem(
+                list_id=list_id, name=name[:80],
+                qty=(s.get('qty') or None),
+                # WHY it is here, in the aisle, where the question gets asked.
+                note=(f"{prop.get('title') or 'From intake'}"
+                      + (f" — {why}" if why else ""))[:120],
+                added_via='intake',
+                source_event_id=source_id or None,
+                needed_by=needed_by or None,
+            ).model_dump()
+            storage.add_shopping_item(item)
+            written += 1
+        return written
+    except Exception as e:
+        print(f"Intake supplies write failed: {e}")
+        return 0
+
+
+def _supplies_note(n: int) -> list:
+    return [f'{n} thing{"s" if n != 1 else ""} on the shopping list 🛒'] if n else []
+
+
 @app.post("/api/proposals/{proposal_id}/approve")
 def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: BackgroundTasks):
     from services import calendar as gcal
@@ -4137,8 +4199,10 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
             'created_errand_id': errand.id, 'title': title, 'start': start, 'end': end,
         })
         _record_intake_feedback(prop, 'errand')
-        return {"status": "approved", "errand_id": errand.id,
-                "message": f'Added "{errand.title}" as a drive errand 🚗'}
+        n = _write_intake_supplies(prop, req, errand.id, due)
+        return {"status": "approved", "errand_id": errand.id, "supplies_added": n,
+                "message": ' — '.join([f'Added "{errand.title}" as a drive errand 🚗']
+                                      + _supplies_note(n))}
 
     # Load arc A2: 'household_task' is the FOURTH intake target, and the one
     # the capture layer had been missing. The extraction prompt already names
@@ -4167,8 +4231,10 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
         # Deliberately unassigned: "the household owes this" is a real state,
         # and picking an owner here would just move the deciding back onto
         # whoever happened to tap Approve.
-        return {"status": "approved", "task_id": task['id'],
-                "message": f'Added "{title}" to the household list 📋'}
+        n = _write_intake_supplies(prop, req, task['id'], due)
+        return {"status": "approved", "task_id": task['id'], "supplies_added": n,
+                "message": ' — '.join([f'Added "{title}" to the household list 📋']
+                                      + _supplies_note(n))}
 
     # K4b: a 'tasks:{member_id}' target lands the item on that kid's school
     # list instead of any calendar — never solver load, never an all-day 📌.
@@ -4195,8 +4261,10 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
             'created_task_id': task['id'], 'title': title, 'start': start, 'end': end,
         })
         _record_intake_feedback(prop, req.calendar_id)
-        return {"status": "approved", "task_id": task['id'],
-                "message": f"Added to {member.get('name')}'s school list 📚"}
+        n = _write_intake_supplies(prop, req, task['id'], due)
+        return {"status": "approved", "task_id": task['id'], "supplies_added": n,
+                "message": ' — '.join([f"Added to {member.get('name')}'s school list 📚"]
+                                      + _supplies_note(n))}
 
     # Approve-as-configure: an edited description replaces the extracted
     # notes; the source attribution line survives either way, because "where
@@ -4279,7 +4347,12 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
         bits.append('repeating 🔁')
     if conf:
         bits.append('set up for the schedule 🚗')
-    return {"status": "approved", "event_id": gid,
+    # The event id is what a supply hangs off in the common case — the science
+    # fair is on a calendar, and A2's "the fair is Friday, the shop run is
+    # Saturday" needs the event's own day as the deadline.
+    n = _write_intake_supplies(prop, req, gid, (start or '')[:10])
+    bits += _supplies_note(n)
+    return {"status": "approved", "event_id": gid, "supplies_added": n,
             "message": ' — '.join(bits) if len(bits) > 1 else bits[0]}
 
 @app.get("/api/proposals/misfiled")

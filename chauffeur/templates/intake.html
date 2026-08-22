@@ -67,6 +67,40 @@
                                     <p class="text-sm text-gray-400" x-show="p.member_name"
                                         x-text="'👤 Looks like: ' + p.member_name"></p>
                                     <p class="text-xs text-gray-500 mt-2 italic" x-show="p.notes" x-text="p.notes"></p>
+                                    <!-- Supply intake A1. NOT a target: these ride whatever
+                                         the parent picks on the right, because a poster board
+                                         is an attribute of the science fair, not a rival to
+                                         it. Pre-ticked because extraction already filtered;
+                                         unticking is how one does not get bought. -->
+                                    <div class="mt-3 bg-gray-900/60 border border-gray-700 rounded-lg p-3"
+                                        x-show="(p.supplies || []).length">
+                                        <p class="text-xs font-bold text-gray-400 mb-2">🛒 Needs buying</p>
+                                        <div class="flex flex-col gap-1.5">
+                                            <template x-for="s in (p.supplies || [])" :key="s.name">
+                                                <button @click="toggleSupply(p, s.name)"
+                                                    class="flex items-start gap-2 text-left rounded px-1.5 py-1 hover:bg-gray-800/60 transition-colors">
+                                                    <span class="text-sm shrink-0"
+                                                        x-text="(p._supplies || []).includes(s.name) ? '☑' : '☐'"></span>
+                                                    <span class="text-sm"
+                                                        :class="(p._supplies || []).includes(s.name) ? 'text-gray-200' : 'text-gray-500 line-through'">
+                                                        <span x-text="s.name"></span>
+                                                        <span class="text-gray-500" x-show="s.qty" x-text="' · ' + s.qty"></span>
+                                                        <span class="block text-xs text-gray-500 italic" x-show="s.why" x-text="s.why"></span>
+                                                    </span>
+                                                </button>
+                                            </template>
+                                        </div>
+                                        <div class="flex items-center gap-2 mt-2" x-show="(p._supplies || []).length">
+                                            <span class="text-xs text-gray-500 shrink-0">onto</span>
+                                            <select x-model="p._supplyList"
+                                                class="bg-gray-900 border border-gray-600 rounded-lg p-1.5 text-white text-xs flex-1">
+                                                <option value="">Default list</option>
+                                                <template x-for="l in shoppingLists" :key="l.id">
+                                                    <option :value="l.id" x-text="l.name"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                    </div>
                                     <p class="text-xs text-gray-600 mt-1 truncate"
                                         x-text="p.source === 'photo' ? '📸 ' + (p.source_subject || '(photo)')
                                             : '✉️ ' + (p.source_from || '') + ' — ' + (p.source_subject || '')"></p>
@@ -493,11 +527,16 @@
                 refiling: false,
                 ignoredSenders: [],
                 skipped: [],
+                // Supply intake A1: where a ticked supply lands. The parent
+                // routes it, never the extractor — the model does not know
+                // this family's lists and poster board is not groceries.
+                shoppingLists: [],
 
                 async init() {
                     await Promise.all([this.loadProposals(), this.loadLog(), this.loadConfig(),
                                        this.loadTargets(), this.loadMisfiled(),
-                                       this.loadIgnoredSenders(), this.loadSkipped()]);
+                                       this.loadIgnoredSenders(), this.loadSkipped(),
+                                       this.loadShoppingLists()]);
                     // The background poll creates proposals while the page is
                     // open — refresh quietly so they appear without a click.
                     setInterval(() => {
@@ -522,7 +561,8 @@
                                 _endTime: old._endTime, _errandLocation: old._errandLocation,
                                 _errandMins: old._errandMins, _location: old._location,
                                 _description: old._description, _recurrence: old._recurrence,
-                                _recurUntil: old._recurUntil, _pax: old._pax, _drv: old._drv };
+                                _recurUntil: old._recurUntil, _pax: old._pax, _drv: old._drv,
+                                _supplies: old._supplies, _supplyList: old._supplyList };
                             const fresh = { ...p, ...this.initEditFields(p), _target: p.calendar_id || '' };
                             if (fresh._target) this.onTargetChange(fresh);   // sender default → pre-check its kid
                             return fresh;
@@ -542,7 +582,25 @@
                     return { _editing: false, _title: p.title, _date: date, _startTime: startTime,
                              _endTime: endTime, _errandLocation: p.location || '', _errandMins: 30,
                              _location: p.location || '', _description: p.notes || '',
-                             _recurrence: '', _recurUntil: '', _pax: [], _drv: [] };
+                             _recurrence: '', _recurUntil: '', _pax: [], _drv: [],
+                             // Pre-ticked: the extraction prompt has already
+                             // done the filtering, so the parent is confirming
+                             // rather than doing the work a second time.
+                             _supplies: (p.supplies || []).map(s => s.name),
+                             _supplyList: '' };
+                },
+                async loadShoppingLists() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/shopping/lists`);
+                        const data = await res.json();
+                        this.shoppingLists = Array.isArray(data) ? data
+                            : (data.lists || []);
+                    } catch (e) { this.shoppingLists = []; }
+                },
+                toggleSupply(p, name) {
+                    const on = p._supplies || [];
+                    p._supplies = on.includes(name) ? on.filter(n => n !== name)
+                                                    : [...on, name];
                 },
                 isCalTarget(p) {
                     const t = p._target || '';
@@ -638,6 +696,12 @@
                     }
                     const desc = (p._description || '').trim();
                     if (desc) body.description = desc;
+                    // Names, not indexes: a quiet refresh must not be able to
+                    // shift which box a tick belonged to.
+                    if ((p._supplies || []).length) {
+                        body.supplies = p._supplies;
+                        if (p._supplyList) body.supplies_list_id = p._supplyList;
+                    }
                     if (this.isCalTarget(p)) {
                         const loc = (p._location || '').trim();
                         if (loc) body.location = loc;

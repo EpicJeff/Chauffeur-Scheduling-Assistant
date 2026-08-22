@@ -227,7 +227,9 @@ Return ONLY valid JSON: {"items": [...]}. Each item:
   "notes": one short sentence of context or null,
   "confidence": 0.0-1.0,
   "duplicate_of": the exact title from ALREADY ON THE CALENDAR below that this
-    item is the same real-world event as, or null
+    item is the same real-world event as, or null,
+  "supplies": [{"name": str, "qty": str or null, "why": short reason}] — things
+    the family must BUY for this item, or [] (the usual answer)
 }
 Rules:
 - ALREADY ON THE CALENDAR lists what the family has for these dates. Reminder
@@ -247,7 +249,24 @@ Rules:
   date given below. If a date cannot be resolved to a specific day, omit the
   item entirely.
 - One item per distinct date. A schedule listing 5 games = 5 items.
-- Do not include items more than a year away, or in the past."""
+- Do not include items more than a year away, or in the past.
+
+SUPPLIES — physical things that have to be BOUGHT before the item happens
+(poster board for the science fair, a shoebox for the food drive, cupcakes for
+the class party). Rules, and they are strict because a wrong supply is worse
+than a missed one:
+- Buyable physical objects ONLY. Money is not a supply ("$5 for pizza day" is
+  a payment — leave it in notes). Clothing the family already owns is not a
+  supply ("wear team colours", "PE kit"). Things the school provides are not
+  supplies.
+- If you are not sure the family has to buy it, leave it out.
+- NEVER invent a quantity. qty is what the source actually said, or null.
+- why is a SHORT quote-like reason ("flyer says bring a shoebox").
+- [] is the expected answer for most items. An empty list is correct and
+  useful; a padded one poisons the list it lands on.
+- An item that is ONLY a supply request with a deadline ("send in box tops by
+  Friday") is kind=task with the supplies attached — never a supply with no
+  item to hang it on."""
 
 
 KNOWN_EVENTS_CAP = 120
@@ -357,7 +376,38 @@ def normalize_item(item: dict, now=None) -> dict:
         'notes': (item.get('notes') or '').strip() or None,
         'member_name': (item.get('member_name') or '').strip() or None,
         'confidence': round(confidence, 2),
+        'supplies': _clean_supplies(item.get('supplies')),
     }
+
+
+MAX_SUPPLIES = 8
+
+
+def _clean_supplies(raw) -> list:
+    """Sanitize the supplies array (A1).
+
+    A malformed entry drops ON ITS OWN rather than killing the item: the date
+    is the load-bearing half of a proposal and a garbled supply line must
+    never cost the family the event. Same reasoning as the confidence floor
+    applying per item and not per message.
+    """
+    out, seen = [], set()
+    for s in (raw if isinstance(raw, list) else [])[:MAX_SUPPLIES]:
+        if not isinstance(s, dict):
+            continue
+        name = str(s.get('name') or '').strip()[:80]
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        qty = s.get('qty')
+        out.append({
+            'name': name,
+            # Free text, never parsed — the ShoppingItem rule, upheld here so
+            # nothing downstream has to re-learn it.
+            'qty': (str(qty).strip()[:24] or None) if qty else None,
+            'why': str(s.get('why') or '').strip()[:120] or None,
+        })
+    return out
 
 
 def _title_tokens(s: str) -> set:
