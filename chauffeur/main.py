@@ -11221,6 +11221,13 @@ def _build_kid_digests(target_date=None, routine_bus=True):
             prep = r.get('prep') or []
             if prep:
                 line += f" (bring: {', '.join(prep[:4])})"
+            # BE THERE BY. On a kid's own line this is the number that matters
+            # most to them — "be there at 10" is what a child can act on, and
+            # the start time is the one they will be asked about afterwards.
+            # Appended, never substituted (services/arrive_by).
+            _ab = r.get('arrive_by') or {}
+            if _ab.get('short_label'):
+                line += f" — ⏱ {_ab['short_label']}"
             lines.append(line)
 
         # K5: leave-by line first — the single most actionable fact of the

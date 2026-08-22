@@ -375,6 +375,7 @@ body.ha-theme #simple-event-modal .glass-panel {
                         <div class="flex items-center text-white/80 text-sm mt-1 font-medium">
                             <span id="modal-time"></span>
                         </div>
+                        <div id="modal-arrive-by" class="hidden text-amber-300 text-sm mt-1 font-bold"></div>
                     </div>
                     <button onclick="FamilyCalendar.closeEvent()" class="text-white/60 hover:text-white bg-black/20 hover:bg-black/40 rounded-full p-1.5 transition-colors">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1198,6 +1199,16 @@ function _openEventDetails(inst, evObj) {
         timeText = startStr + endStr;
     }
     document.getElementById('modal-time').textContent = timeText;
+    // BE THERE BY. This dialog is the one a wall panel and the calendar page
+    // both open, so it is where a family checks what the app believes about
+    // an event — and it said nothing about the buffer for the buffer's whole
+    // life. Its own line under the time, never folded into it.
+    const abEl = document.getElementById('modal-arrive-by');
+    if (abEl) {
+        const ab = props.arriveBy;
+        abEl.textContent = ab ? `⏱ ${ab.label}` : '';
+        abEl.classList.toggle('hidden', !ab);
+    }
     document.getElementById('modal-location').textContent = props.location || 'No location provided.';
 
     const paxContainer = document.getElementById('modal-passengers');
@@ -1651,6 +1662,10 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                                 carSwap: carSwap,
                                                 isErrand: false,
                                                 tripSuppressed: !!ev.trip_suppressed,
+                                                // Carried onto the dialog's props so the
+                                                // panel's event details can say it too.
+                                                arriveBy: ev.arrive_by || null,
+                                                departAfter: ev.depart_after || null,
                                                 rawColor: color,
                                                 prep: (data.prep_by_event || {})[ev.id] || []
                                             }

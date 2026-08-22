@@ -1129,6 +1129,13 @@
                                             ${isErrand ? '' : ev.title}
                                         </div>
                                         <div class="text-gray-400 text-[10px] font-medium truncate pointer-events-none shrink-0">${(isShort || ev.event_type === 'dropoff' || ev.event_type === 'pickup') ? formatTime(ev.start) : formatTime(ev.start) + ' - ' + formatTime(ev.end)}</div>
+                                        <!-- BE THERE BY, on the block itself. The
+                                             drive schedule is one of the two places
+                                             the family named as needing this to be
+                                             conspicuous, and a buffer that only
+                                             showed up inside a departure time was
+                                             invisible here for its whole life. -->
+                                        ${ev.arrive_by ? `<div class="text-amber-300 text-[10px] font-black truncate pointer-events-none shrink-0">⏱ ${ev.arrive_by.arrive_label}</div>` : ''}
                                     </div>
                                 </div>
                             `;

@@ -268,16 +268,37 @@ def scenario_one_string_every_surface():
     def _read(*parts):
         return open(os.path.join(here, *parts), encoding='utf-8').read()
 
-    # Every surface the family named. Each reads `.label`/`.short_label` off
-    # the payload; none of them formats a time or joins a reason itself.
-    for parts, what in (
-            (('services', 'home_board.py'), 'the wall board rows'),
-            (('templates', 'components', 'board_tile_body.html'), 'the wall tile'),
-            (('services', 'drive_sheet.py'), 'the drive sheet payload'),
-            (('templates', 'app.html'), 'the PWA'),
-            (('templates', 'dashboard.html'), 'the event detail'),
-            (('services', 'family_digest.py'), 'the drive digest')):
-        check('arrive_by' in _read(*parts), f"{what} carries it")
+    # EVERY surface, and this list is the regression guard. The first pass
+    # wired four and missed five, and the four it hit were the four the
+    # family looks at least — the hero and the drive schedule, which they
+    # named as the two that matter, were both among the misses.
+    for parts, needle, what in (
+            (('services', 'home_board.py'), 'arrive_by', 'the wall board rows'),
+            (('templates', 'components', 'board_tile_body.html'), 'arrive_by',
+             'the wall tile drive list'),
+            (('templates', 'components', 'hero_card.html'), 'arrive_by',
+             'THE HERO CARD'),
+            (('templates', 'components', 'schedule_timeline.html'), 'ev.arrive_by',
+             'THE DRIVE SCHEDULE timeline block'),
+            (('templates', 'components', 'family_calendar.html'), 'arriveBy',
+             'the panel event dialog'),
+            (('templates', 'home.html'), 'arriveBy',
+             'the board handing events to that dialog'),
+            (('services', 'drive_sheet.py'), 'arrive_by', 'the drive sheet payload'),
+            (('templates', 'app.html'), 'arrive_by', 'the PWA'),
+            (('templates', 'dashboard.html'), 'ab.label', 'the admin event detail'),
+            (('services', 'family_digest.py'), 'arrive_by', 'the drive digest'),
+            (('main.py',), "_ab.get('short_label')", "the KID digest ride line")):
+        check(needle in _read(*parts), f"{what} carries it")
+
+    # The hero gets its own badge, not a tail on a dim supporting line: the
+    # family asked for conspicuous and named this surface first.
+    hero = _read('templates', 'components', 'hero_card.html')
+    check('be there' in hero and 'border-amber-400/50' in hero,
+          "the hero states it as a badge in its own right")
+    check(hero.count('arrive_by.arrive_label') >= 2,
+          "in BOTH the full and compact variants — a panel uses one, the "
+          "screensaver the other, and one of them going quiet is the bug again")
 
     tile = _read('templates', 'components', 'board_tile_body.html')
     check('(r.arrive_by || {}).label' in tile,

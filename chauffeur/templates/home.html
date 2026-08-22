@@ -2540,6 +2540,8 @@
                                 rawColor: color,
                                 location: ev.location || '',
                                 description: ev.description || '',
+                                arriveBy: ev.arrive_by || null,
+                                departAfter: ev.depart_after || null,
                                 // The calendars an event is on ARE the people
                                 // going, which is the same equivalence the
                                 // calendar card's own chips are drawn from.
@@ -2572,6 +2574,8 @@
                             passengers: [],
                             driverName: row.driver || '',
                             isErrand: row.kind === 'errand',
+                            arriveBy: row.arrive_by || null,
+                            departAfter: row.depart_after || null,
                         },
                     });
                 },

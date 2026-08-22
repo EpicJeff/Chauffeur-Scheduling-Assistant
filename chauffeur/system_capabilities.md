@@ -5124,3 +5124,46 @@ existing cached schedule keeps showing nothing until a refresh runs. A rebuild
 alone is not enough — the same force-refresh rule solver changes already have.
 
 Tests: `tests/test_arrive_by.py` grows to 17 scenarios.
+
+## Arrive By, on the surfaces that matter (v2.379.0)
+
+The family's report: *"the only place I see anything is the admin event
+details dialog."* Correct, and the coverage was the problem — the derivation
+was right (both a buffer rule and an ICS-parsed arrival resolved fine), but
+V2 wired the four surfaces the family looks at LEAST and missed the rest.
+Notably it missed the two they named as the ones that matter: **the hero
+card and the drive schedule.**
+
+Now carried by, and rendered on:
+
+- **The hero card** (`hero_card.html`), as a **badge in its own right** —
+  amber pill, the time at 2xl beside a `BE THERE` label and the reason — not
+  a tail appended to the dim "for 10:15 · 17 min drive" line. In **both** the
+  full and the compact variants, since a panel draws one and the screensaver
+  the other. The Leave/Be-ready number keeps the big slot; the badge sits
+  under it.
+- **The drive schedule timeline** (`schedule_timeline.html`) — an amber
+  `⏱ 10:00 AM` line on the event block itself. This is the renderer the
+  Drives page AND the wall panel's drives tile both use; V2 had only patched
+  the tile's *list* variant, which is not the default view.
+- **The panel event dialog** (`family_calendar.html` `_openEventDetails`) —
+  a different dialog from the dashboard's own modal, opened from the calendar
+  page, the kiosk and any board. `arriveBy`/`departAfter` are carried through
+  `extendedProps` from both builders that feed it (`family_calendar.html`'s
+  own event list and `home.html`'s board rows).
+- **The kid digest ride line** — `⏱ Arrive 10:00 AM` appended to the child's
+  own line, which is the number a child can act on.
+- Plus V2's existing five: wall board rows and tile list, drive sheet, PWA My
+  Day, dashboard modal, drive digest.
+
+The regression guard is now a **list of all eleven** in
+`scenario_one_string_every_surface`, plus an assertion that the hero states it
+as a badge and does so in both variants. A surface added later that forgets
+this fails the test rather than going quiet.
+
+**Behaviour confirmed, not changed:** when an ICS description and a buffer
+rule both apply and the description is the earlier or equal arrival, the chip
+reads "from the event details". Max-wins working as designed — the rule only
+takes over when it asks for MORE time, which is the reason a family types one.
+
+Tests: `tests/test_arrive_by.py` (17 scenarios).
