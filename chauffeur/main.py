@@ -15204,6 +15204,18 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     for tid in original_trips_to_remove:
         all_events_for_ui.pop(tid, None)
 
+    # Arrive By: stamped on the EVENTS themselves, once, after the set is
+    # final — so every payload built from them carries it. The first cut
+    # annotated only the per-day schedule, which meant the whole-schedule
+    # cache every surface actually reads (wall board, drive sheet, digest,
+    # My Day) never saw it and nothing appeared anywhere.
+    for _ev in all_events_for_ui.values():
+        try:
+            _ev.arrive_by = _arrive_by.derive(_ev, rules, passengers)
+            _ev.depart_after = _arrive_by.depart_after(_ev, rules, passengers)
+        except Exception as _abe:
+            logger.warning(f"arrive_by skipped for {getattr(_ev, 'id', '?')}: {_abe}")
+
     old_cache = storage.get_cached_schedule()
     previous_assignments = old_cache.get("assignments", {})
     home_location = maps.get_home_location()
@@ -15814,18 +15826,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "route_edges": route_edges,
             "initial_edges": initial_edges,
             "final_edges": final_edges,
-            # Arrive-by V1: stamped HERE, once, on the payload every surface
-            # reads — so the drive sheet, the wall, the digest and the PWA
-            # cannot disagree about when to be at the pitch. Derived, never
-            # stored on the event: a rule change must not leave a stale
-            # arrival time behind (docs/arrive_by_design.md).
-            # The solve's OWN rule list is passed in, not re-read: these are
-            # the rules the matcher actually applied (enabled, and past the
-            # AI/standard toggles), so the chip can never claim a buffer the
-            # solver ignored.
-            "events": _arrive_by.annotate(
-                [e.dict() if hasattr(e, 'dict') else e for e in ui_events_for_day],
-                rules=rules, passengers=passengers),
+            # Already stamped on the Event objects above, so `.dict()` carries
+            # arrive_by/depart_after through with everything else.
+            "events": [e.dict() if hasattr(e, 'dict') else e for e in ui_events_for_day],
             "true_unassigned": base['true_unassigned'],
             "conflicts": base['conflicts'],
             "scheduled_errands": scheduled_errands

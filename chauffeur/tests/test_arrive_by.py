@@ -420,6 +420,56 @@ def scenario_a_long_club_sentence_does_not_break_the_chip():
           f"a short reason still rides the label: {short['label']!r}")
 
 
+def scenario_it_survives_the_trip_from_solve_to_screen():
+    """The wiring, RUN rather than read.
+
+    The first cut of V2 stamped only the per-day payload, while the wall
+    board, the drive sheet, the digest and My Day all read the
+    WHOLE-SCHEDULE cache — so every surface was wired to a field nothing ever
+    set and absolutely nothing appeared. The stamp is inside a try/except, so
+    a break here is silent: this has to exercise the real objects.
+    """
+    from models.schemas import Event
+    _reset()
+
+    ev = Event(id='ev1', title='U12 Blue vs Eagles', description='',
+               start=KICKOFF, end=FINAL, location='Riverside Park',
+               calendar_ids=['cal-ellie'], source_event_ids=['ev1'])
+
+    # 1. The derivation takes an Event MODEL, which is what the refresh has.
+    got = arrive_by.derive(ev, [_rule(buffer_reason='Warm-up')], None)
+    check(got and got['lead_mins'] == 15,
+          f"derive works on the model, not just on a dict: {got}")
+
+    # 2. The model can actually hold it. A plain attribute assignment onto a
+    #    pydantic model without the field declared raises, and the refresh
+    #    swallows that — which is precisely how this stayed invisible.
+    ev.arrive_by = got
+    ev.depart_after = arrive_by.depart_after(
+        ev, [_rule(buffer_after_mins=20, buffer_reason='Huddle')], None)
+    check(ev.arrive_by and ev.depart_after, "both fields assign cleanly")
+
+    # 3. And it survives serialisation, which is how it reaches the cache.
+    d = ev.dict()
+    check(d.get('arrive_by', {}).get('label', '').startswith('Arrive'),
+          f"the label reaches the payload: {d.get('arrive_by')}")
+    check(d.get('depart_after', {}).get('trail_mins') == 20,
+          f"and so does the mirror: {d.get('depart_after')}")
+
+    # 4. The surfaces read it off the cached event dict, so the dict shape
+    #    they expect is the shape serialisation produces.
+    for key in ('label', 'short_label', 'arrive_at', 'source', 'reason'):
+        check(key in d['arrive_by'], f"the cached event carries {key}")
+
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    m = open(os.path.join(here, 'main.py'), encoding='utf-8').read()
+    stamp = m.find('_ev.arrive_by = _arrive_by.derive')
+    payload = m.find('"events": list(all_events_for_ui.values())')
+    check(stamp != -1 and payload != -1 and stamp < payload,
+          "the stamp happens BEFORE the whole-schedule payload is built")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

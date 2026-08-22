@@ -5091,3 +5091,36 @@ Tests: `tests/test_arrive_by.py` (16 scenarios — V1's ten plus the one-string
 guarantee across six surfaces, the never-replaced start, six parsed phrasings,
 eight that must yield nothing, the parsed source joining max-wins in all four
 directions, and the long-sentence label).
+
+## Arrive By actually reaches the screens (v2.378.0)
+
+A wiring fix, and worth recording because the failure mode is a trap the
+codebase can repeat. V2 stamped `arrive_by` onto the **per-day** payload
+(`daily_schedules`), while the wall board, the drive sheet, the digest and
+PWA My Day all read the **whole-schedule** cache (`get_cached_schedule()`,
+written from `all_events_for_ui`). Every surface was correctly wired to a
+field nothing ever set, so nothing appeared anywhere and every test still
+passed.
+
+- **`Event.arrive_by` / `Event.depart_after`** are now declared fields, and
+  the refresh stamps them onto the Event objects **once, after the set is
+  final and before any payload is built** — so both caches carry them and
+  `.dict()` takes them through serialisation.
+- The stamp sits in a `try/except` (a display nicety must never break a
+  solve), which is exactly what made the first failure silent — so the test
+  for it **runs the real objects** rather than reading source: derive against
+  an `Event` model, assign both fields, serialise, and assert the label
+  survives. Pydantic raises on assigning an undeclared field, so the original
+  bug would have been caught by this test and by nothing else in the file.
+- **`arrive_by_check.py`** — a standalone probe, same role as
+  `walmart_check.py`: it separates the four different problems that look
+  identical from the UI. No buffer rules at all / rules that match nothing /
+  a **stale cache** that predates the feature (fixed by a re-solve, not by
+  code) / a broken derivation. It also runs the description parser against
+  the family's own event text and prints what it made of each one.
+
+**Operational note:** `arrive_by` is computed during the solve, so an
+existing cached schedule keeps showing nothing until a refresh runs. A rebuild
+alone is not enough — the same force-refresh rule solver changes already have.
+
+Tests: `tests/test_arrive_by.py` grows to 17 scenarios.

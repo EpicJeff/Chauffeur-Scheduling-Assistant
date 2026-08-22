@@ -47,6 +47,14 @@ class Event(BaseModel):
     # Set by the refresh when every passenger on the event is away on a
     # background trip: excluded from solving but still shown on the calendar.
     trip_suppressed: bool = False
+    # Arrive By: {arrive_at, arrive_label, lead_mins, source, reason, label,
+    # short_label} or None. Stamped on the EVENT during the refresh — not on
+    # the day payload — because the wall board, the drive sheet, the digest
+    # and My Day all read the whole-schedule cache, and a stamp that only
+    # reached the per-day payload reached none of them. Derived, never
+    # persisted beyond the cache (services/arrive_by).
+    arrive_by: Optional[dict] = None
+    depart_after: Optional[dict] = None
     # Cancellations: this OCCURRENCE was called off — out of the solve like a
     # skip, still drawn (struck through), with the reason riding along.
     # Stamped each refresh from storage.event_cancellations
