@@ -491,6 +491,74 @@ def scenario_it_survives_the_trip_from_solve_to_screen():
           "the stamp happens BEFORE the whole-schedule payload is built")
 
 
+def scenario_leave_plus_drive_equals_be_there():
+    """Three numbers on one card that could not all be true.
+
+    The hero read "LEAVE 9:57 · for 10:15 · 18 min drive" beside a badge
+    saying "10:00 BE THERE". A buffer RULE moved the departure because the
+    solver spaces drives by it; a parsed ICS arrival did not, because it was
+    never a rule and so never reached the solve. The badge was computed
+    against the arrival and the departure against kick-off, and the card
+    contradicted itself.
+
+    The fix is at the solve, not the display: a stated arrival now counts
+    exactly as a rule that asked for one, so the plan the solver PROTECTS and
+    the time the board PRINTS are the same claim.
+    """
+    from models.schemas import Event
+    from solver import matcher
+    from services import leave_by
+    _reset()
+
+    ev = Event(id='ev1', title='2ND GRADE CARY DODGERS - Game',
+               description='Please arrive 15 minutes before game time.',
+               start=KICKOFF, end=FINAL, location='228 Aviation Pkwy',
+               calendar_ids=['cal-ellie'], source_event_ids=['ev1'])
+    ev.arrive_by = arrive_by.derive(ev, [], None)
+    check(ev.arrive_by and ev.arrive_by['lead_mins'] == 15,
+          f"the club's 15 minutes is read with no rule at all: {ev.arrive_by}")
+
+    # 1. The solver now sees it as a before-buffer.
+    check(matcher.arrival_lead_mins(ev) == 15,
+          "a stated arrival reaches the solve as an early-arrival requirement")
+    check(matcher.arrival_lead_mins(Event(
+        id='x', title='t', start=KICKOFF, end=FINAL,
+        calendar_ids=[], source_event_ids=['x'])) == 0,
+        "and an event with no arrival asks for nothing")
+
+    # 2. Which means the departure edge carries it, which means the card's
+    #    three numbers reconcile. THIS is the invariant that was broken.
+    sched = {'initial_edges': {'d1': {'ev1': {
+        'to_event': 'ev1', 'travel_mins': 18,
+        'buffer_before_mins': matcher.arrival_lead_mins(ev)}}}}
+    lead = leave_by.travel_into(sched, 'd1', 'ev1')
+    leave = leave_by.leave_at(KICKOFF, lead)
+    arrive = datetime.datetime.fromisoformat(ev.arrive_by['arrive_at'])
+    check(leave + datetime.timedelta(minutes=lead['travel_mins']) == arrive,
+          f"leave {leave.time()} + {lead['travel_mins']}min must equal "
+          f"be-there {arrive.time()}")
+    check(leave.strftime('%H:%M') == '09:42',
+          f"9:42 for an 18-minute drive to a 10:00 arrival: {leave.strftime('%H:%M')}")
+
+    # 3. A longer RULE still wins, and the invariant holds there too — the
+    #    badge moves with the departure rather than the two diverging again.
+    ev.arrive_by = arrive_by.derive(ev, [_rule(buffer_before_mins=30)], None)
+    sched['initial_edges']['d1']['ev1']['buffer_before_mins'] =         matcher.arrival_lead_mins(ev)
+    lead2 = leave_by.travel_into(sched, 'd1', 'ev1')
+    leave2 = leave_by.leave_at(KICKOFF, lead2)
+    arrive2 = datetime.datetime.fromisoformat(ev.arrive_by['arrive_at'])
+    check(leave2 + datetime.timedelta(minutes=lead2['travel_mins']) == arrive2,
+          f"still exact at a 30-minute lead: {leave2.time()} vs {arrive2.time()}")
+
+    # 4. And an event nobody asked to be early for is untouched: no buffer,
+    #    no moved departure, no badge.
+    plain = Event(id='ev2', title='Dentist', start=KICKOFF, end=FINAL,
+                  location='Somewhere', calendar_ids=[], source_event_ids=['ev2'])
+    plain.arrive_by = arrive_by.derive(plain, [], None)
+    check(plain.arrive_by is None and matcher.arrival_lead_mins(plain) == 0,
+          "the ordinary case pays nothing for any of this")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

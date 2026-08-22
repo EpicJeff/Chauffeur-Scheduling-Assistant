@@ -5167,3 +5167,37 @@ reads "from the event details". Max-wins working as designed — the rule only
 takes over when it asks for MORE time, which is the reason a family types one.
 
 Tests: `tests/test_arrive_by.py` (17 scenarios).
+
+## The departure moves for a stated arrival too (v2.380.0)
+
+The family's catch, from the hero card: **"leave 9:57 · 18 min drive · be
+there 10:00. That is not possible."** It was not. Three numbers on one card,
+two of them computed against different anchors.
+
+**Why.** A buffer RULE moves the departure because
+`matcher.e_buffer_before` feeds the drive edges, and `leave_by` computes
+`start − travel − buffer` from those edges. An ICS-parsed arrival was never a
+rule, so it never reached the solve — the badge was computed against the
+arrival while the departure was still computed against kick-off.
+
+**The fix is at the solve, not the display.** `matcher.arrival_lead_mins()`
+reads `Event.arrive_by.lead_mins`, and all three places the matcher
+accumulates a before-buffer now take `max(rule_buffer, stated_arrival)`. A
+stated arrival counts exactly as a rule that asked for one, so:
+
+- the departure moves — `leave + travel == be there`, exactly;
+- conflicts are spaced against the real arrival, so a drive that would make
+  the warm-up impossible is a **conflict** rather than a surprise on the day;
+- every surface inherits it, because they all read the same edges.
+
+Patching `leave_by` instead would have made the card *look* right while the
+solver still planned against kick-off — an app promising a departure it had
+not protected, which is worse than the visible contradiction.
+
+The stamp order already supported this: `arrive_by` is derived onto the Event
+objects before `matcher.solve_schedule` runs, so the solve sees it.
+
+Tests: `tests/test_arrive_by.py` gains
+`scenario_leave_plus_drive_equals_be_there` — the invariant asserted with
+real objects at 15 minutes (parsed, no rule) and at 30 (rule wins), plus proof
+that an ordinary event pays nothing for any of it.

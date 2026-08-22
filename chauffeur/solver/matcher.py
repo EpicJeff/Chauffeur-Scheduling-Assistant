@@ -239,6 +239,35 @@ def get_active_home(entity_id: str, ts: float, default_home: str, trip_metadata:
                 return trip['location']
     return default_home
 
+
+def arrival_lead_mins(event) -> int:
+    """How early this event has to be REACHED, in minutes before its start.
+
+    A `buffer` rule is one way a family says this; an ICS description saying
+    "arrive 15 minutes before" is another, and the second one never reached
+    the solver. The visible symptom was a hero card reading "leave 9:57 · 18
+    min drive · be there 10:00" — three numbers that cannot all be true,
+    because the departure was still computed against kick-off while the badge
+    was computed against the arrival.
+
+    So the stated arrival is folded in HERE, at the one place the schedule
+    already accounts for arriving early, rather than patched into the display.
+    The plan the solver protects and the time the board prints then make the
+    same claim: the departure moves, conflicts are spaced against it, and a
+    drive that would make the warm-up impossible is a conflict rather than a
+    surprise.
+
+    See services/arrive_by.py and docs/arrive_by_design.md.
+    """
+    ab = getattr(event, 'arrive_by', None)
+    if not isinstance(ab, dict):
+        return 0
+    try:
+        return max(0, int(ab.get('lead_mins') or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def does_event_match_rule(event, rule, passengers=None) -> bool:
     if getattr(rule, 'constraint_type', '') == 'group':
         if hasattr(rule, 'filter_sets') and rule.filter_sets:
@@ -638,7 +667,8 @@ def solve_schedule(
                     bb = max(bb, getattr(r, 'buffer_before_mins', 0))
                     ba = max(ba, getattr(r, 'buffer_after_mins', 0))
         e_tolerances[e.id] = {'arrival': tol_arr, 'departure': tol_dep}
-        e_buffer_before[e.id] = bb
+        # A stated arrival counts exactly as a rule that asked for one.
+        e_buffer_before[e.id] = max(bb, arrival_lead_mins(e))
         e_buffer_after[e.id] = ba
         
     grouped_event_pairs = get_grouped_event_pairs(assignable_events, rules, passengers)
@@ -1362,6 +1392,7 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
             if r.constraint_type == 'buffer' and does_event_match_rule(e, r, passengers):
                 bb = max(bb, getattr(r, 'buffer_before_mins', 0))
                 ba = max(ba, getattr(r, 'buffer_after_mins', 0))
+        bb = max(bb, arrival_lead_mins(e))
         e_buffer_before[e.id] = bb
         e_buffer_after[e.id] = ba
         
@@ -1596,6 +1627,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 if getattr(r, 'constraint_type', None) == 'buffer' and does_event_match_rule(e, r, passengers):
                     bb = max(bb, getattr(r, 'buffer_before_mins', 0))
                     ba = max(ba, getattr(r, 'buffer_after_mins', 0))
+        bb = max(bb, arrival_lead_mins(e))
         e_buffer_before[e.id] = bb
         e_buffer_after[e.id] = ba
         
