@@ -33,6 +33,18 @@
         the context that ties them together and generates the work.
     </p>
 
+    <!-- A6. Config decentralisation: the one setting this page owns lives on
+         this page, not on config.html. The lead is not "the day of the
+         party" on purpose — a pickup order placed the night before is a
+         present that is not there. -->
+    <div id="gifts" class="flex flex-wrap items-center gap-2 mb-5 text-sm text-gray-400">
+        <span>🎁 A present should be in hand</span>
+        <input type="number" min="0" max="30" x-model.number="giftLeadDays"
+            @change="saveGiftLead()"
+            class="w-16 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-center">
+        <span>day(s) before the party.</span>
+    </div>
+
     <!-- New occasion. Two required answers and everything else optional: the
          window and the tags are what make it useful, not what make it exist. -->
     <div x-show="showNew" x-cloak class="bg-gray-800 rounded-2xl border border-gray-700 p-5 mb-5">
@@ -267,6 +279,38 @@
                                 @click="saveGifts(o)" :disabled="giftBusy === o.id"
                                 class="mt-3 w-full py-2 rounded-lg bg-amber-500 text-gray-900 font-bold text-sm disabled:opacity-40"
                                 x-text="'Add ' + (giftPicks[o.id] || []).length + ' to a private list'"></button>
+
+                            <!-- A6: what has already been chosen, and the way
+                                 out. The cart is the LAST step and it is a
+                                 person's tap — nothing here ever buys
+                                 anything, and the button says so. -->
+                            <template x-if="giftList(o)">
+                                <div class="mt-3 pt-3 border-t border-gray-700">
+                                    <div class="flex items-baseline justify-between gap-2 mb-2">
+                                        <span class="text-xs font-bold text-gray-400">
+                                            🔒 <span x-text="giftList(o).name"></span>
+                                            <span class="text-gray-600 font-normal">— only the grown-ups see this</span>
+                                        </span>
+                                        <span class="text-[11px] text-amber-200 font-bold"
+                                            x-text="giftDeadline(o)"></span>
+                                    </div>
+                                    <div class="flex flex-wrap gap-1.5 mb-2">
+                                        <template x-for="i in (giftList(o).items || [])" :key="'gi-' + i.id">
+                                            <span class="px-2 py-1 rounded-lg text-[11px] bg-gray-800 border border-gray-700 text-gray-300"
+                                                :class="i.is_checked ? 'line-through text-gray-600' : ''"
+                                                x-text="i.name"></span>
+                                        </template>
+                                    </div>
+                                    <a x-show="(carts[o.id] || {}).url" :href="(carts[o.id] || {}).url"
+                                        target="_blank" rel="noopener"
+                                        class="block text-center py-2 rounded-lg bg-sky-500/20 border border-sky-400/40 text-sky-200 text-sm font-bold">
+                                        Open a Walmart cart — you check out
+                                    </a>
+                                    <p x-show="(carts[o.id] || {}).unmatched_count"
+                                        class="text-[11px] text-gray-500 mt-1"
+                                        x-text="(carts[o.id] || {}).unmatched_count + ' of these has no Walmart item behind it — add them by hand.'"></p>
+                                </div>
+                            </template>
                         </div>
                     </div>
 
@@ -359,9 +403,13 @@
                          allergies into the meal plan; there is deliberately no
                          invitation sending. -->
                     <div class="text-xs font-black uppercase tracking-widest text-pink-200 mb-2">
-                        👥 Who's coming
+                        <span x-text="o.kind === 'invited' ? '👥 Who was asked' : \"👥 Who's coming\""></span>
+                        <!-- Nobody eats at a party we were invited to, and
+                             saying "0 eating" about one is the kind of small
+                             wrongness that makes a page feel borrowed. -->
                         <span class="text-gray-500 font-bold normal-case tracking-normal ml-1"
-                            x-text="'· ' + (detail[o.id] ? detail[o.id].headcount : 0) + ' eating'"></span>
+                            x-text="'· ' + (detail[o.id] ? detail[o.id].headcount : 0)
+                                    + (o.kind === 'invited' ? ' going' : ' eating')"></span>
                     </div>
 
                     <!-- The household roster, every member togglable. The first
@@ -469,6 +517,7 @@
             // A5: staged candidates, the parent's picks, and the free-text
             // hint. Per occasion because two parties can be open at once.
             gifts: {}, giftPicks: {}, giftExtra: {}, giftBusy: null,
+            giftLeadDays: 3, carts: {},
             loading: true, busy: false, sourcing: false, showNew: false,
             // 'invited' is the inverse of the rest: somebody else is hosting and
             // the only work is a present. A4, docs/supply_intake_design.md.
@@ -483,6 +532,14 @@
                     const r = await fetch(this.apiBase + 'api/occasions');
                     this.occasions = r.ok ? await r.json() : [];
                 } catch (e) { this.occasions = []; }
+                try {
+                    const s = await fetch(this.apiBase + 'api/settings');
+                    if (s.ok) {
+                        const d = await s.json();
+                        if (d.gift_lead_days !== undefined && d.gift_lead_days !== null)
+                            this.giftLeadDays = d.gift_lead_days;
+                    }
+                } catch (e) { /* the default is a fine answer */ }
                 this.loading = false;
             },
 
@@ -514,6 +571,9 @@
                 if (g.ok) this.gaps[o.id] = await g.json();
                 if (i.ok) this.insights[o.id] = await i.json();
                 if (m.ok) this.menus[o.id] = await m.json();
+                // A6: the cart is built from the gift list, so it can only be
+                // asked for once the detail is in.
+                if (this.giftList(o)) await this.loadCart(o);
             },
 
             menuWhen(o) {
@@ -621,6 +681,37 @@
                 const b = ((o.answers || {}).gift_budget);
                 return b ? `under $${b}` : 'no budget set';
             },
+            giftList(o) {
+                return ((this.detail[o.id] || {}).lists || [])
+                    .find(l => l.occasion_key === 'gift');
+            },
+            giftDeadline(o) {
+                const items = (this.giftList(o) || {}).items || [];
+                const by = items.map(i => i.needed_by).filter(Boolean).sort()[0];
+                if (!by) return '';
+                const d = new Date(by + 'T00:00:00');
+                return 'in hand by ' + d.toLocaleDateString(undefined,
+                    { weekday: 'short', month: 'short', day: 'numeric' });
+            },
+            async loadCart(o) {
+                const lst = this.giftList(o);
+                if (!lst) return;
+                try {
+                    const r = await fetch(`${this.apiBase}api/walmart/cart?list_id=`
+                        + encodeURIComponent(lst.id));
+                    this.carts[o.id] = r.ok ? await r.json() : {};
+                } catch (e) { this.carts[o.id] = {}; }
+            },
+            async saveGiftLead() {
+                const n = Math.max(0, Math.min(30, parseInt(this.giftLeadDays) || 0));
+                this.giftLeadDays = n;
+                try {
+                    await fetch(this.apiBase + 'api/settings', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ gift_lead_days: n })
+                    });
+                } catch (e) { showGlobalAlert("Couldn't save that."); }
+            },
             giftPicked(o, c) {
                 return (this.giftPicks[o.id] || []).some(p => p.item_id === c.item_id);
             },
@@ -658,6 +749,7 @@
                         const res = await r.json();
                         this.giftPicks[o.id] = [];
                         this.gifts[o.id] = {};
+                        await this.refresh(o);   // the list, its deadline, its cart
                         showGlobalAlert(`On '${res.list.name}' — only the grown-ups can see it. `
                             + `Needed by ${res.needed_by}.`);
                     } else {

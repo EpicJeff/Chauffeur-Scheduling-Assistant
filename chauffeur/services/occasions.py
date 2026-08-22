@@ -260,8 +260,13 @@ def contents(occasion_id: str) -> dict:
     o = storage.get_occasion(occasion_id)
     if not o:
         return {}
-    lists = [l for l in storage.get_shopping_lists()
+    lists = [dict(l) for l in storage.get_shopping_lists()
              if l.get('occasion_id') == occasion_id]
+    # A6: the rows, not just the list. The gift panel has to show what has
+    # already been chosen and work out when it must be in hand, and a second
+    # round-trip per list to learn that is a page asking twice for one answer.
+    for l in lists:
+        l['items'] = storage.get_shopping_items(l['id'])
     # The documented exception: items on a list the occasion does NOT own —
     # the turkey sitting on the standing grocery list, which is where it
     # belongs and where it will actually be bought.

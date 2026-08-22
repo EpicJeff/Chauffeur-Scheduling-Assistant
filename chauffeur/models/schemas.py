@@ -876,6 +876,11 @@ class Settings(BaseModel):
     # guess, and "Ellie's birthday" (ours) reads exactly like "Jack's
     # birthday party" (an invitation).
     propose_invitations: bool = True
+    # A6: how long before the party the present has to be IN HAND. Not the
+    # day of the party — a pickup order placed the night before is a present
+    # that is not there. It becomes `ShoppingItem.needed_by`, which is what
+    # A2 diffs against the next shop run.
+    gift_lead_days: int = 3
     # Prep reminders (M8). "The night before" is a human moment, not an
     # offset — this is when the household is still up and can start a soak.
     prep_reminders_enabled: bool = True

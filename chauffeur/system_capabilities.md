@@ -4859,3 +4859,46 @@ and the budget never reaching it, the price filter incl. missing prices and
 out-of-stock, the unconfigured degradation, a dead search, private +
 cart-ready picks with the mapping proved through `cart_for_list`, both
 stacks, the hand path).
+
+## Order-by, and the way out to a cart (v2.374.0)
+
+Supply intake **A6** — the last slice of `docs/supply_intake_design.md`, and
+the smallest, because A2's spine already did the deadline arithmetic this was
+scoped to carry.
+
+- **`gift_lead_days` is a real setting** (default 3), and it lives on the
+  **occasions page** with an `id="gifts"` anchor rather than on config.html —
+  the config-decentralisation rule. `add_gifts` writes
+  `needed_by = anchor − lead`, which is **before** the party on purpose: a
+  pickup order placed the night before is a present that is not there.
+  Garbage falls back to 3; a negative lead clamps to 0 rather than inverting.
+- **The deadline reaches the spine.** Once written, a gift is just a dated
+  thing on a list: A2 says late or not, the watcher names it, and a list with
+  no trip gets one offered. A6 feeds that machinery rather than repeating it.
+- **`contents()` now carries each list's ROWS**, so the gift panel can show
+  what has been chosen and when it is due from the one fetch the page already
+  makes.
+- **The 🎁 panel closes the loop**: the private list, its earliest deadline
+  ("in hand by Wed, Sep 2"), the chosen rows, and a cart link built by the
+  W1 rails. The button reads **"Open a Walmart cart — you check out"**,
+  because Add-To-Cart is a URL: it cannot check out, hold a card, or spend
+  anything, and the UI must never imply otherwise. Unmatched rows (a
+  hand-added "birthday card" nobody has mapped) are **counted and named** —
+  never a quietly shorter cart.
+- Small honesty fix: an `invited` occasion's roster header reads "Who was
+  asked · N going" rather than "Who's coming · N eating". Nobody eats at a
+  party the family was invited to.
+
+Tests: `tests/test_gift_leadtime.py` (5 scenarios — the setting and its
+clamping, the deadline reaching A2's verdict, rows on the occasion, the cart
+with an unmatched row, and the page owning its own setting).
+
+### The arc, complete
+
+A1 supplies on intake proposals → A2 the deadline spine → A3 duplicates that
+want things → A4 the invited occasion → A5 the shortlist that never invents a
+product → A6 order-by and the cart. A flyer's supplies and a classmate's
+birthday present now travel the same rails: captured without typing, dated,
+noticed when the shop run will miss them, and one tap from a cart a person
+checks out. **Routine restocking stays cut** (no consumption signal exists;
+see the brief), and **nothing in this arc ever buys anything.**
