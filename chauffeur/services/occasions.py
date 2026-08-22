@@ -1293,6 +1293,10 @@ _GIFT_QUERY_SYSTEM = (
 
 MAX_GIFT_CANDIDATES = 12
 _PER_QUERY = 4
+# One search per query, and the metered backend's allowance is SHARED with
+# the trip planner's flight and hotel lookups. Five ideas is still a
+# shortlist; eight is a catalogue nobody reads and costs 60% more.
+_MAX_QUERIES = {'serpapi': 5, 'affiliate': 8}
 
 
 def _gift_context(occasion: dict) -> dict:
@@ -1364,18 +1368,28 @@ def gift_ideas(occasion_id: str, extra: str = None) -> dict:
     if not queries:
         out['error'] = 'could not think of anything'
         return out
-    if not walmart.is_configured():
+    backend = walmart.search_backend()
+    out['backend'] = backend
+    if not backend:
         # Honest, and still useful: these are CATEGORIES to go and look for,
-        # not products anybody is claiming exist at a price.
-        out['note'] = ('No shop search is configured, so these are things to '
-                       'look for rather than real products.')
+        # not products anybody is claiming exist at a price. Each one is a
+        # link to a real shop search on the page — the parent's own browser
+        # is a search engine that needs no credentials and no quota.
+        out['note'] = ('No shop search is set up, so these are things to look '
+                       'for rather than real products — tap one to search.')
         return out
+    queries = queries[:_MAX_QUERIES.get(backend, 5)]
+    out['queries'] = queries
 
     out['searched'] = True
     seen_ids = set()
     for q in queries:
         try:
-            found = walmart.search(q['query'], limit=_PER_QUERY)
+            # The cap goes DOWN into the search where the backend supports
+            # it: one search returns a fixed number of rows, so spending them
+            # all on things the family can afford beats discarding two thirds.
+            found = walmart.search(q['query'], limit=_PER_QUERY,
+                                   max_price=ctx['budget'])
         except Exception as e:
             print(f"[occasions] gift search failed for {q['query']!r}: {e}")
             continue
@@ -1403,11 +1417,45 @@ def gift_ideas(occasion_id: str, extra: str = None) -> dict:
                 'thumbnail': it.get('thumbnail'), 'url': it.get('url'),
                 'brand': it.get('brand'), 'query': q['query'], 'why': q['why'],
             })
-    # Cheapest first: a parent scanning a gift shortlist is deciding what is
-    # enough, not what is best, and the price is the axis they are on.
-    out['candidates'].sort(key=lambda c: (c['price'] is None, c['price'] or 0))
+    # RELEVANCE order, not cheapest-first. An earlier cut sorted by price on
+    # the theory that a parent is deciding what is enough — real results
+    # settled it: price-first turns "a present for a seven-year-old" into the
+    # cheapest packet of pipe cleaners that matched the words. The budget is
+    # already a hard filter; within it, how well the thing fits the child is
+    # the only axis left worth ordering on.
     out['candidates'] = out['candidates'][:MAX_GIFT_CANDIDATES]
+    if backend == 'serpapi':
+        out['usage'] = walmart.serp_usage()
     return out
+
+
+def gift_from_link(occasion_id: str, url: str, name: str = None,
+                   price=None, added_by: str = None) -> dict:
+    """A product the parent found THEMSELVES, pasted back.
+
+    The path that always works: no credentials, no allowance, no approval
+    queue — the family's own browser is a search engine and Walmart's URL
+    carries the itemId. It is also the most honest verification in the arc,
+    because a person looked at the actual page.
+
+    A link that carries no item id is still accepted as a plain row. Somebody
+    typing a present they have decided on should not be refused because the
+    cart cannot help with it.
+    """
+    from services import walmart
+    o = storage.get_occasion(occasion_id)
+    if not o:
+        return {'error': 'no such occasion'}
+    raw = (url or '').strip()
+    item_id = walmart.item_id_from_url(raw) if raw else None
+    title = (name or '').strip() or walmart.title_from_url(raw)
+    if not title:
+        return {'error': "give it a name, or paste a Walmart product link"}
+    res = add_gifts(occasion_id, [{'item_id': item_id, 'title': title,
+                                   'price': price}], added_by=added_by)
+    if not res.get('error'):
+        res['matched'] = bool(item_id)
+    return res
 
 
 def gift_lead_days() -> int:

@@ -219,6 +219,10 @@ ENTRIES: List[dict] = [
     _e('propose_invitations', 'meals', 'Notice party invitations',
        "When a child has a party on the calendar, offer to track the present.",
        page='meals', anchor='planning'),
+    _e('walmart_search_method', 'meals', 'Finding products',
+       'Search for products automatically, or just get a link to search yourself. '
+       'Searching can spend the SerpApi allowance your trip planning shares.',
+       page='meals', anchor='walmart'),
     _e('gift_lead_days', 'household', 'Present lead time',
        'How many days before a party the present has to be in hand.',
        page='occasions', anchor='gifts'),

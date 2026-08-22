@@ -98,7 +98,7 @@ def scenario_the_model_writes_queries_and_never_products():
     with mock.patch('services.model_pools.call_pool_json', side_effect=fake_llm), \
          mock.patch('services.storage.get_settings',
                     return_value={'llm_gemini_api_key': 'k'}), \
-         mock.patch('services.walmart.is_configured', return_value=False):
+         mock.patch('services.walmart.search_backend', return_value=None):
         _occ.gift_ideas(o['id'])
     check('Jack' in sent['prompt'] and 'turning 7' in sent['prompt'],
           f"the model gets who and how old: {sent['prompt']!r}")
@@ -122,17 +122,23 @@ def scenario_the_budget_filters_walmarts_answer():
     with mock.patch('services.model_pools.call_pool_json', return_value=QUERIES), \
          mock.patch('services.storage.get_settings',
                     return_value={'llm_gemini_api_key': 'k'}), \
-         mock.patch('services.walmart.is_configured', return_value=True), \
+         mock.patch('services.walmart.search_backend', return_value='affiliate'), \
          mock.patch('services.walmart.search',
-                    side_effect=lambda q, limit=4: results.get(q, [])):
+                    side_effect=lambda q, limit=4, max_price=None: results.get(q, [])):
         res = _occ.gift_ideas(o['id'])
 
     titles = [c['title'] for c in res['candidates']]
     check(titles == ['Art Case', 'Dino Set'],
           f"over-budget, price-less and out-of-stock all dropped: {titles}")
     check(res['over_budget'] == 1, f"and the over-budget one is counted: {res}")
-    check([c['price'] for c in res['candidates']] == [19.97, 24.50],
-          "cheapest first — the axis a parent scanning a gift list is on")
+    # RELEVANCE order, not cheapest-first. An earlier cut sorted by price;
+    # real results settled it — the cheapest thing matching "art set for a
+    # 7-year-old" is a packet of pipe cleaners, and recommending that as a
+    # present is worse than recommending nothing. The budget is already a
+    # hard filter; within it, fit is the only axis left worth ordering on.
+    check([c['query'] for c in res['candidates']]
+          == ['kids art set 7 year old', 'dinosaur building blocks'],
+          f"the model's own ordering survives: {[c['query'] for c in res['candidates']]}")
     check(res['searched'] is True and res['budget'] == 25.0, f"reported: {res['budget']}")
 
     # No budget answered -> no cap, and a price-less item is now allowed.
@@ -141,9 +147,9 @@ def scenario_the_budget_filters_walmarts_answer():
     with mock.patch('services.model_pools.call_pool_json', return_value=QUERIES), \
          mock.patch('services.storage.get_settings',
                     return_value={'llm_gemini_api_key': 'k'}), \
-         mock.patch('services.walmart.is_configured', return_value=True), \
+         mock.patch('services.walmart.search_backend', return_value='affiliate'), \
          mock.patch('services.walmart.search',
-                    side_effect=lambda q, limit=4: results.get(q, [])):
+                    side_effect=lambda q, limit=4, max_price=None: results.get(q, [])):
         res2 = _occ.gift_ideas(o2['id'])
     check('Deluxe Easel' in [c['title'] for c in res2['candidates']],
           f"no cap set -> nothing is filtered on price: {[c['title'] for c in res2['candidates']]}")
@@ -156,7 +162,7 @@ def scenario_no_search_means_no_products():
     with mock.patch('services.model_pools.call_pool_json', return_value=QUERIES), \
          mock.patch('services.storage.get_settings',
                     return_value={'llm_gemini_api_key': 'k'}), \
-         mock.patch('services.walmart.is_configured', return_value=False):
+         mock.patch('services.walmart.search_backend', return_value=None):
         res = _occ.gift_ideas(o['id'])
     check(res['candidates'] == [] and res['searched'] is False,
           f"no products at all: {res['candidates']}")
@@ -171,7 +177,7 @@ def scenario_one_dead_search_never_kills_the_shortlist():
     _reset(); _household()
     o = _party(budget=25)
 
-    def flaky(q, limit=4):
+    def flaky(q, limit=4, max_price=None):
         if q == 'kids art set 7 year old':
             raise RuntimeError('walmart 500')
         return _found(_item('5', 'Dino Set', 24.50))
@@ -179,7 +185,7 @@ def scenario_one_dead_search_never_kills_the_shortlist():
     with mock.patch('services.model_pools.call_pool_json', return_value=QUERIES), \
          mock.patch('services.storage.get_settings',
                     return_value={'llm_gemini_api_key': 'k'}), \
-         mock.patch('services.walmart.is_configured', return_value=True), \
+         mock.patch('services.walmart.search_backend', return_value='affiliate'), \
          mock.patch('services.walmart.search', side_effect=flaky):
         res = _occ.gift_ideas(o['id'])
     check([c['title'] for c in res['candidates']] == ['Dino Set'],
@@ -240,9 +246,9 @@ def scenario_the_tool_is_in_both_stacks_and_never_invents():
     with mock.patch('services.model_pools.call_pool_json', return_value=QUERIES), \
          mock.patch('services.storage.get_settings',
                     return_value={'llm_gemini_api_key': 'k'}), \
-         mock.patch('services.walmart.is_configured', return_value=True), \
+         mock.patch('services.walmart.search_backend', return_value='affiliate'), \
          mock.patch('services.walmart.search',
-                    side_effect=lambda q, limit=4: _found(_item('1', 'Art Case', 19.97))):
+                    side_effect=lambda q, limit=4, max_price=None: _found(_item('1', 'Art Case', 19.97))):
         res = agent_tools.execute_tool('suggest_gift_ideas',
                                        {'occasion_name': "Jack's party"})
     check(res['status'] == 'success' and 'Art Case' in res['message'],
@@ -255,7 +261,7 @@ def scenario_the_tool_is_in_both_stacks_and_never_invents():
     with mock.patch('services.model_pools.call_pool_json', return_value=QUERIES), \
          mock.patch('services.storage.get_settings',
                     return_value={'llm_gemini_api_key': 'k'}), \
-         mock.patch('services.walmart.is_configured', return_value=True), \
+         mock.patch('services.walmart.search_backend', return_value='affiliate'), \
          mock.patch('services.walmart.search', return_value=[]):
         empty = agent_tools_v2.suggest_gift_ideas("Jack's party")
     check('nothing good' in empty['message'] and '$25' in empty['message'],
@@ -273,7 +279,9 @@ def scenario_the_hand_path_stages_and_never_auto_adds():
                          ('gift-picks', 'the save call'),
                          ('toggleGift', 'per-candidate picking'),
                          ("o.kind === 'invited'", 'the section only on an invitation'),
-                         ('private list', 'the promise that it stays hidden')):
+                         ('private list', 'the promise that it stays hidden'),
+                         ('searchUrl', 'a real shop search when nothing is configured'),
+                         ('addGiftLink', 'the paste-a-product-link path')):
         check(needle in occ, f"the occasions page carries {what}")
     check(occ.index('toggleGift(o, c)') > 0 and 'saveGifts' in occ,
           "candidates are staged and saved by a separate tap, never on arrival")

@@ -881,6 +881,14 @@ class Settings(BaseModel):
     # that is not there. It becomes `ShoppingItem.needed_by`, which is what
     # A2 diffs against the next shop run.
     gift_lead_days: int = 3
+    # How a NAME becomes a product id. 'auto' prefers the free unmetered
+    # Walmart affiliate API and falls back to SerpApi; 'links' never spends a
+    # metered search at all and hands the family a real shop search to run
+    # themselves; 'serpapi' forces the metered one even if affiliate creds
+    # appear later. SerpApi's allowance is ONE pool across every engine — the
+    # trip planner's flight and hotel lookups draw on the same 250 — so this
+    # is a real budget decision and belongs to the family, not to a default.
+    walmart_search_method: str = 'auto'      # auto | links | serpapi
     # Prep reminders (M8). "The night before" is a human moment, not an
     # offset — this is when the household is still up and can start a soak.
     prep_reminders_enabled: bool = True

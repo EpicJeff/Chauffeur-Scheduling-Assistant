@@ -4902,3 +4902,59 @@ birthday present now travel the same rails: captured without typing, dated,
 noticed when the shop run will miss them, and one tap from a cart a person
 checks out. **Routine restocking stays cut** (no consumption signal exists;
 see the brief), and **nothing in this arc ever buys anything.**
+
+## The search backend a family can actually have (v2.375.0)
+
+Supply intake **A5b**. A5 resolved gift ideas through the Walmart I/O product
+API, which needs a developer account **and** an approved access request —
+not something a household can go and get. The shortlist was gated behind a
+credential nobody had. `search()` now has three answers behind one shape, and
+the family picks which.
+
+- **`walmart.search_backend()`** returns `'affiliate'` (Walmart I/O: free,
+  unmetered, gated), `'serpapi'` (the key the trip planner already uses:
+  self-serve, **metered**), or `None`. `search()` keeps its exact return
+  shape, so every caller above it is blind to which answered — **the grocery
+  matcher got the same unlock for free**.
+- **`walmart_search_method`** (Settings, on the shopping page beside the
+  Walmart block): `auto` prefers the free backend and falls back to SerpApi;
+  `links` never spends a metered search at all; `serpapi` forces it. This is
+  a real budget decision and belongs to the family — **SerpApi's allowance is
+  ONE pool across every engine**, so a gift shortlist and a flight lookup
+  draw on the same monthly total. Asking for a backend that is not configured
+  falls back rather than breaking search: the setting is a preference about
+  spending, not a vow.
+- **The SerpApi backend** (`_serp_search`) is one plain-`requests` GET — not
+  the `serpapi` package, which is a soft dependency the trip planner already
+  guards against. `us_item_id` **is** the itemId Add-To-Cart needs, which is
+  what makes this worth having. `primary_offer.offer_price` is the price,
+  `out_of_stock` inverts into `available`.
+- **Sponsored rows are dropped.** A family asking what to get Jack is not
+  asking to be sold to, and an ad inside a shortlist is indistinguishable
+  from a recommendation.
+- **The budget goes DOWN into the query** (`max_price`): one search returns a
+  fixed number of rows, so spending them all on affordable things beats
+  discarding two thirds. **No price sort** — a live check settled it, since
+  sorting cheapest-first turns "a present for a seven-year-old" into an
+  82-cent packet of pipe cleaners. A5's cheapest-first ordering was reversed
+  for the same reason; relevance is the only axis left worth ordering on once
+  the budget is a hard filter.
+- **Every unit is counted** (`serp_usage()`, shown next to the setting) and
+  **repeats are cached 14 days**, keyed by query + cap. A gift shortlist must
+  never be the unexplained answer to "why did my flight lookup stop working."
+  The shortlist also asks **5** questions on the metered backend instead of 8.
+- **The link flow, which needs nothing at all.** With `links` (or no backend)
+  each idea renders as a real `walmart.com/search` link carrying the budget —
+  the parent's own browser is a search engine with no credentials, no quota
+  and no approval queue. `walmart.title_from_url()` reads the URL slug back as
+  words to prefill a name (rough, always editable), and
+  `occasions.gift_from_link()` adds the product with its mapping, so it carts
+  exactly like anything the search found. **This is the most honest
+  verification in the arc — a person looked at the actual page.** A link with
+  no item id is still kept as a plain row; somebody who has decided on a
+  present is not blocked because the cart cannot help.
+
+Tests: `tests/test_walmart_serpapi.py` (8 scenarios — backend choice, the
+response mapping, sponsored/out-of-stock, the budget in the query, counting
+and caching, an exhausted allowance, the setting in all five combinations,
+and the paste-link path including the slug-less URL form).

@@ -244,17 +244,50 @@
                                 x-text="(gifts[o.id] || {}).note"></p>
                             <!-- Unverified: categories to look for, never products
                                  anybody is claiming exist at a price. -->
+                            <!-- No search engine at all: the parent's own browser is
+                                 one, and it needs no credentials and no quota. Each
+                                 idea is a real Walmart search carrying the budget;
+                                 pasting the product link back is the mapping path
+                                 the grocery list has always used. -->
                             <div x-show="(gifts[o.id] || {}).queries && !(gifts[o.id] || {}).searched"
                                 class="flex flex-wrap gap-1.5">
                                 <template x-for="q in ((gifts[o.id] || {}).queries || [])" :key="'q-' + q.query">
-                                    <span class="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-gray-800 border border-gray-700 text-gray-300"
-                                        x-text="q.query"></span>
+                                    <a :href="searchUrl(o, q.query)" target="_blank" rel="noopener"
+                                        class="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-gray-800 border border-gray-700 text-gray-300 hover:border-amber-400/60"
+                                        :title="q.why || ''">
+                                        🔎 <span x-text="q.query"></span>
+                                    </a>
                                 </template>
                             </div>
                             <div x-show="(gifts[o.id] || {}).searched && !((gifts[o.id] || {}).candidates || []).length"
                                 class="text-sm text-gray-400">
                                 Nothing in the shop under that budget. Worth raising it, or
                                 telling me what they're into.
+                            </div>
+
+                            <!-- The path that always works, and the most honest
+                                 verification in the arc: a person looked at the
+                                 actual product page. No credentials, no allowance,
+                                 no approval queue. -->
+                            <div class="mt-3 pt-3 border-t border-gray-800">
+                                <p class="text-[11px] text-gray-500 mb-1.5">
+                                    Found one yourself? Paste the product link — the item number
+                                    at the end is what makes it cart-able.
+                                </p>
+                                <div class="flex flex-col sm:flex-row gap-2">
+                                    <input type="text" x-model="giftLink[o.id]"
+                                        @input="prefillGiftName(o)"
+                                        placeholder="https://www.walmart.com/ip/…"
+                                        class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white">
+                                    <input type="text" x-model="giftLinkName[o.id]"
+                                        placeholder="What to call it"
+                                        class="sm:w-48 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white">
+                                    <button @click="addGiftLink(o)"
+                                        :disabled="giftBusy === o.id || !(giftLinkName[o.id] || '').trim()"
+                                        class="px-3 py-2 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-200 text-sm font-bold disabled:opacity-40">
+                                        Add it
+                                    </button>
+                                </div>
                             </div>
                             <div class="grid grid-cols-2 md:grid-cols-3 gap-2"
                                 x-show="((gifts[o.id] || {}).candidates || []).length">
@@ -517,7 +550,7 @@
             // A5: staged candidates, the parent's picks, and the free-text
             // hint. Per occasion because two parties can be open at once.
             gifts: {}, giftPicks: {}, giftExtra: {}, giftBusy: null,
-            giftLeadDays: 3, carts: {},
+            giftLeadDays: 3, carts: {}, giftLink: {}, giftLinkName: {},
             loading: true, busy: false, sourcing: false, showNew: false,
             // 'invited' is the inverse of the rest: somebody else is hosting and
             // the only work is a present. A4, docs/supply_intake_design.md.
@@ -680,6 +713,49 @@
             giftBudgetLabel(o) {
                 const b = ((o.answers || {}).gift_budget);
                 return b ? `under $${b}` : 'no budget set';
+            },
+            // The credential-free search: Walmart's own site, carrying the
+            // budget. Whatever the parent finds there can be pasted back on
+            // the Shopping page, which is the mapping path W1 already ships.
+            searchUrl(o, q) {
+                const b = ((o.answers || {}).gift_budget);
+                return 'https://www.walmart.com/search?q=' + encodeURIComponent(q)
+                    + (b ? '&max_price=' + encodeURIComponent(b) : '');
+            },
+            // The slug read back as words: rough, always editable, and the
+            // only name available when there is no search API to ask.
+            async prefillGiftName(o) {
+                const url = (this.giftLink[o.id] || '').trim();
+                if (!url || (this.giftLinkName[o.id] || '').trim()) return;
+                try {
+                    const r = await fetch(this.apiBase + 'api/walmart/title-from-url?url='
+                        + encodeURIComponent(url));
+                    if (!r.ok) return;
+                    const d = await r.json();
+                    if (d.title && !(this.giftLinkName[o.id] || '').trim())
+                        this.giftLinkName[o.id] = d.title;
+                } catch (e) { /* typing a name by hand still works */ }
+            },
+            async addGiftLink(o) {
+                this.giftBusy = o.id;
+                try {
+                    const r = await fetch(`${this.apiBase}api/occasions/${o.id}/gift-link`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url: this.giftLink[o.id] || '',
+                                               name: this.giftLinkName[o.id] || '' })
+                    });
+                    if (r.ok) {
+                        const res = await r.json();
+                        this.giftLink[o.id] = ''; this.giftLinkName[o.id] = '';
+                        await this.refresh(o);
+                        showGlobalAlert(res.matched
+                            ? "Added — it'll go straight into a cart."
+                            : "Added. No Walmart item behind it, so you'll buy that one yourself.");
+                    } else {
+                        showGlobalAlert((await r.json()).detail || "Couldn't add that.");
+                    }
+                } catch (e) { showGlobalAlert("Couldn't add that."); }
+                this.giftBusy = null;
             },
             giftList(o) {
                 return ((this.detail[o.id] || {}).lists || [])

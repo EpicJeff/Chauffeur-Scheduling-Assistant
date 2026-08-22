@@ -152,6 +152,26 @@ def set_mapping(name: str, item_id: str, title: str = None, price=None,
 
 
 ITEM_ID_IN_URL = re.compile(r'/ip/(?:[^/]+/)?(\d{6,})')
+# Separate from the id pattern on purpose: the id has to keep matching the
+# slug-less `/ip/<id>` form it always did, and widening one regex to serve
+# both would have quietly changed which group carries the number.
+SLUG_IN_URL = re.compile(r'/ip/([^/?#]+)/\d{6,}')
+
+
+def title_from_url(url: str) -> str:
+    """A rough product name out of the URL slug, to PREFILL a field.
+
+    `/ip/LEGO-Creator-3-in-1-Fierce-Dinosaur/17096963941` is not a product
+    title, but it is close enough that a parent edits two words instead of
+    typing twelve — and it is the only name available when there is no search
+    API to ask. Always editable; never presented as authoritative.
+    """
+    m = SLUG_IN_URL.search(url or '')
+    if not m:
+        return ''
+    slug = urllib.parse.unquote(m.group(1)).replace('-', ' ').replace('_', ' ')
+    slug = re.sub(r'\s+', ' ', slug).strip()
+    return slug[:80]
 
 
 def item_id_from_url(url: str) -> str:
@@ -168,9 +188,164 @@ def item_id_from_url(url: str) -> str:
 
 # --- search -----------------------------------------------------------------
 
-def search(query: str, limit: int = 8) -> list:
+SERPAPI_URL = "https://serpapi.com/search.json"
+_SERP_CACHE_DAYS = 14
+
+
+def search_backend() -> str:
+    """Which engine can answer a name→product question right now.
+
+    'affiliate' — Walmart I/O, free and unmetered, but it needs a developer
+        account AND an approved product-API access request, which is not
+        something a family can simply go and get.
+    'serpapi'  — the key the trip planner already uses. Self-serve, and
+        METERED: the family's monthly allowance is shared with flight and
+        hotel lookups, so everything here is written to spend as little of
+        it as possible.
+    None       — neither, or the family said not to. The pasted product URL
+        is the path that always works and it needs nothing at all.
+
+    `walmart_search_method` is the family's call because the SerpApi
+    allowance is ONE pool across every engine — the trip planner's flight and
+    hotel lookups draw on the same 250 a month — so a gift shortlist quietly
+    spending five of them is a decision somebody should get to make.
+    """
+    method = str((storage.get_settings() or {}).get(
+        'walmart_search_method') or 'auto').strip().lower()
+    if method == 'links':
+        return None
+    if method != 'serpapi' and is_configured():
+        return 'affiliate'
+    try:
+        from services.travel_api import get_serpapi_key
+        if get_serpapi_key():
+            return 'serpapi'
+    except Exception:
+        pass
+    # 'serpapi' asked for, no key: fall back to affiliate rather than to
+    # nothing. The setting is a preference about spending, not a vow.
+    return 'affiliate' if is_configured() else None
+
+
+def search_available() -> bool:
+    return search_backend() is not None
+
+
+def _serp_cache_get(key: str):
+    rows = storage.get_app_state('walmart_serp_cache') or {}
+    hit = rows.get(key)
+    if not hit:
+        return None
+    if time.time() - float(hit.get('ts') or 0) > _SERP_CACHE_DAYS * 86400:
+        return None
+    return hit.get('items')
+
+
+def _serp_cache_put(key: str, items: list) -> None:
+    rows = dict(storage.get_app_state('walmart_serp_cache') or {})
+    cutoff = time.time() - _SERP_CACHE_DAYS * 86400
+    rows = {k: v for k, v in rows.items() if float(v.get('ts') or 0) >= cutoff}
+    rows[key] = {'ts': time.time(), 'items': items}
+    storage.set_app_state('walmart_serp_cache', rows)
+
+
+def serp_usage(now_month: str = None) -> dict:
+    """What this app has spent of the shared allowance this month.
+
+    Counted rather than guessed, because the quota is shared with the trip
+    planner and "why did my flight lookup stop working" is a question a gift
+    shortlist should never be the unexplained answer to.
+    """
+    month = now_month or time.strftime('%Y-%m')
+    rows = storage.get_app_state('serpapi_usage') or {}
+    return {'month': month, 'count': int(rows.get(month) or 0)}
+
+
+def _serp_count(month: str = None) -> None:
+    month = month or time.strftime('%Y-%m')
+    rows = dict(storage.get_app_state('serpapi_usage') or {})
+    rows[month] = int(rows.get(month) or 0) + 1
+    # Keep a year; the older months are what make a spike legible.
+    for k in sorted(rows)[:-12]:
+        rows.pop(k, None)
+    storage.set_app_state('serpapi_usage', rows)
+
+
+def _serp_search(query: str, limit: int = 8, max_price=None) -> list:
+    """The metered backend, called over plain HTTP.
+
+    Deliberately NOT through the `serpapi` package: it is a soft dependency
+    the trip planner already guards against being absent, and this is one
+    GET with three parameters.
+
+    `max_price` is pushed DOWN into the query rather than filtered after: one
+    search returns a fixed number of rows, so spending them all on things the
+    family can afford is strictly better than discarding two thirds. Results
+    stay in RELEVANCE order — sorting by price turns "a present for a
+    seven-year-old" into the cheapest packet of pipe cleaners that matched.
+    """
+    import requests
+    from services.travel_api import get_serpapi_key
+    key = get_serpapi_key()
+    if not key:
+        return []
+    ck = f"{name_key(query)}|{max_price if max_price is not None else ''}"
+    cached = _serp_cache_get(ck)
+    if cached is not None:
+        return cached[:limit]
+
+    params = {'engine': 'walmart', 'query': query, 'api_key': key}
+    if max_price:
+        params['max_price'] = max_price
+    r = requests.get(SERPAPI_URL, params=params, timeout=_TIMEOUT + 18)
+    r.raise_for_status()
+    data = r.json()
+    _serp_count()
+    err = (data.get('error') or '')
+    if err:
+        if 'exhausted' in err.lower():
+            raise RuntimeError("The SerpApi monthly allowance is used up.")
+        raise RuntimeError(err)
+
+    out = []
+    for it in (data.get('organic_results') or []):
+        # Sponsored rows are advertising. A family asking "what should we get
+        # Jack" is not asking to be sold to, and an ad in a shortlist is
+        # indistinguishable from a recommendation.
+        if it.get('sponsored'):
+            continue
+        iid = it.get('us_item_id')
+        if not iid:
+            continue
+        offer = it.get('primary_offer') or {}
+        out.append({
+            'item_id': str(iid),
+            'title': it.get('title'),
+            'price': offer.get('offer_price'),
+            'thumbnail': it.get('thumbnail'),
+            'size': (it.get('price_per_unit') or {}).get('unit'),
+            'brand': it.get('seller_name'),
+            'url': it.get('product_page_url'),
+            'available': not it.get('out_of_stock'),
+        })
+    _serp_cache_put(ck, out)
+    return out[:limit]
+
+
+def search(query: str, limit: int = 8, max_price=None) -> list:
     """Candidates for one list item. Never auto-maps: the family picks, the
-    same way photo candidates are staged rather than added."""
+    same way photo candidates are staged rather than added.
+
+    Two backends behind one shape, so every caller above this line is blind to
+    which one answered. `max_price` is honoured by the metered backend (where
+    it buys better rows for the same unit) and ignored by the free one, which
+    returns few enough rows that filtering after costs nothing.
+    """
+    backend = search_backend()
+    if backend == 'serpapi':
+        return _serp_search(query, limit, max_price)
+    if backend != 'affiliate':
+        return []
     data = _get('/search', {'query': query, 'numItems': max(1, min(25, limit))})
     out = []
     for it in (data.get('items') or [])[:limit]:

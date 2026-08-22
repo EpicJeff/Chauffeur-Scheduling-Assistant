@@ -9980,15 +9980,21 @@ def walmart_status():
     split is the whole point, so the page can offer the cart regardless."""
     from services import walmart as _wm
     creds = _wm.get_credentials()
-    return {'search_available': creds['configured'],
+    backend = _wm.search_backend()
+    return {'search_available': bool(backend),
+            # Which engine answered matters to a person deciding whether to
+            # chase Walmart's approval queue: 'serpapi' works today and is
+            # metered, 'affiliate' is free and unmetered but gated.
+            'search_backend': backend,
             'consumer_id_set': bool(creds['consumer_id']),
             'private_key_set': bool(creds['private_key']),
+            'serp_usage': _wm.serp_usage() if backend == 'serpapi' else None,
             'mapped_count': len(storage.get_walmart_items())}
 
 @app.get("/api/walmart/search")
 def walmart_search(q: str, limit: int = 8):
     from services import walmart as _wm
-    if not _wm.is_configured():
+    if not _wm.search_available():
         return {'status': 'not_configured', 'items': [],
                 'message': "Walmart search isn't set up — paste a product URL instead."}
     try:
@@ -10720,6 +10726,35 @@ def occasion_gift_picks(occasion_id: str, req: GiftPicksRequest):
         raise HTTPException(status_code=400, detail=res['error'])
     _touch_stream()
     return res
+
+class GiftLinkRequest(BaseModel):
+    url: Optional[str] = None
+    name: Optional[str] = None
+    price: Optional[float] = None
+    added_by: Optional[str] = None
+
+@app.post("/api/occasions/{occasion_id}/gift-link")
+def occasion_gift_link(occasion_id: str, req: GiftLinkRequest):
+    """The present a parent found themselves. No credentials, no allowance,
+    no approval queue — and the most honest verification in the arc, because
+    a person looked at the actual product page."""
+    from services import occasions as _occ
+    if not storage.get_occasion(occasion_id):
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    res = _occ.gift_from_link(occasion_id, req.url, req.name, req.price,
+                              req.added_by)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    _touch_stream()
+    return res
+
+@app.get("/api/walmart/title-from-url")
+def walmart_title_from_url(url: str):
+    """Prefill for the paste field: the URL slug read back as words. Rough on
+    purpose and always editable — it is the only name available when there is
+    no search API to ask."""
+    from services import walmart as _wm
+    return {'item_id': _wm.item_id_from_url(url), 'title': _wm.title_from_url(url)}
 
 @app.post("/api/meals/migrate-dishes")
 def migrate_dishes():

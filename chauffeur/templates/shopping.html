@@ -853,6 +853,34 @@
                                     Localises cart links and prices to your store. Everything the cart does
                                     works without it — this only makes it yours.
                                 </p>
+                                <!-- How a NAME becomes an item id. The SerpApi
+                                     allowance is ONE pool across every engine — the
+                                     trip planner's flight and hotel lookups draw on
+                                     the same monthly total — so this is a real
+                                     budget decision and belongs to the family. -->
+                                <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold mt-4">
+                                    Finding products
+                                    <select x-model="mealCfg.walmart_search_method" @change="saveMealCfg()"
+                                        class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white focus:outline-none focus:border-pink-400/60">
+                                        <option value="auto">Search automatically</option>
+                                        <option value="serpapi">Always use SerpApi search</option>
+                                        <option value="links">Never search — give me links</option>
+                                    </select>
+                                </label>
+                                <p class="text-[11px] text-gray-500 mt-2">
+                                    <span x-show="mealCfg.walmart_search_method !== 'links'">
+                                        Searching uses the Walmart affiliate API if you have it, and
+                                        otherwise spends one SerpApi search per query — from the same
+                                        monthly allowance your trip planning uses.
+                                    </span>
+                                    <span x-show="mealCfg.walmart_search_method === 'links'">
+                                        Nothing is searched for you. You get a link to run the search
+                                        yourself and paste the product back — free, unlimited, and you
+                                        see the real page.
+                                    </span>
+                                    <span x-show="(walmart || {}).serp_usage" class="block mt-1 text-gray-600"
+                                        x-text="'SerpApi searches this month: ' + (((walmart || {}).serp_usage || {}).count || 0)"></span>
+                                </p>
                                 <details class="mt-3">
                                     <summary class="text-[11px] font-bold text-gray-600 hover:text-gray-400 cursor-pointer">
                                         Affiliate credentials
@@ -1753,7 +1781,7 @@
                     prep_reminders_enabled: true, prep_reminder_time: '20:30',
                     prep_morning_time: '08:00', walmart_store_id: '',
                     walmart_impact_publisher_id: '', walmart_impact_ad_id: '',
-                    walmart_impact_campaign_id: ''
+                    walmart_impact_campaign_id: '', walmart_search_method: 'auto'
                 },
                 apiBase: base,
 
@@ -2878,6 +2906,7 @@
                         c.prep_reminder_time = d.prep_reminder_time || '20:30';
                         c.prep_morning_time = d.prep_morning_time || '08:00';
                         c.walmart_store_id = d.walmart_store_id || '';
+                        c.walmart_search_method = d.walmart_search_method || 'auto';
                         c.walmart_impact_publisher_id = d.walmart_impact_publisher_id || '';
                         c.walmart_impact_ad_id = d.walmart_impact_ad_id || '';
                         c.walmart_impact_campaign_id = d.walmart_impact_campaign_id || '';
@@ -2919,6 +2948,7 @@
                             prep_reminder_time: c.prep_reminder_time || '20:30',
                             prep_morning_time: c.prep_morning_time || '08:00',
                             walmart_store_id: (c.walmart_store_id || '').trim(),
+                            walmart_search_method: c.walmart_search_method || 'auto',
                             walmart_impact_publisher_id: (c.walmart_impact_publisher_id || '').trim(),
                             walmart_impact_ad_id: (c.walmart_impact_ad_id || '').trim(),
                             walmart_impact_campaign_id: (c.walmart_impact_campaign_id || '').trim()
