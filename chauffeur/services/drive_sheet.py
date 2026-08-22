@@ -177,6 +177,7 @@ def _next_drive(leg_id, driver_id, sched, now=None) -> tuple:
         return {'event_id': ev_id, 'title': ev.get('title') or 'your next drive',
                 'location': ev.get('location'),
                 'leave_label': (run or {}).get('leave_label'),
+                'arrive_by': ev.get('arrive_by'),
                 'start_label': leave_by.clock(start)}, False
     return None, True                # this is the last drive of the day
 
@@ -227,6 +228,12 @@ def sheet(leg_id: str, now=None) -> dict:
         'eta_ts': eta_ts,
         'eta_label': leave_by.clock_label(eta_ts) if eta_ts else None,
         'toward_waiting': waiting,
+        # BE THERE BY, when a buffer rule or the club says so. The driver on
+        # the road is the person this matters most to, and until now the only
+        # place the buffer showed up was silently inside a departure time.
+        # Never replaces the event's own start (services/arrive_by).
+        'arrive_by': (ev or {}).get('arrive_by'),
+        'depart_after': (ev or {}).get('depart_after'),
         'driver_name': (driver or {}).get('name'),
         'passengers': passengers,
         'prep': {'items': prep_items,

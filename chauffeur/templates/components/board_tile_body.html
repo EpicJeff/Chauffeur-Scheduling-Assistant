@@ -260,6 +260,14 @@
                                         <span class="text-sm panel-dim shrink-0 truncate max-w-[7rem]"
                                             x-text="r.driver"></span>
                                     </div>
+                                    <!-- BE THERE BY. Secondary to the row's own
+                                         time on purpose: the arrival is extra
+                                         information, never a replacement for
+                                         when the thing starts. -->
+                                    <div x-show="r.arrive_by" class="pl-1 -mt-0.5">
+                                        <span class="text-xs panel-dim"
+                                            x-text="(r.arrive_by || {}).label"></span>
+                                    </div>
                                 </div>
                             </template>
                             <div x-show="t.data.more" class="text-sm panel-dim pt-1"

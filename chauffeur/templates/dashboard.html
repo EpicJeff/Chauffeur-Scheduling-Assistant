@@ -127,6 +127,9 @@
                             </svg>
                             <span id="view-time">Time</span>
                         </div>
+                        <!-- Arrive By V2: its own line, under the real time,
+                             never folded into it. -->
+                        <div id="view-arrive-by" class="hidden text-sm text-amber-200/90 ml-8"></div>
                         <div class="flex items-start text-gray-300">
                             <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor"
                                 viewBox="0 0 24 24">
@@ -1032,6 +1035,28 @@
             const timeStr = `${formatTime(ev.start)} - ${formatTime(ev.end)}`;
             document.getElementById('view-time').textContent = `${dateStr} • ${timeStr}`
                 + (ev.canceled ? ` • CANCELED${ev.cancel_reason ? ' — ' + ev.cancel_reason : ''}` : '');
+
+            // BE THERE BY, on its own line UNDER the real time — never
+            // folded into it. The event detail is where a parent checks what
+            // the app believes, so this one names its source: "your rule" and
+            // "the club says so" are different facts and deciding whether to
+            // argue with it needs to know which (services/arrive_by).
+            const abEl = document.getElementById('view-arrive-by');
+            if (abEl) {
+                const ab = ev.arrive_by;
+                const da = ev.depart_after;
+                const bits = [];
+                if (ab) {
+                    bits.push(`⏱ ${ab.label}` + (ab.source === 'rule'
+                        ? ' <span class="text-gray-500">(your buffer rule)</span>'
+                        : ab.source === 'description'
+                            ? ' <span class="text-gray-500">(from the event details)</span>'
+                            : ' <span class="text-gray-500">(you set this)</span>'));
+                }
+                if (da) bits.push(`🏁 ${da.label}`);
+                abEl.innerHTML = bits.join('<br>');
+                abEl.classList.toggle('hidden', !bits.length);
+            }
 
             const locEl = document.getElementById('view-location');
             locEl.innerHTML = ev.location ? ev.location : '<span class="italic text-gray-500">No location</span>';

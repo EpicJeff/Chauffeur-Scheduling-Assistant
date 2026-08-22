@@ -5025,3 +5025,69 @@ independence, the override incl. an explicit zero, all four silences,
 delegated matching incl. weekday/location/disabled/wrong-type, a broken rule,
 clamping, the after-buffer mirror, one-pass annotation leaving events
 otherwise untouched, and both authoring paths for the reason).
+
+## Arrive By everywhere, and the club's own words (v2.377.0)
+
+**V2 and V3** of `docs/arrive_by_design.md`, shipped together — V2 has
+nothing to test without a surface and V3 has nothing to show without one.
+
+### V2 — one string, every surface
+
+The derivation builds **one canonical label** server-side
+(`"Arrive 10:00 AM · Warm-up"`, plus a `short_label` for cramped rows) and
+every surface renders it verbatim. No page formats a time or joins a reason
+itself: a wall panel and a phone wording the same game differently is how a
+family stops believing either.
+
+Wired into: the **wall board** rows and tile (own line under the row, never in
+the time slot), the **drive sheet** (amber when the ETA lands after the
+arrival — "arrive 10:00" is information, "you will miss the warm-up" is a
+decision), the **PWA My Day** card and its next-drive line, the **dashboard
+event detail** (which also names the source — "your buffer rule" / "from the
+event details" / "you set this"), and the **drive digest** line a driver reads
+the night before.
+
+**The start time is never replaced, anywhere.** Both times, start dominant.
+That is the whole contract, and it has its own test.
+
+### V3 — the club is read out of the description
+
+The text was always there: `ics_sync` copies the ICS `DESCRIPTION` onto the
+Google event, so Playmetrics' and TeamSnap's *"arrive 15 minutes before"* has
+been sitting in the event body unread since ICS feeds shipped. This is a
+parse, not a capture — no new sync, no new field.
+
+- **Regex, never an LLM.** ics_sync is zero-LLM by design, this runs on every
+  event on every sync, and a model that reads it right 95% of the time
+  produces a **silently wrong** arrival the other 5% — indistinguishable from
+  a right one until the family is standing in an empty car park.
+- Handles `arrive 15 minutes before/prior/early`, `arrive by 10:00 AM`,
+  `arrival: 9:45am`, `check-in at 9:30`, `players arrive 30 minutes prior`,
+  `be there 20 mins early`.
+- **Fails closed**, and that half matters more: *gates open*, *bus departs*,
+  *pick-up*, *parking opens* and a bare event title all yield nothing. The
+  disqualifier is judged against its own **sentence**, so
+  "Gates open at 9:00. Players arrive 9:45." still reads correctly. Only the
+  first six lines are read — club descriptions trail off into league rules and
+  refund policies, and a "30 minutes before" buried in a cancellation policy
+  is not this game's arrival time. An "arrival" at or after kick-off, or more
+  than four hours before it, is rejected.
+- **It is a SOURCE, not a second system**: it feeds the same max-wins
+  derivation, reports `source: 'description'`, loses to a longer standing rule
+  and beats a shorter one, and is still replaced by a typed override.
+- The club's **whole sentence** becomes the reason, because that is what makes
+  the chip checkable against the email — so a reason longer than 24 characters
+  travels in `reason` (shown on the event detail) while the chip keeps the
+  plain `Arrive 10:00`.
+
+Net effect for the case this arc came from: a soccer game synced from
+Playmetrics now says when to be there, on every surface, **with no rule
+typed at all**.
+
+Still deferred: **V4**, the opt-in "Warm-up" shadow calendar event. Shifting
+the real event's start time stays **cut**.
+
+Tests: `tests/test_arrive_by.py` (16 scenarios — V1's ten plus the one-string
+guarantee across six surfaces, the never-replaced start, six parsed phrasings,
+eight that must yield nothing, the parsed source joining max-wins in all four
+directions, and the long-sentence label).

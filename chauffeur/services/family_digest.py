@@ -458,6 +458,14 @@ def build_drive_digests(target_date: datetime.date = None) -> dict:
         prep = prep_kits.items_for_event(ev, kits, pax)
         if prep:
             title += f" (bring: {', '.join(prep[:4])})"
+        # BE THERE BY, on the line a driver reads the night before — which is
+        # the moment it is most useful and the one place a buffer has never
+        # been said out loud. Appended to the title rather than replacing the
+        # time: the start is still when the thing starts (services/arrive_by,
+        # docs/arrive_by_design.md).
+        ab = ev.get("arrive_by") or {}
+        if ab.get("label"):
+            title += f" [{ab['label']}]"
         per_driver.setdefault(d_id, []).append((start, title))
 
     for er in cache.get("scheduled_errands", []):

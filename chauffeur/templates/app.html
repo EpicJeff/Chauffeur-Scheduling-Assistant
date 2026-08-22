@@ -581,6 +581,7 @@
             <!-- Where this drive is going, and when it gets there. -->
             <div id="drive-brief" class="hidden mb-5">
                 <div id="drive-dest" class="text-gray-300 text-sm flex items-start gap-2 mb-2"></div>
+                <div id="drive-arrive-by" class="hidden text-sm font-bold text-gray-400 mb-2"></div>
                 <div id="drive-eta" class="hidden text-lg font-bold text-blue-300 mb-2"></div>
                 <div id="drive-car" class="hidden"></div>
             </div>
@@ -1881,6 +1882,7 @@
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <div class="flex items-center justify-between gap-2 mb-1">
                     <span class="text-sm font-bold uppercase tracking-wider text-blue-400">${timeStr}</span>
+                    ${r.arrive_by ? `<span class="text-xs font-bold text-amber-300/90">${mfEscape(r.arrive_by.label)}</span>` : ''}
                     ${statusChip}
                 </div>
                 <div class="text-gray-100 font-bold text-lg leading-tight flex items-center gap-2 flex-wrap">${typeBadge}${mfEscape(r.title)}${r.optional ? '<span class="text-[10px] font-black uppercase bg-purple-500/15 text-purple-300 border border-purple-500/40 px-1.5 py-0.5 rounded-full">Optional</span>' : ''}</div>
@@ -6004,6 +6006,22 @@
             if (d.eta_label) etaEl.textContent = `Arriving about ${d.eta_label}`;
             show('drive-eta', !!d.eta_label);
 
+            // BE THERE BY — the buffer, said out loud at last. Amber when the
+            // ETA lands after it, because "arrive 10:00" is information and
+            // "you are going to miss the warm-up" is a decision. The label
+            // comes whole from the server so this can never word it
+            // differently from the wall panel (services/arrive_by).
+            const abEl = document.getElementById('drive-arrive-by');
+            const ab = d.arrive_by;
+            if (ab) {
+                const late = d.eta_ts && (d.eta_ts * 1000) > new Date(ab.arrive_at).getTime();
+                abEl.className = late
+                    ? 'text-sm font-bold text-amber-300 mb-2'
+                    : 'text-sm font-bold text-gray-400 mb-2';
+                abEl.textContent = (late ? '⚠ ' : '') + ab.label;
+            }
+            show('drive-arrive-by', !!ab);
+
             // The car, and the one thing about it worth saying before a
             // drive: that it will not make the trip on what is in it.
             const carEl = document.getElementById('drive-car');
@@ -6072,9 +6090,11 @@
             if (nx) {
                 const when = nx.leave_label ? `leave ${mfEscape(nx.leave_label)}`
                                             : `starts ${mfEscape(nx.start_label || '')}`;
+                const nxAb = nx.arrive_by
+                    ? `<span class="text-gray-500 font-bold ml-1">· ${mfEscape(nx.arrive_by.short_label)}</span>` : '';
                 nextEl.innerHTML = `<span class="text-gray-500 font-bold uppercase text-xs tracking-wider">Next</span>
                     <span class="text-gray-200 font-bold ml-2">${mfEscape(nx.title)}</span>
-                    <span class="text-blue-300 font-bold ml-1">· ${when}</span>`;
+                    <span class="text-blue-300 font-bold ml-1">· ${when}</span>${nxAb}`;
             } else if (d.day_done) {
                 nextEl.innerHTML = `<span class="text-gray-400 font-bold">🎉 Last drive of the day</span>`;
             }

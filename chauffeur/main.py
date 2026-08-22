@@ -9059,6 +9059,11 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
             'status': status_by_event.get(ev_id),
             'legs': legs or [],
             'prep': _prep.items_for_event(ev, _kits, _pax),
+            # BE THERE BY — carried whole from the solve's stamp so this card
+            # cannot word it differently from the wall or the drive sheet.
+            # Shown BESIDE the time, never instead of it (services/arrive_by).
+            'arrive_by': ev.get('arrive_by'),
+            'depart_after': ev.get('depart_after'),
             # Optional events (event config): the card softens its voice — an
             # optional ride without a driver was skipped, not failed. The
             # decision is read LIVE (not the cached stamp): the button's

@@ -1203,6 +1203,14 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
             # someone late. Errands below stay static: the solver records
             # only their detour cost, not a route to read traffic against.
             **(leave_by.for_run(sched, d_id, ev_id, start, live=True, now=now) or {}),
+            # BE THERE BY — the destination-side twin of leave-by, stamped on
+            # the event by the solve (services/arrive_by). Carried verbatim:
+            # the label is built once server-side so the wall and the phone
+            # cannot describe the same game differently. Never replaces
+            # `at`/`start` — a board that shows only the arrival makes 10:05
+            # feel like missing a game that has not started.
+            'arrive_by': ev.get('arrive_by'),
+            'depart_after': ev.get('depart_after'),
             # UNDER WAY, read off the clock. `live` is the manual flag from
             # somebody tapping a leg as started, and the same thing that makes
             # `over` clock-based makes this one: nobody taps. A drive between
@@ -1297,6 +1305,8 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
                 'avatar': None, 'image': None,
                 'assist': True,
                 **(leave_by.ready_for_covered(ev, start, live=True, now=now) or {}),
+                'arrive_by': ev.get('arrive_by'),
+                'depart_after': ev.get('depart_after'),
                 'done': False, 'live': False,
                 'optional': bool((ev.get('app_config') or {}).get('is_optional')),
                 'optional_decision': ev.get('optional_decision'),

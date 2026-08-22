@@ -34,6 +34,7 @@ Derived, never stored (except the override): a stored copy drifts the moment a
 rule changes, and a stale arrival time is a missed warm-up.
 """
 import datetime
+import re
 from typing import Any, List, Optional
 
 from services import storage
@@ -140,15 +141,94 @@ def _clamp(mins) -> int:
         return 0
 
 
-def from_description(text: str, start: datetime.datetime = None) -> Optional[dict]:
-    """V3's hook. Deliberately inert in V1.
+# --- V3: the club's own words -----------------------------------------------
+#
+# The text is ALREADY in the database. `ics_sync` copies the ICS DESCRIPTION
+# onto the Google event, so "arrive by 10:00" from Playmetrics or TeamSnap has
+# been sitting in the event body all along, unread. This is a parse, not a
+# capture.
+#
+# Deliberately regex and not an LLM, for three reasons: ics_sync is
+# zero-LLM by design, this runs on every event on every sync, and a model that
+# reads "arrive 15 minutes before" correctly 95% of the time produces a
+# SILENTLY WRONG arrival the other 5% — which is worse than not reading it at
+# all, because a wrong arrival time is indistinguishable from a right one
+# until the family is standing in an empty car park.
+#
+# Every pattern here fails CLOSED. The cost of missing one is a rule typed
+# once; the cost of inventing one is trust in every chip after it.
 
-    The club's own words are ALREADY in the database — ics_sync copies the ICS
-    DESCRIPTION onto the Google event — so this is a parse and not a capture.
-    It stays unimplemented until V3 so that the shape of the derivation is
-    settled first, and it returns None rather than raising so every caller is
-    already written for the day it starts answering.
+_CLOCK = r'(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?'
+_RELATIVE = re.compile(
+    r'\b(?:please\s+)?(?:arrive|be\s+(?:there|at\s+the\s+\w+)|report|check\s*[- ]?in|'
+    r'players?\s+arrive)\b[^.\n]{0,30}?\b(\d{1,3})\s*(?:min(?:ute)?s?|mins)\b'
+    r'[^.\n]{0,20}?\b(?:before|prior|early|ahead)\b', re.I)
+_ABSOLUTE = re.compile(
+    r'\b(?:please\s+)?(?:arrive|arrival|be\s+there|report|check\s*[- ]?in|'
+    r'players?\s+arrive)\b[^.\n]{0,20}?\b(?:by|at|no\s+later\s+than)\s+' + _CLOCK,
+    re.I)
+# The forms that say a time with no "by"/"at" between: "Arrival 9:45am".
+_ABSOLUTE_BARE = re.compile(
+    r'\b(?:arrival|arrive|report|check\s*[- ]?in)\s*[:\-]?\s*' + _CLOCK, re.I)
+
+# Phrases that LOOK like an arrival and are not. Checked first, and each one
+# is here because it would otherwise produce a confident wrong answer.
+_NOT_ARRIVAL = re.compile(
+    r'\b(?:gates?|doors?|field|park(?:ing)?|concessions?|store|office)\s+'
+    r'(?:open|opens)\b|\bdeparts?\b|\bbus\s+leaves\b|\bpick\s*-?\s*up\b', re.I)
+
+
+def _minutes_before(start, hour, minute, meridiem) -> Optional[int]:
+    """A clock time turned into a lead, against THIS event's start."""
+    if start is None:
+        return None
+    h = int(hour) % 12
+    if (meridiem or '').lower().startswith('p'):
+        h += 12
+    when = start.replace(hour=h, minute=int(minute or 0), second=0, microsecond=0)
+    lead = int((start - when).total_seconds() // 60)
+    # An "arrival" at or after kick-off is not an arrival instruction, and one
+    # four hours earlier is a different day's sentence caught by accident.
+    if lead <= 0 or lead > MAX_LEAD_MINS:
+        return None
+    return lead
+
+
+def from_description(text: str, start: datetime.datetime = None) -> Optional[dict]:
+    """An arrival instruction the source stated, or None.
+
+    Reads only the FIRST few lines: club descriptions trail off into league
+    rules, refund policies and directions, and a "30 minutes before" buried in
+    a cancellation policy is not this game's arrival time.
     """
+    raw = (text or '').strip()
+    if not raw:
+        return None
+    head = '\n'.join(raw.splitlines()[:6])[:600]
+
+    for pat in (_RELATIVE, _ABSOLUTE, _ABSOLUTE_BARE):
+        for m in pat.finditer(head):
+            # The disqualifiers are checked against the SENTENCE the match sits
+            # in, not the whole text: "gates open at 9:30, players arrive 9:45"
+            # is a real arrival instruction sharing a line with a red herring.
+            lo = head.rfind('.', 0, m.start()) + 1
+            hi = head.find('.', m.end())
+            sentence = head[lo:hi if hi != -1 else len(head)]
+            if _NOT_ARRIVAL.search(sentence):
+                continue
+            if pat is _RELATIVE:
+                lead = _clamp(m.group(1))
+                if not lead:
+                    continue
+            else:
+                lead = _minutes_before(start, m.group(1), m.group(2), m.group(3))
+                if not lead:
+                    continue
+            return {'lead_mins': lead,
+                    # The club's own phrasing, trimmed — it is more useful
+                    # than any word this app would choose, and it is what
+                    # makes the chip verifiable against the email.
+                    'reason': ' '.join(sentence.split())[:60] or None}
     return None
 
 
@@ -203,9 +283,23 @@ def derive(event, rules=None, passengers=None, config=None) -> Optional[dict]:
 def _out(start: datetime.datetime, mins: int, source: str,
          reason: str = None) -> dict:
     when = start - datetime.timedelta(minutes=mins)
+    reason = (reason or DEFAULT_REASON)
+    # ONE canonical string, built here, rendered verbatim by every surface.
+    # The alternative — each page concatenating a time and a reason its own
+    # way — is how the wall and the phone end up describing the same game
+    # differently, and a family that catches the app contradicting itself
+    # about kick-off does not go back to trusting it.
+    # A parsed reason is the club's WHOLE SENTENCE, because that is what makes
+    # the chip checkable against the email it came from — and a whole sentence
+    # does not fit in a chip. So the label carries the reason only when it is
+    # short enough to be a label; the sentence still travels, and the event
+    # detail is where there is room to print it.
+    short = reason if len(reason) <= 24 else None
     return {'arrive_at': when.isoformat(), 'arrive_label': clock(when),
-            'lead_mins': mins, 'source': source,
-            'reason': (reason or DEFAULT_REASON)}
+            'lead_mins': mins, 'source': source, 'reason': reason,
+            'label': f"Arrive {clock(when)} · {short}" if short
+                     else f"Arrive {clock(when)}",
+            'short_label': f"Arrive {clock(when)}"}
 
 
 def depart_after(event, rules=None, passengers=None) -> Optional[dict]:
@@ -229,9 +323,11 @@ def depart_after(event, rules=None, passengers=None) -> Optional[dict]:
     if not best:
         return None
     when = end + datetime.timedelta(minutes=best)
+    reason = (reason or DEFAULT_REASON)
     return {'depart_at': when.isoformat(), 'depart_label': clock(when),
-            'trail_mins': best, 'source': 'rule',
-            'reason': (reason or DEFAULT_REASON)}
+            'trail_mins': best, 'source': 'rule', 'reason': reason,
+            'label': f"Leave {clock(when)} · {reason}",
+            'short_label': f"Leave {clock(when)}"}
 
 
 def annotate(events: List[Any], rules=None, passengers=None) -> List[dict]:

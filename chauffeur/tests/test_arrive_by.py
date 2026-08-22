@@ -136,8 +136,9 @@ def scenario_silence_beats_a_guess():
           "and no start is no answer, not a crash")
     check(arrive_by.derive(_event(), rules=[]) is None,
           "no rule, no chip — the overwhelming majority of events")
-    check(arrive_by.from_description('Arrive 15 minutes before kickoff') is None,
-          "V3's hook is deliberately inert in V1, and says so by answering None")
+    check(arrive_by.derive(_event(description='Bring water and shin pads.'),
+                           rules=[]) is None,
+          "a description with no arrival language says nothing (V3 fails closed)")
 
 
 def scenario_the_matching_is_the_solvers_own():
@@ -243,6 +244,180 @@ def scenario_the_reason_is_reachable_by_hand_and_by_agent():
     r = Rule(driver_id='d1', constraint_type='buffer', buffer_before_mins=15,
              buffer_reason='Warm-up')
     check(r.buffer_reason == 'Warm-up', "and it is a real field on the model")
+
+
+def scenario_one_string_every_surface():
+    """V2's whole contract. Each surface renders the label the SERVER built,
+    never its own concatenation — because a wall panel and a phone wording
+    the same game differently is how a family stops believing either."""
+    _reset()
+    got = arrive_by.derive(_event(), rules=[_rule(buffer_reason='Warm-up')])
+    check(got['label'] == 'Arrive 10:00 AM · Warm-up',
+          f"one canonical string: {got['label']!r}")
+    check(got['short_label'] == 'Arrive 10:00 AM',
+          f"and a tight one for cramped rows: {got['short_label']!r}")
+
+    trail = arrive_by.depart_after(
+        _event(), rules=[_rule(buffer_after_mins=20, buffer_reason='Huddle')])
+    check(trail['label'] == 'Leave 11:50 AM · Huddle',
+          f"the mirror reads as its own sentence: {trail['label']!r}")
+
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def _read(*parts):
+        return open(os.path.join(here, *parts), encoding='utf-8').read()
+
+    # Every surface the family named. Each reads `.label`/`.short_label` off
+    # the payload; none of them formats a time or joins a reason itself.
+    for parts, what in (
+            (('services', 'home_board.py'), 'the wall board rows'),
+            (('templates', 'components', 'board_tile_body.html'), 'the wall tile'),
+            (('services', 'drive_sheet.py'), 'the drive sheet payload'),
+            (('templates', 'app.html'), 'the PWA'),
+            (('templates', 'dashboard.html'), 'the event detail'),
+            (('services', 'family_digest.py'), 'the drive digest')):
+        check('arrive_by' in _read(*parts), f"{what} carries it")
+
+    tile = _read('templates', 'components', 'board_tile_body.html')
+    check('(r.arrive_by || {}).label' in tile,
+          "the wall tile renders the server's label verbatim")
+    app = _read('templates', 'app.html')
+    check('r.arrive_by.label' in app and 'ab.label' in app,
+          "and so does the PWA, on both the day card and the drive sheet")
+    dash = _read('templates', 'dashboard.html')
+    check('ab.label' in dash and 'your buffer rule' in dash,
+          "the event detail shows the label AND names its source")
+
+
+def scenario_the_start_time_is_never_replaced():
+    """The anxiety this whole feature exists to remove: if the app says
+    10:00 and means warm-up, running late at 10:05 feels like missing a game
+    that has not started. Every surface shows BOTH, start dominant."""
+    _reset()
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    rows = arrive_by.annotate([_event()],
+                              rules=[_rule(buffer_before_mins=15)])
+    check(rows[0]['start'] == KICKOFF.isoformat(),
+          f"annotation leaves the real start exactly as it was: {rows[0]['start']}")
+    check(rows[0]['arrive_by']['arrive_at'] != rows[0]['start'],
+          "the arrival is a SECOND time, not a rewritten one")
+
+    tile = open(os.path.join(here, 'templates', 'components',
+                             'board_tile_body.html'), encoding='utf-8').read()
+    # The row's own time is still rendered from leave/ready/at, untouched by
+    # the arrival, and the arrival sits on its own line beneath it.
+    check('r.leave_label || r.ready_label || r.at' in tile,
+          "the wall row's time slot is unchanged")
+    app = open(os.path.join(here, 'templates', 'app.html'), encoding='utf-8').read()
+    check('${timeStr}' in app and 'r.arrive_by.label' in app,
+          "the PWA card shows the event time AND the arrival, not one or other")
+
+
+# --- V3: the club's own words ------------------------------------------------
+
+def scenario_the_club_is_read_out_of_the_description():
+    """The text was ALWAYS there — ics_sync copies the ICS DESCRIPTION onto
+    the Google event, so Playmetrics' "arrive by 10:00" has been sitting in
+    the event body unread. This is a parse, not a capture."""
+    for text, want in (
+            ("Please arrive 15 minutes before game time for warm-ups.", 15),
+            ("Arrive by 10:00 AM.", 15),
+            ("Players arrive 30 minutes prior to kickoff.", 30),
+            ("Arrival: 9:45am", 30),
+            ("Check-in at 9:30 am, game at 10:15.", 45),
+            ("Be there 20 mins early.", 20)):
+        got = arrive_by.from_description(text, KICKOFF)
+        check(got and got['lead_mins'] == want,
+              f"{text!r} -> {want}, got {got}")
+
+    got = arrive_by.from_description("Please arrive 15 minutes before for warm-ups.",
+                                     KICKOFF)
+    check('15 minutes' in got['reason'],
+          f"the club's own phrasing becomes the reason: {got['reason']!r}")
+
+
+def scenario_the_parser_fails_closed():
+    """The half that matters more. A missed arrival costs a rule typed once;
+    an invented one costs trust in every chip after it — and a wrong arrival
+    is indistinguishable from a right one until somebody is standing in an
+    empty car park."""
+    for text in ("Gates open at 9:30 am.",
+                 "Bus departs at 9:00 am.",
+                 "Pick-up at 11:30 am.",
+                 "Parking opens at 9:00 am.",
+                 "U12 Blue vs Eagles at Riverside Park.",
+                 "See league rules. Refunds must be requested 30 minutes before the season.",
+                 "Arrive at 11:00 PM.",
+                 ""):
+        check(arrive_by.from_description(text, KICKOFF) is None,
+              f"{text!r} must yield nothing")
+
+    # A red herring SHARING A LINE with a real instruction must not kill it:
+    # the disqualifier is judged against its own sentence, not the whole text.
+    got = arrive_by.from_description("Gates open at 9:00 am. Players arrive 9:45 am.",
+                                     KICKOFF)
+    check(got and got['lead_mins'] == 30,
+          f"the real instruction survives its neighbour: {got}")
+
+    # Club descriptions trail off into league rules and refund policies; a
+    # "30 minutes before" buried on line twelve is not this game's arrival.
+    buried = chr(10).join(["Game day!"] + ["filler"] * 10
+                          + ["Please arrive 30 minutes before."])
+    check(arrive_by.from_description(buried, KICKOFF) is None,
+          "only the first few lines are read")
+
+    # No start means an absolute time cannot be turned into a lead at all.
+    check(arrive_by.from_description("Arrive by 10:00 AM.", None) is None,
+          "an absolute time with nothing to measure against yields nothing")
+
+
+def scenario_a_parsed_arrival_joins_the_same_max():
+    """V3 is a SOURCE, not a second system: it feeds the same max-wins
+    derivation V1 built, and says so in `source`."""
+    _reset()
+    ev = _event(description="Please arrive 15 minutes before for warm-ups.")
+
+    got = arrive_by.derive(ev, rules=[])
+    check(got and got['source'] == 'description' and got['lead_mins'] == 15,
+          f"no rule needed — the club said it: {got}")
+
+    # The family's longer standing rule still wins, because it was typed for
+    # exactly this reason: clubs say 15 and this household wants 30.
+    both = arrive_by.derive(ev, rules=[_rule(buffer_before_mins=30,
+                                             buffer_reason='Goalie warm-up')])
+    check(both['lead_mins'] == 30 and both['source'] == 'rule',
+          f"max still wins across sources: {both}")
+
+    # And a shorter rule does NOT drag the club's instruction later.
+    shorter = arrive_by.derive(ev, rules=[_rule(buffer_before_mins=5)])
+    check(shorter['lead_mins'] == 15 and shorter['source'] == 'description',
+          f"the earliest arrival wins whichever source it came from: {shorter}")
+
+    # A typed override still replaces everything, club included.
+    storage.set_event_config('ev1', {'arrive_lead_mins': 5})
+    over = arrive_by.derive(ev, rules=[_rule(buffer_before_mins=30)])
+    check(over['lead_mins'] == 5 and over['source'] == 'override',
+          f"a person overruling the app is not argued with: {over}")
+
+
+def scenario_a_long_club_sentence_does_not_break_the_chip():
+    """The parsed reason is the club's whole sentence — that is what makes the
+    chip checkable against the email — and a whole sentence does not fit in a
+    chip. The sentence travels; the label stays a label."""
+    _reset()
+    ev = _event(description="Please arrive 15 minutes before game time so the "
+                            "team can complete warm-ups together.")
+    got = arrive_by.derive(ev, rules=[])
+    check(len(got['reason']) > 24, f"the sentence is kept whole: {got['reason']!r}")
+    check(got['label'] == got['short_label'],
+          f"but the label does not try to wear it: {got['label']!r}")
+
+    short = arrive_by.derive(_event(), rules=[_rule(buffer_reason='Warm-up')])
+    check(short['label'].endswith('· Warm-up'),
+          f"a short reason still rides the label: {short['label']!r}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
