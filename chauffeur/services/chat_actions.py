@@ -81,6 +81,11 @@ ADMIN_ACTIONS = {
     "approve_week_plan",
     "add_shopping_errand",
     "add_invited_occasion",
+    # The coverage ladder's rungs (docs/needs_you_design.md). Each one is a
+    # real thing the app can do — an option that only prints advice was the
+    # fake door this arc removed.
+    "ask_outside_hand",
+    "skip_occurrence",
 }
 
 # Human-friendly label shown as the card's action badge.
@@ -100,6 +105,8 @@ ACTION_LABELS = {
     "approve_week_plan": "Week of dinners",
     "add_shopping_errand": "Shopping trip",
     "add_invited_occasion": "Track a present",
+    "ask_outside_hand": "Ask for cover",
+    "skip_occurrence": "Skip this one",
 }
 
 
@@ -227,6 +234,26 @@ def _approve_week_plan(payload: dict) -> dict:
                        f"{'s' if n_added != 1 else ''} went on the list for the shop."}
 
 
+def _skip_occurrence(payload: dict) -> dict:
+    """"We're skipping it" — for ONE occurrence, whatever the event is.
+
+    Deliberately not called "mark optional": the family is not changing what
+    the event is, they are saying they are not going this once. The decision
+    machinery underneath is the optional-events one (per-occurrence, keyed by
+    the occurrence's own google id, series untouched), which is exactly the
+    semantics wanted — only the `is_optional` precondition had to go, and that
+    precondition was about who may DECIDE day by day, not about who may skip.
+    """
+    from services import optional_events, storage
+    sched = storage.get_cached_schedule() or {}
+    ev = next((e for e in (sched.get('events') or [])
+               if str(e.get('id')) == str(payload.get('event_id'))), None)
+    if not ev:
+        return {"status": "error", "message": "That event is not in the current schedule."}
+    return optional_events.record_decision(ev, 'skip',
+                                           decided_by=payload.get('member_id'))
+
+
 def _execute(action_type: str, payload: dict) -> dict:
     """Run an approved action through the tested handlers."""
     from services import agent_tools
@@ -256,6 +283,12 @@ def _execute(action_type: str, payload: dict) -> dict:
         return _occ.accept_invitation(
             payload.get('event_id'), payload.get('title'),
             payload.get('anchor_date'), payload.get('member_ids'))
+    if action_type == "ask_outside_hand":
+        from services import coverage_options as _cov
+        return _cov.start_ask(payload.get('event_id'), payload.get('contact_id'),
+                              payload.get('contact_name'))
+    if action_type == "skip_occurrence":
+        return _skip_occurrence(payload)
     if action_type in agent_tools.TOOL_HANDLERS:
         return agent_tools.execute_tool(action_type, payload)
     return {"status": "error", "message": f"Unknown action type '{action_type}'."}

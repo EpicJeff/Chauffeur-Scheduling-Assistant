@@ -60,14 +60,25 @@ def decision_for(ev):
 
 
 def stamp_decisions(events) -> None:
-    """Refresh-pipeline pass: stamp `optional_decision` onto every event whose
-    config says optional. Also prunes expired decisions — the sweep runs at
-    least hourly, so the table never accumulates history."""
+    """Refresh-pipeline pass: stamp `optional_decision` onto every event that
+    has one. Also prunes expired decisions — the sweep runs at least hourly, so
+    the table never accumulates history.
+
+    Optional events get whatever decision they carry. Everything else gets only
+    a **skip**, because "we're not going this once" is a sentence a family may
+    say about any event on the calendar (the coverage ladder's third rung), and
+    a decision the solver never reads would be a button that does nothing. An
+    'attend' on a mandatory event stays meaningless on purpose: it is already
+    full weight, and honouring it would imply it had been something less.
+    """
     storage.prune_optional_decisions(datetime.date.today().isoformat())
     for e in events:
         conf = getattr(e, 'app_config', None) or {}
+        decision = decision_for(e)
         if conf.get('is_optional'):
-            e.optional_decision = decision_for(e)
+            e.optional_decision = decision
+        elif decision == 'skip':
+            e.optional_decision = 'skip'
 
 
 def record_decision(ev, decision: str, decided_by: str = None) -> dict:

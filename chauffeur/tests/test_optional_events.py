@@ -90,14 +90,17 @@ def scenario_a_skipped_optional_is_calm_not_a_siren():
         "assignments": {},
         "unassigned": ["gym", "practice"],
     })
-    found = dict(watchers._unassigned_findings(NOON))
+    found = {f.key: f for f in watchers._unassigned_findings(NOON)}
     gym_keys = [k for k in found if k.startswith("optional_skip:gym:")]
     check(len(gym_keys) == 1, f"the skipped optional is its own kind of finding: {found}")
-    gym_msg = found[gym_keys[0]]
-    check("⏭️" in gym_msg and "🚨" not in gym_msg and "optional" in gym_msg,
-          f"one calm line, never the siren: {gym_msg}")
+    gym = found[gym_keys[0]]
+    check("⏭️" in gym.line and "🚨" not in gym.line and "optional" in gym.line,
+          f"one calm line, never the siren: {gym.line}")
+    check(gym.dm is False,
+          "and it does not get to interrupt anybody — days out, a skipped "
+          "optional is not a decision the family wants handed to them")
     practice_keys = [k for k in found if k.startswith("unassigned:practice:")]
-    check(practice_keys and "🚨" in found[practice_keys[0]],
+    check(practice_keys and "🚨" in found[practice_keys[0]].line,
           f"a real coverage hole still sounds like one: {found}")
 
 
@@ -164,10 +167,10 @@ def scenario_the_watcher_sirens_for_a_promised_kid():
         "assignments": {},
         "unassigned": ["gym"],
     })
-    found = dict(watchers._unassigned_findings(NOON))
+    found = {f.key: f for f in watchers._unassigned_findings(NOON)}
     keys = list(found)
     check(len(keys) == 1 and keys[0].startswith("unassigned:gym:")
-          and "🚨" in found[keys[0]],
+          and "🚨" in found[keys[0]].line,
           f"attend-decided means somebody promised — the real alarm is back: {found}")
 
 

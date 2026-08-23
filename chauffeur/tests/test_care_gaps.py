@@ -144,7 +144,7 @@ def scenario_aftercare_softens_a_half_day_but_not_a_closure():
     _prime_school_cache(dates={closed.isoformat()},
                         kinds={half.isoformat(): 'half'})
 
-    msgs = [m for _, m in watchers._care_gap_findings(datetime.datetime.now())]
+    msgs = [f.line for f in watchers._care_gap_findings(datetime.datetime.now())]
     check(not any('half day' in m for m in msgs),
           f"her aftercare has the half-day afternoon — not a gap: {msgs}")
     check(any('no school' in m for m in msgs),
@@ -152,7 +152,7 @@ def scenario_aftercare_softens_a_half_day_but_not_a_closure():
 
     # A second kid without aftercare re-opens the half day, and is NAMED.
     _kid("James")
-    msgs = [m for _, m in watchers._care_gap_findings(datetime.datetime.now())]
+    msgs = [f.line for f in watchers._care_gap_findings(datetime.datetime.now())]
     half_msgs = [m for m in msgs if 'half day' in m]
     check(half_msgs and 'James' in half_msgs[0] and 'Lily' not in half_msgs[0],
           f"the finding names who needs covering, not who is fine: {half_msgs}")
@@ -198,7 +198,7 @@ def scenario_the_finding_is_a_decision_not_an_alarm():
     _prime_school_cache(dates={closed.isoformat()})
     found = watchers._care_gap_findings(datetime.datetime.now())
     check(found, "the gap is found")
-    key, msg = found[0]
+    key, msg = found[0].key, found[0].line
     check('carpool family' in msg and 'grandparent' in msg,
           f"named options, the occasions-decisions voice: {msg}")
     check('🚨' not in msg, "and it is not dressed as an emergency")

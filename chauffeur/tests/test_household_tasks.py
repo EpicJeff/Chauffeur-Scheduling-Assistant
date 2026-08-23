@@ -69,7 +69,7 @@ def scenario_an_undated_task_is_real_and_never_late():
 
     from services import watchers
     found = watchers._household_task_findings(datetime.datetime.now())
-    check(not any('garage' in msg.lower() for _, msg in found),
+    check(not any('garage' in f.line.lower() for f in found),
           "and an undated task is never chased as late")
 
 
@@ -84,7 +84,7 @@ def scenario_the_household_owing_something_is_said_out_loud():
     _task("Pay the deposit", due_date=(TODAY + datetime.timedelta(days=1)).isoformat(),
           assigned_to=m['id'])
 
-    msgs = " | ".join(msg for _, msg in watchers._household_task_findings(now))
+    msgs = " | ".join(f.line for f in watchers._household_task_findings(now))
     check('Permission slip' in msgs,
           f"due tomorrow with nobody on it must be said: {msgs}")
     check('Book the MOT' not in msgs,
@@ -97,7 +97,7 @@ def scenario_past_due_is_its_own_finding():
     from services import watchers
     _reset()
     _task("Send the form", due_date=(TODAY - datetime.timedelta(days=3)).isoformat())
-    msgs = [msg for _, msg in watchers._household_task_findings(datetime.datetime.now())]
+    msgs = [f.line for f in watchers._household_task_findings(datetime.datetime.now())]
     check(any('Past due' in m and '3 days ago' in m for m in msgs),
           f"it says how late, not just that it is late: {msgs}")
 

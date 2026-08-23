@@ -228,6 +228,24 @@ def build_weekly_digest(end_date: datetime.date = None, days: int = 7):
             lines.append(f"• {len(pending)} still waiting for a decision")
         sections.append(("📬 Intake", lines))
 
+    # What the watchers carried this week. Counted, never estimated — the
+    # invented "hours of mental load saved" that this section was tempted by
+    # is the first number a family would disagree with, and disagreeing with a
+    # number is how they learn to skip the whole digest.
+    try:
+        from services import findings as _f
+        counts = _f.month_counts(start_ts)
+        if counts['watched']:
+            lines = [f"• {counts['watched']} watched — "
+                     f"{counts['cleared_themselves']} sorted themselves, "
+                     f"{counts['one_tap']} cleared in a tap, "
+                     f"{counts['decided']} needed a decision"]
+            if counts['still_open']:
+                lines.append(f"• {counts['still_open']} still open")
+            sections.append(("👀 Argyle watched", lines))
+    except Exception as e:
+        print(f"[digest] finding counts skipped: {e}")
+
     if not sections:
         return None
     period = (f"{start_date.strftime('%b')} {start_date.day} – "

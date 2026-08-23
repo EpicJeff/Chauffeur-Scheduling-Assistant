@@ -443,6 +443,12 @@ class ListChoresTool(BaseModel):
     """
     pass
 
+class ListOpenFindingsTool(BaseModel):
+    """
+    Lists what still needs a parent: drives with nobody assigned, things waiting on an approval, and decisions nobody has made yet.
+    """
+    pass
+
 class ClaimChoreTool(BaseModel):
     """
     Claims an open chore for a family member ('Ben will take the dishes'). member_name is required; ask who is claiming if unknown.
@@ -871,6 +877,7 @@ TOOL_SCHEMAS = {
     "send_direct_message": SendDirectMessageTool.model_json_schema(),
     "get_family_messages": GetFamilyMessagesTool.model_json_schema(),
     "list_chores": ListChoresTool.model_json_schema(),
+    "list_open_findings": ListOpenFindingsTool.model_json_schema(),
     "claim_chore": ClaimChoreTool.model_json_schema(),
     "get_routine_status": GetRoutineStatusTool.model_json_schema(),
     "post_weekly_digest": PostWeeklyDigestTool.model_json_schema(),
@@ -2018,6 +2025,10 @@ def handle_list_chores(args: dict) -> dict:
     from services.agent_tools_v2 import list_chores
     return list_chores()
 
+def handle_list_open_findings(args: dict) -> dict:
+    from services.agent_tools_v2 import list_open_findings
+    return list_open_findings()
+
 def handle_claim_chore(args: dict) -> dict:
     from services.agent_tools_v2 import claim_chore
     return claim_chore(args.get("chore_title", ""),
@@ -2340,6 +2351,7 @@ TOOL_HANDLERS = {
     "send_direct_message": handle_send_direct_message,
     "get_family_messages": handle_get_family_messages,
     "list_chores": handle_list_chores,
+    "list_open_findings": handle_list_open_findings,
     "claim_chore": handle_claim_chore,
     "get_routine_status": handle_get_routine_status,
     "post_weekly_digest": handle_post_weekly_digest,

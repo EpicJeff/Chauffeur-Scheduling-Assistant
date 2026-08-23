@@ -262,7 +262,7 @@ def scenario_the_no_driver_alarm_does_not_fire_for_covered_rides():
     try:
         storage.get_cached_schedule = lambda: cache
         found = watchers._unassigned_findings(now)
-        titles = " ".join(msg for _, msg in found)
+        titles = " ".join(f.line for f in found)
         check('Guitar' in titles,
               "a genuinely uncovered ride is still chased")
         check('Soccer' not in titles,

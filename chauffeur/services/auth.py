@@ -304,6 +304,15 @@ RULES = [
     (ANY, '/api/household-tasks/*', SIGNED_IN, 'lists.household_tasks'),
     (ANY, '/api/household-load/*', SIGNED_IN, None),
     (ANY, '/api/commitments/*', SIGNED_IN, None),
+    # Needs You. SIGNED_IN at the route, because a helper is a signed-in member
+    # and the route guard is not where role is decided here — the handlers
+    # refuse a child/helper/guest by role (`_needs_you_actor`), the same
+    # discipline the cancel routes use. The findings themselves carry a child's
+    # care gaps and an adult's protected time, so this pair of gates is the
+    # point rather than belt-and-braces.
+    (ANY, '/api/findings/*', SIGNED_IN, None),
+    (ANY, '/api/findings', SIGNED_IN, None),
+    (ANY, '/api/coverage/*', SIGNED_IN, 'schedule.carpool_contacts'),
     (ANY, '/api/assist-contacts/*', SIGNED_IN, 'schedule.carpool_contacts'),
     (ANY, '/api/assist-coverage/*', SIGNED_IN, None),
     (ANY, '/api/assist-history/*', SIGNED_IN, None),

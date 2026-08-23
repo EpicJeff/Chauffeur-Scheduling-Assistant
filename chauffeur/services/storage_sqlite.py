@@ -76,6 +76,12 @@ INDEX_SPEC = {
     # Requests (load arc A3): read by who owes an answer and by who is waiting.
     "requests": [["id"], ["to_member"], ["from_member"], ["status"]],
     "protected_commitments": [["id"], ["member_id"]],
+    # Needs You findings: every sweep reads the open set and looks rows up by
+    # identity, so both are indexed. State is indexed because the surfaces ask
+    # for one state at a time ("what's open?").
+    "findings": [["id"], ["identity"], ["state"]],
+    # Coverage asks: the nudge sweep reads by state, the answer path by id.
+    "coverage_asks": [["id"], ["state"], ["event_id"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

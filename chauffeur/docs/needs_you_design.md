@@ -168,15 +168,37 @@ from records. Hand path: everything tappable on the tile too.
 
 ## Build order
 
-1. **Noise cuts** — the three DM cuts. Immediate relief, no schema.
+1. **Noise cuts** — the DM cuts. Immediate relief, no schema. **SHIPPED v2.385.0.**
 2. **Feasibility pass + solution ladder** — tiers 1–3 with honest buttons,
-   skip-this-occurrence, ask state + Rail A pushes.
+   skip-this-occurrence, ask state + Rail A pushes. **SHIPPED v2.385.0.**
 3. **Findings table + lifecycle** — records, auto-resolve, undo.
-4. **Tile + agent tool + digest counts.**
-5. **Rail B Shortcut** — opt-in, after the core proves out.
+   **SHIPPED v2.385.0.**
+4. **Tile** — the Needs You board card. Not built. The agent tool
+   (`list_open_findings`, both stacks) and the digest counts shipped with
+   slice 3; the hand path meanwhile is the approve-cards the sweep posts into
+   the DM, which go through the same proposal rail a tile would.
+5. **Rail B Shortcut** — opt-in, after the core proves out. Not built.
 
-Slices 1–2 are shippable without 3; cuts and better DM lines need no records
-table.
+Slices 1–2 were shippable without 3; cuts and better DM lines need no records
+table. They shipped together anyway because the ladder wanted somewhere to
+record that an ask was in flight.
+
+### What shipped in 1–3
+
+- `services/findings.py` — the `Finding` tuple, identity, `reconcile`,
+  `resolve`, `month_counts`. `findings` table.
+- `services/coverage_options.py` — `driver_options`, `outside_hand_candidates`,
+  `draft_ask`, `ladder`, `start_ask` / `answer_ask` / `due_nudges`.
+  `coverage_asks` table.
+- `services/watchers.py` — every collector emits `Finding`s; the sweep
+  reconciles records before it decides whether to speak; `dm=False` carries the
+  noise cuts; up to 3 approve-cards ride the DM.
+- `chat_actions` gained `ask_outside_hand` and `skip_occurrence`;
+  `optional_events.stamp_decisions` stamps `skip` on any event.
+- `static/sw.js` gained the generic `postAction` rail; `main` gained
+  `send_push_with_actions` and the nudge sweep.
+- Tests: `tests/test_coverage_ladder.py` (10 scenarios), `tests/test_watchers.py`
+  (+4).
 
 ## What this is not
 

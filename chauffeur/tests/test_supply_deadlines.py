@@ -225,7 +225,7 @@ def scenario_the_watcher_names_the_item_not_a_count():
     now = datetime.datetime.combine(MONDAY, datetime.time(9, 0))
     found = watchers._supply_deadline_findings(now)
     check(len(found) == 1, f"only the dated one is a finding: {found}")
-    key, line = found[0]
+    key, line = found[0].key, found[0].line
     check(key.startswith('supply_late:'), f"dedup key is per item: {key}")
     check('tri-fold board' in line and 'no trip scheduled' in line,
           f"it names the thing and the reason: {line!r}")

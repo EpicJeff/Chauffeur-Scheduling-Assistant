@@ -16,11 +16,29 @@ Anti-nag guarantees (the design constraint, not an afterthought):
   the watcher is the safety net for the ones that got missed.
 - Zero LLM requests, except the WEEKLY prep-kit idea check (background tier;
   skipped silently when no key / no events / the pool errors).
+
+**The signal policy** (docs/needs_you_design.md, from the family's own report
+that most of these messages were not worth reading). A finding may interrupt
+somebody only if it passes all three:
+
+    time-critical?   actionable?   does it arrive with a solution?
+
+Anything that fails one is still WATCHED — it becomes a record, it shows up
+where somebody has chosen to look — but it does not get to buzz a phone.
+Unclaimed chores and a skipped optional activity days out are the two the
+family named: neither has a clock, and neither is a decision anybody wants to
+be handed. They are marked `dm=False` below rather than deleted, because a
+count of them is still worth having.
+
+Findings are `findings.Finding` tuples now, not bare `(key, line)` pairs — the
+extra fields carry severity, subject and the proposed action. Indexing still
+works, so the collectors read the same as they always did.
 """
 import datetime
 import time
 
-from services import storage
+from services import coverage_options as _coverage, findings as _findings, storage
+from services.findings import Finding
 
 WATCH_WINDOW_DAYS = 3          # unassigned-event lookahead
 STALE_PROPOSAL_DAYS = 3        # intake proposals pending this long
@@ -43,7 +61,14 @@ def _days_ago(ts: float, now_ts: float) -> int:
 
 
 def _unassigned_findings(now: datetime.datetime):
-    """Events in the next WATCH_WINDOW_DAYS the solver left unassigned."""
+    """Events in the next WATCH_WINDOW_DAYS the solver left unassigned.
+
+    This is the one finding a parent genuinely cannot act on without help, so
+    it is the one that carries the ladder: who at home is free, who has covered
+    this before, or an honest can't-cover with the reasons named
+    (services/coverage_options.py). A siren with no answer attached was the
+    complaint that produced all of this.
+    """
     cache = storage.get_cached_schedule() or {}
     events = {str(e.get('id')): e for e in cache.get('events', [])}
     # Outside hands (load arc A1). A ride a carpool parent is making was never
@@ -69,21 +94,46 @@ def _unassigned_findings(now: datetime.datetime):
         # Optional events (event config `is_optional`): dropped-first is the
         # DESIGN, not a coverage hole — one calm line, never the siren. The
         # key differs from the unassigned one so flipping the flag re-says
-        # the day in the right voice. This IS the conflict-triggered ask:
-        # it fires only when the solver actually had to drop the event, and
-        # the reply path is wired ("she's still going" -> decide_optional_
-        # event -> full weight -> re-solve). An occurrence decided 'attend'
+        # the day in the right voice. An occurrence decided 'attend'
         # deliberately falls through to the siren — somebody promised a kid;
         # 'skip' never gets here (excluded from the solve upstream).
+        #
+        # It does NOT get to interrupt anybody. The family's verdict: an
+        # optional thing that did not fit, days out, is not a decision they
+        # want handed to them — the schedule already shows it as skipped, and
+        # "she's still going" is a sentence they will say when they mean it.
         if (ev.get('app_config') or {}).get('is_optional') \
                 and ev.get('optional_decision') != 'attend':
-            out.append((f"optional_skip:{ev_id}:{start.date().isoformat()}",
-                        f"⏭️ {title} ({_fmt_when(start)}) is optional and didn't "
-                        f"fit around the other drives — skipped it. If they "
-                        f"should still go, tell me and I'll re-plan the day."))
+            out.append(Finding(
+                key=f"optional_skip:{ev_id}:{start.date().isoformat()}",
+                line=(f"⏭️ {title} ({_fmt_when(start)}) is optional and didn't "
+                      f"fit around the other drives — skipped it."),
+                kind='optional_skip', severity='fyi', dm=False,
+                subject_type='event', subject_id=ev_id,
+                due_at=start.timestamp()))
             continue
         key = f"unassigned:{ev_id}:{start.date().isoformat()}"
-        out.append((key, f"🚨 No driver yet: {title} — {_fmt_when(start)}"))
+        try:
+            rung = _coverage.ladder(ev, cache, now)
+        except Exception as e:
+            print(f"[watchers] coverage ladder failed for {ev_id}: {e}")
+            rung = None
+        if not rung:
+            out.append(Finding(key=key,
+                               line=f"🚨 No driver yet: {title} — {_fmt_when(start)}",
+                               kind='unassigned', severity='decide',
+                               subject_type='event', subject_id=ev_id,
+                               due_at=start.timestamp()))
+            continue
+        out.append(Finding(
+            key=key, line=rung['line'], kind='unassigned',
+            severity=rung.get('severity') or 'decide',
+            # A rung-0 line ("asked the Muellers, waiting") is a status, not a
+            # question: the nudge rail is already carrying that conversation
+            # and a second reminder would be the app talking over itself.
+            dm=rung.get('tier') != 0,
+            subject_type='event', subject_id=ev_id, due_at=start.timestamp(),
+            action=(rung.get('actions') or [None])[0]))
     return out
 
 
@@ -94,21 +144,34 @@ def _stale_proposal_findings(now_ts: float):
         if now_ts - created < STALE_PROPOSAL_DAYS * 86400:
             continue
         n = _days_ago(created, now_ts)
-        out.append((f"proposal:{p.get('id')}",
-                    f"📥 Intake proposal waiting {n} days: {p.get('title') or 'Untitled'}"))
+        out.append(Finding(key=f"proposal:{p.get('id')}",
+                           line=f"📥 Intake proposal waiting {n} days: "
+                                f"{p.get('title') or 'Untitled'}",
+                           kind='proposal', severity='approve',
+                           subject_type='proposal', subject_id=str(p.get('id'))))
     return out
 
 
 def _chore_findings(now_ts: float):
+    """Verify nudges interrupt; unclaimed chores no longer do.
+
+    A chore somebody finished and is waiting to be paid for has a person at the
+    end of it — that is time-critical in the way that matters. A chore nobody
+    has claimed in a week is a fact about the chore list, and the family was
+    explicit that being asked about it weekly was noise.
+    """
     out = []
     unclaimed = []
     for c in storage.get_all_chores():
         state = c.get('state')
         if state == 'done' and c.get('done_at') \
                 and now_ts - c['done_at'] >= STALE_VERIFY_HOURS * 3600:
-            out.append((f"chore_verify:{c.get('id')}:{int(c['done_at'])}",
-                        f"✅ '{c.get('title')}' has waited {_days_ago(c['done_at'], now_ts)}"
-                        f" day(s) for your OK"))
+            out.append(Finding(
+                key=f"chore_verify:{c.get('id')}:{int(c['done_at'])}",
+                line=(f"✅ '{c.get('title')}' has waited "
+                      f"{_days_ago(c['done_at'], now_ts)} day(s) for your OK"),
+                kind='chore_verify', severity='approve',
+                subject_type='chore', subject_id=str(c.get('id'))))
         elif state == 'open' and c.get('created_at') \
                 and now_ts - c['created_at'] >= UNCLAIMED_CHORE_DAYS * 86400:
             unclaimed.append((f"chore_unclaimed:{c.get('id')}", c.get('title') or 'Chore'))
@@ -123,9 +186,11 @@ def _redemption_findings(now_ts: float):
         if now_ts - requested < STALE_REDEMPTION_HOURS * 3600:
             continue
         who = (members.get(r.get('member_id')) or {}).get('name') or 'Someone'
-        out.append((f"redemption:{r.get('id')}",
-                    f"🎁 {who} asked for '{r.get('reward_title')}'"
-                    f" {_days_ago(requested, now_ts)} day(s) ago"))
+        out.append(Finding(key=f"redemption:{r.get('id')}",
+                           line=(f"🎁 {who} asked for '{r.get('reward_title')}'"
+                                 f" {_days_ago(requested, now_ts)} day(s) ago"),
+                           kind='redemption', severity='approve',
+                           subject_type='redemption', subject_id=str(r.get('id'))))
     return out
 
 
@@ -134,8 +199,11 @@ def _errand_findings():
     for e in storage.get_all_errands():
         if e.get('is_completed') or e.get('status') != 'past_due':
             continue
-        out.append((f"errand_pastdue:{e.get('id')}",
-                    f"🛒 Past-due errand: {e.get('title')} — complete it or it stays parked"))
+        out.append(Finding(key=f"errand_pastdue:{e.get('id')}",
+                           line=f"🛒 Past-due errand: {e.get('title')} — "
+                                f"complete it or it stays parked",
+                           kind='errand_pastdue', severity='approve',
+                           subject_type='errand', subject_id=str(e.get('id'))))
     return out
 
 
@@ -148,10 +216,22 @@ def _supply_deadline_findings(now: datetime.datetime):
     """
     try:
         from services import shopping as _shop
-        return _shop.deadline_findings(now.date())
+        rows = _shop.deadline_findings(now.date())
     except Exception as e:
         print(f"[watchers] supply deadline check failed: {e}")
         return []
+    return [_as_finding(r, kind='supply_deadline', severity='approve') for r in rows]
+
+
+def _as_finding(row, kind: str, severity: str = 'fyi', dm: bool = True) -> Finding:
+    """Adapt a collector that still speaks in `(key, line)` pairs. Kept so a
+    service outside this module never has to import the Finding shape just to
+    hand back a sentence."""
+    if isinstance(row, Finding):
+        return row
+    key, line = row[0], row[1]
+    return Finding(key=key, line=line, kind=kind, severity=severity, dm=dm,
+                   subject_type=kind, subject_id=str(key))
 
 
 def _prep_kit_findings(now_ts: float):
@@ -183,9 +263,11 @@ def _prep_kit_findings(now_ts: float):
     storage.set_app_state('prep_suggest_seen',
                           sorted(seen | {n.lower() for n in fresh}))
     names = ', '.join(fresh[:4])
-    return [(f"prep_suggest:{int(now_ts)}",
-             f"🎒 Prep-kit idea{'s' if len(fresh) != 1 else ''}: {names} — "
-             f"tap ✨ Suggest on the Routines page to review & save")]
+    return [Finding(key=f"prep_suggest:{int(now_ts)}",
+                    line=(f"🎒 Prep-kit idea{'s' if len(fresh) != 1 else ''}: {names} — "
+                          f"tap ✨ Suggest on the Routines page to review & save"),
+                    kind='prep_suggest', severity='fyi',
+                    subject_type='prep_suggest', subject_id=f"prep_suggest:{int(now_ts)}")]
 
 
 def _occasion_findings(now: datetime.datetime):
@@ -219,12 +301,26 @@ def _occasion_findings(now: datetime.datetime):
         names = ', '.join(g['label'] for g in urgent[:3])
         more = f" (+{len(urgent) - 3} more)" if len(urgent) > 3 else ""
         when = "today" if away == 0 else f"in {away} day{'s' if away != 1 else ''}"
-        out.append((key, f"🎉 {o['title']} is {when} — still to sort: {names}{more}"))
+        out.append(Finding(
+            key=key,
+            line=f"🎉 {o['title']} is {when} — still to sort: {names}{more}",
+            kind='occasion_gap', severity='decide',
+            subject_type='occasion', subject_id=str(o['id']),
+            due_at=datetime.datetime.combine(anchor, datetime.time.max).timestamp()))
     return out
 
 
+# Every kind this sweep looks for. Reconciliation is scoped to it: a record of
+# a kind that was not scanned must never be auto-closed by a sweep that did not
+# ask the question (services/findings.py).
+SCANNED_KINDS = ('unassigned', 'optional_skip', 'proposal', 'chore_verify',
+                 'redemption', 'errand_pastdue', 'supply_deadline',
+                 'occasion_gap', 'household_task', 'stage', 'care_gap',
+                 'commitment', 'chore_unclaimed')
+
+
 def collect_findings(now: datetime.datetime = None):
-    """All watcher findings as (dedup_key, line) pairs — unfiltered."""
+    """All watcher findings as `Finding` tuples — unfiltered, un-deduped."""
     now = now or datetime.datetime.now()
     now_ts = now.timestamp()
     findings = []
@@ -289,17 +385,27 @@ def _commitment_findings(now: datetime.datetime):
                 if not (w_start <= start <= w_end):
                     continue
                 day_label = start.strftime('%A')
+                # Somebody's own life is nobody else's business: these stay in
+                # the DM and are marked so no shared surface can render them.
                 if drv and assignments.get(ev_id) == drv:
-                    out.append((f"erosion:{pc['id']}:{ev_id}",
-                                f"⏳ {day_label}'s {pc.get('title')} is about to be "
-                                f"lost to a drive ({ev.get('title') or 'an event'}) — "
-                                f"that took an override, so make sure it was worth it."))
+                    out.append(Finding(
+                        key=f"erosion:{pc['id']}:{ev_id}",
+                        line=(f"⏳ {day_label}'s {pc.get('title')} is about to be "
+                              f"lost to a drive ({ev.get('title') or 'an event'}) — "
+                              f"that took an override, so make sure it was worth it."),
+                        kind='commitment', severity='fyi',
+                        subject_type='commitment', subject_id=f"{pc['id']}:{ev_id}",
+                        due_at=start.timestamp()))
                 elif pc.get('needs_coverage') and str(ev_id) in unassigned \
                         and str(ev_id) not in covered_out:
-                    out.append((f"pc_cover:{pc['id']}:{ev_id}",
-                                f"🛡️ {member.get('name')}'s {pc.get('title')} is "
-                                f"{day_label} — {ev.get('title') or 'a drive'} in that "
-                                f"window still needs a driver."))
+                    out.append(Finding(
+                        key=f"pc_cover:{pc['id']}:{ev_id}",
+                        line=(f"🛡️ {member.get('name')}'s {pc.get('title')} is "
+                              f"{day_label} — {ev.get('title') or 'a drive'} in that "
+                              f"window still needs a driver."),
+                        kind='commitment', severity='decide',
+                        subject_type='commitment', subject_id=f"{pc['id']}:{ev_id}",
+                        due_at=start.timestamp()))
         return out
     except Exception as e:
         print(f"[watchers] commitment findings failed: {e}")
@@ -348,7 +454,14 @@ def _care_gap_findings(now: datetime.datetime):
                 line = (f"🏫 {when} — no school. Someone has the day: a parent "
                         f"takes it off, a grandparent, a carpool family, or a "
                         f"camp day.")
-            out.append((f"caregap:{gap['date']}:{gap['kind']}", line))
+            # DM-only, forever. A care gap names a specific child and a
+            # specific hole in their week; the wall panel is semi-public and
+            # this is not wall material (docs/needs_you_design.md §9).
+            out.append(Finding(
+                key=f"caregap:{gap['date']}:{gap['kind']}", line=line,
+                kind='care_gap', severity='decide', subject_type='care_gap',
+                subject_id=f"{gap['date']}:{gap['kind']}",
+                due_at=datetime.datetime.combine(d, datetime.time.max).timestamp()))
         return out
     except Exception as e:
         print(f"[watchers] care-gap findings failed: {e}")
@@ -364,9 +477,12 @@ def _stage_findings(now: datetime.datetime):
         from services import stages
         out = []
         for p in stages.pending_promotions(now.date()):
-            out.append((f"stage:{p['member_id']}:{p['to']}",
-                        f"🌱 {p['name']} is {p['age']} now — ready to be a "
-                        f"{p['to'].capitalize()}. Confirm it in Config → People."))
+            out.append(Finding(
+                key=f"stage:{p['member_id']}:{p['to']}",
+                line=(f"🌱 {p['name']} is {p['age']} now — ready to be a "
+                      f"{p['to'].capitalize()}. Confirm it in Config → People."),
+                kind='stage', severity='decide', subject_type='member',
+                subject_id=f"{p['member_id']}:{p['to']}"))
         return out
     except Exception as e:
         print(f"[watchers] stage findings failed: {e}")
@@ -393,51 +509,86 @@ def _household_task_findings(now: datetime.datetime):
         except ValueError:
             continue
         title = t.get('title') or 'Something'
+        due_ts = _dt.datetime.combine(due_d, _dt.time.max).timestamp()
         if due_d < today:
             days = (today - due_d).days
-            out.append((f"task_overdue:{t['id']}:{due}",
-                        f"📋 Past due: {title} — was due "
-                        f"{'yesterday' if days == 1 else f'{days} days ago'}"))
+            out.append(Finding(
+                key=f"task_overdue:{t['id']}:{due}",
+                line=(f"📋 Past due: {title} — was due "
+                      f"{'yesterday' if days == 1 else f'{days} days ago'}"),
+                kind='household_task', severity='approve',
+                subject_type='task', subject_id=f"overdue:{t['id']}"))
         elif not t.get('assigned_to') and (due_d - today).days <= UNCLAIMED_TASK_LEAD_DAYS:
             when = 'today' if due_d == today else (
                 'tomorrow' if (due_d - today).days == 1 else due_d.strftime('%a'))
-            out.append((f"task_unclaimed:{t['id']}:{due}",
-                        f"📋 Nobody has {title} — due {when}"))
+            out.append(Finding(
+                key=f"task_unclaimed:{t['id']}:{due}",
+                line=f"📋 Nobody has {title} — due {when}",
+                kind='household_task', severity='decide',
+                subject_type='task', subject_id=f"unclaimed:{t['id']}",
+                due_at=due_ts))
     return out
 
 
+def _unclaimed_batch(unclaimed) -> Finding:
+    """The week-old unclaimed chores, as one record nobody is pinged about.
+
+    Kept, because "seven chores have sat there a fortnight" is worth knowing
+    when you go looking. Silenced, because being asked about it every week was
+    the noise the family actually complained about.
+    """
+    titles = [t for _, t in unclaimed]
+    line = f"🧹 Unclaimed for a week: {', '.join(titles[:3])}"
+    if len(titles) > 3:
+        line += f" (+{len(titles) - 3} more)"
+    line += " — lower the points, split it up, or retire it?"
+    return Finding(key='__unclaimed_batch__', line=line, kind='chore_unclaimed',
+                   severity='fyi', dm=False, subject_type='chore_batch',
+                   subject_id='__unclaimed_batch__')
+
+
 def run_watchers(now: datetime.datetime = None) -> int:
-    """One sweep: collect, drop already-notified findings, DM each parent one
-    consolidated heads-up. Returns the number of fresh findings sent (0 = no
-    post). Quiet hours return without consuming anything — findings wait."""
+    """One sweep: collect, reconcile the record table, then DM each parent one
+    consolidated heads-up about the findings that earned an interruption.
+    Returns the number of fresh findings SENT (0 = no post).
+
+    The two halves are deliberately independent. Records are reconciled on
+    every sweep, including inside quiet hours and including for findings that
+    may never be DM'd — the app's picture of what is true should not depend on
+    whether it was a polite hour to say so.
+    """
     now = now or datetime.datetime.now()
     settings = storage.get_settings() or {}
     if not settings.get('proactive_watchers_enabled', True):
         return 0
+
+    now_ts = now.timestamp()
+    findings, unclaimed = collect_findings(now)
+    if unclaimed:
+        findings.append(_unclaimed_batch(unclaimed))
+    findings += _prep_kit_findings(now_ts)
+
+    # Records first, so a finding that resolved itself is closed even on a
+    # sweep that posts nothing.
+    scanned = set(SCANNED_KINDS)
+    if any(f.kind == 'prep_suggest' for f in findings):
+        scanned.add('prep_suggest')
+    try:
+        _findings.reconcile(findings, scanned, now_ts)
+    except Exception as e:
+        print(f"[watchers] finding reconcile failed: {e}")
+
     if not (QUIET_END_HOUR <= now.hour < QUIET_START_HOUR):
         return 0
 
-    now_ts = now.timestamp()
     notified = dict(storage.get_app_state('watcher_notified') or {})
     # prune old markers so the dict never grows without bound
     cutoff = now_ts - NOTIFIED_RETENTION_DAYS * 86400
     notified = {k: ts for k, ts in notified.items() if ts >= cutoff}
 
-    findings, unclaimed = collect_findings(now)
-    findings += _prep_kit_findings(now_ts)
-
-    fresh = [(k, line) for k, line in findings if k not in notified]
-    fresh_unclaimed = [(k, title) for k, title in unclaimed if k not in notified]
-    if fresh_unclaimed:
-        titles = [t for _, t in fresh_unclaimed]
-        line = f"🧹 Unclaimed for a week: {', '.join(titles[:3])}"
-        if len(titles) > 3:
-            line += f" (+{len(titles) - 3} more)"
-        line += " — lower the points, split it up, or retire it?"
-        fresh.append(('__unclaimed_batch__', line))
-
-    real_keys = [k for k, _ in fresh if k != '__unclaimed_batch__'] \
-        + [k for k, _ in fresh_unclaimed]
+    # The signal policy, applied in one line: only findings that carry a
+    # solution or a clock get to interrupt a person.
+    fresh = [f for f in findings if f.dm and f.key not in notified]
     if not fresh:
         storage.set_app_state('watcher_notified', notified)
         return 0
@@ -447,8 +598,7 @@ def run_watchers(now: datetime.datetime = None) -> int:
     if not parents:
         return 0
 
-    lines = [line for _, line in fresh]
-    body = "👋 Heads-up — needs a look:\n" + "\n".join(f"• {l}" for l in lines)
+    body = "👋 Heads-up — needs a look:\n" + "\n".join(f"• {f.line}" for f in fresh)
     body += "\n\nAsk me for options, or handle it on the dashboard."
 
     from services.agent_tools_v2 import _post_chat_message
@@ -458,14 +608,51 @@ def run_watchers(now: datetime.datetime = None) -> int:
         try:
             dm = storage.get_or_create_dm(argyle['id'], parent['id'])
             _post_chat_message(dm, argyle, body)
+            _post_action_cards(dm, argyle, fresh, parent)
             sent = True
         except Exception as e:
             print(f"[watchers] DM to {parent.get('name')} failed: {e}")
 
     if sent:
-        for k in real_keys:
-            notified[k] = now_ts
+        for f in fresh:
+            if f.key != '__unclaimed_batch__':
+                notified[f.key] = now_ts
         storage.set_app_state('watcher_notified', notified)
         print(f"[watchers] sent {len(fresh)} finding(s) to {len(parents)} parent(s)")
         return len(fresh)
     return 0
+
+
+# At most this many approve-cards ride a single sweep. The consolidated DM is
+# the contract; cards are the hand path for the findings that have a concrete
+# thing to tap, and a sweep that posted nine of them would have broken the one
+# guarantee this module has always made.
+MAX_ACTION_CARDS = 3
+
+
+def _post_action_cards(dm, argyle, fresh, parent):
+    """One approve card per actionable finding, after the consolidated line.
+
+    This is the hand path: the same proposal machinery the agent uses
+    (services/chat_actions.py), so a tap goes through the tested handler and
+    the parent/admin gate is enforced at approval rather than here.
+    """
+    from services import chat_actions
+    from services.agent_tools_v2 import _post_chat_message
+    posted = 0
+    for f in fresh:
+        if posted >= MAX_ACTION_CARDS or not f.action:
+            continue
+        act = f.action
+        try:
+            res = chat_actions.create_action_proposal(
+                act['action_type'], act.get('label') or act['action_type'],
+                act.get('payload') or {}, created_by_member_id=argyle.get('id'))
+            if res.get('status') != 'success':
+                continue
+            storage.update_action_proposal(res['proposal_id'], {'channel_id': dm['id']})
+            _post_chat_message(dm, argyle, act.get('label') or 'Suggested',
+                               card=res.get('card'))
+            posted += 1
+        except Exception as e:
+            print(f"[watchers] action card failed ({act.get('action_type')}): {e}")

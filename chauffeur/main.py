@@ -459,6 +459,19 @@ async def push_notification_loop():
             except Exception as we:
                 print(f"Watcher sweep error: {we}")
 
+            # --- Coverage-ask nudges (findings arc, slice 2) ---
+            # The reply to "any chance you could take Ava?" arrives as a text
+            # message this app cannot read, and on iOS there is no rail that
+            # would let it. So it asks the sender instead, at the moments an
+            # answer is most likely to exist, with the answer as a button.
+            try:
+                last_ca = float(storage.get_app_state("coverage_nudges_swept") or 0)
+                if time.time() - last_ca >= 600:
+                    storage.set_app_state("coverage_nudges_swept", time.time())
+                    await asyncio.to_thread(_sweep_coverage_nudges)
+            except Exception as cae:
+                print(f"Coverage nudge sweep error: {cae}")
+
             # --- Runway cues (runway arc R3) ---
             # The single calm satellite sentence when a kid's runway is
             # genuinely behind. Every 2 min; the service is idempotent per
@@ -4656,6 +4669,90 @@ def remove_commitment(commitment_id: str, background_tasks: BackgroundTasks):
     background_tasks.add_task(trigger_background_refresh, None, None, True)
     return {"status": "success"}
 
+# --- Needs You: findings with a lifecycle, and the coverage ladder ---
+# The watchers stopped being a stream of text and became records that close
+# themselves (services/findings.py); an uncovered event now arrives with a
+# driver, an outside hand, or an honest can't-cover and its reasons
+# (services/coverage_options.py). docs/needs_you_design.md.
+
+def _needs_you_actor(request, claimed: Optional[str]) -> Optional[dict]:
+    """Findings are parent/adult work. A child or helper who reaches one of
+    these routes is refused rather than quietly ignored — same discipline as
+    the cancel path."""
+    actor_id = _acting_id(request, claimed)
+    actor = storage.get_member(actor_id) if actor_id else None
+    if actor and actor.get('role') in ('child', 'helper', 'guest'):
+        raise HTTPException(status_code=403,
+                            detail="Only a parent or adult can handle these")
+    return actor
+
+@app.get("/api/findings")
+def list_findings(state: str = 'open', request: Request = None):
+    """What could not be handled without you. Ordered decide → approve → fyi,
+    soonest first — the order somebody would work down it."""
+    from services import findings as _f
+    _needs_you_actor(request, None)
+    if state == 'open':
+        return {"findings": _f.open_findings()}
+    return {"findings": storage.get_findings(state=state)}
+
+@app.post("/api/findings/{finding_id}/resolve")
+def resolve_finding(finding_id: str, body: dict = Body(default={}),
+                    request: Request = None):
+    """act: tap | dismiss | undo. Undo is first-class on purpose — a
+    lock-screen tap is easy to get wrong, and a wrong tap you cannot take back
+    teaches people to stop tapping."""
+    from services import findings as _f
+    actor = _needs_you_actor(request, body.get('member_id'))
+    res = _f.resolve(finding_id, body.get('act') or 'tap',
+                     member_id=(actor or {}).get('id'))
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    return res
+
+@app.get("/api/coverage/{event_id}/options")
+def coverage_options_api(event_id: str, request: Request = None):
+    """The ladder for one event: who is free, who has covered it before, or the
+    reasons nobody can. Read-only — this is the thinking, not the doing."""
+    from services import coverage_options as _cov
+    _needs_you_actor(request, None)
+    ev = _resolve_cached_event(event_id)
+    return _cov.ladder(ev)
+
+@app.post("/api/coverage/{event_id}/ask")
+def coverage_ask_api(event_id: str, body: dict = Body(default={}),
+                     request: Request = None):
+    """Start an ask. Returns the drafted text for the parent to send from their
+    own phone — the app never holds a number and never sends the message."""
+    from services import coverage_options as _cov
+    actor = _needs_you_actor(request, body.get('member_id'))
+    res = _cov.start_ask(event_id, body.get('contact_id'), body.get('contact_name'),
+                         asked_by=(actor or {}).get('id'))
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    return res
+
+@app.get("/api/coverage/asks")
+def list_coverage_asks(state: str = 'waiting', request: Request = None):
+    _needs_you_actor(request, None)
+    return {"asks": storage.get_coverage_asks(state=state)}
+
+@app.post("/api/coverage/asks/{ask_id}/answer")
+def answer_coverage_ask(ask_id: str, body: dict = Body(default={}),
+                        request: Request = None):
+    """covered | no | waiting | undo — the one bit the app needs back from a
+    conversation it cannot read."""
+    from services import coverage_options as _cov
+    actor = _needs_you_actor(request, body.get('member_id'))
+    res = _cov.answer_ask(ask_id, body.get('answer') or '',
+                          member_id=(actor or {}).get('id'),
+                          contact_name=body.get('contact_name'))
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    if res.get('schedule_dirty'):
+        trigger_background_refresh()
+    return res
+
 # --- Stages: the child that grows (load arc A4) ---
 
 @app.get("/api/stages")
@@ -6443,6 +6540,72 @@ def send_push_to_member(member_id, title, body, url=None):
                 print(f"Member push failed for {member_id} (HTTP {code}): {repr(ex)}")
         except Exception as ex:
             print(f"Member push failed for {member_id}: {repr(ex)}")
+
+def send_push_with_actions(member_id, title, body, actions, data=None):
+    """Web push carrying tappable answers.
+
+    The service worker posts these itself, credentialed from the mirrored
+    member token (static/sw.js), so the answer lands without the app ever
+    opening. `data['action_posts']` maps an action name to the request to make
+    — a generic rail, so the next one-tap question costs no worker code.
+    """
+    from pywebpush import webpush, WebPushException
+    import json as _json
+    payload = _json.dumps({"title": title, "body": body, "actions": actions,
+                           "data": data or {}})
+    for sub in storage.get_push_subscriptions_for_member(member_id):
+        try:
+            webpush(subscription_info=sub["subscription"], data=payload,
+                    vapid_private_key=VAPID_PRIVATE_KEY_PATH,
+                    vapid_claims={"sub": "mailto:admin@example.com"})
+        except WebPushException as ex:
+            code = getattr(getattr(ex, 'response', None), 'status_code', None)
+            if code in (404, 410):
+                endpoint = (sub.get("subscription") or {}).get("endpoint")
+                if endpoint:
+                    try:
+                        storage.delete_push_subscription_by_endpoint(endpoint)
+                    except Exception as prune_ex:
+                        print(f"Failed to prune subscription: {prune_ex}")
+            else:
+                print(f"Action push failed for {member_id} (HTTP {code}): {repr(ex)}")
+        except Exception as ex:
+            print(f"Action push failed for {member_id}: {repr(ex)}")
+
+def _sweep_coverage_nudges(now=None):
+    """One question per due ask, to whoever sent it (or to the parents if that
+    is unknown). Marked sent BEFORE the push so a failing send never becomes a
+    loop — the next rung of the schedule will ask again anyway."""
+    from services import coverage_options as _cov
+    now = now or datetime.now()
+    due = _cov.due_nudges(now)
+    if not due:
+        return 0
+    parents = [m for m in storage.get_all_members()
+               if m.get('role') == 'parent' and not m.get('system')]
+    sent = 0
+    for ask in due:
+        storage.update_coverage_ask(ask['id'],
+                                    {'nudges_sent': int(ask.get('nudges_sent') or 0) + 1})
+        asker = storage.get_member(ask.get('asked_by') or '') if ask.get('asked_by') else None
+        targets = [asker] if asker else parents
+        actions = [{"action": "cover_yes", "title": "Covered"},
+                   {"action": "cover_no", "title": "No"}]
+        url = f"/api/coverage/asks/{ask['id']}/answer"
+        data = {"navigate_url": "/app?tab=drives",
+                "action_posts": {
+                    "cover_yes": {"url": url, "body": {"answer": "covered"}},
+                    "cover_no": {"url": url, "body": {"answer": "no"}}}}
+        for t in targets:
+            if not t:
+                continue
+            try:
+                send_push_with_actions(t['id'], "Chauffeur", _cov.nudge_body(ask),
+                                       actions, data)
+                sent += 1
+            except Exception as e:
+                print(f"[coverage] nudge push failed: {e}")
+    return sent
 
 def _channel_recipient_members(channel):
     """Family-network S10: a ping may reach exactly whoever may SEE the
@@ -11182,7 +11345,11 @@ def _build_kid_digests(target_date=None, routine_bus=True):
             # for a thing they are not attending; an undecided one is marked
             # (optional) so "5:00 PM – Open Gym" never reads as a promise.
             # An explicit 'attend' reads like any firm commitment.
-            if r.get('optional') and r.get('optional_decision') == 'skip':
+            # A skip is a skip whether or not the event was ever flagged
+            # optional — the family can decide not to go to anything once, and
+            # a kid must not be told to get ready for a thing nobody is driving
+            # them to.
+            if r.get('optional_decision') == 'skip':
                 lines.append(line + " — skipped today")
                 continue
             if r.get('optional') and r.get('optional_decision') != 'attend':
@@ -13311,14 +13478,20 @@ def delete_event_config(google_id: str):
 def set_optional_decision_api(event_id: str, body: dict = Body(default={})):
     """Optional events, phase 2: the per-occurrence attend/skip choice.
     Resolves the cached-schedule event so the decision is keyed by the
-    occurrence's own google id — recurring siblings are never touched."""
+    occurrence's own google id — recurring siblings are never touched.
+
+    'skip' is allowed on ANY event (the coverage ladder's third rung: "we're
+    skipping it"). attend/clear still require an optional event, because on a
+    firm commitment they would say nothing — it is already full weight.
+    """
     from services import optional_events
     sched = storage.get_cached_schedule() or {}
     ev = next((e for e in sched.get('events', [])
                if str(e.get('id')) == str(event_id)), None)
     if not ev:
         raise HTTPException(status_code=404, detail="Event not found in the current schedule.")
-    if not ((ev.get('app_config') or {}).get('is_optional')):
+    if body.get('decision') != 'skip' \
+            and not ((ev.get('app_config') or {}).get('is_optional')):
         raise HTTPException(status_code=400, detail="That event is not marked optional.")
     res = optional_events.record_decision(ev, body.get('decision'),
                                           decided_by=body.get('member_id'))

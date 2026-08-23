@@ -459,6 +459,17 @@ with db_lock:
     household_tasks_table = db.table('household_tasks')
     requests_table = db.table('requests')
     protected_commitments_table = db.table('protected_commitments')
+    # Needs You (findings arc). A watcher finding with a LIFECYCLE: it opens
+    # when the sweep sees the condition and closes when the sweep stops seeing
+    # it, which is how a thing handled somewhere else in the app stops being
+    # asked about. Identity is (kind, subject) so the same trouble is one row
+    # across days, unlike the dated notify markers in app_state.
+    findings_table = db.table('findings')
+    # An ask that is out with a human (findings arc, slice 2). The reply comes
+    # back as a text message the app cannot read, so the ASK is what the app
+    # holds: state, and the nudges that turn a forgotten conversation into one
+    # lock-screen tap.
+    coverage_asks_table = db.table('coverage_asks')
     # Per-member music (favorites + recently chosen). OURS on purpose: Music
     # Assistant's lead has declined per-user libraries outright — MA 2.7 user
     # profiles scope providers and speakers, favourites stay one shared pile.
@@ -2582,6 +2593,95 @@ def delete_protected_commitment(commitment_id: str):
     with db_lock:
         protected_commitments_table.remove(Query().id == commitment_id)
         _invalidate_schedule_caches()
+
+# --- Needs You findings ---
+# Storage only. The lifecycle rules (what opens, what auto-closes, what never
+# reopens) live in services/findings.py — this layer holds rows and nothing
+# else, so the sweep's semantics are readable in one file.
+
+def get_findings(state: str = None, kind: str = None) -> List[dict]:
+    with db_lock:
+        rows = [dict(f) for f in findings_table.all()]
+    if state:
+        rows = [f for f in rows if f.get('state') == state]
+    if kind:
+        rows = [f for f in rows if f.get('kind') == kind]
+    rows.sort(key=lambda f: f.get('created_at') or 0)
+    return rows
+
+def get_finding(finding_id: str) -> Optional[dict]:
+    if not finding_id:
+        return None
+    with db_lock:
+        res = findings_table.search(Query().id == finding_id)
+        return dict(res[0]) if res else None
+
+def get_finding_by_identity(identity: str) -> Optional[dict]:
+    """The row for this (kind, subject), whatever state it is in — the dismissed
+    ones matter most here: they are how a settled answer stays settled."""
+    if not identity:
+        return None
+    with db_lock:
+        res = findings_table.search(Query().identity == identity)
+    if not res:
+        return None
+    rows = sorted((dict(r) for r in res), key=lambda f: f.get('created_at') or 0)
+    return rows[-1]
+
+def add_finding(data: dict) -> str:
+    import uuid as _uuid
+    row = {'id': _uuid.uuid4().hex, 'created_at': time.time(), 'state': 'open',
+           **data}
+    with db_lock:
+        findings_table.insert(row)
+    return row['id']
+
+def update_finding(finding_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(findings_table.update(data, Query().id == finding_id))
+
+def prune_findings(before_ts: float) -> int:
+    """Resolved rows older than the cutoff. Open rows are NEVER pruned — an
+    open finding is live state, and age is not a reason to forget it."""
+    with db_lock:
+        rows = [dict(f) for f in findings_table.all()]
+        doomed = [f['id'] for f in rows
+                  if f.get('state') != 'open'
+                  and (f.get('resolved_at') or f.get('created_at') or 0) < before_ts]
+        for fid in doomed:
+            findings_table.remove(Query().id == fid)
+    return len(doomed)
+
+# --- Coverage asks (findings arc, slice 2) ---
+
+def get_coverage_asks(state: str = None, event_id: str = None) -> List[dict]:
+    with db_lock:
+        rows = [dict(a) for a in coverage_asks_table.all()]
+    if state:
+        rows = [a for a in rows if a.get('state') == state]
+    if event_id:
+        rows = [a for a in rows if a.get('event_id') == event_id]
+    rows.sort(key=lambda a: a.get('asked_at') or 0)
+    return rows
+
+def get_coverage_ask(ask_id: str) -> Optional[dict]:
+    if not ask_id:
+        return None
+    with db_lock:
+        res = coverage_asks_table.search(Query().id == ask_id)
+        return dict(res[0]) if res else None
+
+def add_coverage_ask(data: dict) -> str:
+    import uuid as _uuid
+    row = {'id': _uuid.uuid4().hex, 'asked_at': time.time(), 'state': 'waiting',
+           'nudges_sent': 0, **data}
+    with db_lock:
+        coverage_asks_table.insert(row)
+    return row['id']
+
+def update_coverage_ask(ask_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(coverage_asks_table.update(data, Query().id == ask_id))
 
 # --- Requests (load arc A3) ---
 # An ask with a state. A request is ALWAYS answered: silence is the failure

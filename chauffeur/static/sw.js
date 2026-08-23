@@ -83,6 +83,37 @@ async function completeLeg(legId, fallbackUrl) {
     }
 }
 
+// Answer a question from the lock screen. The generalisation of completeLeg:
+// the push itself carries WHERE the answer goes and WHAT it says, in
+// `data.action_posts[actionName] = {url, body}`, so a new one-tap question is
+// a server change and nothing here. Same two failure modes, same rule — an
+// answer that did not land must never look like one that did.
+async function postAction(spec, fallbackUrl) {
+    const token = await memberToken();
+    if (!token) {
+        return openApp(fallbackUrl);
+    }
+    let ok = false;
+    try {
+        const res = await fetch(spec.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Member-Token': token },
+            body: JSON.stringify(spec.body || {})
+        });
+        ok = res.ok;
+    } catch (e) {
+        ok = false;
+    }
+    if (!ok) {
+        await self.registration.showNotification('Could not save that', {
+            body: 'Tap to open Chauffeur and finish it.',
+            icon: '/static/icon.png',
+            badge: '/static/icon.png',
+            data: { navigate_url: fallbackUrl }
+        });
+    }
+}
+
 self.addEventListener('push', function(event) {
     if (event.data) {
         try {
@@ -105,12 +136,17 @@ self.addEventListener('push', function(event) {
 self.addEventListener('notificationclick', function(event) {
     event.notification.close();
 
+    const posts = event.notification.data.action_posts || {};
+
     // If the user clicked a specific action button (e.g. "Mark Completed")
     if (event.action === 'complete') {
         const legId = event.notification.data.leg_id;
         if (legId) {
             event.waitUntil(completeLeg(legId, event.notification.data.navigate_url || '/app'));
         }
+    } else if (event.action && posts[event.action]) {
+        event.waitUntil(postAction(posts[event.action],
+                                   event.notification.data.navigate_url || '/app'));
     } else if (event.action === 'navigate') {
         const navigateUrl = event.notification.data.navigate_url;
         if (navigateUrl) {

@@ -392,14 +392,14 @@ def scenario_the_watcher_anticipates_but_does_not_nag():
     soon = (_dt.date.today() + _dt.timedelta(days=2)).isoformat()
     o = occasions.create('Ellie birthday', soon, 'birthday')
     occasions.answer(o['id'], 'cake', True)
-    keys = [k for k, _ in watchers._occasion_findings(_dt.datetime.now())]
+    keys = [f.key for f in watchers._occasion_findings(_dt.datetime.now())]
     check(any(k.startswith('occasion_gap:') for k in keys),
           f"a party in two days with an unbought cake gets a nudge, got {keys}")
 
     far = (_dt.date.today() + _dt.timedelta(days=200)).isoformat()
     o2 = occasions.create('Christmas', far, 'christmas')
     occasions.answer(o2['id'], 'gifts', True)
-    keys2 = [k for k, _ in watchers._occasion_findings(_dt.datetime.now())]
+    keys2 = [f.key for f in watchers._occasion_findings(_dt.datetime.now())]
     check(not any(o2['id'] in k for k in keys2),
           "but something 200 days out is not a heads-up, it is nagging")
 

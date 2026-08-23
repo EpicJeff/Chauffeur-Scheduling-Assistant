@@ -1235,6 +1235,30 @@ def list_chores() -> Dict[str, Any]:
     return {"status": "success", "message": " | ".join(parts)}
 
 
+def list_open_findings() -> Dict[str, Any]:
+    """"What needs me?" — answered from the records, not from a re-scan.
+
+    The whole point of the findings table is that the answer is a stored fact
+    rather than something recomputed per asker, so the app, the push and the
+    agent can never disagree about what is still outstanding.
+    """
+    from services import findings as _f
+    rows = _f.open_findings()
+    if not rows:
+        return {"status": "success", "message": "Nothing needs you right now."}
+    decide = [r for r in rows if r.get('severity') == 'decide']
+    approve = [r for r in rows if r.get('severity') == 'approve']
+    parts = []
+    if decide:
+        parts.append("Needs a decision: " + "; ".join(r['line'] for r in decide[:4]))
+    if approve:
+        parts.append("One tap each: " + "; ".join(r['line'] for r in approve[:4]))
+    rest = len(rows) - len(decide[:4]) - len(approve[:4])
+    if rest > 0:
+        parts.append(f"...and {rest} more on the list")
+    return {"status": "success", "message": " | ".join(parts)}
+
+
 def claim_chore(chore_title: str, member_name: str = None,
                 sender_driver_id: str = None) -> Dict[str, Any]:
     from services import storage
@@ -3273,6 +3297,11 @@ def get_available_tools() -> List[Dict]:
         {
             "name": "list_chores",
             "description": "Lists the family chore pot: what's open to claim, who has claimed what, and what's waiting for parent verification ('what chores are open?', 'who's doing the dishes?').",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "list_open_findings",
+            "description": "Lists what still needs a parent — drives with no driver, things waiting on an approval, decisions nobody has made ('what needs me?', 'anything outstanding?', 'what's still open?').",
             "parameters": {"type": "object", "properties": {}, "required": []}
         },
         {

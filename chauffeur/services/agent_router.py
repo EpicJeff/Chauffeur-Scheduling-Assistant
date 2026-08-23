@@ -340,6 +340,7 @@ sending or claiming, and never pass from_member/member_name for them.
                              "complete_household_task", "claim_household_task",
                              "get_household_load",
                              "get_family_messages", "list_chores",
+                             "list_open_findings",
                              "claim_chore", "get_routine_status",
                              "post_weekly_digest", "get_drive_digest",
                              "get_kid_tasks", "add_kid_task", "complete_kid_task",
@@ -675,6 +676,9 @@ sending or claiming, and never pass from_member/member_name for them.
                 elif func_name == "list_chores":
                     from services.agent_tools_v2 import list_chores
                     res = list_chores()
+                elif func_name == "list_open_findings":
+                    from services.agent_tools_v2 import list_open_findings
+                    res = list_open_findings()
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "claim_chore":
                     from services.agent_tools_v2 import claim_chore
