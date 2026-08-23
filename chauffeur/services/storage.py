@@ -5677,10 +5677,11 @@ def get_event_moment_index() -> List[dict]:
                 b = buckets[ch['id']] = {
                     'channel_id': ch['id'], 'event_id': ch.get('event_id'),
                     'event_title': ch.get('title') or 'Family moment',
-                    'count': 0, 'latest_ts': 0.0, 'cover': None,
+                    'count': 0, 'media_count': 0, 'latest_ts': 0.0, 'cover': None,
                     'sender_ids': set(),
                 }
             b['count'] += 1
+            b['media_count'] += len(attachment_items(m.get('attachment')))
             b['sender_ids'].add(m.get('sender_member_id'))
             if (m.get('ts') or 0) >= b['latest_ts']:
                 b['latest_ts'] = m.get('ts') or 0

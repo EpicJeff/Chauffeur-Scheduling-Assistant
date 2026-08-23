@@ -93,6 +93,19 @@ def prompt_worthiness(ev, present_ids, date_str):
     return 'quiet'
 
 
+def _item_rows(att) -> list:
+    """Every media in a moment, shaped for a client: cover first, one entry for
+    an ordinary moment. Always present so no surface needs an album special
+    case — `items[0]` is what the top-level cover fields describe."""
+    out = []
+    for it in storage.attachment_items(att):
+        url = str(it.get('url') or '')
+        out.append({'kind': it.get('kind') or 'photo',
+                    'media_url': url,
+                    'poster_url': poster_url_for(it) or url})
+    return out
+
+
 def _base_event_id(ev_id: str) -> str:
     s = str(ev_id)
     for suffix in ('_dropoff', '_pickup'):
@@ -355,6 +368,7 @@ def moment_stream_meta(channel, message, sender=None):
         'sender_member_id': (message or {}).get('sender_member_id'),
         'sender_name': (sender or {}).get('name') or '?',
         'event_title': (channel or {}).get('title') or 'A family moment',
+        'items': _item_rows(att),
     }}
 
 
@@ -388,6 +402,11 @@ def _moment_row(m, members, event_title=None):
         # without re-fetching the message (the strip's lightbox opens rows
         # older than the thread's 100-message window).
         'sender_member_id': m.get('sender_member_id'),
+        # Every media in this moment, cover first. The top-level kind/media_url
+        # above describe items[0]; a surface that draws the whole album reads
+        # this instead. Legacy inline photos yield a single item whose
+        # media_url is '' — the by-message URL above is their route.
+        'items': _item_rows(att),
     }
 
 
@@ -424,6 +443,11 @@ def moment_events(offset: int = 0, limit: int = 24):
             'event_id': b.get('event_id'),
             'event_title': b.get('event_title'),
             'count': b.get('count', 0),
+            # Two different questions, deliberately: `count` is how many times
+            # somebody SHARED (the unit the panel badge uses), `media_count` is
+            # how much there is to look at. The card shows the latter — "6"
+            # over an event holding twenty-four photos answers nothing.
+            'media_count': b.get('media_count', b.get('count', 0)),
             'latest_ts': b.get('latest_ts'),
             'cover_url': (poster_url_for(cover_att) or str(cover_att.get('url') or '')
                           or by_message),

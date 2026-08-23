@@ -1239,6 +1239,52 @@ def scenario_album_validation():
                   "pre-existing file survives album validation failure")
 
 
+def scenario_album_rides_the_wire():
+    """A client must never have to reach into the raw attachment, and must
+    never need a second request to learn what is in an album."""
+    import main
+    _family()
+    ch = storage.get_or_create_event_channel("vb1", "Emma's Volleyball")
+    t0 = time.time()
+    a = storage.save_photo_data_url(_TINY_JPEG)
+    b = storage.save_photo_data_url(_TINY_JPEG)
+    storage.add_chat_message({
+        "id": "alb", "channel_id": ch["id"], "sender_member_id": "mom",
+        "ts": t0, "type": "text", "body": "first half",
+        "attachment": {"kind": "photo", "url": a["url"],
+                       "items": [{"kind": "photo", "url": a["url"]},
+                                 {"kind": "photo", "url": b["url"]}]},
+        "reactions": {}})
+    storage.add_chat_message({
+        "id": "solo", "channel_id": ch["id"], "sender_member_id": "dad",
+        "ts": t0 - 60, "type": "text", "body": "",
+        "attachment": {"kind": "photo", "url": a["url"]}, "reactions": {}})
+
+    rows = {r["id"]: r for r in presence.recent_moments(hours=1)}
+    alb = rows["alb"]
+    check([i["media_url"] for i in alb["items"]] == [a["url"], b["url"]],
+          f"items ride the row, cover first, got {alb['items']}")
+    check(alb["media_url"] == a["url"] and alb["kind"] == "photo",
+          "cover fields stay at the top level for readers that never learned about albums")
+    check(len(rows["solo"]["items"]) == 1,
+          "an ordinary moment carries a one-item list, so clients need no special case")
+
+    meta = presence.moment_stream_meta(ch, storage.get_chat_message("alb"),
+                                       storage.get_member("mom"))["moment"]
+    check(len(meta["items"]) == 2 and meta["media_url"] == a["url"],
+          "the SSE preview carries the album too")
+
+    card = main.get_moment_events()["items"][0]
+    check(card["count"] == 2, f"count stays MESSAGES, got {card['count']}")
+    check(card["media_count"] == 3,
+          f"media_count sums the media (2 + 1), got {card['media_count']}")
+
+    # The shelf badge counts SHARES. An album is one share however much it
+    # holds — the unit the two surfaces use is the whole distinction.
+    check(presence.count_moments_since(t0 - 3600) == 2,
+          "an album counts once toward the panel badge, not once per photo")
+
+
 SCENARIOS = [
     scenario_resumable_upload,
     scenario_media_root_and_sharding,
@@ -1263,6 +1309,7 @@ SCENARIOS = [
     scenario_hearth_is_pop_only,
     scenario_attachment_items_helper,
     scenario_album_deletion_frees_every_file,
+    scenario_album_rides_the_wire,
 ]
 
 if __name__ == "__main__":
