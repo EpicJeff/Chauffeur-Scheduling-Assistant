@@ -399,6 +399,14 @@ def recent_moments(hours: float = 12, limit: int = 12):
             for m in storage.get_recent_event_moments(since, limit=limit)]
 
 
+def count_moments_since(since_ts: float) -> int:
+    """The kiosk catch-up badge: moments the panel has not been shown yet.
+
+    Deliberately unenriched — no sender, no event, no media. The badge is a
+    number, and the panel asks for it once a minute from every page."""
+    return storage.count_event_moments_since(since_ts)
+
+
 def moment_events(offset: int = 0, limit: int = 24):
     """Gallery top level: one card per EVENT, newest first, PAGED — the whole
     history, so it must never be loaded in one shot."""

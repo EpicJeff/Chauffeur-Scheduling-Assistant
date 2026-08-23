@@ -12452,6 +12452,14 @@ def get_presence_moments(hours: float = 12, limit: int = 12):
     from services import presence
     return presence.recent_moments(hours=min(hours, 720), limit=min(limit, 200))
 
+@app.get("/api/presence/moments/count")
+def get_moments_count(since: float = 0):
+    """How many moments have landed since `since` — the panel shelf's catch-up
+    badge. Split from the feed above because it must be cheap: every kiosk page
+    asks once a minute, and the feed carries media."""
+    from services import presence
+    return {"count": presence.count_moments_since(max(0.0, since))}
+
 @app.get("/api/presence/moment-events")
 def get_moment_events(offset: int = 0, limit: int = 24):
     """Gallery top level: one card per event with moments, newest first."""

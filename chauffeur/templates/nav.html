@@ -654,13 +654,76 @@
             if (fits >= items.length) {
                 more.style.display = 'none';
                 if (flyout) flyout.classList.add('hidden');
+                paintBadges();
                 return;
             }
             // The More button costs a slot of its own.
             fits = Math.max(1, fits - 1);
             items.slice(fits).forEach(a => drawer.appendChild(a));
             more.style.display = '';
+            paintBadges();   // the Moments button may have just moved behind More
         }
+
+        // THE MOMENTS BADGE — nav owns it because nav owns the destination.
+        //
+        // components/moments_hearth.html polls the count and calls this; the
+        // shelf just draws it. Kept here rather than in the poller for two
+        // reasons: the button this hangs off can be MOVED into the More flyout
+        // by layoutShelf() at any resize, and every other nav surface (the
+        // desktop row, the mobile menu) carries the same `data-slug="moments"`
+        // and gets the badge for free.
+        //
+        // When the button is behind More the badge would be invisible — which
+        // is exactly when the catch-up path matters most — so the count rolls
+        // onto the More button too.
+        let momentsBadge = 0;
+
+        function badgeEl(host) {
+            let b = host.querySelector('.chf-nav-badge');
+            if (!b) {
+                b = document.createElement('span');
+                b.className = 'chf-nav-badge';
+                // Inline, not Tailwind: this element is created at runtime and
+                // a class the precompiled sheet has never seen would render as
+                // nothing at all.
+                b.style.cssText =
+                    'position:absolute; top:2px; right:calc(50% - 22px); min-width:18px;' +
+                    'height:18px; padding:0 4px; border-radius:9999px; background:#db2777;' +
+                    'color:#fff; font-size:10px; font-weight:900; line-height:18px;' +
+                    'text-align:center; pointer-events:none;';
+                // Unconditionally relative rather than measured: every host is
+                // a nav button, all of them are statically positioned, and
+                // reading computed style here would be a layout flush per
+                // button per paint for an answer that never varies.
+                host.style.position = 'relative';
+                host.appendChild(b);
+            }
+            return b;
+        }
+
+        function paintBadges() {
+            const count = momentsBadge;
+            const label = count > 99 ? '99+' : String(count);
+            const drawer = document.getElementById('panel-shelf-flyout-items');
+            let hidden = false;
+            document.querySelectorAll('[data-slug="moments"]').forEach(a => {
+                const b = badgeEl(a);
+                b.textContent = label;
+                b.style.display = count > 0 ? 'block' : 'none';
+                if (count > 0 && drawer && drawer.contains(a)) hidden = true;
+            });
+            const more = document.getElementById('panel-shelf-more');
+            if (more) {
+                const b = badgeEl(more);
+                b.textContent = label;
+                b.style.display = hidden ? 'block' : 'none';
+            }
+        }
+
+        window.chfSetMomentsBadge = function (count) {
+            momentsBadge = Math.max(0, parseInt(count, 10) || 0);
+            paintBadges();
+        };
 
         function showShelf() {
             const shelf = document.getElementById('panel-shelf');

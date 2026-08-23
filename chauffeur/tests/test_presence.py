@@ -1010,6 +1010,72 @@ def scenario_resumable_upload():
             check(e.status_code in (400, 404), f"junk upload id refused: {junk!r}")
 
 
+def scenario_unseen_moment_count():
+    """The wall panel's catch-up badge. The rail is gone, so the count is
+    what tells a family that moments landed while nobody was looking — and it
+    counts MOMENTS (messages), never media, so one share of five photos will
+    still read as one once albums land."""
+    import main
+    _family()
+    t0 = time.time()
+    vb = storage.get_or_create_event_channel("vb1", "Emma's Volleyball")
+    pi = storage.get_or_create_event_channel("pi1", "Piano Recital")
+    for mid, ch, ts in (("old", vb, t0 - 7200), ("new1", vb, t0 - 600),
+                        ("new2", pi, t0 - 300)):
+        storage.add_chat_message({"id": mid, "channel_id": ch["id"], "sender_member_id": "mom",
+                                  "ts": ts, "type": "text", "body": mid,
+                                  "attachment": {"kind": "photo", "data_url": _TINY_JPEG},
+                                  "reactions": {}})
+    # Neither a text message nor a DM photo is a moment.
+    storage.add_chat_message({"id": "talk", "channel_id": vb["id"], "sender_member_id": "mom",
+                              "ts": t0 - 60, "type": "text", "body": "parking",
+                              "attachment": None, "reactions": {}})
+    dm = storage.get_or_create_dm("mom", "dad")
+    storage.add_chat_message({"id": "dmp", "channel_id": dm["id"], "sender_member_id": "mom",
+                              "ts": t0 - 60, "type": "text", "body": "private",
+                              "attachment": {"kind": "photo", "data_url": _TINY_JPEG},
+                              "reactions": {}})
+
+    check(presence.count_moments_since(t0 - 3600) == 2,
+          f"two moments since the cutoff, got {presence.count_moments_since(t0 - 3600)}")
+    check(presence.count_moments_since(t0 - 86400) == 3, "everything is newer than yesterday")
+    check(presence.count_moments_since(t0) == 0, "nothing newer than now")
+
+    body = main.get_moments_count(since=t0 - 3600)
+    check(body == {"count": 2}, f"the count route answers a bare number, got {body}")
+    # A panel that has never looked gets the whole window, not a seeded lie.
+    check(main.get_moments_count(since=0)["count"] == 3, "since=0 counts them all")
+
+
+def scenario_hearth_is_pop_only():
+    """The floating rail/FAB is gone from every kiosk page; the unbidden pop
+    and its one external caller (the home board's moments tile) survive."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    hearth = open(os.path.join(root, 'templates', 'components', 'moments_hearth.html'),
+                  encoding='utf-8').read()
+    for gone in ('moments-fab', 'moments-rail', 'toggleMomentsRail', 'openHearthMoment',
+                 'renderRail', 'momentsFabPulse'):
+        check(gone not in hearth, f"the rail is gone: {gone} still in moments_hearth.html")
+    check('showMomentOverlayKiosk' in hearth, "the unbidden pop survives")
+    check('chfSetMomentsBadge' in hearth, "the poll feeds the shelf badge instead of a FAB")
+
+    home = open(os.path.join(root, 'templates', 'home.html'), encoding='utf-8').read()
+    check('showMomentOverlayKiosk' in home, "the home board tile still opens moments full screen")
+
+    nav = open(os.path.join(root, 'templates', 'nav.html'), encoding='utf-8').read()
+    check('chfSetMomentsBadge' in nav, "nav owns the badge")
+    check('panel-shelf-more' in nav and 'momentsBadge' in nav,
+          "the badge rolls onto More when Moments overflows the shelf")
+
+    gallery = open(os.path.join(root, 'templates', 'components', 'moments_gallery.html'),
+                   encoding='utf-8').read()
+    check('chauffeur_moments_viewed_ts' in gallery and 'chfSetMomentsBadge' in gallery,
+          "visiting the gallery is what clears the badge")
+    check('chauffeur_moments_seen_ts' not in gallery,
+          "the badge key and the pop-dedupe key must stay apart")
+    check('mg-new' in gallery, "events with new moments are marked")
+
+
 SCENARIOS = [
     scenario_resumable_upload,
     scenario_media_root_and_sharding,
@@ -1029,6 +1095,8 @@ SCENARIOS = [
     scenario_video_posters_and_photo_files,
     scenario_moment_rides_the_message_stream,
     scenario_gallery_event_grouping_and_paging,
+    scenario_unseen_moment_count,
+    scenario_hearth_is_pop_only,
 ]
 
 if __name__ == "__main__":

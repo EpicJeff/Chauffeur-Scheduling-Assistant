@@ -43,6 +43,10 @@
         color: var(--panel-text, #e5e7eb);
     }
     html[data-panel] .mg-dim { color: var(--panel-dim, #9ca3af); }
+    /* An event with moments this panel has not looked at yet. The ring is the
+       signal at a glance from across a room; the pill says what it means up
+       close. Both go away for good the moment the gallery is opened. */
+    .mg-new { border-color: #ec4899 !important; box-shadow: 0 0 0 2px rgba(236, 72, 153, .35); }
 </style>
 <script>
     window.MomentsGallery = (function () {
@@ -98,6 +102,34 @@
         // the same reason the hearth's rail is index-addressed. Two galleries
         // on one board (the card, plus a second card filtered differently) must
         // not answer each other's taps.
+        // WHAT CLEARS THE SHELF BADGE. Opening the gallery — this component,
+        // on the page or on a Moments board — IS the acknowledgement, and the
+        // only one: the unbidden pop deliberately does not clear it, because a
+        // pop that fired into an empty room saw nobody.
+        //
+        // Its key is the poller's VIEWED_KEY, never the pop's SEEN_KEY
+        // (moments_hearth.html explains why those must stay apart).
+        //
+        // Stamped with the newest moment's own ts rather than the clock, so a
+        // panel whose clock drifts from the box's cannot mark unseen moments
+        // seen. Read ONCE at mount: the badges have to survive the visit that
+        // clears them, or nobody ever finds out what was new.
+        const VIEWED_KEY = 'chauffeur_moments_viewed_ts';
+
+        function viewedSnapshot() {
+            const v = parseFloat(localStorage.getItem(VIEWED_KEY) || '');
+            return (!isNaN(v) && v > 0) ? v : 0;
+        }
+
+        function markViewed(ts) {
+            if (!ts) return;
+            const cur = parseFloat(localStorage.getItem(VIEWED_KEY) || '') || 0;
+            if (ts > cur) localStorage.setItem(VIEWED_KEY, String(ts));
+            // The shelf is on this page too — don't make it wait for the
+            // poller's next minute to drop a badge the family just answered.
+            if (typeof window.chfSetMomentsBadge === 'function') window.chfSetMomentsBadge(0);
+        }
+
         const INSTANCES = {};
         let seq = 0;
 
@@ -138,6 +170,7 @@
                 mOffset: 0, mMore: true, mItems: [], mChannel: null, mTitle: '',
                 mTotal: 0, evTotal: 0,
                 loading: false, dead: false,
+                viewedAt: viewedSnapshot(),
             };
             INSTANCES[id] = g;
 
@@ -206,9 +239,11 @@
                     <${tap ? 'button type="button"' : 'div'}
                         ${tap ? `onclick="__mgTap('${id}','event','${esc(e.channel_id)}')"` : ''}
                         class="text-left mg-tile rounded-2xl border overflow-hidden
+                               ${(e.latest_ts || 0) > g.viewedAt ? 'mg-new' : ''}
                                ${tap ? 'hover:border-pink-500/60 transition-colors' : ''}">
                         <div class="relative w-full" style="aspect-ratio: 4/3">
                             ${thumb(e.cover_url, e.cover_kind, e.cover_media_url)}
+                            ${(e.latest_ts || 0) > g.viewedAt ? `<span class="absolute top-2 left-2 text-[11px] font-black uppercase tracking-wide bg-pink-600 text-white px-2 py-0.5 rounded-full">New</span>` : ''}
                             ${show.count ? `<span class="absolute top-2 right-2 text-[11px] font-bold bg-black/70 text-white px-2 py-0.5 rounded-full">
                                 ${e.count} moment${e.count !== 1 ? 's' : ''}</span>` : ''}
                         </div>
@@ -261,6 +296,9 @@
                         g.evTotal = data.total || 0;
                         g.evOffset += opts.eventsLimit;
                         if (g.view === 'events') renderEvents();
+                        // Newest event first, so the first page carries the
+                        // newest moment there is — later pages only go back.
+                        markViewed((g.evItems[0] || {}).latest_ts);
                         announce();
                     }
                 } catch (e) { }

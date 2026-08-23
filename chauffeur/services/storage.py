@@ -5691,6 +5691,23 @@ def get_recent_event_moments(since_ts: float, limit: int = 20) -> List[dict]:
     out.sort(key=lambda m: m.get('ts', 0), reverse=True)
     return out[:limit]
 
+def count_event_moments_since(since_ts: float) -> int:
+    """How many moments have landed since `since_ts` — the wall panel's
+    catch-up badge, and nothing more. Counted rather than fetched on purpose:
+    the badge wants a number, and pulling the feed to length() it would drag
+    every attachment (older ones are inline data URLs) across the wire once a
+    minute on every panel page.
+
+    A MOMENT is one message. A share carrying several photos counts once."""
+    with db_lock:
+        channels = {c['id'] for c in chat_channels_table.search(Query().kind == 'event')}
+        if not channels:
+            return 0
+        return sum(1 for m in chat_messages_table.all()
+                   if m.get('channel_id') in channels and m.get('attachment')
+                   and (m.get('ts') or 0) > since_ts)
+
+
 def get_channel_messages(channel_id: str, after_ts: float = None,
                          limit: int = 50) -> List[dict]:
     """Ascending by ts; the LAST `limit` messages (optionally after after_ts)."""

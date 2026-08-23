@@ -1,20 +1,25 @@
-<!-- Shared kiosk Moments hearth (Presence slice, docs/presence_status_design.md):
+<!-- Shared kiosk Moments pop (Presence slice, docs/presence_status_design.md):
      the wall panel lights up, unbidden, with a fresh photo/clip from an
      activity — the family hearth showing you the moment you couldn't be at.
      Plain JS, no Alpine dependency (status_celebration precedent). Active only
-     with ?kiosk=true. Polls /api/presence/moments every 60s; dedupe is the
-     celebration convention — localStorage seeded silently on first sight so a
-     freshly mounted panel never replays old moments. The rail is a FLOATING
-     shell this component injects itself (no page mount required, so it is on
-     every kiosk page): a 📸 FAB top-right, badged with the count of moments
-     newer than you last opened it, toggling a vertical rail down the right
-     edge. Open/closed persists per panel across pages. It costs the page no
-     layout — the old inline rail pushed the actual content of whatever tab you
-     were on down the screen, and only existed on the two pages that happened
-     to carry a mount div. No moments at all in the window means no FAB.
-     Deliberately never auto-opens: a fresh moment already takes the whole
-     screen via the overlay, and a rail that reopens itself would make the
-     remembered open/closed state a lie. Looking further back is /moments. -->
+     with ?kiosk=true.
+
+     THE POP IS ALL THAT LIVES HERE. There used to be a floating 📸 FAB and a
+     rail of recent moments down the right edge of every kiosk page; it earned
+     nothing, sat over whatever tab you were actually looking at, and was cut.
+     Looking BACK is /moments (or a Moments board), and what tells the family
+     something landed while nobody was in the room is the shelf badge this
+     component feeds — chrome the panel already has, rather than chrome
+     floating on top of it.
+
+     Two windows, deliberately different:
+       - the POP is fresh-only (12 h), so a panel powered on after a weekend
+         never ambushes the room with Tuesday's game;
+       - the BADGE counts everything since this panel last opened the gallery,
+         because that is the whole question it answers.
+     Their storage keys are separate for the same reason: the pop's seeds to
+     the newest moment on first sight (never replay), the badge's seeds to
+     24 h ago (a fresh panel badges today, not the week). -->
 <script>
     (function () {
         if (new URLSearchParams(window.location.search).get('kiosk') !== 'true') return;
@@ -28,18 +33,10 @@
             return d.innerHTML;
         }
 
-        const PLAY_BADGE = `
-            <span class="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <span class="flex items-center justify-center w-10 h-10 rounded-full bg-black/55 backdrop-blur-sm ring-1 ring-white/25">
-                    <svg viewBox="0 0 24 24" class="w-5 h-5 translate-x-[1px]" fill="white" opacity="0.95">
-                        <path d="M8 5.5v13a1 1 0 001.53.85l10-6.5a1 1 0 000-1.7l-10-6.5A1 1 0 008 5.5z"/>
-                    </svg>
-                </span>
-            </span>`;
-
         // The kind lives at the top level on the feed payload and inside the
-        // attachment on a raw message. Reading only one of them is how the
-        // overlay's clip timeout ended up applying to nothing.
+        // attachment on a raw message (the home board tile hands us one of
+        // those). Reading only one of them is how the overlay's clip timeout
+        // ended up applying to nothing.
         function isClip(m) {
             return (m.kind || (m.attachment || {}).kind) === 'video';
         }
@@ -70,44 +67,17 @@
             return u ? `${apiBase}${String(u).replace(/^\//, '')}` : (att.data_url || '');
         }
 
-        // Media always loads by URL (never the inline photo data URL) and
-        // relative (like the api fetches) so HA ingress paths work. TILES are
-        // always a still image — clips carry an ffmpeg poster frame, so the
-        // rail never shows the black box a <video> paints for preload=metadata
-        // and never streams video just to draw a thumbnail.
-        function mediaHtml(m, cls, opts) {
+        // The pop always shows the media itself. Poster frames are for GRIDS
+        // (the gallery draws those) — nothing here is a thumbnail.
+        // Relative like the api fetches, so HA ingress paths work.
+        function mediaHtml(m, cls) {
             const kind = m.kind || (m.attachment || {}).kind;
-            if (opts && opts.full) {
-                // preload=auto: buffer ahead rather than decode against the
-                // network. The clip is already on the family's own box and the
-                // panel has nothing else to do while it is on screen.
-                return kind === 'video'
-                    ? `<video src="${mediaUrl(m)}" poster="${mediaUrl(m, 'poster')}" autoplay muted loop playsinline preload="auto" class="${cls}"></video>`
-                    : `<img src="${mediaUrl(m)}" class="${cls}">`;
-            }
-            return `<img src="${mediaUrl(m, 'poster')}" loading="lazy"
-                        data-fallback="${mediaUrl(m)}" onerror="momentThumbFallback(this)"
-                        class="${cls}">`;
-        }
-
-        // A thumbnail that fails (missing poster frame) must never leave an
-        // empty tile — fall back to the media itself.
-        window.momentThumbFallback = function (img) {
-            const src = img.getAttribute('data-fallback');
-            if (!src || img.dataset.fellBack) return;
-            img.dataset.fellBack = '1';
-            const v = document.createElement('video');
-            v.src = src; v.muted = true; v.playsInline = true;
-            v.preload = 'metadata'; v.className = img.className;
-            img.replaceWith(v);
-        };
-
-        function momentAgo(ts) {
-            const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
-            if (mins < 1) return 'just now';
-            if (mins < 60) return `${mins} min ago`;
-            const h = Math.round(mins / 60);
-            return `${h} hour${h !== 1 ? 's' : ''} ago`;
+            // preload=auto: buffer ahead rather than decode against the
+            // network. The clip is already on the family's own box and the
+            // panel has nothing else to do while it is on screen.
+            return kind === 'video'
+                ? `<video src="${mediaUrl(m)}" poster="${mediaUrl(m, 'poster')}" autoplay muted loop playsinline preload="auto" class="${cls}"></video>`
+                : `<img src="${mediaUrl(m)}" class="${cls}">`;
         }
 
         window.showMomentOverlayKiosk = function (m) {
@@ -122,7 +92,7 @@
                 <div style="animation:kioskMomentPop .5s ease-out forwards"
                     class="relative text-center bg-gray-900 border border-pink-500/40 rounded-3xl shadow-2xl p-6 max-w-3xl">
                     <div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${esc(m.event_title)}</div>
-                    ${mediaHtml(m, 'max-h-[62vh] rounded-2xl mx-auto object-contain', { full: true })}
+                    ${mediaHtml(m, 'max-h-[62vh] rounded-2xl mx-auto object-contain')}
                     ${m.body ? `<div class="text-xl text-white font-bold mt-3">${esc(m.body)}</div>` : ''}
                     <div class="text-sm text-gray-400 mt-2">from ${esc(m.sender_name)}</div>
                 </div>`;
@@ -141,172 +111,50 @@
             setTimeout(close, clip ? 30000 : 20000);
         };
 
-        // Rail state — index-addressed so tile handlers never inline JSON.
-        let rail = [];
-        window.openHearthMoment = function (i) {
-            if (rail[i]) window.showMomentOverlayKiosk(rail[i]);
-        };
+        // The catch-up badge. Its key is NOT the pop's: SEEN_KEY seeds to the
+        // newest moment on first sight so a rebooted panel never replays old
+        // moments as full-screen pops, and reusing it would mean a panel that
+        // polled at 3am shows a zero badge over breakfast for moments nobody
+        // saw. This seeds to 24h ago instead.
+        const VIEWED_KEY = 'chauffeur_moments_viewed_ts';
 
-        function galleryHref() {
-            const pageBase = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
-            // nav.html's param propagation runs at DOMContentLoaded and can't
-            // see this link (rendered on poll), so carry the params here.
-            return `${pageBase}moments${window.location.search}`;
-        }
-
-        // The rail used to need a #moments-hearth-card mount, which only
-        // chores and routines ever had — so despite this component being
-        // included on eleven pages, the rail existed on two, arbitrarily. It
-        // now injects its own floating shell, so it is on EVERY kiosk page and
-        // costs no layout: the old inline rail pushed the actual content of
-        // whatever tab you were looking at down the screen.
-        const OPEN_KEY = 'chauffeur_moments_rail_open';
-        const RAIL_SEEN_KEY = 'chauffeur_moments_rail_seen_ts';
-        let lastBadge = 0;
-
-        // Deliberately NOT the overlay's SEEN_KEY. That one seeds to the newest
-        // moment on first sight so a rebooted panel never replays old moments
-        // as full-screen pops — reusing it would mean a panel that polled at
-        // 3am shows a zero badge over breakfast for moments nobody saw. This
-        // seeds to 24h ago instead: a fresh panel badges today, not the week.
-        function railSeenTs() {
-            const v = parseFloat(localStorage.getItem(RAIL_SEEN_KEY) || '');
+        function viewedTs() {
+            const v = parseFloat(localStorage.getItem(VIEWED_KEY) || '');
             if (!isNaN(v) && v > 0) return v;
             const seed = (Date.now() / 1000) - 24 * 3600;
-            localStorage.setItem(RAIL_SEEN_KEY, String(seed));
+            localStorage.setItem(VIEWED_KEY, String(seed));
             return seed;
         }
 
-        function railIsOpen() { return localStorage.getItem(OPEN_KEY) === 'true'; }
-
-        function ensureShell() {
-            if (document.getElementById('moments-rail-root')) return;
-            // Sit clear of the nav when there is one; ?tabs=none removes the
-            // nav entirely and the FAB takes the corner itself. Measured, not
-            // assumed, because nav height differs across breakpoints.
-            const nav = document.querySelector('nav');
-            const navH = (nav && nav.offsetParent !== null)
-                ? Math.round(nav.getBoundingClientRect().height) : 0;
-            const top = navH + 16;
-            const root = document.createElement('div');
-            root.id = 'moments-rail-root';
-            // Below the unbidden pop (z-200) — a fresh moment still owns the
-            // screen — and above ordinary page content.
-            root.style.cssText =
-                `position:fixed; top:${top}px; right:16px; z-index:60;
-                 display:none; flex-direction:column; align-items:flex-end; gap:8px;`;
-            root.innerHTML = `
-                <style>
-                    @keyframes momentsFabPulse {
-                        0%,100% { box-shadow: 0 0 0 0 rgba(236,72,153,.55); }
-                        50%     { box-shadow: 0 0 0 12px rgba(236,72,153,0); }
-                    }
-                    #moments-fab.pulsing { animation: momentsFabPulse 1.6s ease-out 3; }
-                    #moments-rail::-webkit-scrollbar { width: 6px; }
-                    #moments-rail::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
-                </style>
-                <button id="moments-fab" onclick="toggleMomentsRail()" title="Moments"
-                    class="relative w-12 h-12 rounded-full bg-gray-900/90 border border-pink-500/50
-                           backdrop-blur-sm shadow-lg flex items-center justify-center text-xl
-                           hover:border-pink-400 transition-colors">
-                    📸
-                    <span id="moments-fab-badge"
-                        class="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-pink-600
-                               text-white text-[11px] font-black flex items-center justify-center
-                               border-2 border-gray-900" style="display:none"></span>
-                </button>
-                <div id="moments-rail" style="display:none; max-height:calc(100vh - ${top + 80}px)"
-                    class="w-44 overflow-y-auto rounded-2xl bg-gray-900/90 backdrop-blur-sm
-                           border border-pink-900/50 shadow-2xl p-2 flex flex-col gap-2"></div>`;
-            document.body.appendChild(root);
-        }
-
-        window.toggleMomentsRail = function (force) {
-            const open = typeof force === 'boolean' ? force : !railIsOpen();
-            localStorage.setItem(OPEN_KEY, String(open));
-            const panel = document.getElementById('moments-rail');
-            if (panel) panel.style.display = open ? 'flex' : 'none';
-            if (open) {
-                // Opening IS the acknowledgement — clear the badge.
-                const newest = rail.length ? (rail[0].ts || 0) : 0;
-                if (newest) localStorage.setItem(RAIL_SEEN_KEY, String(newest));
-                lastBadge = 0;
-                applyBadge(0);
-            }
-        };
-
-        function applyBadge(count) {
-            const badge = document.getElementById('moments-fab-badge');
-            const fab = document.getElementById('moments-fab');
-            if (!badge || !fab) return;
-            badge.style.display = count > 0 ? 'flex' : 'none';
-            badge.textContent = count > 99 ? '99+' : String(count);
-            // Pulse only when the count GROWS — a standing badge that pulses
-            // every 60 s poll is just a flashing light on the wall.
-            if (count > lastBadge) {
-                fab.classList.remove('pulsing');
-                void fab.offsetWidth;
-                fab.classList.add('pulsing');
-            }
-            lastBadge = count;
-        }
-
-        function renderRail(moments) {
-            rail = moments;
-            ensureShell();
-            const root = document.getElementById('moments-rail-root');
-            const panel = document.getElementById('moments-rail');
-            // No moments in the whole window: no FAB at all, nothing to browse.
-            if (!moments.length) { root.style.display = 'none'; return; }
-            root.style.display = 'flex';
-            const open = railIsOpen();
-            panel.style.display = open ? 'flex' : 'none';
-            // Uniform tiles, newest first — a hero card plus a stray thumbnail
-            // read as broken when there were only two moments. Vertical now
-            // that the rail floats down the right edge instead of across.
-            panel.innerHTML = moments.slice(0, 8).map((x, i) => `
-                <button onclick="openHearthMoment(${i})"
-                    class="relative w-full shrink-0 rounded-xl overflow-hidden border border-pink-900/50
-                           bg-gray-800/60 text-left hover:border-pink-500/60 transition-colors">
-                    <div class="relative w-full bg-black" style="aspect-ratio: 4/3">
-                        ${mediaHtml(x, 'w-full h-full object-cover')}
-                        ${(x.kind || (x.attachment || {}).kind) === 'video' ? PLAY_BADGE : ''}
-                    </div>
-                    <div class="p-1.5">
-                        <div class="text-[11px] font-bold text-white truncate">${esc(x.event_title)}</div>
-                        <div class="text-[10px] text-gray-500 truncate">${esc(x.sender_name)} · ${momentAgo(x.ts)}</div>
-                    </div>
-                </button>`).join('')
-                + `<a href="${galleryHref()}"
-                       class="text-center text-[11px] font-bold text-pink-300 hover:text-pink-200 py-1.5">See all →</a>`;
-            // An open rail is already acknowledged; only a closed one accrues.
-            applyBadge(open ? 0 : moments.filter(m => (m.ts || 0) > railSeenTs()).length);
-            if (open) {
-                const newest = moments[0].ts || 0;
-                if (newest) localStorage.setItem(RAIL_SEEN_KEY, String(newest));
-            }
+        // Counted server-side rather than derived from the feed above: the
+        // feed is windowed and capped for the POP, and widening it to make a
+        // number would drag media across the wire from every panel page once
+        // a minute. The route answers with a bare count.
+        async function refreshBadge() {
+            if (typeof window.chfSetMomentsBadge !== 'function') return;
+            try {
+                const res = await fetch(`${apiBase}api/presence/moments/count?since=${viewedTs()}`);
+                if (!res.ok) return;
+                window.chfSetMomentsBadge((await res.json()).count || 0);
+            } catch (e) { }
         }
 
         async function poll() {
+            refreshBadge();
             try {
-                // TWO windows, deliberately: the rail looks back a week so the
-                // panel is browsable, but the unbidden pop stays fresh-only —
-                // a panel powered on after a few days must not ambush the room
-                // with Tuesday's game.
-                const BROWSE_HOURS = 24 * 7;
-                const POP_MAX_AGE_S = 12 * 3600;
-                const res = await fetch(`${apiBase}api/presence/moments?hours=${BROWSE_HOURS}&limit=12`);
+                // Fresh-only, and small: the pop shows ONE moment and the rail
+                // that used to browse a week of them is gone.
+                const POP_HOURS = 12;
+                const res = await fetch(`${apiBase}api/presence/moments?hours=${POP_HOURS}&limit=6`);
                 if (!res.ok) return;
                 const moments = (await res.json()).filter(m => m.attachment
                     && (m.attachment.data_url || m.attachment.url));
-                renderRail(moments);
                 const prev = localStorage.getItem(SEEN_KEY);
                 const newest = moments.length ? (moments[0].ts || 0) : 0;
                 localStorage.setItem(SEEN_KEY, String(Math.max(newest, parseFloat(prev || '0') || 0)));
                 if (prev === null) return;   // first sighting: seed silently
                 const seen = parseFloat(prev) || 0;
-                const cutoff = (Date.now() / 1000) - POP_MAX_AGE_S;
-                const fresh = moments.filter(m => (m.ts || 0) > seen && (m.ts || 0) > cutoff);
+                const fresh = moments.filter(m => (m.ts || 0) > seen);
                 if (fresh.length) window.showMomentOverlayKiosk(fresh[0]);
             } catch (e) { }
         }
