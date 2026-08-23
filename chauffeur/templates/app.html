@@ -3257,7 +3257,7 @@
                         ${renderReactions(m)}
                         <button onclick="toggleQuickReact('${m.id}')" type="button"
                             class="w-10 h-10 -my-2 flex items-center justify-center rounded-full text-lg leading-none text-gray-500 active:text-gray-300 active:bg-gray-800">☺+</button>
-                        ${(canEditMsg(m) || canDeleteMsg(m))
+                        ${(canEditMsg(m) || canDeleteMsg(m) || canShareMsg(m))
                             ? `<button onclick="toggleMsgActions('${m.id}')" type="button"
                                    class="w-10 h-10 -my-2 flex items-center justify-center rounded-full text-lg leading-none text-gray-500 active:text-gray-300 active:bg-gray-800">⋯</button>` : ''}
                         <span class="text-xs text-gray-500">${t}${m.edited_ts ? ' · edited' : ''}</span>
@@ -3277,6 +3277,8 @@
                     <div id="ma-${m.id}" class="mt-1 flex gap-1.5 ${mine ? 'justify-end' : ''}" style="display:none">
                         ${canEditMsg(m) ? `<button onclick="editMessage('${m.id}')" type="button"
                             class="text-sm font-bold px-4 py-2.5 rounded-full bg-gray-800 border border-gray-700 text-gray-200 active:bg-gray-700">Edit</button>` : ''}
+                        ${canShareMsg(m) ? `<button onclick="shareMessage(this, '${m.id}')" type="button"
+                            class="text-sm font-bold px-4 py-2.5 rounded-full bg-gray-800 border border-gray-700 text-gray-200 active:bg-gray-700">Share</button>` : ''}
                         ${canDeleteMsg(m) ? `<button onclick="deleteMessage('${m.id}')" type="button"
                             class="text-sm font-bold px-4 py-2.5 rounded-full bg-gray-800 border border-red-900/60 text-red-400 active:bg-red-900/40">Delete</button>` : ''}
                     </div>
@@ -3318,6 +3320,13 @@
             // edit; changing the photo is delete-and-repost).
             return m.sender_member_id === selectedMemberId
                 && m.sender_member_id !== 'argyle' && !!m.body;
+        }
+        // Anything with something in it, for anyone allowed to share out.
+        // Argyle's own replies are excluded — the assistant's words are house
+        // furniture, not a family moment somebody would send a relative.
+        function canShareMsg(m) {
+            return canShareOut() && m.sender_member_id !== 'argyle'
+                && !!(m.attachment || (m.body || '').trim());
         }
         function canDeleteMsg(m) {
             if (m.sender_member_id === selectedMemberId) return true;
@@ -3423,6 +3432,144 @@
             return `${apiBase}api/media/${u.split('/').pop().split('.')[0]}.jpg`;
         }
 
+        // --- Sharing a moment OUT of Chauffeur (v2.384.0) -------------------
+        //
+        // The OS share sheet IS the integration. It reaches WhatsApp, Messages,
+        // Instagram, AirDrop and everything else the phone knows about, so no
+        // per-network code is ever written here. The alternatives were both
+        // dead ends: a wa.me link carries text only and cannot attach media,
+        // and the WhatsApp Business API wants a business account, a dedicated
+        // number and per-conversation billing to send a photo of a school
+        // concert.
+        //
+        // What LEAVES is deliberately thin. In the app a moment is anchored —
+        // it sits on the event, it reached the people the schedule proved
+        // missed it — and none of that survives the crossing. All that travels
+        // is one string, and the app NEVER generates a name or a date into it.
+        // A family's event titles are their own words and go as typed; an
+        // attendee list assembled by the app is a different thing, and the
+        // person sharing adds a name if they judge that fine. They can: the
+        // string is pre-filled into the target app's compose box and is
+        // editable before they hit send.
+        //
+        // Ladder: the caption the sender wrote, else the event's own title,
+        // else nothing at all (a DM moment has no event title).
+        function momentShareText(body, eventTitle) {
+            return String(body || '').trim() || String(eventTitle || '').trim() || '';
+        }
+
+        // Parents and adults. Children, helpers and guests get no button.
+        //
+        // Honest about what this is: a norm, not a control. `navigator.share`
+        // is entirely client-side — there is no server call to refuse, unlike
+        // delete, which `_may_delete_message` mirrors — so anybody who can SEE
+        // a moment can already long-press it or screenshot it. The only real
+        // lever over where a moment travels is who is in the channel. This
+        // stops the thoughtless share, not the determined one, and it is worth
+        // having on exactly those terms.
+        function canShareOut() {
+            const r = myRole();
+            return r === 'parent' || r === 'adult';
+        }
+
+        // Pull the media back down as a File. The global fetch wrapper attaches
+        // the member token, which matters: /api/media/* is not public, and
+        // handing the OS a blob we fetched ourselves is what keeps it that way
+        // — nothing is ever exposed by URL.
+        //
+        // The filename carries no name and no date either, for the same reason
+        // the caption doesn't.
+        async function momentAsFile(src, kind) {
+            const res = await fetch(src);
+            if (!res.ok) return null;
+            const blob = await res.blob();
+            const type = blob.type || (kind === 'video' ? 'video/mp4' : 'image/jpeg');
+            const ext = String(type.split('/')[1] || '').split('+')[0]
+                || (kind === 'video' ? 'mp4' : 'jpg');
+            return new File([blob], `moment.${ext}`, { type: type });
+        }
+
+        // No file sharing here (desktop Chrome, Firefox, anything old). A dead
+        // button would be worse than no button, so save the media and put the
+        // caption on the clipboard — the paste is then one gesture in whatever
+        // app they were heading for.
+        async function shareFallback(file, text) {
+            let saved = false;
+            if (file) {
+                try {
+                    const url = URL.createObjectURL(file);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = file.name;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 10000);
+                    saved = true;
+                } catch (e) { saved = false; }
+            }
+            let copied = false;
+            if (text) {
+                try {
+                    await navigator.clipboard.writeText(text);
+                    copied = true;
+                } catch (e) { copied = false; }
+            }
+            if (saved && copied) showGlobalAlert('Saved, and the caption is on your clipboard');
+            else if (saved) showGlobalAlert('Saved — share it from your photos');
+            else if (copied) showGlobalAlert('Caption copied');
+            else showGlobalAlert('Sharing is not available on this device');
+        }
+
+        async function shareOut(btn, opts) {
+            const text = momentShareText(opts.body, opts.title);
+            const original = btn ? btn.textContent : '';
+            if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
+            try {
+                const file = opts.src ? await momentAsFile(opts.src, opts.kind) : null;
+                // canShare is asked with the ACTUAL file, never bare: support
+                // varies by TYPE, and a device that will take a photo may
+                // refuse a clip. Asking in the abstract promises a sheet that
+                // then rejects what we hand it.
+                if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+                    await navigator.share(text ? { files: [file], text: text } : { files: [file] });
+                    return;
+                }
+                // Text-only message, on a device that can share text.
+                if (!file && text && navigator.share) {
+                    await navigator.share({ text: text });
+                    return;
+                }
+                await shareFallback(file, text);
+            } catch (e) {
+                // AbortError is somebody tapping Cancel on the sheet. That is
+                // a decision, not a failure, and must not raise an error at
+                // them for making it.
+                if (e && e.name === 'AbortError') return;
+                console.warn('share failed', e);
+                showGlobalAlert('Could not share that — try saving it instead');
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = original; }
+            }
+        }
+
+        // Share from the message action sheet. Attachments go as files; a
+        // text message goes as its words.
+        function shareMessage(btn, msgId) {
+            const m = (threadMessages || []).find(x => x.id === msgId);
+            if (!m) return;
+            const ch = channelsData.find(c => c.id === activeChannelId) || {};
+            shareOut(btn, {
+                src: m.attachment ? momentMediaSrc(m.attachment) : '',
+                kind: (m.attachment || {}).kind,
+                body: m.body,
+                // Only an EVENT channel has a title worth carrying; a DM's
+                // title is drawn client-side from who is in it, which is a
+                // person's name and therefore never generated into a share.
+                title: ch.kind === 'event' ? ch.title : ''
+            });
+        }
+
         function showMomentOverlay(opts) {
             const overlay = document.createElement('div');
             overlay.className = 'fixed inset-0 z-[210] bg-black/90 flex items-center justify-center p-3';
@@ -3444,9 +3591,15 @@
                     ${opts.senderName ? `<div class="text-gray-400 text-sm mt-1">from ${mfEscape(opts.senderName)}</div>` : ''}
                     ${opts.channelId ? `<button onclick="this.closest('.moment-overlay').remove(); setView('messages'); openChannel('${opts.channelId}')"
                         class="mt-4 px-4 py-2 rounded-full bg-white/15 text-white text-sm font-bold">Open chat →</button>` : ''}
+                    ${canShareOut() ? `<button class="moment-share mt-4 ml-2 px-4 py-2 rounded-full bg-white/15 text-white text-sm font-bold">Share</button>` : ''}
                     ${opts.canDelete ? `<button onclick="deleteMomentFromOverlay(this, '${opts.messageId}')"
                         class="mt-4 ml-2 px-4 py-2 rounded-full bg-red-600/25 border border-red-500/50 text-red-200 text-sm font-bold">Delete</button>` : ''}
                 </div>`;
+            // Wired here rather than as an inline onclick: the caption is
+            // arbitrary family text and would have to survive two levels of
+            // quoting to reach an attribute intact.
+            const shareBtn = overlay.querySelector('.moment-share');
+            if (shareBtn) shareBtn.onclick = () => shareOut(shareBtn, opts);
             overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
             document.body.appendChild(overlay);
         }
@@ -3458,10 +3611,17 @@
             const m = (threadMessages || []).find(x => x.id === id);
             if (m && m.attachment) {
                 const sender = membersData.find(x => x.id === m.sender_member_id) || {};
+                const ch = channelsData.find(c => c.id === activeChannelId) || {};
                 return showMomentOverlay({
                     kind: m.attachment.kind,
                     src: momentMediaSrc(m.attachment),
                     poster: momentPosterSrc(m.attachment),
+                    // The event's own title, and only for an EVENT channel —
+                    // it is the anchor the share ladder falls back to, and a
+                    // DM's title is drawn from who is in it, which is a
+                    // person's name. Was never passed before the share button
+                    // needed it, so this path drew no kicker either.
+                    title: ch.kind === 'event' ? ch.title : '',
                     body: m.body,
                     senderName: m.sender_member_id === selectedMemberId ? null : sender.name,
                     messageId: m.id, canDelete: canDeleteMsg(m)
@@ -3477,6 +3637,7 @@
                     kind: row.kind,
                     src: `${apiBase}${String(row.media_url || '').replace(/^\//, '')}`,
                     poster: `${apiBase}${String(row.poster_url || '').replace(/^\//, '')}`,
+                    title: row.event_title,
                     body: row.body, senderName: row.sender_name,
                     messageId: row.id, canDelete: canDelete
                 });
