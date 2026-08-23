@@ -3860,11 +3860,7 @@
             inputEl.value = '';
             if (!files.length) return;
             const room = ALBUM_MAX - pendingAlbum.length;
-            if (files.length > room) {
-                showGlobalAlert(room > 0
-                    ? `A share holds ${ALBUM_MAX} — sending the first ${room}`
-                    : `That share already has ${ALBUM_MAX}`);
-            }
+            let staged = 0;
             for (const file of files.slice(0, Math.max(0, room))) {
                 if (file.type.startsWith('video/')) {
                     if (file.size > MAX_UPLOAD_BYTES) {
@@ -3873,6 +3869,7 @@
                     }
                     const entry = { file: file, kind: 'video', preview: '' };
                     pendingAlbum.push(entry);
+                    staged++;
                     renderAlbumPreview();
                     // Deliberately not awaited in sequence with the others: a
                     // big clip's frame extraction must not hold up staging the
@@ -3887,8 +3884,18 @@
                     if (!r) { showGlobalAlert('Could not read that photo'); continue; }
                     pendingAlbum.push({ file: file, kind: 'photo', preview: r.dataUrl,
                                         w: r.w, h: r.h });
+                    staged++;
                     renderAlbumPreview();
                 }
+            }
+            // AFTER staging, not before: room counts what the cap ALLOWS, not
+            // what actually landed - an oversized clip or unreadable photo
+            // inside that room drops on its own (its own alert, above), and
+            // reporting room here would overstate what actually arrived.
+            if (files.length > room) {
+                showGlobalAlert(room > 0
+                    ? `A share holds ${ALBUM_MAX} — sending the first ${staged}`
+                    : `That share already has ${ALBUM_MAX}`);
             }
             renderAlbumPreview();
         }
@@ -3955,9 +3962,9 @@
 
         // One bubble for the whole share, a progress ring per cell. Failure
         // keeps the bubble AND the staged files, so Retry costs one tap
-        // rather than finding five clips in the camera roll again — and it
-        // resumes, because the chunked upload resyncs to the offset the
-        // server actually has.
+        // rather than finding five clips in the camera roll again — and a
+        // Retry skips whatever already landed (see sendAlbum's memo on each
+        // entry) rather than re-sending bytes the server already has.
         function addAlbumBubble(entries, body) {
             const wrap = document.getElementById('thread-messages');
             const el = document.createElement('div');
@@ -3974,6 +3981,13 @@
             uploadingBubbles.push(el);
             wrap.appendChild(el);
             wrap.scrollTop = wrap.scrollHeight;
+            // Same "Queued…" tell sendWithUpload used to give a lone upload:
+            // this album's slot in the two-at-a-time pipe is already spoken
+            // for by another send in flight.
+            if (activeUploads >= MAX_CONCURRENT_UPLOADS) {
+                const status = el.querySelector('.upload-status');
+                if (status) status.textContent = 'Queued…';
+            }
             return el;
         }
 
@@ -3995,7 +4009,6 @@
 
         function dropUploadingBubble(el) {
             uploadingBubbles = uploadingBubbles.filter(x => x !== el);
-            if (el._objUrl) URL.revokeObjectURL(el._objUrl);
             el.remove();
         }
 
@@ -4220,12 +4233,24 @@
             try {
                 const items = await Promise.all(entries.map((entry, i) =>
                     enqueueUpload(async () => {
+                        // Bytes already in the media store are never sent
+                        // twice. A Retry re-sends the ALBUM, not the uploads
+                        // that already landed — and nothing in this codebase
+                        // collects an unreferenced file, so every needless
+                        // re-upload would leave another orphan behind.
+                        if (entry.uploaded) { setCellProgress(el, i, 100); return entry.uploaded; }
+                        // Whichever job actually starts first flips the
+                        // status off "Queued…" — same tell sendWithUpload
+                        // used to give a lone queued upload.
+                        const status = el.querySelector('.upload-status');
+                        if (status) status.textContent = `Sending ${entries.length}…`;
                         const att = entry.kind === 'video'
                             ? await uploadMomentVideo(entry.file, pct => setCellProgress(el, i, pct))
                             : await (async () => {
                                 setCellProgress(el, i, null);   // no progress events on a photo POST
                                 return uploadMomentPhoto(entry.preview, entry.w, entry.h);
                             })();
+                        entry.uploaded = att;
                         setCellProgress(el, i, 100);
                         return att;
                     })));

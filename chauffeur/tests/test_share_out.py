@@ -253,10 +253,14 @@ def scenario_photos_are_uploaded_not_inlined():
     Task 8 moved every attachment (one photo or ten) through `sendAlbum`, so
     the dedup-on-retry dance that used to live in `submitThreadMessage` (never
     re-upload a photo that already reached the media store) no longer applies
-    there — `submitThreadMessage` now only ever posts plain text itself.
-    Retry on an album deliberately re-sends the WHOLE thing instead: completed
-    chunked video uploads resync to the server's offset, and re-posting a
-    photo that is already in the media store is cheap. See `sendAlbum`.
+    there — `submitThreadMessage` now only ever posts plain text itself. The
+    same property still has to hold somewhere, though: Retry re-sends the
+    WHOLE album (deliberately — there is no per-cell retry), but each entry
+    memoizes its own successful upload (`entry.uploaded`), so a Retry skips
+    every item that already reached the server rather than re-uploading it.
+    Skipping matters because nothing in this codebase collects an
+    unreferenced file — a needless re-upload does not just waste bandwidth,
+    it leaves a second, permanently orphaned file behind. See `sendAlbum`.
     """
     src = _extract('uploadMomentPhoto')
     check('api/media/photo' in src,
@@ -273,6 +277,9 @@ def scenario_photos_are_uploaded_not_inlined():
     album = _extract('sendAlbum')
     check('uploadMomentPhoto' in album,
           'an album uploads its photo entries through the media store, one call per item')
+    check('entry.uploaded' in album,
+          'a Retry must not re-upload an item that already reached the server - '
+          'nothing garbage-collects the orphan that would leave behind')
 
 
 def scenario_album_composer_is_atomic_and_capped():
@@ -290,7 +297,7 @@ def scenario_album_composer_is_atomic_and_capped():
     post_at = send.index('/messages')
     check(upload_at < post_at,
           'every item uploads before the message is posted - an album posts whole')
-    check('items' in send, 'the message carries an items list')
+    check('items: items' in send, 'the message carries an items list')
 
     pick = _extract('handlePhotoPick')
     check('ALBUM_MAX' in pick, 'the composer trims the pick at the cap')
