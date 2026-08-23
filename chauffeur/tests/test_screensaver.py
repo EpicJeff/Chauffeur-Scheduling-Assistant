@@ -168,6 +168,52 @@ def scenario_photos_playlist_is_moments_photos():
           f"the playlist is the moment photos, relative for ingress: {pl['urls']}")
 
 
+def scenario_zzz_screensaver_shows_every_album_photo():
+    """A slideshow of the family's photographs wants ALL of them, not one
+    frame per share."""
+    ch = storage.get_or_create_event_channel('ev2', 'Game')
+    storage.add_chat_message({
+        'id': 'alb1', 'channel_id': ch['id'], 'sender_member_id': 'm1',
+        'body': 'first half', 'ts': 1000.0,
+        'attachment': {'kind': 'photo', 'url': '/api/media/aaa111',
+                       'items': [{'kind': 'photo', 'url': '/api/media/aaa111'},
+                                 {'kind': 'photo', 'url': '/api/media/bbb222'},
+                                 {'kind': 'photo', 'url': '/api/media/ccc333'}]}})
+    pl = home_board.screensaver_playlist({'panel_screensaver_source': 'photos'})
+    # State may carry over from earlier scenarios, so check containment + count.
+    album_urls = ['api/media/aaa111', 'api/media/bbb222', 'api/media/ccc333']
+    check(set(album_urls).issubset(set(pl['urls'])),
+          f"every album photo is in the playlist: {pl['urls']}")
+    # Verify the album photos appear in order (consecutively).
+    urls_str = ','.join(pl['urls'])
+    album_str = ','.join(album_urls)
+    check(album_str in urls_str,
+          f"album photos appear in order: {pl['urls']}")
+
+
+def scenario_zzz_home_board_tile_takes_only_the_cover():
+    """The opposite call from the screensaver, and deliberately so: the tile is
+    a flat mosaic beside eight other tiles, and one album flooding it would
+    push every other activity off the board."""
+    import time as _time
+    ch = storage.get_or_create_event_channel('ev3', 'Recital')
+    # A REAL timestamp: the tile uses a 30-day window, so an epoch-1970 ts
+    # would be filtered out and the tile would return None for the wrong reason.
+    storage.add_chat_message({
+        'id': 'alb2', 'channel_id': ch['id'], 'sender_member_id': 'm1',
+        'body': 'she nailed it', 'ts': _time.time() - 60,
+        'attachment': {'kind': 'photo', 'url': '/api/media/ddd444',
+                       'items': [{'kind': 'photo', 'url': '/api/media/ddd444'},
+                                 {'kind': 'photo', 'url': '/api/media/eee555'},
+                                 {'kind': 'photo', 'url': '/api/media/fff666'}]}})
+    tile = home_board._tile_moments(None) or {}
+    rows = tile.get('moments') or []
+    check(len(rows) == 1,
+          f"one album is ONE entry on the tile, not three: got {len(rows)}")
+    check(rows[0]['media_url'] == '/api/media/ddd444',
+          f"and the entry is the cover: {rows[0].get('media_url')}")
+
+
 # --- template contracts -----------------------------------------------------
 
 TPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'templates')

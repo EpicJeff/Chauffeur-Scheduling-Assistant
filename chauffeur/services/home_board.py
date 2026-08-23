@@ -3838,19 +3838,27 @@ def screensaver_playlist(settings: dict = None) -> dict:
     if cfg['source'] == 'photos':
         # Moments photos (and video posters — a still is a still). since_ts=0:
         # moments are exempt from chat retention, so the whole archive is the
-        # playlist, newest first.
+        # playlist, newest first. EVERY item of an album, not just its cover:
+        # this is a slideshow of the family's photographs and more of them is
+        # strictly better.
+        _URL_CAP = 240
         for m in storage.get_recent_event_moments(0, limit=120):
-            att = m.get('attachment') or {}
-            url = att.get('url') or ''
-            if not url.startswith('/api/media/'):
-                continue  # legacy inline data_url photos: too heavy for a playlist
-            if (att.get('kind') or 'photo') == 'photo':
-                urls.append(url.lstrip('/'))
-            else:
-                # Poster convention from the chat renderer: media id + .jpg
-                media_id = url.rsplit('/', 1)[-1].split('.')[0]
-                if storage.media_file_path(f'{media_id}.jpg'):
-                    urls.append(f'api/media/{media_id}.jpg')
+            for att in storage.attachment_items(m.get('attachment')):
+                url = att.get('url') or ''
+                if not url.startswith('/api/media/'):
+                    continue  # legacy inline data_url photos: too heavy for a playlist
+                if (att.get('kind') or 'photo') == 'photo':
+                    urls.append(url.lstrip('/'))
+                else:
+                    # Poster convention from the chat renderer: media id + .jpg
+                    media_id = url.rsplit('/', 1)[-1].split('.')[0]
+                    if storage.media_file_path(f'{media_id}.jpg'):
+                        urls.append(f'api/media/{media_id}.jpg')
+            # A handful of ten-photo albums must not crowd the rest of the
+            # archive out of the playlist entirely.
+            if len(urls) >= _URL_CAP:
+                break
+        del urls[_URL_CAP:]
     elif cfg['source'] == 'media':
         urls = ['api/panel/media-image/' + rel
                 for rel in _media_share_images(settings.get('panel_screensaver_media_path') or '')]
