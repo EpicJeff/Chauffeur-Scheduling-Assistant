@@ -1327,6 +1327,75 @@ def scenario_album_push_describes_the_set():
           main._moment_push_phrase({**photo, "items": [photo, clip, clip]}))
 
 
+def scenario_delete_one_album_item():
+    """Looking at one frame is exactly the context in which get rid of THAT
+    one is what you mean."""
+    import main
+    from fastapi import HTTPException
+    _family()
+    ch = storage.get_or_create_event_channel("vb1", "Emma's Volleyball")
+    saved = [storage.save_photo_data_url(_TINY_JPEG) for _ in range(3)]
+    ids = [s["url"].rsplit("/", 1)[-1] for s in saved]
+    storage.add_chat_message({
+        "id": "alb", "channel_id": ch["id"], "sender_member_id": "mom",
+        "ts": time.time(), "type": "text", "body": "first half",
+        "attachment": {"kind": "photo", "url": saved[0]["url"],
+                       "items": [{"kind": "photo", "url": s["url"]} for s in saved]},
+        "reactions": {}})
+
+    # 3 -> 2: the RIGHT one goes, by id, and only its file is freed.
+    main.delete_message_media("alb", ids[1], main.MessageDeleteRequest(member_id="mom"))
+    att = storage.get_chat_message("alb")["attachment"]
+    check([i["url"] for i in att["items"]] == [saved[0]["url"], saved[2]["url"]],
+          f"the named media is gone, the others stay, got {att['items']}")
+    check(not storage.media_file_path(ids[1]), "its file is freed")
+    check(storage.media_file_path(ids[0]) and storage.media_file_path(ids[2]),
+          "the other two files are untouched")
+
+    # Deleting the cover promotes the next item.
+    main.delete_message_media("alb", ids[0], main.MessageDeleteRequest(member_id="mom"))
+    att = storage.get_chat_message("alb")["attachment"]
+    check("items" not in att, f"two minus one is not an album any more, got {att}")
+    check(att["url"] == saved[2]["url"], "the survivor is the attachment")
+
+    # The last media takes the message with it.
+    main.delete_message_media("alb", ids[2], main.MessageDeleteRequest(member_id="mom"))
+    check(storage.get_chat_message("alb") is None,
+          "a moment with no media is not a moment - the row goes too")
+
+    # Permission matches message delete exactly.
+    s2 = storage.save_photo_data_url(_TINY_JPEG)
+    s3 = storage.save_photo_data_url(_TINY_JPEG)
+    storage.add_chat_message({
+        "id": "alb2", "channel_id": ch["id"], "sender_member_id": "mom",
+        "ts": time.time(), "type": "text", "body": "",
+        "attachment": {"kind": "photo", "url": s2["url"],
+                       "items": [{"kind": "photo", "url": s2["url"]},
+                                 {"kind": "photo", "url": s3["url"]}]},
+        "reactions": {}})
+    mid = s3["url"].rsplit("/", 1)[-1]
+    for member, code in (("gramps", 403), ("nobody", 404)):
+        try:
+            main.delete_message_media("alb2", mid,
+                                      main.MessageDeleteRequest(member_id=member))
+            check(False, f"expected {code}")
+        except HTTPException as e:
+            check(e.status_code == code, f"{member} -> {code}, got {e.status_code}")
+    # A parent who is not the sender MAY clear a shared channel.
+    main.delete_message_media("alb2", mid, main.MessageDeleteRequest(member_id="dad"))
+    check("items" not in storage.get_chat_message("alb2")["attachment"],
+          "a parent may clear one frame out of a shared thread")
+
+    # Unknown media, and media belonging to another message, both 404.
+    for bad in ("f" * 32, ids[0]):
+        try:
+            main.delete_message_media("alb2", bad,
+                                      main.MessageDeleteRequest(member_id="mom"))
+            check(False, "expected 404")
+        except HTTPException as e:
+            check(e.status_code == 404, f"{bad[:8]} -> 404, got {e.status_code}")
+
+
 SCENARIOS = [
     scenario_resumable_upload,
     scenario_media_root_and_sharding,
@@ -1353,6 +1422,7 @@ SCENARIOS = [
     scenario_album_deletion_frees_every_file,
     scenario_album_rides_the_wire,
     scenario_album_push_describes_the_set,
+    scenario_delete_one_album_item,
 ]
 
 if __name__ == "__main__":

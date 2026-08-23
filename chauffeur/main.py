@@ -12486,6 +12486,33 @@ def delete_message(message_id: str, req: MessageDeleteRequest, request: Request 
     _push_message_event(msg['channel_id'], recipients)
     return {"status": "ok", "id": message_id, "channel_id": msg['channel_id']}
 
+@app.delete("/api/messages/{message_id}/media/{media_id}")
+def delete_message_media(message_id: str, media_id: str,
+                         req: MessageDeleteRequest, request: Request = None):
+    """Delete ONE photo or clip out of an album. Same permission as deleting
+    the whole message — removing one frame is the same act, only narrower — so
+    `_may_delete_message` governs both and there is no second rule to keep in
+    step. Removing the last media deletes the message itself."""
+    req.member_id = _acting_id(request, req.member_id)
+    member = storage.get_member(req.member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    msg = storage.get_chat_message(message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    channel = storage.get_channel(msg['channel_id']) or {}
+    if not _may_delete_message(msg, member, channel):
+        raise HTTPException(status_code=403, detail="Not yours to delete")
+    res = storage.remove_attachment_item(message_id, media_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="That photo is not in this moment")
+    recipients = channel.get('member_ids') if channel.get('kind') in ('dm', 'group') else None
+    _push_message_event(msg['channel_id'], recipients)
+    return {'deleted_message': res['deleted_message'],
+            'attachment': (res['message'] or {}).get('attachment')
+            if not res['deleted_message'] else None}
+
+
 @app.patch("/api/messages/{message_id}")
 def edit_message(message_id: str, req: MessageEditRequest, request: Request = None):
     """Edit your own message's text. SENDER ONLY, deliberately narrower than
