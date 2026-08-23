@@ -12189,13 +12189,29 @@ def _validate_moment_attachment(att: dict) -> dict:
             raise HTTPException(
                 status_code=400,
                 detail=f"An album holds at most {_ALBUM_MAX_ITEMS} — that one has {len(raw)}")
-        items = []
+        items, created = [], []
         for i in raw:
             if not isinstance(i, dict):
                 raise HTTPException(status_code=400, detail="Unsupported attachment")
             if i.get('items') is not None:
                 raise HTTPException(status_code=400, detail="Albums do not nest")
-            items.append(_validate_moment_attachment(i))
+            # Did THIS call write the file? Only then is it ours to clean up.
+            # An item that arrived already stored belongs to whichever message
+            # first referenced it, and freeing it would be data loss.
+            fresh = not str(i.get('url') or '').startswith('/api/media/')
+            try:
+                out = _validate_moment_attachment(i)
+            except Exception:
+                # A half-validated album is never written to the database, so
+                # every file this call has already persisted is unreferenced
+                # the moment we raise — and nothing else in the system will
+                # ever collect it. Free them on the way out.
+                for c in created:
+                    storage._delete_media_for_attachment(c)
+                raise
+            if fresh:
+                created.append(out)
+            items.append(out)
         # A one-item album is not an album. Collapsing here is what keeps
         # "one photo" to a single stored representation, so every reader that
         # tests for `items` is asking a question with one right answer.

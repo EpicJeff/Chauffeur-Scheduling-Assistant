@@ -1185,6 +1185,59 @@ def scenario_album_validation():
     except HTTPException as e:
         check(e.status_code == 400, "a nested album is refused")
 
+    # A failed album cleans up newly persisted files. If item 1 is good and
+    # item 2 fails, item 1's file must be freed (not left as orphan).
+    import os
+    import services.storage as st
+    media_dir = st.MEDIA_DIR
+    if media_dir and os.path.isdir(media_dir):
+        # Count files before attempting the failed album
+        files_before = set()
+        for root, dirs, files in os.walk(media_dir):
+            for f in files:
+                files_before.add(os.path.join(root, f))
+
+        try:
+            main.send_message(ch["id"], main.SendMessageRequest(
+                sender_member_id="mom", body="",
+                attachment={"items": [photo(), {"kind": "photo", "data_url": "not-a-data-url"}]}), bt)
+            check(False, "expected 400")
+        except HTTPException as e:
+            check(e.status_code == 400, "album with bad second item fails")
+
+            # Count files after
+            files_after = set()
+            for root, dirs, files in os.walk(media_dir):
+                for f in files:
+                    files_after.add(os.path.join(root, f))
+
+            # The failed album should not have left any new files
+            new_files = files_after - files_before
+            check(not new_files, f"failed album cleans up created files, got new {new_files}")
+
+    # Pre-existing files are NOT deleted. Create a stored photo, then try
+    # to use it in an album where a later item fails.
+    good_photo = main.send_message(ch["id"], main.SendMessageRequest(
+        sender_member_id="mom", body="", attachment={"items": [photo()]}), bt)
+    good_url = good_photo["attachment"]["url"]
+    good_id = good_url.rsplit('/', 1)[-1] if good_url.startswith('/api/media/') else None
+
+    if good_id:
+        check(storage.media_file_path(good_id), "stored photo file exists")
+        try:
+            main.send_message(ch["id"], main.SendMessageRequest(
+                sender_member_id="mom", body="",
+                attachment={"items": [
+                    {"kind": "photo", "url": good_url},  # Already stored
+                    {"kind": "photo", "data_url": "invalid"}  # This will fail
+                ]}), bt)
+            check(False, "expected 400")
+        except HTTPException as e:
+            check(e.status_code == 400, "album with pre-existing URL and bad item fails")
+            # Verify the pre-existing file still exists
+            check(storage.media_file_path(good_id),
+                  "pre-existing file survives album validation failure")
+
 
 SCENARIOS = [
     scenario_resumable_upload,
