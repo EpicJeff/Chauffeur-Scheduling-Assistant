@@ -4111,9 +4111,13 @@
             }
             input.value = '';
             clearPendingAttachment();
+            // Declared outside the try so a failed send can still see whatever
+            // the upload step produced — including the url of a photo that
+            // reached the media store even though the message post after it
+            // failed.
+            let att = attachment;
             try {
-                let att = attachment;
-                if (att && att._dataUrl) {
+                if (att && att._dataUrl && !att.url) {
                     att = await uploadMomentPhoto(att._dataUrl, att.w, att.h);
                 }
                 const res = await fetch(`${apiBase}api/channels/${activeChannelId}/messages`, {
@@ -4129,7 +4133,12 @@
                 showGlobalAlert('Failed to send message');
                 input.value = body;
                 if (attachment) {
-                    pendingAttachment = attachment;
+                    // Re-stage what we actually HAVE. If the photo already
+                    // reached the media store, a retry must post that url, not
+                    // upload the same bytes again — nothing in this codebase
+                    // collects an unreferenced file, so every re-upload would
+                    // leave another orphan behind.
+                    pendingAttachment = Object.assign({}, attachment, att || {});
                     showAttachPreview(attachment.kind === 'video'
                         ? `<video src="${apiBase}${attachment.url.replace(/^\//, '')}" muted playsinline class="h-20 rounded-xl border border-gray-700 object-cover"></video>`
                         : `<img src="${attachment._dataUrl || momentMediaSrc(attachment)}" class="h-20 rounded-xl border border-gray-700 object-cover">`);

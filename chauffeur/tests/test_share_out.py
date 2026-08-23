@@ -233,6 +233,12 @@ def scenario_photos_are_uploaded_not_inlined():
     send = _extract('submitThreadMessage')
     check('data_url' not in send,
           'the message body no longer carries image bytes')
+    check('_dataUrl' in send and '!att.url' in send,
+          'a retry must not re-upload an already-uploaded photo — nothing '
+          'garbage-collects the orphan that would leave behind. This is a '
+          'source check, not a runtime one: it proves the guard text is '
+          'present, not that the control flow actually skips the second '
+          'upload at runtime.')
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
