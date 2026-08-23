@@ -162,10 +162,17 @@ _TINY_PNG = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC
              "AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
 
 
-def _seed_live_event_with_helper_driving():
-    """A 60-minute event that started five minutes ago, driven by the nanny."""
+def _seed_live_event_with_helper_driving(now=None):
+    """A 60-minute event that started five minutes ago, driven by the nanny.
+
+    `now` defaults to the real clock — the scenarios that go through
+    `send_message` need the event live against it. Pass an anchor when the
+    code under test compares the event's start DATE against today: five
+    minutes before midnight is yesterday, and the sweep skips it. That is not
+    hypothetical; it failed exactly once, at 00:02.
+    """
     import datetime
-    now = datetime.datetime.now()
+    now = now or datetime.datetime.now()
     ev = {"id": "ev1", "title": "Emma's game",
           "start": (now - datetime.timedelta(minutes=5)).isoformat(),
           "end": (now + datetime.timedelta(minutes=55)).isoformat()}
@@ -209,14 +216,21 @@ def scenario_absent_helper_is_refused():
 
 
 def scenario_capture_prompt_reaches_the_helper():
+    import datetime
     from services import presence
     _seed()
-    _seed_live_event_with_helper_driving()
+    # Midday, not the real clock. `run_capture_prompts` requires the event to
+    # START today (presence.py), so an event seeded five minutes before a real
+    # midnight begins yesterday and the sweep skips it — the test then fails
+    # for the hour after 00:00 and passes for the other twenty-three.
+    anchor = datetime.datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)
+    _seed_live_event_with_helper_driving(anchor)
     orig = presence.prompt_worthiness
     presence.prompt_worthiness = lambda ev, present_ids, d: 'moment'
     sent = []
     try:
-        presence.run_capture_prompts(lambda m, title, body, path: sent.append(m['id']))
+        presence.run_capture_prompts(lambda m, title, body, path: sent.append(m['id']),
+                                     now=anchor)
     finally:
         presence.prompt_worthiness = orig
     check("nan" in sent,

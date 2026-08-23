@@ -4111,6 +4111,38 @@
             return t;
         }
 
+        // The service worker's notification actions post as this member, and a
+        // worker cannot read localStorage — so the token is MIRRORED onto the
+        // Cache API, the one shelf both the window and the worker can reach.
+        // Mirrored, not moved: localStorage stays the source of truth for every
+        // in-page fetch, and `memberToken()` above stays the only thing that
+        // decides whether this device may speak as anybody at all — a token
+        // belonging to the previous person on this phone mirrors as nothing.
+        //
+        // Called on every app load and after every sign-in or sign-out here.
+        // A token minted on another page (config, the admin gate) reaches the
+        // worker the next time the PWA is opened, which is soon enough: the
+        // worker only ever needs it to answer a push, and pushes are the PWA's.
+        const SW_AUTH_CACHE = 'chauffeur-auth-v1';
+        const SW_AUTH_KEY = '/__sw/member-token';
+
+        async function mirrorTokenToServiceWorker() {
+            if (!('caches' in window)) return;
+            try {
+                const cache = await caches.open(SW_AUTH_CACHE);
+                const t = memberToken();
+                if (t) {
+                    await cache.put(SW_AUTH_KEY, new Response(t, {
+                        headers: { 'Content-Type': 'text/plain' }
+                    }));
+                } else {
+                    await cache.delete(SW_AUTH_KEY);
+                }
+            } catch (e) {
+                console.warn('member token mirror failed', e);
+            }
+        }
+
         // Finish a pairing from the push (auth arc S6).
         //
         // The whole point is that the person holding the phone is usually the
@@ -5514,6 +5546,9 @@
             localStorage.removeItem('chauffeur_member_id');
             localStorage.removeItem('chauffeur_member_token');
             localStorage.removeItem('chauffeur_member_token_for');
+            // Signing out has to reach the worker too, or a notification action
+            // would keep posting as the person who just left this device.
+            mirrorTokenToServiceWorker();
             if (messagesStream) { try { messagesStream.close(); } catch (e) { } messagesStream = null; }
             if (typeof mwOnMemberChanged === 'function') mwOnMemberChanged();
             applyRoleTabs();
@@ -5525,6 +5560,14 @@
         // registrations (e.g. after a VAPID key change or a pruned endpoint)
         // and keeps multiple devices per driver registered.
         async function syncPushSubscription() {
+            // Refresh the worker's copy of the token first, and BEFORE the
+            // early returns below. This runs on every path that establishes
+            // who is holding the phone — fresh sign-in and restore-on-load,
+            // via selectDriver and selectPassengerMember — which is exactly
+            // when the mirror needs redoing. It is deliberately not gated on
+            // push permission: the shelf costs nothing to keep straight, and
+            // a permission granted later must not find a stale token.
+            mirrorTokenToServiceWorker();
             try {
                 if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
                 if (typeof Notification === 'undefined'
