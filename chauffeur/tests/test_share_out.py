@@ -304,6 +304,24 @@ def scenario_album_composer_is_atomic_and_capped():
     check('showGlobalAlert' in pick, 'and says so - never a browser dialog')
 
 
+def scenario_lightbox_acts_on_the_item_on_screen():
+    """Opening item three is the whole reason item three is the one you want."""
+    src = _extract('showMomentOverlay')
+    check('opts.index' in src or 'idx' in src, 'the lightbox tracks a current item')
+    check('/media/' in src, 'delete targets one media id, not the message')
+    check('Delete photo' in src or 'Delete clip' in src,
+          'the lightbox button names the narrower scope')
+
+    sheet = _extract('shareMessage')
+    check('momentMediaSrc(m.attachment)' in sheet,
+          'the action sheet shares the COVER, not a current item')
+
+    with open(APP, encoding='utf-8') as f:
+        html = f.read()
+    check('Delete album' in html,
+          'the message action sheet says it takes the whole share')
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

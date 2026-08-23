@@ -3375,7 +3375,7 @@
                         ${canShareMsg(m) ? `<button onclick="shareMessage(this, '${m.id}')" type="button"
                             class="text-sm font-bold px-4 py-2.5 rounded-full bg-gray-800 border border-gray-700 text-gray-200 active:bg-gray-700">Share</button>` : ''}
                         ${canDeleteMsg(m) ? `<button onclick="deleteMessage('${m.id}')" type="button"
-                            class="text-sm font-bold px-4 py-2.5 rounded-full bg-gray-800 border border-red-900/60 text-red-400 active:bg-red-900/40">Delete</button>` : ''}
+                            class="text-sm font-bold px-4 py-2.5 rounded-full bg-gray-800 border border-red-900/60 text-red-400 active:bg-red-900/40">${attachmentItemsJs(m.attachment).length > 1 ? 'Delete album' : 'Delete'}</button>` : ''}
                     </div>
                 </div>`;
             }).join('') || '<div class="text-center text-gray-500 text-sm mt-4">No messages yet — say hi!</div>';
@@ -3665,49 +3665,153 @@
             });
         }
 
+        // opts.items is the RAW attachment items (cover first); opts.index is
+        // which one is on screen. Share and Delete both act on THAT item —
+        // opening item three is the whole reason item three is the one you
+        // want. The message action sheet, which has no current item, keeps
+        // acting on the whole share.
         function showMomentOverlay(opts) {
+            // .slice(): attachmentItemsJs(att) hands back att.items BY
+            // REFERENCE for a real album, and delete below splices this
+            // array — that must never mutate the message object still sitting
+            // in threadMessages.
+            const items = (opts.items && opts.items.length)
+                ? opts.items.slice()
+                : [{ kind: opts.kind, url: '' }];
+            let idx = Math.min(Math.max(0, opts.index || 0), items.length - 1);
             const overlay = document.createElement('div');
-            overlay.className = 'fixed inset-0 z-[210] bg-black/90 flex items-center justify-center p-3';
-            // Video keeps its controls usable, so only the backdrop and the
-            // explicit ✕ dismiss; a photo closes on tap like before.
-            const media = opts.kind === 'video'
-                ? `<video src="${opts.src}" ${opts.poster ? `poster="${opts.poster}"` : ''} controls autoplay playsinline
-                       class="max-w-full max-h-[78vh] rounded-xl"></video>`
-                : `<img src="${opts.src}" onclick="this.closest('.moment-overlay').remove()"
-                       class="max-w-full max-h-[78vh] rounded-xl object-contain">`;
-            overlay.classList.add('moment-overlay');
-            overlay.innerHTML = `
-                <button onclick="this.closest('.moment-overlay').remove()"
-                    class="absolute top-3 right-3 w-10 h-10 rounded-full bg-white/15 text-white text-lg leading-none">✕</button>
-                <div class="max-w-full text-center">
-                    ${opts.title ? `<div class="text-xs font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${mfEscape(opts.title)}</div>` : ''}
-                    ${media}
-                    ${opts.body ? `<div class="text-white font-bold mt-3 px-4">${mfEscape(opts.body)}</div>` : ''}
-                    ${opts.senderName ? `<div class="text-gray-400 text-sm mt-1">from ${mfEscape(opts.senderName)}</div>` : ''}
-                    ${opts.channelId ? `<button onclick="this.closest('.moment-overlay').remove(); setView('messages'); openChannel('${opts.channelId}')"
-                        class="mt-4 px-4 py-2 rounded-full bg-white/15 text-white text-sm font-bold">Open chat →</button>` : ''}
-                    ${canShareOut() ? `<button class="moment-share mt-4 ml-2 px-4 py-2 rounded-full bg-white/15 text-white text-sm font-bold">Share</button>` : ''}
-                    ${opts.canDelete ? `<button onclick="deleteMomentFromOverlay(this, '${opts.messageId}')"
-                        class="mt-4 ml-2 px-4 py-2 rounded-full bg-red-600/25 border border-red-500/50 text-red-200 text-sm font-bold">Delete</button>` : ''}
-                </div>`;
-            // Wired here rather than as an inline onclick: the caption is
-            // arbitrary family text and would have to survive two levels of
-            // quoting to reach an attribute intact.
-            const shareBtn = overlay.querySelector('.moment-share');
-            if (shareBtn) shareBtn.onclick = () => shareOut(shareBtn, opts);
+            overlay.className = 'moment-overlay fixed inset-0 z-[210] bg-black/90 flex items-center justify-center p-3';
+
+            function srcFor(i) {
+                const it = items[i] || {};
+                return opts.items ? momentMediaSrc(it) : (opts.src || '');
+            }
+            function posterFor(i) {
+                const it = items[i] || {};
+                return opts.items ? momentPosterSrc(it) : (opts.poster || '');
+            }
+
+            // Delete the frame ON SCREEN, not the share. The message action
+            // sheet keeps the wider act and says "Delete album" so the two
+            // cannot be confused for each other. A single-item moment skips
+            // this entirely (see wire() below) — deleteMomentFromOverlay's
+            // richer "Delete this moment?" copy already covers that case,
+            // and the two acts are identical when there is only one frame.
+            async function deleteMomentItem() {
+                const item = items[idx] || {};
+                const isClip = item.kind === 'video';
+                const ok = await promptConfirm(
+                    `Delete this ${isClip ? 'clip' : 'photo'}?`,
+                    'It leaves this share for everyone and the file is removed from '
+                    + 'your box. The rest of the share stays.',
+                    'Delete', 'Cancel');
+                if (!ok) return;
+                const mediaId = String(item.url || '').split('/').pop();
+                try {
+                    const res = await fetch(
+                        `${apiBase}api/messages/${opts.messageId}/media/${mediaId}`, {
+                        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ member_id: selectedMemberId })
+                    });
+                    if (!res.ok) throw new Error('delete failed');
+                    await refreshThread();
+                    items.splice(idx, 1);
+                    if (!items.length) return overlay.remove();
+                    if (idx >= items.length) idx = items.length - 1;
+                    draw();
+                } catch (e) {
+                    showGlobalAlert('Could not delete that');
+                }
+            }
+
+            function draw() {
+                const it = items[idx] || {};
+                const clip = (it.kind || opts.kind) === 'video';
+                const many = items.length > 1;
+                // Video keeps its controls usable, so only the backdrop and
+                // the explicit ✕ dismiss. A lone photo still closes on tap,
+                // like before — but not in an album, where the image is
+                // flanked by prev/next and a tap there is ambiguous.
+                const closeOnTap = (!many && !clip)
+                    ? `onclick="this.closest('.moment-overlay').remove()"` : '';
+                const media = clip
+                    ? `<video src="${srcFor(idx)}" ${posterFor(idx) ? `poster="${posterFor(idx)}"` : ''} controls autoplay playsinline
+                           class="max-w-full max-h-[70vh] rounded-xl"></video>`
+                    : `<img src="${srcFor(idx)}" ${closeOnTap}
+                           class="max-w-full max-h-[70vh] rounded-xl object-contain">`;
+                const delLabel = many ? (clip ? 'Delete clip' : 'Delete photo') : 'Delete';
+                overlay.innerHTML = `
+                    <button onclick="this.closest('.moment-overlay').remove()"
+                        class="absolute top-3 right-3 w-10 h-10 rounded-full bg-white/15 text-white text-lg leading-none">✕</button>
+                    <div class="max-w-full text-center">
+                        ${opts.title ? `<div class="text-xs font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${mfEscape(opts.title)}</div>` : ''}
+                        <div class="relative inline-block">
+                            ${media}
+                            ${many ? `
+                            <button class="mo-prev absolute left-1 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/50 text-white text-xl">‹</button>
+                            <button class="mo-next absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/50 text-white text-xl">›</button>
+                            <span class="absolute top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-black/60 text-white text-xs font-bold">${idx + 1} / ${items.length}</span>` : ''}
+                        </div>
+                        ${opts.body ? `<div class="text-white font-bold mt-3 px-4">${mfEscape(opts.body)}</div>` : ''}
+                        ${opts.senderName ? `<div class="text-gray-400 text-sm mt-1">from ${mfEscape(opts.senderName)}</div>` : ''}
+                        ${opts.channelId ? `<button class="mo-open mt-4 px-4 py-2 rounded-full bg-white/15 text-white text-sm font-bold">Open chat →</button>` : ''}
+                        ${canShareOut() ? `<button class="moment-share mt-4 ml-2 px-4 py-2 rounded-full bg-white/15 text-white text-sm font-bold">Share</button>` : ''}
+                        ${opts.canDelete ? `<button class="mo-del mt-4 ml-2 px-4 py-2 rounded-full bg-red-600/25 border border-red-500/50 text-red-200 text-sm font-bold">${delLabel}</button>` : ''}
+                    </div>`;
+                wire();
+            }
+
+            function step(d) {
+                idx = (idx + d + items.length) % items.length;
+                draw();
+            }
+
+            function wire() {
+                const prev = overlay.querySelector('.mo-prev');
+                const next = overlay.querySelector('.mo-next');
+                // stopPropagation, or the backdrop handler below reads the
+                // click as "outside the media" and closes the overlay on
+                // every step.
+                if (prev) prev.onclick = e => { e.stopPropagation(); step(-1); };
+                if (next) next.onclick = e => { e.stopPropagation(); step(1); };
+                const open = overlay.querySelector('.mo-open');
+                if (open) open.onclick = () => {
+                    overlay.remove(); setView('messages'); openChannel(opts.channelId);
+                };
+                // Wired here rather than as an inline onclick: the caption is
+                // arbitrary family text and would have to survive two levels
+                // of quoting to reach an attribute intact.
+                const shareBtn = overlay.querySelector('.moment-share');
+                if (shareBtn) shareBtn.onclick = () => shareOut(shareBtn, {
+                    src: srcFor(idx), kind: (items[idx] || {}).kind || opts.kind,
+                    body: opts.body, title: opts.title
+                });
+                const del = overlay.querySelector('.mo-del');
+                if (del) del.onclick = () => {
+                    // A single-item moment IS its only item, so the two acts
+                    // are identical — keep the richer "Delete this moment?"
+                    // confirmation instead of a terser duplicate.
+                    if (items.length === 1) deleteMomentFromOverlay(del, opts.messageId);
+                    else deleteMomentItem();
+                };
+            }
+
             overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+            draw();
             document.body.appendChild(overlay);
         }
 
         // Resolve a moment from the open thread, falling back to the strip's
         // own data (the thread only loads the last 100 messages, so an older
         // moment tapped in the strip may not be in it).
-        function openMomentById(id) {
+        function openMomentById(id, index) {
             const m = (threadMessages || []).find(x => x.id === id);
             if (m && m.attachment) {
                 const sender = membersData.find(x => x.id === m.sender_member_id) || {};
                 const ch = channelsData.find(c => c.id === activeChannelId) || {};
                 return showMomentOverlay({
+                    items: attachmentItemsJs(m.attachment),
+                    index: index || 0,
                     kind: m.attachment.kind,
                     src: momentMediaSrc(m.attachment),
                     poster: momentPosterSrc(m.attachment),
@@ -3722,13 +3826,19 @@
                     messageId: m.id, canDelete: canDeleteMsg(m)
                 });
             }
+            // Strip rows (older than the thread's 100-message window) carry
+            // their own items list from presence._item_rows, shaped
+            // {kind, media_url, poster_url} rather than raw attachment items —
+            // map them to what momentMediaSrc/momentPosterSrc expect. Strip
+            // rows are always event-channel moments (recent_moments never
+            // returns DMs), so a parent may clear any of them.
             const row = (momentsStripData || []).find(x => x.id === id);
             if (row) {
-                // Strip rows are always event-channel moments (recent_moments
-                // never returns DMs), so a parent may clear any of them.
                 const canDelete = row.sender_member_id === selectedMemberId
                     || myRole() === 'parent';
                 return showMomentOverlay({
+                    items: (row.items || []).map(i => ({ kind: i.kind, url: i.media_url })),
+                    index: index || 0,
                     kind: row.kind,
                     src: `${apiBase}${String(row.media_url || '').replace(/^\//, '')}`,
                     poster: `${apiBase}${String(row.poster_url || '').replace(/^\//, '')}`,
