@@ -3752,7 +3752,9 @@
                 canvas.width = w; canvas.height = h;
                 canvas.getContext('2d').drawImage(img, 0, 0, w, h);
                 const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-                pendingAttachment = { kind: 'photo', data_url: dataUrl, w: w, h: h };
+                // The data URL stays for the PREVIEW only; Send uploads it and
+                // swaps in a url. Never posted as bytes.
+                pendingAttachment = { kind: 'photo', _dataUrl: dataUrl, w: w, h: h };
                 showAttachPreview(`<img src="${dataUrl}" class="h-20 rounded-xl border border-gray-700 object-cover">`);
             };
             img.onerror = () => { URL.revokeObjectURL(url); showGlobalAlert('Could not read that photo'); };
@@ -3898,6 +3900,25 @@
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.detail || `Upload failed (${res.status})`);
             return data;
+        }
+
+        // Photos take the same route clips do: into the media store first,
+        // and the message carries a url. They used to ride the message body
+        // as a data URL, which is fine for one and a ~160 MB JSON POST for
+        // ten. One path for one photo and for ten, so there is no second
+        // code path to keep in step.
+        async function uploadMomentPhoto(dataUrl, w, h) {
+            const res = await fetch(`${apiBase}api/media/photo`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ data_url: dataUrl })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || `Photo upload failed (${res.status})`);
+            const out = { kind: 'photo', url: data.url };
+            if (data.mime) out.mime = data.mime;
+            if (w) out.w = w;
+            if (h) out.h = h;
+            return out;
         }
 
         async function uploadMomentVideo(file, onProgress) {
@@ -4091,11 +4112,15 @@
             input.value = '';
             clearPendingAttachment();
             try {
+                let att = attachment;
+                if (att && att._dataUrl) {
+                    att = await uploadMomentPhoto(att._dataUrl, att.w, att.h);
+                }
                 const res = await fetch(`${apiBase}api/channels/${activeChannelId}/messages`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ sender_member_id: selectedMemberId, body: body,
-                                           attachment: attachment || undefined })
+                                           attachment: att || undefined })
                 });
                 if (!res.ok) throw new Error('send failed');
                 await refreshThread();
@@ -4107,7 +4132,7 @@
                     pendingAttachment = attachment;
                     showAttachPreview(attachment.kind === 'video'
                         ? `<video src="${apiBase}${attachment.url.replace(/^\//, '')}" muted playsinline class="h-20 rounded-xl border border-gray-700 object-cover"></video>`
-                        : `<img src="${attachment.data_url}" class="h-20 rounded-xl border border-gray-700 object-cover">`);
+                        : `<img src="${attachment._dataUrl || momentMediaSrc(attachment)}" class="h-20 rounded-xl border border-gray-700 object-cover">`);
                 }
             }
         }

@@ -221,6 +221,20 @@ def scenario_the_overlay_and_the_sheet_both_carry_it():
           "ladder has nothing to fall back to")
 
 
+def scenario_photos_are_uploaded_not_inlined():
+    """A ten-photo album must not be a 160 MB JSON POST, so photos go to the
+    media store first and the message carries urls."""
+    src = _extract('uploadMomentPhoto')
+    check('api/media/photo' in src,
+          'the photo upload posts to the media-store route')
+    check('data_url' in src,
+          'it sends the rendition as a data url')
+
+    send = _extract('submitThreadMessage')
+    check('data_url' not in send,
+          'the message body no longer carries image bytes')
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
