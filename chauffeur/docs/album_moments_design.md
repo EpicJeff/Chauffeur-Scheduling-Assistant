@@ -162,6 +162,23 @@ play badge, never a live `<video>` — the gallery already refuses this for the
 same reason ("tiles ALWAYS render a still image"), and a 2×2 grid of live
 players is four decoders in a chat row.
 
+**The `+N` cell opens a grid of the whole album**; every other cell goes
+straight to the lightbox at its own index. So the middle level exists exactly
+when media is actually hidden and never otherwise — an intermediate view of
+three photos the bubble already showed you is a tap that buys nothing. From
+the grid, tapping opens the lightbox as usual.
+
+This is deliberately NOT WhatsApp's flow, which routes every album through an
+album view first (its bubble collage crops and truncates, so its bubble cannot
+be the grid; ours can, up to four). Nor does the lightbox scrub across the
+whole conversation's media the way WhatsApp's does — **that surface already
+exists and is better**: the chat IS the event, so `/moments` → event → grid is
+"all media in this conversation", paged over the entire archive rather than
+stopping at whatever the thread's last-100-messages window happens to hold. A
+thread-wide scrub would also blur the two actions above, since share-the-item
+and delete-the-item become ambiguous once scrubbing has carried the viewer
+into a different message than the one they tapped.
+
 **Single clips move to the lightbox too, and that is a behaviour change.**
 Today a lone video bubble renders an inline `<video controls>` with no click
 handler, so the tap goes to the player; only photos carry
@@ -189,12 +206,14 @@ index, so stepping the lightbox re-aims the Share button for free. This is
 the one place the cover rule does not apply; the message action sheet, which
 has no notion of a current item, still shares the cover.
 
-**Delete stays message-scoped and must say so.** The button deletes the
-MESSAGE, so on item 3 of 5 it takes all five. With `items` present it reads
-**"Delete album"**. Per-item delete is out of scope: it would mean mutating a
-stored attachment, reassigning the cover when item 0 goes, and collecting
-exactly one file — real work for an action whose honest form ("take the whole
-share back") is what the button already does.
+**Delete removes the item you are looking at.** Looking at one frame is
+exactly the context in which "get rid of that one" is the thing you mean, so
+the lightbox button reads "Delete photo" / "Delete clip" and takes that item
+alone, then steps to the next (or closes, if it was the last). The MESSAGE
+action sheet keeps the wider act and reads **"Delete album"** when `items` is
+present, because a sheet attached to the whole bubble has no current item and
+must not pretend otherwise. Two buttons, two scopes, each labelled with the
+scope it has.
 
 ### Share-out — `shareMessage` / `shareOut`
 
@@ -224,6 +243,37 @@ Contributes **the cover only**. The tile is a flat mosaic of the last few
 moments beside eight other tiles; one album flooding it would push every
 other activity off the board.
 
+### Deleting one item — `DELETE /api/messages/{message_id}/media/{media_id}`
+
+New route, because `PATCH /api/messages/{id}` deliberately never touches the
+attachment ("swapping media is delete-and-repost") and that rule is still
+right for editing.
+
+**Keyed by media id, not by index.** Two people clearing frames from the same
+album, or one client working from a stale copy, would otherwise remove a
+different photo than the one on screen — and a silently wrong deletion of
+family media is unrecoverable.
+
+Permission is `main._may_delete_message` unchanged: your own always, plus
+`role='parent'` in a SHARED channel. Removing one frame is the same act as
+removing the share, only narrower, so it cannot need a wider rule.
+
+What it does, by remaining count:
+
+- **More than two items left** → drop the item, free its files, cover becomes
+  the new `items[0]`.
+- **Exactly two left** → drop the item and collapse to a plain single
+  attachment with **no `items` key**, preserving the one-representation rule.
+  An album of two that loses one was never an album.
+- **The only media** (a single moment, or the last of an album) → delete the
+  MESSAGE, via the existing `storage.delete_chat_message`. A moment is media
+  plus a caption; the caption alone is not a moment, and leaving a stranded
+  line of text where a photo was is not what anyone meant by "delete this".
+
+Pushes `_push_message_event` so open threads refresh over SSE, exactly as
+delete and edit already do. Best-effort by nature, same as those: a push
+already on a lock screen cannot be recalled.
+
 ### Media deletion — `storage._delete_media_for_messages`
 
 Iterates `attachment_items`. This is the one place where getting it wrong is
@@ -231,6 +281,11 @@ silent and permanent: moments are exempt from the retention cap, so nothing
 else will ever collect an album's non-cover files, and they would sit on the
 family's disk forever. Same per-item cleanup as today (media file, `.orig`,
 `.tmp.mp4`, poster `.jpg`).
+
+The per-file half is extracted as `_delete_media_for_attachment(item)` so the
+single-item route above and the whole-message sweep share one definition of
+"what files does this media own" — the list of suffixes is the kind of thing
+that grows on one side and not the other.
 
 ### Push fan-out — `main._fanout_message_notifications`
 
@@ -293,6 +348,19 @@ applies to each item.
   extend it to an actual album once the shape exists).
 - `media_count` on the event index sums media while `count` stays messages.
 
+Per-item delete, in `tests/test_presence.py`:
+
+- 10 → 9 drops the right media BY ID (not by position), frees only that
+  item's files, and leaves the other nine on disk.
+- Deleting `items[0]` promotes the new first item to cover.
+- 2 → 1 collapses to a plain attachment with no `items` key.
+- The last item deletes the MESSAGE, and a captioned single moment does not
+  survive as a stranded text row.
+- Permission matches message delete exactly: sender yes, parent in a shared
+  channel yes, another adult no, and a DM stays sender-only.
+- An unknown media id, and a media id belonging to a DIFFERENT message,
+  both 404 rather than deleting anything.
+
 `tests/test_share_out.py`: the message action sheet shares an album's cover,
 the lightbox shares the item at the current index, and the text rule is
 unchanged in both.
@@ -311,7 +379,6 @@ that nothing posts until every item has a URL.
   files in tap order, so the sender already controls it.
 - Albums in DMs beyond what falls out for free. Moments are an event-channel
   idea; a DM attachment keeps working exactly as it does now.
-- Deleting one item out of a posted album. The message is the unit; Delete
-  takes the whole share and the button says "Delete album" so it cannot be
-  mistaken for anything narrower.
 - Sharing a whole album as one multi-file share sheet.
+- Scrubbing across a whole conversation's media from the lightbox. The
+  gallery's event level already is that surface, over the whole archive.
