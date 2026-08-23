@@ -93,13 +93,17 @@ def prompt_worthiness(ev, present_ids, date_str):
     return 'quiet'
 
 
-def _item_rows(att) -> list:
+def _item_rows(att, by_message='') -> list:
     """Every media in a moment, shaped for a client: cover first, one entry for
     an ordinary moment. Always present so no surface needs an album special
-    case — `items[0]` is what the top-level cover fields describe."""
+    case — `items[0]` is what the top-level cover fields describe, and it has
+    to STAY that: a legacy inline photo has no url of its own, so it falls back
+    to the same by-message route the top level uses. Without that, a client
+    iterating items renders a dead image for every un-migrated record, which is
+    exactly the reaching-into-the-raw-attachment this field exists to prevent."""
     out = []
     for it in storage.attachment_items(att):
-        url = str(it.get('url') or '')
+        url = str(it.get('url') or '') or by_message
         out.append({'kind': it.get('kind') or 'photo',
                     'media_url': url,
                     'poster_url': poster_url_for(it) or url})
@@ -368,7 +372,7 @@ def moment_stream_meta(channel, message, sender=None):
         'sender_member_id': (message or {}).get('sender_member_id'),
         'sender_name': (sender or {}).get('name') or '?',
         'event_title': (channel or {}).get('title') or 'A family moment',
-        'items': _item_rows(att),
+        'items': _item_rows(att, by_message),
     }}
 
 
@@ -378,6 +382,7 @@ def _moment_row(m, members, event_title=None):
     thumbnails is a few KB of JSON with lazy-loaded, cacheable images."""
     sender = members.get(m.get('sender_member_id')) or {}
     att = m.get('attachment') or {}
+    by_message = f"/api/moments/{m.get('id')}/media"
     return {
         'id': m.get('id'),
         'channel_id': m.get('channel_id'),
@@ -387,10 +392,10 @@ def _moment_row(m, members, event_title=None):
         # Direct media-store URL when there is one (photos and clips both live
         # there now); the by-message URL stays the fallback that decodes
         # legacy inline photos.
-        'media_url': str(att.get('url') or '') or f"/api/moments/{m.get('id')}/media",
+        'media_url': str(att.get('url') or '') or by_message,
         # Videos show their poster frame in tiles; photos are their own.
         'poster_url': (poster_url_for(att) or str(att.get('url') or '')
-                       or f"/api/moments/{m.get('id')}/media"),
+                       or by_message),
         'attachment': att,
         'reactions': m.get('reactions') or {},
         'event_id': m.get('event_id'),
@@ -405,8 +410,9 @@ def _moment_row(m, members, event_title=None):
         # Every media in this moment, cover first. The top-level kind/media_url
         # above describe items[0]; a surface that draws the whole album reads
         # this instead. Legacy inline photos yield a single item whose
-        # media_url is '' — the by-message URL above is their route.
-        'items': _item_rows(att),
+        # media_url mirrors the top-level URL — the by-message route that
+        # decodes them without reaching into the raw attachment.
+        'items': _item_rows(att, by_message),
     }
 
 

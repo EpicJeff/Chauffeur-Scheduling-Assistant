@@ -1284,6 +1284,29 @@ def scenario_album_rides_the_wire():
     check(presence.count_moments_since(t0 - 3600) == 2,
           "an album counts once toward the panel badge, not once per photo")
 
+    # Legacy inline photos have no url key, so items[0] must fall back to the
+    # by-message route, mirroring the top-level media_url. Without this, a
+    # client iterating items renders a dead image for every un-migrated record.
+    storage.add_chat_message({
+        "id": "legacy", "channel_id": ch["id"], "sender_member_id": "mom",
+        "ts": t0 - 120, "type": "text", "body": "legacy inline",
+        "attachment": {"kind": "photo", "data_url": _TINY_JPEG},
+        "reactions": {}})
+    legacy_row = presence.recent_moments(hours=1)
+    legacy_row = next((r for r in legacy_row if r["id"] == "legacy"), None)
+    check(legacy_row, "legacy inline photo moment found")
+    check(legacy_row["items"][0]["media_url"] == legacy_row["media_url"],
+          f"items[0] mirrors top-level media_url for legacy photos: {legacy_row['items'][0]['media_url']} vs {legacy_row['media_url']}")
+    check(legacy_row["items"][0]["media_url"].startswith("/api/moments/legacy/media"),
+          "legacy photo items[0] uses by-message URL, not empty string")
+
+    # Same contract for the SSE preview.
+    legacy_msg = storage.get_chat_message("legacy")
+    legacy_meta = presence.moment_stream_meta(ch, legacy_msg,
+                                              storage.get_member("mom"))["moment"]
+    check(legacy_meta["items"][0]["media_url"] == legacy_meta["media_url"],
+          f"SSE preview items[0] mirrors top-level media_url: {legacy_meta['items'][0]['media_url']} vs {legacy_meta['media_url']}")
+
 
 SCENARIOS = [
     scenario_resumable_upload,
