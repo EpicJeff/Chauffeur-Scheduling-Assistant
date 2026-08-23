@@ -3244,7 +3244,13 @@
             // a lie. visible cells + the scrim number always equals n.
             const cells = items.slice(0, shown).map(cell).join('');
             const cols = shown <= 2 ? shown : 2;
-            return `<div class="grid gap-0.5 rounded-2xl overflow-hidden rounded-br-sm"
+            // Same corner rule as every other bubble in the thread: mine is
+            // sharp bottom-right, theirs is sharp bottom-left. Default to
+            // mine when opts.mine is unset (=== false, not falsy) because
+            // Task 8's optimistic upload bubble is always the viewer's own
+            // and calls this without a mine option at all.
+            const corner = opts.mine === false ? 'rounded-bl-sm' : 'rounded-br-sm';
+            return `<div class="grid gap-0.5 rounded-2xl overflow-hidden ${corner}"
                         style="grid-template-columns: repeat(${cols}, 1fr)">${cells}</div>`;
         }
 
@@ -3320,7 +3326,7 @@
                         att = `<div class="${m.body ? 'mb-1' : ''}">${albumGridHtml(
                             items.map(it => ({ poster: momentPosterSrc(it) || momentMediaSrc(it),
                                                media: momentMediaSrc(it), kind: it.kind })),
-                            { msgId: m.id })}</div>`;
+                            { msgId: m.id, mine: mine })}</div>`;
                     } else if (items.length === 1) {
                         // ONE rule for every media in the thread: a still that
                         // opens the lightbox. A lone clip used to render an

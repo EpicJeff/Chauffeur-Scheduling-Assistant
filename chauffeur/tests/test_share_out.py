@@ -215,6 +215,9 @@ def scenario_album_bubble_is_stills_and_a_plus_n():
           'the overflow cell opens the full album')
     check('shown - 1' in grid,
           'and it is the LAST shown cell that carries it, not the first')
+    check('rounded-br-sm' in grid and 'rounded-bl-sm' in grid,
+          'the album wrapper picks its corner like every other bubble '
+          '(mine vs theirs) - a received album must not draw the sender corner')
 
     with open(APP, encoding='utf-8') as f:
         html = f.read()
