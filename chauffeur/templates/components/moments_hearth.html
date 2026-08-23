@@ -96,9 +96,15 @@
             function close() {
                 clearTimeout(timer);
                 overlay.remove();
-                // A poll can pop a second moment over the first, so the flag
-                // comes off only when the last overlay has gone.
-                if (!document.querySelector('[data-moment-overlay]')) {
+                // Only the LAST clip on screen may clear the flag. A poll can
+                // pop a second moment over the first, and this must ask the
+                // same question draw() asks — is any clip still playing —
+                // rather than merely whether any overlay remains. Asking the
+                // coarser question leaves the page un-blurred forever when a
+                // clip closes over a photo. overlay.remove() above happens
+                // first, so this closing overlay's own video is already out
+                // of the DOM and cannot match itself.
+                if (!document.querySelector('[data-moment-overlay] video')) {
                     document.documentElement.classList.remove('clip-playing');
                 }
             }

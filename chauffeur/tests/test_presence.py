@@ -1084,6 +1084,15 @@ def scenario_hearth_is_pop_only():
     # exists where the dwell clock restarts on every draw().
     check('clearTimeout(timer);\n                timer = setTimeout(close, clip ? 30000 : 20000);' in hearth,
           'the dwell clock restarts on each step rather than running out mid-album')
+    # close() and draw() must ask the SAME question -- is any clip still on
+    # screen -- not two different ones. The coarse form ('[data-moment-
+    # overlay]' with no ' video') is a substring of the precise form, so a
+    # plain "not in hearth" check on the coarse text would pass even with
+    # the precise text present; counting occurrences of the precise literal
+    # is what actually pins both sites and catches either one reverting.
+    check(hearth.count("[data-moment-overlay] video") == 2,
+          'close() and draw() both ask whether any clip is still on screen, '
+          'not merely whether any overlay remains')
 
 
 def scenario_attachment_items_helper():
