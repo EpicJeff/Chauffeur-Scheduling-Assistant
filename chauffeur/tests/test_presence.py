@@ -1117,10 +1117,80 @@ def scenario_album_deletion_frees_every_file():
     check(not left, f"every item's file is freed, not just the cover — left {left}")
 
 
+def scenario_album_validation():
+    """The one choke point every album passes through."""
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+    _member("mom", "Mom", role="parent")
+    ch = storage.get_or_create_event_channel("evA", "Soccer")
+    bt = BackgroundTasks()
+
+    def photo():
+        return {"kind": "photo", "data_url": _TINY_JPEG, "w": 4, "h": 4}
+
+    # Ten is the cap and it is accepted.
+    m = main.send_message(ch["id"], main.SendMessageRequest(
+        sender_member_id="mom", body="first half",
+        attachment={"items": [photo() for _ in range(10)]}), bt)
+    att = m["attachment"]
+    check(len(att["items"]) == 10, f"ten items kept, got {len(att['items'])}")
+    check(att["kind"] == "photo" and att["url"] == att["items"][0]["url"],
+          "the cover mirrors items[0]")
+    check(all(i["url"].startswith("/api/media/") for i in att["items"]),
+          "every item is persisted to the media store, none left inline")
+    check(len({i["url"] for i in att["items"]}) == 10,
+          "ten distinct files, not one file referenced ten times")
+
+    # Eleven is refused, and the message says what the limit is.
+    try:
+        main.send_message(ch["id"], main.SendMessageRequest(
+            sender_member_id="mom", body="",
+            attachment={"items": [photo() for _ in range(11)]}), bt)
+        check(False, "expected 400")
+    except HTTPException as e:
+        check(e.status_code == 400 and "10" in str(e.detail),
+              f"eleventh item refused with the limit named, got {e.detail}")
+
+    # An empty list is not an album.
+    try:
+        main.send_message(ch["id"], main.SendMessageRequest(
+            sender_member_id="mom", body="", attachment={"items": []}), bt)
+        check(False, "expected 400")
+    except HTTPException as e:
+        check(e.status_code == 400, "an empty album is refused")
+
+    # A bad item raises ITS error, not a generic one.
+    try:
+        main.send_message(ch["id"], main.SendMessageRequest(
+            sender_member_id="mom", body="",
+            attachment={"items": [photo(), {"kind": "photo", "data_url": "http://x/y.jpg"}]}), bt)
+        check(False, "expected 400")
+    except HTTPException as e:
+        check("image data URL" in str(e.detail),
+              f"the failing item's own error survives, got {e.detail}")
+
+    # One item is NOT an album — one representation of one photo.
+    m = main.send_message(ch["id"], main.SendMessageRequest(
+        sender_member_id="mom", body="", attachment={"items": [photo()]}), bt)
+    check("items" not in m["attachment"] and m["attachment"]["kind"] == "photo",
+          f"a one-item list normalizes to a plain attachment, got {m['attachment']}")
+
+    # Albums do not nest.
+    try:
+        main.send_message(ch["id"], main.SendMessageRequest(
+            sender_member_id="mom", body="",
+            attachment={"items": [{"kind": "photo", "data_url": _TINY_JPEG,
+                                   "items": [photo()]}]}), bt)
+        check(False, "expected 400")
+    except HTTPException as e:
+        check(e.status_code == 400, "a nested album is refused")
+
+
 SCENARIOS = [
     scenario_resumable_upload,
     scenario_media_root_and_sharding,
     scenario_attachment_send_and_validation,
+    scenario_album_validation,
     scenario_reaction_toggle_and_endpoint,
     scenario_message_delete_and_edit,
     scenario_present_and_kept_away,

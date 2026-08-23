@@ -12165,12 +12165,44 @@ class SendMessageRequest(BaseModel):
 # protect the database, which is what the old 1 MB limit was really doing.
 _ATTACHMENT_MAX_CHARS = 16_000_000
 
+# One share, one caption, up to ten media. Enough for a part of a game; low
+# enough that a single share cannot dump a camera roll onto the wall.
+_ALBUM_MAX_ITEMS = 10
+
 def _validate_moment_attachment(att: dict) -> dict:
     """Normalize/validate a moment attachment; raises HTTPException on junk.
     Photos are inline data URLs; videos reference an uploaded media file
     (/api/moments/upload -> /api/media/{id})."""
     if not isinstance(att, dict):
         raise HTTPException(status_code=400, detail="Unsupported attachment")
+
+    # An ALBUM. Each item goes through this same function, so a data URL in
+    # item 4 is still persisted to the media store and a bad item still raises
+    # its own error rather than a generic one. The cover is mirrored HERE and
+    # nowhere else — see docs/album_moments_design.md.
+    if att.get('items') is not None:
+        raw = att.get('items')
+        if not isinstance(raw, list) or not raw:
+            raise HTTPException(status_code=400,
+                                detail="An album needs at least one photo or clip")
+        if len(raw) > _ALBUM_MAX_ITEMS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"An album holds at most {_ALBUM_MAX_ITEMS} — that one has {len(raw)}")
+        items = []
+        for i in raw:
+            if not isinstance(i, dict):
+                raise HTTPException(status_code=400, detail="Unsupported attachment")
+            if i.get('items') is not None:
+                raise HTTPException(status_code=400, detail="Albums do not nest")
+            items.append(_validate_moment_attachment(i))
+        # A one-item album is not an album. Collapsing here is what keeps
+        # "one photo" to a single stored representation, so every reader that
+        # tests for `items` is asking a question with one right answer.
+        if len(items) == 1:
+            return items[0]
+        return {**items[0], 'items': items}
+
     if att.get('kind') == 'photo':
         # Already-stored photo (re-post / migration passthrough).
         url = str(att.get('url') or '')
