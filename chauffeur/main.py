@@ -4052,23 +4052,14 @@ async def ingest_photo(photo: UploadFile = File(...), caption: str = Form('')):
     summary['pending'] = len(storage.get_proposals('proposed'))
     return summary
 
-@app.post("/share")
-async def pwa_share_target(photos: list[UploadFile] = File(default=[]),
-                           title: str = Form(''), text: str = Form('')):
-    """Android PWA share-target (manifest.json share_target → this route,
-    which is why the manifest is served from the origin root): sharing an
-    image to the installed app drops it into the intake pipeline, then
-    bounces into the PWA. iOS has never supported PWA share targets — the
-    in-app 📸 buttons are the capture path there."""
-    import base64
-    caption = ' '.join(x for x in [(title or '').strip(), (text or '').strip()] if x)[:200]
-    for up in photos[:1]:  # v1: first image only
-        data = await up.read()
-        mime = (up.content_type or '').lower()
-        if data and len(data) <= _PHOTO_MAX_BYTES and mime.startswith('image/'):
-            from services import email_ingest
-            email_ingest.run_photo_ingest(base64.b64encode(data).decode('ascii'), mime, caption)
-    return RedirectResponse(url='app?view=family', status_code=303)
+# The Android PWA share-target (manifest `share_target` → POST /share) was
+# removed in v2.382.0. It only ever worked on Android — iOS has never
+# supported PWA share targets — and it could not have survived auth
+# enforcement: the OS issues that POST, so none of our headers ride along and
+# the route would 403 at the flip. The in-app 📸 buttons on /intake and the
+# PWA Family strip are the capture path on every platform. Re-add it when a
+# native app makes a share extension available on iOS too, at which point the
+# token handoff gets solved properly instead of worked around.
 
 @app.get("/api/proposals")
 def list_proposals(status: str = 'proposed'):

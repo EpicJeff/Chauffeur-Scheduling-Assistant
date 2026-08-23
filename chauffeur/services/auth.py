@@ -319,10 +319,6 @@ RULES = [
     (ANY, '/api/push_subscribe/*', SIGNED_IN, None),
     (ANY, '/api/members/*', SIGNED_IN, None),   # reads; the writes are gated above
     (ANY, '/api/sendspin/*', SIGNED_IN, 'music'),
-    # The Android share target. The OS posts it with none of our headers, so
-    # it will show up in the audit as a would-deny; S3 decides whether the
-    # service worker attaches the token or the route lands on a signed-in page.
-    (ANY, '/share', SIGNED_IN, None),
 ]
 
 

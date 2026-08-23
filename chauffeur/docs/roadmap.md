@@ -112,10 +112,13 @@ genuinely one-tap or it's data entry with extra steps.
   INTAKE ARC AS DESIGNED IS COMPLETE.** Photos/screenshots → the same
   proposal pipeline via a new 'vision' model tier (flash→lite; gemma is
   text-only). Surfaces: 📸 buttons on /intake + the PWA parent strip
-  (always visible on Family view now), and an Android share-target
-  (`/share`; iOS never supported PWA share targets — in-app buttons are
-  the iOS path; SMS stays unreachable there, share/screenshot is the
-  permanent ceiling). Still true from the original design: recurrence
+  (always visible on Family view now). An Android share-target (`/share`)
+  shipped alongside them and was **removed in v2.382.0**: it only ever
+  worked on Android (iOS has never supported PWA share targets) and the OS
+  posts it with none of our headers, so it would have 403'd at the auth
+  flip — a service-worker token handoff was not worth building for a path
+  half the household could not reach. The in-app buttons are the capture
+  path on every platform now. Still true from the original design: recurrence
   with exceptions (spring break, early dismissal) is where extraction
   embarrasses — v1 handles single + simple-weekly items only. Open
   nice-to-haves: multi-image share, an optional caption field on the
@@ -680,10 +683,12 @@ What is actually blocked on it today, each already written down elsewhere:
 - **Barcode capture** (M1 / `system_capabilities.md`): `BarcodeDetector` exists
   in no iOS browser, so on the web it means shipping a WASM decoder for the
   narrowest capture path; Capacitor gets native ML Kit free.
-- **iOS share-target intake** (Phase 3): Android has `/share`; iOS has never
-  supported PWA share targets, and in-app buttons were accepted as the
-  permanent web ceiling. A native share extension is the only thing that
-  removes it.
+- **Share-target intake** (Phase 3): iOS has never supported PWA share targets,
+  and in-app buttons were accepted as the permanent web ceiling. Since v2.382.0
+  Android does not have one either — the `/share` route was removed rather than
+  carried through the auth flip for a platform half the household does not use.
+  A native share extension is the only thing that brings it back, and it brings
+  it back for everyone at once.
 - **Voice memos** (still unbuilt): iOS PWA records fine *in the foreground*
   only — the walkie-talkie moment wants background capture.
 - **Sendspin phone players**: a member's phone is a real MA player, which on

@@ -39,8 +39,14 @@ The rule that shapes every decision below
    through the tunnel, and it has no credential to present today.
 4. **Kids keep their surfaces.** The kid lens, My Day, chores and routines are
    reached by children who may have no PIN set.
-5. **Android's share target keeps ingesting.** `/share` is POSTed by the OS
-   share sheet, which attaches no headers of ours.
+5. ~~**Android's share target keeps ingesting.** `/share` is POSTed by the OS
+   share sheet, which attaches no headers of ours.~~ **Void since v2.382.0** —
+   the share target was deleted rather than worked around. It only ever worked
+   on Android (iOS has never supported PWA share targets), and the honest fix
+   was a service-worker token handoff for a path half the household could not
+   use. The in-app 📸 buttons are the capture path everywhere now. If a native
+   app ever brings a share extension to iOS, this constraint comes back and
+   gets solved properly.
 
 ## The model
 
