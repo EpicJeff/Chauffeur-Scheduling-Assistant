@@ -1472,15 +1472,18 @@ def scenario_gallery_draws_albums():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     g = open(os.path.join(root, "templates", "components", "moments_gallery.html"),
              encoding="utf-8").read()
-    check("media_count" in g, "the event card counts media, not shares")
-    check("e.media_count || e.count" in g,
+    check("${e.media_count || e.count} moment" in g,
+          "the event card counts media, not shares")
+    check("(e.media_count || e.count) !== 1" in g,
           "and falls back to the message count for a pre-change payload")
-    check("items.length > 1" in g,
+    check("(m.items || []).length > 1" in g,
           "a share holding several draws a count chip, a lone moment does not")
-    check("idx + 1" in g and "items.length" in g,
+    check("${idx + 1} / ${items.length}" in g,
           "the lightbox draws a position marker, not just the first frame")
-    check("stopPropagation" in g,
-          "stepping must not fall through to the close-on-click handler")
+    check("p.onclick = e => { e.stopPropagation(); idx = (idx - 1 + items.length) % items.length; draw(); }" in g,
+          "stepping back must not fall through to the close-on-click handler")
+    check("nx.onclick = e => { e.stopPropagation(); idx = (idx + 1) % items.length; draw(); }" in g,
+          "stepping forward must not fall through to the close-on-click handler")
 
 
 SCENARIOS = [
