@@ -248,7 +248,16 @@ def scenario_the_overlay_and_the_sheet_both_carry_it():
 
 def scenario_photos_are_uploaded_not_inlined():
     """A ten-photo album must not be a 160 MB JSON POST, so photos go to the
-    media store first and the message carries urls."""
+    media store first and the message carries urls.
+
+    Task 8 moved every attachment (one photo or ten) through `sendAlbum`, so
+    the dedup-on-retry dance that used to live in `submitThreadMessage` (never
+    re-upload a photo that already reached the media store) no longer applies
+    there — `submitThreadMessage` now only ever posts plain text itself.
+    Retry on an album deliberately re-sends the WHOLE thing instead: completed
+    chunked video uploads resync to the server's offset, and re-posting a
+    photo that is already in the media store is cheap. See `sendAlbum`.
+    """
     src = _extract('uploadMomentPhoto')
     check('api/media/photo' in src,
           'the photo upload posts to the media-store route')
@@ -258,12 +267,34 @@ def scenario_photos_are_uploaded_not_inlined():
     send = _extract('submitThreadMessage')
     check('data_url' not in send,
           'the message body no longer carries image bytes')
-    check('_dataUrl' in send and '!att.url' in send,
-          'a retry must not re-upload an already-uploaded photo — nothing '
-          'garbage-collects the orphan that would leave behind. This is a '
-          'source check, not a runtime one: it proves the guard text is '
-          'present, not that the control flow actually skips the second '
-          'upload at runtime.')
+    check('pendingAlbum' in send,
+          'an attached pick routes through the album path, not inline bytes')
+
+    album = _extract('sendAlbum')
+    check('uploadMomentPhoto' in album,
+          'an album uploads its photo entries through the media store, one call per item')
+
+
+def scenario_album_composer_is_atomic_and_capped():
+    """Nothing posts until every item has a url, and ten is the cap on both
+    sides of the wire."""
+    with open(APP, encoding='utf-8') as f:
+        html = f.read()
+    check('id="thread-photo-input" type="file" multiple' in html
+          or 'multiple' in html.split('id="thread-photo-input"')[1].split('>')[0],
+          'the picker takes more than one file')
+
+    send = _extract('sendAlbum')
+    # The post must come AFTER every upload resolves.
+    upload_at = send.index('Promise.all') if 'Promise.all' in send else send.index('await')
+    post_at = send.index('/messages')
+    check(upload_at < post_at,
+          'every item uploads before the message is posted - an album posts whole')
+    check('items' in send, 'the message carries an items list')
+
+    pick = _extract('handlePhotoPick')
+    check('ALBUM_MAX' in pick, 'the composer trims the pick at the cap')
+    check('showGlobalAlert' in pick, 'and says so - never a browser dialog')
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

@@ -345,16 +345,12 @@
                 </div>
                 <div id="thread-messages" class="flex-1 overflow-y-auto p-4 flex flex-col gap-2"></div>
                 <div id="thread-attach-preview" class="px-3 pt-2 bg-gray-900 border-t border-gray-800" style="display:none">
-                    <div class="relative inline-block">
-                        <div id="thread-attach-slot"></div>
-                        <button onclick="clearPendingAttachment()" type="button"
-                            class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-gray-700 text-gray-100 text-xs font-bold flex items-center justify-center">✕</button>
-                    </div>
+                    <div id="thread-attach-slot" class="flex gap-2 overflow-x-auto pb-1"></div>
                 </div>
                 <form id="thread-form" onsubmit="submitThreadMessage(event)"
                     class="p-3 bg-gray-900 border-t border-gray-800 flex gap-2 items-center shrink-0"
                     style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom))">
-                    <input id="thread-photo-input" type="file" accept="image/*,video/*" class="hidden"
+                    <input id="thread-photo-input" type="file" accept="image/*,video/*" multiple class="hidden"
                         onchange="handlePhotoPick(this)">
                     <button type="button" id="thread-attach-btn" onclick="document.getElementById('thread-photo-input').click()"
                         title="Add a photo"
@@ -3819,9 +3815,6 @@
         // inline data-URL (~1280px JPEG, avatar precedent bigger); VIDEOS —
         // the thing, for sports — upload as files to the family's box and
         // the attachment carries the /api/media URL.
-        let pendingAttachment = null;
-        let pendingFile = null;          // staged video, uploaded on Send
-        let pendingPoster = '';          // its extracted first frame, reused by the bubble
         const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 
         function showAttachPreview(html) {
@@ -3831,33 +3824,95 @@
             document.getElementById('thread-input').placeholder = 'Add a caption…';
         }
 
-        function handlePhotoPick(inputEl) {
-            const file = inputEl.files && inputEl.files[0];
+        // A share is up to ten media under one caption. Ten is enough for a
+        // part of a game and low enough that one share cannot dump a camera
+        // roll onto the wall; the server enforces the same number.
+        const ALBUM_MAX = 10;
+        let pendingAlbum = [];      // [{file, kind, preview, w, h}]
+
+        function albumCell(entry, i) {
+            const box = 'h-20 w-20 rounded-xl border border-gray-700 object-cover';
+            const media = entry.preview
+                ? `<img src="${entry.preview}" class="${box}">`
+                : `<div class="${box} bg-gray-800 animate-pulse"></div>`;
+            return `<div class="relative shrink-0">
+                    ${media}${entry.kind === 'video' ? playBadge(true) : ''}
+                    <button onclick="dropAlbumEntry(${i})" type="button"
+                        class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-gray-700 text-gray-100 text-xs font-bold flex items-center justify-center">✕</button>
+                </div>`;
+        }
+
+        function renderAlbumPreview() {
+            if (!pendingAlbum.length) return clearPendingAttachment();
+            showAttachPreview(pendingAlbum.map(albumCell).join(''));
+        }
+
+        window.dropAlbumEntry = function (i) {
+            pendingAlbum.splice(i, 1);
+            renderAlbumPreview();
+        };
+
+        // Every pick lands here — one file or ten, photo or clip. Photos are
+        // downscaled now (the rendition is what gets uploaded) and clips have
+        // their first frame pulled, so the strip is never a row of grey boxes.
+        async function handlePhotoPick(inputEl) {
+            const files = [...(inputEl.files || [])];
             inputEl.value = '';
-            if (!file) return;
-            if (file.type.startsWith('video/')) return stagePendingVideo(file);
-            if (!file.type.startsWith('image/')) return;
-            const img = new Image();
-            const url = URL.createObjectURL(file);
-            img.onload = () => {
-                URL.revokeObjectURL(url);
-                // 2048px: photos are stored as FILES now, so the old 1280
-                // squeeze (which existed to keep base64 out of the database)
-                // isn't needed — send something worth looking at on a TV.
-                const MAX = 2048;
-                const scale = Math.min(1, MAX / Math.max(img.width, img.height));
-                const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
-                const canvas = document.createElement('canvas');
-                canvas.width = w; canvas.height = h;
-                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-                // The data URL stays for the PREVIEW only; Send uploads it and
-                // swaps in a url. Never posted as bytes.
-                pendingAttachment = { kind: 'photo', _dataUrl: dataUrl, w: w, h: h };
-                showAttachPreview(`<img src="${dataUrl}" class="h-20 rounded-xl border border-gray-700 object-cover">`);
-            };
-            img.onerror = () => { URL.revokeObjectURL(url); showGlobalAlert('Could not read that photo'); };
-            img.src = url;
+            if (!files.length) return;
+            const room = ALBUM_MAX - pendingAlbum.length;
+            if (files.length > room) {
+                showGlobalAlert(room > 0
+                    ? `A share holds ${ALBUM_MAX} — sending the first ${room}`
+                    : `That share already has ${ALBUM_MAX}`);
+            }
+            for (const file of files.slice(0, Math.max(0, room))) {
+                if (file.type.startsWith('video/')) {
+                    if (file.size > MAX_UPLOAD_BYTES) {
+                        showGlobalAlert(`That clip is ${fmtBytes(file.size)} — the limit is ${fmtBytes(MAX_UPLOAD_BYTES)}`);
+                        continue;
+                    }
+                    const entry = { file: file, kind: 'video', preview: '' };
+                    pendingAlbum.push(entry);
+                    renderAlbumPreview();
+                    // Deliberately not awaited in sequence with the others: a
+                    // big clip's frame extraction must not hold up staging the
+                    // rest of the pick.
+                    extractVideoPoster(file).then(p => {
+                        if (!pendingAlbum.includes(entry)) return;
+                        entry.preview = p || '';
+                        renderAlbumPreview();
+                    });
+                } else if (file.type.startsWith('image/')) {
+                    const r = await downscalePhoto(file);
+                    if (!r) { showGlobalAlert('Could not read that photo'); continue; }
+                    pendingAlbum.push({ file: file, kind: 'photo', preview: r.dataUrl,
+                                        w: r.w, h: r.h });
+                    renderAlbumPreview();
+                }
+            }
+            renderAlbumPreview();
+        }
+
+        // The 2048px q0.85 rendition. Photos are stored as FILES now, so the
+        // old 1280 squeeze (which existed to keep base64 out of the database)
+        // isn't needed — send something worth looking at on a TV.
+        function downscalePhoto(file) {
+            return new Promise(resolve => {
+                const img = new Image();
+                const url = URL.createObjectURL(file);
+                img.onload = () => {
+                    URL.revokeObjectURL(url);
+                    const MAX = 2048;
+                    const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+                    const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w; canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), w: w, h: h });
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+                img.src = url;
+            });
         }
 
         // Resumable, chunked video upload. A clip from a game goes up over
@@ -3898,49 +3953,27 @@
                 </div>`;
         }
 
-        // A bubble that looks like the message it is about to become, so the
-        // thread never jumps when the real one replaces it.
-        function addUploadingBubble(file, body, kind, poster) {
+        // One bubble for the whole share, a progress ring per cell. Failure
+        // keeps the bubble AND the staged files, so Retry costs one tap
+        // rather than finding five clips in the camera roll again — and it
+        // resumes, because the chunked upload resyncs to the offset the
+        // server actually has.
+        function addAlbumBubble(entries, body) {
             const wrap = document.getElementById('thread-messages');
-            const objUrl = poster || URL.createObjectURL(file);
             const el = document.createElement('div');
             el.className = 'max-w-[80%] self-end';
             el.dataset.uploading = '1';
-            // The frame extracted at stage time, so the bubble shows the clip
-            // rather than a black rectangle for the whole upload.
-            const mediaCls = 'upload-media rounded-2xl rounded-br-sm max-h-64 w-full object-cover';
-            const media = (kind === 'video' && !poster)
-                ? `<video src="${objUrl}" muted playsinline preload="metadata" class="${mediaCls}"></video>`
-                : `<img src="${objUrl}" class="${mediaCls}">`;
             el.innerHTML = `
-                <div class="relative ${body ? 'mb-1' : ''}">${media}${uploadOverlay(kind === 'video')}</div>
+                <div class="${body ? 'mb-1' : ''}">${albumGridHtml(
+                    entries.map(x => ({ poster: x.preview, kind: x.kind })),
+                    { uploading: true })}</div>
                 ${body ? `<div class="px-3.5 py-2 rounded-2xl bg-blue-600 text-white rounded-br-sm text-[15px] leading-snug break-words whitespace-pre-wrap">${mfEscape(body)}</div>` : ''}
                 <div class="flex items-center gap-1.5 mt-0.5 justify-end">
-                    <span class="upload-status text-xs text-gray-500">Sending…</span>
+                    <span class="upload-status text-xs text-gray-500">Sending ${entries.length}…</span>
                 </div>`;
-            // Only revoke what we created; a data-URL poster is not a blob URL.
-            el._objUrl = poster ? null : objUrl;
-            el._poster = poster || '';   // so Retry keeps the frame
             uploadingBubbles.push(el);
             wrap.appendChild(el);
             wrap.scrollTop = wrap.scrollHeight;
-            // No frame yet — Send was pressed before the staged extraction
-            // finished (likely on a big clip), or this is a Retry. Pull one
-            // now and swap it in, so the bubble is never a black rectangle for
-            // the length of an upload. The <video> stays if extraction fails.
-            if (kind === 'video' && !poster) {
-                extractVideoPoster(file).then(p => {
-                    if (!p || !uploadingBubbles.includes(el)) return;
-                    const holder = el.querySelector('.upload-media');
-                    if (!holder) return;
-                    const img = document.createElement('img');
-                    img.src = p;
-                    img.className = holder.className;
-                    holder.replaceWith(img);
-                    el._poster = p;          // Retry keeps it
-                    if (el._objUrl) { URL.revokeObjectURL(el._objUrl); el._objUrl = null; }
-                });
-            }
             return el;
         }
 
@@ -3966,18 +3999,26 @@
             el.remove();
         }
 
-        // Failure keeps the bubble AND the file, so retry costs one tap
-        // rather than finding the clip in the camera roll again.
-        function markBubbleFailed(el, file, body, kind, msg) {
-            const overlay = el.querySelector('.upload-overlay');
-            if (overlay) {
-                overlay.innerHTML = `<button class="px-3 py-1.5 rounded-full bg-white/15 border border-white/30 text-white text-xs font-bold">↻ Retry</button>`;
-                overlay.querySelector('button').onclick = () => {
-                    const poster = el._poster;
-                    dropUploadingBubble(el);
-                    sendWithUpload(file, body, kind, poster);
-                };
-            }
+        function setCellProgress(el, i, pct) {
+            if (!uploadingBubbles.includes(el)) return;
+            const cell = el.querySelectorAll('.album-cell')[i];
+            if (cell) setBubbleProgress(cell, pct);
+        }
+
+        function markAlbumFailed(el, entries, body, msg) {
+            const overlays = el.querySelectorAll('.upload-overlay');
+            // Every ring stops. A bubble that says "failed" while four cells
+            // keep spinning is telling the sender two different things.
+            overlays.forEach((o, i) => {
+                o.innerHTML = i === 0
+                    ? `<button class="px-3 py-1.5 rounded-full bg-white/15 border border-white/30 text-white text-xs font-bold">↻ Retry</button>`
+                    : '';
+            });
+            const btn = el.querySelector('.upload-overlay button');
+            if (btn) btn.onclick = () => {
+                dropUploadingBubble(el);
+                sendAlbum(entries, body);
+            };
             const status = el.querySelector('.upload-status');
             if (status) {
                 status.textContent = msg || 'Upload failed';
@@ -4093,35 +4134,8 @@
             return data;   // {kind:'video', url, mime}
         }
 
-        // Staged, NOT uploaded. Nothing leaves the phone until you hit Send —
-        // which is also what lets the clip appear in the thread the instant
-        // you do, instead of after the transfer.
-        async function stagePendingVideo(file) {
-            if (file.size > MAX_UPLOAD_BYTES) {
-                showGlobalAlert(`That clip is ${fmtBytes(file.size)} — the limit is ${fmtBytes(MAX_UPLOAD_BYTES)}`);
-                return;
-            }
-            pendingFile = file;
-            pendingPoster = '';
-            const box = 'h-20 w-20 rounded-xl border border-gray-700 object-cover';
-            // Something immediately, so the composer never sits empty while a
-            // large clip is decoded for its first frame.
-            showAttachPreview(`<div class="${box} bg-gray-800 animate-pulse"></div>`);
-            const poster = await extractVideoPoster(file);
-            if (pendingFile !== file) return;    // superseded or cleared
-            pendingPoster = poster;
-            showAttachPreview(poster
-                ? `<img src="${poster}" class="${box}">${playBadge(true)}`
-                // No frame (iOS can refuse): the element itself, but with the
-                // real badge rather than the OS emoji.
-                : `<video src="${URL.createObjectURL(file)}" muted playsinline preload="metadata"
-                       class="${box}"></video>${playBadge(true)}`);
-        }
-
         function clearPendingAttachment() {
-            pendingAttachment = null;
-            pendingFile = null;
-            pendingPoster = '';
+            pendingAlbum = [];
             document.getElementById('thread-attach-preview').style.display = 'none';
             document.getElementById('thread-input').placeholder = 'Message...';
         }
@@ -4135,8 +4149,9 @@
         }
 
         // Send-then-upload: the bubble appears now, the bytes follow. Returns
-        // immediately so the composer is usable again while a 2 GB clip goes
-        // up in the background.
+        // immediately so the composer is usable again while a share's worth
+        // of clips goes up in the background.
+        //
         // Two at a time. Everything shares one link to the box, so firing five
         // at once just divides the same pipe five ways and every bubble crawls;
         // the set finishes no sooner. Two rather than one because chunks are
@@ -4162,68 +4177,28 @@
             });
         }
 
-        async function sendWithUpload(file, body, kind, poster) {
-            const channelId = activeChannelId;
-            const el = addUploadingBubble(file, body, kind, poster);
-            const status = el.querySelector('.upload-status');
-            if (activeUploads >= MAX_CONCURRENT_UPLOADS && status) status.textContent = 'Queued…';
-            try {
-                const attachment = await enqueueUpload(async () => {
-                    if (status) status.textContent = 'Sending…';
-                    return uploadMomentVideo(file, pct => {
-                        if (uploadingBubbles.includes(el)) setBubbleProgress(el, pct);
-                    });
-                });
-                const res = await fetch(`${apiBase}api/channels/${channelId}/messages`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sender_member_id: selectedMemberId,
-                                           body: body, attachment: attachment })
-                });
-                if (!res.ok) throw new Error('Could not post the moment');
-                dropUploadingBubble(el);
-                // Only refresh if we're still looking at the thread it went to.
-                if (activeChannelId === channelId) { await refreshThread(); noteMomentShared(); }
-                else loadMomentsStrip();
-            } catch (err) {
-                markBubbleFailed(el, file, body, kind, err.message);
-            }
-        }
-
         async function submitThreadMessage(e) {
             e.preventDefault();
             const input = document.getElementById('thread-input');
             const body = input.value.trim();
-            const attachment = pendingAttachment;
-            const file = pendingFile;
-            const poster = pendingPoster;
-            if ((!body && !attachment && !file) || !activeChannelId || !selectedMemberId) return;
-            if (helperShareMode && !attachment && !file) {
+            const entries = pendingAlbum.slice();
+            if ((!body && !entries.length) || !activeChannelId || !selectedMemberId) return;
+            if (helperShareMode && !entries.length) {
                 showGlobalAlert('Add a photo or video — text goes in your chat with the parents');
                 input.value = body;
                 return;
             }
-            if (file) {
-                input.value = '';
-                clearPendingAttachment();
-                sendWithUpload(file, body, 'video', poster);   // deliberately not awaited
-                return;
-            }
             input.value = '';
             clearPendingAttachment();
-            // Declared outside the try so a failed send can still see whatever
-            // the upload step produced — including the url of a photo that
-            // reached the media store even though the message post after it
-            // failed.
-            let att = attachment;
+            if (entries.length) {
+                sendAlbum(entries, body);   // deliberately not awaited
+                return;
+            }
             try {
-                if (att && att._dataUrl && !att.url) {
-                    att = await uploadMomentPhoto(att._dataUrl, att.w, att.h);
-                }
                 const res = await fetch(`${apiBase}api/channels/${activeChannelId}/messages`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sender_member_id: selectedMemberId, body: body,
-                                           attachment: att || undefined })
+                    body: JSON.stringify({ sender_member_id: selectedMemberId, body: body })
                 });
                 if (!res.ok) throw new Error('send failed');
                 await refreshThread();
@@ -4231,17 +4206,48 @@
             } catch (err) {
                 showGlobalAlert('Failed to send message');
                 input.value = body;
-                if (attachment) {
-                    // Re-stage what we actually HAVE. If the photo already
-                    // reached the media store, a retry must post that url, not
-                    // upload the same bytes again — nothing in this codebase
-                    // collects an unreferenced file, so every re-upload would
-                    // leave another orphan behind.
-                    pendingAttachment = Object.assign({}, attachment, att || {});
-                    showAttachPreview(attachment.kind === 'video'
-                        ? `<video src="${apiBase}${attachment.url.replace(/^\//, '')}" muted playsinline class="h-20 rounded-xl border border-gray-700 object-cover"></video>`
-                        : `<img src="${attachment._dataUrl || momentMediaSrc(attachment)}" class="h-20 rounded-xl border border-gray-700 object-cover">`);
+            }
+        }
+
+        // ATOMIC. Every item uploads, THEN one message posts carrying all of
+        // them — one push, one gallery row, one pop. Posting first and
+        // appending as uploads land reads faster on this screen and is wrong
+        // everywhere else: the panel would pop an album of one that silently
+        // grows, and the push would describe a share that is not finished.
+        async function sendAlbum(entries, body) {
+            const channelId = activeChannelId;
+            const el = addAlbumBubble(entries, body);
+            try {
+                const items = await Promise.all(entries.map((entry, i) =>
+                    enqueueUpload(async () => {
+                        const att = entry.kind === 'video'
+                            ? await uploadMomentVideo(entry.file, pct => setCellProgress(el, i, pct))
+                            : await (async () => {
+                                setCellProgress(el, i, null);   // no progress events on a photo POST
+                                return uploadMomentPhoto(entry.preview, entry.w, entry.h);
+                            })();
+                        setCellProgress(el, i, 100);
+                        return att;
+                    })));
+                const res = await fetch(`${apiBase}api/channels/${channelId}/messages`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sender_member_id: selectedMemberId, body: body,
+                        // Always an items list, even for one: the server
+                        // collapses a single into a plain attachment, so the
+                        // client needs no special case.
+                        attachment: { items: items }
+                    })
+                });
+                if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    throw new Error(typeof d.detail === 'string' ? d.detail : 'Could not post that');
                 }
+                dropUploadingBubble(el);
+                if (activeChannelId === channelId) { await refreshThread(); noteMomentShared(); }
+                else loadMomentsStrip();
+            } catch (err) {
+                markAlbumFailed(el, entries, body, err.message);
             }
         }
 
