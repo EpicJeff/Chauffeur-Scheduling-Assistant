@@ -311,6 +311,10 @@ def scenario_lightbox_acts_on_the_item_on_screen():
     check('/media/' in src, 'delete targets one media id, not the message')
     check('Delete photo' in src or 'Delete clip' in src,
           'the lightbox button names the narrower scope')
+    check('items.length === 1' in src and 'deleteMomentFromOverlay' in src,
+          'a single moment still routes to the richer whole-moment confirm')
+    check('opts.items.slice()' in src,
+          'the items array is copied - splicing the live one would mutate threadMessages')
 
     sheet = _extract('shareMessage')
     check('momentMediaSrc(m.attachment)' in sheet,

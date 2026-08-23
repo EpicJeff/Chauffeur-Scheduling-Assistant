@@ -3684,11 +3684,11 @@
 
             function srcFor(i) {
                 const it = items[i] || {};
-                return opts.items ? momentMediaSrc(it) : (opts.src || '');
+                return (opts.items && opts.items.length) ? momentMediaSrc(it) : (opts.src || '');
             }
             function posterFor(i) {
                 const it = items[i] || {};
-                return opts.items ? momentPosterSrc(it) : (opts.poster || '');
+                return (opts.items && opts.items.length) ? momentPosterSrc(it) : (opts.poster || '');
             }
 
             // Delete the frame ON SCREEN, not the share. The message action
@@ -3713,8 +3713,20 @@
                         method: 'DELETE', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ member_id: selectedMemberId })
                     });
-                    if (!res.ok) throw new Error('delete failed');
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        showGlobalAlert(data.detail || 'Could not delete that');
+                        return;
+                    }
                     await refreshThread();
+                    loadMomentsStrip();   // a deleted item may have been the
+                                          // cover; the strip must not keep
+                                          // pointing at a removed file
+                    // remove_attachment_item removes every position matching
+                    // this media id — an album holding the same photo twice
+                    // can collapse the WHOLE message on one tap. The server's
+                    // answer decides, not our local splice.
+                    if (data.deleted_message) return overlay.remove();
                     items.splice(idx, 1);
                     if (!items.length) return overlay.remove();
                     if (idx >= items.length) idx = items.length - 1;
@@ -3734,11 +3746,15 @@
                 // flanked by prev/next and a tap there is ambiguous.
                 const closeOnTap = (!many && !clip)
                     ? `onclick="this.closest('.moment-overlay').remove()"` : '';
+                // 78vh is the old single-moment headroom; an album gives up
+                // 8vh of it to the "N / M" counter pill that only albums
+                // draw, so a lone photo keeps the size it always had.
+                const maxH = many ? 'max-h-[70vh]' : 'max-h-[78vh]';
                 const media = clip
                     ? `<video src="${srcFor(idx)}" ${posterFor(idx) ? `poster="${posterFor(idx)}"` : ''} controls autoplay playsinline
-                           class="max-w-full max-h-[70vh] rounded-xl"></video>`
+                           class="max-w-full ${maxH} rounded-xl"></video>`
                     : `<img src="${srcFor(idx)}" ${closeOnTap}
-                           class="max-w-full max-h-[70vh] rounded-xl object-contain">`;
+                           class="max-w-full ${maxH} rounded-xl object-contain">`;
                 const delLabel = many ? (clip ? 'Delete clip' : 'Delete photo') : 'Delete';
                 overlay.innerHTML = `
                     <button onclick="this.closest('.moment-overlay').remove()"
