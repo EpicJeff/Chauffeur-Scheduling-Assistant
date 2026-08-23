@@ -6627,6 +6627,24 @@ def _channel_recipient_members(channel):
             if scope.can_see(m, facet,
                              instance_member_ids=channel.get('member_ids') or [])]
 
+def _moment_push_phrase(att: dict) -> str:
+    """What arrived, for the one push an album gets. Five separate pushes for
+    one share is the thing this feature fixes for whoever is not at the event,
+    so the push has to carry the count instead."""
+    items = storage.attachment_items(att)
+    if len(items) < 2:
+        return "a moment"
+    photos = sum(1 for i in items if (i.get('kind') or 'photo') == 'photo')
+    clips = len(items) - photos
+
+    def part(n, one, many):
+        return f"a {one}" if n == 1 else f"{n} {many}"
+
+    if photos and clips:
+        return f"{part(photos, 'photo', 'photos')} and {part(clips, 'clip', 'clips')}"
+    return part(photos or clips, 'photo' if photos else 'clip',
+                'photos' if photos else 'clips')
+
 def _fanout_message_notifications(channel, message):
     """Web push + HA notify to every recipient except the sender. A member
     with both configured gets both (accepted v1 tradeoff, no dedupe)."""
@@ -6660,7 +6678,8 @@ def _fanout_message_notifications(channel, message):
                 recipients = presence.moment_push_audience(channel)
                 title = f"📸 {channel.get('title') or 'A family moment'}"
                 caption = (message.get('body') or '').strip()
-                body = (f"{sender_name} shared a moment"
+                what = _moment_push_phrase(message.get('attachment') or {})
+                body = (f"{sender_name} shared {what}"
                         + (f": {caption[:140]}" if caption else " — you couldn't be there 💙"))
             except Exception as pe:
                 print(f"Moment audience resolution failed (falling back): {pe}")

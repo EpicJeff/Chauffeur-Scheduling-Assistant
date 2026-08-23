@@ -1308,6 +1308,25 @@ def scenario_album_rides_the_wire():
           f"SSE preview items[0] mirrors top-level media_url: {legacy_meta['items'][0]['media_url']} vs {legacy_meta['media_url']}")
 
 
+def scenario_album_push_describes_the_set():
+    """The single most visible fix for anyone not at the event: one push, and
+    it says how much arrived."""
+    import main
+    photo = {"kind": "photo", "url": "/api/media/" + "a" * 32}
+    clip = {"kind": "video", "url": "/api/media/" + "b" * 32 + ".mp4"}
+    check(main._moment_push_phrase(photo) == "a moment", "a lone moment stays a moment")
+    check(main._moment_push_phrase({**photo, "items": [photo] * 5}) == "5 photos",
+          main._moment_push_phrase({**photo, "items": [photo] * 5}))
+    check(main._moment_push_phrase({**photo, "items": [clip] * 3}) == "3 clips",
+          main._moment_push_phrase({**photo, "items": [clip] * 3}))
+    check(main._moment_push_phrase({**photo, "items": [photo, photo, photo, clip]})
+          == "3 photos and a clip",
+          main._moment_push_phrase({**photo, "items": [photo, photo, photo, clip]}))
+    check(main._moment_push_phrase({**photo, "items": [photo, clip, clip]})
+          == "a photo and 2 clips",
+          main._moment_push_phrase({**photo, "items": [photo, clip, clip]}))
+
+
 SCENARIOS = [
     scenario_resumable_upload,
     scenario_media_root_and_sharding,
@@ -1333,6 +1352,7 @@ SCENARIOS = [
     scenario_attachment_items_helper,
     scenario_album_deletion_frees_every_file,
     scenario_album_rides_the_wire,
+    scenario_album_push_describes_the_set,
 ]
 
 if __name__ == "__main__":
