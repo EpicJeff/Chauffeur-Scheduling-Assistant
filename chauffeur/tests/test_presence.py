@@ -1075,6 +1075,16 @@ def scenario_hearth_is_pop_only():
           "the badge key and the pop-dedupe key must stay apart")
     check('mg-new' in gallery, "events with new moments are marked")
 
+    check('${idx + 1} / ${items.length}' in hearth,
+          'an album pop says which frame you are looking at')
+    check('if (idx + 1 >= items.length) return close();' in hearth,
+          'tapping steps forward, and a tap past the last frame closes')
+    # 'clearTimeout(timer)' alone is not unique to this feature -- close()
+    # already carries one -- so pin the clear-then-rearm pair that only
+    # exists where the dwell clock restarts on every draw().
+    check('clearTimeout(timer);\n                timer = setTimeout(close, clip ? 30000 : 20000);' in hearth,
+          'the dwell clock restarts on each step rather than running out mid-album')
+
 
 def scenario_attachment_items_helper():
     """One helper is the only thing that knows the album rule."""

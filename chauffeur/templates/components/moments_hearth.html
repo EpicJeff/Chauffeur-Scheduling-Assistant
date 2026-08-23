@@ -81,22 +81,20 @@
         }
 
         window.showMomentOverlayKiosk = function (m) {
-            const clip = isClip(m);
+            // A row from presence._moment_row always carries items (cover
+            // first, length 1 for an ordinary moment); the fallback below is
+            // only for an old cached payload that predates that field.
+            const items = (m.items && m.items.length) ? m.items
+                : [{ kind: (m.kind || (m.attachment || {}).kind),
+                     media_url: m.media_url, poster_url: m.poster_url }];
+            let idx = 0, timer = null;
             const overlay = document.createElement('div');
             overlay.className = 'fixed inset-0 z-[200] flex items-center justify-center p-8';
             overlay.dataset.momentOverlay = '1';
             overlay.style.background = 'rgba(0,0,0,0.82)';
-            overlay.innerHTML = `
-                <style>@keyframes kioskMomentPop { 0% { transform: scale(.5); opacity: 0; } 60% { transform: scale(1.06); } 100% { transform: scale(1); opacity: 1; } }</style>
-                ${clip ? CLIP_COMPOSITING_CSS : ''}
-                <div style="animation:kioskMomentPop .5s ease-out forwards"
-                    class="relative text-center bg-gray-900 border border-pink-500/40 rounded-3xl shadow-2xl p-6 max-w-3xl">
-                    <div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${esc(m.event_title)}</div>
-                    ${mediaHtml(m, 'max-h-[62vh] rounded-2xl mx-auto object-contain')}
-                    ${m.body ? `<div class="text-xl text-white font-bold mt-3">${esc(m.body)}</div>` : ''}
-                    <div class="text-sm text-gray-400 mt-2">from ${esc(m.sender_name)}</div>
-                </div>`;
+
             function close() {
+                clearTimeout(timer);
                 overlay.remove();
                 // A poll can pop a second moment over the first, so the flag
                 // comes off only when the last overlay has gone.
@@ -104,11 +102,49 @@
                     document.documentElement.classList.remove('clip-playing');
                 }
             }
-            overlay.addEventListener('click', close);
+
+            function draw() {
+                const it = items[idx];
+                const clip = it.kind === 'video';
+                overlay.innerHTML = `
+                    <style>@keyframes kioskMomentPop { 0% { transform: scale(.5); opacity: 0; } 60% { transform: scale(1.06); } 100% { transform: scale(1); opacity: 1; } }</style>
+                    ${clip ? CLIP_COMPOSITING_CSS : ''}
+                    <div style="animation:kioskMomentPop .5s ease-out forwards"
+                        class="relative text-center bg-gray-900 border border-pink-500/40 rounded-3xl shadow-2xl p-6 max-w-3xl">
+                        <div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${esc(m.event_title)}</div>
+                        ${mediaHtml(it, 'max-h-[62vh] rounded-2xl mx-auto object-contain')}
+                        ${items.length > 1 ? `<div class="absolute top-3 right-4 px-2 py-0.5 rounded-full bg-black/60 text-white text-xs font-bold">${idx + 1} / ${items.length}</div>` : ''}
+                        ${m.body ? `<div class="text-xl text-white font-bold mt-3">${esc(m.body)}</div>` : ''}
+                        <div class="text-sm text-gray-400 mt-2">from ${esc(m.sender_name)}</div>
+                    </div>`;
+                // This overlay can stack (a poll can pop a second moment over
+                // the first), so a bare toggle is wrong: stepping to a photo
+                // here must not un-blur the page while another overlay is
+                // still playing a clip. Only the LAST clip on screen may
+                // clear the flag.
+                if (clip) {
+                    document.documentElement.classList.add('clip-playing');
+                } else if (!document.querySelector('[data-moment-overlay] video')) {
+                    document.documentElement.classList.remove('clip-playing');
+                }
+                // Clips get a little longer on the wall than stills, and the
+                // clock restarts on every step so the room can dwell on a good
+                // one. An album can therefore never hold the panel for longer
+                // than somebody is actively choosing to hold it.
+                clearTimeout(timer);
+                timer = setTimeout(close, clip ? 30000 : 20000);
+            }
+
+            // Tapping STEPS rather than closes, and a tap past the last item
+            // closes — so the wall never traps the room in a ten-photo album,
+            // and nobody has to hunt for a dismiss target.
+            overlay.addEventListener('click', () => {
+                if (idx + 1 >= items.length) return close();
+                idx += 1;
+                draw();
+            });
+            draw();
             document.body.appendChild(overlay);
-            if (clip) document.documentElement.classList.add('clip-playing');
-            // Clips get a little longer on the wall than stills.
-            setTimeout(close, clip ? 30000 : 20000);
         };
 
         // The catch-up badge. Its key is NOT the pop's: SEEN_KEY seeds to the
