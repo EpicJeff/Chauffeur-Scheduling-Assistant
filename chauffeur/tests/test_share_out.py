@@ -202,6 +202,28 @@ def scenario_a_kid_sees_no_button_anywhere():
           f"a child reached the share button: {got}")
 
 
+def scenario_album_bubble_is_stills_and_a_plus_n():
+    """Four decoders in a chat row is not a bubble, and the +N cell is the
+    only place the middle level earns its keep."""
+    grid = _extract('albumGridHtml')
+    check('<video' not in grid,
+          'every cell is a still - a clip shows its poster and a play badge')
+    check('album-cell' in grid, 'cells are addressable for per-item progress')
+    check('hidden + 1' in grid,
+          'the scrim counts its own covered cell, so visible + scrim == album size')
+    check('openAlbumGrid' in grid,
+          'the overflow cell opens the full album')
+    check('shown - 1' in grid,
+          'and it is the LAST shown cell that carries it, not the first')
+
+    with open(APP, encoding='utf-8') as f:
+        html = f.read()
+    thread = html[html.index('let att = '):html.index('const bubble = m.body')]
+    check('<video' not in thread,
+          'a lone clip is a poster that opens the lightbox, not an inline player')
+    check('openMomentById' in thread, 'and it opens the lightbox')
+
+
 def scenario_the_overlay_and_the_sheet_both_carry_it():
     """Source check, and the only thing that can notice a half-wired slice.
 

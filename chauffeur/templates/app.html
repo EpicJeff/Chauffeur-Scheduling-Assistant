@@ -3105,7 +3105,7 @@
                 const last = c.last_message;
                 const sender = last ? (membersData.find(m => m.id === last.sender_member_id) || {}) : {};
                 const preview = last
-                    ? `${last.sender_member_id === selectedMemberId ? 'You' : (sender.name || '?')}: ${last.attachment ? ((last.attachment.kind === 'video' ? '🎥 ' : '📷 ') + (last.body || (last.attachment.kind === 'video' ? 'Clip' : 'Photo'))) : last.body}`
+                    ? `${last.sender_member_id === selectedMemberId ? 'You' : (sender.name || '?')}: ${last.attachment ? momentPreviewLabel(last) : last.body}`
                     : 'No messages yet';
                 const t = last ? new Date(last.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
                 return `
@@ -3206,6 +3206,90 @@
             </div>`;
         }
 
+        // A grid of STILLS, never live <video> elements. A 2x2 of players is
+        // four decoders in a chat row, and the gallery already refuses this
+        // for the same reason. Shapes: 2 across for two, a plain 2-column
+        // grid for three (two on top, one below — no special "one large plus
+        // two" layout; that would need grid-area spans for a single count and
+        // buys nothing a plain grid doesn't already give), 2x2 for four, 2x2
+        // with a +N scrim on the last cell beyond that.
+        //
+        // The +N cell is the ONLY one that opens a middle level. An
+        // intermediate view of three photos the bubble already showed you is
+        // a tap that buys nothing; a view of the six it could not show you is
+        // the whole reason that level exists.
+        function albumGridHtml(items, opts) {
+            opts = opts || {};
+            const n = items.length;
+            const shown = n > 4 ? 4 : n;
+            const hidden = n - shown;
+            const cls = 'album-cell relative bg-black overflow-hidden';
+            const cell = (it, i) => {
+                const src = it.poster || it.media || '';
+                const badge = it.kind === 'video' ? playBadge(true) : '';
+                const over = hidden && i === shown - 1
+                    ? `<span class="absolute inset-0 bg-black/60 text-white text-2xl font-black flex items-center justify-center">+${hidden + 1}</span>`
+                    : '';
+                const tap = opts.uploading ? ''
+                    : (hidden && i === shown - 1
+                        ? `onclick="openAlbumGrid('${opts.msgId}')"`
+                        : `onclick="openMomentById('${opts.msgId}', ${i})"`);
+                return `<div class="${cls}" ${tap} style="aspect-ratio:1">
+                        <img src="${src}" loading="lazy" class="w-full h-full object-cover">
+                        ${badge}${over}${opts.uploading ? uploadOverlay(true) : ''}
+                    </div>`;
+            };
+            // The last visible cell absorbs the overflow, so a 10-item album
+            // draws 4 real cells (the last one scrimmed) and a +7 rather than
+            // a lie. visible cells + the scrim number always equals n.
+            const cells = items.slice(0, shown).map(cell).join('');
+            const cols = shown <= 2 ? shown : 2;
+            return `<div class="grid gap-0.5 rounded-2xl overflow-hidden rounded-br-sm"
+                        style="grid-template-columns: repeat(${cols}, 1fr)">${cells}</div>`;
+        }
+
+        // The middle level: every item in one share, reached from the +N cell.
+        window.openAlbumGrid = function (msgId) {
+            const m = (threadMessages || []).find(x => x.id === msgId);
+            const items = (m && m.attachment) ? attachmentItemsJs(m.attachment) : [];
+            if (!items.length) return;
+            const overlay = document.createElement('div');
+            overlay.className = 'moment-overlay fixed inset-0 z-[205] bg-black/95 overflow-y-auto p-3';
+            overlay.innerHTML = `
+                <button onclick="this.closest('.moment-overlay').remove()"
+                    class="sticky top-0 float-right w-10 h-10 rounded-full bg-white/15 text-white text-lg leading-none">✕</button>
+                <div class="grid gap-1 pt-12" style="grid-template-columns: repeat(3, 1fr)">
+                    ${items.map((it, i) => `
+                        <div class="relative bg-black" style="aspect-ratio:1"
+                            onclick="this.closest('.moment-overlay').remove(); openMomentById('${msgId}', ${i})">
+                            <img src="${momentPosterSrc(it) || momentMediaSrc(it)}" loading="lazy"
+                                class="w-full h-full object-cover">
+                            ${it.kind === 'video' ? playBadge(true) : ''}
+                        </div>`).join('')}
+                </div>`;
+            document.body.appendChild(overlay);
+        };
+
+        // The album rule, client side. Mirrors storage.attachment_items.
+        function attachmentItemsJs(att) {
+            att = att || {};
+            return (Array.isArray(att.items) && att.items.length) ? att.items
+                : ((att.url || att.data_url) ? [att] : []);
+        }
+
+        // What the channel list says a share was. An album with no caption
+        // must not read as one photo.
+        function momentPreviewLabel(msg) {
+            const items = attachmentItemsJs(msg.attachment);
+            const clip = (msg.attachment || {}).kind === 'video';
+            if (msg.body) return `${clip ? '🎥 ' : '📷 '}${msg.body}`;
+            if (items.length > 1) {
+                const clips = items.filter(i => i.kind === 'video').length;
+                return `📷 ${items.length} ${clips === items.length ? 'clips' : 'photos'}`;
+            }
+            return clip ? '🎥 Clip' : '📷 Photo';
+        }
+
         function renderThread(msgs) {
             const wrap = document.getElementById('thread-messages');
             threadMessages = msgs;   // lets the lightbox resolve a moment by id
@@ -3230,21 +3314,30 @@
                 lastCtx = ctxLabel;
                 const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 let att = '';
-                if (m.attachment && m.attachment.kind === 'photo') {
-                    // Stored photos come by URL; legacy ones are still inline.
-                    const psrc = m.attachment.url
-                        ? `${apiBase}${m.attachment.url.replace(/^\//, '')}`
-                        : (m.attachment.data_url || '');
-                    att = `<img src="${psrc}" loading="lazy" onclick="openMomentById('${m.id}')"
-                          class="rounded-2xl ${mine ? 'rounded-br-sm' : 'rounded-bl-sm'} max-h-64 w-full object-cover cursor-pointer ${m.body ? 'mb-1' : ''}">`;
-                } else if (m.attachment && m.attachment.kind === 'video' && m.attachment.url) {
-                    // Relative (like every api fetch) so HA ingress paths work;
-                    // poster derived from the clip id so the bubble shows a
-                    // frame instead of a black box before you hit play.
-                    const vsrc = `${apiBase}${m.attachment.url.replace(/^\//, '')}`;
-                    const vposter = `${apiBase}api/media/${m.attachment.url.split('/').pop().split('.')[0]}.jpg`;
-                    att = `<video src="${vsrc}" poster="${vposter}" controls playsinline preload="metadata"
-                          class="rounded-2xl ${mine ? 'rounded-br-sm' : 'rounded-bl-sm'} max-h-64 w-full ${m.body ? 'mb-1' : ''}"></video>`;
+                if (m.attachment) {
+                    const items = attachmentItemsJs(m.attachment);
+                    if (items.length > 1) {
+                        att = `<div class="${m.body ? 'mb-1' : ''}">${albumGridHtml(
+                            items.map(it => ({ poster: momentPosterSrc(it) || momentMediaSrc(it),
+                                               media: momentMediaSrc(it), kind: it.kind })),
+                            { msgId: m.id })}</div>`;
+                    } else if (items.length === 1) {
+                        // ONE rule for every media in the thread: a still that
+                        // opens the lightbox. A lone clip used to render an
+                        // inline player, which would have meant tapping a clip
+                        // did one thing alone and another inside an album, with
+                        // nothing on screen to explain the difference. The
+                        // lightbox has rendered video since the moments strip
+                        // first reached it, so nothing is lost and a clip gains
+                        // the full screen.
+                        const it = items[0];
+                        const src = momentPosterSrc(it) || momentMediaSrc(it);
+                        att = `<div class="relative ${m.body ? 'mb-1' : ''}" onclick="openMomentById('${m.id}', 0)">
+                                <img src="${src}" loading="lazy"
+                                    class="rounded-2xl ${mine ? 'rounded-br-sm' : 'rounded-bl-sm'} max-h-64 w-full object-cover cursor-pointer">
+                                ${it.kind === 'video' ? playBadge(true) : ''}
+                            </div>`;
+                    }
                 }
                 const bubble = m.body
                     ? `<div class="px-3.5 py-2 rounded-2xl ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-gray-800 text-gray-100 rounded-bl-sm'} text-[15px] leading-snug break-words whitespace-pre-wrap">${mfEscape(m.body)}</div>`
