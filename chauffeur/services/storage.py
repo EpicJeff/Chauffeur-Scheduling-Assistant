@@ -5646,42 +5646,54 @@ def remove_attachment_item(message_id: str, media_id: str) -> Optional[dict]:
     Keyed by id rather than by position on purpose: two people clearing frames
     out of the same album, or one client working from a stale copy, would
     otherwise remove a different photo than the one on screen — and a silently
-    wrong deletion of family media is unrecoverable.
+    wrong deletion of family media is unrecoverable. If the SAME id appears
+    more than once in one album, every occurrence is removed together — the
+    safe direction, since freeing only one position would leave the surviving
+    duplicate pointing at a file that no longer exists.
+
+    The whole read-modify-write runs under ONE lock acquisition (db_lock is
+    reentrant, so delete_chat_message's own acquisition nests fine). Splitting
+    the read from the write would let two concurrent deletes of DIFFERENT
+    frames both read the same starting list and each write back a version
+    that silently un-deletes the other's frame while still freeing its file —
+    exactly the "two people clearing frames out of the same album" case this
+    function exists to protect against.
 
     Returns {'message': <updated or None>, 'deleted_message': bool}, or None if
     the message has no such media."""
+    if not media_id:
+        return None                      # empty id must never mass-match url-less items
     with db_lock:
         res = chat_messages_table.search(Query().id == message_id)
         if not res:
             return None
         msg = dict(res[0])
-    att = msg.get('attachment') or {}
-    items = attachment_items(att)
-    # Partitioned BY POSITION, not by value: an album may legitimately hold two
-    # entries that compare equal, and `i not in keep` would then quietly free
-    # the file the survivor still points at.
-    hit = [n for n, i in enumerate(items)
-           if str(i.get('url') or '').rsplit('/', 1)[-1] == media_id]
-    if not hit:
-        return None                      # no such media in this message
-    keep = [i for n, i in enumerate(items) if n not in set(hit)]
-    gone = [items[n] for n in hit]
+        att = msg.get('attachment') or {}
+        items = attachment_items(att)
+        # Partitioned BY POSITION, not by value: an album may legitimately hold
+        # two entries that compare equal, and `i not in keep` would then
+        # quietly free the file the survivor still points at.
+        hit = [n for n, i in enumerate(items)
+               if str(i.get('url') or '').rsplit('/', 1)[-1] == media_id]
+        if not hit:
+            return None                  # no such media in this message
+        keep = [i for n, i in enumerate(items) if n not in set(hit)]
+        gone = [items[n] for n in hit]
 
-    # The LAST media takes the message with it. A moment is media plus a
-    # caption; the caption alone is not a moment, and a stranded line of text
-    # where a photo was is not what anyone meant by "delete this".
-    if not keep:
-        return {'message': delete_chat_message(message_id), 'deleted_message': True}
+        # The LAST media takes the message with it. A moment is media plus a
+        # caption; the caption alone is not a moment, and a stranded line of
+        # text where a photo was is not what anyone meant by "delete this".
+        if not keep:
+            return {'message': delete_chat_message(message_id), 'deleted_message': True}
 
-    # An album of two that loses one was never an album — collapse to a plain
-    # attachment so "one photo" keeps exactly one representation.
-    new_att = dict(keep[0]) if len(keep) == 1 else {**keep[0], 'items': keep}
-    with db_lock:
+        # An album of two that loses one was never an album — collapse to a
+        # plain attachment so "one photo" keeps exactly one representation.
+        new_att = dict(keep[0]) if len(keep) == 1 else {**keep[0], 'items': keep}
         chat_messages_table.update({'attachment': new_att}, Query().id == message_id)
-    for item in gone:
-        _delete_media_for_attachment(item)
-    msg['attachment'] = new_att
-    return {'message': msg, 'deleted_message': False}
+        for item in gone:
+            _delete_media_for_attachment(item)
+        msg['attachment'] = new_att
+        return {'message': msg, 'deleted_message': False}
 
 
 def edit_chat_message(message_id: str, body: str) -> Optional[dict]:

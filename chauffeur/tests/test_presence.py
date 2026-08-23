@@ -1363,7 +1363,7 @@ def scenario_delete_one_album_item():
     check(storage.get_chat_message("alb") is None,
           "a moment with no media is not a moment - the row goes too")
 
-    # Permission matches message delete exactly.
+    # Permission matches message delete exactly, in a SHARED channel.
     s2 = storage.save_photo_data_url(_TINY_JPEG)
     s3 = storage.save_photo_data_url(_TINY_JPEG)
     storage.add_chat_message({
@@ -1386,14 +1386,83 @@ def scenario_delete_one_album_item():
     check("items" not in storage.get_chat_message("alb2")["attachment"],
           "a parent may clear one frame out of a shared thread")
 
-    # Unknown media, and media belonging to another message, both 404.
-    for bad in ("f" * 32, ids[0]):
+    # A DM stays sender-only, same as whole-message delete: a parent who is
+    # not the sender is refused even though "dad" would pass in a shared
+    # channel above.
+    dm = storage.get_or_create_dm("mom", "dad")
+    s4 = storage.save_photo_data_url(_TINY_JPEG)
+    s5 = storage.save_photo_data_url(_TINY_JPEG)
+    storage.add_chat_message({
+        "id": "dm1", "channel_id": dm["id"], "sender_member_id": "mom",
+        "ts": time.time(), "type": "text", "body": "",
+        "attachment": {"kind": "photo", "url": s4["url"],
+                       "items": [{"kind": "photo", "url": s4["url"]},
+                                 {"kind": "photo", "url": s5["url"]}]},
+        "reactions": {}})
+    dm_mid = s5["url"].rsplit("/", 1)[-1]
+    try:
+        main.delete_message_media("dm1", dm_mid, main.MessageDeleteRequest(member_id="dad"))
+        check(False, "expected 403")
+    except HTTPException as e:
+        check(e.status_code == 403, f"a non-sender parent in a DM -> 403, got {e.status_code}")
+    check([i["url"] for i in storage.get_chat_message("dm1")["attachment"]["items"]]
+          == [s4["url"], s5["url"]], "a refused DM delete changes nothing")
+
+    # Unknown media is 404. Media belonging to a DIFFERENT, still-LIVE message
+    # is also 404 — and unlike an already-deleted id, this proves the route
+    # actually refuses rather than merely finding nothing left to find.
+    s6 = storage.save_photo_data_url(_TINY_JPEG)
+    s7 = storage.save_photo_data_url(_TINY_JPEG)
+    storage.add_chat_message({
+        "id": "alb3", "channel_id": ch["id"], "sender_member_id": "mom",
+        "ts": time.time(), "type": "text", "body": "",
+        "attachment": {"kind": "photo", "url": s6["url"],
+                       "items": [{"kind": "photo", "url": s6["url"]},
+                                 {"kind": "photo", "url": s7["url"]}]},
+        "reactions": {}})
+    other_mid = s7["url"].rsplit("/", 1)[-1]
+    for bad in ("f" * 32, other_mid):
         try:
             main.delete_message_media("alb2", bad,
                                       main.MessageDeleteRequest(member_id="mom"))
             check(False, "expected 404")
         except HTTPException as e:
             check(e.status_code == 404, f"{bad[:8]} -> 404, got {e.status_code}")
+    check(storage.media_file_path(other_mid),
+          "alb3's file survives a delete aimed at the wrong message")
+    check([i["url"] for i in storage.get_chat_message("alb3")["attachment"]["items"]]
+          == [s6["url"], s7["url"]], "alb3's items are untouched by the mistargeted delete")
+
+    # A duplicate media id inside one album: every occurrence goes together.
+    # That is the SAFE direction — freeing only one position would leave the
+    # surviving duplicate's url pointing at a file that was just deleted.
+    s8 = storage.save_photo_data_url(_TINY_JPEG)
+    dup_id = s8["url"].rsplit("/", 1)[-1]
+    s9 = storage.save_photo_data_url(_TINY_JPEG)
+    storage.add_chat_message({
+        "id": "albdup", "channel_id": ch["id"], "sender_member_id": "mom",
+        "ts": time.time(), "type": "text", "body": "",
+        "attachment": {"kind": "photo", "url": s8["url"],
+                       "items": [{"kind": "photo", "url": s8["url"]},
+                                 {"kind": "photo", "url": s8["url"]},
+                                 {"kind": "photo", "url": s9["url"]}]},
+        "reactions": {}})
+    main.delete_message_media("albdup", dup_id, main.MessageDeleteRequest(member_id="mom"))
+    att = storage.get_chat_message("albdup")["attachment"]
+    check("items" not in att and att["url"] == s9["url"],
+          f"both duplicate occurrences go together, leaving only the third, got {att}")
+    check(not storage.media_file_path(dup_id), "the duplicate's file is freed")
+
+    # An empty media id must never mass-match every url-less legacy item.
+    storage.add_chat_message({
+        "id": "leg1", "channel_id": ch["id"], "sender_member_id": "mom",
+        "ts": time.time(), "type": "text", "body": "",
+        "attachment": {"kind": "photo", "data_url": _TINY_JPEG},
+        "reactions": {}})
+    check(storage.remove_attachment_item("leg1", "") is None,
+          "an empty media id matches nothing, even a url-less legacy item")
+    check(storage.get_chat_message("leg1") is not None,
+          "the legacy message survives an empty-id call")
 
 
 SCENARIOS = [
