@@ -1484,6 +1484,22 @@ def scenario_delete_one_album_item():
           "the legacy message survives an empty-id call")
 
 
+def scenario_moment_card_shows_the_cover():
+    """The iframed single-moment card is full-bleed and dependency-free — it
+    shows the cover and says how many more there are, never a carousel."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    page = open(os.path.join(root, 'templates', 'moment.html'), encoding='utf-8').read()
+    check('items' in page, 'it knows a share can hold several')
+    check('carousel' not in page.lower() and 'setInterval' not in page,
+          'and deliberately does not animate through them')
+    # Pinned to the actual chip, not just the word "items" — the CSS's own
+    # "align-items" would otherwise satisfy the check above with nothing
+    # about the count chip actually built.
+    check('(m.items || []).length > 1' in page,
+          'the chip only appears when the row is genuinely an album')
+    check('count-chip' in page, 'the chip has a rule to render against')
+
+
 def scenario_gallery_draws_albums():
     """The gallery draws an album as ONE tile with a count chip, and the
     lightbox steps through what a share holds rather than spreading an
@@ -1533,6 +1549,7 @@ SCENARIOS = [
     scenario_album_push_describes_the_set,
     scenario_delete_one_album_item,
     scenario_gallery_draws_albums,
+    scenario_moment_card_shows_the_cover,
 ]
 
 if __name__ == "__main__":
