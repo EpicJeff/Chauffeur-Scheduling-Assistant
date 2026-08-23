@@ -1076,6 +1076,47 @@ def scenario_hearth_is_pop_only():
     check('mg-new' in gallery, "events with new moments are marked")
 
 
+def scenario_attachment_items_helper():
+    """One helper is the only thing that knows the album rule."""
+    legacy = {"kind": "photo", "data_url": _TINY_JPEG}
+    single = {"kind": "photo", "url": "/api/media/" + "a" * 32}
+    album = {"kind": "photo", "url": "/api/media/" + "a" * 32,
+             "items": [{"kind": "photo", "url": "/api/media/" + "a" * 32},
+                       {"kind": "video", "url": "/api/media/" + "b" * 32 + ".mp4"}]}
+    check(storage.attachment_items(legacy) == [legacy], "a legacy inline photo is one item")
+    check(storage.attachment_items(single) == [single], "a modern single photo is one item")
+    check([i["url"] for i in storage.attachment_items(album)]
+          == ["/api/media/" + "a" * 32, "/api/media/" + "b" * 32 + ".mp4"],
+          "an album yields its items, cover first")
+    check(storage.attachment_items(None) == [], "no attachment is no media")
+    check(storage.attachment_items({}) == [], "an empty attachment is no media")
+    check(storage.attachment_items({"kind": "photo"}) == [],
+          "an attachment with no url and no data is no media")
+
+
+def scenario_album_deletion_frees_every_file():
+    """THE landmine: moments never age out, so if deletion misses an album's
+    non-cover files nothing else ever collects them."""
+    import main
+    _family()
+    ch = storage.get_or_create_event_channel("vb1", "Emma's Volleyball")
+    saved = [storage.save_photo_data_url(_TINY_JPEG) for _ in range(3)]
+    check(all(saved), "three photos land in the media store")
+    ids = [s["url"].rsplit("/", 1)[-1] for s in saved]
+    check(all(storage.media_file_path(i) for i in ids), "all three exist on disk")
+
+    storage.add_chat_message({
+        "id": "alb", "channel_id": ch["id"], "sender_member_id": "mom",
+        "ts": time.time(), "type": "text", "body": "first half",
+        "attachment": {"kind": "photo", "url": saved[0]["url"],
+                       "items": [{"kind": "photo", "url": s["url"]} for s in saved]},
+        "reactions": {}})
+
+    storage.delete_chat_message("alb")
+    left = [i for i in ids if storage.media_file_path(i)]
+    check(not left, f"every item's file is freed, not just the cover — left {left}")
+
+
 SCENARIOS = [
     scenario_resumable_upload,
     scenario_media_root_and_sharding,
@@ -1097,6 +1138,8 @@ SCENARIOS = [
     scenario_gallery_event_grouping_and_paging,
     scenario_unseen_moment_count,
     scenario_hearth_is_pop_only,
+    scenario_attachment_items_helper,
+    scenario_album_deletion_frees_every_file,
 ]
 
 if __name__ == "__main__":

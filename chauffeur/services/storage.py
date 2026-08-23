@@ -5528,28 +5528,54 @@ def media_mime(media_id: str) -> str:
     return _MEDIA_SERVE_MIME.get(os.path.splitext(media_id)[1], 'application/octet-stream')
 
 
+def attachment_items(att) -> List[dict]:
+    """Every media in a moment, cover first.
+
+    One item for an ordinary moment, N for an album — so a caller can iterate
+    without first asking which it has. THE only place that knows the album
+    rule: `items` present means album, absent means the attachment IS the
+    media, and `items[0]` is always the same media the top level mirrors."""
+    att = att or {}
+    items = att.get('items')
+    if isinstance(items, list) and items:
+        return [i for i in items if isinstance(i, dict)]
+    return [att] if (att.get('url') or att.get('data_url')) else []
+
+
+def _delete_media_for_attachment(att):
+    """Free the files ONE media owns. Split out from the message sweep so the
+    single-item delete route and the whole-message delete share one definition
+    of what a media owns — the suffix list is exactly the kind of thing that
+    grows on one side and not the other."""
+    url = str((att or {}).get('url') or '')
+    if not url.startswith('/api/media/'):
+        return
+    media_id = url.rsplit('/', 1)[-1]
+    stem = media_id.split('.')[0]
+    if not (len(stem) == 32 and all(c in '0123456789abcdef' for c in stem)):
+        return
+    for name in (media_id, stem + '.orig', stem + '.tmp.mp4', stem + '.jpg'):
+        # Wherever it actually is — sharded or flat, new root or the legacy
+        # one a half-finished migration left it in.
+        p = media_read_path(name)
+        if not p:
+            continue
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
 def _delete_media_for_messages(msgs):
-    """Best-effort file cleanup when messages roll off the retention cap —
-    a pruned moment must not orphan its clip (or a pending transcode's
-    working files) on disk."""
+    """Best-effort file cleanup when messages roll off the retention cap or are
+    deleted outright — a pruned moment must not orphan its clip (or a pending
+    transcode's working files) on disk. Iterates EVERY item: an album's
+    non-cover media has no other collector, because moments are exempt from
+    the retention cap."""
     for m in msgs:
         att = (m.get('attachment') or {}) if isinstance(m, dict) else {}
-        url = str(att.get('url') or '')
-        if url.startswith('/api/media/'):
-            media_id = url.rsplit('/', 1)[-1]
-            stem = media_id.split('.')[0]
-            if not (len(stem) == 32 and all(c in '0123456789abcdef' for c in stem)):
-                continue
-            for name in (media_id, stem + '.orig', stem + '.tmp.mp4', stem + '.jpg'):
-                # Wherever it actually is — sharded or flat, new root or the
-                # legacy one a half-finished migration left it in.
-                p = media_read_path(name)
-                if not p:
-                    continue
-                try:
-                    os.remove(p)
-                except OSError:
-                    pass
+        for item in attachment_items(att):
+            _delete_media_for_attachment(item)
 
 
 def add_chat_message(message: dict) -> dict:
