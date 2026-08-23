@@ -157,17 +157,58 @@ beyond that. Any cell opens the existing full-screen lightbox at that index,
 stepping with the same controls the gallery's uses. The caption sits below
 the grid, once.
 
+**Every cell is a still.** A clip in an album renders its poster frame with a
+play badge, never a live `<video>` — the gallery already refuses this for the
+same reason ("tiles ALWAYS render a still image"), and a 2×2 grid of live
+players is four decoders in a chat row.
+
+**Single clips move to the lightbox too, and that is a behaviour change.**
+Today a lone video bubble renders an inline `<video controls>` with no click
+handler, so the tap goes to the player; only photos carry
+`onclick="openMomentById(…)"`. Once album cells route to the lightbox, leaving
+single clips inline would mean two rules — tap a lone clip and it plays in
+place, tap one inside an album and it goes full screen — with nothing on
+screen to explain the difference. So a single clip becomes a poster with a
+play badge that opens the lightbox, same as every other media in the thread.
+Nothing is lost: `showMomentOverlay` already renders `<video controls
+autoplay playsinline>` for `kind === 'video'` and the moments strip has been
+reaching that path all along. Clips gain the full screen instead of a 256px
+player.
+
 The channel-list preview line reads "📷 5 photos" for an album with no
 caption, and the caption itself when there is one.
 
+### The lightbox — `showMomentOverlay`
+
+Gains a current index. For an album it draws prev/next affordances and a
+`3 / 5` marker; for a single moment it is exactly what it is today.
+
+**Share shares the item you are looking at**, not the cover — the whole point
+of opening item 3 is that item 3 is the one you want. It reads the current
+index, so stepping the lightbox re-aims the Share button for free. This is
+the one place the cover rule does not apply; the message action sheet, which
+has no notion of a current item, still shares the cover.
+
+**Delete stays message-scoped and must say so.** The button deletes the
+MESSAGE, so on item 3 of 5 it takes all five. With `items` present it reads
+**"Delete album"**. Per-item delete is out of scope: it would mean mutating a
+stored attachment, reassigning the cover when item 0 goes, and collecting
+exactly one file — real work for an action whose honest form ("take the whole
+share back") is what the button already does.
+
 ### Share-out — `shareMessage` / `shareOut`
 
-Shares **the cover only**, with the same text rule already locked in the
-share-out slice (body → event title → nothing). Deliberate: `shareOut`'s
+The message action sheet shares **the cover only**, with the same text rule
+already locked in the share-out slice (body → event title → nothing). It has
+no notion of a current item, so the cover is the only honest answer.
+
+Sharing from the LIGHTBOX shares the item on screen instead (see above).
+
+Neither shares the whole album as a multi-file sheet. Deliberate: `shareOut`'s
 contract is one file plus text, `navigator.canShare` support for multi-file is
 uneven across the devices this family actually holds, and a share sheet that
 silently drops four of five files is worse than one that honestly sends the
-best frame. Revisit when there is a native iOS app.
+frame you chose. Revisit when there is a native iOS app.
 
 ### The screensaver — `services/home_board.py`
 
@@ -252,8 +293,9 @@ applies to each item.
   extend it to an actual album once the shape exists).
 - `media_count` on the event index sums media while `count` stays messages.
 
-`tests/test_share_out.py`: an album shares its cover, and the text rule is
-unchanged.
+`tests/test_share_out.py`: the message action sheet shares an album's cover,
+the lightbox shares the item at the current index, and the text rule is
+unchanged in both.
 
 Template/runtime tests, per the standing rule that entry points swallow
 exceptions: the composer's staging and upload orchestration is extracted far
@@ -269,3 +311,7 @@ that nothing posts until every item has a URL.
   files in tap order, so the sender already controls it.
 - Albums in DMs beyond what falls out for free. Moments are an event-channel
   idea; a DM attachment keeps working exactly as it does now.
+- Deleting one item out of a posted album. The message is the unit; Delete
+  takes the whole share and the button says "Delete album" so it cannot be
+  mistaken for anything narrower.
+- Sharing a whole album as one multi-file share sheet.
