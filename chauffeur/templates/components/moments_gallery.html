@@ -245,7 +245,7 @@
                             ${thumb(e.cover_url, e.cover_kind, e.cover_media_url)}
                             ${(e.latest_ts || 0) > g.viewedAt ? `<span class="absolute top-2 left-2 text-[11px] font-black uppercase tracking-wide bg-pink-600 text-white px-2 py-0.5 rounded-full">New</span>` : ''}
                             ${show.count ? `<span class="absolute top-2 right-2 text-[11px] font-bold bg-black/70 text-white px-2 py-0.5 rounded-full">
-                                ${e.count} moment${e.count !== 1 ? 's' : ''}</span>` : ''}
+                                ${e.media_count || e.count} moment${(e.media_count || e.count) !== 1 ? 's' : ''}</span>` : ''}
                         </div>
                         <div class="p-3">
                             <div class="font-bold text-sm truncate">${esc(e.event_title)}</div>
@@ -265,7 +265,10 @@
                         ${tap ? `onclick="__mgTap('${id}','moment','${esc(m.id)}')"` : ''}
                         class="text-left mg-tile rounded-2xl border overflow-hidden
                                ${tap ? 'hover:border-pink-500/60 transition-colors' : ''}">
-                        <div class="relative w-full" style="aspect-ratio: 4/3">${thumb(m.poster_url, m.kind, m.media_url)}</div>
+                        <div class="relative w-full" style="aspect-ratio: 4/3">${thumb(m.poster_url, m.kind, m.media_url)}${
+                            (m.items || []).length > 1
+                                ? `<span class="absolute top-2 right-2 text-[11px] font-bold bg-black/70 text-white px-2 py-0.5 rounded-full">⧉ ${m.items.length}</span>`
+                                : ''}</div>
                         <div class="p-3">
                             ${show.body && m.body ? `<div class="text-[13px]">${esc(m.body)}</div>` : ''}
                             ${show.who || show.when ? `<div class="text-[11px] mg-dim mt-1">${
@@ -357,40 +360,76 @@
                 else g.showEvents();
             };
 
-            g.openMoment = function (momentId) {
+            // One tile per SHARE, and the lightbox walks what is inside it.
+            // Spreading an album back into the grid would rebuild the wall of
+            // context-free stills this whole feature exists to prevent. The
+            // gallery always opens an album at its cover — no per-item tile
+            // exists to have been tapped — but startAt stays a parameter so
+            // this function is honest about what it supports.
+            g.openMoment = function (momentId, startAt) {
                 const m = g.mItems.find(x => x.id === momentId);
                 if (!m || !opts.lightbox) return;
-                const clip = m.kind === 'video';
-                const media = clip
-                    ? `<video src="${url(m.media_url)}" poster="${url(m.poster_url)}" autoplay muted loop playsinline controls preload="auto" class="max-h-[68vh] rounded-2xl mx-auto"></video>`
-                    : `<img src="${url(m.media_url)}" class="max-h-[68vh] rounded-2xl mx-auto object-contain">`;
+                const items = (m.items && m.items.length) ? m.items
+                    : [{ kind: m.kind, media_url: m.media_url, poster_url: m.poster_url }];
+                let idx = Math.min(Math.max(0, startAt || 0), items.length - 1);
                 const overlay = document.createElement('div');
                 overlay.className = 'fixed inset-0 z-[210] flex items-center justify-center p-6';
                 overlay.style.background = 'rgba(0,0,0,0.88)';
-                // Same reasoning as the hearth overlay: nothing behind a
-                // full-screen lightbox is visible, so no backdrop-filter on the
-                // page should be re-blurred for every frame the clip paints.
-                overlay.innerHTML = `
-                    ${clip ? `<style>
-                        html.clip-playing *,
-                        html.clip-playing *::before,
-                        html.clip-playing *::after {
-                            -webkit-backdrop-filter: none !important;
-                            backdrop-filter: none !important;
-                        }
-                    </style>` : ''}
-                    <div class="relative text-center bg-gray-900 border border-pink-500/40 rounded-3xl shadow-2xl p-6 max-w-4xl">
-                        <div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${esc(m.event_title)}</div>
-                        ${media}
-                        ${m.body ? `<div class="text-xl text-white font-bold mt-3">${esc(m.body)}</div>` : ''}
-                        <div class="text-sm text-gray-400 mt-2">from ${esc(m.sender_name)} · ${dayLabel(m.ts)} ${timeLabel(m.ts)}</div>
-                    </div>`;
-                overlay.addEventListener('click', () => {
+
+                function draw() {
+                    const it = items[idx];
+                    const clip = it.kind === 'video';
+                    const media = clip
+                        ? `<video src="${url(it.media_url)}" poster="${url(it.poster_url)}" autoplay muted loop playsinline controls preload="auto" class="max-h-[64vh] rounded-2xl mx-auto"></video>`
+                        : `<img src="${url(it.media_url)}" class="max-h-[64vh] rounded-2xl mx-auto object-contain">`;
+                    const many = items.length > 1;
+                    // Same reasoning as the hearth overlay: nothing behind a
+                    // full-screen lightbox is visible, so no backdrop-filter on
+                    // the page should be re-blurred for every frame the clip
+                    // paints. Rebuilt (not just toggled) on every draw so a
+                    // step from a clip to a photo drops the style along with
+                    // the class below.
+                    overlay.innerHTML = `
+                        ${clip ? `<style>
+                            html.clip-playing *,
+                            html.clip-playing *::before,
+                            html.clip-playing *::after {
+                                -webkit-backdrop-filter: none !important;
+                                backdrop-filter: none !important;
+                            }
+                        </style>` : ''}
+                        <div class="relative text-center bg-gray-900 border border-pink-500/40 rounded-3xl shadow-2xl p-6 max-w-4xl">
+                            <div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${esc(m.event_title)}</div>
+                            <div class="relative inline-block">
+                                ${media}
+                                ${many ? `
+                                <button class="mg-prev absolute left-1 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/50 text-white text-xl">‹</button>
+                                <button class="mg-next absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/50 text-white text-xl">›</button>
+                                <span class="absolute top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-black/60 text-white text-xs font-bold">${idx + 1} / ${items.length}</span>` : ''}
+                            </div>
+                            ${m.body ? `<div class="text-xl text-white font-bold mt-3">${esc(m.body)}</div>` : ''}
+                            <div class="text-sm text-gray-400 mt-2">from ${esc(m.sender_name)} · ${dayLabel(m.ts)} ${timeLabel(m.ts)}</div>
+                        </div>`;
+                    const p = overlay.querySelector('.mg-prev');
+                    const nx = overlay.querySelector('.mg-next');
+                    // Stepping must never fall through to the overlay's own
+                    // close-on-click handler below — this lightbox has no ✕,
+                    // it closes on a click anywhere, so without this every
+                    // step would close it instead of advancing.
+                    if (p) p.onclick = e => { e.stopPropagation(); idx = (idx - 1 + items.length) % items.length; draw(); };
+                    if (nx) nx.onclick = e => { e.stopPropagation(); idx = (idx + 1) % items.length; draw(); };
+                    // toggle (not add/remove): a step from a clip to a photo
+                    // must drop the flag just as surely as closing does.
+                    document.documentElement.classList.toggle('clip-playing', clip);
+                }
+
+                overlay.addEventListener('click', e => {
+                    if (e.target.closest('.mg-prev') || e.target.closest('.mg-next')) return;
                     overlay.remove();
                     document.documentElement.classList.remove('clip-playing');
                 });
+                draw();
                 document.body.appendChild(overlay);
-                if (clip) document.documentElement.classList.add('clip-playing');
             };
 
             // Prune deletions from an OPEN event grid without disturbing it.

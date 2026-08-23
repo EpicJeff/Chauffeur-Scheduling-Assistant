@@ -1465,6 +1465,24 @@ def scenario_delete_one_album_item():
           "the legacy message survives an empty-id call")
 
 
+def scenario_gallery_draws_albums():
+    """The gallery draws an album as ONE tile with a count chip, and the
+    lightbox steps through what a share holds rather than spreading an
+    album back across the grid (docs/album_moments_design.md)."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    g = open(os.path.join(root, "templates", "components", "moments_gallery.html"),
+             encoding="utf-8").read()
+    check("media_count" in g, "the event card counts media, not shares")
+    check("e.media_count || e.count" in g,
+          "and falls back to the message count for a pre-change payload")
+    check("items.length > 1" in g,
+          "a share holding several draws a count chip, a lone moment does not")
+    check("idx + 1" in g and "items.length" in g,
+          "the lightbox draws a position marker, not just the first frame")
+    check("stopPropagation" in g,
+          "stepping must not fall through to the close-on-click handler")
+
+
 SCENARIOS = [
     scenario_resumable_upload,
     scenario_media_root_and_sharding,
@@ -1492,6 +1510,7 @@ SCENARIOS = [
     scenario_album_rides_the_wire,
     scenario_album_push_describes_the_set,
     scenario_delete_one_album_item,
+    scenario_gallery_draws_albums,
 ]
 
 if __name__ == "__main__":
