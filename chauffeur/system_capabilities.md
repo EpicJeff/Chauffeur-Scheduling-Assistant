@@ -5507,3 +5507,90 @@ retiring the imitation.
   named, the chunk proxy's filename gate, converter host/fallback shapes,
   builtin hosts skipping the resource round trip, and the template contract).
   `test_ha_card_convert.py` updated to the host-with-fallback contract.
+
+## Cards span board rows, and move between tiles (v2.387.41 — .46)
+
+A household wanted a tall card with two shorter cards stacked beside it inside
+a Custom tile — the layout the main board grid has always allowed for tiles —
+and wanted to drag a card from one Custom tile into another instead of copying
+its YAML out of one and pasting it into a new card on the other. Both land on
+`.nc-stack-grid`, the twelve-column grid that lays out cards inside a Custom
+tile and sub-cards inside a Home Assistant stack.
+
+- **A cell was placed with a column span but only ever a bare CSS height**,
+  which does not make it a participant in the grid's VERTICAL geometry: every
+  cell owned exactly one implicit row, so a four-row card and a two-row card
+  side by side both sat in row 1, the row grew to the taller of them, and the
+  next card in source order landed below the tall card's bottom edge rather
+  than in the space beside it. `rows` is now a real `grid-row: span N` plus
+  `height: calc(N * var(--nc-row) + (N-1) * var(--nc-gap))`, so a four-row
+  card and two two-row cards place as rows 1–4 and rows 1–2 / 3–4 — the second
+  short card finds the free slot beside the tall one instead of a new row
+  beneath it. The height formula had to change to match: three rows must
+  equal one row plus two rows plus the gap between them, or a tall card and
+  the stack beside it never bottom-align, which is the whole request.
+- **`--nc-row` and `--nc-gap` come from the BOARD, inside a Custom tile.**
+  56px was Home Assistant's own section row, borrowed when this grid was
+  written; inside a tile placed on a board whose rows are 10px it was a unit
+  nobody chose. `cardGridVars()` sets both from the board's own `row_height`
+  and `gap` on the grid element itself, so a card of nine rows is as tall as
+  a tile of nine rows, and a number typed into the tile editor means what the
+  same number means in board settings. A Home Assistant stack — a real
+  `vertical-stack` / `grid` config, pasted in with its own numbers — keeps
+  HA's 56px and its 12px gutter on purpose: those numbers were written
+  against HA's section row, and `rows: 2` should draw the height it draws in
+  HA. Only the panel's own card grid follows the board; the arithmetic holds
+  at any row height and gutter, because the grid gap is a real CSS gap, not a
+  painted margin — no divisibility rule, nothing to warn about.
+- **The `rows` cap rose from 40 to 1000** (client input, `setCardNum`,
+  `resizeTileCard`, `resizeCardCell`, and the server's two `_cfg_int` calls).
+  Forty was sensible at 56px a row; at a 10px board row it capped a card at
+  400px, shorter than most tiles.
+- **A card with no intrinsic height keeps an absolute 224px floor**, not four
+  rows of a variable. A map, a mounted calendar, a camera lay their content
+  INTO their box, so "as tall as the content" has no answer for them and fit
+  still means fill — but four rows of a 10px board row is a collapsed card,
+  so the floor is now a fixed pixel measurement instead of `calc(4 *
+  var(--nc-row))`.
+- **Both resize handlers read the grid's own variables** instead of a
+  hardcoded 56 — the Custom tile handler and the Home Assistant stack
+  handler had already drifted from each other once (`56px` drawn, `56 + gap`
+  dragged), and a pitch that disagrees with the grid is the bug this design
+  had to unpick.
+- **A card can be dragged from one Custom tile into another.** The same
+  pointer-based drag that reorders and resizes a card now watches which
+  tile's grid the pointer is over (`.closest('[data-cards]')`); staying
+  inside the source tile is today's reorder, crossing into a different
+  Custom tile splices the card out of the source draft list and into the
+  destination's at the hovered index. Only an unlocked Custom tile is a
+  destination — a built-in tile is a single synthetic card with no card list
+  to join, and refuses rather than half-accepting. A destination already at
+  the server's twelve-card cap refuses too, with `showGlobalAlert` said ONCE
+  per drag — a pointer wandering back to a full tile a second time in the
+  same gesture does not hear the sentence twice, because the household
+  already heard it. A colliding id is re-minted the way `addCard` already
+  mints one (the bare type, then `type-2`, `type-3`). `cols` and `rows`
+  travel with the card unchanged — refitting them to the destination's width
+  would silently resize a card somebody just moved. Persistence is the
+  existing draft model: both lists are the same `page().widgets[…]
+  .config.cards` every other arrange-mode edit writes to, so `Save` and
+  `Cancel` need nothing new.
+- **The bug this uncovered: a Home Assistant card sitting inside a Custom
+  tile was eating its own sub-card drag.** `startCardDrag` looked its holder
+  up by `tile.id` in `page().widgets`, which only ever names a top-level
+  tile — a card inside a container draws with the namespaced id
+  `"<tileId>-<cardId>"`, which never appears there, and by the time the
+  lookup gave up it had already called `preventDefault`/`stopPropagation`,
+  so the gesture was consumed and nothing moved, silently. `_cardConfigHolder`
+  now resolves either shape, and the resolution happens BEFORE the gesture is
+  claimed, so a drag with genuinely nowhere to go falls through instead of
+  being swallowed.
+- Tests: `test_board_card_grid.py` (2 chromium scenarios against the real
+  `.nc-stack-grid` rules read out of home.html — the stacking layout itself,
+  and the span arithmetic holding at more than one row height and gutter),
+  plus scenarios added to `test_board_arrange_runtime.py` (the board's row
+  and gutter landing on the grid element, both resize pitches reading
+  `--nc-row`, a cross-tile drag leaving one list and entering the other, the
+  full-tile refusal firing once per drag rather than resetting mid-gesture,
+  the swallowed sub-card drag resolving and moving) and `test_board_cards.py`
+  (the 0..1000 server-side clamp).
