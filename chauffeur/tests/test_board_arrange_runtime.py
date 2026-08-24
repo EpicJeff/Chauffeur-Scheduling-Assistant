@@ -178,6 +178,12 @@ const sized = b.cardsOf(mine())[0];
 b.setCardNum(draftCards[1], 'cols', 12, 12);
 b.setCardNum(draftCards[1], 'rows', 900, 0);
 const tidy = JSON.stringify(draftCards[1].config);
+// The rows a board row's worth of card actually needs.
+b.setCardNum(draftCards[0], 'rows', 200, 0);
+const tallRows = draftCards[0].config.rows;
+b.setCardNum(draftCards[0], 'rows', 90000, 0);
+const clampedRows = draftCards[0].config.rows;
+b.setCardNum(draftCards[0], 'rows', 3, 0);
 // A LOCKED tile is never re-ordered off the draft — it has no card list.
 const lockedDraw = b.cardsOf({ id: 'calendar', locked: true,
   cards: [{ id: 'calendar', cols: 12, rows: 0 }] }).map(c => c.id);
@@ -295,6 +301,8 @@ console.log(JSON.stringify({
   drawnAfter: drawnAfter,
   sizedCard: { id: sized.id, cols: sized.cols, rows: sized.rows },
   tidy: tidy,
+  tallRows: tallRows,
+  clampedRows: clampedRows,
   lockedDraw: lockedDraw,
   editingId: editingId,
   editingCleared: b.editing === null,
@@ -503,8 +511,21 @@ def scenario_a_card_at_its_default_size_stores_nothing():
     got = _run()
     if got is None:
         return
-    check(got['tidy'] == '{"rows":40}',
+    check(got['tidy'] == '{"rows":900}',
           f"a default was stored, or nonsense was not clamped: {got['tidy']}")
+
+
+def scenario_a_card_can_be_as_tall_as_the_board_allows():
+    """The cap was forty 56px rows. On a 10px board row that is 400px, so the
+    number that used to mean 'taller than any tile' now means 'shorter than
+    most of them'."""
+    got = _run()
+    if got is None:
+        return
+    check(got['tallRows'] == 200,
+          f"a card cannot be told to stand 200 board rows tall: {got['tallRows']}")
+    check(got['clampedRows'] == 1000,
+          f"a pasted absurdity is not clamped: {got['clampedRows']}")
 
 
 def scenario_the_overlay_opens_on_the_card_that_was_tapped():

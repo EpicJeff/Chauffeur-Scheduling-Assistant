@@ -3563,7 +3563,7 @@ def _build_card(card, now, **kw):
         # the same unit a card inside a Home Assistant stack uses, so the
         # number means one thing everywhere on the page.
         'cols': _cfg_int(config, 'cols', 12, 1, 12),
-        'rows': _cfg_int(config, 'rows', 0, 0, 40),
+        'rows': _cfg_int(config, 'rows', 0, 0, 1000),
         'config': config, 'data': payload}
 
 
@@ -3608,7 +3608,7 @@ def _build_tile(inst, now, **kw):
                                        or cmeta.get('heading') or cmeta['label']),
                              'title': _cfg_str(card['config'], 'title'),
                              'cols': _cfg_int(card['config'], 'cols', 12, 1, 12),
-                             'rows': _cfg_int(card['config'], 'rows', 0, 0, 40),
+                             'rows': _cfg_int(card['config'], 'rows', 0, 0, 1000),
                              'bare': _cfg_bool(card['config'], 'bare', False),
                              'config': card['config'],
                              'data': {'empty': REQUIRED_EMPTY.get(

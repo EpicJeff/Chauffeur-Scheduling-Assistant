@@ -1089,7 +1089,7 @@
                             columns of twelve
                         </label>
                         <label class="flex items-center gap-1 text-[0.7rem] ed-note">
-                            <input type="number" min="0" max="40" step="1"
+                            <input type="number" min="0" max="1000" step="1"
                                 :value="cardNum(cardEd(), 'rows', 0)"
                                 @change="setCardNum(cardEd(), 'rows', $event.target.value, 0)"
                                 class="w-14 ed-input rounded text-xs ed-title px-1 py-0.5">
@@ -3943,7 +3943,12 @@
                     // A twelfth of the STACK, not of the board: a card's
                     // columns are spans of the grid its own stack lays out on.
                     const colW = ((grid ? grid.clientWidth : 0) - gap * 11) / 12 + gap;
-                    const rowH = 56 + gap;                    // --nc-row + gap
+                    // The row the GRID is on, not a number typed in here. The
+                    // two disagreed for as long as 56 was written twice.
+                    const rowUnit = cs
+                        ? (parseFloat(cs.getPropertyValue('--nc-row')) || 56) : 56;
+                    const rowGap = cs ? (parseFloat(cs.rowGap) || gap) : gap;
+                    const rowH = rowUnit + rowGap;
                     // The stack stops stretching for the whole drag, not after
                     // the re-render: otherwise a card dragged SHORTER sits in a
                     // row still held open by a neighbour and nothing appears to
@@ -3958,13 +3963,15 @@
                     const move = (ev) => {
                         const cols = Math.max(1, Math.min(12,
                             Math.round((ev.clientX - startX) / colW + startCols)));
-                        const rows = Math.max(1,
-                            Math.round((ev.clientY - startY) / rowH + startRows));
+                        const rows = Math.max(1, Math.min(1000,
+                            Math.round((ev.clientY - startY) / rowH + startRows)));
                         // Live feedback without a round trip per pixel: the
                         // cell is restyled here and the config is only written
                         // when the numbers actually change.
                         cell.style.gridColumn = 'span ' + cols;
-                        cell.style.height = 'calc(' + rows + ' * var(--nc-row))';
+                        cell.style.gridRow = 'span ' + rows;
+                        cell.style.height = 'calc(' + rows + ' * var(--nc-row) + '
+                            + (rows - 1) + ' * var(--nc-gap))';
                         const key = cols + 'x' + rows;
                         if (key === last) return;
                         last = key;
@@ -4757,7 +4764,7 @@
                 setCardNum(c, key, raw, dflt) {
                     let v = parseInt(raw, 10);
                     if (Number.isNaN(v)) return;
-                    v = key === 'rows' ? Math.max(0, Math.min(40, v))
+                    v = key === 'rows' ? Math.max(0, Math.min(1000, v))
                                        : Math.max(1, Math.min(12, v));
                     if (!c.config) c.config = {};
                     if (v === dflt) delete c.config[key];
@@ -4894,7 +4901,12 @@
                     // A twelfth of the TILE, not of the board: a card's
                     // columns are spans of the grid its own tile lays out on.
                     const colW = ((grid ? grid.clientWidth : 0) - gap * 11) / 12 + gap;
-                    const rowH = 56 + gap;                    // --nc-row + gap
+                    // The row the GRID is on, not a number typed in here. The
+                    // two disagreed for as long as 56 was written twice.
+                    const rowUnit = cs
+                        ? (parseFloat(cs.getPropertyValue('--nc-row')) || 56) : 56;
+                    const rowGap = cs ? (parseFloat(cs.rowGap) || gap) : gap;
+                    const rowH = rowUnit + rowGap;
                     // Freed for the whole drag: a card dragged SHORTER sits in
                     // a row a neighbour is still holding open otherwise, and
                     // nothing appears to move until the pointer comes up.
@@ -4907,10 +4919,12 @@
                     const move = (ev) => {
                         const cols = Math.max(1, Math.min(12,
                             Math.round((ev.clientX - startX) / colW + startCols)));
-                        const rows = Math.max(1, Math.min(40,
+                        const rows = Math.max(1, Math.min(1000,
                             Math.round((ev.clientY - startY) / rowH + startRows)));
                         cell.style.gridColumn = 'span ' + cols;
-                        cell.style.height = 'calc(' + rows + ' * var(--nc-row))';
+                        cell.style.gridRow = 'span ' + rows;
+                        cell.style.height = 'calc(' + rows + ' * var(--nc-row) + '
+                            + (rows - 1) + ' * var(--nc-gap))';
                         this.setCardNum(card, 'cols', cols, 12);
                         this.setCardNum(card, 'rows', rows, 0);
                         dirty = true;

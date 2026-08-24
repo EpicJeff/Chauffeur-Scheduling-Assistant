@@ -220,6 +220,17 @@ def scenario_a_card_is_sized_in_twelfths_of_its_tile():
     wild = _with_builders({'chores': _Spy()}, lambda: _custom(
         [{'type': 'chores', 'config': {'cols': 900}}]))
     check(wild['cards'][0]['cols'] == 12, "a card's width is not clamped")
+    # The row is the BOARD's now, and a board row is 10px on every board in
+    # this house. Forty of them is 400px — shorter than most tiles, which is a
+    # cap that would stop a card being told to fill one.
+    tall = _with_builders({'chores': _Spy()}, lambda: _custom(
+        [{'type': 'chores', 'config': {'rows': 200}}]))
+    check(tall['cards'][0]['rows'] == 200,
+          f"a card's height is capped below what a board row now needs: "
+          f"{tall['cards'][0]}")
+    silly = _with_builders({'chores': _Spy()}, lambda: _custom(
+        [{'type': 'chores', 'config': {'rows': 90000}}]))
+    check(silly['cards'][0]['rows'] == 1000, "a card's height is not clamped")
 
 
 def scenario_a_broken_card_does_not_take_the_tile_down():
