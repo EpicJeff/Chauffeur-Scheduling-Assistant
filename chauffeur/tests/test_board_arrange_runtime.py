@@ -54,7 +54,14 @@ globalThis.window = {
   location: { search: '', pathname: '/home' },
   matchMedia: function () { return { matches: false }; },
   innerHeight: 1000, scrollY: 0,
-  addEventListener: function () {}, removeEventListener: function () {}
+  // Captured by type rather than thrown away: a drag's `move`/`up` are
+  // closures nothing else can reach, and a resize is only provable by
+  // actually firing the pointer events the grip itself would receive.
+  addEventListener: function (type, fn) {
+    globalThis.__win = globalThis.__win || {};
+    globalThis.__win[type] = fn;
+  },
+  removeEventListener: function () {}
 };
 function stubEl(key, extra) {
   return Object.assign({
@@ -62,6 +69,24 @@ function stubEl(key, extra) {
     // The board's padded container, which is what `_boardPadBottom` reads.
     parentElement: { __pad: true },
   }, extra || {});
+}
+// The cells and grids a cross-tile drag walks over. `elementFromPoint` is the
+// only way the handler learns where the pointer is, so the stub answers with
+// whichever cell the probe last aimed at.
+globalThis.AIM = null;
+function cardCell(tileId, cardId) {
+  const grid = { dataset: { cards: tileId } };
+  grid.closest = sel => sel === '[data-cards]' ? grid : null;
+  const cell = { dataset: { path: `${tileId}-${cardId}` }, classList: {
+    add: function () {}, remove: function () {} } };
+  cell.closest = sel => sel === '[data-cards]' ? grid
+                      : sel === '[data-path]' ? cell : null;
+  return cell;
+}
+function emptyGrid(tileId) {
+  const grid = { dataset: { cards: tileId } };
+  grid.closest = sel => sel === '[data-cards]' ? grid : null;
+  return grid;
 }
 globalThis.document = {
   documentElement: { getAttribute: function () { return 'dark'; } },
@@ -77,13 +102,24 @@ globalThis.document = {
   querySelector: function (sel) {
     return /tile-id="map"/.test(sel) ? stubEl('tile:map') : null;
   },
-  addEventListener: function () {}
+  addEventListener: function () {},
+  elementFromPoint: function () { return globalThis.AIM; },
 };
 globalThis.CSS = { escape: function (s) { return s; } };
+// `rowGap` and `getPropertyValue` matter here, not just structurally: both
+// resize handlers read their drag pitch off the GRID (`--nc-row` plus
+// `rowGap`) instead of a hardcoded 56, and a stub missing either would throw
+// the moment a resize handler actually ran — which nothing did until the
+// scenario below.
 globalThis.getComputedStyle = function (el) {
   return { columnGap: '16px',
            paddingBottom: (el && el.__pad) ? '24px' : '0px',
-           borderBottomWidth: '0px' };
+           borderBottomWidth: '0px',
+           rowGap: (el && el.__rowGap != null) ? el.__rowGap + 'px' : '16px',
+           getPropertyValue: function (name) {
+             return (name === '--nc-row' && el && el.__row != null)
+                 ? el.__row + 'px' : '';
+           } };
 };
 globalThis.setInterval = function () { return 0; };
 """
@@ -191,6 +227,66 @@ const lockedDraw = b.cardsOf({ id: 'calendar', locked: true,
 b.openCardEditor('mine', 'mine-weather');
 const editingId = b.editing && b.editing.id;
 b.closeCardEditor();
+
+// --- Dragging a card from one Custom tile into another.
+b.page().widgets.push({ id: 'yours', type: 'custom', config: { cards: [
+  { id: 'weather', type: 'weather', config: {} } ] } });
+b.board.tiles.push({ id: 'yours', type: 'custom', locked: false, cards: [
+  { id: 'yours-weather', type: 'weather', cols: 12, rows: 0, config: {}, data: {} } ] });
+b.catalog = { widgets: [{ key: 'custom', container: true },
+                        { key: 'chores' }, { key: 'weather' }, { key: 'map' }] };
+b.load = () => {};                    // the redraw is a fetch; not this test's job
+
+const drag = (fromTile, cardId, aim) => {
+  const cards = b._cardsOf(fromTile);
+  const at = cards.findIndex(c => c.id === cardId);
+  const cell = cardCell(fromTile, cardId);
+  b.moveTileCard({ clientX: 0, clientY: 0 }, cards, at, cell, fromTile);
+  globalThis.AIM = aim;
+  b.__move({ clientX: 400, clientY: 400 });     // past the 6px slack
+  b.__up();
+};
+
+drag('mine', 'weather', cardCell('yours', 'weather'));
+const afterCross = { mine: b._cardsOf('mine').map(c => c.id),
+                     yours: b._cardsOf('yours').map(c => c.id) };
+
+// A full tile refuses. Twelve is the server's limit, so a thirteenth would be
+// dropped on the way in and the card would simply vanish.
+const alerts = [];
+globalThis.showGlobalAlert = m => alerts.push(m);
+b.page().widgets.find(w => w.id === 'yours').config.cards =
+  Array.from({ length: 12 }, (_, i) => ({ id: 'x' + i, type: 'chores', config: {} }));
+drag('mine', 'chores', cardCell('yours', 'x0'));
+const afterFull = { mine: b._cardsOf('mine').map(c => c.id),
+                    yours: b._cardsOf('yours').length, said: alerts.length };
+
+// A built-in tile is a locked container of one synthetic card. It has no card
+// list to join, and inventing one for it would put a card somewhere the server
+// will not keep it.
+drag('mine', 'chores', cardCell('drives', 'drives'));
+const afterLocked = b._cardsOf('mine').map(c => c.id);
+
+// --- The resize grip's pitch is the GRID's, not a hardcoded 56. Neither
+// `resizeTileCard` nor `resizeCardCell` had ever been driven through an
+// actual pointer move in this suite — the stub's `getComputedStyle` had no
+// `getPropertyValue`, so either would have thrown the moment it tried. Two
+// identical 400px drags, one on a 200px board row and one on a 56px row,
+// have to land on two different row counts, or the grip is not reading the
+// grid at all.
+const dragResize = (rowPx) => {
+  const grid = { clientWidth: 1000, __row: rowPx, __rowGap: 16,
+    classList: { add: function () {}, remove: function () {} } };
+  const cell = { parentElement: grid, offsetWidth: 1000, offsetHeight: 300,
+    style: {}, classList: { add: function () {}, remove: function () {} } };
+  const card = { id: 'x', type: 'weather', config: {} };
+  b.resizeTileCard({ clientX: 0, clientY: 0 }, [card], 0, cell);
+  globalThis.__win.pointermove({ clientX: 0, clientY: 400 });
+  globalThis.__win.pointerup();
+  return card.config.rows;
+};
+const rowsAt200 = dragResize(200);
+const rowsAt56 = dragResize(56);
 
 // The card grid's vertical unit is the BOARD's. 56px was Home Assistant's
 // section row, borrowed when this grid was written and arbitrary inside a
@@ -306,6 +402,11 @@ console.log(JSON.stringify({
   lockedDraw: lockedDraw,
   editingId: editingId,
   editingCleared: b.editing === null,
+  afterCross: afterCross,
+  afterFull: afterFull,
+  afterLocked: afterLocked,
+  rowsAt200: rowsAt200,
+  rowsAt56: rowsAt56,
   gridVars: gridVars,
 }));
 """
@@ -384,9 +485,10 @@ def scenario_a_drag_reorders_the_tiles_that_are_drawn():
     got = _run()
     if got is None:
         return
-    # 'mine' is the custom tile the card scenarios add; it stays where it was
-    # put, which is itself worth seeing — a drag moves ONE tile.
-    check(got['reordered'] == ['calendar', 'map', 'drives', 'mine'],
+    # 'mine' and 'yours' are the custom tiles the card scenarios add; they
+    # stay where they were put, which is itself worth seeing — a drag moves
+    # ONE tile.
+    check(got['reordered'] == ['calendar', 'map', 'drives', 'mine', 'yours'],
           f"the drawn order did not follow the drag: {got['reordered']}")
 
 
@@ -645,6 +747,68 @@ def scenario_a_filled_tile_stops_above_the_shelf():
     check(got['fillResolved'] == 570,
           f"fill resolved to {got['fillResolved']}px, not 570 — the tile ends "
           f"{570 - (got['fillResolved'] or 0)}px past where it should")
+
+
+def scenario_a_card_can_be_dragged_into_another_custom_tile():
+    """The alternative was copying a card's YAML out of one tile and pasting it
+    into a new card on the other, which is the long way round dragging already
+    replaced for position and size."""
+    got = _run()
+    if got is None:
+        return
+    check(got['afterCross']['mine'] == ['chores'],
+          f"the card did not leave the tile it was dragged out of: "
+          f"{got['afterCross']}")
+    # Dropping onto the destination's existing card inserts BEFORE it and
+    # pushes it forward — the same splice-at-target idiom already used and
+    # proven for reordering within one tile, applied across tiles too.
+    check(got['afterCross']['yours'] == ['weather-2', 'weather'],
+          f"the card did not land in the tile it was dropped on, with an id "
+          f"the destination did not already hold: {got['afterCross']}")
+
+
+def scenario_a_full_tile_refuses_a_card_and_says_so():
+    """Twelve cards is the server's limit. A thirteenth would be dropped on the
+    way in — the card would leave one tile and never arrive at the other."""
+    got = _run()
+    if got is None:
+        return
+    check(got['afterFull']['yours'] == 12,
+          f"a thirteenth card was accepted: {got['afterFull']}")
+    check(got['afterFull']['mine'] == ['chores'],
+          f"the card left its tile anyway: {got['afterFull']}")
+    check(got['afterFull']['said'] == 1,
+          f"a refused drop said nothing, or said it once per pointer move: "
+          f"{got['afterFull']}")
+
+
+def scenario_a_built_in_tile_is_not_a_destination():
+    """A built-in tile is a locked container of one synthetic card. Handing it
+    a second one writes a card list the server will not keep."""
+    got = _run()
+    if got is None:
+        return
+    check(got['afterLocked'] == ['chores'],
+          f"a card was dropped into a tile that cannot hold one: "
+          f"{got['afterLocked']}")
+
+
+def scenario_a_resize_grips_pitch_is_the_grids_not_a_hardcoded_56():
+    """56px was Home Assistant's section row, borrowed when this grid was
+    written and arbitrary inside a tile placed on a board with its own row
+    height. Nothing in this suite had ever driven a resize handler through an
+    actual pointer move, so the stub's missing `getPropertyValue` — which
+    would throw the instant either handler ran — went unnoticed."""
+    got = _run()
+    if got is None:
+        return
+    check(got['rowsAt200'] == 3,
+          f"a 400px drag at a 200px row should settle on 3 rows: {got['rowsAt200']}")
+    check(got['rowsAt56'] == 10,
+          f"a 400px drag at a 56px row should settle on 10 rows: {got['rowsAt56']}")
+    check(got['rowsAt200'] != got['rowsAt56'],
+          "the same pointer drag landed on the same row count at two "
+          "different board rows — the grip is not reading the grid")
 
 
 def scenario_the_card_grid_takes_the_boards_row_and_gutter():

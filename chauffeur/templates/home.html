@@ -4846,6 +4846,17 @@
                     return w ? this.tileCards(w) : null;
                 },
 
+                // The draft card list of a tile that can actually hold cards.
+                // `tileCards` CREATES the list if it is missing, so asking it
+                // about a built-in tile would quietly give that tile a card
+                // list the server refuses to keep — the check has to come
+                // first.
+                _containerCards(tileId) {
+                    const w = (this.page().widgets || []).find(x => x.id === tileId);
+                    if (!w || !this.widgetMeta(w.type).container) return null;
+                    return this.tileCards(w);
+                },
+
                 startTileCardDrag(e, tileId) {
                     if (e.button > 0) return;
                     const grip = e.target.closest('.nc-card-move');
@@ -4865,9 +4876,19 @@
                                 : this.moveTileCard(e, cards, at, cell, tileId);
                 },
 
+                // A drag that leaves its tile MOVES the card. The alternative
+                // a household had was copying the card's YAML out of one tile
+                // and pasting it into a new card on the other, which is the
+                // long way round this gesture already replaced for position
+                // and size.
+                //
+                // Both lists are drafts, so a cross-tile move is two splices
+                // and nothing else: no endpoint, no re-parse, and Cancel puts
+                // both tiles back because it restores the whole page.
                 moveTileCard(e, cards, at, cell, tileId) {
                     const startX = e.clientX, startY = e.clientY;
-                    let moved = false, from = at;
+                    let moved = false, from = at, list = cards, host = tileId;
+                    let said = false;
                     const move = (ev) => {
                         if (!moved) {
                             if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
@@ -4875,22 +4896,70 @@
                             cell.classList.add('tile-dragging');
                         }
                         const over = document.elementFromPoint(ev.clientX, ev.clientY);
-                        const target = over && over.closest('[data-path]');
-                        if (!target || target === cell) return;
-                        const id = String(target.dataset.path).slice(tileId.length + 1);
-                        const to = cards.findIndex(c => c.id === id);
-                        if (to === -1 || to === from) return;
-                        cards.splice(to, 0, cards.splice(from, 1)[0]);
-                        from = to;
+                        const grid = over && over.closest('[data-cards]');
+                        if (!grid) return;
+                        const onto = grid.dataset.cards;
+                        const target = over.closest('[data-path]');
+                        const seat = (l, tile) => {
+                            if (!target) return l.length;
+                            const id = String(target.dataset.path).slice(tile.length + 1);
+                            const j = l.findIndex(c => c.id === id);
+                            return j === -1 ? l.length : j;
+                        };
+                        if (onto === host) {
+                            if (!target || target === cell) return;
+                            const to = seat(list, host);
+                            if (to === from) return;
+                            list.splice(to, 0, list.splice(from, 1)[0]);
+                            from = to;
+                            return;
+                        }
+                        // A different tile. Only a container has a card list to
+                        // join, and only twelve cards fit in one — a thirteenth
+                        // is dropped server-side, which would look like a card
+                        // that left one tile and never arrived at the other.
+                        const dest = this._containerCards(onto);
+                        if (!dest) return;
+                        if (dest.length >= 12) {
+                            if (!said) {
+                                said = true;
+                                showGlobalAlert('That tile is full — twelve cards '
+                                    + 'is as many as one tile holds.');
+                            }
+                            return;
+                        }
+                        const card = list.splice(from, 1)[0];
+                        // Ids are unique WITHIN a tile, and the destination may
+                        // already hold a card of this type. Same mint as adding
+                        // one by hand: the bare type, then type-2.
+                        const taken = new Set(dest.map(c => c.id));
+                        if (taken.has(card.id)) {
+                            let id = card.type, n = 2;
+                            while (taken.has(id)) id = `${card.type}-${n++}`;
+                            card.id = id;
+                        }
+                        const to = seat(dest, onto);
+                        dest.splice(to, 0, card);
+                        list = dest; host = onto; from = to; said = false;
                     };
                     const up = () => {
                         window.removeEventListener('pointermove', move);
                         window.removeEventListener('pointerup', up);
+                        window.removeEventListener('pointercancel', up);
                         cell.classList.remove('tile-dragging');
-                        if (moved) this.load();   // redraw from the new order
+                        // The card is drawn from the SERVER's payload, which
+                        // still has it in the tile it left; only a redraw can
+                        // show it where the draft now says it is.
+                        if (moved) this.load();
                     };
+                    // Named on the component so the runtime test can drive the
+                    // gesture: node has no pointer, and a drag nobody can run
+                    // is a drag nobody can test.
+                    this.__move = move;
+                    this.__up = up;
                     window.addEventListener('pointermove', move);
                     window.addEventListener('pointerup', up);
+                    window.addEventListener('pointercancel', up);
                 },
 
                 resizeTileCard(e, cards, at, cell) {
