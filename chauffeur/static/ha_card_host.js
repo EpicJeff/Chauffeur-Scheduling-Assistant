@@ -346,6 +346,15 @@
         for (k in (spec.states || {})) states[k] = (spec.states || {})[k];
         return {
             states: states,
+            // hui-image wipes its loaded photograph on any hass update
+            // where `hass.connected` is falsy — HA's "connection lost, stop
+            // showing stale frames" behaviour. This hass is rebuilt fresh on
+            // every board poll, so an absent flag read as "disconnected
+            // twenty times a minute": the photo survived until the first
+            // poll and then blanked forever (a cached img never refires
+            // `load` for an unchanged src, and in ratio mode the visible
+            // pixels are the background that only `load` repopulates).
+            connected: true,
             // Enough of the shape that a card reading these does not throw.
             // Empty-string localize is HA's own behaviour for an unknown key,
             // and cards written against it use `|| fallback`.

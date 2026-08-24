@@ -186,6 +186,20 @@ def scenario_the_elements_no_card_imports_are_still_defined():
           'undefined hui-image and silently show nothing')
 
 
+def scenario_the_hass_says_it_is_connected():
+    """hui-image wipes its loaded photograph on any hass update where
+    `hass.connected` is falsy — HA's "connection lost, stop showing stale
+    frames" rule. Our hass is rebuilt on every board poll, so an ABSENT
+    flag read as "disconnected twenty times a minute": area photographs
+    survived until the first poll and then blanked forever, because a
+    cached img never refires `load` for an unchanged src and ratio mode's
+    visible pixels are the background only `load` repopulates. Found by
+    reading the wiping branch out of hui-image's own willUpdate."""
+    host = open(os.path.join(STATIC, 'ha_card_host.js'), encoding='utf-8').read()
+    check('connected: true,' in host,
+          "hass.connected is gone — every poll wipes every photograph")
+
+
 def scenario_the_camera_lanes_exist():
     """A camera-mode card negotiates stream flavours over the websocket and
     renders its still branch as the MJPEG proxy URL. The bridge answers

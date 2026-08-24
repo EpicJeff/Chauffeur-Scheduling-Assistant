@@ -5322,6 +5322,16 @@ retiring the imitation.
   path — `getConfigElement()` from the borrowed runtime is the obvious next
   slice, and until then `features:` (and any key outside the schema) is
   YAML-only: the form preserves such keys (v2.387.30) but cannot author them.
+- **v2.387.39 — hass.connected, the actual blanking cause.** Found in
+  hui-image's own willUpdate: on any hass update where `hass.connected`
+  is falsy it wipes `_loadedImageSrc` — HA's "connection lost, stop
+  showing stale frames" rule. Our hass is rebuilt on every board poll and
+  never carried the flag, so absent read as "disconnected twenty times a
+  minute": a photograph survived until the FIRST poll after mount, then
+  blanked forever — a cached img never refires `load` for an unchanged
+  src, and ratio mode's visible pixels are the background that only
+  `load` repopulates. `connected: true` on makeHass. (The .37 hourly
+  suffix and .38 day-cache stay: real resilience, just not this bug.)
 - **v2.387.38 — the photograph cache matches the photograph.** The user
   pinned it: the blanking coincides with the same event that flashes the
   fallbacks — a full page reload (the panel's idle-return). Every reload
