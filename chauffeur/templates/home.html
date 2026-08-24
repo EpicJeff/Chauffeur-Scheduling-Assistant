@@ -995,11 +995,31 @@
                                              that drew nothing. Exactly the bug
                                              `fillsTile` was written for one
                                              level up. -->
+                                        <!-- `x-effect`, not just the initial
+                                             binding: `x-data` runs ONCE, and
+                                             `x-for` reuses the node for a key
+                                             it already drew, so `t` held the
+                                             card as it was the first time the
+                                             board rendered and never changed
+                                             again. Every payload after that
+                                             — a poll, a preview, the load
+                                             after Done — updated `c` and left
+                                             `t` stale, so a Home Assistant
+                                             card added or reconfigured here
+                                             stayed empty (its host div is
+                                             behind `!t.data.empty`, so
+                                             `syncCards` had nothing to mount
+                                             into) until the page was reloaded.
+                                             Reported exactly that way. It is
+                                             every card body, not only HA's:
+                                             a list card in a custom tile was
+                                             frozen at whatever it said when
+                                             the tab opened. -->
                                         <div class="min-w-0 flex-1"
                                             :class="cardFills(c)
                                                 ? 'flex flex-col overflow-hidden'
                                                 : 'overflow-y-auto tile-scroll'"
-                                            x-data="{ t: c }">
+                                            x-data="{ t: c }" x-effect="t = c">
                                             {% include 'components/board_tile_body.html' %}
                                         </div>
                                     </div>

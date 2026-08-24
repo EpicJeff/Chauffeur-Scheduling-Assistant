@@ -258,6 +258,29 @@ def scenario_a_card_can_drop_its_own_panel():
           "the editor offers no way to make a card bare")
 
 
+def scenario_a_card_body_follows_its_card():
+    """A card drawn in a custom tile must keep up with the payload.
+
+    The card body is included under its own Alpine scope so the shared drawing
+    can go on calling the thing it draws `t`. `x-data` runs ONCE, and `x-for`
+    reuses the node it already drew for a key — so that scope kept the card as
+    it was the FIRST time the board rendered and every payload after it left
+    the copy stale. A Home Assistant card added or reconfigured in a custom
+    tile stayed empty until the page was reloaded: its host div is behind
+    `!t.data.empty`, so with a stale `t` there was nothing for `syncCards` to
+    mount into. Every other card body was frozen the same way — a list card in
+    a custom tile said whatever it said when the tab opened.
+    """
+    tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       'templates')
+    home = open(os.path.join(tpl, 'home.html'), encoding='utf-8').read()
+    scope = home[home.index('x-data="{ t: c }"'):]
+    scope = scope[:scope.index('board_tile_body.html')]
+    check('x-effect="t = c"' in scope,
+          "the card body's scope is bound once, so a reused cell draws the "
+          "card as it was on first render and never updates")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
