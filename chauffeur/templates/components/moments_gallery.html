@@ -206,6 +206,14 @@
             // Sticky against the nearest scrolling ancestor, which is the page
             // scroller in one caller and the tile's own scroll box in the
             // other — the same rule works for both without knowing which.
+            //
+            // g.mTotal counts MESSAGES (each g.mItems entry is one share, and
+            // an album is one share of up to ten photos/clips), while the
+            // event card's count above is media_count — photos/clips. Both
+            // are visible one tap apart, so this header says "shares", never
+            // "moments" — the same noun for two different units here would
+            // read as a bug (an album made the two diverge, e.g. 24 photos
+            // across 6 shares).
             function backBar() {
                 if (g.view !== 'event') return '';
                 return `<div class="sticky top-0 z-20 py-2 mb-2 flex items-center gap-3
@@ -220,7 +228,7 @@
                         All moments
                     </button>
                     <span class="text-sm font-bold text-white truncate">${esc(g.mTitle)}</span>
-                    ${show.count && g.mTotal ? `<span class="text-xs mg-dim shrink-0">${g.mTotal} moment${g.mTotal !== 1 ? 's' : ''}</span>` : ''}
+                    ${show.count && g.mTotal ? `<span class="text-xs mg-dim shrink-0">${g.mTotal} share${g.mTotal !== 1 ? 's' : ''}</span>` : ''}
                 </div>`;
             }
 
@@ -423,10 +431,27 @@
                     document.documentElement.classList.toggle('clip-playing', clip);
                 }
 
-                overlay.addEventListener('click', e => {
-                    if (e.target.closest('.mg-prev') || e.target.closest('.mg-next')) return;
+                function closeOverlay() {
+                    document.removeEventListener('keydown', onKeydown);
                     overlay.remove();
                     document.documentElement.classList.remove('clip-playing');
+                }
+                // Arrow keys step the album; Escape closes — this gallery is
+                // a desktop nav tab as well as a wall surface. There is only
+                // one place this overlay ever closes from (the backdrop
+                // click below), so the listener is torn down right there
+                // rather than needing a MutationObserver.
+                function onKeydown(e) {
+                    if (e.key === 'Escape') { closeOverlay(); return; }
+                    if (items.length <= 1) return;
+                    if (e.key === 'ArrowLeft') { idx = (idx - 1 + items.length) % items.length; draw(); }
+                    else if (e.key === 'ArrowRight') { idx = (idx + 1) % items.length; draw(); }
+                }
+                document.addEventListener('keydown', onKeydown);
+
+                overlay.addEventListener('click', e => {
+                    if (e.target.closest('.mg-prev') || e.target.closest('.mg-next')) return;
+                    closeOverlay();
                 });
                 draw();
                 document.body.appendChild(overlay);

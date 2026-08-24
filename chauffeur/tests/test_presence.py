@@ -1258,6 +1258,131 @@ def scenario_album_validation():
                   "pre-existing file survives album validation failure")
 
 
+def _media_file_snapshot():
+    import os
+    import services.storage as st
+    media_dir = st.MEDIA_DIR
+    if not (media_dir and os.path.isdir(media_dir)):
+        return None
+    files = set()
+    for root, dirs, fs in os.walk(media_dir):
+        for f in fs:
+            files.add(os.path.join(root, f))
+    return files
+
+
+def scenario_permission_checks_run_before_attachment_persists():
+    """A refused post must never leak files onto disk.
+
+    `_validate_moment_attachment` PERSISTS every item to the media store as
+    a side effect of validating it. It used to run at the very top of
+    `send_message`, before the sender-exists (404), channel-membership (403)
+    and scope (403) checks — so a post that was about to be REFUSED had
+    already written every one of its files, and nothing in this codebase
+    ever collects an unreferenced file. Validation now runs last, right
+    before the message is built, so none of those refusals can leave
+    anything behind."""
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+
+    _member("mom", "Mom", role="parent")
+    _member("dad", "Dad", role="parent")
+    _member("stranger", "Stranger", role="parent")
+    dm = storage.get_or_create_dm("mom", "dad")
+    bt = BackgroundTasks()
+
+    def photo():
+        return {"kind": "photo", "data_url": _TINY_JPEG, "w": 4, "h": 4}
+
+    # 403: not a member of this DM. A stranger's attachment must never touch
+    # disk on the way to being refused.
+    before = _media_file_snapshot()
+    try:
+        main.send_message(dm["id"], main.SendMessageRequest(
+            sender_member_id="stranger", body="", attachment=photo()), bt)
+        check(False, "expected 403")
+    except HTTPException as e:
+        check(e.status_code == 403, f"non-member post -> 403, got {e.status_code}")
+    after = _media_file_snapshot()
+    if before is not None:
+        check(after == before,
+              f"a 403-refused post left files on disk: {after - before}")
+
+    # 404: unknown sender. Same requirement — the attachment must not have
+    # been written before the sender was even confirmed to exist.
+    before = _media_file_snapshot()
+    try:
+        main.send_message(dm["id"], main.SendMessageRequest(
+            sender_member_id="ghost", body="", attachment=photo()), bt)
+        check(False, "expected 404")
+    except HTTPException as e:
+        check(e.status_code == 404, f"unknown sender -> 404, got {e.status_code}")
+    after = _media_file_snapshot()
+    if before is not None:
+        check(after == before,
+              f"a 404-refused post left files on disk: {after - before}")
+
+    # The empty-message guard must still work with validation deferred: no
+    # body and no attachment at all is rejected before ever reaching a
+    # channel/sender check that would otherwise 404/403 first.
+    try:
+        main.send_message(dm["id"], main.SendMessageRequest(
+            sender_member_id="mom", body="  "), bt)
+        check(False, "expected 400")
+    except HTTPException as e:
+        check(e.status_code == 400, f"empty message -> 400, got {e.status_code}")
+
+    # Sanity: a genuinely permitted post still persists and posts normally.
+    m = main.send_message(dm["id"], main.SendMessageRequest(
+        sender_member_id="mom", body="", attachment=photo()), bt)
+    check(m["attachment"]["url"].startswith("/api/media/"),
+          "a permitted post still persists its attachment")
+
+
+def scenario_album_stale_url_recovers_without_orphaning():
+    """`fresh` must be decided from whether validation actually wrote a NEW
+    file, not from the shape of the item's INPUT url.
+
+    An item can arrive with a stale `/api/media/...` url that no longer
+    resolves to anything on disk, alongside a `data_url` fallback. Its
+    single-item validation falls through to a fresh save in that case — and
+    that new file must be tracked as `created`, or a later item's failure
+    orphans it forever, since nothing in this codebase collects an
+    unreferenced file."""
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+
+    _member("mom", "Mom", role="parent")
+    ch = storage.get_or_create_event_channel("evStale", "Practice")
+    bt = BackgroundTasks()
+
+    stale_item = {"kind": "photo", "url": "/api/media/" + "d" * 32,
+                  "data_url": _TINY_JPEG, "w": 4, "h": 4}
+    bad_item = {"kind": "photo", "data_url": "not-a-data-url"}
+
+    # Force the media dir into existence (it is created lazily on first
+    # write) so the snapshot below is meaningful even when this scenario
+    # runs before any other photo has ever been saved.
+    main.send_message(ch["id"], main.SendMessageRequest(
+        sender_member_id="mom", body="",
+        attachment={"kind": "photo", "data_url": _TINY_JPEG}), bt)
+
+    before = _media_file_snapshot()
+    check(before is not None, "media dir must exist for this test to mean anything")
+    try:
+        main.send_message(ch["id"], main.SendMessageRequest(
+            sender_member_id="mom", body="",
+            attachment={"items": [stale_item, bad_item]}), bt)
+        check(False, "expected 400")
+    except HTTPException as e:
+        check(e.status_code == 400, "album with a stale-url item and a bad item still fails")
+
+    after = _media_file_snapshot()
+    check(after == before,
+          f"the stale item's fresh save was orphaned by the failing second item: "
+          f"{after - before}")
+
+
 def scenario_album_rides_the_wire():
     """A client must never have to reach into the raw attachment, and must
     never need a second request to learn what is in an album."""
@@ -1526,6 +1651,8 @@ SCENARIOS = [
     scenario_media_root_and_sharding,
     scenario_attachment_send_and_validation,
     scenario_album_validation,
+    scenario_permission_checks_run_before_attachment_persists,
+    scenario_album_stale_url_recovers_without_orphaning,
     scenario_reaction_toggle_and_endpoint,
     scenario_message_delete_and_edit,
     scenario_present_and_kept_away,

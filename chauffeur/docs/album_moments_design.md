@@ -113,8 +113,21 @@ feedback, locally, with none of that.
 **Failure is per item.** If item 3 of 5 exhausts its retries, the bubble stays
 failed and Retry resumes *only item 3* — the chunked upload already resyncs to
 the offset the server actually has. Nothing is posted until the set is whole.
-Discarding the bubble abandons the parts, and the existing 2-hour scratch
-sweep (`_sweep_stale_uploads`) collects them.
+
+**Discarding the bubble abandons the parts, and nothing collects them.** An
+earlier draft of this doc claimed the existing 2-hour scratch sweep
+(`_sweep_stale_uploads`) cleans them up; that is false on both halves.
+`_sweep_stale_uploads` only removes `*.part`/`*.meta` files from an upload
+that never finished CHUNKING — a completed item's `.part` has already been
+consumed by `finalize_media_upload` and moved into the media store, so the
+sweep never sees it. The only code path that removes media from the store is
+`storage._delete_media_for_attachment`, reachable solely from deleting a
+posted message. An album whose post never happens — the composer is
+discarded, the app is closed, or the final `POST /messages` never lands —
+leaves every already-uploaded item on disk, referenced by nothing, forever.
+Closing that gap needs an orphan sweep, which is explicitly **NOT** part of
+this arc; see `system_capabilities.md`'s Moments section for the same
+caveat.
 
 ## What each surface does
 
@@ -151,11 +164,19 @@ times did someone share" — and never appear beside each other.
 
 ### The PWA thread — `templates/app.html`
 
-The bubble renders a grid, sized to the count: 2 across for two, one large
-plus two for three, 2×2 for four, and 2×2 with a `+N` scrim on the last cell
-beyond that. Any cell opens the existing full-screen lightbox at that index,
-stepping with the same controls the gallery's uses. The caption sits below
-the grid, once.
+The bubble renders a grid, sized to the count: 2 across for two, a plain
+2-column grid for three (two on top, one below), 2×2 for four, and 2×2 with a
+`+N` scrim on the last cell beyond that. Any cell opens the existing
+full-screen lightbox at that index, stepping with the same controls the
+gallery's uses. The caption sits below the grid, once.
+
+**Built as a plain grid, not "one large plus two."** An earlier draft of this
+doc called for one large tile plus two smaller ones at three items, but that
+needs grid-area spans for a single count and buys nothing a plain 2-column
+grid doesn't already give — three items reads fine as two-up-one-down, and a
+special-cased layout for exactly one count was not worth the CSS. The shipped
+code (`albumGridHtml` in `templates/app.html`) and `system_capabilities.md`
+both describe the plain grid; this section is what was actually built.
 
 **Every cell is a still.** A clip in an album renders its poster frame with a
 play badge, never a live `<video>` — the gallery already refuses this for the

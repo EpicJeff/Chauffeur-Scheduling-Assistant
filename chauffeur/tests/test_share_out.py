@@ -304,6 +304,22 @@ def scenario_album_composer_is_atomic_and_capped():
     check('showGlobalAlert' in pick, 'and says so - never a browser dialog')
 
 
+def scenario_pop_carries_the_whole_album():
+    """`moment_stream_meta` carries an `items` list so an open PWA can pop an
+    album, not just its cover. `maybePopMoment` — the only consumer, reached
+    from the message-stream handler — has to pass it through to
+    `showMomentOverlay`, or a 5-photo album popped on someone's phone shows
+    one frame with no `<>` and no `3 / 5` while the wall panel beside them
+    steps through all five."""
+    pop = _extract('maybePopMoment')
+    check('items:' in pop,
+          'maybePopMoment does not pass items to showMomentOverlay - an '
+          'album pop would show a single frame with no stepping')
+    check('mo.items' in pop,
+          'the items passed through must come from the moment payload (mo), '
+          'not some other source')
+
+
 def scenario_lightbox_acts_on_the_item_on_screen():
     """Opening item three is the whole reason item three is the one you want."""
     src = _extract('showMomentOverlay')

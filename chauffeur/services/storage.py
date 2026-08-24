@@ -5534,7 +5534,14 @@ def attachment_items(att) -> List[dict]:
     One item for an ordinary moment, N for an album — so a caller can iterate
     without first asking which it has. THE only place that knows the album
     rule: `items` present means album, absent means the attachment IS the
-    media, and `items[0]` is always the same media the top level mirrors."""
+    media, and `items[0]` is always the same media the top level mirrors.
+
+    Any future migration that rewrites attachments (see the three in
+    services/migrations.py that already read/replace top-level `kind`/`url`)
+    MUST iterate this — or the equivalent of it — rather than touching only
+    the top-level fields. A migration that replaces the whole attachment dict
+    from top-level fields alone will silently flatten every album down to its
+    cover, discarding every other item with no error anywhere."""
     att = att or {}
     items = att.get('items')
     if isinstance(items, list) and items:

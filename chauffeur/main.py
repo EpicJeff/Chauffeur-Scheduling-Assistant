@@ -12214,10 +12214,6 @@ def _validate_moment_attachment(att: dict) -> dict:
                 raise HTTPException(status_code=400, detail="Unsupported attachment")
             if i.get('items') is not None:
                 raise HTTPException(status_code=400, detail="Albums do not nest")
-            # Did THIS call write the file? Only then is it ours to clean up.
-            # An item that arrived already stored belongs to whichever message
-            # first referenced it, and freeing it would be data loss.
-            fresh = not str(i.get('url') or '').startswith('/api/media/')
             try:
                 out = _validate_moment_attachment(i)
             except Exception:
@@ -12228,6 +12224,14 @@ def _validate_moment_attachment(att: dict) -> dict:
                 for c in created:
                     storage._delete_media_for_attachment(c)
                 raise
+            # Did THIS call write the file? Only then is it ours to clean up.
+            # An item that arrived already stored belongs to whichever message
+            # first referenced it, and freeing it would be data loss. Decide
+            # from whether the url actually changed, not the input url alone —
+            # a stale /api/media/... url that no longer resolves falls through
+            # to a fresh save inside _validate_moment_attachment, and that new
+            # file must be tracked too or a later item's 400 orphans it.
+            fresh = out.get('url') != i.get('url')
             if fresh:
                 created.append(out)
             items.append(out)
@@ -12341,8 +12345,13 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
     if channel.get('archived'):
         raise HTTPException(status_code=409, detail="Channel is archived")
     body = (req.body or '').strip()
-    attachment = _validate_moment_attachment(req.attachment) if req.attachment else None
-    if not body and not attachment:
+    # Validation is deferred until after every permission/membership check
+    # below: _validate_moment_attachment PERSISTS files to the media store,
+    # and a refused post (404/403) must not leak an album's files onto disk
+    # referenced by nothing. Test req.attachment (unvalidated) for presence
+    # here; the validated `attachment` isn't built until we know the post
+    # is actually going to happen.
+    if not body and not req.attachment:
         raise HTTPException(status_code=400, detail="Empty message")
     sender = storage.get_member(req.sender_member_id)
     if not sender:
@@ -12363,7 +12372,7 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
         # the schedule places at an event may hand the family a moment — an
         # upload tied to the event — without ever holding the thread.
         from services import presence as _presence
-        contributing = (channel.get('kind') == 'event' and attachment
+        contributing = (channel.get('kind') == 'event' and req.attachment
                         and _presence.member_present_at_channel_event(
                             channel, req.sender_member_id))
         if not contributing:
@@ -12377,6 +12386,9 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
                    'event_id': str(req.context.get('event_id') or '')[:80] or None,
                    'leg_id': str(req.context.get('leg_id') or '')[:80] or None,
                    'label': str(req.context.get('label') or '')[:80] or None}
+    # Every check above has passed: this post is actually happening, so this
+    # is the first point it's safe to persist the attachment's files.
+    attachment = _validate_moment_attachment(req.attachment) if req.attachment else None
     from models.schemas import ChatMessage
     message = ChatMessage(channel_id=channel_id,
                           sender_member_id=req.sender_member_id,
