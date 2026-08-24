@@ -452,6 +452,10 @@ def registries(ttl=300):
             continue
         opts = r.get('options') or {}
         sensor = opts.get('sensor') or {}
+        # `aliases` and friends ride along even when empty: HA's pickers
+        # iterate these rows and call list methods on fields the app shell
+        # always supplies — `aliases.join` on an absent field killed the
+        # area picker outright.
         out['entities'][r['entity_id']] = {
             'entity_id': r['entity_id'],
             'name': r.get('name'),
@@ -462,6 +466,9 @@ def registries(ttl=300):
             'platform': r.get('platform'),
             'display_precision': sensor.get('display_precision'),
             'hidden': bool(r.get('hidden_by')),
+            'entity_category': r.get('entity_category'),
+            'original_name': r.get('original_name'),
+            'aliases': r.get('aliases') or [],
             'labels': r.get('labels') or [],
         }
     for r in ha_api.ws_command('config/device_registry/list') or []:
@@ -470,7 +477,10 @@ def registries(ttl=300):
         out['devices'][r['id']] = {
             'id': r['id'],
             'name': r.get('name_by_user') or r.get('name'),
+            'name_by_user': r.get('name_by_user'),
             'area_id': r.get('area_id'),
+            'model': r.get('model'),
+            'manufacturer': r.get('manufacturer'),
             'labels': r.get('labels') or [],
         }
     for r in ha_api.ws_command('config/area_registry/list') or []:
@@ -493,6 +503,8 @@ def registries(ttl=300):
             'name': r.get('name'),
             'picture': pic,
             'icon': r.get('icon'),
+            'floor_id': r.get('floor_id'),
+            'aliases': r.get('aliases') or [],
             'labels': r.get('labels') or [],
         }
     cfg = ha_api.ws_command('get_config') or {}

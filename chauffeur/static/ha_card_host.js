@@ -377,6 +377,10 @@
                 fragments: [],
                 translations: { en: { nativeName: 'English', isRTL: false } },
             },
+            // Read as `hass.services[domain]` by the editors when they
+            // decide which controls an entity's domain offers. Empty means
+            // "offer nothing extra"; ABSENT meant a throw.
+            services: {},
             themes: { darkMode: spec.dark !== false, theme: 'default', themes: {} },
             config: {
                 unit_system: { temperature: '°F', length: 'mi', mass: 'lb',
@@ -811,6 +815,10 @@
                 fragments: [],
                 translations: { en: { nativeName: 'English', isRTL: false } },
             },
+            // Read as `hass.services[domain]` by the editors when they
+            // decide which controls an entity's domain offers. Empty means
+            // "offer nothing extra"; ABSENT meant a throw.
+            services: {},
             loadBackendTranslation: function () {
                 return Promise.resolve(humanize);
             },
@@ -958,9 +966,16 @@
             case 'hassInternationalization':
                 return builtinI18n();
             case 'narrowViewport': return false;
-            case 'hassUi':
-                return { darkMode: document.documentElement
-                    .getAttribute('data-panel-theme') !== 'light' };
+            case 'hassUi': {
+                // Consumers read `_ui?.themes.darkMode` — the optional
+                // chain guards the CONTEXT, not the field, so the value
+                // must carry a themes object or the select boxes throw.
+                var dark = document.documentElement
+                    .getAttribute('data-panel-theme') !== 'light';
+                return { darkMode: dark,
+                         themes: { darkMode: dark, theme: 'default',
+                                   themes: {} } };
+            }
         }
         return undefined;
     }

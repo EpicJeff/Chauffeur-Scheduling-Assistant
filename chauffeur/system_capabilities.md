@@ -5322,6 +5322,23 @@ retiring the imitation.
   path — `getConfigElement()` from the borrowed runtime is the obvious next
   slice, and until then `features:` (and any key outside the schema) is
   YAML-only: the form preserves such keys (v2.387.30) but cannot author them.
+- **v2.387.33 — the pool misses container-dwelling cards; picker shapes.**
+  The wall's last holdouts, run down with the user's console paste. (1) The
+  whole-house `ha_states` pool condition scanned TOP-LEVEL tiles for
+  `ha_card` — a household whose HA cards all live inside custom container
+  tiles has none, so the pool never shipped. Cards drew (each carries its
+  own states slice); the EDITORS, fed from the pool alone, saw an empty
+  house — amber pickers, features "not compatible", wrong lock icons. The
+  condition now scans tiles plus their cards. (2) HA's pickers call list
+  methods on registry fields the app shell always supplies — `aliases.join`
+  killed the area picker — so the slim rows now carry aliases/floor_id/
+  entity_category/model etc., empty when empty. (3) Two editor hass gaps
+  found by running the area and tile editors in the harness: `hassUi`
+  consumers read `_ui?.themes.darkMode` (the chain guards the context, not
+  the field) so the context value carries a `themes` object; and the tile
+  editor reads `hass.services[domain]`, so hass carries an empty services
+  map. Harness: thermostat + area + tile(lock) editors all mount with zero
+  console errors.
 - **v2.387.32 — the registries' size cap, and the whole theme.** Two more
   wall reports, one cause each. The pickers showed raw entity ids and the
   bundle's registries came up empty on a real install because

@@ -4996,9 +4996,16 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     # count too when they carry host cells: a stack of [custom card, gauge]
     # is the config people actually write.
     ha_states = None
-    if any(t['type'] == 'ha_card' and isinstance(t.get('data'), dict)
+    # Tiles AND the cards inside custom tiles: a household whose HA cards
+    # all live in custom containers has no top-level ha_card tile at all,
+    # and the pool never shipped — the cards still drew (each carries its
+    # own states slice) but every surface fed from the pool alone saw an
+    # empty house. The card EDITORS were that surface: entity pickers
+    # amber, features "not compatible", lock icons wrong.
+    drawn = list(tiles) + [c for t in tiles for c in (t.get('cards') or [])]
+    if any(t.get('type') == 'ha_card' and isinstance(t.get('data'), dict)
            and (t['data'].get('mode') == 'host' or t['data'].get('hosts'))
-           for t in tiles):
+           for t in drawn):
         try:
             from services import ha_cards
             ha_states = ha_cards.states_all()

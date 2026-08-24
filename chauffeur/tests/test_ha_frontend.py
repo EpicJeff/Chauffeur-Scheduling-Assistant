@@ -243,6 +243,26 @@ def scenario_the_real_editors_come_off_the_runtime():
     check('ensureForm()' in home,
           'the fallback form path never asks for a form layer, and the '
           'shims no longer define themselves')
+    # The editors' hass gaps found by running them: hassUi consumers read
+    # `_ui?.themes.darkMode` (the chain guards the context, not the field),
+    # and the tile editor reads `hass.services[domain]`.
+    check('themes: { darkMode: dark' in host,
+          "the hassUi context has no themes object — select boxes throw")
+    check('services: {},' in host,
+          'hass has no services map — the tile editor throws per domain')
+
+
+def scenario_the_pool_reaches_cards_inside_custom_tiles():
+    """A household whose HA cards all live inside custom container tiles
+    has no top-level ha_card tile, and the whole-house states pool never
+    shipped: cards drew (each carries its own slice) while the editors —
+    fed from the pool alone — saw an empty house. Entity pickers amber,
+    every feature 'not compatible', lock icons wrong."""
+    import inspect
+    from services import home_board
+    src = inspect.getsource(home_board.build)
+    check("(t.get('cards') or [])" in src,
+          'the ha_states condition only scans top-level tiles again')
 
 
 def scenario_no_home_assistant_is_an_answer_not_an_error():
@@ -367,6 +387,10 @@ def scenario_an_area_photograph_rides_the_artwork_proxy():
               f"the proxied path does not decode back: {back!r}")
         check(reg['areas']['kit']['picture'] is None,
               'an area with no photograph grew one')
+        # The fields HA's pickers CALL METHODS ON ride along even when
+        # empty — `aliases.join` on an absent field killed the area picker.
+        check(reg['areas']['lr']['aliases'] == [], 'areas lost aliases')
+        check('floor_id' in reg['areas']['lr'], 'areas lost floor_id')
     finally:
         ha_api.ws_command = orig
         ha_frontend.reset()
