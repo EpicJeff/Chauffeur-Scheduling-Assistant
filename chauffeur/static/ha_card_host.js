@@ -786,6 +786,28 @@
                         });
                 }));
             })
+            .then(function () {
+                // `hui-image` — the element the AREA card renders its
+                // photograph through — is not in any eager card's import
+                // graph; inside HA the view machinery pulls it in. Its
+                // chunk sat REGISTERED in the lovelace set while the module
+                // never executed, so the card rendered an unknown element:
+                // properties landed as expandos, no shadow root, no
+                // request, nothing in the console. The picture-entity card
+                // imports it by definition, so requiring that one lazy
+                // entry defines it for everybody — release-proof, because
+                // the map is HA's own.
+                var row = builtin.map['picture-entity'];
+                if (!row) return;
+                var o = window.__haWpr;
+                return Promise.all((row.chunks || []).map(function (c) {
+                    return o.e(c);
+                })).then(function () { return o(row.module); })
+                    .catch(function (e) {
+                        console.warn('[ha_card_host] picture-entity preload:',
+                            e && e.message);
+                    });
+            })
             .then(function () { builtin.ready = true; return true; })
             .catch(function (e) {
                 console.warn('[ha_card_host] builtin cards unavailable:',

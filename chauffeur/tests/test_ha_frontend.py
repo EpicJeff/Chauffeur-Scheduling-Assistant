@@ -172,6 +172,20 @@ def scenario_the_ui_strings_are_findable():
         check(not ok(bad), f"the translations proxy would serve {bad!r}")
 
 
+def scenario_the_elements_no_card_imports_are_still_defined():
+    """The area card renders its photograph through hui-image, which is in
+    NO eager card's import graph — inside HA the view machinery defines it.
+    Its chunk sat registered while the module never ran, so the card drew
+    an unknown element: expando properties, no shadow root, no request,
+    nothing in the console. The boot requires the picture-entity lazy entry
+    — which imports hui-image by definition — so the element exists for
+    everybody, out of HA's own map."""
+    host = open(os.path.join(STATIC, 'ha_card_host.js'), encoding='utf-8').read()
+    check("builtin.map['picture-entity']" in host,
+          'the picture-entity preload is gone — area photographs render an '
+          'undefined hui-image and silently show nothing')
+
+
 def scenario_the_static_proxies_beat_the_static_mount():
     """Starlette matches in REGISTRATION order and app.mount('/static')
     swallows everything under it — the mdi and translation proxies

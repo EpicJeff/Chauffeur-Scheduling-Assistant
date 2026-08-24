@@ -5322,6 +5322,17 @@ retiring the imitation.
   path — `getConfigElement()` from the borrowed runtime is the obvious next
   slice, and until then `features:` (and any key outside the schema) is
   YAML-only: the form preserves such keys (v2.387.30) but cannot author them.
+- **v2.387.36 — the element nobody imports.** Area photographs, final
+  cause (diagnosed end-to-end against the live install: registries full,
+  pictures present, proxy serving JPEG — and the console CLEAN, because
+  nothing ever asked). The area card renders its photograph through
+  `hui-image`, which is in no eager card's import graph — inside HA the
+  view machinery defines it. Its chunk sat REGISTERED in the lovelace set
+  while the module never executed, so the card drew an unknown element:
+  properties landed as expandos, no shadow root, no request, no error.
+  The boot now also requires the `picture-entity` lazy entry — which
+  imports hui-image by definition — out of HA's own map, so the element
+  exists for everybody, release-proof. Harness: the photograph draws.
 - **v2.387.35 — the mount that ate the proxies, and the doubled base.**
   The wall report that cracked it: ingress showed every icon, the
   cloudflare tunnel lost the ws-resolved ones. Through INGRESS the page's
