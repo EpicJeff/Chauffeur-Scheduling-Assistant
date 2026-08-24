@@ -1294,6 +1294,13 @@ def scenario_permission_checks_run_before_attachment_persists():
     def photo():
         return {"kind": "photo", "data_url": _TINY_JPEG, "w": 4, "h": 4}
 
+    # Force the media dir into existence (it is created lazily on first
+    # write) so the snapshot below is meaningful even when this scenario
+    # runs before any other photo has ever been saved.
+    main.send_message(dm["id"], main.SendMessageRequest(
+        sender_member_id="mom", body="",
+        attachment={"kind": "photo", "data_url": _TINY_JPEG}), bt)
+
     # 403: not a member of this DM. A stranger's attachment must never touch
     # disk on the way to being refused.
     before = _media_file_snapshot()
@@ -1304,9 +1311,8 @@ def scenario_permission_checks_run_before_attachment_persists():
     except HTTPException as e:
         check(e.status_code == 403, f"non-member post -> 403, got {e.status_code}")
     after = _media_file_snapshot()
-    if before is not None:
-        check(after == before,
-              f"a 403-refused post left files on disk: {after - before}")
+    check(after == before,
+          f"a 403-refused post left files on disk: {after - before}")
 
     # 404: unknown sender. Same requirement — the attachment must not have
     # been written before the sender was even confirmed to exist.
@@ -1318,9 +1324,8 @@ def scenario_permission_checks_run_before_attachment_persists():
     except HTTPException as e:
         check(e.status_code == 404, f"unknown sender -> 404, got {e.status_code}")
     after = _media_file_snapshot()
-    if before is not None:
-        check(after == before,
-              f"a 404-refused post left files on disk: {after - before}")
+    check(after == before,
+          f"a 404-refused post left files on disk: {after - before}")
 
     # The empty-message guard must still work with validation deferred: no
     # body and no attachment at all is rejected before ever reaching a

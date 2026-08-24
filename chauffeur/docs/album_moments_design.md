@@ -1,6 +1,6 @@
 # Album Moments
 
-**Status:** design approved 2026-08-23, unimplemented
+**Status:** SHIPPED 2026-08-23, v2.387.0 – v2.387.23
 **Related:** `docs/presence_status_design.md` (Slice 4, where moments came from),
 `system_capabilities.md` §Moments
 
