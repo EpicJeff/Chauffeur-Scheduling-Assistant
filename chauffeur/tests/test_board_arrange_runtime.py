@@ -88,6 +88,18 @@ function emptyGrid(tileId) {
   grid.closest = sel => sel === '[data-cards]' ? grid : null;
   return grid;
 }
+// A native Home Assistant vertical-stack/grid card drawn INSIDE a Custom
+// tile hangs its own sub-cells in the SAME `[data-cards]` grid, addressed by
+// a NUMERIC path like "0.1" — its position in that card's own nested config
+// tree — rather than a stored card's id.
+function numericCell(tileId, path) {
+  const grid = { dataset: { cards: tileId } };
+  grid.closest = sel => sel === '[data-cards]' ? grid : null;
+  const cell = { dataset: { path: path } };
+  cell.closest = sel => sel === '[data-cards]' ? grid
+                      : sel === '[data-path]' ? cell : null;
+  return cell;
+}
 globalThis.document = {
   documentElement: { getAttribute: function () { return 'dark'; } },
   getElementById: function (id) {
@@ -210,7 +222,9 @@ const drawnAfter = b.cardsOf(mine()).map(c => c.id);
 b.setCardNum(draftCards[0], 'cols', 6, 12);
 b.setCardNum(draftCards[0], 'rows', 3, 0);
 const sized = b.cardsOf(mine())[0];
-// Defaults stop being stored; nonsense is clamped rather than drawn.
+// Defaults stop being stored; an in-range value is kept exactly as given
+// (900 is well inside the 0-1000 cap now, so this is not the clamping
+// case — that is proven separately, below, by `clampedRows`).
 b.setCardNum(draftCards[1], 'cols', 12, 12);
 b.setCardNum(draftCards[1], 'rows', 900, 0);
 const tidy = JSON.stringify(draftCards[1].config);
@@ -228,6 +242,31 @@ b.openCardEditor('mine', 'mine-weather');
 const editingId = b.editing && b.editing.id;
 b.closeCardEditor();
 
+// Stubbed here rather than where the cross-tile scenarios need it below: a
+// completed drag calls `load()` to show the draft's result, and the numeric-
+// path scenario right after this drives a real pointer gesture through
+// `moveTileCard` too.
+b.load = () => {};                    // the redraw is a fetch; not this test's job
+
+// An ordinary SAME-TILE drag that merely crosses over a nested Home
+// Assistant card's own numeric-path cell must not move anything: `seat`
+// used to slice the tile-id prefix off `"0.1"` blindly, get "", match no
+// real card, and fall back to "the end of the list" — so hovering over one
+// of those cells mid-drag silently yanked the dragged card to the tile's
+// last slot. The pre-existing code did nothing in that case, and that is
+// the behaviour being defended here.
+const beforeNumericMiss = b._cardsOf('mine').map(c => c.id);
+{
+  const cards = b._cardsOf('mine');
+  const at = cards.findIndex(c => c.id === 'weather');
+  const cell = cardCell('mine', 'weather');
+  b.moveTileCard({ clientX: 0, clientY: 0 }, cards, at, cell, 'mine');
+  globalThis.AIM = numericCell('mine', '0.1');
+  globalThis.__win.pointermove({ clientX: 400, clientY: 400 });
+  globalThis.__win.pointerup();
+}
+const afterNumericMiss = b._cardsOf('mine').map(c => c.id);
+
 // --- Dragging a card from one Custom tile into another.
 b.page().widgets.push({ id: 'yours', type: 'custom', config: { cards: [
   { id: 'weather', type: 'weather', config: {} } ] } });
@@ -235,16 +274,19 @@ b.board.tiles.push({ id: 'yours', type: 'custom', locked: false, cards: [
   { id: 'yours-weather', type: 'weather', cols: 12, rows: 0, config: {}, data: {} } ] });
 b.catalog = { widgets: [{ key: 'custom', container: true },
                         { key: 'chores' }, { key: 'weather' }, { key: 'map' }] };
-b.load = () => {};                    // the redraw is a fetch; not this test's job
 
+// `globalThis.__win.pointermove`/`.pointerup` are the closures the harness's
+// `addEventListener` stub captured by type — the same route a real drag's
+// handlers are found by, so there is nothing left on the component itself
+// for a test to reach into.
 const drag = (fromTile, cardId, aim) => {
   const cards = b._cardsOf(fromTile);
   const at = cards.findIndex(c => c.id === cardId);
   const cell = cardCell(fromTile, cardId);
   b.moveTileCard({ clientX: 0, clientY: 0 }, cards, at, cell, fromTile);
   globalThis.AIM = aim;
-  b.__move({ clientX: 400, clientY: 400 });     // past the 6px slack
-  b.__up();
+  globalThis.__win.pointermove({ clientX: 400, clientY: 400 });  // past the 6px slack
+  globalThis.__win.pointerup();
 };
 
 drag('mine', 'weather', cardCell('yours', 'weather'));
@@ -272,8 +314,18 @@ const afterLocked = b._cardsOf('mine').map(c => c.id);
 // didn't already say — so the alert fires once for the whole drag, not
 // once per full tile it happens to pass over. Reuses the same alert
 // collector as the scenario above rather than a second one.
-b.page().widgets.push({ id: 'theirs', type: 'custom', config: { cards: [] } });
-b.board.tiles.push({ id: 'theirs', type: 'custom', locked: false, cards: [] });
+//
+// The mid-drag hop lands on an ORDINARY card cell in a non-empty tile —
+// `theirs` carries one card from the start — rather than on the tile's bare
+// grid. An empty grid's own `[data-cards]` element used to be `display:none`
+// in the real markup (`x-show="cardsOf(t).length"`, no `arranging` escape
+// hatch), so a stub standing in for it here was standing in for a DOM shape
+// that could not exist on the wall and would have hidden that bug forever.
+// Dropping onto an actually-empty tile's grid is its own scenario, below.
+b.page().widgets.push({ id: 'theirs', type: 'custom', config: { cards: [
+  { id: 'filler', type: 'weather', config: {} } ] } });
+b.board.tiles.push({ id: 'theirs', type: 'custom', locked: false, cards: [
+  { id: 'theirs-filler', type: 'weather', cols: 12, rows: 0, config: {}, data: {} } ] });
 const alertsBeforeRevisit = alerts.length;
 {
   const cards = b._cardsOf('mine');
@@ -281,15 +333,31 @@ const alertsBeforeRevisit = alerts.length;
   const cell = cardCell('mine', 'chores');
   b.moveTileCard({ clientX: 0, clientY: 0 }, cards, at, cell, 'mine');
   globalThis.AIM = cardCell('yours', 'x0');     // full tile: refused, said
-  b.__move({ clientX: 400, clientY: 400 });
-  globalThis.AIM = emptyGrid('theirs');         // valid tile: accepted
-  b.__move({ clientX: 401, clientY: 401 });
+  globalThis.__win.pointermove({ clientX: 400, clientY: 400 });
+  globalThis.AIM = cardCell('theirs', 'filler'); // valid tile: accepted
+  globalThis.__win.pointermove({ clientX: 401, clientY: 401 });
   globalThis.AIM = cardCell('yours', 'x0');     // full tile again: still said
-  b.__move({ clientX: 402, clientY: 402 });
-  b.__up();
+  globalThis.__win.pointermove({ clientX: 402, clientY: 402 });
+  globalThis.__win.pointerup();
 }
 const afterRevisit = { theirs: b._cardsOf('theirs').map(c => c.id),
                        said: alerts.length - alertsBeforeRevisit };
+
+// Dropping onto an EMPTY tile's grid — no `[data-path]` cell under the
+// pointer at all, exactly what a tile with no cards draws — has to append
+// rather than do nothing. This is the shape finding 1 fixed on the markup
+// side (the grid is now hittable while arranging even with zero cards); this
+// half proves the handler's own logic treats "landed on the grid, not a
+// card" as a valid drop rather than a miss.
+// Not pushed to `board.tiles`: `_containerCards`/`_cardsOf` only ever read
+// `page().widgets` (the same reason `holder`, below, is not on the board
+// either), and a tile added here would shift `scenario_a_drag_reorders_the_
+// tiles_that_are_drawn`'s expected order for no reason connected to what
+// this scenario is proving.
+b.page().widgets.push({ id: 'empty', type: 'custom', config: { cards: [] } });
+drag('yours', 'x0', emptyGrid('empty'));
+const afterEmptyDrop = { empty: b._cardsOf('empty').map(c => c.id),
+                         yoursHasX0: b._cardsOf('yours').some(c => c.id === 'x0') };
 
 // An HA card INSIDE a Custom tile. Its drawn id is namespaced by the tile, so
 // a straight lookup in `widgets` finds nothing — and the handler had already
@@ -299,6 +367,25 @@ b.page().widgets.push({ id: 'holder', type: 'custom', config: { cards: [
 const holder = b._cardConfigHolder('holder-ha_card');
 const topLevel = b._cardConfigHolder('mine');
 const nobody = b._cardConfigHolder('holder-nothing');
+
+// The swallowed drag itself, not just the lookup it depends on: `startCardDrag`
+// used to call `preventDefault`/`stopPropagation` BEFORE resolving which
+// record a drawn id belongs to, so a drag with nowhere to go still ate the
+// gesture, silently, forever. Calling `_cardConfigHolder` on its own proves
+// the lookup is right but not that the handler consults it before claiming
+// the pointer — only driving `startCardDrag` itself proves that.
+function gripTarget(pathId) {
+  const cell = { dataset: { path: pathId } };
+  return { closest: sel => sel === '.nc-card-move' ? {}
+                          : sel === '[data-path]' ? cell : null };
+}
+let missClaimed = false, hitClaimed = false;
+await b.startCardDrag({ button: 0, target: gripTarget('holder-nothing'),
+  preventDefault: () => { missClaimed = true; }, stopPropagation: () => {} },
+  { id: 'holder-nothing' });
+await b.startCardDrag({ button: 0, target: gripTarget('holder-ha_card'),
+  preventDefault: () => { hitClaimed = true; }, stopPropagation: () => {} },
+  { id: 'holder-ha_card' });
 
 // --- The resize grip's pitch is the GRID's, not a hardcoded 56. Neither
 // `resizeTileCard` nor `resizeCardCell` had ever been driven through an
@@ -435,16 +522,21 @@ console.log(JSON.stringify({
   lockedDraw: lockedDraw,
   editingId: editingId,
   editingCleared: b.editing === null,
+  beforeNumericMiss: beforeNumericMiss,
+  afterNumericMiss: afterNumericMiss,
   afterCross: afterCross,
   afterFull: afterFull,
   afterLocked: afterLocked,
   afterRevisit: afterRevisit,
+  afterEmptyDrop: afterEmptyDrop,
   rowsAt200: rowsAt200,
   rowsAt56: rowsAt56,
   gridVars: gridVars,
   holderYaml: (holder && holder.config || {}).config || null,
   holderTop: !!(topLevel && topLevel.type === 'custom'),
   holderMiss: nobody,
+  missClaimed: missClaimed,
+  hitClaimed: hitClaimed,
 }));
 """
 
@@ -651,7 +743,8 @@ def scenario_a_card_at_its_default_size_stores_nothing():
     if got is None:
         return
     check(got['tidy'] == '{"rows":900}',
-          f"a default was stored, or nonsense was not clamped: {got['tidy']}")
+          f"a default was stored, or an in-range value was not kept as "
+          f"given: {got['tidy']}")
 
 
 def scenario_a_card_can_be_as_tall_as_the_board_allows():
@@ -835,16 +928,55 @@ def scenario_a_refusal_is_said_once_per_drag_not_once_per_full_tile():
     valid one, then the same full tile again has nothing new to tell the
     household the first refusal didn't already say — resetting the flag on
     every successful hop would let a wandering pointer rattle off the same
-    sentence twice in one drag."""
+    sentence twice in one drag.
+
+    The valid mid-drag hop lands on an ordinary card in a tile that already
+    holds one — `theirs` starts with `filler` — rather than on a bare empty
+    grid: the drop-on-an-empty-grid case is its own scenario, and standing in
+    for it here would have been standing in for a DOM shape that could not
+    exist before finding 1 was fixed."""
     got = _run()
     if got is None:
         return
-    check(got['afterRevisit']['theirs'] == ['chores'],
+    check(got['afterRevisit']['theirs'] == ['chores', 'filler'],
           f"the valid tile visited mid-drag did not receive the card: "
           f"{got['afterRevisit']}")
     check(got['afterRevisit']['said'] == 1,
           f"a full tile visited twice in one drag said the refusal more "
           f"than once: {got['afterRevisit']}")
+
+
+def scenario_a_card_dropped_on_an_empty_tiles_grid_appends():
+    """The design says it plainly: dropping onto the grid of a Custom tile
+    that has no cards appends. Before finding 1's fix, that grid was
+    `display:none` whenever a tile had no cards, so `elementFromPoint` could
+    never land on it or anything inside it — the drop this scenario proves
+    could not have reached the handler at all on a real board."""
+    got = _run()
+    if got is None:
+        return
+    check(got['afterEmptyDrop']['empty'] == ['x0'],
+          f"a card dropped on an empty tile's grid did not land there: "
+          f"{got['afterEmptyDrop']}")
+    check(not got['afterEmptyDrop']['yoursHasX0'],
+          f"the card was copied rather than moved: {got['afterEmptyDrop']}")
+
+
+def scenario_a_same_tile_drag_over_a_nested_numeric_path_is_a_no_op():
+    """A native Home Assistant stack card drawn inside a Custom tile hangs
+    its own sub-cells in the tile's OWN card grid, addressed by a numeric
+    path like `0.1` rather than a stored card's id. `seat` used to slice the
+    tile-id prefix off that path blindly, match nothing, and fall back to
+    'the end of the list' — so an ordinary reorder that merely crossed over
+    one of those cells silently yanked the dragged card to the tile's last
+    slot."""
+    got = _run()
+    if got is None:
+        return
+    check(got['afterNumericMiss'] == got['beforeNumericMiss'],
+          f"hovering over a nested card's numeric-path cell moved the "
+          f"dragged card anyway: {got['beforeNumericMiss']} -> "
+          f"{got['afterNumericMiss']}")
 
 
 def scenario_a_resize_grips_pitch_is_the_grids_not_a_hardcoded_56():
@@ -890,6 +1022,24 @@ def scenario_a_card_inside_a_custom_tile_can_be_dragged():
     check(got['holderTop'], "a top-level tile is no longer its own holder")
     check(got['holderMiss'] is None,
           f"an id belonging to nothing resolved to something: {got['holderMiss']}")
+
+
+def scenario_a_drag_with_nowhere_to_go_never_claims_the_gesture():
+    """The fix was an ORDERING inside `startCardDrag`: the id is resolved
+    BEFORE `preventDefault`/`stopPropagation` run, not after. A test that only
+    calls `_cardConfigHolder` on the side cannot see that ordering regress —
+    reverting the swap in `startCardDrag` would still pass one that does. This
+    drives the handler itself and checks the claim, not just the lookup."""
+    got = _run()
+    if got is None:
+        return
+    check(got['missClaimed'] is False,
+          "a drag whose id resolves to nothing still claimed the gesture "
+          "(preventDefault was called) — it should reach whatever is under "
+          "the pointer instead")
+    check(got['hitClaimed'] is True,
+          "a drag whose id resolves to a real card never claimed the "
+          "gesture — nothing would move")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

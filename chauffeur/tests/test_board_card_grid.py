@@ -39,7 +39,16 @@ PAGE = """
 {grid_css}
 </style>
 <div class="tile"><div class="nc-stack-grid" id="g" style="{vars}">
-  <div class="nc-cell" id="tall"  style="{tall}">tall</div>
+  <div class="nc-cell" id="tall"  style="{tall}">tall
+    <!-- A Home Assistant stack drawn INSIDE a Custom tile's card: it carries
+         the SAME class as the outer grid, and never sets --nc-row/--nc-gap
+         inline the way the outer one does — so it has to fall back to the
+         class's own 56px/12px, not inherit the board's numbers from its
+         ancestor. That is the split Decision 1b turns on. -->
+    <div class="nc-stack-grid" id="inner">
+      <div class="nc-cell" id="innerCell" style="{inner}">nested</div>
+    </div>
+  </div>
   <div class="nc-cell" id="topA"  style="{short}">a</div>
   <div class="nc-cell" id="topB"  style="{short}">b</div>
 </div></div>
@@ -52,7 +61,8 @@ PROBE = """
     return { top: Math.round(r.top), bottom: Math.round(r.bottom),
              left: Math.round(r.left), height: Math.round(r.height) };
   };
-  return { tall: box('tall'), a: box('topA'), b: box('topB') };
+  return { tall: box('tall'), a: box('topA'), b: box('topB'),
+           innerCell: box('innerCell') };
 }
 """
 
@@ -75,7 +85,11 @@ def _measure(row, gap, tall_rows, short_rows):
     page = (PAGE.replace('{grid_css}', chr(10).join(rules))
                 .replace('{vars}', f'--nc-row:{row}px;--nc-gap:{gap}px')
                 .replace('{tall}', cell(6, tall_rows))
-                .replace('{short}', cell(6, short_rows)))
+                .replace('{short}', cell(6, short_rows))
+                # A fixed 2-row cell inside the nested grid: this is checked
+                # only by the cross-grid scenario below, but it has to be laid
+                # out for every scenario since it lives inside `tall`.
+                .replace('{inner}', cell(12, 2)))
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         tab = browser.new_page()
@@ -118,6 +132,25 @@ def scenario_a_span_equals_the_stack_beside_it_at_any_row_and_gutter():
         check(got['tall']['height'] == 4 * row + 3 * gap,
               f"a four-row card at row={row} gap={gap} is "
               f"{got['tall']['height']}px, not {4 * row + 3 * gap}px")
+
+
+def scenario_a_nested_ha_stack_keeps_its_own_row_unit():
+    """The cascade the design leans on: a Custom tile's grid takes the
+    board's row and gutter through an INLINE style, and a Home Assistant
+    stack nested inside one of its cards carries the same `.nc-stack-grid`
+    class but never sets that inline override, so it falls back to the
+    class's own 56px row and 12px (0.75rem) gutter rather than inheriting the
+    board's numbers from its ancestor. Proven at a board row (10px) and
+    gutter (20px) far enough from 56/12 that inheriting them would be
+    obviously wrong."""
+    got = _measure(row=10, gap=20, tall_rows=4, short_rows=2)
+    if got is None:
+        return
+    want = 2 * 56 + 1 * 12
+    check(got['innerCell']['height'] == want,
+          f"a nested Home Assistant stack's cell measures "
+          f"{got['innerCell']['height']}px, not {want}px — it inherited the "
+          f"outer Custom tile grid's row/gutter instead of keeping HA's own")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

@@ -115,9 +115,11 @@ differ, the override can be added then without changing anything here.
 - **`fill` cards** keep their measured pixel height and one row span. `fill`
   means "take the rest of the screen", which is a measurement, not a row count.
 - **Drawn cards with no intrinsic height** (a map, a mounted calendar, a
-  camera) keep `min-height: calc(4 * var(--nc-row))` when unsized. The content
-  is laid out *into* the box, so "as tall as the content" has no answer for
-  them, and fit still means fill.
+  camera) keep a fixed 224px floor when unsized — the height `calc(4 *
+  var(--nc-row))` drew before `--nc-row` became the board's. Decision 1b
+  already covers why it cannot stay a formula: at a 10px board row, four rows
+  is a collapsed card again. The content is laid out *into* the box, so "as
+  tall as the content" has no answer for them, and fit still means fill.
 - **`.nc-free`** stays. It is about stretching, which row spans do not replace.
 - **The stored data shape.** `cols` and `rows` keep their names, their ranges
   (1–12 and 0–40) and their meaning as twelfths of the tile and rows of 56px.

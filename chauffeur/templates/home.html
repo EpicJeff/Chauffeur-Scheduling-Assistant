@@ -69,7 +69,11 @@
            `grid_options: {columns: 6, rows: 3}` mean the same thing wherever
            it sits, which is the whole point of honouring them at all.
            `--nc-row` is Home Assistant's own section row height, so a `rows`
-           copied out of a dashboard is the height it was there. */
+           copied out of a dashboard is the height it was there. That is the
+           CLASS default, for a Home Assistant stack's own cells; the Custom
+           tile's own card grid overrides both variables inline with the
+           board's row height and gap, so a card typed into THIS panel's
+           editor means what the same number means in board settings. */
         .nc-stack-grid {
             --nc-row: 56px;
             --nc-gap: 0.75rem;
@@ -87,6 +91,11 @@
            sized card in it stops stretching, and each card is the height it
            was actually given. */
         .nc-stack-grid.nc-free { align-items: start; }
+        /* An empty Custom tile's grid has nothing in it to give it height, so
+           without a floor it is a 0px box a drag can never land on. Gated to
+           arrange mode: a tile with cards is already the height of its cards,
+           and a tile with none is not drawn at all outside arrange mode. */
+        .nc-stack-grid.nc-arranging { min-height: 64px; }
         /* Each card in a stack gets its own SURFACE.
            Side by side with Home Assistant this was most of the difference:
            HA's stacks are stacks of cards, and ours were a stack of contents
@@ -940,11 +949,21 @@
                                 @click.prevent.stop="openCardPicker(t.id)"
                                 class="tile-add-card">+ Add card</button>
 
+                            <!-- An EMPTY tile still needs a grid on the wall while
+                                 arranging: dropping a dragged card onto it is how
+                                 an empty Custom tile receives its first card, and
+                                 `elementFromPoint` can never land on an element
+                                 `x-show` has set to `display:none`. The grid stays
+                                 mounted whenever arranging is on, and `nc-arranging`
+                                 gives it a floor to be hit against when it has no
+                                 cards to size it — gated to arranging so the live
+                                 wall never carries the extra height. -->
                             <div class="nc-stack-grid" :data-cards="t.id"
                                 :style="cardGridVars()"
                                 @pointerdown="arranging && startTileCardDrag($event, t.id)"
-                                :class="tileFree(t) ? 'nc-free' : ''"
-                                x-show="cardsOf(t).length">
+                                :class="[tileFree(t) ? 'nc-free' : '',
+                                         arranging ? 'nc-arranging' : '']"
+                                x-show="cardsOf(t).length || arranging">
                                 <template x-for="c in cardsOf(t)" :key="c.id">
                                     <!-- `data-plain` is the same no-surface
                                          state a nested stack's cell wears; a
@@ -2334,7 +2353,9 @@
                     // box, so with no box there is nothing to lay it into and
                     // the card collapsed to its padding. An absolute floor, not
                     // four rows of one: on a board whose row is 10px, four rows
-                    // is a collapsed card again.
+                    // is a collapsed card again. 224 is 4 * 56 — the height
+                    // this floor stood at before `rows` became the board's,
+                    // kept as a fixed pixel value so it does not shrink with it.
                     if (this.cardFills(c)) return s + 'min-height:224px';
                     return s;
                 },
@@ -4920,16 +4941,25 @@
                         if (!grid) return;
                         const onto = grid.dataset.cards;
                         const target = over.closest('[data-path]');
+                        // A miss is reported as -1, not as "the end": a native
+                        // Home Assistant stack card drawn INSIDE a Custom tile
+                        // hangs its own sub-cells in this same grid under a
+                        // numeric path (`"0.1"`), which does not name any card
+                        // in this tile's list. Same-tile and cross-tile mean
+                        // different things by a miss — same-tile has nowhere
+                        // sane to put the card, so it is a no-op; cross-tile has
+                        // nothing better than the end of the list — so each
+                        // branch below decides for itself rather than seat()
+                        // guessing "append" for both.
                         const seat = (l, tile) => {
-                            if (!target) return l.length;
+                            if (!target) return -1;
                             const id = String(target.dataset.path).slice(tile.length + 1);
-                            const j = l.findIndex(c => c.id === id);
-                            return j === -1 ? l.length : j;
+                            return l.findIndex(c => c.id === id);
                         };
                         if (onto === host) {
                             if (!target || target === cell) return;
                             const to = seat(list, host);
-                            if (to === from) return;
+                            if (to === -1 || to === from) return;
                             list.splice(to, 0, list.splice(from, 1)[0]);
                             from = to;
                             return;
@@ -4958,7 +4988,13 @@
                             while (taken.has(id)) id = `${card.type}-${n++}`;
                             card.id = id;
                         }
-                        const to = seat(dest, onto);
+                        // A miss here — dropping onto the grid itself rather
+                        // than a card, which is exactly how an EMPTY tile is
+                        // dropped onto — means append, not "do nothing": the
+                        // design's rule is "dropping onto the grid of a Custom
+                        // tile that has no cards appends."
+                        const j = seat(dest, onto);
+                        const to = j === -1 ? dest.length : j;
                         dest.splice(to, 0, card);
                         // `said` is NOT reset here: the refusal is said once
                         // per DRAG, not once per full tile visited. A pointer
@@ -4978,11 +5014,6 @@
                         // show it where the draft now says it is.
                         if (moved) this.load();
                     };
-                    // Named on the component so the runtime test can drive the
-                    // gesture: node has no pointer, and a drag nobody can run
-                    // is a drag nobody can test.
-                    this.__move = move;
-                    this.__up = up;
                     window.addEventListener('pointermove', move);
                     window.addEventListener('pointerup', up);
                     window.addEventListener('pointercancel', up);
