@@ -6358,6 +6358,92 @@ def ha_card_resource(url: str, request: Request = None):
     return Response(content=content, media_type=content_type,
                     headers={'Cache-Control': 'max-age=3600'})
 
+@app.get("/api/ha/frontend/bundle")
+def ha_frontend_bundle():
+    """Everything the browser needs to run HA's OWN built-in cards: the
+    patched runtime's address, the chunk set, the card map, and the registry
+    slices their `hass` reads. `ok: false` is a real answer — the client keeps
+    the converter drawings, which is the fallback this whole feature stands on.
+    """
+    from services import ha_frontend
+    meta = ha_frontend.bundle()
+    if not meta:
+        return {'ok': False, 'error': ha_frontend.last_error()
+                or 'Home Assistant is not reachable'}
+    reg = ha_frontend.registries()
+    return {
+        'ok': True,
+        'version': meta['app_hash'],
+        'runtime': f"api/ha/frontend/latest/runtime.{meta['app_hash']}.js",
+        'chunks': meta['chunks'],
+        'eager_modules': meta['eager_modules'],
+        'cards': meta['cards'],
+        'entities': reg['entities'],
+        'devices': reg['devices'],
+        'areas': reg['areas'],
+        'config': reg['config'],
+    }
+
+@app.get("/api/ha/frontend/theme/{app_hash}.css")
+def ha_frontend_theme(app_hash: str):
+    """HA's default theme tokens as a stylesheet, for the hosted built-ins.
+
+    Class-scoped, never global: `.ha-builtin-theme` carries the base set and
+    `.ha-builtin-theme.ha-dark` the dark overrides. The panel's own tokens are
+    set inline on the same element, and inline beats class — HA supplies the
+    long tail (state colours, slider tracks), the wall keeps its branding."""
+    from services import ha_frontend
+    meta = ha_frontend.bundle()
+    if not meta or meta['app_hash'] != app_hash:
+        raise HTTPException(status_code=404, detail="No such theme")
+    css = ('.ha-builtin-theme{' + (meta.get('theme_base') or '') + '}\n'
+           '.ha-builtin-theme.ha-dark{' + (meta.get('theme_dark') or '') + '}\n')
+    return Response(content=css, media_type='text/css; charset=utf-8',
+                    headers={'Cache-Control': 'max-age=31536000, immutable'})
+
+@app.get("/api/ha/frontend/latest/{fname}")
+def ha_frontend_file(fname: str):
+    """HA's frontend chunks, served on THIS origin — ES modules refuse to
+    load cross-origin without CORS headers HA does not send. The runtime is
+    the one file we patched; everything else passes through untouched.
+
+    Tokenless on both sides: these are the same unauthenticated static files
+    HA hands any browser before sign-in. Hard-cached — the hash is in every
+    filename, so a changed frontend is a changed URL."""
+    from services import ha_frontend, ha_api
+    m = re.match(r'^runtime\.([0-9a-f]{8,32})\.js$', fname)
+    if m:
+        src = ha_frontend.runtime_source(m.group(1))
+        if src is None:
+            raise HTTPException(status_code=404, detail="No such runtime")
+        return Response(content=src,
+                        media_type='application/javascript; charset=utf-8',
+                        headers={'Cache-Control': 'max-age=31536000, immutable'})
+    if not ha_frontend.frontend_file_allowed(fname):
+        raise HTTPException(status_code=400, detail="Path not allowed")
+    got = ha_api.fetch_static(f'/frontend_latest/{fname}')
+    if not got:
+        raise HTTPException(status_code=502,
+                            detail="Could not fetch that from Home Assistant")
+    content, content_type = got
+    return Response(content=content, media_type=content_type,
+                    headers={'Cache-Control': 'max-age=31536000, immutable'})
+
+@app.get("/static/mdi/{fname}")
+def ha_frontend_mdi(fname: str):
+    """HA's icon database chunks, on our origin. The REAL `ha-icon` (the one
+    the hosted built-in cards render) fetches `/static/mdi/<part>.json`
+    relative to the page — which is this app, not Home Assistant."""
+    from services import ha_api
+    if not re.match(r'^[A-Za-z0-9_-]+\.json$', fname):
+        raise HTTPException(status_code=400, detail="Path not allowed")
+    got = ha_api.fetch_static(f'/static/mdi/{fname}')
+    if not got:
+        raise HTTPException(status_code=404, detail="No such icon chunk")
+    content, content_type = got
+    return Response(content=content, media_type=content_type,
+                    headers={'Cache-Control': 'max-age=86400'})
+
 @app.get("/api/ha/card/mdi/{name}")
 def ha_card_mdi(name: str):
     """SVG path data for one mdi icon, out of Home Assistant's own icon
@@ -6435,15 +6521,68 @@ def ha_card_service(req: HaCardServiceRequest):
     from services import home_board, ha_api
     domain = (req.domain or '').strip()
     service = (req.service or '').strip()
-    if domain not in home_board.toggle_domains():
+    data = dict(req.data or {})
+    # Climate rides its own rules rather than the toggle list: HA's real
+    # thermostat card (hosted via services/ha_frontend) speaks whole services
+    # — set_temperature, set_hvac_mode — not nudges. The safety story the
+    # step endpoint told still holds, so the SERVER clamps: a setpoint is
+    # bounded by the entity's own min/max before HA hears about it, and only
+    # the setting services are open — nothing that could reconfigure.
+    CLIMATE_SERVICES = {'set_temperature', 'set_hvac_mode', 'set_fan_mode',
+                        'set_preset_mode', 'set_humidity', 'set_swing_mode',
+                        'turn_on', 'turn_off'}
+    if domain == 'climate':
+        if service not in CLIMATE_SERVICES:
+            raise HTTPException(status_code=400,
+                                detail=f"climate.{service} cannot be called "
+                                       f"from a board card")
+        if service == 'set_temperature':
+            entity_id = str(data.get('entity_id') or '')
+            state = ha_api.get_state(entity_id) or {}
+            attrs = state.get('attributes') or {}
+            try:
+                lo = float(attrs.get('min_temp')) if attrs.get('min_temp') is not None else 45.0
+                hi = float(attrs.get('max_temp')) if attrs.get('max_temp') is not None else 95.0
+            except (TypeError, ValueError):
+                lo, hi = 45.0, 95.0
+            for key in ('temperature', 'target_temp_low', 'target_temp_high'):
+                if data.get(key) is None:
+                    continue
+                try:
+                    data[key] = max(lo, min(hi, float(data[key])))
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=400,
+                                        detail=f"{key} is not a number")
+    elif domain not in home_board.toggle_domains():
         raise HTTPException(status_code=400,
                             detail=f"{domain or 'that'} services cannot be "
                                    f"called from a board card")
     if not home_board.ha_available():
         raise HTTPException(status_code=503, detail="Home Assistant is not reachable")
-    if ha_api.call_service(domain, service, req.data or {}) is None:
+    if ha_api.call_service(domain, service, data) is None:
         raise HTTPException(status_code=502, detail="Home Assistant refused that")
     return {'ok': True}
+
+@app.get("/api/ha/frontend/history")
+def ha_frontend_history(entity_id: str, hours: int = 24):
+    """History for ONE entity, for the hosted sensor card's line.
+
+    The real card asks `hass.callApi` for `history/period/...`; a general
+    API proxy would be an authenticated hole into HA, so the client host
+    recognises exactly that request shape and routes it here — one entity,
+    bounded hours, the same cached reader the converter's graph uses."""
+    from services import ha_api
+    eid = (entity_id or '').strip()
+    if not re.match(r'^[a-z_]{2,}\.[a-z0-9_]+$', eid):
+        raise HTTPException(status_code=400, detail="Not an entity id")
+    rows = ha_api.get_history(eid, hours=max(1, min(168, hours)))
+    # HA's own /history/period shape — a list of series, each sample carrying
+    # last_changed + state, the first also naming the entity — because the
+    # consumer is HA's own card and it parses what HA serves.
+    return [[({'entity_id': eid, 'last_changed': stamp, 'state': state,
+               'attributes': {}} if i == 0 else
+              {'last_changed': stamp, 'state': state})
+             for i, (stamp, state) in enumerate(rows)]] if rows else []
 
 @app.get("/api/ha/notify_services")
 def ha_notify_services():

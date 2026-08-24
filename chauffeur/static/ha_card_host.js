@@ -484,7 +484,10 @@
             last = now;
             clearTimeout(held.resizeTimer);
             held.resizeTimer = setTimeout(function () {
-                try { held.el.hass = makeHass(held.spec); } catch (e) { /* gone */ }
+                try {
+                    held.el.hass = held.builtin ? buildBuiltinHass(held.spec)
+                                                : makeHass(held.spec);
+                } catch (e) { /* gone */ }
             }, 120);
         });
         held.observer.observe(held.container);
@@ -650,8 +653,370 @@
         delete mounted[id];
     }
 
+    // ── Hosting HA's OWN built-in cards.
+    //
+    // Everything above runs a CUSTOM card — a file HA merely serves. The
+    // built-ins have no file; they live inside HA's frontend bundle. The
+    // server (services/ha_frontend.py) reads that bundle once per HA release:
+    // the entrypoint patched into a loader that boots nothing, the chunk set
+    // the lovelace panel loads, and HA's own card table. This half drives it:
+    // load the runtime, load the chunks, require the card modules, and the
+    // real hui-* elements define themselves — HA's pixels, HA's controls,
+    // HA's resize behaviour, none of it reimplemented here.
+    //
+    // Every step can refuse (no HA, an extraction miss on some future
+    // release, a type this HA does not ship). Refusal is CHEAP by design:
+    // the board draws the converter's fallback into every host cell first,
+    // and a builtin mount that never happens simply leaves it standing.
+    var builtin = {
+        boot: null, ready: false, map: {}, chunks: [], eager: [],
+        reg: { entities: {}, devices: {}, areas: {}, config: {} },
+        ctxInstalled: false,
+    };
+
+    function waitFor(test, ms) {
+        return new Promise(function (resolve) {
+            var t0 = Date.now();
+            (function poll() {
+                if (test()) return resolve(true);
+                if (Date.now() - t0 > ms) return resolve(false);
+                setTimeout(poll, 100);
+            })();
+        });
+    }
+
+    function bootBuiltin(apiBase) {
+        if (builtin.boot) return builtin.boot;
+        if (apiBase) API.base = apiBase;
+        builtin.boot = fetch(API.base + 'api/ha/frontend/bundle')
+            .then(function (r) { return r.ok ? r.json() : { ok: false }; })
+            .then(function (b) {
+                if (!b.ok) throw new Error(b.error || 'no bundle from the server');
+                builtin.map = b.cards || {};
+                builtin.chunks = b.chunks || [];
+                builtin.eager = b.eager_modules || [];
+                builtin.reg = {
+                    entities: b.entities || {}, devices: b.devices || {},
+                    areas: b.areas || {}, config: b.config || {},
+                };
+                installContextProvider();
+                // HA's default tokens, class-scoped to host cells. Without
+                // them the real cards draw geometry with no stroke — every
+                // state colour and slider track is a theme variable the app
+                // shell would have set.
+                var css = document.createElement('link');
+                css.rel = 'stylesheet';
+                css.href = API.base + 'api/ha/frontend/theme/' + b.version + '.css';
+                document.head.appendChild(css);
+                var s = document.createElement('script');
+                s.type = 'module';
+                s.src = API.base + b.runtime;
+                document.head.appendChild(s);
+                return waitFor(function () { return window.__haWpr; }, 15000);
+            })
+            .then(function (up) {
+                if (!up) throw new Error('the borrowed runtime never appeared');
+                var o = window.__haWpr;
+                return Promise.all(builtin.chunks.map(function (c) { return o.e(c); }));
+            })
+            .then(function () {
+                // Each eager module on its own: one card of a release failing
+                // to define must not take the other twelve with it.
+                var o = window.__haWpr;
+                return Promise.all(builtin.eager.map(function (m) {
+                    return Promise.resolve().then(function () { return o(m); })
+                        .catch(function (e) {
+                            console.warn('[ha_card_host] eager module ' + m + ':',
+                                e && e.message);
+                        });
+                }));
+            })
+            .then(function () { builtin.ready = true; return true; })
+            .catch(function (e) {
+                console.warn('[ha_card_host] builtin cards unavailable:',
+                    e && e.message);
+                builtin.ready = false;
+                return false;
+            });
+        return builtin.boot;
+    }
+
+    // ── The app-shell contexts.
+    //
+    // Inside HA, deep components (the climate dial, the big number) do not
+    // read `hass` — they consume lit contexts the <home-assistant> element
+    // provides. A lit context request is an ordinary composed DOM event and
+    // HA's keys are the plain strings its createContext calls pass, so one
+    // document-level listener stands in for the whole shell.
+    var LOCALE = {
+        language: 'en', number_format: 'language', time_format: 'language',
+        date_format: 'language', first_weekday: 'language', time_zone: 'local',
+    };
+
+    function humanize(key) {
+        var last = String(key || '').split('.').pop();
+        return last.replace(/_/g, ' ');
+    }
+
+    function haConfig() {
+        var cfg = builtin.reg.config || {};
+        return {
+            components: cfg.components || ['history', 'recorder'],
+            unit_system: cfg.unit_system && cfg.unit_system.temperature
+                ? cfg.unit_system
+                : { temperature: '°F', length: 'mi', mass: 'lb', volume: 'gal',
+                    pressure: 'psi', wind_speed: 'mph',
+                    accumulated_precipitation: 'in', area: 'ft²' },
+            time_zone: cfg.time_zone || 'local',
+            version: cfg.version || '',
+            latitude: cfg.latitude, longitude: cfg.longitude,
+            state: 'RUNNING',
+        };
+    }
+
+    function displayPrecision(stateObj) {
+        var reg = builtin.reg.entities[(stateObj || {}).entity_id] || {};
+        return reg.display_precision == null ? null : reg.display_precision;
+    }
+
+    // The state, as Intl parts — HA's cards pick the unit part out to
+    // typeset it small, so the SHAPE matters as much as the text.
+    function formatStateToParts(stateObj, stateOverride) {
+        var raw = stateOverride != null ? stateOverride : (stateObj || {}).state;
+        var n = Number(raw);
+        var parts;
+        if (raw !== '' && raw != null && isFinite(n)) {
+            var digits = displayPrecision(stateObj);
+            parts = new Intl.NumberFormat(undefined, {
+                maximumFractionDigits: digits == null ? 2 : digits,
+                minimumFractionDigits: digits == null ? 0 : digits,
+            }).formatToParts(n);
+        } else {
+            parts = [{ type: 'literal', value: stateLabel(stateObj) }];
+        }
+        var unit = ((stateObj || {}).attributes || {}).unit_of_measurement;
+        if (unit) {
+            parts = parts.concat([{ type: 'literal', value: ' ' },
+                                  { type: 'unit', value: unit }]);
+        }
+        return parts;
+    }
+
+    function builtinFormatters() {
+        return {
+            formatEntityState: function (stateObj, state) {
+                return formatStateToParts(stateObj, state)
+                    .map(function (p) { return p.value; }).join('')
+                    .replace(/ $/, '');
+            },
+            formatEntityStateToParts: formatStateToParts,
+            formatEntityAttributeValue: function (stateObj, attr) {
+                var v = ((stateObj || {}).attributes || {})[attr];
+                return v == null ? '' : humanize(String(v));
+            },
+            formatEntityAttributeName: function (stateObj, attr) {
+                return humanize(String(attr));
+            },
+            formatEntityName: function (stateObj) {
+                var reg = builtin.reg.entities[(stateObj || {}).entity_id] || {};
+                return reg.name
+                    || ((stateObj || {}).attributes || {}).friendly_name
+                    || (stateObj || {}).entity_id || '';
+            },
+        };
+    }
+
+    function builtinContextValue(key) {
+        switch (key) {
+            case 'hassFormatters': return builtinFormatters();
+            case 'hassConfig': return { config: haConfig() };
+            case 'states': return statesPool;
+            case 'entities': return builtin.reg.entities;
+            case 'devices': return builtin.reg.devices;
+            case 'areas': return builtin.reg.areas;
+            case 'floors': return {};
+            case 'labels': return {};
+            case 'locale': return LOCALE;
+            case 'localize': return humanize;
+            case 'hassInternationalization':
+                return { language: 'en', locale: LOCALE, localize: humanize };
+            case 'narrowViewport': return false;
+            case 'hassUi':
+                return { darkMode: document.documentElement
+                    .getAttribute('data-panel-theme') !== 'light' };
+        }
+        return undefined;
+    }
+
+    function installContextProvider() {
+        if (builtin.ctxInstalled) return;
+        builtin.ctxInstalled = true;
+        document.addEventListener('context-request', function (e) {
+            var value = builtinContextValue(e.context);
+            if (value === undefined) return;
+            e.stopPropagation();
+            try { e.callback(value, function () { }); } catch (err) { /* consumer gone */ }
+        });
+    }
+
+    // The custom-card hass, upgraded to what the real cards read. Same
+    // states merge, same gated callService; the formatters, the registries
+    // and the one API route (the sensor card's history line) are the parts
+    // a built-in reaches for that a custom card never did.
+    function buildBuiltinHass(spec) {
+        var hass = makeHass(spec);
+        var fmt = builtinFormatters();
+        hass.entities = builtin.reg.entities;
+        hass.devices = builtin.reg.devices;
+        hass.areas = builtin.reg.areas;
+        hass.floors = {};
+        hass.formatEntityState = fmt.formatEntityState;
+        hass.formatEntityStateToParts = fmt.formatEntityStateToParts;
+        hass.formatEntityAttributeValue = fmt.formatEntityAttributeValue;
+        hass.formatEntityAttributeName = fmt.formatEntityAttributeName;
+        hass.formatEntityName = fmt.formatEntityName;
+        hass.localize = humanize;
+        hass.locale = LOCALE;
+        hass.config = haConfig();
+        hass.hassUrl = function (p) {
+            return API.base + String(p || '').replace(/^\//, '');
+        };
+        // hass.callApi, for exactly ONE request shape: the sensor card's
+        // history line. A general proxy would be an authenticated hole into
+        // HA; this recognises `history/period/<start>?...filter_entity_id=X`
+        // and routes it to the server's bounded, cached reader.
+        hass.callApi = function (method, path) {
+            var m = /^history\/period\/([^?]*)\?/.exec(String(path || ''));
+            var eid = /filter_entity_id=([a-z_]+\.[a-z0-9_]+)/
+                .exec(String(path || ''));
+            if (String(method).toUpperCase() === 'GET' && m && eid) {
+                var hours = 24;
+                var start = new Date(decodeURIComponent(m[1]));
+                if (!isNaN(start)) {
+                    hours = Math.max(1, Math.min(168,
+                        Math.ceil((Date.now() - start.getTime()) / 3600000)));
+                }
+                return fetch(API.base + 'api/ha/frontend/history?entity_id='
+                    + eid[1] + '&hours=' + hours)
+                    .then(function (r) {
+                        if (!r.ok) throw new Error('history unavailable');
+                        return r.json();
+                    });
+            }
+            return Promise.reject(new Error('no api in the panel'));
+        };
+        // The same history, on the OTHER pipe. Today's cards subscribe to
+        // `history/stream` and draw whatever arrives; the panel has no
+        // websocket, so the one message HA would have opened with — the
+        // backlog — is built from the same bounded endpoint and delivered
+        // once. No live tail, matching the board's own poll-not-push rule.
+        var base = hass.connection;
+        hass.connection = {
+            subscribeMessage: function (callback, message) {
+                var msg = message || {};
+                if (msg.type !== 'history/stream'
+                        || !(msg.entity_ids || []).length) {
+                    return base.subscribeMessage
+                        ? base.subscribeMessage(callback, message)
+                        : Promise.reject(new Error('no websocket in the panel'));
+                }
+                var start = new Date(msg.start_time || 0);
+                var hours = isNaN(start) ? 24 : Math.max(1, Math.min(168,
+                    Math.ceil((Date.now() - start.getTime()) / 3600000)));
+                var jobs = msg.entity_ids.map(function (eid) {
+                    return fetch(API.base + 'api/ha/frontend/history?entity_id='
+                        + eid + '&hours=' + hours)
+                        .then(function (r) { return r.ok ? r.json() : []; })
+                        .then(function (series) {
+                            var pts = ((series || [])[0] || []).map(function (p) {
+                                return { s: p.state,
+                                         lu: new Date(p.last_changed).getTime() / 1000 };
+                            }).filter(function (p) { return isFinite(p.lu); });
+                            return [eid, pts];
+                        })
+                        .catch(function () { return [eid, []]; });
+                });
+                return Promise.all(jobs).then(function (pairs) {
+                    var states = {};
+                    pairs.forEach(function (p) { states[p[0]] = p[1]; });
+                    try {
+                        callback({ states: states,
+                                   start_time: start.getTime() / 1000,
+                                   end_time: Date.now() / 1000 });
+                    } catch (e) { /* consumer re-rendering */ }
+                    return function () { };
+                });
+            },
+            subscribeEvents: base.subscribeEvents,
+            addEventListener: base.addEventListener,
+            removeEventListener: base.removeEventListener,
+        };
+        return hass;
+    }
+
+    function mountBuiltin(container, spec) {
+        if (!container || !spec || !spec.type) return Promise.resolve(false);
+        API.base = spec.apiBase || API.base;
+        return bootBuiltin(spec.apiBase).then(function (ok) {
+            if (!ok) return false;
+            var type = String(spec.type);
+            var tag = 'hui-' + type + '-card';
+            var signature = JSON.stringify(['builtin', type, spec.config]);
+            var live = mounted[spec.id];
+            if (live && live.container === container
+                    && live.signature === signature) {
+                live.spec = spec;
+                live.el.hass = buildBuiltinHass(spec);   // the cheap path
+                return true;
+            }
+            var need = Promise.resolve();
+            if (!window.customElements.get(tag)) {
+                var row = builtin.map[type];
+                if (row) {
+                    var o = window.__haWpr;
+                    need = Promise.all((row.chunks || []).map(function (c) {
+                        return o.e(c);
+                    })).then(function () { return o(row.module); });
+                }
+            }
+            return need.then(function () {
+                if (!window.customElements.get(tag)) {
+                    throw new Error(tag + ' is not in this Home Assistant release');
+                }
+                // HA's defaults by class, the panel's brand by inline var —
+                // inline wins wherever both speak.
+                container.classList.add('ha-builtin-theme');
+                container.classList.toggle('ha-dark', spec.dark !== false);
+                var theme = themeFrom(container);
+                Object.keys(theme).forEach(function (k) {
+                    container.style.setProperty(k, theme[k]);
+                });
+                var el = document.createElement(tag);
+                el.setConfig(JSON.parse(JSON.stringify(spec.config || {})));
+                el.hass = buildBuiltinHass(spec);
+                el.style.display = 'block';
+                container.textContent = '';
+                container.appendChild(el);
+                var held = { el: el, container: container,
+                             signature: signature, spec: spec, builtin: true };
+                mounted[spec.id] = held;
+                watchWidth(held);
+                return true;
+            });
+        }).catch(function (e) {
+            // The fallback drawing is still in the cell; leaving it there IS
+            // the error handling. The console line is for the person asking
+            // why a card looks like the converter's version.
+            console.warn('[ha_card_host] builtin ' + spec.type + ':',
+                e && e.message);
+            return false;
+        });
+    }
+
     window.ChauffeurHaCards = {
         mount: mount,
+        mountBuiltin: mountBuiltin,
+        bootBuiltin: bootBuiltin,
         setStates: setStates,
         mountEditor: mountEditor,
         discover: discover,

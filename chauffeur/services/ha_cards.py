@@ -23,12 +23,14 @@ matching Home Assistant.
 
 WHAT THIS CANNOT DO, stated up front so nobody rediscovers it on the wall:
 
-  - **Built-in cards are out of reach.** `type: gauge` resolves to
+  - **Built-in cards do not ship as files.** `type: gauge` resolves to
     `hui-gauge-card`, which lives inside HA's frontend bundle and is not a
-    loadable resource. Only `type: custom:…` cards ship as their own file, and
-    only those can be fetched and run. Built-in card types need a converter
-    that reads their config and draws it natively — a different job, and an
-    easier one, because a built-in card's config fully describes it.
+    loadable resource — only `type: custom:…` cards can be fetched and run
+    THIS way. They stopped being out of reach when HA's frontend became
+    ES-module chunks: services/ha_frontend borrows the bundle's own runtime
+    and the browser mounts the real hui-* elements (ha_card_host
+    mountBuiltin), with ha_card_convert's drawings standing as the fallback
+    wherever that borrowing fails.
   - **Cards that reach for HA's frontend internals.** Anything calling
     `loadCardHelpers()` or extending `hui-*` classes wants machinery we are
     not hosting. It will fail to define, and the tile says so.
@@ -397,17 +399,27 @@ def _resolve_hosts(hosts, states):
     """
     if not hosts:
         return {}
-    resources = list_resources()
+    resources = None
     out = {}
     for host_id, host in hosts.items():
-        row = resolve_resource(host['tag'], resources)
-        url = (row or {}).get('url')
-        entry = {'tag': host['tag'], 'config': host['config'],
+        entry = {'config': host['config'],
                  # The states this card asked for, out of the ones the whole
                  # tree already gathered — no second trip for a card that
                  # shares its sensors with the gauge beside it.
                  'states': {k: v for k, v in (states or {}).items()
                             if k in set(entity_ids(host['config']))}}
+        # A BUILT-IN leaf: no file to find — the browser mounts it out of
+        # HA's own frontend (services/ha_frontend), or leaves the converter
+        # fallback standing. Nothing to resolve and nothing to get wrong.
+        if host.get('builtin'):
+            entry['builtin'] = host['builtin']
+            out[host_id] = entry
+            continue
+        if resources is None:
+            resources = list_resources()
+        row = resolve_resource(host['tag'], resources)
+        url = (row or {}).get('url')
+        entry['tag'] = host['tag']
         if not url:
             entry['error'] = (f"Nothing in Home Assistant's resources looks "
                               f"like it defines `{host['tag']}`.")
@@ -445,7 +457,8 @@ def prepare(raw_config, resource_override=''):
         # worth drawing are drawn natively instead. See ha_card_convert.
         from services import ha_card_convert
         kind = str(config.get('type') or '').strip().lower()
-        if kind in ha_card_convert.NATIVE_CARDS:
+        if kind in ha_card_convert.NATIVE_CARDS \
+                or kind in ha_card_convert.HOSTED_BUILTINS:
             ids = ha_card_convert.entity_ids(config)
             states = states_for(ids)
             hosts = {}
@@ -456,7 +469,9 @@ def prepare(raw_config, resource_override=''):
                         # power-flow card above a gauge is the config people
                         # actually write. Each custom card inside the tree gets
                         # its file resolved here, once, and the browser runs it
-                        # in the cell the drawing left for it.
+                        # in the cell the drawing left for it. A BUILT-IN leaf
+                        # is a host too now, mounted out of HA's own frontend
+                        # (services/ha_frontend) over its converter fallback.
                         'hosts': _resolve_hosts(hosts, states),
                         'missing': [e for e in ids if e not in states]}
         # Refused BY NAME, with the way to get it anyway. A built-in that
@@ -464,10 +479,9 @@ def prepare(raw_config, resource_override=''):
         # avoid, and "could not load" would send somebody hunting for a file
         # that was never the problem.
         return {'error': f"`{config.get('type')}` is one of Home Assistant's "
-                         "built-in cards. Chauffeur draws some of those itself "
-                         "(entities, glance, tile, gauge, markdown, "
-                         "picture-entity, button and the stacks) — this is not "
-                         "one of them yet, so use a dashboard tile for it."}
+                         "built-in cards, and one of the few Chauffeur can "
+                         "neither draw nor host (most need Home Assistant's "
+                         "live websocket). Use a dashboard tile for it."}
 
     override = (resource_override or '').strip()
     row = None if override else resolve_resource(tag)

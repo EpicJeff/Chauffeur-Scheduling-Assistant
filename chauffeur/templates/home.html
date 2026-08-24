@@ -2688,9 +2688,23 @@
                     // (null) on boards with no custom card, which
                     // setStates treats as empty.
                     window.ChauffeurHaCards.setStates(this.board && this.board.ha_states);
+                    const tiles = this.drawnTiles()
+                        .filter(t => t.type === 'ha_card' && t.data && !t.data.empty);
+                    // A board with any BUILT-IN host on it boots the borrowed
+                    // runtime before anything mounts. Ordering, not decoration:
+                    // the custom-card path defines shim ha-* elements, HA's
+                    // own chunks define the real ones, and a registry only
+                    // takes each name once — whoever defines first wins. The
+                    // runtime must win where it is coming at all, so on such
+                    // boards every mount waits for the boot to settle (either
+                    // way; a failed boot just leaves the shims to it).
+                    const anyBuiltin = tiles.some(t => t.data.mode === 'native'
+                        && Object.values(t.data.hosts || {}).some(h => h.builtin));
+                    const gate = anyBuiltin
+                        ? window.ChauffeurHaCards.bootBuiltin(this.apiBase)
+                        : Promise.resolve(false);
                     const live = new Set();
-                    for (const tile of this.drawnTiles()
-                        .filter(t => t.type === 'ha_card' && t.data && !t.data.empty)) {
+                    for (const tile of tiles) {
                         // A NATIVE tile can still contain custom cards — a
                         // stack of [power flow card, gauge] is the config
                         // people actually write. Each one has an empty cell
@@ -2705,21 +2719,31 @@
                                 if (host.error) { cell.textContent = host.error; continue; }
                                 const id = tile.id + '/' + hostId;
                                 live.add(id);
-                                window.ChauffeurHaCards.mount(cell, {
+                                const spec = {
                                     id: id, tag: host.tag,
                                     resource: host.resource,
                                     resourceType: host.resource_type,
                                     config: host.config, states: host.states,
                                     interactive: !!tile.data.interactive,
                                     dark: !this.isLight(), apiBase: this.apiBase,
-                                });
+                                };
+                                if (host.builtin) {
+                                    // The REAL card, over the fallback the
+                                    // cell already shows. Type rides the spec;
+                                    // the host resolves everything else.
+                                    spec.type = host.builtin;
+                                    window.ChauffeurHaCards.mountBuiltin(cell, spec);
+                                } else {
+                                    gate.finally(() =>
+                                        window.ChauffeurHaCards.mount(cell, spec));
+                                }
                             }
                             continue;
                         }
                         const el = document.getElementById('board-card-' + tile.id);
                         if (!el) continue;
                         live.add(tile.id);
-                        window.ChauffeurHaCards.mount(el, {
+                        gate.finally(() => window.ChauffeurHaCards.mount(el, {
                             id: tile.id,
                             tag: tile.data.tag,
                             resource: tile.data.resource,
@@ -2729,7 +2753,7 @@
                             interactive: !!tile.data.interactive,
                             dark: !this.isLight(),
                             apiBase: this.apiBase,
-                        });
+                        }));
                     }
                     (this.cardIds || []).forEach(id => {
                         if (!live.has(id)) window.ChauffeurHaCards.unmount(id);
@@ -3364,8 +3388,16 @@
                         // the page. That is what makes a mixed stack (a power
                         // flow card above a gauge) the config it looks like.
                         case 'host':
+                            // A BUILTIN host ships its converter drawing as
+                            // the fallback, drawn INTO the cell now: the wall
+                            // shows a card immediately, and the real hui-*
+                            // card replaces it when the borrowed runtime is
+                            // up. If that never happens — HA absent, an
+                            // extraction miss, an old release — the fallback
+                            // just stays, which is the whole error handling.
                             return `<div class="nc-host" data-host="${
-                                this.esc(c.host_id || '')}"></div>`;
+                                this.esc(c.host_id || '')}">${
+                                c.fallback ? this.drawCard(c.fallback, path) : ''}</div>`;
                         // Something this app does not draw. NAMED, and keeping
                         // its cell, so the cards either side do not shuffle up
                         // to fill a hole with no explanation in it.

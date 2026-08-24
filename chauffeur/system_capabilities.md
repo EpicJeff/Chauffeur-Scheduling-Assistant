@@ -5249,3 +5249,82 @@ otherwise equal drivers, so the fix is a softening and not a deletion.
 no criteria at all, so a bare `Rule(constraint_type='buffer', ...)` in a test
 is silently inert. The first cut of this file passed identically with and
 without the fix; every buffer rule in a test needs a keyword or a passenger.
+
+## HA's own cards, borrowed whole (v2.387.29 — hosted built-ins)
+
+The `ha_card` tile's built-in mode stops imitating Home Assistant's cards and
+starts RUNNING them. The parity complaint that opened this (thermostat next
+to HA's: no dial, no mode row; area card resizing differently; sensor graph
+only roughly alike) does not get fixed a card at a time — it gets fixed by
+retiring the imitation.
+
+- **The claim that blocked this died of a rebuild.** "Built-in cards live
+  inside HA's frontend bundle and cannot be loaded" was true of the webpack
+  era. Today's frontend is rspack ES-module chunks, each exporting its module
+  map, loaded by plain `import()`. Nothing about that machinery needs the app
+  around it — proven 2026-08-24 by running `hui-thermostat-card` (real
+  dual-setpoint dial, heat/cool arcs), `hui-sensor-card` (real history line)
+  and `hui-area-card` on a bare page.
+- **`services/ha_frontend.py` reads HA's frontend once per HA release**: the
+  entrypoint's LAST STATEMENT (the boot call) swapped for
+  `window.__haWpr=<require>` — HA's own runtime with no app behind it; the
+  lovelace panel's chunk set; HA's own lazy card table plus the eager card
+  modules; and the default theme's two variable blocks (the base run naming
+  the state colours, the dark run repainting the card). Persisted per app
+  hash next to the database. **Every step of this is extraction from
+  minified code and will someday miss — that is priced in**: extraction
+  failure costs HA's pixels, never a tile.
+- **The fallback is structural, not a code path.** `ha_card_convert` still
+  draws every leaf; a hostable leaf now ships as a `host` node CARRYING that
+  drawing as `fallback`. The wall renders the fallback immediately;
+  `mountBuiltin` replaces it when the runtime is up; every refusal at every
+  stage simply leaves it standing. HA absent, old HA, future-HA regex miss,
+  unknown type — all the same harmless outcome. (Standing rule honoured: HA
+  integration degrades gracefully.)
+- **`HOSTED_BUILTINS` is curated by what a states-snapshot can feed**:
+  entity, entities, glance, tile, button, gauge, sensor, thermostat, area,
+  light, humidifier, alarm-panel, weather-forecast. Deliberately OUT:
+  markdown (HA's renders templates over the websocket we are not lending),
+  picture-entity/media-control (their images ride authenticated HA paths),
+  history-graph/statistics/logbook/map/calendar/todo/energy-* (websocket
+  subscriptions, nothing to draw without them). Types the converter never
+  drew (light…) are now accepted and hosted — 'unsupported' finally only
+  means the websocket cases.
+- **The app shell is stood in for, not booted**: a document-level
+  `context-request` listener answers HA's lit contexts (the keys are the
+  plain strings its createContext calls pass — `hassFormatters`,
+  `hassConfig`, registries, locale); `hass` gains real Intl-parts formatters
+  honouring registry display precision; slim entity/device/area registries
+  and HA config ride the bundle payload (`ws_command` one-shots). The sensor
+  card's `history/stream` subscription is translated into one fetch of
+  `/api/ha/frontend/history` (bounded, cached, entity-id-validated) —
+  backlog delivered once, no live tail, same poll-not-push the board runs on.
+- **Theming**: HA's default tokens go on the host cell as a CLASS
+  (`.ha-builtin-theme` / `.ha-dark`, served from the extracted blocks); the
+  panel's brand tokens go on inline, and inline beats class — HA supplies
+  the long tail (state colours, slider tracks), the wall keeps its identity.
+  Without this the real cards drew geometry with no stroke.
+- **Ordering rule**: on a board with any builtin host, `syncCards` gates
+  EVERY card mount on `bootBuiltin` settling — the shims and HA's chunks
+  both define `ha-*` elements and a registry takes each name once, so the
+  runtime must win wherever it is coming at all. The shims' `define()`
+  already skips existing names; a failed boot leaves them the job.
+- **Service safety**: `climate` joins `/api/ha/card/service` with its own
+  rules — only the setting services, and `set_temperature` clamped
+  server-side to the entity's own min/max (the "up one" vs "set to 92"
+  story, kept). Locks stay behind `panel_allow_unsafe_controls` exactly as
+  before. New lanes classified in `auth.RULES`: `/api/ha/frontend/*` = WALL
+  (history and registries are household data), `/static/mdi/{fname}` =
+  ANYONE (icon outlines, the same files HA serves before sign-in).
+- **Known gaps**: localize is a humanizer (mode names read "heat cool" not
+  localized strings); area pictures from the registry ride authenticated HA
+  paths and may not draw; more-info taps do nothing (by decision — not
+  rebuilding HA inside Chauffeur). The CARD EDITORS still use our ha-form
+  path — `getConfigElement()` from the borrowed runtime is the obvious next
+  slice.
+- Tests: `tests/test_ha_frontend.py` (11 scenarios — rspack-shaped fixtures
+  for every extraction including the editor-table bleed the balanced scan
+  fixed, end-to-end against fixtures, no-HA answers None with the step
+  named, the chunk proxy's filename gate, converter host/fallback shapes,
+  builtin hosts skipping the resource round trip, and the template contract).
+  `test_ha_card_convert.py` updated to the host-with-fallback contract.

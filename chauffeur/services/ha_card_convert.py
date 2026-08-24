@@ -50,6 +50,27 @@ NATIVE_CARDS = {
 STACKS = {'vertical-stack': 'vertical', 'horizontal-stack': 'horizontal',
           'grid': 'grid'}
 
+# Which built-in leaves may be upgraded to HA's REAL card (ha_frontend +
+# ha_card_host mountBuiltin). Curated by what a card can do with a states
+# snapshot and a service endpoint, which is all the borrowed runtime gives it:
+#
+#   - IN: cards that read states and call services. The sensor card's history
+#     line rides a targeted proxy (`/api/ha/frontend/history`).
+#   - OUT on purpose: markdown (HA's renders templates over the websocket we
+#     are not lending — the converter's plain text is more honest than a
+#     spinner); picture-entity and media-control (their images come off HA
+#     paths that need auth the page does not have); history-graph,
+#     statistics-graph, calendar, todo-list, logbook, map and everything
+#     energy-* (websocket subscriptions, nothing to draw without them).
+#
+# Types absent from BOTH this set and the converter still land as
+# 'unsupported' lines, exactly as before.
+HOSTED_BUILTINS = {
+    'entity', 'entities', 'glance', 'tile', 'button', 'gauge', 'sensor',
+    'thermostat', 'area', 'light', 'humidifier', 'alarm-panel',
+    'weather-forecast',
+}
+
 # A per-domain fallback so a row is never iconless. HA picks icons from the
 # device class as well, which is a deeper lookup than this needs — an entity
 # that cares almost always carries `attributes.icon` anyway.
@@ -879,6 +900,26 @@ def _convert_one(config, states, depth, hosts, kind):
                 'square': bool(config.get('square', True)),
                 'title': config.get('title'), 'cards': cards}
 
+    # A HOSTABLE leaf is now a host, carrying its converter drawing as the
+    # fallback. The browser draws the fallback immediately, then — when HA's
+    # own frontend runtime is up (services/ha_frontend) — mounts the REAL
+    # hui-* card over it. Parity by construction where the runtime works,
+    # and exactly yesterday's board where it does not: extraction failed, HA
+    # absent, an old HA, a type the release does not ship. The fallback for
+    # a type this converter never learned to draw is the same 'unsupported'
+    # line it always drew — which the runtime now usually replaces with the
+    # actual card, so 'unsupported' finally means what it says.
+    fallback = _draw_leaf(config, states, kind)
+    if hosts is None or kind not in HOSTED_BUILTINS:
+        return fallback
+    node = {'kind': 'host', 'builtin': kind, 'host_id': f'h{len(hosts)}'}
+    if fallback is not None:
+        node['fallback'] = fallback
+    hosts[node['host_id']] = {'builtin': kind, 'config': config}
+    return node
+
+
+def _draw_leaf(config, states, kind):
     if kind == 'entities':
         return _entities_card(config, states)
     if kind == 'glance':

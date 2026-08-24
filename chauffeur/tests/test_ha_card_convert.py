@@ -162,7 +162,14 @@ def scenario_a_real_dashboard_stack_keeps_every_card():
           f"the custom card was dropped instead of hosted: {left['cards'][0]}")
     check(left['cards'][0]['tag'] == 'tesla-style-solar-power-card',
           f"the hosted card lost its element name: {left['cards'][0]}")
-    check(left['cards'][1]['kind'] == 'gauge', "the gauge stopped converting")
+    # The gauge is a host too since the borrowed-frontend arc — HA's real
+    # gauge mounts over the drawing — but the drawing is right there under
+    # it, unchanged, for every wall the runtime cannot reach.
+    check(left['cards'][1]['kind'] == 'host'
+          and left['cards'][1]['builtin'] == 'gauge',
+          f"the gauge leaf did not become a builtin host: {left['cards'][1]}")
+    check(left['cards'][1]['fallback']['kind'] == 'gauge',
+          "the gauge stopped converting")
 
     check(len(right['cards']) == 2, f"the column collapsed: {right}")
     for node in right['cards']:
@@ -173,9 +180,12 @@ def scenario_a_real_dashboard_stack_keeps_every_card():
     check(right['cards'][0]['type'] == 'history-graph',
           f"the placeholder does not name the card type: {right['cards'][0]}")
 
-    # The host is collected so its file can be resolved once for the tree.
-    check(list(hosts) == ['h0'] and hosts['h0']['tag'] ==
+    # The hosts are collected so files resolve once for the tree — the
+    # custom card by tag, the gauge as a builtin.
+    check(list(hosts) == ['h0', 'h1'] and hosts['h0']['tag'] ==
           'tesla-style-solar-power-card', f"hosts not collected: {hosts}")
+    check(hosts['h1'] == {'builtin': 'gauge', 'config': cfg['cards'][0]['cards'][1]},
+          f"the gauge host entry is wrong: {hosts.get('h1')}")
     check(left['cards'][0]['host_id'] == 'h0',
           "the drawing cannot find the host it belongs to")
 
@@ -554,16 +564,30 @@ def scenario_an_area_card_asks_home_assistant_what_is_in_the_room():
 
 def scenario_an_unsupported_built_in_is_refused_by_name():
     """The edge of the closed set, stated out loud. This is what stops "we
-    support most of them" from turning into a blank box on a wall."""
+    support most of them" from turning into a blank box on a wall.
+
+    The set is smaller since the borrowed-frontend arc — `light` and its
+    kind are HOSTED now — so what remains refused is what genuinely cannot
+    work here: the cards that are nothing without HA's live websocket."""
     from services import ha_cards
-    for kind in ('history-graph', 'statistic', 'media-control', 'light',
+    for kind in ('history-graph', 'statistic', 'media-control',
                  'energy-distribution'):
         check(kind not in conv.NATIVE_CARDS, f"{kind} is claimed but untested")
+        check(kind not in conv.HOSTED_BUILTINS,
+              f"{kind} is hosted now — it belongs in the other scenario")
         out = ha_cards.prepare(f'type: {kind}\nentity: sensor.grid_power')
         check(out.get('error'), f"{kind} did not produce an error: {out}")
         check(kind in out['error'] and 'dashboard tile' in out['error'],
               f"{kind}'s refusal does not name it or offer a way round: "
               f"{out['error']}")
+
+    # A type the converter never drew but the frontend ships IS accepted
+    # now: the host mounts HA's real card, and until then the wall shows the
+    # honest 'unsupported' line the fallback carries.
+    out = ha_cards.prepare('type: light\nentity: light.kitchen')
+    check(out.get('mode') == 'native'
+          and out['card']['builtin'] == 'light',
+          f"a hosted-only type stopped being accepted: {out}")
 
 
 def scenario_a_built_in_card_comes_back_as_a_drawing_not_a_download():
@@ -578,8 +602,19 @@ def scenario_a_built_in_card_comes_back_as_a_drawing_not_a_download():
         check(out.get('mode') == 'native', f"a built-in card was not converted: {out}")
         check('resource' not in out and 'tag' not in out,
               f"a native card is being asked to fetch something: {out}")
-        check(out['card']['rows'][0]['state'] == '3300',
+        # Since the borrowed-frontend arc, a hostable leaf is a HOST node
+        # wearing its converter drawing as the fallback — the wall shows the
+        # drawing at once and mounts HA's real card over it when the runtime
+        # is up. The drawing itself is unchanged, one level down.
+        check(out['card']['kind'] == 'host'
+              and out['card']['builtin'] == 'entities',
+              f"a hostable built-in did not become a host: {out['card']}")
+        check(out['card']['fallback']['rows'][0]['state'] == '3300',
               f"the states did not reach the drawing: {out['card']}")
+        host = out['hosts'][out['card']['host_id']]
+        check(host['builtin'] == 'entities'
+              and host['states']['sensor.grid_power']['state'] == '3300',
+              f"the host entry lost its states: {host}")
         check(out['missing'] == [], f"nothing should be missing: {out['missing']}")
     finally:
         ha_cards.states_for = real

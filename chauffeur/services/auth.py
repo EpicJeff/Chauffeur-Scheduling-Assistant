@@ -66,6 +66,11 @@ RULES = [
     # --- public: the things that must answer before anyone can sign in ------
     (ANY, '/health', ANYONE, None),
     (ANY, '/manifest.json', ANYONE, None),
+    # HA's icon-shape chunks, proxied for the REAL ha-icon the hosted
+    # built-in cards render — it fetches them relative to the page. The
+    # content is SVG path data, the same files HA serves any browser before
+    # sign-in; nothing about the household rides in an icon's outline.
+    ('GET', '/static/mdi/{fname}', ANYONE, None),
     (ANY, '/sw.js', ANYONE, None),
     (ANY, '/api/vapid_public_key', ANYONE, None),
     # Sign-in itself. `/auth` mints the token, so it cannot require one; it is
@@ -168,6 +173,14 @@ RULES = [
     ('GET', '/api/ha/media_players', WALL, 'music'),
     ('POST', '/api/ha/media_players/{entity_id}/command', WALL, 'music'),
     ('GET', '/api/ha/image64/{encoded}', WALL, 'music'),
+    # The hosted built-in cards' lanes (services/ha_frontend), carved out the
+    # same way and for the same reason: a wall panel is what mounts HA's own
+    # cards, and the bundle, its chunks, the theme and a sensor's history are
+    # all read on the panel's own tier. The chunk files and the icon shapes
+    # are the same unauthenticated statics HA hands any browser pre-sign-in —
+    # but everything above them stays behind the wall tier because history
+    # and registries ARE household data.
+    ('GET', '/api/ha/frontend/*', WALL, None),
     (ANY, '/api/ha/*', PARENTS, None),
     (ANY, '/api/telemetry/*', PARENTS, None),
     (ANY, '/api/push_subscriptions/*', PARENTS, None),
