@@ -86,6 +86,14 @@
         --panel-card: rgb(12 16 28 / 0.55);
         --panel-card-hi: rgb(20 26 42 / 0.72);
         --panel-card-lo: rgb(8 11 20 / 0.38);
+        /* The same card with NOTHING behind it. `-lo` is a card lying on a
+           tile’s panel: two translucent layers, and the pair reads solid.
+           A tile told to drop its panel leaves that card as one thin layer
+           over the photograph, which the household read as barely there.
+           This is that card’s shade and only that card’s — thickening
+           `-lo` itself would thicken every card that still has a panel
+           under it. */
+        --panel-card-solo: rgb(8 11 20 / 0.7);
         /* Mapped page surfaces. More opaque than the board's glass because
            they carry no blur — see the surfaces block below. */
         --panel-surface-1: rgb(10 13 22 / 0.62);
@@ -127,6 +135,7 @@
         --panel-card: rgb(255 255 255 / 0.88);
         --panel-card-hi: rgb(255 255 255 / 0.96);
         --panel-card-lo: rgb(255 255 255 / 0.72);
+        --panel-card-solo: rgb(255 255 255 / 0.9);
         --panel-surface-1: rgb(255 255 255 / 0.78);
         --panel-modal: rgb(255 255 255);
         --panel-surface-2: rgb(255 255 255 / 0.86);
@@ -161,6 +170,7 @@
             --panel-card: rgb(255 255 255 / 0.88);
             --panel-card-hi: rgb(255 255 255 / 0.96);
             --panel-card-lo: rgb(255 255 255 / 0.72);
+            --panel-card-solo: rgb(255 255 255 / 0.9);
             --panel-surface-1: rgb(255 255 255 / 0.78);
             --panel-modal: rgb(255 255 255);
         --panel-modal: rgb(255 255 255);

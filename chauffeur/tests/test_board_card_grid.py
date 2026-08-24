@@ -153,6 +153,68 @@ def scenario_a_nested_ha_stack_keeps_its_own_row_unit():
           f"outer Custom tile grid's row/gutter instead of keeping HA's own")
 
 
+# --- the card surface when the tile has no panel behind it -------------------
+#
+# Two translucent layers stacked (a card on a tile's panel) read as solid; the
+# same card alone over a photograph does not. The fix is a second shade role
+# rather than a denser `--panel-card-lo`, so this checks the PLUMBING — that a
+# card inside a tile marked bare resolves to the solo shade and a card in an
+# ordinary tile does not — against the real rules out of home.html. The values
+# themselves are a palette contract, checked in test_panel_chrome.
+SURFACE_PAGE = """
+<style>
+  :root { --panel-card-lo: rgb(1 2 3 / 0.38); --panel-card-solo: rgb(4 5 6 / 0.7);
+          --panel-line: rgb(0 0 0 / 0.1); }
+{grid_css}
+</style>
+<div class="tile-bare"><div class="nc-stack-grid" id="bare">
+  <div class="nc-cell" id="lonely">a card with nothing behind it</div>
+  <div class="nc-cell" id="plain" data-plain="true">a bare card</div>
+</div></div>
+<div><div class="nc-stack-grid" id="panelled">
+  <div class="nc-cell" id="stacked">a card on a panel</div>
+</div></div>
+"""
+
+SURFACE_PROBE = """
+() => {
+  const bg = id => getComputedStyle(document.getElementById(id)).backgroundColor;
+  return { lonely: bg('lonely'), stacked: bg('stacked'), plain: bg('plain') };
+}
+"""
+
+
+def scenario_a_card_alone_over_the_photograph_is_denser():
+    """The household's report: with the tile's panel turned off, the cards are
+    too transparent to read. A card that still has a panel under it must not
+    change — it was never the thin one."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("  skip  playwright not installed — the surfaces were not resolved")
+        return
+    tpl = tpl_source.read('home.html')
+    rules = re.findall(r'^\s*\.nc-(?:stack-grid|cell)[^{\n]*\{[^}]*\}', tpl, re.M)
+    rules += re.findall(r'^\s*\.tile-bare[^{\n]*\{[^}]*\}', tpl, re.M)
+    check(any('tile-bare' in r for r in rules),
+          "home.html has no .tile-bare rule to resolve the card surface with")
+    page = SURFACE_PAGE.replace('{grid_css}', chr(10).join(rules))
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        tab = browser.new_page()
+        tab.set_content(page)
+        got = tab.evaluate(SURFACE_PROBE)
+        browser.close()
+    check(got['lonely'] == 'rgba(4, 5, 6, 0.7)',
+          f"a card in a tile with no panel behind it did not take the denser "
+          f"surface: {got['lonely']}")
+    check(got['stacked'] == 'rgba(1, 2, 3, 0.38)',
+          f"a card that still sits on a tile's panel changed too: "
+          f"{got['stacked']}")
+    check(got['plain'] == 'rgba(0, 0, 0, 0)',
+          f"a card asked to drop its own surface got one back: {got['plain']}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

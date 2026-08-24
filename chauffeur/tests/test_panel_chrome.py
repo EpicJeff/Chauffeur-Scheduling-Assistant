@@ -145,6 +145,29 @@ def scenario_the_skin_maps_the_greys_the_pages_are_written_in():
           "the tokens moved out of the shared skin")
 
 
+def scenario_a_card_with_no_panel_behind_it_gets_a_denser_surface():
+    """`--panel-card-lo` is a card sitting ON a tile's panel: two translucent
+    layers stacked, and the pair reads solid enough. Turn the tile's panel off
+    ("No panel behind these cards") and the same card is one thin layer over
+    the photograph — the household reported it as too transparent to read.
+
+    So the no-panel case gets its own shade role rather than a nudged token:
+    changing `--panel-card-lo` itself would thicken every card that still has
+    a panel under it. Defined in all THREE places the palette is written —
+    dark, explicit light, and auto-following-the-system — because a token
+    added to two of them is a token that silently reverts when somebody
+    switches their phone to light.
+    """
+    check(SKIN.count('--panel-card-solo') == 3,
+          f"the no-panel card shade is not defined in all three palettes: "
+          f"{SKIN.count('--panel-card-solo')} of 3")
+    check('--panel-card-solo: rgb(8 11 20 / 0.7)' in SKIN,
+          "dark's no-panel card shade is not the denser one")
+    check(SKIN.count('--panel-card-solo: rgb(255 255 255 / 0.9)') == 2,
+          "light's no-panel card shade is not the denser one in both light "
+          "palettes (explicit and auto)")
+
+
 def scenario_the_grey_mapping_never_applies_a_filter():
     """This one broke the whole panel twice, for two different reasons.
 

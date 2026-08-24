@@ -112,6 +112,12 @@
             padding: 0.75rem;
             overflow: hidden;
         }
+        /* A card in a tile that was told to drop its panel ("No panel behind
+           these cards") has nothing behind it but the photograph, so it takes
+           the denser shade. Set as the TOKEN rather than as a background, so a
+           card asked to drop its OWN surface still draws none — that rule wins
+           on the property, not on the variable. */
+        .tile-bare .nc-stack-grid { --panel-card-lo: var(--panel-card-solo); }
         .nc-cell[data-plain] {
             background: none;
             border: 0;
@@ -851,7 +857,7 @@
                     :style="spanStyle(t.id, t.type, t.config)" :data-tile-id="t.id"
                     @pointerdown="arranging && startTileDrag($event, t.id)"
                     class="min-w-0 overflow-x-hidden relative"
-                    :class="[t.bare ? '' : 'panel-card rounded-2xl p-4 md:p-5',
+                    :class="[t.bare ? 'tile-bare' : 'panel-card rounded-2xl p-4 md:p-5',
                              tileFills(t) ? 'flex flex-col overflow-hidden'
                                           : 'block tile-scroll overflow-y-auto',
                              !arranging && opens(t) ? 'transition-transform active:scale-[0.985]' : '',
