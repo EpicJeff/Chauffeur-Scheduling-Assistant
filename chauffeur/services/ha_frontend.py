@@ -69,8 +69,22 @@ def find_app_path(index_html):
     return (m.group(0), m.group(1)) if m else (None, None)
 
 
+# Prepended to the patched entrypoint. HA's elements and the panel's shim
+# elements share tag names, and a registry takes each name once — an exact
+# duplicate `define` THROWS, and it throws inside a chunk's module
+# evaluation, taking every module that shares the chunk down with it. That
+# was the wall's "cards mount but features and area images don't": the
+# shims defined first, and the chunks defining ha-form, ha-icon and their
+# neighbours died mid-evaluation. First definition winning silently is the
+# right rule for this page, in both directions.
+_DEFINE_GUARD = ('(function(){var d=customElements.define.bind(customElements);'
+                 'customElements.define=function(n,c,o){'
+                 'if(!customElements.get(n)){d(n,c,o);}};})();')
+
+
 def patch_runtime(src):
-    """The entrypoint with its boot call swapped for a window export.
+    """The entrypoint with its boot call swapped for a window export, and a
+    duplicate-define guard in front.
 
     The last statement of the entrypoint is `<require>(<entry module>);` —
     everything before it is runtime setup. Replacing that single call is the
@@ -87,7 +101,8 @@ def patch_runtime(src):
     at = src.rfind(call)
     if at < 0:
         return None
-    return src[:at] + f'window.__haWpr={tail.group(1)};' + src[at + len(call):]
+    return (_DEFINE_GUARD + src[:at]
+            + f'window.__haWpr={tail.group(1)};' + src[at + len(call):])
 
 
 def chunk_filenames(src):
@@ -225,14 +240,25 @@ def extract_eager_modules(chunk_src):
 
 # --- the bundle ---------------------------------------------------------------
 
+# Bumped whenever what _extract PRODUCES changes shape — the patched
+# runtime's prelude, a new meta field — so a cached extraction from an older
+# build is redone rather than served with yesterday's patch. The app hash
+# only says HA did not change; it cannot say WE did not.
+PATCH_V = 2
+
+
 def _load_cached(app_hash):
     try:
         meta_path = os.path.join(_cache_dir(), f'{app_hash}.json')
-        runtime = os.path.join(_cache_dir(), f'runtime.{app_hash}.js')
+        runtime = os.path.join(_cache_dir(),
+                               f'runtime.{app_hash}.p{PATCH_V}.js')
         if not (os.path.exists(meta_path) and os.path.exists(runtime)):
             return None
         with open(meta_path, encoding='utf-8') as f:
-            return json.load(f)
+            meta = json.load(f)
+        if meta.get('patch_v') != PATCH_V:
+            return None
+        return meta
     except Exception:
         return None
 
@@ -240,7 +266,8 @@ def _load_cached(app_hash):
 def _persist(app_hash, meta, runtime_src):
     try:
         os.makedirs(_cache_dir(), exist_ok=True)
-        with open(os.path.join(_cache_dir(), f'runtime.{app_hash}.js'),
+        with open(os.path.join(_cache_dir(),
+                               f'runtime.{app_hash}.p{PATCH_V}.js'),
                   'w', encoding='utf-8') as f:
             f.write(runtime_src)
         with open(os.path.join(_cache_dir(), f'{app_hash}.json'),
@@ -253,11 +280,15 @@ def _persist(app_hash, meta, runtime_src):
 
 
 def runtime_source(app_hash):
-    """The patched entrypoint for a bundle already extracted, or None."""
+    """The patched entrypoint for a bundle already extracted, or None. The
+    file is named for the app hash AND our patch version: the URL is cached
+    immutable in browsers, and a guard added to the patch must be a new URL
+    or every wall keeps yesterday's runtime until somebody clears a cache."""
     if not re.match(r'^[0-9a-f]{8,32}$', str(app_hash or '')):
         return None
     try:
-        with open(os.path.join(_cache_dir(), f'runtime.{app_hash}.js'),
+        with open(os.path.join(_cache_dir(),
+                               f'runtime.{app_hash}.p{PATCH_V}.js'),
                   encoding='utf-8') as f:
             return f.read()
     except Exception:
@@ -322,6 +353,7 @@ def _extract(fetch):
             theme_base, theme_dark = extract_theme(app_src)
             meta = {
                 'app_hash': app_hash,
+                'patch_v': PATCH_V,
                 'chunks': chunks,
                 'files': files,
                 'eager_modules': eager,

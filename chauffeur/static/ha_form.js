@@ -486,9 +486,23 @@
         return { text: {} };
     }
 
-    defineAll();
+    // NOT defined at parse time any more, and this is load-bearing: every
+    // one of these tags is ALSO defined by Home Assistant's own frontend,
+    // which the board now borrows for the built-in cards (ha_card_host
+    // bootBuiltin). A registry takes each name once — when the shims went
+    // first, HA's chunks threw mid-evaluation and every module sharing those
+    // chunks died with them: cards mounted, but their feature rows, their
+    // hui-image and the real pickers were casualties. Reported from the wall
+    // as "features and area images don't show". The shims now define only
+    // when asked — which the host does exactly when the borrowed runtime is
+    // not there to do it better.
 
     window.ChauffeurHaForm = {
+        // The shim elements, on demand. Idempotent (define skips existing),
+        // safe after the runtime too — its patched prelude ignores duplicate
+        // defines — but the design is to not need that net: real elements
+        // where the runtime works, these where it does not.
+        ensure: defineAll,
         // Fed by the page once the household's entities are known. Called
         // again whenever they change; every picker reads the live array.
         setEntities: function (rows) { ENTITIES = rows || []; },

@@ -5322,6 +5322,37 @@ retiring the imitation.
   path — `getConfigElement()` from the borrowed runtime is the obvious next
   slice, and until then `features:` (and any key outside the schema) is
   YAML-only: the form preserves such keys (v2.387.30) but cannot author them.
+- **v2.387.31 — the collision that explained the wall.** Every tag the
+  panel's shims define (`ha-card`, `ha-icon`, `ha-form`, the pickers…) is
+  ALSO defined by chunks in the borrowed runtime's own set (verified:
+  ha-card in 68787, ha-icon in 38092, ha-form in 95135). A registry takes
+  each name once and a duplicate `define` THROWS — inside the chunk's
+  module evaluation, killing every module sharing the chunk. On the wall
+  the shims parsed first, so cards mounted but their feature rows,
+  `hui-image` (area photos) and the real pickers were casualties — while
+  the shim-free test harness showed everything working. Three-layer fix:
+  the patched runtime now leads with a duplicate-define guard (first
+  definition wins silently, both directions; `PATCH_V` bumps the disk
+  cache AND the runtime's immutable URL); `ha_form.js` no longer defines
+  at parse (`ChauffeurHaForm.ensure()` on demand); and
+  `ChauffeurHaCards.ensureForm()` picks the form layer — HA's real one
+  pulled through a card's `getConfigElement()` where the runtime booted,
+  the shims where it did not.
+- **v2.387.31 — the REAL card editors.** The tile/card overlay asks
+  `mountBuiltinEditor` first: `getConfigElement()` off the borrowed
+  runtime returns HA's own editor — the thermostat's includes the whole
+  `features` UI, the area card's the real display choices — with our
+  declared-schema ha-form as the fallback. "Features set in the options"
+  could never be true before: a schema only offers what somebody re-typed
+  into it. The editors consume more of the app shell than the cards do;
+  the context provider now answers the full roster (`hassRegistries` —
+  unanswered, the entity picker threw — `hassConnection`, `hassApi`,
+  `extendedEntities`, `related` answered null on purpose: consumers guard
+  on falsy but walk any truthy value). Editor i18n is the same humanizer
+  (`loadBackendTranslation` resolves to it). The picker catalog now lists
+  every hostable type (schema or not). Verified in the harness: entity
+  picker with registry names, mode row, theme, features section, zero
+  console errors, alongside ha_form.js loaded the way the wall loads it.
 - **v2.387.30 follow-ups from the wall**: area photographs rewritten
   server-side through the base64url artwork proxy (`api/ha/image64/…`,
   client prefixes apiBase) — the registry path is authenticated and a bare

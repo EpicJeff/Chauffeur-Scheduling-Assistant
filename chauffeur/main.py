@@ -6295,8 +6295,15 @@ def ha_card_catalog():
     catalogue rather than a picker.
     """
     from services import ha_cards, ha_card_convert
+    # The union: every type with a declared schema PLUS every hostable
+    # built-in. A hosted type's real editor comes off the borrowed runtime
+    # (getConfigElement) in the browser; the schema — None for the ones we
+    # never declared — is the fallback form for walls the runtime cannot
+    # reach.
+    kinds = sorted(set(ha_card_convert.editable_cards())
+                   | ha_card_convert.HOSTED_BUILTINS)
     native = []
-    for kind in ha_card_convert.editable_cards():
+    for kind in kinds:
         native.append({'type': kind, 'schema': ha_card_convert.schema_for(kind)})
     # The RESOURCES, not the cards. A file's name does not tell you which
     # elements it defines — `mushroom.js` defines about thirty — and the
@@ -6374,7 +6381,8 @@ def ha_frontend_bundle():
     return {
         'ok': True,
         'version': meta['app_hash'],
-        'runtime': f"api/ha/frontend/latest/runtime.{meta['app_hash']}.js",
+        'runtime': (f"api/ha/frontend/latest/"
+                    f"runtime.{meta['app_hash']}.p{ha_frontend.PATCH_V}.js"),
         'chunks': meta['chunks'],
         'eager_modules': meta['eager_modules'],
         'cards': meta['cards'],
@@ -6411,7 +6419,7 @@ def ha_frontend_file(fname: str):
     HA hands any browser before sign-in. Hard-cached — the hash is in every
     filename, so a changed frontend is a changed URL."""
     from services import ha_frontend, ha_api
-    m = re.match(r'^runtime\.([0-9a-f]{8,32})\.js$', fname)
+    m = re.match(r'^runtime\.([0-9a-f]{8,32})(?:\.p\d+)?\.js$', fname)
     if m:
         src = ha_frontend.runtime_source(m.group(1))
         if src is None:

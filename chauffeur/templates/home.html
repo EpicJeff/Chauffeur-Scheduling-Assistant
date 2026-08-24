@@ -4064,12 +4064,36 @@
                         return;
                     }
 
-                    // A built-in. Its schema came from the server, declared
-                    // beside the code that reads those keys.
+                    // A built-in. HA's OWN editor first, off the borrowed
+                    // runtime (getConfigElement — the thermostat's carries
+                    // the whole features UI, the area card's the real
+                    // display choices). Our declared schema could only ever
+                    // offer the fields somebody re-typed into it, and a
+                    // field the form does not know about is a setting that
+                    // silently does not exist — reported exactly that way.
+                    host.textContent = '';
+                    const real = await window.ChauffeurHaCards.mountBuiltinEditor(
+                        host, { type: type, config: config,
+                                apiBase: this.apiBase, dark: !this.isLight() },
+                        onChange);
+                    if (!host.isConnected) return;      // closed mid-boot
+                    if (real) {
+                        this.cardEditorNote[w.id] = '';
+                        this._appendSizeSection(host, config, onChange);
+                        return;
+                    }
+                    // The declared schema, for walls the runtime cannot
+                    // reach — and for the types that never declared one,
+                    // the honest sentence. The form elements are no longer
+                    // defined at page load (they collided with the borrowed
+                    // runtime's own), so the form layer is asked for first:
+                    // HA's real one where the runtime is up, the shims
+                    // where it is not.
+                    await window.ChauffeurHaCards.ensureForm();
+                    if (!host.isConnected) return;
                     const native = (this.cardCatalog.native || [])
                         .find(n => n.type === type);
-                    host.textContent = '';
-                    if (!native) {
+                    if (!native || !native.schema) {
                         this.cardEditorNote[w.id] =
                             type + ' has no visual editor here — its YAML is the way.';
                         return;
@@ -4090,11 +4114,17 @@
                         onChange({ ...config, ...e.detail.value, type: type });
                     });
                     host.appendChild(form);
+                    this._appendSizeSection(host, config, onChange);
+                },
 
-                    // Size is asked separately because it writes into
-                    // `grid_options` rather than the config's top level —
-                    // folding it in would have put a `columns` field beside the
-                    // grid card's own `columns`.
+                // Size is asked separately because it writes into
+                // `grid_options` rather than the config's top level —
+                // folding it in would have put a `columns` field beside the
+                // grid card's own `columns`. Appended after WHICHEVER editor
+                // mounted: HA's real editors do not cover grid_options
+                // either (their sections view asks the same question in its
+                // own chrome, which is not here).
+                _appendSizeSection(host, config, onChange) {
                     const size = document.createElement('ha-form');
                     size.schema = this.cardCatalog.grid;
                     size.data = config.grid_options || {};

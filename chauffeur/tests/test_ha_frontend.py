@@ -87,6 +87,12 @@ def scenario_the_entrypoint_is_read_not_guessed():
     check(patched is not None, 'the boot call was not found')
     check('window.__haWpr=o;' in patched, 'the runtime export is missing')
     check('o(91535);' not in patched, 'the app still boots')
+    # The duplicate-define guard rides in FRONT of everything: HA's chunks
+    # and the panel's shims share tag names, and without it a collision
+    # throws mid-chunk-evaluation and kills every module sharing the chunk —
+    # the wall's "cards mount but features and area images don't".
+    check(patched.startswith('(function(){var d=customElements.define'),
+          'the duplicate-define guard is not first in the runtime')
 
     files = ha_frontend.chunk_filenames(APP)
     check(files.get('14887') == 'bbbb111122223333.js'
@@ -140,6 +146,82 @@ def scenario_extraction_end_to_end_against_fixtures():
     check(meta['eager_modules'] == [37831, 60275, 87206],
           f"eager: {meta['eager_modules']}")
     check('window.__haWpr=' in runtime, 'runtime not patched')
+
+
+def scenario_a_new_patch_is_a_new_extraction_and_a_new_url():
+    """The app hash only says HA did not change; it cannot say WE did not.
+    A guard added to the patch must reach walls whose browsers hold the old
+    runtime URL immutable — so the version rides the cache key AND the
+    filename."""
+    files = {'/': (INDEX.encode(), 'text/html'),
+             '/frontend_latest/app.d53ce8172fc8c85d.js':
+                 (APP.encode(), 'application/javascript'),
+             '/frontend_latest/14887.bbbb111122223333.js':
+                 (REGISTRY_CHUNK.encode(), 'application/javascript')}
+    meta, runtime = ha_frontend._extract(lambda p: files.get(p))
+    check(meta['patch_v'] == ha_frontend.PATCH_V,
+          f"the extraction does not stamp its patch version: {meta.keys()}")
+    ha_frontend._persist(meta['app_hash'], meta, runtime)
+    check(ha_frontend._load_cached(meta['app_hash']) is not None,
+          'a fresh persist does not load back')
+    check(ha_frontend.runtime_source(meta['app_hash']) is not None,
+          'the runtime file is not where runtime_source looks')
+    # An older build's cache must be re-extracted, not served.
+    import json as _json
+    stale = dict(meta, patch_v=ha_frontend.PATCH_V - 1)
+    with open(os.path.join(ha_frontend._cache_dir(),
+                           f"{meta['app_hash']}.json"), 'w',
+              encoding='utf-8') as f:
+        _json.dump(stale, f)
+    check(ha_frontend._load_cached(meta['app_hash']) is None,
+          "yesterday's patch is being served from the cache")
+
+
+def scenario_the_shims_wait_their_turn():
+    """Every tag the shims define is ALSO defined by chunks in the borrowed
+    runtime's set (verified against the live bundle: ha-card in 68787,
+    ha-icon in 38092, ha-form in 95135, ...). Shims defined at page parse
+    made those chunk evaluations throw, killing every module that shared the
+    chunk — cards mounted, their feature rows and hui-image died. So the
+    form shims define only on demand, and the host asks for the REAL form
+    stack first wherever the runtime booted."""
+    form = open(os.path.join(STATIC, 'ha_form.js'), encoding='utf-8').read()
+    import re as _re
+    check(not _re.search(r'^\s*defineAll\(\);\s*$', form, _re.M),
+          'ha_form.js still defines its elements at parse time')
+    check('ensure: defineAll' in form, 'the on-demand road is gone')
+    host = open(os.path.join(STATIC, 'ha_card_host.js'), encoding='utf-8').read()
+    check('function ensureForm()' in host, 'ensureForm is gone')
+    check('ensureForm: ensureForm' in host, 'ensureForm is not exported')
+    check(host.count('ensureForm()') >= 2,
+          'the custom-editor path no longer asks for a form layer')
+
+
+def scenario_the_real_editors_come_off_the_runtime():
+    """'Features set in the options' had no way to be true: our declared
+    schemas only offer the fields somebody re-typed into them. The REAL
+    editors (getConfigElement) carry HA's whole options surface — the
+    thermostat's features UI included — so the overlay asks for them first
+    and keeps the schema form as the fallback. Verified live in the harness:
+    entity picker, mode row, theme, features section, zero console errors."""
+    host = open(os.path.join(STATIC, 'ha_card_host.js'), encoding='utf-8').read()
+    check('function mountBuiltinEditor(' in host,
+          'the real-editor mount is gone')
+    check('mountBuiltinEditor: mountBuiltinEditor' in host,
+          'mountBuiltinEditor is not exported')
+    # The editors consume more of the app shell than the cards do; each of
+    # these keys was found unanswered by watching real context-request
+    # events, and each unanswered one was a throw inside the editor.
+    for key in ("'hassRegistries'", "'hassConnection'", "'hassApi'",
+                "'extendedEntities'", "'related'"):
+        check('case ' + key + ':' in host,
+              f"the {key} context is unanswered — the pickers throw on it")
+    home = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    check('mountBuiltinEditor(' in home,
+          'the card overlay never asks for the real editor')
+    check('ensureForm()' in home,
+          'the fallback form path never asks for a form layer, and the '
+          'shims no longer define themselves')
 
 
 def scenario_no_home_assistant_is_an_answer_not_an_error():

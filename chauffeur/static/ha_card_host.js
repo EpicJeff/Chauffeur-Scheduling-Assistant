@@ -635,7 +635,9 @@
         API.base = spec.apiBase || '';
         defineShims();
 
-        return loadResource(spec.resource, spec.resourceType).then(function () {
+        return ensureForm().then(function () {
+            return loadResource(spec.resource, spec.resourceType);
+        }).then(function () {
             return Promise.race([
                 window.customElements.whenDefined(spec.tag),
                 new Promise(function (_, reject) {
@@ -797,6 +799,27 @@
         return last.replace(/_/g, ' ');
     }
 
+    // The i18n shape the REAL editors consume (the cards read localize off
+    // hass; the editors reach for the whole machine). Backend translations
+    // resolve to the same humanizer — a mode reading "heat cool" instead of
+    // a localized string is the accepted cost of not booting HA's app.
+    function builtinI18n() {
+        return {
+            language: 'en', locale: LOCALE, localize: humanize,
+            translations: {}, resources: { en: {} },
+            translationMetadata: {
+                fragments: [],
+                translations: { en: { nativeName: 'English', isRTL: false } },
+            },
+            loadBackendTranslation: function () {
+                return Promise.resolve(humanize);
+            },
+            loadFragmentTranslation: function () {
+                return Promise.resolve(humanize);
+            },
+        };
+    }
+
     function haConfig() {
         var cfg = builtin.reg.config || {};
         return {
@@ -865,20 +888,75 @@
         };
     }
 
+    // The connection nobody is holding open, as one shared stub: rejecting
+    // subscriptions is what lets a consumer fall back or say so — a promise
+    // that never settles is a spinner forever.
+    var NO_WS = {
+        subscribeMessage: function () {
+            return Promise.reject(new Error('no websocket in the panel'));
+        },
+        subscribeEvents: function () {
+            return Promise.resolve(function () { });
+        },
+        sendMessagePromise: function () {
+            return Promise.reject(new Error('no websocket in the panel'));
+        },
+        addEventListener: function () { },
+        removeEventListener: function () { },
+    };
+
     function builtinContextValue(key) {
         switch (key) {
             case 'hassFormatters': return builtinFormatters();
             case 'hassConfig': return { config: haConfig() };
+            // The registries, in the wrapped shape the pickers' row builders
+            // read (`registries.entities[id]`). Leaving this unanswered left
+            // the consumer's property undefined and the first row build threw
+            // — which is why the entity picker never drew.
+            case 'hassRegistries':
+                return { entities: builtin.reg.entities,
+                         devices: builtin.reg.devices,
+                         areas: builtin.reg.areas,
+                         floors: {}, labels: {} };
+            case 'connection': return NO_WS;
+            case 'hassConnection':
+                return { connection: NO_WS, connected: true };
+            case 'hassApi':
+                return { callApi: NO_WS.sendMessagePromise,
+                         callWS: NO_WS.sendMessagePromise,
+                         sendMessagePromise: NO_WS.sendMessagePromise };
+            case 'config': return haConfig();
             case 'states': return statesPool;
             case 'entities': return builtin.reg.entities;
+            // The picker's richer registry view. Fed the plain registry:
+            // fields it wants beyond ours read as absent, which the picker
+            // treats as "no extra detail" — the failure mode when the
+            // context itself was unanswered was a throw.
+            case 'extendedEntities': return builtin.reg.entities;
             case 'devices': return builtin.reg.devices;
             case 'areas': return builtin.reg.areas;
             case 'floors': return {};
             case 'labels': return {};
+            case 'services': return {};
+            case 'configEntries': return {};
+            case 'manifests': return {};
+            case 'related':
+                // Answered NULL on purpose: the consumers guard on falsy
+                // ("no related-items index here") and walk fields of any
+                // truthy value — an empty stand-in object threw deeper.
+                return null;
+            case 'panels': return {};
+            case 'themes':
+                return { darkMode: document.documentElement
+                    .getAttribute('data-panel-theme') !== 'light',
+                    theme: 'default', themes: {} };
+            case 'selectedTheme': return null;
+            case 'user':
+                return { name: 'Panel', is_admin: true, id: 'panel' };
             case 'locale': return LOCALE;
             case 'localize': return humanize;
             case 'hassInternationalization':
-                return { language: 'en', locale: LOCALE, localize: humanize };
+                return builtinI18n();
             case 'narrowViewport': return false;
             case 'hassUi':
                 return { darkMode: document.documentElement
@@ -917,6 +995,12 @@
         hass.localize = humanize;
         hass.locale = LOCALE;
         hass.config = haConfig();
+        hass.loadBackendTranslation = function () {
+            return Promise.resolve(humanize);
+        };
+        hass.loadFragmentTranslation = function () {
+            return Promise.resolve(humanize);
+        };
         hass.hassUrl = function (p) {
             return API.base + String(p || '').replace(/^\//, '');
         };
@@ -1049,9 +1133,112 @@
         });
     }
 
+    // ── Which form layer a page gets.
+    //
+    // Editors — ours and every custom card's — are built out of `ha-form`
+    // and the selector elements. Two implementations exist: HA's real ones
+    // (in the borrowed runtime's chunks) and static/ha_form.js's shims. The
+    // registry takes each tag once, so the page must PICK, and the pick is
+    // the same rule as everywhere else in this file: the real thing where
+    // the runtime works, the shim where it does not. The real form stack is
+    // not loaded by booting alone (editor chunks are lazy), so it is pulled
+    // through the first defined card's own getConfigElement — the same road
+    // a real editor would take — and the element it returns is discarded.
+    function ensureForm() {
+        if (window.customElements.get('ha-form')) return Promise.resolve(true);
+        var viaRuntime = Promise.resolve(false);
+        if (builtin.ready && window.__haWpr) {
+            var ctor = null;
+            ['entities', 'thermostat', 'tile', 'sensor'].some(function (t) {
+                var c = window.customElements.get('hui-' + t + '-card');
+                if (c && typeof c.getConfigElement === 'function') {
+                    ctor = c;
+                    return true;
+                }
+                return false;
+            });
+            if (ctor) {
+                viaRuntime = Promise.resolve()
+                    .then(function () { return ctor.getConfigElement(); })
+                    .then(function () {
+                        return !!window.customElements.get('ha-form');
+                    })
+                    .catch(function () { return false; });
+            }
+        }
+        return viaRuntime.then(function (real) {
+            if (real) return true;
+            if (window.ChauffeurHaForm) window.ChauffeurHaForm.ensure();
+            return !!window.customElements.get('ha-form');
+        });
+    }
+
+    // ── The REAL editor for a built-in card, off the borrowed runtime.
+    //
+    // Every hui-* card ships `static getConfigElement()`, and the element it
+    // returns is HA's own editor — for a thermostat that includes the whole
+    // features UI, for an area card the real display-type choices. This is
+    // what "the options" should have been all along: our declared ha-form
+    // schemas could only ever offer the fields somebody re-typed here, and a
+    // field the form does not know about is a field that silently does not
+    // exist. The schemas stay as the fallback for walls the runtime cannot
+    // reach.
+    function mountBuiltinEditor(container, spec, onChange) {
+        if (!container || !spec || !spec.type) return Promise.resolve(false);
+        API.base = spec.apiBase || API.base;
+        return bootBuiltin(spec.apiBase).then(function (ok) {
+            if (!ok) return false;
+            var type = String(spec.type);
+            var tag = 'hui-' + type + '-card';
+            var need = Promise.resolve();
+            if (!window.customElements.get(tag)) {
+                var row = builtin.map[type];
+                if (!row) return false;
+                var o = window.__haWpr;
+                need = Promise.all((row.chunks || []).map(function (c) {
+                    return o.e(c);
+                })).then(function () { return o(row.module); });
+            }
+            return need.then(function () {
+                var ctor = window.customElements.get(tag);
+                if (!ctor || typeof ctor.getConfigElement !== 'function') {
+                    return false;
+                }
+                return Promise.resolve(ctor.getConfigElement()).then(function (el) {
+                    if (!el) return false;
+                    container.classList.add('ha-builtin-theme');
+                    container.classList.toggle('ha-dark', spec.dark !== false);
+                    var theme = themeFrom(container);
+                    Object.keys(theme).forEach(function (k) {
+                        container.style.setProperty(k, theme[k]);
+                    });
+                    el.hass = buildBuiltinHass(spec);
+                    el.setConfig(JSON.parse(JSON.stringify(spec.config || {})));
+                    el.addEventListener('config-changed', function (e) {
+                        e.stopPropagation();
+                        if (e && e.detail && e.detail.config) {
+                            onChange(e.detail.config);
+                        }
+                    });
+                    container.textContent = '';
+                    container.appendChild(el);
+                    return true;
+                });
+            });
+        }).catch(function (e) {
+            // False, not a broken form: the caller still holds the declared
+            // schema and renders that instead.
+            console.warn('[ha_card_host] builtin editor ' + spec.type + ':',
+                e && e.message);
+            return false;
+        });
+    }
+
     window.ChauffeurHaCards = {
         mount: mount,
         mountBuiltin: mountBuiltin,
+        mountBuiltinEditor: mountBuiltinEditor,
+        ensureForm: ensureForm,
         bootBuiltin: bootBuiltin,
         setStates: setStates,
         mountEditor: mountEditor,

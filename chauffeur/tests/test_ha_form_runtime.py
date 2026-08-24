@@ -56,6 +56,12 @@ const { window } = dom;
 window.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ path: 'M1,1' }) });
 window.eval(fs.readFileSync(process.argv[2], 'utf8'));      // ha_form.js
 
+// On demand since the borrowed-frontend arc — at page parse the shims would
+// collide with HA's own definitions and kill the chunks mid-evaluation. The
+// host calls this exactly when the runtime is not there to define the real
+// ones; this probe IS that no-runtime wall.
+window.ChauffeurHaForm.ensure();
+
 window.ChauffeurHaForm.setEntities([
   { value: 'light.hall', label: 'Hall' },
   { value: 'sensor.power', label: 'Power' },
