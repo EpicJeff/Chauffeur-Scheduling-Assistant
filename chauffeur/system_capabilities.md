@@ -5564,11 +5564,13 @@ tile and sub-cards inside a Home Assistant stack.
   Custom tile splices the card out of the source draft list and into the
   destination's at the hovered index. Only an unlocked Custom tile is a
   destination — a built-in tile is a single synthetic card with no card list
-  to join, and refuses rather than half-accepting. A destination already at
-  the server's twelve-card cap refuses too, with `showGlobalAlert` said ONCE
-  per drag — a pointer wandering back to a full tile a second time in the
-  same gesture does not hear the sentence twice, because the household
-  already heard it. A colliding id is re-minted the way `addCard` already
+  to join, and refuses rather than half-accepting. **How many cards the
+  destination already holds is nobody's business**: the twelve-card cap was
+  removed in v2.387.49 (it had no reason — it landed with the first version
+  of `normalize_cards`, contradicted its own commit message, dropped the
+  thirteenth card of a pasted board with a silent `break`, and capped one
+  tile of twenty cards while allowing twenty tiles of one). A colliding id
+  is re-minted the way `addCard` already
   mints one (the bare type, then `type-2`, `type-3`). `cols` and `rows`
   travel with the card unchanged — refitting them to the destination's width
   would silently resize a card somebody just moved. Persistence is the

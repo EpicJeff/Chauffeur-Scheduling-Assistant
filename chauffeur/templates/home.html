@@ -4776,7 +4776,6 @@
                 addCard(w, type) {
                     if (!type || this.widgetMeta(type).container) return;
                     const cards = this.tileCards(w);
-                    if (cards.length >= 12) return;
                     const taken = new Set(cards.map(c => c.id));
                     let id = type, n = 2;
                     while (taken.has(id)) id = `${type}-${n++}`;
@@ -4927,9 +4926,13 @@
                 // and nothing else: no endpoint, no re-parse, and Cancel puts
                 // both tiles back because it restores the whole page.
                 moveTileCard(e, cards, at, cell, tileId) {
+                    // A card that is not in the list it was dragged from is a
+                    // caller bug, and a silent one: `splice(-1, 1)` counts from
+                    // the END, so a stale index does not fail, it moves the
+                    // wrong card.
+                    if (at < 0 || at >= cards.length) return;
                     const startX = e.clientX, startY = e.clientY;
                     let moved = false, from = at, list = cards, host = tileId;
-                    let said = false;
                     const move = (ev) => {
                         if (!moved) {
                             if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
@@ -4964,20 +4967,14 @@
                             from = to;
                             return;
                         }
-                        // A different tile. Only a container has a card list to
-                        // join, and only twelve cards fit in one — a thirteenth
-                        // is dropped server-side, which would look like a card
-                        // that left one tile and never arrived at the other.
+                        // A different tile. Only a container has a card list
+                        // to join; a built-in tile's single card is assembled
+                        // at build time and there is no list there to join.
+                        // How MANY cards the destination already holds is not
+                        // this handler's business — a tile takes as many as a
+                        // household puts in it.
                         const dest = this._containerCards(onto);
                         if (!dest) return;
-                        if (dest.length >= 12) {
-                            if (!said) {
-                                said = true;
-                                showGlobalAlert('That tile is full — twelve cards '
-                                    + 'is as many as one tile holds.');
-                            }
-                            return;
-                        }
                         const card = list.splice(from, 1)[0];
                         // Ids are unique WITHIN a tile, and the destination may
                         // already hold a card of this type. Same mint as adding
@@ -4996,12 +4993,11 @@
                         const j = seat(dest, onto);
                         const to = j === -1 ? dest.length : j;
                         dest.splice(to, 0, card);
-                        // `said` is NOT reset here: the refusal is said once
-                        // per DRAG, not once per full tile visited. A pointer
-                        // that wanders from a full tile to a valid one and
-                        // back to a (possibly different) full tile has
-                        // nothing new to tell the household the first alert
-                        // did not already say.
+                        // The card now lives in the destination's list, so the
+                        // rest of the gesture measures itself against THAT
+                        // list: a pointer that crosses three tiles before it
+                        // is released has to leave the card in the last one
+                        // and nowhere else.
                         list = dest; host = onto; from = to;
                     };
                     const up = () => {

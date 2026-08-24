@@ -233,6 +233,24 @@ def scenario_a_card_is_sized_in_twelfths_of_its_tile():
     check(silly['cards'][0]['rows'] == 1000, "a card's height is not clamped")
 
 
+def scenario_a_tile_holds_as_many_cards_as_somebody_puts_in_it():
+    """There was a cap of twelve, and it never had a reason.
+
+    It arrived in the same commit whose own message says a custom tile "takes
+    any number of cards", it was never written down anywhere, and it was
+    enforced by a silent `break` — a board pasted in with thirteen cards in one
+    tile simply lost the thirteenth with nothing said. Tiles per board have no
+    cap, so twenty tiles of one card each was always allowed while one tile of
+    twenty cards was not, at identical cost to the build and the payload.
+    """
+    many = [{'type': 'chores', 'config': {}} for _ in range(20)]
+    got = _with_builders({'chores': _Spy()}, lambda: _custom(many))
+    check(len(got['cards']) == 20,
+          f"a tile dropped cards it was given: kept {len(got['cards'])} of 20")
+    ids = [c['id'] for c in got['cards']]
+    check(len(set(ids)) == 20, f"the ids collided rather than minting: {ids}")
+
+
 def scenario_a_broken_card_does_not_take_the_tile_down():
     """One card throwing has to cost that card and nothing else. A custom tile
     is several features in one, which is several more chances to throw."""

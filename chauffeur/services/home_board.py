@@ -3436,7 +3436,6 @@ def _tile_intake(now, **_):
 # renderers per type quietly disagreeing with each other.
 
 CUSTOM_TILE = 'custom'
-TILE_MAX_CARDS = 12
 
 # What a REQUIRED tile says when its builder had nothing. Each one is the same
 # sentence its own page shows on an empty day, because that is the honest
@@ -3489,6 +3488,14 @@ def normalize_cards(raw) -> List[dict]:
     work, but because a wall panel is read at a glance from across a room, a
     layout nested three deep is not read at all, and the markup that draws a
     card is the markup that draws a tile and cannot include itself.
+
+    There is no limit on HOW MANY cards a tile holds. There was one — twelve,
+    enforced by a silent `break` right here, so a board pasted in with a
+    thirteenth card quietly lost it. It arrived with the first version of this
+    function and was never argued for anywhere, and the asymmetry gave it away:
+    a board takes any number of TILES, so twenty tiles of one card each cost
+    exactly what one tile of twenty cards costs, and only the second was
+    refused. A household that wants a dense tile can have one.
     """
     known = {w['key'] for w in WIDGETS} - container_types()
     out, taken = [], set()
@@ -3506,8 +3513,6 @@ def normalize_cards(raw) -> List[dict]:
         config = item.get('config')
         out.append({'id': iid, 'type': type_,
                     'config': dict(config) if isinstance(config, dict) else {}})
-        if len(out) >= TILE_MAX_CARDS:
-            break
     return out
 
 

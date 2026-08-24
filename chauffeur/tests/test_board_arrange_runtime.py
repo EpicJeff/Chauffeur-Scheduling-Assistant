@@ -293,27 +293,33 @@ drag('mine', 'weather', cardCell('yours', 'weather'));
 const afterCross = { mine: b._cardsOf('mine').map(c => c.id),
                      yours: b._cardsOf('yours').map(c => c.id) };
 
-// A full tile refuses. Twelve is the server's limit, so a thirteenth would be
-// dropped on the way in and the card would simply vanish.
+// A tile that already holds twelve cards takes a thirteenth. There used to be
+// a cap here, refused with an alert; it had no reason (see the scenario) and
+// the collector below is kept to prove nothing is said any more.
 const alerts = [];
 globalThis.showGlobalAlert = m => alerts.push(m);
 b.page().widgets.find(w => w.id === 'yours').config.cards =
   Array.from({ length: 12 }, (_, i) => ({ id: 'x' + i, type: 'chores', config: {} }));
 drag('mine', 'chores', cardCell('yours', 'x0'));
 const afterFull = { mine: b._cardsOf('mine').map(c => c.id),
-                    yours: b._cardsOf('yours').length, said: alerts.length };
+                    yours: b._cardsOf('yours').length, said: alerts.length,
+                    landed: b._cardsOf('yours').map(c => c.id).includes('chores') };
 
 // A built-in tile is a locked container of one synthetic card. It has no card
 // list to join, and inventing one for it would put a card somewhere the server
 // will not keep it.
+//
+// `mine` needs a card again first: the drag above genuinely MOVED its only one
+// into `yours`, where the old cap-refusal left it sitting at home.
+b._cardsOf('mine').push({ id: 'chores', type: 'chores', config: {} });
 drag('mine', 'chores', cardCell('drives', 'drives'));
 const afterLocked = b._cardsOf('mine').map(c => c.id);
 
-// A drag is ONE gesture. A pointer that visits a full tile, then a valid
-// one, then a full tile again has nothing new to say the first refusal
-// didn't already say — so the alert fires once for the whole drag, not
-// once per full tile it happens to pass over. Reuses the same alert
-// collector as the scenario above rather than a second one.
+// One drag, three tiles. `host`, `from` and `list` are rebound on every
+// crossing, so a pointer that wanders across several tiles before it is
+// released has to leave the card in the LAST one and nowhere else — the
+// bookkeeping is the whole risk here, and a card that lands in two lists at
+// once is a card the next save duplicates.
 //
 // The mid-drag hop lands on an ORDINARY card cell in a non-empty tile —
 // `theirs` carries one card from the start — rather than on the tile's bare
@@ -324,6 +330,8 @@ const afterLocked = b._cardsOf('mine').map(c => c.id);
 // Dropping onto an actually-empty tile's grid is its own scenario, below.
 b.page().widgets.push({ id: 'theirs', type: 'custom', config: { cards: [
   { id: 'filler', type: 'weather', config: {} } ] } });
+b.page().widgets.push({ id: 'empty2', type: 'custom', config: { cards: [
+  { id: 'seed', type: 'weather', config: {} } ] } });
 b.board.tiles.push({ id: 'theirs', type: 'custom', locked: false, cards: [
   { id: 'theirs-filler', type: 'weather', cols: 12, rows: 0, config: {}, data: {} } ] });
 const alertsBeforeRevisit = alerts.length;
@@ -332,15 +340,18 @@ const alertsBeforeRevisit = alerts.length;
   const at = cards.findIndex(c => c.id === 'chores');
   const cell = cardCell('mine', 'chores');
   b.moveTileCard({ clientX: 0, clientY: 0 }, cards, at, cell, 'mine');
-  globalThis.AIM = cardCell('yours', 'x0');     // full tile: refused, said
+  globalThis.AIM = cardCell('yours', 'x0');     // first hop
   globalThis.__win.pointermove({ clientX: 400, clientY: 400 });
-  globalThis.AIM = cardCell('theirs', 'filler'); // valid tile: accepted
+  globalThis.AIM = cardCell('theirs', 'filler'); // second hop
   globalThis.__win.pointermove({ clientX: 401, clientY: 401 });
-  globalThis.AIM = cardCell('yours', 'x0');     // full tile again: still said
+  globalThis.AIM = cardCell('empty2', 'seed');   // released here
   globalThis.__win.pointermove({ clientX: 402, clientY: 402 });
   globalThis.__win.pointerup();
 }
 const afterRevisit = { theirs: b._cardsOf('theirs').map(c => c.id),
+                       last: b._cardsOf('empty2').map(c => c.id),
+                       mine: b._cardsOf('mine').map(c => c.id),
+                       passed: b._cardsOf('yours').length,
                        said: alerts.length - alertsBeforeRevisit };
 
 // Dropping onto an EMPTY tile's grid — no `[data-path]` cell under the
@@ -897,19 +908,28 @@ def scenario_a_card_can_be_dragged_into_another_custom_tile():
           f"the destination did not already hold: {got['afterCross']}")
 
 
-def scenario_a_full_tile_refuses_a_card_and_says_so():
-    """Twelve cards is the server's limit. A thirteenth would be dropped on the
-    way in — the card would leave one tile and never arrive at the other."""
+def scenario_a_thirteenth_card_is_an_ordinary_card():
+    """The cap of twelve is gone, and with it the refusal it needed.
+
+    It never had a reason: it arrived in the same commit whose message says a
+    custom tile takes any number of cards, was written down nowhere, and made
+    twenty tiles of one card fine while one tile of twenty was refused. The
+    alert collector stays wired up here to prove the drag has stopped saying
+    anything at all."""
     got = _run()
     if got is None:
         return
-    check(got['afterFull']['yours'] == 12,
-          f"a thirteenth card was accepted: {got['afterFull']}")
-    check(got['afterFull']['mine'] == ['chores'],
-          f"the card left its tile anyway: {got['afterFull']}")
-    check(got['afterFull']['said'] == 1,
-          f"a refused drop said nothing, or said it once per pointer move: "
+    check(got['afterFull']['yours'] == 13,
+          f"a tile that held twelve cards refused a thirteenth: "
           f"{got['afterFull']}")
+    check(got['afterFull']['landed'],
+          f"the thirteenth card is not the one that was dragged in: "
+          f"{got['afterFull']}")
+    check(got['afterFull']['mine'] == [],
+          f"the card did not leave the tile it came from: {got['afterFull']}")
+    check(got['afterFull']['said'] == 0,
+          f"the drag said something to the household about a limit that no "
+          f"longer exists: {got['afterFull']}")
 
 
 def scenario_a_built_in_tile_is_not_a_destination():
@@ -923,27 +943,33 @@ def scenario_a_built_in_tile_is_not_a_destination():
           f"{got['afterLocked']}")
 
 
-def scenario_a_refusal_is_said_once_per_drag_not_once_per_full_tile():
-    """A drag is one gesture. A pointer that crosses a full tile, then a
-    valid one, then the same full tile again has nothing new to tell the
-    household the first refusal didn't already say — resetting the flag on
-    every successful hop would let a wandering pointer rattle off the same
-    sentence twice in one drag.
+def scenario_a_drag_across_three_tiles_leaves_the_card_in_the_last_one():
+    """One gesture, several crossings, one card.
 
-    The valid mid-drag hop lands on an ordinary card in a tile that already
-    holds one — `theirs` starts with `filler` — rather than on a bare empty
-    grid: the drop-on-an-empty-grid case is its own scenario, and standing in
-    for it here would have been standing in for a DOM shape that could not
-    exist before finding 1 was fixed."""
+    `host`, `from` and `list` are rebound every time the pointer enters a new
+    tile, and a card that ends up in two of those lists is a card the next
+    save duplicates — the bookkeeping, not the splice, is the risk in a
+    cross-tile drag."""
     got = _run()
     if got is None:
         return
-    check(got['afterRevisit']['theirs'] == ['chores', 'filler'],
-          f"the valid tile visited mid-drag did not receive the card: "
+    # `chores-2`, not `chores`: the first tile it crossed already held a card
+    # of that id, so it was re-minted on the way through — and the new id
+    # travels with it rather than being re-derived at every hop.
+    check(got['afterRevisit']['last'] == ['chores-2', 'seed'],
+          f"the card did not end in the tile the pointer was released over, "
+          f"under the id it picked up on the way: {got['afterRevisit']}")
+    check(got['afterRevisit']['theirs'] == ['filler'],
+          f"a tile the drag merely passed through kept a copy of the card: "
           f"{got['afterRevisit']}")
-    check(got['afterRevisit']['said'] == 1,
-          f"a full tile visited twice in one drag said the refusal more "
-          f"than once: {got['afterRevisit']}")
+    check(got['afterRevisit']['passed'] == 13,
+          f"the first tile the drag crossed kept a copy too: "
+          f"{got['afterRevisit']}")
+    check(got['afterRevisit']['mine'] == [],
+          f"the card is still in the tile it started in: {got['afterRevisit']}")
+    check(got['afterRevisit']['said'] == 0,
+          f"the drag said something about a limit that no longer exists: "
+          f"{got['afterRevisit']}")
 
 
 def scenario_a_card_dropped_on_an_empty_tiles_grid_appends():

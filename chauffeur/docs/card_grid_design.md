@@ -169,9 +169,15 @@ appends.
 - **Only into an unlocked Custom tile.** A built-in tile is built with a single
   synthetic card and has no card list to join; it must refuse rather than
   half-accept.
-- **A full destination refuses.** Twelve cards per tile is the server's limit
-  (`TILE_MAX_CARDS`), so a thirteenth is refused with a `showGlobalAlert`
-  saying so. Never a browser dialog — the panel has its own.
+- **No limit on how many cards a destination holds.** There was one — twelve,
+  and the drag refused a thirteenth with a `showGlobalAlert`. The household
+  asked what it was for, and there was no answer: it arrived in the same commit
+  whose message says a custom tile takes any number of cards, was written down
+  nowhere, and was enforced by a silent `break` that dropped the thirteenth card
+  of a pasted board. Tiles per board have never been capped, so twenty tiles of
+  one card each cost exactly what one tile of twenty cards costs and only the
+  second was refused. Removed on all three surfaces (server, the add button, the
+  drag) in v2.387.49.
 - **A colliding id is re-minted.** Card ids are unique within a tile, and the
   destination may already hold a card of the same type. The mint is the one
   `addCard` already uses: the bare type, then `type-2`, `type-3`.
@@ -229,7 +235,8 @@ home.html):**
 
 - A card dragged into another Custom tile leaves the source list and enters the
   destination at the hovered index.
-- A destination holding twelve cards refuses, and the card stays put.
+- A tile that already holds twelve cards takes a thirteenth, and the drag says
+  nothing about a limit.
 - A colliding id is re-minted rather than duplicated.
 - A built-in (locked) tile is not a destination.
 - `Cancel` after a cross-tile drag restores both tiles.
