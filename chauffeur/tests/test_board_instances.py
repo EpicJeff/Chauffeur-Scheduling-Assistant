@@ -406,19 +406,19 @@ def scenario_the_tile_is_edited_on_the_tile():
     ov = tpl[tpl.index("<!-- ── A TILE's settings"):]
     ov = ov[:ov.index('<!-- ── `#panel-setup` was here')]
     for needs, why in (
-            ("spanOf(tileEditing.id, 'cols')", 'width'),
-            ("spanOf(tileEditing.id, 'rows')", 'height'),
-            ("setSpan(tileEditing.id, 'auto'", 'fit'),
-            ("setSpan(tileEditing.id, 'fill'", 'fill'),
-            ('isHidden(tileEditing)', 'hidden'),
-            ('isRequired(tileEditing)', 'always-show'),
+            ("spanOf(tileEd().id, 'cols')", 'width'),
+            ("spanOf(tileEd().id, 'rows')", 'height'),
+            ("setSpan(tileEd().id, 'auto'", 'fit'),
+            ("setSpan(tileEd().id, 'fill'", 'fill'),
+            ('isHidden(tileEd())', 'hidden'),
+            ('isRequired(tileEd())', 'always-show'),
             ('removeEditingTile()', 'remove')):
         check(needs in ov,
               f"the tile overlay cannot set {why}, so it is not yet a "
               f"replacement for the row in the list")
     # The type's own options, through the SAME declaration renderer every
     # other surface uses rather than a form written twice.
-    check("OW = 'tileEditing'" in ov and 'board_options.html' in ov,
+    check("OW = 'tileEd()'" in ov and 'board_options.html' in ov,
           "the tile overlay hand-rolls its options instead of rendering the "
           "type's declaration through the shared renderer")
 

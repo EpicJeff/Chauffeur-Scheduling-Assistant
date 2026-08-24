@@ -1038,26 +1038,26 @@
             <template x-if="editing">
                 <div class="ed-card rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5">
                     <div class="flex items-center gap-2 mb-1">
-                        <span class="text-lg" x-text="instanceIcon(editing)"></span>
+                        <span class="text-lg" x-text="instanceIcon(cardEd())"></span>
                         <span class="text-base font-black ed-title"
-                            x-text="instanceLabel(editing)"></span>
+                            x-text="instanceLabel(cardEd())"></span>
                         <button type="button" class="ml-auto ed-btn px-2"
                             @click="closeCardEditor()" title="Close">✕</button>
                     </div>
-                    <p class="text-xs ed-note mb-4" x-text="widgetMeta(editing.type).blurb"></p>
+                    <p class="text-xs ed-note mb-4" x-text="widgetMeta(cardEd().type).blurb"></p>
 
                     <div class="flex items-center gap-3 mb-4">
                         <label class="flex items-center gap-1 text-[0.7rem] ed-note">
                             <input type="number" min="1" max="12" step="1"
-                                :value="cardNum(editing, 'cols', 12)"
-                                @change="setCardNum(editing, 'cols', $event.target.value, 12)"
+                                :value="cardNum(cardEd(), 'cols', 12)"
+                                @change="setCardNum(cardEd(), 'cols', $event.target.value, 12)"
                                 class="w-14 ed-input rounded text-xs ed-title px-1 py-0.5">
                             columns of twelve
                         </label>
                         <label class="flex items-center gap-1 text-[0.7rem] ed-note">
                             <input type="number" min="0" max="40" step="1"
-                                :value="cardNum(editing, 'rows', 0)"
-                                @change="setCardNum(editing, 'rows', $event.target.value, 0)"
+                                :value="cardNum(cardEd(), 'rows', 0)"
+                                @change="setCardNum(cardEd(), 'rows', $event.target.value, 0)"
                                 class="w-14 ed-input rounded text-xs ed-title px-1 py-0.5">
                             rows (0 fits the content)
                         </label>
@@ -1070,13 +1070,13 @@
                          drawing, and nineteen copies of the same option is how
                          a vocabulary drifts. -->
                     <label class="flex items-center gap-1.5 text-[0.7rem] ed-note mb-4">
-                        <input type="checkbox" :checked="!!(editing.config || {}).bare"
-                            @change="setCfg(editing, { key: 'bare', type: 'bool', default: false }, $event.target.checked)">
+                        <input type="checkbox" :checked="!!(cardEd().config || {}).bare"
+                            @change="setCfg(cardEd(), { key: 'bare', type: 'bool', default: false }, $event.target.checked)">
                         No panel behind this card
                     </label>
 
                     <div class="space-y-3">
-                        {% with OW = 'editing' %}
+                        {% with OW = 'cardEd()' %}
                             {% include 'components/board_options.html' %}
                         {% endwith %}
                     </div>
@@ -1312,42 +1312,42 @@
             <template x-if="tileEditing">
                 <div class="ed-card rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5">
                     <div class="flex items-center gap-2 mb-1">
-                        <span class="text-lg" x-text="instanceIcon(tileEditing)"></span>
+                        <span class="text-lg" x-text="instanceIcon(tileEd())"></span>
                         <span class="text-base font-black ed-title"
-                            x-text="instanceLabel(tileEditing)"></span>
+                            x-text="instanceLabel(tileEd())"></span>
                         <button type="button" class="ml-auto ed-btn px-2"
                             @click="closeTileEditor()" title="Close">✕</button>
                     </div>
                     <p class="text-xs ed-note mb-4"
-                        x-text="widgetMeta(tileEditing.type).blurb"></p>
+                        x-text="widgetMeta(tileEd().type).blurb"></p>
 
                     <div class="flex flex-wrap items-center gap-3 mb-4">
                         <label class="flex items-center gap-1 text-[0.7rem] ed-note">
                             <input type="number" min="1" :max="cols()" step="1"
-                                :value="spanOf(tileEditing.id, 'cols')"
-                                @change="setSpan(tileEditing.id, 'cols', $event.target.value)"
+                                :value="spanOf(tileEd().id, 'cols')"
+                                @change="setSpan(tileEd().id, 'cols', $event.target.value)"
                                 class="w-14 ed-input rounded text-xs ed-title px-1 py-0.5">
                             <span x-text="'of ' + cols() + ' columns'"></span>
                         </label>
                         <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                            x-show="!spanOf(tileEditing.id, 'auto') && !spanOf(tileEditing.id, 'fill')">
+                            x-show="!spanOf(tileEd().id, 'auto') && !spanOf(tileEd().id, 'fill')">
                             <input type="number" min="1" step="1"
-                                :value="spanOf(tileEditing.id, 'rows')"
-                                @change="setSpan(tileEditing.id, 'rows', $event.target.value)"
+                                :value="spanOf(tileEd().id, 'rows')"
+                                @change="setSpan(tileEd().id, 'rows', $event.target.value)"
                                 class="w-14 ed-input rounded text-xs ed-title px-1 py-0.5">
                             rows
                         </label>
                         <label class="flex items-center gap-1 text-[0.7rem] ed-note"
-                            x-show="canFit(tileEditing.type, tileEditing.config)"
+                            x-show="canFit(tileEd().type, tileEd().config)"
                             title="As tall as whatever it is showing">
-                            <input type="checkbox" :checked="!!spanOf(tileEditing.id, 'auto')"
-                                @change="setSpan(tileEditing.id, 'auto', $event.target.checked)">
+                            <input type="checkbox" :checked="!!spanOf(tileEd().id, 'auto')"
+                                @change="setSpan(tileEd().id, 'auto', $event.target.checked)">
                             fit
                         </label>
                         <label class="flex items-center gap-1 text-[0.7rem] ed-note"
                             title="Down to the bottom of the screen, on any display">
-                            <input type="checkbox" :checked="!!spanOf(tileEditing.id, 'fill')"
-                                @change="setSpan(tileEditing.id, 'fill', $event.target.checked)">
+                            <input type="checkbox" :checked="!!spanOf(tileEd().id, 'fill')"
+                                @change="setSpan(tileEd().id, 'fill', $event.target.checked)">
                             fill
                         </label>
                     </div>
@@ -1355,21 +1355,21 @@
                     <div class="flex flex-wrap items-center gap-4 mb-4">
                         <label class="flex items-center gap-1.5 text-[0.7rem] ed-note"
                             title="Keep the tile but take it off the wall">
-                            <input type="checkbox" :checked="isHidden(tileEditing)"
-                                @change="setHidden(tileEditing, $event.target.checked)">
+                            <input type="checkbox" :checked="isHidden(tileEd())"
+                                @change="setHidden(tileEd(), $event.target.checked)">
                             Hidden — kept, but not on the wall
                         </label>
                         <label class="flex items-center gap-1.5 text-[0.7rem] ed-note"
-                            x-show="canRequire(tileEditing.type)"
+                            x-show="canRequire(tileEd().type)"
                             title="Say it is empty instead of disappearing">
-                            <input type="checkbox" :checked="isRequired(tileEditing)"
-                                @change="setRequired(tileEditing, $event.target.checked)">
+                            <input type="checkbox" :checked="isRequired(tileEd())"
+                                @change="setRequired(tileEd(), $event.target.checked)">
                             Always show, even when empty
                         </label>
                     </div>
 
                     <div class="space-y-3">
-                        {% with OW = 'tileEditing' %}
+                        {% with OW = 'tileEd()' %}
                             {% include 'components/board_options.html' %}
                         {% endwith %}
                     </div>
@@ -3972,6 +3972,13 @@
                     await this.loadCardCatalog();
                     const config = await this.cardConfigOf(w);
                     if (config === null) return;          // the note says why
+                    // The catalog and the config are two round trips, and the
+                    // overlay can be closed across either one. Writing a note
+                    // or mounting an editor into a host that has left the
+                    // document is work nobody can see, and the reactive write
+                    // re-runs the closed overlay's expressions against an
+                    // instance that is no longer there.
+                    if (!host.isConnected) return;
                     const type = String(config.type || '').trim();
                     if (!type) {
                         host.textContent = '';
@@ -4544,6 +4551,7 @@
                 // game: an instance's own title wins, then the type's label,
                 // and a repeat says which repeat it is.
                 instanceLabel(w) {
+                    if (!w) return '';
                     const own = ((w.config || {}).title || '').trim();
                     if (own) return own;
                     const label = this.widgetMeta(w.type).label;
@@ -4558,6 +4566,7 @@
                 // visible in the list it is meant to disambiguate, or it can
                 // only be checked by walking to the wall.
                 instanceIcon(w) {
+                    if (!w) return '';
                     return ((w.config || {}).icon || '').trim().slice(0, 8)
                         || this.widgetMeta(w.type).icon;
                 },
@@ -4798,6 +4807,20 @@
                 editing: null,          // the card instance being edited
                 editingTile: null,
                 tileEditing: null,      // the TILE instance being edited
+
+                // The instance an overlay is about, never null. Closing one
+                // sets its instance to null, and Alpine evaluates the
+                // children of the closing `x-if` once more before it pulls
+                // them out — every `tileEditing.id` in there is read against
+                // the null. A Home Assistant card makes it certain rather
+                // than occasional: its editor is still finishing fetches when
+                // the overlay closes, and the reactive state it writes
+                // afterwards re-runs those same expressions. A stub instance
+                // makes those last reads harmless; nothing can be typed into
+                // an overlay that is gone, so what lands on it is discarded.
+                _noInstance: {},
+                cardEd() { return this.editing || this._noInstance; },
+                tileEd() { return this.tileEditing || this._noInstance; },
                 cardPicking: null,      // the container tile being added to
                 boardSettings: false,   // the board's own settings, open
 

@@ -307,7 +307,7 @@ def scenario_fit_is_offered_per_instance_not_per_type():
     # `canFit` is asked in the tile's OVERLAY since v2.230.4 — the list row
     # that used to ask it as `canFit(w.type, w.config)` is gone.
     for call in ('tileFills(t)', 'cardFills(c)', 'fillsHere(t)',
-                 'canFit(tileEditing.type, tileEditing.config)',
+                 'canFit(tileEd().type, tileEd().config)',
                  'spanStyle(t.id, t.type, t.config)',
                  'isAuto(t.id, t.type, t.config)'):
         check(call in src, f"`{call}` is not how fit is decided, so the "
@@ -565,9 +565,9 @@ def scenario_a_card_inside_a_tile_can_fit_too():
     src = tpl_source.read('home.html')
     # The card's OVERLAY since v2.230.4, not its row in a list — the list is
     # gone, so the controls are read where they live now.
-    card_row = src[src.index("setCardNum(editing, 'cols'"):]
+    card_row = src[src.index("setCardNum(cardEd(), 'cols'"):]
     card_row = card_row[:card_row.index('No panel behind this card')]
-    check("setCardNum(editing, 'rows'" in card_row,
+    check("setCardNum(cardEd(), 'rows'" in card_row,
           "a card's height cannot be edited, so a dragged one is permanent")
     check('fit' in card_row,
           "there is no way to put a dragged card back to fitting its content")

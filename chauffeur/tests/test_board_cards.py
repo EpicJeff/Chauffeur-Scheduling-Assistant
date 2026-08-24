@@ -254,7 +254,7 @@ def scenario_a_card_can_drop_its_own_panel():
     # list left a card with no options no road to it.
     # In the card's own overlay since v2.230.4, because the list it used to
     # live in is gone — cards are dragged, resized and opened on the board now.
-    check("setCfg(editing, { key: 'bare'" in home,
+    check("setCfg(cardEd(), { key: 'bare'" in home,
           "the editor offers no way to make a card bare")
 
 
