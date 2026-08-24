@@ -5317,11 +5317,23 @@ retiring the imitation.
   (history and registries are household data), `/static/mdi/{fname}` =
   ANYONE (icon outlines, the same files HA serves before sign-in).
 - **Known gaps**: localize is a humanizer (mode names read "heat cool" not
-  localized strings); area pictures from the registry ride authenticated HA
-  paths and may not draw; more-info taps do nothing (by decision — not
+  localized strings); more-info taps do nothing (by decision — not
   rebuilding HA inside Chauffeur). The CARD EDITORS still use our ha-form
   path — `getConfigElement()` from the borrowed runtime is the obvious next
-  slice.
+  slice, and until then `features:` (and any key outside the schema) is
+  YAML-only: the form preserves such keys (v2.387.30) but cannot author them.
+- **v2.387.30 follow-ups from the wall**: area photographs rewritten
+  server-side through the base64url artwork proxy (`api/ha/image64/…`,
+  client prefixes apiBase) — the registry path is authenticated and a bare
+  <img> on our origin 404'd. The visual editor's `value-changed` now MERGES
+  over the card's config instead of replacing it — replacement deleted every
+  key the schema does not name (a thermostat's `features:` first) on the
+  first form edit. And a poll re-render ADOPTS the live card element into
+  its new cell (`adopt()` in ha_card_host.js, both mount paths, theme
+  re-applied) instead of rebuilding — rebuilding flashed the converter
+  fallback for a frame per poll and restarted card animations. First page
+  load still shows the fallback until the runtime boots: that one is the
+  design, not the bug.
 - Tests: `tests/test_ha_frontend.py` (11 scenarios — rspack-shaped fixtures
   for every extraction including the editor-table bleed the balanced scan
   fixed, end-to-end against fixtures, no-HA answers None with the step

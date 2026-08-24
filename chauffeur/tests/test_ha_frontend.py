@@ -238,6 +238,67 @@ def scenario_builtin_hosts_skip_the_resource_lookup():
         hc.list_resources = orig
 
 
+def scenario_an_area_photograph_rides_the_artwork_proxy():
+    """The registry's `picture` is an authenticated HA path, and the real
+    area card renders it as a bare <img> on OUR origin — served raw it 404s
+    and the card shows its icon instead of the room. Rewritten through the
+    same base64url artwork proxy the converter's drawing uses."""
+    import base64
+    from services import ha_api
+    orig = ha_api.ws_command
+    rows = {'config/area_registry/list': [
+        {'area_id': 'lr', 'name': 'Living Room',
+         'picture': '/api/image/serve/abc123/512x512'},
+        {'area_id': 'kit', 'name': 'Kitchen', 'picture': None},
+    ]}
+    ha_api.ws_command = lambda cmd, **kw: rows.get(cmd, [])
+    try:
+        ha_frontend.reset()
+        reg = ha_frontend.registries(ttl=0)
+        pic = reg['areas']['lr']['picture']
+        check(pic and pic.startswith('api/ha/image64/'),
+              f"the picture is not proxied: {pic!r}")
+        enc = pic.split('/')[-1]
+        back = base64.urlsafe_b64decode(enc + '=' * (-len(enc) % 4)).decode()
+        check(back == '/api/image/serve/abc123/512x512',
+              f"the proxied path does not decode back: {back!r}")
+        check(reg['areas']['kit']['picture'] is None,
+              'an area with no photograph grew one')
+    finally:
+        ha_api.ws_command = orig
+        ha_frontend.reset()
+
+
+def scenario_a_poll_moves_the_live_card_instead_of_rebuilding_it():
+    """Every board poll re-renders the tile tree, handing each host a NEW
+    cell. Rebuilding there flashed the converter fallback for a frame and
+    restarted whatever the card animates — reported as 'a flash of the old
+    implementation on every load or update'. An unchanged card is adopted
+    into the new cell (same task as the re-render, before paint)."""
+    host = open(os.path.join(STATIC, 'ha_card_host.js'), encoding='utf-8').read()
+    check('function adopt(' in host, 'the adoption path is gone')
+    check(host.count('return adopt(live, container, spec,') == 2,
+          'one of the two mount paths stopped adopting — that path flashes '
+          'its fallback and restarts its animations on every poll')
+    # And the new cell gets dressed: a moved card keeps its shape but loses
+    # its colours if the theme never lands on the adopting container.
+    at = host.index('function adopt(')
+    body = host[at:at + 1600]
+    check('themeFrom(container)' in body and 'ha-builtin-theme' in body,
+          "adopt() does not theme the new cell")
+
+
+def scenario_the_visual_editor_keeps_the_keys_it_cannot_see():
+    """The ha-form editor only knows the schema's fields, and a thermostat's
+    YAML legitimately carries `features:` the schema does not name — now
+    rendered by the real cards, so silently deleting them on the first form
+    edit reads as 'features set in the options don't show'."""
+    home = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()
+    check('onChange({ ...config, ...e.detail.value, type: type });' in home,
+          "the form's value-changed replaces the config instead of merging "
+          "over it, so every key outside the schema dies on first edit")
+
+
 def scenario_the_wall_draws_fallbacks_and_upgrades_in_place():
     """The template's side of the bargain, read from the source."""
     home = open(os.path.join(TPL, 'home.html'), encoding='utf-8').read()

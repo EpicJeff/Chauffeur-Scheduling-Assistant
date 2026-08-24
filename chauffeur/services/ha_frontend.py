@@ -420,10 +420,22 @@ def registries(ttl=300):
     for r in ha_api.ws_command('config/area_registry/list') or []:
         if not isinstance(r, dict) or not r.get('area_id'):
             continue
+        # An area's photograph is an AUTHENTICATED HA path (/api/image/...),
+        # and the real area card renders it as a bare <img> on our origin —
+        # so it is rewritten through the same artwork proxy the converter's
+        # drawing already uses (base64url form, because encoded slashes in a
+        # query read like a traversal probe to some reverse proxies). The
+        # client prefixes its apiBase; ha_image validates the decoded path.
+        pic = r.get('picture')
+        if pic:
+            import base64
+            enc = base64.urlsafe_b64encode(
+                str(pic).encode('utf-8')).decode('ascii').rstrip('=')
+            pic = f'api/ha/image64/{enc}'
         out['areas'][r['area_id']] = {
             'area_id': r['area_id'],
             'name': r.get('name'),
-            'picture': r.get('picture'),
+            'picture': pic,
             'icon': r.get('icon'),
             'labels': r.get('labels') or [],
         }

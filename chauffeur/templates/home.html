@@ -4080,7 +4080,14 @@
                     form.data = config;
                     form.addEventListener('value-changed', (e) => {
                         e.stopPropagation();
-                        onChange({ ...e.detail.value, type: type });
+                        // MERGED over the config, never replacing it: the form
+                        // only knows the schema's fields, and the card's YAML
+                        // legitimately carries keys the schema does not name —
+                        // `features` on a thermostat above all, now that the
+                        // real cards render them. Replacement silently deleted
+                        // every such key on the first form edit, which read as
+                        // "features set in the options don't show".
+                        onChange({ ...config, ...e.detail.value, type: type });
                     });
                     host.appendChild(form);
 

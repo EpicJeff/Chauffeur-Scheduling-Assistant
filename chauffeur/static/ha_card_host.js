@@ -493,6 +493,38 @@
         held.observer.observe(held.container);
     }
 
+    // A board poll re-renders the tile tree, and Alpine's x-html hands every
+    // host a NEW cell — with the old one, and the live card inside it, gone.
+    // Rebuilding the card there restarted its animations and, for the hosted
+    // built-ins, painted the converter fallback for a frame first: the wall
+    // flashed the imitation on every poll. The card is not stale — only its
+    // cell is — so an unchanged card is MOVED into the new cell instead.
+    // syncCards runs in the same task as the re-render ($nextTick, before
+    // paint), so the move is invisible.
+    function adopt(live, container, spec, buildHass) {
+        live.spec = spec;
+        if (live.container !== container) {
+            // The new cell is bare: it needs the same theme dress the
+            // original mount gave the old one, or the moved card keeps its
+            // shape and loses its colours.
+            if (live.builtin) {
+                container.classList.add('ha-builtin-theme');
+                container.classList.toggle('ha-dark', spec.dark !== false);
+            }
+            var theme = themeFrom(container);
+            Object.keys(theme).forEach(function (k) {
+                container.style.setProperty(k, theme[k]);
+            });
+            container.textContent = '';
+            container.appendChild(live.el);
+            live.container = container;
+            if (live.observer) { live.observer.disconnect(); live.observer = null; }
+            watchWidth(live);
+        }
+        try { live.el.hass = buildHass(spec); } catch (e) { /* mid-teardown */ }
+        return Promise.resolve(true);
+    }
+
     function mount(container, spec) {
         if (!container || !spec) return Promise.resolve(false);
         API.base = spec.apiBase || '';
@@ -500,9 +532,8 @@
 
         var signature = JSON.stringify([spec.tag, spec.resource, spec.config]);
         var live = mounted[spec.id];
-        if (live && live.container === container && live.signature === signature) {
-            live.el.hass = makeHass(spec);           // the cheap path: new states
-            return Promise.resolve(true);
+        if (live && live.signature === signature && !live.builtin && live.el) {
+            return adopt(live, container, spec, makeHass);
         }
 
         var theme = themeFrom(container);
@@ -699,6 +730,14 @@
                     entities: b.entities || {}, devices: b.devices || {},
                     areas: b.areas || {}, config: b.config || {},
                 };
+                // Registry pictures arrive proxy-relative (the server cannot
+                // know the page's base); the cards render them as bare <img>.
+                Object.keys(builtin.reg.areas).forEach(function (k) {
+                    var a = builtin.reg.areas[k];
+                    if (a.picture && !/^(https?:)?\//.test(a.picture)) {
+                        a.picture = API.base + a.picture;
+                    }
+                });
                 installContextProvider();
                 // HA's default tokens, class-scoped to host cells. Without
                 // them the real cards draw geometry with no stroke — every
@@ -963,11 +1002,8 @@
             var tag = 'hui-' + type + '-card';
             var signature = JSON.stringify(['builtin', type, spec.config]);
             var live = mounted[spec.id];
-            if (live && live.container === container
-                    && live.signature === signature) {
-                live.spec = spec;
-                live.el.hass = buildBuiltinHass(spec);   // the cheap path
-                return true;
+            if (live && live.builtin && live.signature === signature && live.el) {
+                return adopt(live, container, spec, buildBuiltinHass);
             }
             var need = Promise.resolve();
             if (!window.customElements.get(tag)) {
