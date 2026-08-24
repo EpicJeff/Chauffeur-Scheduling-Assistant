@@ -6390,6 +6390,8 @@ def ha_frontend_bundle():
         'devices': reg['devices'],
         'areas': reg['areas'],
         'config': reg['config'],
+        # The UI translation fingerprints, for the client's real localize.
+        'i18n': meta.get('i18n') or {},
         # Diagnosability. When the wall shows raw entity ids or missing
         # area photographs, THIS says whether the registries ever arrived —
         # empty counts point at the websocket (see ha_api.ws_command and the
@@ -6441,6 +6443,59 @@ def ha_frontend_file(fname: str):
     if not got:
         raise HTTPException(status_code=502,
                             detail="Could not fetch that from Home Assistant")
+    content, content_type = got
+    return Response(content=content, media_type=content_type,
+                    headers={'Cache-Control': 'max-age=31536000, immutable'})
+
+@app.get("/api/ha/frontend/icons")
+def ha_frontend_icons(category: str, integration: str = None):
+    """`frontend/get_icons`, proxied. The real cards resolve domain and
+    attribute icons (a lock's padlock, a fan mode's glyph) over the
+    websocket; the connection shim routes exactly this message here."""
+    from services import ha_frontend
+    if not re.match(r'^[a-z_]+$', category or ''):
+        raise HTTPException(status_code=400, detail="Not a category")
+    fields = {'category': category}
+    if integration:
+        if not re.match(r'^[a-z0-9_]+$', integration):
+            raise HTTPException(status_code=400, detail="Not an integration")
+        fields['integration'] = integration
+    return JSONResponse(ha_frontend.ws_resources('frontend/get_icons',
+                                                 **fields),
+                        headers={'Cache-Control': 'max-age=3600'})
+
+@app.get("/api/ha/frontend/translations")
+def ha_frontend_translations(category: str, language: str = 'en',
+                             integration: str = None,
+                             config_flow: bool = False):
+    """`frontend/get_translations`, proxied — the editors' backend labels
+    (entity names by translation key, `title` strings) come off this."""
+    from services import ha_frontend
+    if not re.match(r'^[a-z_]+$', category or '') \
+            or not re.match(r'^[A-Za-z-]{2,10}$', language or ''):
+        raise HTTPException(status_code=400, detail="Not a category")
+    fields = {'category': category, 'language': language}
+    if integration:
+        if not re.match(r'^[a-z0-9_]+$', integration):
+            raise HTTPException(status_code=400, detail="Not an integration")
+        fields['integration'] = integration
+    if config_flow:
+        fields['config_flow'] = True
+    return JSONResponse(ha_frontend.ws_resources('frontend/get_translations',
+                                                 **fields),
+                        headers={'Cache-Control': 'max-age=3600'})
+
+@app.get("/static/translations/{path:path}")
+def ha_frontend_translation_file(path: str):
+    """HA's fingerprinted UI translation files, on our origin — the code in
+    the borrowed chunks fetches `/static/translations/...` page-relative,
+    and every `ui.*` label the editors show lives in these."""
+    from services import ha_api, ha_frontend
+    if not ha_frontend.translations_file_allowed(path):
+        raise HTTPException(status_code=400, detail="Path not allowed")
+    got = ha_api.fetch_static(f'/static/translations/{path}')
+    if not got:
+        raise HTTPException(status_code=404, detail="No such translation")
     content, content_type = got
     return Response(content=content, media_type=content_type,
                     headers={'Cache-Control': 'max-age=31536000, immutable'})

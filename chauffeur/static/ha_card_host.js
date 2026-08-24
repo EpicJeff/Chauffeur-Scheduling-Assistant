@@ -736,6 +736,11 @@
                     entities: b.entities || {}, devices: b.devices || {},
                     areas: b.areas || {}, config: b.config || {},
                 };
+                builtin.i18n = b.i18n || {};
+                if ((b.config || {}).version) {
+                    NO_WS.haVersion = b.config.version;
+                }
+                loadUiStrings();          // no await: labels catch up
                 // Registry pictures arrive proxy-relative (the server cannot
                 // know the page's base); the cards render them as bare <img>.
                 Object.keys(builtin.reg.areas).forEach(function (k) {
@@ -798,9 +803,74 @@
         date_format: 'language', first_weekday: 'language', time_zone: 'local',
     };
 
+    var GENERIC_TAILS = { label: 1, name: 1, title: 1, value: 1,
+                          header: 1, description: 1 };
+
     function humanize(key) {
-        var last = String(key || '').split('.').pop();
-        return last.replace(/_/g, ' ');
+        var parts = String(key || '').split('.');
+        var last = parts.pop();
+        // `...types.climate-hvac-modes.label` should read "climate hvac
+        // modes", not "label" -- the tail is the field, the segment before
+        // it is the subject.
+        if (GENERIC_TAILS[last] && parts.length) last = parts.pop();
+        return last.replace(/[-_]/g, ' ');
+    }
+
+    // -- The REAL ui.* strings.
+    //
+    // Every label the editors show is a `ui.*` key resolved against HA's
+    // fingerprinted translation files -- a humanizer can only echo key
+    // tails, which is how a feature row came to be called "label". The
+    // files are static and unauthenticated; the fingerprints ride the
+    // bundle. Fetched once, flattened, substituted the way HA's own
+    // localize does; anything not found falls back to the humanizer.
+    var uiStrings = null;                 // flat { 'ui.a.b': 'text' }
+
+    function flattenInto(out, prefix, node) {
+        Object.keys(node || {}).forEach(function (k) {
+            var v = node[k];
+            var path = prefix ? prefix + '.' + k : k;
+            if (v && typeof v === 'object') flattenInto(out, path, v);
+            else out[path] = String(v);
+        });
+    }
+
+    function loadUiStrings() {
+        var i18n = builtin.i18n || {};
+        if (!i18n.hash || uiStrings) return Promise.resolve();
+        var flat = {};
+        uiStrings = flat;                 // one attempt per page
+        // The base file plus the fragments the cards and their editors
+        // read from. The rest of the app's fragments are pages we are not
+        // hosting.
+        var want = [''].concat((i18n.fragments || []).filter(function (f) {
+            return f === 'lovelace' || f === 'config';
+        }));
+        return Promise.all(want.map(function (frag) {
+            var path = (frag ? frag + '/' : '') + 'en-' + i18n.hash + '.json';
+            return fetch(API.base + 'static/translations/' + path)
+                .then(function (r) { return r.ok ? r.json() : {}; })
+                .then(function (data) { flattenInto(flat, '', data); })
+                .catch(function () { });
+        }));
+    }
+
+    function localize(key) {
+        var text = uiStrings && uiStrings[key];
+        if (text == null) return humanize(key);
+        // localize('key', {name: x}) and the older ('key', 'name', x) both
+        // appear in card code; substitute either shape.
+        var args = arguments;
+        if (args.length === 2 && args[1] && typeof args[1] === 'object') {
+            Object.keys(args[1]).forEach(function (k) {
+                text = text.split('{' + k + '}').join(String(args[1][k]));
+            });
+        } else {
+            for (var i = 1; i + 1 < args.length; i += 2) {
+                text = text.split('{' + args[i] + '}').join(String(args[i + 1]));
+            }
+        }
+        return text;
     }
 
     // The i18n shape the REAL editors consume (the cards read localize off
@@ -809,7 +879,7 @@
     // a localized string is the accepted cost of not booting HA's app.
     function builtinI18n() {
         return {
-            language: 'en', locale: LOCALE, localize: humanize,
+            language: 'en', locale: LOCALE, localize: localize,
             translations: {}, resources: { en: {} },
             translationMetadata: {
                 fragments: [],
@@ -819,13 +889,64 @@
             // decide which controls an entity's domain offers. Empty means
             // "offer nothing extra"; ABSENT meant a throw.
             services: {},
-            loadBackendTranslation: function () {
-                return Promise.resolve(humanize);
-            },
+            loadBackendTranslation: loadBackendTranslation,
             loadFragmentTranslation: function () {
-                return Promise.resolve(humanize);
+                return Promise.resolve(localize);
             },
         };
+    }
+
+    // Backend categories (entity names by translation key, `title`
+    // strings) come over the proxied websocket lane and MERGE into the
+    // same flat map the ui strings live in -- one localize, every source.
+    var backendLoaded = {};
+    function loadBackendTranslation(category, integration) {
+        var key = String(category || '') + '/' + String(integration || '');
+        if (!backendLoaded[key]) {
+            backendLoaded[key] = fetch(API.base
+                + 'api/ha/frontend/translations?category='
+                + encodeURIComponent(category || 'title')
+                + (integration ? '&integration='
+                    + encodeURIComponent(integration) : ''))
+                .then(function (r) { return r.ok ? r.json() : {}; })
+                .then(function (data) {
+                    if (uiStrings) {
+                        flattenInto(uiStrings, '', (data || {}).resources || {});
+                    }
+                })
+                .catch(function () { });
+        }
+        return backendLoaded[key].then(function () { return localize; });
+    }
+
+    // The two websocket message types the borrowed code sends that have a
+    // REST answer here. Everything else stays refused -- a promise that
+    // never settles is a spinner forever.
+    function wsBridge(msg) {
+        if (!msg || !msg.type) return null;
+        if (msg.type === 'frontend/get_icons') {
+            return fetch(API.base + 'api/ha/frontend/icons?category='
+                + encodeURIComponent(msg.category || '')
+                + (msg.integration ? '&integration='
+                    + encodeURIComponent(msg.integration) : ''))
+                .then(function (r) {
+                    if (!r.ok) throw new Error('icons unavailable');
+                    return r.json();
+                });
+        }
+        if (msg.type === 'frontend/get_translations') {
+            return fetch(API.base + 'api/ha/frontend/translations?category='
+                + encodeURIComponent(msg.category || '')
+                + '&language=' + encodeURIComponent(msg.language || 'en')
+                + (msg.integration ? '&integration='
+                    + encodeURIComponent(msg.integration) : '')
+                + (msg.config_flow ? '&config_flow=1' : ''))
+                .then(function (r) {
+                    if (!r.ok) throw new Error('translations unavailable');
+                    return r.json();
+                });
+        }
+        return null;
     }
 
     function haConfig() {
@@ -900,14 +1021,20 @@
     // subscriptions is what lets a consumer fall back or say so — a promise
     // that never settles is a spinner forever.
     var NO_WS = {
+        // The icon-resolution code checks `connection.haVersion` before it
+        // even asks -- an absent version reads as "too old", and every
+        // domain and attribute icon silently skips. Refreshed from the
+        // bundle's config at boot.
+        haVersion: '2026.1.0',
         subscribeMessage: function () {
             return Promise.reject(new Error('no websocket in the panel'));
         },
         subscribeEvents: function () {
             return Promise.resolve(function () { });
         },
-        sendMessagePromise: function () {
-            return Promise.reject(new Error('no websocket in the panel'));
+        sendMessagePromise: function (msg) {
+            return wsBridge(msg)
+                || Promise.reject(new Error('no websocket in the panel'));
         },
         addEventListener: function () { },
         removeEventListener: function () { },
@@ -962,7 +1089,7 @@
             case 'user':
                 return { name: 'Panel', is_admin: true, id: 'panel' };
             case 'locale': return LOCALE;
-            case 'localize': return humanize;
+            case 'localize': return localize;
             case 'hassInternationalization':
                 return builtinI18n();
             case 'narrowViewport': return false;
@@ -1007,14 +1134,16 @@
         hass.formatEntityAttributeValue = fmt.formatEntityAttributeValue;
         hass.formatEntityAttributeName = fmt.formatEntityAttributeName;
         hass.formatEntityName = fmt.formatEntityName;
-        hass.localize = humanize;
+        hass.localize = localize;
         hass.locale = LOCALE;
         hass.config = haConfig();
-        hass.loadBackendTranslation = function () {
-            return Promise.resolve(humanize);
-        };
+        hass.loadBackendTranslation = loadBackendTranslation;
         hass.loadFragmentTranslation = function () {
-            return Promise.resolve(humanize);
+            return Promise.resolve(localize);
+        };
+        hass.callWS = function (msg) {
+            return wsBridge(msg)
+                || Promise.reject(new Error('no websocket in the panel'));
         };
         hass.hassUrl = function (p) {
             return API.base + String(p || '').replace(/^\//, '');
@@ -1050,6 +1179,8 @@
         // once. No live tail, matching the board's own poll-not-push rule.
         var base = hass.connection;
         hass.connection = {
+            haVersion: (builtin.reg.config || {}).version || NO_WS.haVersion,
+            sendMessagePromise: NO_WS.sendMessagePromise,
             subscribeMessage: function (callback, message) {
                 var msg = message || {};
                 if (msg.type !== 'history/stream'

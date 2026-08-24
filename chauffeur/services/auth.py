@@ -71,6 +71,10 @@ RULES = [
     # content is SVG path data, the same files HA serves any browser before
     # sign-in; nothing about the household rides in an icon's outline.
     ('GET', '/static/mdi/{fname}', ANYONE, None),
+    # Same class: HA's fingerprinted UI translation files, fetched
+    # page-relative by the borrowed frontend chunks. Strings, served to any
+    # browser by HA itself before sign-in.
+    ('GET', '/static/translations/{path:path}', ANYONE, None),
     (ANY, '/sw.js', ANYONE, None),
     (ANY, '/api/vapid_public_key', ANYONE, None),
     # Sign-in itself. `/auth` mints the token, so it cannot require one; it is

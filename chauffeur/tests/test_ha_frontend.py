@@ -67,6 +67,10 @@ APP = (
     # a small import site and the big (lovelace) one
     'a=()=>Promise.all([n.e(10021)]).then(n.bind(n,111));'
     'b=()=>Promise.all([n.e(14887),n.e(79381),n.e(29442)]).then(n.bind(n,60368));'
+    # the UI translation metadata, as the entrypoint embeds it
+    'const tm=JSON.parse(\'{"fragments":["app","config","lovelace","map"],'
+    '"translations":{"en":{"nativeName":"English",'
+    '"hash":"4382c634be91d05dbb6161acf45b495f"}}}\');'
     # the boot call this module exists to remove
     'o(91535);\n//# sourceMappingURL=app.js.map'
 )
@@ -148,6 +152,45 @@ def scenario_the_theme_rides_along():
           'the light semantics did not land in the base block')
     check('--ha-color-text-primary:var(--white-color)' in dark,
           'the dark semantics did not land in the dark block')
+
+
+def scenario_the_ui_strings_are_findable():
+    """Every label the real editors show is a ui.* key against HA's
+    fingerprinted translation files; without the fingerprints the client
+    can only humanize key tails — a feature row literally read "label"."""
+    i18n = ha_frontend.extract_i18n(APP)
+    check(i18n.get('hash') == '4382c634be91d05dbb6161acf45b495f',
+          f"the en hash was not found: {i18n}")
+    check('lovelace' in i18n.get('fragments', []),
+          f"the fragments list is lost: {i18n}")
+    ok = ha_frontend.translations_file_allowed
+    check(ok('en-4382c634be91d05dbb6161acf45b495f.json'),
+          'the base translation file is refused')
+    check(ok('lovelace/en-4382c634be91d05dbb6161acf45b495f.json'),
+          'a fragment translation file is refused')
+    for bad in ('../secrets.yaml', 'a/b/c.json', 'en.json', 'x/y-zz.json'):
+        check(not ok(bad), f"the translations proxy would serve {bad!r}")
+
+
+def scenario_the_ws_lanes_the_cards_need_are_bridged():
+    """Domain and attribute icons — and backend labels — arrive over
+    `frontend/get_icons` / `frontend/get_translations`, and the icon path
+    checks `connection.haVersion` before asking at all. The client bridges
+    exactly those message types; nothing else grows a websocket."""
+    host = open(os.path.join(STATIC, 'ha_card_host.js'), encoding='utf-8').read()
+    check('function wsBridge(' in host, 'the ws bridge is gone')
+    check("msg.type === 'frontend/get_icons'" in host
+          and "msg.type === 'frontend/get_translations'" in host,
+          'the two bridged message types are not both handled')
+    check('haVersion' in host,
+          'the connection has no haVersion — icon resolution silently '
+          'skips as "too old"')
+    check('function loadUiStrings(' in host and 'function localize(' in host,
+          'the real ui.* localize is gone — labels fall back to key tails')
+    # And the ws answers are CACHED server-side; a board poll must not be
+    # a websocket connect per icon category.
+    check(callable(getattr(ha_frontend, 'ws_resources', None)),
+          'ws_resources is gone from ha_frontend')
 
 
 def scenario_extraction_end_to_end_against_fixtures():

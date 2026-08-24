@@ -232,6 +232,43 @@ def extract_theme(app_src):
     return ''.join(base_parts), ''.join(dark_parts)
 
 
+def extract_i18n(app_src):
+    """{'hash': <en file hash>, 'fragments': [...]} — the UI translation
+    metadata, embedded in the entrypoint as a JSON.parse literal.
+
+    The real editors' every label is a `ui.*` key resolved against
+    fingerprinted files under /static/translations/ — `<lang>-<hash>.json`
+    for the base and `<fragment>/<lang>-<hash>.json` for the rest, one hash
+    per language across all of them. Without these the client can only
+    humanize key tails, which is how a feature row came to be called
+    "label"."""
+    src = str(app_src or '')
+    at = src.find('{"fragments":')
+    if at < 0:
+        return {}
+    depth, end = 0, -1
+    for i in range(at, min(len(src), at + 200000)):
+        if src[i] == '{':
+            depth += 1
+        elif src[i] == '}':
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end < 0:
+        return {}
+    try:
+        meta = json.loads(src[at:end].replace("\'", "'"))
+    except Exception:
+        return {}
+    en = ((meta.get('translations') or {}).get('en') or {})
+    if not en.get('hash'):
+        return {}
+    return {'hash': en['hash'],
+            'fragments': [f for f in (meta.get('fragments') or [])
+                          if isinstance(f, str)]}
+
+
 def extract_eager_modules(chunk_src):
     """The module ids of the cards the lovelace panel imports STATICALLY.
 
@@ -268,7 +305,7 @@ def extract_eager_modules(chunk_src):
 # runtime's prelude, a new meta field — so a cached extraction from an older
 # build is redone rather than served with yesterday's patch. The app hash
 # only says HA did not change; it cannot say WE did not.
-PATCH_V = 3
+PATCH_V = 4
 
 
 def _load_cached(app_hash):
@@ -378,6 +415,7 @@ def _extract(fetch):
             meta = {
                 'app_hash': app_hash,
                 'patch_v': PATCH_V,
+                'i18n': extract_i18n(app_src),
                 'chunks': chunks,
                 'files': files,
                 'eager_modules': eager,
@@ -524,6 +562,44 @@ def registries(ttl=300):
         with _LOCK:
             _REG_CACHE.update(data=out, ts=now)
     return out
+
+
+_WS_PROXY_CACHE = {}
+_WS_PROXY_TTL = 3600
+
+
+def ws_resources(command, **fields):
+    """One `frontend/get_icons` / `frontend/get_translations` answer, cached.
+
+    The real cards resolve domain and attribute icons — and the editors
+    their backend labels — over the websocket we are not lending the
+    browser; the connection shim routes those exact message types here.
+    The answers change on an HA update, so an hour of cache is plenty and
+    a dead HA serves the stale copy rather than a hole."""
+    key = (command, tuple(sorted(fields.items())))
+    now = time.time()
+    with _LOCK:
+        held = _WS_PROXY_CACHE.get(key)
+        if held and now - held[0] < _WS_PROXY_TTL:
+            return held[1]
+    from services import ha_api
+    out = ha_api.ws_command(command, **fields)
+    if not isinstance(out, dict):
+        with _LOCK:
+            held = _WS_PROXY_CACHE.get(key)
+        return held[1] if held else {'resources': {}}
+    with _LOCK:
+        _WS_PROXY_CACHE[key] = (now, out)
+        if len(_WS_PROXY_CACHE) > 64:
+            _WS_PROXY_CACHE.pop(next(iter(_WS_PROXY_CACHE)), None)
+    return out
+
+
+def translations_file_allowed(path):
+    """/static/translations proxy gate: fragment dir + fingerprinted json,
+    nothing else."""
+    return bool(re.match(r'^(?:[A-Za-z0-9_-]+/)?[A-Za-z-]+-[0-9a-f]{16,64}'
+                         r'\.json$', str(path or '')))
 
 
 def frontend_file_allowed(name):

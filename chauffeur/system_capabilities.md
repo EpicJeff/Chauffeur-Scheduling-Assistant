@@ -5322,6 +5322,26 @@ retiring the imitation.
   path — `getConfigElement()` from the borrowed runtime is the obvious next
   slice, and until then `features:` (and any key outside the schema) is
   YAML-only: the form preserves such keys (v2.387.30) but cannot author them.
+- **v2.387.34 — the icons' websocket, and the real words.** The last icon
+  and label gaps had one shape: things HA fetches over pipes we had not
+  bridged. Domain and attribute icons (a lock's padlock, fan-mode glyphs)
+  resolve via `frontend/get_icons` over the websocket — and the resolution
+  code checks `connection.haVersion` FIRST, so an absent version silently
+  skipped every lookup. The connection now carries the bundle's HA version
+  and a `wsBridge` that answers exactly two message types
+  (`frontend/get_icons`, `frontend/get_translations`) from new cached
+  server lanes (`ha_frontend.ws_resources`, hour TTL, stale-on-dead-HA);
+  everything else still rejects fast. And every `ui.*` label — editor
+  fields, feature names, section headers — now resolves against HA's REAL
+  fingerprinted translation files: the fingerprints ride the bundle
+  (extracted from the entrypoint's translationMetadata, PATCH_V 4), the
+  files ride a validated `/static/translations/{path}` proxy (ANYONE — the
+  same pre-sign-in statics HA serves), and the client flattens base +
+  `lovelace`/`config` fragments into one localize with placeholder
+  substitution, humanizer as fallback (which itself learned to skip
+  generic tails — a feature row literally read "label").
+  `loadBackendTranslation` merges backend categories into the same map.
+  Harness: HA's own words on every editor surface, zero console errors.
 - **v2.387.33 — the pool misses container-dwelling cards; picker shapes.**
   The wall's last holdouts, run down with the user's console paste. (1) The
   whole-house `ha_states` pool condition scanned TOP-LEVEL tiles for
