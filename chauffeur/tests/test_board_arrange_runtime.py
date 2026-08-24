@@ -186,6 +186,11 @@ b.openCardEditor('mine', 'mine-weather');
 const editingId = b.editing && b.editing.id;
 b.closeCardEditor();
 
+// The card grid's vertical unit is the BOARD's. 56px was Home Assistant's
+// section row, borrowed when this grid was written and arbitrary inside a
+// tile that was placed with a 200px row.
+const gridVars = b.cardGridVars();
+
 // While arranging, the DRAFT is the truth.
 const draftSpan = b.spanStyle('drives');
 b.arranging = false;
@@ -289,6 +294,7 @@ console.log(JSON.stringify({
   lockedDraw: lockedDraw,
   editingId: editingId,
   editingCleared: b.editing === null,
+  gridVars: gridVars,
 }));
 """
 
@@ -595,6 +601,17 @@ def scenario_a_filled_tile_stops_above_the_shelf():
     check(got['fillResolved'] == 570,
           f"fill resolved to {got['fillResolved']}px, not 570 — the tile ends "
           f"{570 - (got['fillResolved'] or 0)}px past where it should")
+
+
+def scenario_the_card_grid_takes_the_boards_row_and_gutter():
+    """56px is Home Assistant's section row, and a Custom tile is not an HA
+    dashboard. A card's rows should mean what a tile's rows mean on the board
+    it was placed on — one vertical unit for the page, not two."""
+    got = _run()
+    if got is None:
+        return
+    check(got['gridVars'] == '--nc-row:200px;--nc-gap:16px',
+          f"the card grid is not on the board's row and gutter: {got['gridVars']}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

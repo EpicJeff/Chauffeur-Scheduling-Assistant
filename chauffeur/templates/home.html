@@ -72,9 +72,10 @@
            copied out of a dashboard is the height it was there. */
         .nc-stack-grid {
             --nc-row: 56px;
+            --nc-gap: 0.75rem;
             display: grid;
             grid-template-columns: repeat(12, minmax(0, 1fr));
-            gap: 0.75rem;
+            gap: var(--nc-gap);
             align-items: stretch;
         }
         /* Stretch is the right DEFAULT — a row of cards nobody has sized reads
@@ -940,6 +941,7 @@
                                 class="tile-add-card">+ Add card</button>
 
                             <div class="nc-stack-grid" :data-cards="t.id"
+                                :style="cardGridVars()"
                                 @pointerdown="arranging && startTileCardDrag($event, t.id)"
                                 :class="tileFree(t) ? 'nc-free' : ''"
                                 x-show="cardsOf(t).length">
@@ -2296,6 +2298,18 @@
                 },
                 cardFitting(c) {
                     return !c.rows && !this.cardIsFill(c);
+                },
+
+                // The two numbers a card's height is measured in. They are the
+                // BOARD's: 56px was Home Assistant's section row, borrowed when
+                // this grid was written, and inside a tile that was placed on a
+                // 10px lattice it is a unit nobody chose. Set on the grid
+                // element, so a nested stack of Home Assistant cards — which
+                // re-declares them on its own class — keeps HA's row and does
+                // not inherit ours.
+                cardGridVars() {
+                    return `--nc-row:${this.rowHeight()}px;`
+                         + `--nc-gap:${this.gapPx()}px`;
                 },
 
                 cellStyle(c) {
