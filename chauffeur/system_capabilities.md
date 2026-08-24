@@ -5322,6 +5322,20 @@ retiring the imitation.
   path — `getConfigElement()` from the borrowed runtime is the obvious next
   slice, and until then `features:` (and any key outside the schema) is
   YAML-only: the form preserves such keys (v2.387.30) but cannot author them.
+- **v2.387.35 — the mount that ate the proxies, and the doubled base.**
+  The wall report that cracked it: ingress showed every icon, the
+  cloudflare tunnel lost the ws-resolved ones. Through INGRESS the page's
+  absolute `/static/...` fetches go to HA's own origin and never touch this
+  app; on the app's own origin they hit `app.mount("/static")` — which is
+  registered BEFORE the mdi/translations proxy routes, and Starlette
+  matches in registration order, so the mount answered 404 off disk. The
+  two proxies now register above the mount, and a test pins the order. And
+  the area photographs (missing on BOTH routes): `hui-image` runs every
+  src through `hass.hassUrl`, which prepends the api base itself — the
+  client prefixed the base too, hassUrl doubled it, and no photograph
+  loaded anywhere. Registry pictures are stored root-absolute now
+  (`/api/ha/image64/…`) so hassUrl's arithmetic lands on direct origins
+  and under ingress alike.
 - **v2.387.34 — the icons' websocket, and the real words.** The last icon
   and label gaps had one shape: things HA fetches over pipes we had not
   bridged. Domain and attribute icons (a lock's padlock, fan-mode glyphs)

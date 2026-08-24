@@ -1138,6 +1138,45 @@ TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
 
+# The two HA-frontend proxies that live UNDER /static, registered BEFORE
+# the /static mount because Starlette matches in registration order and
+# the mount would swallow them into a disk lookup that 404s. That is not
+# hypothetical: it shipped that way, and the wall paid for it only off
+# ingress -- through ingress the page-absolute /static/... fetches go to
+# Home Assistant's own origin and never reach this app, so the break was
+# invisible exactly where it was tested.
+@app.get("/static/mdi/{fname}")
+def ha_frontend_mdi(fname: str):
+    """HA's icon database chunks, on our origin. The REAL `ha-icon` (the one
+    the hosted built-in cards render) fetches `/static/mdi/<part>.json`
+    relative to the page — which is this app, not Home Assistant."""
+    from services import ha_api
+    if not re.match(r'^[A-Za-z0-9_-]+\.json$', fname):
+        raise HTTPException(status_code=400, detail="Path not allowed")
+    got = ha_api.fetch_static(f'/static/mdi/{fname}')
+    if not got:
+        raise HTTPException(status_code=404, detail="No such icon chunk")
+    content, content_type = got
+    return Response(content=content, media_type=content_type,
+                    headers={'Cache-Control': 'max-age=86400'})
+
+
+@app.get("/static/translations/{path:path}")
+def ha_frontend_translation_file(path: str):
+    """HA's fingerprinted UI translation files, on our origin — the code in
+    the borrowed chunks fetches `/static/translations/...` page-relative,
+    and every `ui.*` label the editors show lives in these."""
+    from services import ha_api, ha_frontend
+    if not ha_frontend.translations_file_allowed(path):
+        raise HTTPException(status_code=400, detail="Path not allowed")
+    got = ha_api.fetch_static(f'/static/translations/{path}')
+    if not got:
+        raise HTTPException(status_code=404, detail="No such translation")
+    content, content_type = got
+    return Response(content=content, media_type=content_type,
+                    headers={'Cache-Control': 'max-age=31536000, immutable'})
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
@@ -6484,36 +6523,6 @@ def ha_frontend_translations(category: str, language: str = 'en',
     return JSONResponse(ha_frontend.ws_resources('frontend/get_translations',
                                                  **fields),
                         headers={'Cache-Control': 'max-age=3600'})
-
-@app.get("/static/translations/{path:path}")
-def ha_frontend_translation_file(path: str):
-    """HA's fingerprinted UI translation files, on our origin — the code in
-    the borrowed chunks fetches `/static/translations/...` page-relative,
-    and every `ui.*` label the editors show lives in these."""
-    from services import ha_api, ha_frontend
-    if not ha_frontend.translations_file_allowed(path):
-        raise HTTPException(status_code=400, detail="Path not allowed")
-    got = ha_api.fetch_static(f'/static/translations/{path}')
-    if not got:
-        raise HTTPException(status_code=404, detail="No such translation")
-    content, content_type = got
-    return Response(content=content, media_type=content_type,
-                    headers={'Cache-Control': 'max-age=31536000, immutable'})
-
-@app.get("/static/mdi/{fname}")
-def ha_frontend_mdi(fname: str):
-    """HA's icon database chunks, on our origin. The REAL `ha-icon` (the one
-    the hosted built-in cards render) fetches `/static/mdi/<part>.json`
-    relative to the page — which is this app, not Home Assistant."""
-    from services import ha_api
-    if not re.match(r'^[A-Za-z0-9_-]+\.json$', fname):
-        raise HTTPException(status_code=400, detail="Path not allowed")
-    got = ha_api.fetch_static(f'/static/mdi/{fname}')
-    if not got:
-        raise HTTPException(status_code=404, detail="No such icon chunk")
-    content, content_type = got
-    return Response(content=content, media_type=content_type,
-                    headers={'Cache-Control': 'max-age=86400'})
 
 @app.get("/api/ha/card/mdi/{name}")
 def ha_card_mdi(name: str):

@@ -741,12 +741,17 @@
                     NO_WS.haVersion = b.config.version;
                 }
                 loadUiStrings();          // no await: labels catch up
-                // Registry pictures arrive proxy-relative (the server cannot
-                // know the page's base); the cards render them as bare <img>.
+                // Registry pictures arrive proxy-relative. hui-image runs
+                // EVERY src through hass.hassUrl, which strips one leading
+                // slash and prepends the api base — so the stored value must
+                // be root-absolute for that arithmetic to land, on a direct
+                // origin and under ingress alike. (The first cut prepended
+                // the base here TOO, and hassUrl doubled it into a path one
+                // directory too high: no photographs on any route.)
                 Object.keys(builtin.reg.areas).forEach(function (k) {
                     var a = builtin.reg.areas[k];
                     if (a.picture && !/^(https?:)?\//.test(a.picture)) {
-                        a.picture = API.base + a.picture;
+                        a.picture = '/' + a.picture;
                     }
                 });
                 installContextProvider();

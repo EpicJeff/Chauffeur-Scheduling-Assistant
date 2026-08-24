@@ -172,6 +172,32 @@ def scenario_the_ui_strings_are_findable():
         check(not ok(bad), f"the translations proxy would serve {bad!r}")
 
 
+def scenario_the_static_proxies_beat_the_static_mount():
+    """Starlette matches in REGISTRATION order and app.mount('/static')
+    swallows everything under it — the mdi and translation proxies
+    registered after it answered 404 off disk. Invisible through ingress
+    (page-absolute /static/... goes to HA's own origin there), fatal on
+    the app's own origin: the tunnel wall lost every ws-resolved icon."""
+    main_src = open(os.path.join(
+        os.path.dirname(TPL), 'main.py'), encoding='utf-8').read()
+    mount_at = main_src.find("app.mount(\"/static\"")
+    check(mount_at > 0, 'the static mount moved — update this test')
+    for route in ('@app.get("/static/mdi/{fname}")',
+                  '@app.get("/static/translations/{path:path}")'):
+        at = main_src.find(route)
+        check(0 < at < mount_at,
+              f"{route} is registered after the /static mount and the "
+              f"mount answers first — the proxy 404s off disk")
+    # And the client stores registry pictures root-absolute: hui-image runs
+    # every src through hass.hassUrl, which prepends the api base itself —
+    # prefixing here too doubled the base and no photograph loaded anywhere.
+    host = open(os.path.join(STATIC, 'ha_card_host.js'), encoding='utf-8').read()
+    check("a.picture = '/' + a.picture;" in host,
+          'registry pictures are not stored root-absolute for hassUrl')
+    check("a.picture = API.base + a.picture" not in host,
+          'the double-prefix picture bug is back')
+
+
 def scenario_the_ws_lanes_the_cards_need_are_bridged():
     """Domain and attribute icons — and backend labels — arrive over
     `frontend/get_icons` / `frontend/get_translations`, and the icon path
