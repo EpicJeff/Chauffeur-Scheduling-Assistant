@@ -267,6 +267,30 @@ const afterFull = { mine: b._cardsOf('mine').map(c => c.id),
 drag('mine', 'chores', cardCell('drives', 'drives'));
 const afterLocked = b._cardsOf('mine').map(c => c.id);
 
+// A drag is ONE gesture. A pointer that visits a full tile, then a valid
+// one, then a full tile again has nothing new to say the first refusal
+// didn't already say — so the alert fires once for the whole drag, not
+// once per full tile it happens to pass over. Reuses the same alert
+// collector as the scenario above rather than a second one.
+b.page().widgets.push({ id: 'theirs', type: 'custom', config: { cards: [] } });
+b.board.tiles.push({ id: 'theirs', type: 'custom', locked: false, cards: [] });
+const alertsBeforeRevisit = alerts.length;
+{
+  const cards = b._cardsOf('mine');
+  const at = cards.findIndex(c => c.id === 'chores');
+  const cell = cardCell('mine', 'chores');
+  b.moveTileCard({ clientX: 0, clientY: 0 }, cards, at, cell, 'mine');
+  globalThis.AIM = cardCell('yours', 'x0');     // full tile: refused, said
+  b.__move({ clientX: 400, clientY: 400 });
+  globalThis.AIM = emptyGrid('theirs');         // valid tile: accepted
+  b.__move({ clientX: 401, clientY: 401 });
+  globalThis.AIM = cardCell('yours', 'x0');     // full tile again: still said
+  b.__move({ clientX: 402, clientY: 402 });
+  b.__up();
+}
+const afterRevisit = { theirs: b._cardsOf('theirs').map(c => c.id),
+                       said: alerts.length - alertsBeforeRevisit };
+
 // --- The resize grip's pitch is the GRID's, not a hardcoded 56. Neither
 // `resizeTileCard` nor `resizeCardCell` had ever been driven through an
 // actual pointer move in this suite — the stub's `getComputedStyle` had no
@@ -405,6 +429,7 @@ console.log(JSON.stringify({
   afterCross: afterCross,
   afterFull: afterFull,
   afterLocked: afterLocked,
+  afterRevisit: afterRevisit,
   rowsAt200: rowsAt200,
   rowsAt56: rowsAt56,
   gridVars: gridVars,
@@ -485,10 +510,10 @@ def scenario_a_drag_reorders_the_tiles_that_are_drawn():
     got = _run()
     if got is None:
         return
-    # 'mine' and 'yours' are the custom tiles the card scenarios add; they
-    # stay where they were put, which is itself worth seeing — a drag moves
-    # ONE tile.
-    check(got['reordered'] == ['calendar', 'map', 'drives', 'mine', 'yours'],
+    # 'mine', 'yours' and 'theirs' are the custom tiles the card scenarios
+    # add; they stay where they were put, which is itself worth seeing — a
+    # drag moves ONE tile.
+    check(got['reordered'] == ['calendar', 'map', 'drives', 'mine', 'yours', 'theirs'],
           f"the drawn order did not follow the drag: {got['reordered']}")
 
 
@@ -791,6 +816,23 @@ def scenario_a_built_in_tile_is_not_a_destination():
     check(got['afterLocked'] == ['chores'],
           f"a card was dropped into a tile that cannot hold one: "
           f"{got['afterLocked']}")
+
+
+def scenario_a_refusal_is_said_once_per_drag_not_once_per_full_tile():
+    """A drag is one gesture. A pointer that crosses a full tile, then a
+    valid one, then the same full tile again has nothing new to tell the
+    household the first refusal didn't already say — resetting the flag on
+    every successful hop would let a wandering pointer rattle off the same
+    sentence twice in one drag."""
+    got = _run()
+    if got is None:
+        return
+    check(got['afterRevisit']['theirs'] == ['chores'],
+          f"the valid tile visited mid-drag did not receive the card: "
+          f"{got['afterRevisit']}")
+    check(got['afterRevisit']['said'] == 1,
+          f"a full tile visited twice in one drag said the refusal more "
+          f"than once: {got['afterRevisit']}")
 
 
 def scenario_a_resize_grips_pitch_is_the_grids_not_a_hardcoded_56():

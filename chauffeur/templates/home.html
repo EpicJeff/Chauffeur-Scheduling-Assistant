@@ -4940,7 +4940,13 @@
                         }
                         const to = seat(dest, onto);
                         dest.splice(to, 0, card);
-                        list = dest; host = onto; from = to; said = false;
+                        // `said` is NOT reset here: the refusal is said once
+                        // per DRAG, not once per full tile visited. A pointer
+                        // that wanders from a full tile to a valid one and
+                        // back to a (possibly different) full tile has
+                        // nothing new to tell the household the first alert
+                        // did not already say.
+                        list = dest; host = onto; from = to;
                     };
                     const up = () => {
                         window.removeEventListener('pointermove', move);
