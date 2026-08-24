@@ -4383,36 +4383,12 @@
         // appending as uploads land reads faster on this screen and is wrong
         // everywhere else: the panel would pop an album of one that silently
         // grows, and the push would describe a share that is not finished.
-        // TEMPORARY INSTRUMENTATION (v2.387.25) — a reported post-Send
-        // slowdown, on a phone where the console is not reachable. Puts the
-        // numbers on screen instead. Remove this whole block with the fix.
-        function _reportAlbumTimings(t) {
-            const NL = String.fromCharCode(10);
-            const each = t.items.map(function (x) {
-                return '#' + (x.i + 1) + ' '
-                    + (x.kind === 'video' ? 'clip' : x.kb + 'kb') + ' ' + x.ms + 'ms';
-            }).join(NL);
-            const slowest = t.items.reduce(function (a, b) {
-                return (b.ms > (a || {}).ms ? b : a);
-            }, null);
-            console.log('[album timings]', JSON.parse(JSON.stringify(t)));
-            showGlobalAlert(
-                t.items.length + ' item(s) — total ' + (t.totalMs / 1000).toFixed(1) + 's' + NL
-                + 'uploads ' + (t.uploadsMs / 1000).toFixed(1) + 's (slowest '
-                + (slowest ? slowest.ms : 0) + 'ms)' + NL
-                + 'message post ' + t.postMs + 'ms · thread refresh ' + t.refreshMs + 'ms'
-                + NL + NL + each);
-        }
-
         async function sendAlbum(entries, body, channelId) {
             // channelId is passed explicitly on a Retry so it always targets
             // the thread the share was originally composed in; on the first
             // call it defaults to whatever thread is open right now (same as
             // reading activeChannelId used to do at this point).
             channelId = channelId || activeChannelId;
-            // TEMPORARY INSTRUMENTATION (v2.387.25). Remove with the fix.
-            const _albumTimings = { items: [], t0: performance.now() };
-            window.__albumTimings = _albumTimings;
             const el = addAlbumBubble(entries, body);
             const jobs = entries.map((entry, i) =>
                 enqueueUpload(async () => {
@@ -4427,28 +4403,18 @@
                     // used to give a lone queued upload.
                     const status = el.querySelector('.upload-status');
                     if (status) status.textContent = `Sending ${entries.length}…`;
-                    const _t0 = performance.now();
                     const att = entry.kind === 'video'
                         ? await uploadMomentVideo(entry.file, pct => setCellProgress(el, i, pct))
                         : await (async () => {
                             setCellProgress(el, i, null);   // no progress events on a photo POST
                             return uploadMomentPhoto(entry.preview, entry.w, entry.h);
                         })();
-                    // TEMPORARY INSTRUMENTATION (v2.387.25) — measuring a
-                    // reported post-Send slowdown. Remove once the cause is fixed.
-                    _albumTimings.items.push({
-                        i: i, kind: entry.kind,
-                        ms: Math.round(performance.now() - _t0),
-                        kb: Math.round((entry.preview || '').length / 1024)
-                    });
                     entry.uploaded = att;
                     setCellProgress(el, i, 100);
                     return att;
                 }));
             try {
                 const items = await Promise.all(jobs);
-                _albumTimings.uploadsMs = Math.round(performance.now() - _albumTimings.t0);
-                const _tPost = performance.now();
                 const res = await fetch(`${apiBase}api/channels/${channelId}/messages`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -4463,14 +4429,9 @@
                     const d = await res.json().catch(() => ({}));
                     throw new Error(typeof d.detail === 'string' ? d.detail : 'Could not post that');
                 }
-                _albumTimings.postMs = Math.round(performance.now() - _tPost);
-                const _tRef = performance.now();
                 dropUploadingBubble(el);
                 if (activeChannelId === channelId) { await refreshThread(); noteMomentShared(); }
                 else loadMomentsStrip();
-                _albumTimings.refreshMs = Math.round(performance.now() - _tRef);
-                _albumTimings.totalMs = Math.round(performance.now() - _albumTimings.t0);
-                _reportAlbumTimings(_albumTimings);
             } catch (err) {
                 // Promise.all above rejects on the FIRST failed upload while
                 // its siblings may still be mid-flight. If Retry is drawn
