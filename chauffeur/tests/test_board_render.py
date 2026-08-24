@@ -833,10 +833,10 @@ def scenario_a_custom_tile_draws_its_cards_as_the_content_they_are():
     # the same thing. Its content is laid out INTO the box: with no box there
     # is nothing to lay it into, and a mounted calendar or a map in a custom
     # tile collapsed to its own padding. "Fit" for those types means fill.
-    check('min-height:calc' in g['cells'][0]['style'],
+    check('min-height:224px' in g['cells'][0]['style'],
           f"a mounted calendar card has no height to draw into, so it "
           f"collapses: {g['cells'][0]['style']}")
-    check('calc(3 * var(--nc-row))' in g['cells'][2]['style'],
+    check('calc(3 * var(--nc-row) + 2 * var(--nc-gap))' in g['cells'][2]['style'],
           f"a sized card did not get its height: {g['cells'][2]['style']}")
     check(g['free'],
           "a tile holding a sized card still stretches its cells, so that "

@@ -2317,15 +2317,25 @@
                     if (this.cardIsFill(c) && this.cardFillPx[c.id]) {
                         return s + `height:${this.cardFillPx[c.id]}px`;
                     }
-                    if (c.rows) return s + `height:calc(${c.rows} * var(--nc-row))`;
+                    // A stated height SPANS: a cell that merely stands N rows
+                    // tall still owns one row track, so the card beside it
+                    // wraps under its bottom edge instead of stacking in the
+                    // space it left. The gutters between the spanned rows are
+                    // the card's too, or a tall card and the stack beside it
+                    // drift apart by a gutter per row.
+                    if (c.rows) {
+                        return s + `grid-row:span ${c.rows};`
+                            + `height:calc(${c.rows} * var(--nc-row)`
+                            + ` + ${c.rows - 1} * var(--nc-gap))`;
+                    }
                     // A DRAWN card with no height of its own (a map, a mounted
-                    // calendar, a camera) is the one case where "as tall as
-                    // the content" has no answer: the content is laid out INTO
-                    // the box, so with no box there is nothing to lay it into
-                    // and the card collapsed to its padding. Fit means fill
-                    // for those — the same promise the tile-level `rows` makes
-                    // for the same types.
-                    if (this.cardFills(c)) return s + 'min-height:calc(4 * var(--nc-row))';
+                    // calendar, a camera) is the one case where "as tall as the
+                    // content" has no answer: the content is laid out INTO the
+                    // box, so with no box there is nothing to lay it into and
+                    // the card collapsed to its padding. An absolute floor, not
+                    // four rows of one: on a board whose row is 10px, four rows
+                    // is a collapsed card again.
+                    if (this.cardFills(c)) return s + 'min-height:224px';
                     return s;
                 },
 
@@ -3344,7 +3354,8 @@
                                 // ever grow a card, so dragging the grip upwards
                                 // did nothing and the card looked stuck.
                                 const rows = g.rows
-                                    ? `height:calc(${g.rows} * var(--nc-row))`
+                                    ? `grid-row:span ${g.rows};height:calc(${g.rows}`
+                                      + ` * var(--nc-row) + ${g.rows - 1} * var(--nc-gap))`
                                     : '';
                                 // WHERE this card lives in the config tree, as
                                 // a path of indexes. A drag has to be able to

@@ -286,7 +286,11 @@ console.log(JSON.stringify({
   handlesArmed: /nc-card-move/.test(armedDraw) && /nc-card-size/.test(armedDraw),
   sizedFrees: /nc-stack-grid nc-free/.test(sizedDraw),
   plainStretches: !/nc-free/.test(plainDraw),
-  sizedHeights: (sizedDraw.match(/height:calc\(\d+ \* var\(--nc-row\)\)/g) || []),
+  sizedHeights: (sizedDraw.match(/height:calc\(\d+ \* var\(--nc-row\) \+ \d+ \* var\(--nc-gap\)\)/g) || []),
+  sizedSpan: /grid-row:span 3/.test(sizedDraw),
+  sizedHeight: /calc\(3 \* var\(--nc-row\) \+ 2 \* var\(--nc-gap\)\)/.test(sizedDraw),
+  cellSized: b.cellStyle({ id: 'c', cols: 6, rows: 3, type: 'chores', config: {} }),
+  cellUnsized: b.cellStyle({ id: 'd', cols: 12, rows: 0, type: 'chores', config: {} }),
   drawnFirst: drawnFirst,
   drawnAfter: drawnAfter,
   sizedCard: { id: sized.id, cols: sized.cols, rows: sized.rows },
@@ -442,8 +446,27 @@ def scenario_a_card_can_be_sized_without_sizing_its_neighbours():
     check(got['plainStretches'],
           "a stack nobody has sized stopped stretching, which leaves a row of "
           "cards with ragged bottoms")
-    check(got['sizedHeights'] == ['height:calc(3 * var(--nc-row))'],
+    check(got['sizedHeights'] == ['height:calc(3 * var(--nc-row) + 2 * var(--nc-gap))'],
           f"exactly the sized card should carry a height: {got['sizedHeights']}")
+
+
+def scenario_a_sized_card_spans_rows_rather_than_owning_one():
+    """A CSS height does not make a cell part of the grid's vertical geometry.
+    Spanning rows is what lets a shorter card sit beside a taller one instead
+    of below it, and it is what Home Assistant's own sections view does."""
+    got = _run()
+    if got is None:
+        return
+    check(got['sizedSpan'],
+          "a sized card in a Home Assistant stack still owns a single row")
+    check(got['sizedHeight'],
+          "the stack cell's height is not the span formula")
+    check('grid-row:span 3' in got['cellSized']
+          and 'var(--nc-gap)' in got['cellSized'],
+          f"a sized card in a Custom tile does not span rows: {got['cellSized']}")
+    check('grid-row' not in got['cellUnsized'],
+          f"an unsized card should span one automatic row, not a stated one: "
+          f"{got['cellUnsized']}")
 
 
 def scenario_a_custom_tiles_cards_are_drawn_off_the_draft_while_arranging():
