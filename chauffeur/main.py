@@ -7169,8 +7169,16 @@ def ha_image(path: str, request: Request = None):
         raise HTTPException(status_code=502, detail="Could not fetch image from Home Assistant")
     content, content_type = result
     print(f"[ha_image] OK {len(content)}b {content_type} {ms}ms ua={ua}")
+    # Registry photographs (/api/image/ uploads, /local/ files) are
+    # near-immutable and drawn by cards a wall re-renders every poll — at 30s
+    # they re-fetched through the tunnel on every re-render, and hui-image
+    # latches one failed load into a blank photograph until the URL changes.
+    # A day of cache means the browser never re-asks on a re-render at all;
+    # freshness rides the hourly version suffix the host appends. Camera
+    # frames and media artwork stay at 30s — those are supposed to move.
+    age = 86400 if path.startswith(('/api/image/', '/local/')) else 30
     return Response(content=content, media_type=content_type,
-                    headers={'Cache-Control': 'max-age=30'})
+                    headers={'Cache-Control': f'max-age={age}'})
 
 class MediaCommandRequest(BaseModel):
     command: str  # play | pause | stop | next | previous | volume_set |

@@ -5322,6 +5322,16 @@ retiring the imitation.
   path — `getConfigElement()` from the borrowed runtime is the obvious next
   slice, and until then `features:` (and any key outside the schema) is
   YAML-only: the form preserves such keys (v2.387.30) but cannot author them.
+- **v2.387.38 — the photograph cache matches the photograph.** The user
+  pinned it: the blanking coincides with the same event that flashes the
+  fallbacks — a full page reload (the panel's idle-return). Every reload
+  re-fetched every registry photograph through the tunnel, because the
+  artwork proxy served max-age=30 for everything; one failed fetch in the
+  burst and hui-image latches blank. Registry photographs (/api/image/,
+  /local/) now cache for a DAY — the browser answers reloads from disk and
+  never re-asks — while camera frames and media artwork keep 30s, because
+  those are supposed to move. Freshness rides the hourly version suffix
+  from v2.387.37.
 - **v2.387.37 — cameras get their lanes; photographs stop dying of one
   blip.** A card set to `display_type: camera` negotiates stream flavours
   over the websocket (`camera/capabilities`) and renders its still branch
