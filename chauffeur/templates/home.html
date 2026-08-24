@@ -203,6 +203,18 @@
            DRAWN_TILES. */
         .nc-host { min-height: 8rem; display: flex; flex-direction: column; }
         .nc-host > * { flex: 1 1 auto; min-height: 0; }
+        /* A cell where the REAL Home Assistant card mounted — the host adds
+           `ha-builtin-theme` to exactly those, and to nothing else — takes the
+           TILE's height rather than its own content's.
+
+           HA's built-ins are written for a box somebody sized: `ha-card` is
+           `height: 100%` and the area card gives its photograph whatever the
+           room's name leaves over. With no height to fill, that resolves to
+           nothing at all: the picture collapsed, the card fell back to its
+           16:9 ratio, and the name it was supposed to sit above was pushed out
+           of the bottom of the tile. The converter's fallback drawing keeps
+           its own sizing — it is not written to fill anything. */
+        .nc-host.ha-builtin-theme { height: 100%; }
         .nc-unsupported {
             display: flex;
             flex-direction: column;

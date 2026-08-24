@@ -17,6 +17,7 @@ Run from chauffeur/:  python tests/test_board_ha_tiles.py
 """
 import datetime
 import os
+import re
 import sys
 import tempfile
 
@@ -735,6 +736,122 @@ def scenario_the_retry_is_bounded():
     check('tries > 0' in fn and 'tries - 1' in fn,
           "the retry is no longer bounded, so a dashboard that never matches "
           "retries for as long as the panel is up")
+
+
+# --- the hosted card's BOX, measured -----------------------------------------
+#
+# A built-in Home Assistant card is written for a box somebody sized: `ha-card`
+# is `height: 100%` and the area card hands its photograph whatever the room's
+# name leaves over. That is a CSS contract between HA's cards and the cell we
+# mount them in, and it fails silently — a picture with nowhere to go collapses
+# to nothing, the card falls back to a 16:9 block, and the name ends up below
+# the bottom of its own tile. jsdom does no layout, so this one is measured in
+# chromium against the real `.nc-host` rules lifted out of home.html.
+HOST_BOX_PAGE = """
+<style>
+  body { margin: 0 }
+  /* The tile chrome board_tile_body draws, as the Tailwind classes resolve:
+     a fixed-height tile, a flex column body, and the native card container. */
+  .tile { width: 420px; height: 260px; display: flex; flex-direction: column }
+  .body { flex: 1 1 0%; min-height: 0; display: flex; flex-direction: column }
+  .native { flex: 1 1 0%; min-height: 0; overflow-y: auto }
+{host_css}
+</style>
+<div class="tile" id="real"><div class="body"><div class="native">
+  <div class="nc-host ha-builtin-theme" data-host="h0">
+    <stand-in-card style="display: block"></stand-in-card>
+  </div>
+</div></div></div>
+<div class="tile" id="fallback"><div class="body"><div class="native">
+  <div class="nc-host" data-host="h0"><div class="drawing">a drawing</div></div>
+</div></div></div>
+<script>
+// hui-area-card's own structure and the three rules of its own stylesheet that
+// decide this: the card fills its host, the header takes what is left, and the
+// name's row does not stretch. Copied from HA's card, not invented here.
+class StandInCard extends HTMLElement {
+  connectedCallback() {
+    this.attachShadow({ mode: 'open' }).innerHTML = `<style>
+      :host { display: block }
+      ha-card { height: 100%; display: flex; flex-direction: column;
+                justify-content: space-between }
+      .header { flex: 1; position: relative; overflow: hidden }
+      .picture { width: 100%; height: 100%; position: relative }
+      .info { flex: none; height: auto }
+    </style>
+    <ha-card><div class="header"><div class="picture"></div></div>
+    <div class="info">Main House</div></ha-card>`;
+  }
+}
+customElements.define('stand-in-card', StandInCard);
+</script>
+"""
+
+HOST_BOX_PROBE = r"""
+() => {
+  const box = (id, sel) => {
+    const tile = document.getElementById(id);
+    const card = tile.querySelector('stand-in-card');
+    const t = tile.getBoundingClientRect();
+    if (!card) return { drawing: tile.querySelector(sel).getBoundingClientRect().height,
+                        cell: tile.querySelector('.nc-host').getBoundingClientRect().height };
+    const sr = card.shadowRoot;
+    const pic = sr.querySelector('.picture').getBoundingClientRect();
+    const info = sr.querySelector('.info').getBoundingClientRect();
+    return { tile: t.height, picture: pic.height,
+             nameInside: info.bottom <= t.bottom + 0.5 };
+  };
+  return { real: box('real'), fallback: box('fallback', '.drawing') };
+}
+"""
+
+
+def _host_box():
+    """The `.nc-host` rules as home.html actually writes them, in a browser."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("  skip  playwright not installed — the cell was not laid out")
+        return None
+    tpl = tpl_source.read('home.html')
+    rules = re.findall(r'^\s*\.nc-host[^{\n]*\{[^}]*\}', tpl, re.M)
+    check(rules, "home.html no longer has any .nc-host rules to measure")
+    return sync_playwright, HOST_BOX_PAGE.replace('{host_css}', chr(10).join(rules))
+
+
+def scenario_a_real_ha_card_is_given_the_tiles_height():
+    """The area card's photograph had nowhere to go, so it went nowhere.
+
+    Home Assistant's own cards size themselves against the box they are put in.
+    A cell that is only as tall as its contents gives a card that fills its cell
+    a height of zero to fill — measured, that is a picture 0px high and a room
+    name pushed out the bottom of the tile. The cell the REAL card mounted into
+    (the host marks those, and only those, with `ha-builtin-theme`) therefore
+    takes the tile's height; the converter's own drawing, which is not written
+    to fill anything, keeps its content height.
+    """
+    made = _host_box()
+    if made is None:
+        return
+    sync_playwright, page = made
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        tab = browser.new_page()
+        tab.set_content(page)
+        got = tab.evaluate(HOST_BOX_PROBE)
+        browser.close()
+    real = got['real']
+    check(real['picture'] > real['tile'] / 2,
+          f"a hosted card's picture got {real['picture']}px of a "
+          f"{real['tile']}px tile — the cell is sized by its contents, so "
+          f"`height: 100%` inside it resolves to nothing")
+    check(real['nameInside'],
+          "the card's name sits below the bottom of its own tile")
+    check(got['fallback']['cell'] < real['tile'] - 50,
+          f"a cell holding only the converter's fallback drawing took "
+          f"{got['fallback']['cell']}px of a {real['tile']}px tile — the "
+          f"tile's height belongs to cells where a real HA card mounted, and "
+          f"the fallback is not written to fill anything")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

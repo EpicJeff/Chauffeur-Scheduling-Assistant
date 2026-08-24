@@ -5322,6 +5322,26 @@ retiring the imitation.
   path — `getConfigElement()` from the borrowed runtime is the obvious next
   slice, and until then `features:` (and any key outside the schema) is
   YAML-only: the form preserves such keys (v2.387.30) but cannot author them.
+- **v2.387.40 — a card's own name, and the box it was given.** Two things
+  HA's frontend does for every card it lays out, that this host was not
+  doing. (1) `hass.formatEntityName(stateObj, name)` takes the card's
+  `name:` as its SECOND argument and returns a string there unchanged —
+  our shim took one argument, so a card that had been given a name
+  reverted to the entity's friendly name the moment the real card mounted
+  over the fallback that had shown the right one. (Non-string names are
+  HA's name TEMPLATE: entity/device/area/text parts, now assembled from
+  the same registries.) (2) `layout` — HA's sections view sets
+  `layout = 'grid'` on every card, and cards branch on it: the area card
+  fills the space above the room's name with the photograph in a grid and
+  forces 16:9 anywhere else. A board tile IS a sized grid cell, so
+  `mountBuiltin` says so (`el.layout = 'grid'`, `el.isPanel = false`) and
+  the cell it mounts into takes the tile's height
+  (`.nc-host.ha-builtin-theme { height: 100% }`) — HA's cards are written
+  for a box somebody sized (`ha-card { height: 100% }`), and with no
+  height to fill the picture collapsed to 0px and the name was pushed out
+  of the bottom of the tile. Scoped to cells where the REAL card mounted;
+  the converter's fallback drawing keeps its own sizing. Measured in
+  chromium (test_board_ha_tiles), not asserted from the source.
 - **v2.387.39 — hass.connected, the actual blanking cause.** Found in
   hui-image's own willUpdate: on any hass update where `hass.connected`
   is falsy it wipes `_loadedImageSrc` — HA's "connection lost, stop

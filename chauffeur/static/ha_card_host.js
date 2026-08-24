@@ -1052,6 +1052,36 @@
         return parts;
     }
 
+    // A registry entry's own name, then the entity's, then the id — the
+    // order HA reads them in when nothing overrides.
+    function entityName(stateObj) {
+        var reg = builtin.reg.entities[(stateObj || {}).entity_id] || {};
+        return reg.name || reg.original_name
+            || ((stateObj || {}).attributes || {}).friendly_name
+            || (stateObj || {}).entity_id || '';
+    }
+
+    // One part of a name template, against the registries the bundle
+    // shipped. A part whose subject this panel does not have (no floors
+    // here) is dropped rather than guessed at, which is what HA does with a
+    // part it cannot resolve.
+    function namePart(stateObj, part) {
+        var type = (part || {}).type;
+        if (type === 'text') return part.text || '';
+        if (type === 'entity') return entityName(stateObj);
+        var reg = builtin.reg.entities[(stateObj || {}).entity_id] || {};
+        var device = reg.device_id ? builtin.reg.devices[reg.device_id] : null;
+        if (type === 'device') {
+            return device ? (device.name_by_user || device.name || '') : '';
+        }
+        if (type === 'area') {
+            var areaId = reg.area_id || (device || {}).area_id;
+            var area = areaId ? builtin.reg.areas[areaId] : null;
+            return area ? (area.name || '') : '';
+        }
+        return '';
+    }
+
     function builtinFormatters() {
         return {
             formatEntityState: function (stateObj, state) {
@@ -1067,11 +1097,28 @@
             formatEntityAttributeName: function (stateObj, attr) {
                 return humanize(String(attr));
             },
-            formatEntityName: function (stateObj) {
-                var reg = builtin.reg.entities[(stateObj || {}).entity_id] || {};
-                return reg.name
-                    || ((stateObj || {}).attributes || {}).friendly_name
-                    || (stateObj || {}).entity_id || '';
+            // HA's signature is `(stateObj, name, options)`, and the
+            // second argument is where every modern hui-* card passes its
+            // own `name:` — `this.hass.formatEntityName(stateObj,
+            // this._config.name)`. A STRING there is the answer, unchanged;
+            // that one line is HA's, and this shim taking a single argument
+            // is why a named card reverted to the entity's friendly name a
+            // beat after the fallback had drawn the right one.
+            //
+            // A non-string name is HA's name TEMPLATE: a list of parts
+            // naming where each piece comes from (the entity, its device,
+            // its area, literal text). Assembled here from the same
+            // registries, joined the way HA joins them.
+            formatEntityName: function (stateObj, name, options) {
+                if (typeof name === 'string') return name;
+                if (name) {
+                    var sep = (options && options.separator) || ' ';
+                    var parts = (Array.isArray(name) ? name : [name])
+                        .map(function (p) { return namePart(stateObj, p); })
+                        .filter(function (v) { return v; });
+                    if (parts.length) return parts.join(sep);
+                }
+                return entityName(stateObj);
             },
         };
     }
@@ -1319,6 +1366,16 @@
                 var el = document.createElement(tag);
                 el.setConfig(JSON.parse(JSON.stringify(spec.config || {})));
                 el.hass = buildBuiltinHass(spec);
+                // What KIND of place the card is in, which HA's own
+                // `hui-card` sets on every card it lays out. A board tile is
+                // a grid cell with a height somebody chose — the same thing
+                // the sections view is — so `grid` is the honest answer, and
+                // cards read it: the area card fills the space above its name
+                // with the photograph in a grid and forces 16:9 everywhere
+                // else. Unset, a full-ratio picture pushed the room's name
+                // out of the bottom of its own card.
+                el.layout = 'grid';
+                el.isPanel = false;
                 el.style.display = 'block';
                 container.textContent = '';
                 container.appendChild(el);

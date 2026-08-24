@@ -100,14 +100,97 @@ Promise.allSettled([
 """
 
 
-def _run():
+# The BUILT-IN mount, run for real against a stub runtime. Everything HA's
+# own frontend would have provided is faked as thinly as the code path allows
+# — a bundle response, a webpack require that resolves, a registry that has
+# `hui-area-card` in it — so that what is being tested is our mount, and the
+# two properties a real card reads off the element we hand it.
+BUILTIN_PROBE = r"""
+const H = window.ChauffeurHaCards;
+
+function fakeEl(tag) {
+  return {
+    tagName: tag, _config: null, _appended: [],
+    style: { setProperty: function () {}, display: '' },
+    classList: { add: function () {}, toggle: function () {} },
+    setConfig: function (c) { this._config = c; },
+    setAttribute: function () {},
+    appendChild: function (c) { this._appended.push(c); },
+    textContent: '',
+  };
+}
+globalThis.document = {
+  head: { appendChild: function () {} },
+  createElement: fakeEl,
+  addEventListener: function () {},
+};
+// The hourly picture tick would hold node's event loop open for an hour.
+globalThis.setInterval = function () { return 0; };
+globalThis.getComputedStyle = function () {
+  return { getPropertyValue: function () { return ''; } };
+};
+window.customElements = {
+  get: function (tag) { return tag === 'hui-area-card' ? function () {} : null; },
+  define: function () {},
+};
+// The borrowed runtime, already up: a require that resolves and a chunk
+// loader that loads nothing.
+var wpr = function () { return Promise.resolve(); };
+wpr.e = function () { return Promise.resolve(); };
+window.__haWpr = wpr;
+
+var BUNDLE = {
+  ok: true, version: 'test', runtime: 'runtime.js',
+  cards: { area: { chunks: [], module: 1 } },
+  chunks: [], eager_modules: [],
+  entities: {}, devices: {},
+  areas: { study: { area_id: 'study', name: 'Study', picture: 'api/ha/image?p=1' } },
+  config: { version: '2026.8.0' },
+  i18n: {},
+};
+window.fetch = globalThis.fetch = function (url) {
+  return Promise.resolve({ ok: true, json: function () {
+    return Promise.resolve(BUNDLE);
+  } });
+};
+
+var container = fakeEl('div');
+container.clientWidth = 300;
+H.mountBuiltin(container, {
+  id: 't/h0', type: 'area', apiBase: '',
+  config: { type: 'area', area: 'study', name: 'Main House' },
+}).then(function (ok) {
+  var el = container._appended[0] || {};
+  var hass = el.hass || {};
+  var stateObj = { entity_id: 'sensor.a',
+                   attributes: { friendly_name: 'Sensor A' } };
+  console.log(JSON.stringify({
+    mounted: ok,
+    // What the sections view sets on every card it lays out. The area card
+    // reads it to decide whether its photograph is a 16:9 block or fills the
+    // space above the name; without it the name is pushed out of the card.
+    layout: el.layout === undefined ? null : el.layout,
+    isPanel: el.isPanel === undefined ? null : el.isPanel,
+    // A card passes its `name:` as the SECOND argument here, and a string
+    // there IS the answer. Ignoring it is how a named card reverted to the
+    // entity's own name the moment the real card mounted.
+    namedByConfig: hass.formatEntityName
+      ? hass.formatEntityName(stateObj, 'Main House') : null,
+    unnamedFallsBack: hass.formatEntityName
+      ? hass.formatEntityName(stateObj) : null,
+  }));
+});
+"""
+
+
+def _run(probe=None):
     node = shutil.which('node')
     if not node:
         return None
     src = open(os.path.join(STATIC, 'ha_card_host.js'), encoding='utf-8').read()
     with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False,
                                      encoding='utf-8') as fh:
-        fh.write(HARNESS + src + PROBE)
+        fh.write(HARNESS + src + (probe or PROBE))
         path = fh.name
     try:
         out = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
@@ -218,6 +301,51 @@ def scenario_the_hass_shape_is_complete_enough_to_index_into():
           "the entity registry is absent rather than empty — indexing an empty "
           "map gives undefined and a card falls back; indexing undefined throws")
     check(got['formatsAttribute'], "formatEntityAttributeValue does not format")
+
+
+def scenario_a_hosted_builtin_is_told_it_is_in_a_grid():
+    """`layout` is what tells a card it has a box rather than a page.
+
+    A board tile is a grid cell with a height somebody chose, which is exactly
+    what HA's sections view is — and HA sets `layout = 'grid'` on every card it
+    lays out there. The area card branches on it: in a grid its photograph
+    fills whatever is left above the name, and everywhere else it is forced to
+    16:9. Unset, the card drew a full 16:9 picture in a fixed-height cell and
+    pushed its own name out of the bottom.
+    """
+    got = _run(BUILTIN_PROBE)
+    if got is None:
+        print("  skip  node is not installed")
+        return
+    check(got['mounted'], "the built-in mount did not complete")
+    check(got['layout'] == 'grid',
+          f"a hosted built-in is laid out in a grid cell but was told "
+          f"layout={got['layout']!r} — the area card's picture will be 16:9 "
+          f"and its name will be clipped")
+    check(got['isPanel'] is False,
+          "isPanel must be explicitly false: HA sets it alongside layout, and "
+          "`undefined` is not what a card checking it expects")
+
+
+def scenario_a_cards_own_name_survives_the_real_card():
+    """`hass.formatEntityName(stateObj, config.name)` — the second argument.
+
+    Every modern hui-* card asks the hass object to name its entity and passes
+    its own `name:` along. HA answers a string there by returning it unchanged.
+    Our shim took one argument, so the name a household typed was dropped and
+    the card reverted to the entity's friendly name — visibly, a beat after the
+    converter fallback had shown the right one.
+    """
+    got = _run(BUILTIN_PROBE)
+    if got is None:
+        print("  skip  node is not installed")
+        return
+    check(got['namedByConfig'] == 'Main House',
+          f"a card's own name: was ignored — formatEntityName returned "
+          f"{got['namedByConfig']!r}")
+    check(got['unnamedFallsBack'] == 'Sensor A',
+          f"with no name in the config the entity's own name is the answer, "
+          f"not {got['unnamedFallsBack']!r}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
