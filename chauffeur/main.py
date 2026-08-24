@@ -6390,6 +6390,14 @@ def ha_frontend_bundle():
         'devices': reg['devices'],
         'areas': reg['areas'],
         'config': reg['config'],
+        # Diagnosability. When the wall shows raw entity ids or missing
+        # area photographs, THIS says whether the registries ever arrived —
+        # empty counts point at the websocket (see ha_api.ws_command and the
+        # add-on log's '[ha_api] ws ...' lines), full counts point at the
+        # client.
+        'registry_counts': {'entities': len(reg['entities']),
+                            'devices': len(reg['devices']),
+                            'areas': len(reg['areas'])},
     }
 
 @app.get("/api/ha/frontend/theme/{app_hash}.css")

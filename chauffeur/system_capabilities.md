@@ -5322,6 +5322,22 @@ retiring the imitation.
   path — `getConfigElement()` from the borrowed runtime is the obvious next
   slice, and until then `features:` (and any key outside the schema) is
   YAML-only: the form preserves such keys (v2.387.30) but cannot author them.
+- **v2.387.32 — the registries' size cap, and the whole theme.** Two more
+  wall reports, one cause each. The pickers showed raw entity ids and the
+  bundle's registries came up empty on a real install because
+  `ws_command`'s websockets client caps a MESSAGE at 1MB by default and a
+  whole-house entity registry sails past it — the connection died mid-reply
+  and downstream read "this household has no entities" (and no area
+  pictures, and feature rows judged `not compatible`). `max_size=None`; the
+  peer is HA on the LAN, the cap defended nothing. The bundle now carries
+  `registry_counts` so the next such report is a one-look diagnosis: empty
+  counts mean the websocket (add-on log, `[ha_api] ws` lines), full counts
+  mean the client. And the editors' borderless fields: the two-run theme
+  extraction was never the whole theme — HA's `--ha-color-*` primitives,
+  the semantic text/surface/form tokens (light run first, dark second) and
+  the whole `--wa-*` form-control layer now ride the theme stylesheet in
+  their proper buckets (`PATCH_V` 3 re-extracts and re-URLs). A field with
+  no `--wa-form-control-border-color` was a field with no border.
 - **v2.387.31 — the collision that explained the wall.** Every tag the
   panel's shims define (`ha-card`, `ha-icon`, `ha-form`, the pickers…) is
   ALSO defined by chunks in the borrowed runtime's own set (verified:

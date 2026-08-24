@@ -386,7 +386,13 @@ def ws_command(command: str, timeout: float = 8, **fields):
     try:
         import json as _json
         from websockets.sync.client import connect
-        with connect(url, open_timeout=timeout, close_timeout=timeout) as ws:
+        # max_size=None: the library's default caps a MESSAGE at 1MB, and a
+        # whole-house entity registry sails past that — the connection dies
+        # mid-reply and the caller sees None, which downstream read as "this
+        # household has no entities". The peer is Home Assistant on the LAN,
+        # not the internet; the cap defends against nothing here.
+        with connect(url, open_timeout=timeout, close_timeout=timeout,
+                     max_size=None) as ws:
             for _ in range(3):
                 msg = _json.loads(ws.recv(timeout))
                 if msg.get('type') == 'auth_required':

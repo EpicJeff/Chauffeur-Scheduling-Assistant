@@ -54,6 +54,16 @@ APP = (
     # ...and a dark run repainting the card near-black
     'const dark=`--card-background-color:#1c1c1c;'
     + ';'.join(f'--dfiller-{i}:#111' for i in range(40)) + ';`;'
+    # the mode-neutral primitives and the wa form-control layer
+    'const prims=`--ha-color-primary-05:#012;'
+    + ';'.join(f'--ha-color-scale-{i}:#123' for i in range(24)) + ';`;'
+    'const wa=`--wa-form-control-border-color:#456;'
+    + ';'.join(f'--wa-token-{i}:#456' for i in range(24)) + ';`;'
+    # light semantics first, dark second — HA's emit order
+    'const lightsem=`--ha-color-text-primary:var(--x-05);'
+    + ';'.join(f'--ha-sem-{i}:#789' for i in range(24)) + ';`;'
+    'const darksem=`--ha-color-text-primary:var(--white-color);'
+    + ';'.join(f'--ha-dsem-{i}:#abc' for i in range(24)) + ';`;'
     # a small import site and the big (lovelace) one
     'a=()=>Promise.all([n.e(10021)]).then(n.bind(n,111));'
     'b=()=>Promise.all([n.e(14887),n.e(79381),n.e(29442)]).then(n.bind(n,60368));'
@@ -127,6 +137,17 @@ def scenario_the_theme_rides_along():
           'the base theme lost the state colours')
     check('--card-background-color:#1c1c1c' in dark,
           'the dark overrides were not found')
+    # The editors' chrome: primitives, the wa form-control layer and the
+    # LIGHT semantics ride the base; the dark semantics ride the dark
+    # block. Two runs was never the whole theme — the first cut shipped
+    # fields with no borders.
+    check('--ha-color-primary-05' in base, 'the colour primitives are lost')
+    check('--wa-form-control-border-color' in base,
+          'the wa form-control tokens are lost — fields draw borderless')
+    check('--ha-color-text-primary:var(--x-05)' in base,
+          'the light semantics did not land in the base block')
+    check('--ha-color-text-primary:var(--white-color)' in dark,
+          'the dark semantics did not land in the dark block')
 
 
 def scenario_extraction_end_to_end_against_fixtures():

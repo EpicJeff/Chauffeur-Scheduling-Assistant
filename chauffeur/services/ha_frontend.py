@@ -188,24 +188,48 @@ def extract_card_map(chunk_src):
 def extract_theme(app_src):
     """(base_vars, dark_vars) — HA's default theme, out of the entrypoint.
 
-    The cards' long tail of tokens (`--state-climate-heat-color`, the
-    control-slider colours, every `--rgb-*`) is applied by the app shell we
-    do not boot, so the real cards drew geometry with no stroke until these
-    were found. The entrypoint carries them as two big runs of CSS variable
-    declarations: the base set (the one naming the state colours) and the
-    dark overrides (the one that repaints the card background near-black).
+    The cards' and editors' tokens are applied by the app shell we do not
+    boot, so the real cards drew geometry with no stroke — and the real
+    editors drew fields with no outlines — until these were found. The
+    entrypoint carries them as several big runs of CSS variable
+    declarations, and the first cut of this took only two of them (the
+    state-colour set and the dark background overrides), which left every
+    `--ha-color-*` primitive, the semantic text/surface/form tokens and the
+    whole `--wa-*` form-control layer undefined. A field with no
+    `--wa-form-control-border-color` is a field with no border.
+
+    Buckets, by marker:
+      - BASE: the run naming the state colours, plus every mode-neutral
+        run — the colour primitives (`--ha-color-primary-05`), the
+        `--wa-*` component tokens, fonts, layout metrics.
+      - LIGHT: the FIRST run defining `--ha-color-text-primary` (HA emits
+        light semantics before dark).
+      - DARK: the near-black background overrides plus the SECOND
+        `--ha-color-text-primary` run.
+
     Served as a stylesheet CLASS on the host cell, which is what keeps the
     panel's own branding in charge: the panel tokens go on as inline
     properties, and inline beats class.
     """
     runs = [m.group(0) for m in
             re.finditer(r'(?:--[\w-]+\s*:[^;{}"`]+;)+', str(app_src or ''))
-            if m.group(0).count('--') >= 40]
-    base = next((r for r in runs if 'state-climate-heat-color' in r), '')
-    dark = next((r for r in runs
-                 if '--card-background-color:#1c1c1c' in r
-                 or ('--primary-background-color:#11' in r)), '')
-    return base, dark
+            if m.group(0).count('--') >= 20]
+    base_parts, dark_parts, semantics = [], [], []
+    for r in runs:
+        if 'state-climate-heat-color' in r:
+            base_parts.insert(0, r)
+        elif ('--card-background-color:#1c1c1c' in r
+                or '--primary-background-color:#11' in r):
+            dark_parts.insert(0, r)
+        elif '--ha-color-text-primary' in r:
+            semantics.append(r)
+        elif ('--ha-color-primary-05' in r or '--wa-' in r
+                or '--ha-font-family-body' in r or '--header-height' in r):
+            base_parts.append(r)
+    if semantics:
+        base_parts.append(semantics[0])          # light
+        dark_parts.extend(semantics[1:2])        # dark, when HA ships one
+    return ''.join(base_parts), ''.join(dark_parts)
 
 
 def extract_eager_modules(chunk_src):
@@ -244,7 +268,7 @@ def extract_eager_modules(chunk_src):
 # runtime's prelude, a new meta field — so a cached extraction from an older
 # build is redone rather than served with yesterday's patch. The app hash
 # only says HA did not change; it cannot say WE did not.
-PATCH_V = 2
+PATCH_V = 3
 
 
 def _load_cached(app_hash):
