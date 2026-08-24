@@ -3868,18 +3868,38 @@
                 // there is no object on the page to point at. The path indexes
                 // the parsed config, which is the thing that actually changes.
 
+                // The record whose `config.config` holds a card's YAML. A
+                // top-level tile is its own; a Home Assistant card sitting
+                // INSIDE a Custom tile is one of that tile's cards, drawn with
+                // an id namespaced by the tile — which is why looking it up in
+                // `widgets` found nothing, and why dragging its sub-cards did
+                // nothing at all with no error anywhere.
+                _cardConfigHolder(drawnId) {
+                    const widgets = this.page().widgets || [];
+                    const direct = widgets.find(w => w.id === drawnId);
+                    if (direct) return direct;
+                    for (const w of widgets) {
+                        for (const c of ((w.config || {}).cards || [])) {
+                            if (`${w.id}-${c.id}` === drawnId) return c;
+                        }
+                    }
+                    return null;
+                },
+
                 async startCardDrag(e, tile) {
                     if (e.button > 0) return;
                     const grip = e.target.closest('.nc-card-move');
                     const grab = e.target.closest('.nc-card-size');
                     const cell = e.target.closest('[data-path]');
                     if (!cell || (!grip && !grab)) return;
+                    // Resolved BEFORE the gesture is claimed: a drag with
+                    // nowhere to go should reach whatever is under it rather
+                    // than being eaten by a handler that then gives up.
+                    const inst = this._cardConfigHolder(tile.id);
+                    if (!inst) return;
                     e.preventDefault();
                     e.stopPropagation();          // never also drag the TILE
 
-                    const inst = (this.page().widgets || [])
-                        .find(w => w.id === tile.id);
-                    if (!inst) return;
                     const config = await this.cardConfigOf(inst);
                     if (!config) return;
 

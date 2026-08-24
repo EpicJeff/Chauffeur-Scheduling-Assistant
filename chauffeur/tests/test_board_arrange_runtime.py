@@ -291,6 +291,15 @@ const alertsBeforeRevisit = alerts.length;
 const afterRevisit = { theirs: b._cardsOf('theirs').map(c => c.id),
                        said: alerts.length - alertsBeforeRevisit };
 
+// An HA card INSIDE a Custom tile. Its drawn id is namespaced by the tile, so
+// a straight lookup in `widgets` finds nothing — and the handler had already
+// eaten the gesture by the time it discovered that.
+b.page().widgets.push({ id: 'holder', type: 'custom', config: { cards: [
+  { id: 'ha_card', type: 'ha_card', config: { config: 'type: gauge' } } ] } });
+const holder = b._cardConfigHolder('holder-ha_card');
+const topLevel = b._cardConfigHolder('mine');
+const nobody = b._cardConfigHolder('holder-nothing');
+
 // --- The resize grip's pitch is the GRID's, not a hardcoded 56. Neither
 // `resizeTileCard` nor `resizeCardCell` had ever been driven through an
 // actual pointer move in this suite — the stub's `getComputedStyle` had no
@@ -433,6 +442,9 @@ console.log(JSON.stringify({
   rowsAt200: rowsAt200,
   rowsAt56: rowsAt56,
   gridVars: gridVars,
+  holderYaml: (holder && holder.config || {}).config || null,
+  holderTop: !!(topLevel && topLevel.type === 'custom'),
+  holderMiss: nobody,
 }));
 """
 
@@ -862,6 +874,22 @@ def scenario_the_card_grid_takes_the_boards_row_and_gutter():
         return
     check(got['gridVars'] == '--nc-row:200px;--nc-gap:16px',
           f"the card grid is not on the board's row and gutter: {got['gridVars']}")
+
+
+def scenario_a_card_inside_a_custom_tile_can_be_dragged():
+    """A Home Assistant card sitting in a Custom tile is drawn with an id
+    namespaced by its tile, which never appears in the page's widget list. The
+    handler looked there, found nothing, and returned — having already called
+    preventDefault, so the gesture was eaten with nothing said anywhere."""
+    got = _run()
+    if got is None:
+        return
+    check(got['holderYaml'] == 'type: gauge',
+          f"a card inside a Custom tile cannot be resolved to its config: "
+          f"{got['holderYaml']}")
+    check(got['holderTop'], "a top-level tile is no longer its own holder")
+    check(got['holderMiss'] is None,
+          f"an id belonging to nothing resolved to something: {got['holderMiss']}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
