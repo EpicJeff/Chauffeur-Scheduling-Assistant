@@ -754,6 +754,22 @@
                         a.picture = '/' + a.picture;
                     }
                 });
+                // And an hourly freshness tick. hui-image latches a failed
+                // load — one blipped fetch (a tunnel hiccup on a wall that
+                // runs for days) is a photograph gone until something makes
+                // the image PROPERTY change. A version suffix that moves
+                // once an hour is that something: the next hass refresh
+                // re-resolves, re-fetches, and a transient failure stops
+                // being forever.
+                builtin.picTick = setInterval(function () {
+                    Object.keys(builtin.reg.areas).forEach(function (k) {
+                        var a = builtin.reg.areas[k];
+                        if (a.picture) {
+                            a.picture = a.picture.split('?')[0]
+                                + '?v=' + Math.floor(Date.now() / 3600000);
+                        }
+                    });
+                }, 3600000);
                 installContextProvider();
                 // HA's default tokens, class-scoped to host cells. Without
                 // them the real cards draw geometry with no stroke — every
@@ -951,6 +967,13 @@
     // never settles is a spinner forever.
     function wsBridge(msg) {
         if (!msg || !msg.type) return null;
+        // A camera card asking what stream flavours the frontend can have:
+        // none — HLS and WebRTC negotiate over the websocket. Answering
+        // (rather than rejecting) steers ha-camera-stream to its still/MJPEG
+        // branch, which the /api/camera_proxy lanes serve.
+        if (msg.type === 'camera/capabilities') {
+            return Promise.resolve({ frontend_stream_types: [] });
+        }
         if (msg.type === 'frontend/get_icons') {
             return fetch(API.base + 'api/ha/frontend/icons?category='
                 + encodeURIComponent(msg.category || '')

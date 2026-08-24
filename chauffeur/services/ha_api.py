@@ -157,6 +157,28 @@ def fetch_binary(path: str):
         return None
 
 
+def stream_binary(path: str, timeout: float = 10):
+    """A STREAMING response for an HA-relative path, or None — for the
+    camera proxies, whose MJPEG stream never ends and must not be buffered
+    the way fetch_binary buffers. Returns the live `requests` response;
+    the caller iterates it and MUST close it."""
+    try:
+        base, token = _base_and_token()
+        if not base:
+            return None
+        root = base[:-len('/api')] if base.endswith('/api') else base
+        resp = requests.get(f"{root}{path}",
+                            headers={'Authorization': f'Bearer {token}'},
+                            timeout=timeout, stream=True)
+        if resp.status_code >= 400:
+            resp.close()
+            return None
+        return resp
+    except Exception as e:
+        print(f"[ha_api] GET {path} (stream) failed: {e}")
+        return None
+
+
 def core_origins() -> list:
     """Where Home Assistant's own web server can be reached, in order to try.
 

@@ -7075,6 +7075,45 @@ _HA_IMAGE_PREFIXES = ('/api/media_player_proxy/', '/api/image_proxy/',
                       # pictures of a room somebody chose to show.
                       '/local/')
 
+@app.get("/api/camera_proxy/{entity_id}")
+def ha_camera_still(entity_id: str, token: str = None):
+    """One camera frame, on our origin. The hosted camera elements build
+    `/api/camera_proxy/<entity>?token=…` page-relative; HA validates its
+    own access token, we only validate the shape and forward."""
+    from services import ha_api
+    if not re.match(r'^camera\.[a-z0-9_]+$', entity_id or ''):
+        raise HTTPException(status_code=400, detail="Not a camera")
+    q = f'?token={token}' if token and re.match(r'^[0-9a-f]+$', token) else ''
+    got = ha_api.fetch_binary(f'/api/camera_proxy/{entity_id}{q}')
+    if not got:
+        raise HTTPException(status_code=502, detail="No frame from Home Assistant")
+    content, content_type = got
+    return Response(content=content, media_type=content_type,
+                    headers={'Cache-Control': 'no-store'})
+
+@app.get("/api/camera_proxy_stream/{entity_id}")
+def ha_camera_stream_proxy(entity_id: str, token: str = None):
+    """The camera's MJPEG stream, PIPED — this is what the hosted camera
+    element actually renders as its <img>, and it never ends, so it must
+    stream rather than buffer. One upstream connection per watching panel;
+    the generator closes it when the viewer goes away."""
+    from services import ha_api
+    if not re.match(r'^camera\.[a-z0-9_]+$', entity_id or ''):
+        raise HTTPException(status_code=400, detail="Not a camera")
+    q = f'?token={token}' if token and re.match(r'^[0-9a-f]+$', token) else ''
+    resp = ha_api.stream_binary(f'/api/camera_proxy_stream/{entity_id}{q}',
+                                timeout=15)
+    if resp is None:
+        raise HTTPException(status_code=502, detail="No stream from Home Assistant")
+    def pipe():
+        try:
+            for chunk in resp.iter_content(chunk_size=32768):
+                yield chunk
+        finally:
+            resp.close()
+    return StreamingResponse(pipe(), media_type=resp.headers.get(
+        'Content-Type', 'multipart/x-mixed-replace'))
+
 @app.get("/api/ha/image64/{encoded}")
 def ha_image64(encoded: str, request: Request):
     """Same as /api/ha/image but with the HA path base64url-encoded into a

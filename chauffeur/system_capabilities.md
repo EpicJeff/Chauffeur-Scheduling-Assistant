@@ -5322,6 +5322,24 @@ retiring the imitation.
   path — `getConfigElement()` from the borrowed runtime is the obvious next
   slice, and until then `features:` (and any key outside the schema) is
   YAML-only: the form preserves such keys (v2.387.30) but cannot author them.
+- **v2.387.37 — cameras get their lanes; photographs stop dying of one
+  blip.** A card set to `display_type: camera` negotiates stream flavours
+  over the websocket (`camera/capabilities`) and renders its still branch
+  as `/api/camera_proxy_stream/<entity>?token=…` — a page-relative MJPEG
+  URL with no route on our origin, so the card threw and drew nothing. The
+  bridge now answers capabilities with NO stream types (steering to the
+  still/MJPEG branch), and two proxy lanes exist: `/api/camera_proxy/…`
+  (one frame) and `/api/camera_proxy_stream/…` (the endless MJPEG, PIPED
+  via StreamingResponse — buffering an endless stream never returns).
+  Shape-validated, HA's own per-camera token forwarded, WALL tier. HLS and
+  WebRTC stay honestly out (they need the live socket). And the
+  load-then-blank photographs: `hui-image` latches a failed load — one
+  blipped fetch on a wall that runs for days is a photograph gone until
+  the image PROPERTY changes — so the registry pictures now carry an
+  hourly version suffix; the next hass refresh after the tick re-resolves
+  and a transient failure stops being forever. (Diagnosed against the
+  live install: payloads stable over minutes, proxy 21/21 under load —
+  the server was never the problem.)
 - **v2.387.36 — the element nobody imports.** Area photographs, final
   cause (diagnosed end-to-end against the live install: registries full,
   pictures present, proxy serving JPEG — and the console CLEAN, because

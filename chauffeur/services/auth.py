@@ -185,6 +185,11 @@ RULES = [
     # but everything above them stays behind the wall tier because history
     # and registries ARE household data.
     ('GET', '/api/ha/frontend/*', WALL, None),
+    # The hosted camera elements' two lanes — a frame and the MJPEG stream —
+    # drawn as bare <img> by panels, same as the artwork proxy above them.
+    # HA additionally validates its own per-camera access token.
+    ('GET', '/api/camera_proxy/{entity_id}', WALL, None),
+    ('GET', '/api/camera_proxy_stream/{entity_id}', WALL, None),
     (ANY, '/api/ha/*', PARENTS, None),
     (ANY, '/api/telemetry/*', PARENTS, None),
     (ANY, '/api/push_subscriptions/*', PARENTS, None),

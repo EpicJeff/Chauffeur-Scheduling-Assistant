@@ -186,6 +186,31 @@ def scenario_the_elements_no_card_imports_are_still_defined():
           'undefined hui-image and silently show nothing')
 
 
+def scenario_the_camera_lanes_exist():
+    """A camera-mode card negotiates stream flavours over the websocket and
+    renders its still branch as the MJPEG proxy URL. The bridge answers
+    camera/capabilities with no stream types (steering to that branch), and
+    both /api/camera_proxy lanes exist on our origin — validated shape,
+    HA's own per-camera token forwarded, the endless stream PIPED rather
+    than buffered."""
+    host = open(os.path.join(STATIC, 'ha_card_host.js'), encoding='utf-8').read()
+    check("'camera/capabilities'" in host
+          and 'frontend_stream_types: []' in host,
+          'the capabilities answer is gone — camera cards throw and blank')
+    main_src = open(os.path.join(
+        os.path.dirname(TPL), 'main.py'), encoding='utf-8').read()
+    check('"/api/camera_proxy/{entity_id}"' in main_src
+          and '"/api/camera_proxy_stream/{entity_id}"' in main_src,
+          'the camera proxy lanes are gone')
+    check('StreamingResponse(pipe()' in main_src,
+          'the MJPEG stream is buffered — an endless stream never returns')
+    from services import auth
+    check(auth.resolve('GET', '/api/camera_proxy/{entity_id}') is not None,
+          'the camera still lane is unclassified')
+    check(auth.resolve('GET', '/api/camera_proxy_stream/{entity_id}') is not None,
+          'the camera stream lane is unclassified')
+
+
 def scenario_the_static_proxies_beat_the_static_mount():
     """Starlette matches in REGISTRATION order and app.mount('/static')
     swallows everything under it — the mdi and translation proxies
