@@ -5597,16 +5597,16 @@ tile and sub-cards inside a Home Assistant stack.
   the swallowed sub-card drag resolving and moving) and `test_board_cards.py`
   (the 0..1000 server-side clamp).
 
-## Outings, and what leaves the house today (packing arc P1–P2, v2.388.0–v2.395.0 — `docs/packing_design.md`, `services/outings.py`)
+## The Family Day card — one place the day lives (packing arc P1–P2 + reshape F1, v2.388.0–v2.402.0 — `docs/packing_design.md`, `docs/family_day_design.md`, `services/outings.py`, `services/family_day.py`)
 
 A driver took a passenger to one event, drove straight on to a second without
-coming home in between, and arrived without the second event's gear. Prep-kit
-pills already drew on every surface that shows an event — the driver's card,
-the family card, the kid's ride card, the wall's calendar dialog — and none of
-them was a surface you could *act* on except the drive sheet, which is
-deliberately a loading checklist at the car door. A list read on the way out
-can only ever list what's already been forgotten. Fixing this needed a
-concept the app never had, not another pill.
+coming home in between, and arrived without the second event's gear. Fixing
+that (P1+P2) meant giving the app a concept it never had — the outing — and a
+tile to show it. But the tile only ever answered "what has to be packed," a
+fourth view (with the agenda, the drives card, and the hero) of one subject a
+person still had to join in their head. The F1 reshape evolves the same tile,
+in place, into the wall's one answer to "what is happening today and are we
+ready for it."
 
 - **An outing is one trip out of the house, computed, never stored.**
   `services/outings.py:outings_for` chains a driver's date out of the
@@ -5615,66 +5615,79 @@ concept the app never had, not another pill.
   home" (a gap over 45 minutes, a wait over 15, a 20-minute layover worth
   taking). **The absence of a `home_waypoint` is the statement**: no home
   between two edges means the driver never had the chance to swap gear, so
-  they're one outing. A real trip home between them keeps them two outings —
-  carrying the whole day's kit on every leg is its own kind of wrong.
-- **Two events on one trip are one packing job, and the grouping IS the
-  message.** At four activities a day, going straight from one thing to the
-  next without touching home is most days, not an exception — a tile
-  announcing "you're not stopping home between these" would be wallpaper
-  within a week, and the standing rule against notifiers rules it out anyway.
-  So the fact is said the only way that survives being true constantly: one
-  row, one list, one packed/needed fraction for both events, never two.
-- **Needed counts distinct people, not events.** `packing_for` intersects a
-  kit's `passenger_ids` against each event's attendees and unions the result
-  **across the whole outing** — the kid who needs a water bottle at soccer
-  and again at band needs one bottle, because they're carrying it the whole
-  afternoon, not two. A kit's `per_person` flag (on by default, "One per
-  person" in the prep-kit editor) is what makes that union count heads at
-  all; clearing it pins `needed` to 1 regardless — the team snack, the
-  folding chair, the fundraiser cash don't scale with how many kids are
-  going, and without the exception the counter trains people to ignore it.
-- **A claim is anonymous on the wall, named on a phone — and nothing the
-  payload asserts is trusted.** `POST /api/packing/claim` re-derives the
-  outing from the live schedule (a garbage `outing_key` 404s) and validates
-  `item_key` against that outing's own `packing_for` items (a garbage
-  `item_key` 404s too — before this it minted its own fresh XP, since the
-  once-guard keys on `ref_id=item_key`, and filed a claim row nothing ever
-  pruned). `member_id` from the payload is ignored outright in P1+P2 — the
-  endpoint files every claim as `member_id=None` regardless of what's sent,
-  because the DEVICE lane has no real identity to assert and nothing should
-  be trusted to name one. A claim is `{outing_key, item_key, date, member_id
-  or null}` (`storage.add_packing_claim`), and `prep_status.confirmed_by`
-  already taught this codebase what a field pretending otherwise costs. A
-  kid ticking their own item on their own phone claims a slot with their
-  name on it — that surface is P3, which will derive identity server-side
-  from the session (never the payload), and is not built yet, so every claim
-  the shipped card produces today is the wall's anonymous kind. `delta` is
-  parsed explicitly and a `delta: 0` is refused (400), not quietly rounded
-  up to +1.
-- **A tick mints critter XP and nothing else.** `grant_pet_xp('prep', …,
-  once=True)` per member/item/day — the same anti-faucet guard routines pass,
-  because a child can tick and untick a box all afternoon. It never pays
-  points (packing your own bag isn't a chore somebody assigned), never
-  completes or extends a routine streak (an unpacked bag is a real problem,
-  not a broken habit, and a parent packing it for you hasn't kept your streak
-  either), and an anonymous wall tap mints nothing — no member, nobody to
-  pay. Unticking removes the claim but **never claws the XP back**: a thing
-  earned isn't taken away because a box got tapped twice.
-- **The day follows the day, not a clock.** `day_in_focus` returns today for
-  as long as any of today's outings is still ahead, and flips to tomorrow
-  only once the last one's *end* — the drive home, not the last event —
-  has passed. That buys two things for free: a live outing can never be
-  hidden mid-trip, and a day with no outings at all shows tomorrow from the
-  start, no empty-day special case. `GET /api/packing/day` defaults to that
-  day, and the card marks a tomorrow answer with a small **Tomorrow** chip so
-  it's never read as this morning's.
-- The card self-fetches (board rule 2 — a poll can't own an interactive
-  card's state while a finger is mid-tick), on the lanes cards' own 30s
-  cadence, and ticking is optimistic: applied locally before the request
-  lands, and it survives the board's own poll landing on top of a claim still
-  in flight (`pkPending`, resolved by item key so a stale poll never stomps a
-  live tap) — a *failed* tick still resyncs to the server, because the guard
-  releases before the reconciling re-fetch, not after. No prep kits at all
-  means the card doesn't exist (rule 1, first half); kits with a genuinely
-  quiet day draw the honest inline sentence instead of vanishing (rule 1,
-  second half) — a blank tile must never be mistaken for a broken one.
+  they're one outing. Needed counts still union distinct people across the
+  whole outing, not events (`packing_for`'s `per_person` flag) — one water
+  bottle for the afternoon, not one per event it's carried to.
+- **The spine widened from outings to blocks** (`services/family_day.py:
+  blocks_for`), because not everything leaves the house and an at-home event
+  can still need prep. One time-ordered list, three feeds:
+  - **Outings** — the container above, built off the day's driver
+    assignments, unchanged from P1.
+  - **Home and covered blocks** are read off the *same stamped event feed the
+    calendar card reads* (`sched['events']`, the solve cache's own assembly)
+    — driven, undriven, canceled-and-stamped, skip-decided all pass through
+    that one feed, never a second query. A covered ride (load arc's outside
+    hand; no household driver, `leave_by.ready_for_covered` is its only wall
+    presence before this) now draws as a bare block naming its coverage
+    ("Swim — Grandma driving") with its own items — before F1, an outside
+    hand covering a ride meant the bag packed itself for nobody, silently.
+  - **All-day events are a banner, never a block** — one slim line, because
+    they have no time to anchor to, and they must never reach the solver
+    (`driver_events`); the card is a read-only lens over the event feed and
+    changes nothing the solver sees.
+- **The container rule: a box only at two or more events.** A single-event
+  outing draws as one flat line, the same shape as a bare event block — a box
+  around one event is redundant chrome, and most outings are single-event, so
+  drawing every outing as a box would be a wall of boxes. At two-plus events
+  the outer block carries the trip facts (driver, car, the promoted pill) and
+  the inner lines stay always-visible (title + time, never gated behind a
+  tap) — the box says "one trip, one packing job" more strongly than a joined
+  title ever did, without hiding either event's own time.
+- **The card self-fetches and taps optimistically, per board rule 2**
+  (a poll can't own an interactive card's mid-tap state): it fetches its own
+  `GET /api/packing/day` on the lanes' 30s cadence, applies a tap locally
+  before the request lands, and reconciles by item key so a stale poll never
+  stomps a live tap — a failed tick still resyncs, because the pending-guard
+  releases before the reconciling re-fetch, not after. **No block
+  auto-expands**; tapping one unfolds it and `expandedKeys` survives the same
+  poll — "what to look at first" is the hero's job, not this card's.
+- **The pill is two states and only two.** Work remaining is the one
+  saturated element on a resting row — a filled amber pill, `N to pack`;
+  done, or nothing to pack, is a muted checkmark or nothing at all. No
+  proximity escalation, no colour ramp toward departure — this card is a
+  surface, not a notifier, and a badge that's loud all day teaches a
+  household to ignore it.
+- **Three shipped rules flipped, and each inversion reverses a rule this same
+  arc shipped a few versions earlier, on purpose:**
+  1. An outing with nothing to pack now draws. "Nothing to pack is nothing to
+     draw" was the tile's rule; on a day surface a drive is a happening
+     independent of its cargo. The quiet sentence ("Nothing on the calendar
+     today.") now fires only when the day has **no blocks at all**, not
+     merely no items.
+  2. Turnover follows the last **block**, not the last outing —
+     `day_in_focus` widened its input so a day ending with an at-home party
+     doesn't flip to tomorrow mid-party; the rule itself (today while
+     anything is still ahead) is unchanged, only what counts as "anything."
+  3. Covered rides returned to the packing surface — the repair above,
+     reversing a silent gap rather than a stated rule.
+- **The server still caps every claim at `needed`**, independent of the
+  client's disabled `+` button: `POST /api/packing/claim` counts the block's
+  own existing claims before writing another, so two walls racing past a
+  stale disabled state can't file surplus claims that make the first untick
+  look dead. The rest of the P1+P2 claim contract carries over unchanged:
+  `outing_key`/`item_key` are re-derived and validated against the live
+  schedule (garbage values 404), `member_id` is always filed `None` (P3+ is
+  the named-claim surface, not built), a tick mints critter XP once per
+  member/item/day and never claws it back on an untick, and `delta: 0` is
+  refused rather than quietly rounded up.
+- **The board swap: the default home board leads with this one card**,
+  replacing `calendar` + `drives` + `packing`. The card keeps the `packing`
+  catalog key on purpose — placements, config, and every existing claim
+  survive the reshape underneath a new label ("Family day"). All three
+  replaced cards stay in the catalog, untouched and placeable, so reverting
+  to the old three-card layout is a board-edit-mode action, not a rollback.
+- **Known gap, watched, not fixed:** an outing's key is
+  `f"{driver_id}:{first_event_id}"`. A midday re-solve that changes which
+  event leads an outing's chain changes that key, which orphans every claim
+  already filed against the outing for the day — accepted for F1; P3+ may
+  need to re-key claims by outing membership rather than by first event.

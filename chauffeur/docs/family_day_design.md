@@ -134,6 +134,8 @@ config, tests, claims): blocks, the container rule, the amber pill, the three
 rule flips, the all-day banner, the board swap. Packing is the only cargo
 type.
 
+Shipped v2.398.0–v2.402.0.
+
 **F2 — meals join.** Meal-prep items as a second kit source on the same rows
 — the family eats full meals in the car between activities, so a prepped
 cooler is outing cargo exactly like a soccer bag. Same claims, same pill.

@@ -322,6 +322,8 @@ only way that survives being true most days.
 
 Shipped v2.392.0–v2.393.1.
 
+The tile later became the Family Day card — `docs/family_day_design.md`.
+
 **P3 — the phone half.** The kid's My Day gets its own event-sourced items with the
 same claims; the driver's phone gets the outing list; the drive sheet's checklist
 becomes the outing's, with the single loading confirmation.
