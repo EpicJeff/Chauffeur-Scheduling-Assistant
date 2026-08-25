@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chauffeur - Calendar</title>
     {% include 'ha_theme.html' %}
+    <!-- The agenda's own row/day-panel builder, ahead of the component that
+         used to carry it inline -- family_calendar.html now calls it rather
+         than drawing its own copy. -->
+    {% include 'components/agenda_row.html' %}
     {% include 'components/family_calendar.html' %}
     <style>
         body { 

@@ -1486,6 +1486,11 @@
     {% include 'components/shopping_lists.html' %}
     <!-- And the routines kiosk's lanes, plus the kid digest card's wrapper. -->
     {% include 'components/routine_lanes.html' %}
+    <!-- The agenda's own row/day-panel builder. Included exactly once here
+         even though both the Family Day card AND the calendar card below
+         need it — an outing container is the same builder the calendar's
+         agenda uses, per components/agenda_row.html's own header. -->
+    {% include 'components/agenda_row.html' %}
     <!-- The family packing card: self-fetching (rule 2), so this include
          carries its own script the same way the lanes cards do. -->
     {% include 'components/packing_card.html' %}

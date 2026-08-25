@@ -186,6 +186,7 @@ def _render_page(interactive, members=None):
         "x-init=\"startPacking()\">"
         "{{ packing.rows() }}"
         "</div>"
+        "{% include 'components/agenda_row.html' %}"
         "{% include 'components/packing_card.html' %}"
         "</body></html>"
     )

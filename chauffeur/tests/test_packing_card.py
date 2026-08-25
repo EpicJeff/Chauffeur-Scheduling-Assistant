@@ -261,6 +261,7 @@ def _render_html(cfg, day_json, tile_width=480):
         "x-init=\"startPacking()\">"
         "{{ packing.rows() }}"
         "</div>"
+        "{% include 'components/agenda_row.html' %}"
         "{% include 'components/packing_card.html' %}"
         "</div>"
         "<script>" + alpine + "</script>"

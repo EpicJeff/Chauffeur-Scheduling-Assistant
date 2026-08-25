@@ -1,0 +1,120 @@
+{# ── The agenda's own event row, and the day/event/today surfaces it wears —
+   pulled out of `family_calendar.html`'s hand-drawn agenda so a second
+   consumer can be a container for multiple events without inventing a
+   second panel language for it.
+
+   The user's own framing, verbatim: "Each day is a container for multiple
+   events. An outing is the same concept, so make it use the same builder
+   and styling as the agenda." The Family Day card's outing container used
+   to be exactly that claim, drawn twice — this file is the one drawing,
+   shared.
+
+   Self-contained on purpose: `family_calendar.html` is deliberately not
+   downloaded on a board with no calendar card (its own file comment says
+   so), so a consumer that only needs the row — the Family Day card, on a
+   board that may or may not also carry a calendar tile — cannot depend on
+   anything family_calendar.html defines. Its own escape/time helpers live
+   here too, under their own names, rather than reaching across an include
+   boundary for `_agEsc`/`fmtTime`.
+
+   `window.agendaEventRow(ev, opts)` returns a DOM element, not a markup
+   string, so a caller that wants a plain HTML string (Alpine's `x-html`,
+   which is how the Family Day card's blocks — built declaratively, not
+   imperatively — get one) takes `.outerHTML`, and a caller building the DOM
+   by hand (the calendar's own agenda) can `appendChild` it directly, the
+   same way `_renderAgenda` always has.
+
+   ev: { title, start, end, allDay, extendedProps: { driverName, carName,
+        carSwap, assistName, isErrand, isConflict, isUnassigned,
+        tripSuppressed, rawColor } } — FullCalendar's own event shape, the
+   one the calendar's `eventContent` and agenda both already speak.
+
+   opts: { canceled, extraBadgeHtml } — canceled reuses the row's own
+   past/tripSuppressed opacity treatment (nearest agenda precedent) and adds
+   a line-through title; extraBadgeHtml is appended into the same badge slot
+   the driver/car/covered chips already occupy, which is how a caller with
+   its own badge (the Family Day card's amber/done pill) sits inline with
+   the agenda's rather than beside it. #}
+<style>
+        .agenda-day { background-color: rgba(30, 41, 59, 0.5); border: 1px solid rgba(255, 255, 255, 0.08); }
+        .agenda-today { border-color: rgba(59, 130, 246, 0.6); box-shadow: 0 0 12px rgba(59, 130, 246, 0.15); }
+        .agenda-event { background-color: rgba(51, 65, 85, 0.5); }
+        .agenda-event:hover { background-color: rgba(71, 85, 105, 0.7); }
+
+        body.ha-theme .agenda-day {
+            background-color: var(--ha-card-bg) !important;
+            border-color: var(--ha-divider) !important;
+        }
+        body.ha-theme .agenda-today { border-color: var(--ha-primary-color) !important; box-shadow: none !important; }
+        body.ha-theme .agenda-event { background-color: color-mix(in srgb, var(--ha-primary-text) 8%, transparent) !important; }
+        body.ha-theme .agenda-event:hover { background-color: color-mix(in srgb, var(--ha-primary-text) 14%, transparent) !important; }
+</style>
+<script>
+function _agRowEsc(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function _agRowFmtTime(d) {
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+// The one agenda event row. Moved verbatim out of `_renderAgenda`'s own row
+// section — same colour rule, same badge ladder, same past/suppressed
+// greying — with two seams added for a second caller: `opts.canceled` (the
+// Family Day card's own state, with no agenda equivalent) and
+// `opts.extraBadgeHtml` (a caller's own badge, appended into the same slot).
+// `opts.onClick(ev)` fires on a tap when `opts.tappable` is set — the
+// calendar's own use, to open the shared details dialog. A caller that
+// wires its own tap target instead (the Family Day card expands a block by
+// tapping a button that WRAPS this row, not the row itself) leaves both
+// unset and gets a plain, inert row.
+function agendaEventRow(ev, opts) {
+    opts = opts || {};
+    const props = ev.extendedProps || {};
+    const barColor = props.isUnassigned ? (props.isConflict ? '#f59e0b' : '#ef4444')
+        : (props.rawColor || ev.backgroundColor || '#3b82f6');
+    const timeLabel = ev.allDay ? 'Entire day'
+        : `${_agRowFmtTime(new Date(ev.start))}${ev.end ? ' – ' + _agRowFmtTime(new Date(ev.end)) : ''}`;
+
+    let badge = '';
+    if (props.tripSuppressed) {
+        badge = '<span class="text-[10px] font-bold text-gray-400 shrink-0">✈️ Trip conflict</span>';
+    } else if (props.isConflict) {
+        badge = '<span class="text-[10px] font-bold text-amber-400 shrink-0">⚠️ Conflict</span>';
+    } else if (props.isUnassigned) {
+        badge = '<span class="text-[10px] font-bold text-red-400 shrink-0">⚠️ Needs driver</span>';
+    } else if (props.driverName) {
+        badge = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 shrink-0 max-w-[80px] truncate">${_agRowEsc(props.driverName)}</span>`;
+        if (props.carName) {
+            badge += `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 max-w-[90px] truncate ${props.carSwap ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-700 text-gray-400'}" title="${props.carSwap ? 'Car swap: not this driver&#39;s usual car' : 'Assigned car'}">${_agRowEsc(props.carName)}${props.carSwap ? ' ⇄' : ''}</span>`;
+        }
+    } else if (props.assistName) {
+        // The agenda is the list a parent scrolls on a phone at seven in
+        // the morning. A covered ride showing nothing there is the whole
+        // complaint: the day looks unhandled when it is handled.
+        badge = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 shrink-0 max-w-[110px] truncate" title="Covered by ${_agRowEsc(props.assistName)} — nobody in this house is driving it">\u{1f91d} ${_agRowEsc(props.assistName)}</span>`;
+    } else if (props.isErrand) {
+        badge = '<span class="text-[10px] font-bold text-amber-400 shrink-0">Errand</span>';
+    }
+    if (opts.extraBadgeHtml) badge += opts.extraBadgeHtml;
+
+    // What has already happened stays, greyed — dropping it makes a busy
+    // morning invisible. A canceled row (the Family Day card's own state,
+    // with no agenda equivalent) reuses the same treatment, plus a
+    // line-through title — nearest precedent to "this was on the day and
+    // is not happening" the agenda already draws.
+    const isPast = !ev.allDay && ev.end && new Date(ev.end) < new Date();
+    const row = document.createElement('div');
+    row.className = `agenda-event rounded-lg px-2.5 py-1.5 transition-colors flex flex-col gap-0.5${props.tripSuppressed ? ' opacity-50' : ((isPast || opts.canceled) ? ' opacity-45' : '')}${opts.tappable ? ' cursor-pointer' : ''}`;
+    row.style.borderLeft = `4px solid ${barColor}`;
+    row.innerHTML = `
+        <span class="text-[11px] font-semibold text-gray-400">${_agRowEsc(timeLabel)}</span>
+        <div class="flex items-center justify-between gap-2">
+            <span class="text-[13px] font-bold text-white truncate${opts.canceled ? ' line-through' : ''}">${_agRowEsc(ev.title)}</span>
+            ${badge}
+        </div>`;
+    if (opts.tappable && opts.onClick) row.onclick = () => opts.onClick(ev);
+    return row;
+}
+window.agendaEventRow = agendaEventRow;
+</script>

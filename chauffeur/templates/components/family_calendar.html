@@ -335,10 +335,12 @@ body.ha-theme #simple-event-modal .glass-panel {
         }
         .agenda-btn:hover { background-color: rgba(71, 85, 105, 0.9); color: white; }
         .agenda-btn-active { background-color: #3b82f6; color: white; border-color: #2563eb; }
-        .agenda-day { background-color: rgba(30, 41, 59, 0.5); border: 1px solid rgba(255, 255, 255, 0.08); }
-        .agenda-today { border-color: rgba(59, 130, 246, 0.6); box-shadow: 0 0 12px rgba(59, 130, 246, 0.15); }
-        .agenda-event { background-color: rgba(51, 65, 85, 0.5); }
-        .agenda-event:hover { background-color: rgba(71, 85, 105, 0.7); }
+        /* .agenda-day / .agenda-today / .agenda-event and their ha-theme
+           overrides moved to components/agenda_row.html — the row and the
+           day-panel it sits in are shared with the Family Day card's own
+           outing containers now, and that file has to carry its styling
+           without this component present (a board with no calendar card
+           never downloads family_calendar.html at all). */
 
         body.ha-theme .agenda-btn {
             background-color: var(--ha-card-bg) !important;
@@ -349,13 +351,6 @@ body.ha-theme #simple-event-modal .glass-panel {
             background-color: var(--ha-primary-color) !important;
             border-color: var(--ha-primary-color) !important;
         }
-        body.ha-theme .agenda-day {
-            background-color: var(--ha-card-bg) !important;
-            border-color: var(--ha-divider) !important;
-        }
-        body.ha-theme .agenda-today { border-color: var(--ha-primary-color) !important; box-shadow: none !important; }
-        body.ha-theme .agenda-event { background-color: color-mix(in srgb, var(--ha-primary-text) 8%, transparent) !important; }
-        body.ha-theme .agenda-event:hover { background-color: color-mix(in srgb, var(--ha-primary-text) 14%, transparent) !important; }
 </style>
 <!-- ── The details dialog and popover backdrop, shared by every
      calendar on the page. Emitted once by this include. -->
@@ -1043,7 +1038,6 @@ async function _renderAgenda(inst) {
     const todayIso = _agIso(todayD);
     todayD.setDate(todayD.getDate() + 1);
     const tomorrowIso = _agIso(todayD);
-    const fmtTime = d => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
     for (let i = 0; i < inst.agendaDays; i++) {
         const day = new Date(inst.agendaAnchor);
@@ -1089,51 +1083,15 @@ async function _renderAgenda(inst) {
             card.innerHTML += '<p class="text-xs text-gray-500 italic px-1 py-2">Nothing scheduled</p>';
         }
 
+        // The row itself -- shared with the Family Day card's outing
+        // containers (components/agenda_row.html): same builder, same
+        // styling, the user's own framing that a day and an outing are both
+        // just a container for events.
         dayEvents.forEach(ev => {
-            const props = ev.extendedProps || {};
-            const barColor = props.isUnassigned ? (props.isConflict ? '#f59e0b' : '#ef4444')
-                : (props.rawColor || ev.backgroundColor || '#3b82f6');
-            const timeLabel = ev.allDay ? 'Entire day'
-                : `${fmtTime(new Date(ev.start))}${ev.end ? ' \u2013 ' + fmtTime(new Date(ev.end)) : ''}`;
-
-            let badge = '';
-            if (props.tripSuppressed) {
-                badge = '<span class="text-[10px] font-bold text-gray-400 shrink-0">\u2708\ufe0f Trip conflict</span>';
-            } else if (props.isConflict) {
-                badge = '<span class="text-[10px] font-bold text-amber-400 shrink-0">\u26a0\ufe0f Conflict</span>';
-            } else if (props.isUnassigned) {
-                badge = '<span class="text-[10px] font-bold text-red-400 shrink-0">\u26a0\ufe0f Needs driver</span>';
-            } else if (props.driverName) {
-                badge = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 shrink-0 max-w-[80px] truncate">${_agEsc(props.driverName)}</span>`;
-                if (props.carName) {
-                    badge += `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 max-w-[90px] truncate ${props.carSwap ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-700 text-gray-400'}" title="${props.carSwap ? 'Car swap: not this driver&#39;s usual car' : 'Assigned car'}">${_agEsc(props.carName)}${props.carSwap ? ' \u21c4' : ''}</span>`;
-                }
-            } else if (props.assistName) {
-                // The agenda is the list a parent scrolls on a phone at seven in
-                // the morning. A covered ride showing nothing there is the whole
-                // complaint: the day looks unhandled when it is handled.
-                badge = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 shrink-0 max-w-[110px] truncate" title="Covered by ${_agEsc(props.assistName)} \u2014 nobody in this house is driving it">\u{1f91d} ${_agEsc(props.assistName)}</span>`;
-            } else if (props.isErrand) {
-                badge = '<span class="text-[10px] font-bold text-amber-400 shrink-0">Errand</span>';
-            }
-
-            // What has already happened stays, greyed — dropping it makes a
-            // busy morning invisible: two things left at four in the
-            // afternoon read as a quiet day rather than a day nearly done.
-            // (The board's old server-drawn agenda did this; the page never
-            // did, until the two became one drawing.)
-            const isPast = !ev.allDay && ev.end && new Date(ev.end) < new Date();
-            const row = document.createElement('div');
-            row.className = `agenda-event rounded-lg px-2.5 py-1.5 transition-colors flex flex-col gap-0.5${props.tripSuppressed ? ' opacity-50' : (isPast ? ' opacity-45' : '')}${tappable ? ' cursor-pointer' : ''}`;
-            row.style.borderLeft = `4px solid ${barColor}`;
-            row.innerHTML = `
-                <span class="text-[11px] font-semibold text-gray-400">${_agEsc(timeLabel)}</span>
-                <div class="flex items-center justify-between gap-2">
-                    <span class="text-[13px] font-bold text-white truncate">${_agEsc(ev.title)}</span>
-                    ${badge}
-                </div>`;
-            if (tappable) row.onclick = () => _onEventTap(inst, ev);
-            card.appendChild(row);
+            card.appendChild(agendaEventRow(ev, {
+                tappable,
+                onClick: tappable ? (e) => _onEventTap(inst, e) : null,
+            }));
         });
 
         grid.appendChild(card);

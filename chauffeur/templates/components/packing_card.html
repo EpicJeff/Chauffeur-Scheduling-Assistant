@@ -14,17 +14,26 @@
      schedule and the packing list woven in.
 
      ONE ROW PER BLOCK, time-ordered (server order — `family_day.blocks_for`
-     already sorts). The event block is the atom: an at-home event is a bare
-     row; a covered ride names its coverage ("Swim — Grandma driving"). The
-     outing is a container only at TWO OR MORE events — a box around one
-     event is redundant chrome, and most outings are single-event, so a
-     single-event outing draws as one flat line exactly like an event block
-     does (time, icon, title, driver + car, the pill). At two or more events
-     the container appears: the outer row carries the trip facts (driver,
-     car, the pill) and the events sit inside as compact lines — title and
-     time only, ALWAYS VISIBLE, never gated behind a tap — because the box
-     itself is a claim ("one trip, one packing job") that still owes each
-     event its own scannable time.
+     already sorts), and the row is the SAME BUILDER AND STYLING as the
+     calendar's agenda (components/agenda_row.html) — a day is a container
+     for multiple events, and an outing is the same concept, so it draws with
+     the agenda's own vocabulary rather than a second, bespoke panel
+     language: a color bar in the driver's own color, a muted time label, a
+     bold title, and the agenda's own badge ladder (driver chip, car chip,
+     the covered-ride 🤝 chip) with this card's amber/done pill riding in the
+     same badge slot. The event block is the atom: an at-home event is a bare
+     row; a covered ride earns the agenda's own teal chip. The outing is a
+     container only at TWO OR MORE events — a box around one event is
+     redundant chrome, and most outings are single-event, so a single-event
+     outing draws as one flat agenda row exactly like an event block does. At
+     two or more events the container appears as an `agenda-day` panel — the
+     same nesting the agenda uses for a day full of events — holding the
+     outing's own header row (time, driver chip, car chip, the pill) and its
+     events as their own agenda rows underneath, title and time only (no end,
+     no badges — `family_day.py`'s inner-event shape carries nothing else),
+     ALWAYS VISIBLE, never gated behind a tap — because the box itself is a
+     claim ("one trip, one packing job") that still owes each event its own
+     scannable time.
 
      THE PILL IS TWO STATES AND ONLY TWO, and it is the only saturated thing
      on a resting row: work remaining is a filled amber pill ("3 to pack"),
@@ -44,9 +53,11 @@
      tick state does, because a poll that collapsed whatever somebody just
      opened would be as unusable as one that reset a tick.
 
-     Canceled blocks (an event the household called off) draw line-through,
-     carry no pill, and are not expandable — nothing to unfold on a thing not
-     happening. `interactive: false` removes the claim controls (the tick,
+     Canceled blocks (an event the household called off) draw greyed and
+     line-through — the agenda's own past/tripSuppressed treatment, reused
+     rather than invented, plus the line-through the agenda has no equivalent
+     state for — carry no pill, and are not expandable — nothing to unfold on
+     a thing not happening. `interactive: false` removes the claim controls (the tick,
      the stepper) from the DOM entirely — the shipped `x-if` split — but a
      row stays a button either way, because expand/collapse is local state,
      not a server action, and a wall that is read-only should still let
@@ -68,8 +79,10 @@
      pinned/editing machinery — rather than leaving a blank box under the
      card's chrome. Before that first fetch resolves the card draws nothing,
      so the sentence never flashes ahead of real data. All-day events are a
-     banner above everything else, one slim muted line — they have no time
-     to anchor a block to and must never reach the solver.
+     banner above everything else, drawn with the agenda's own "Entire day"
+     row treatment (one agenda row per title) rather than a bespoke muted
+     strip — they have no time to anchor a block to and must never reach the
+     solver.
 
      A poll that FAILS after that first fetch resolved leaves `blocks`
      exactly as it was rather than wiping it to `[]` — stale beats
@@ -78,48 +91,6 @@
 
      Jinja `import` renders none of this file, so the logic script at the
      bottom is emitted by `include` exactly once per page. -->
-
-{% macro block_header() %}
-                                        <span class="w-12 shrink-0 text-center text-xs font-bold tabular-nums text-blue-400"
-                                            x-text="pkTime(b.start)"></span>
-                                        <!-- The kind marker (drive / home / covered) in its own
-                                             fixed slot, aligned the same way the time column is --
-                                             a glyph in a sentence drifts with the text around it;
-                                             a glyph in a column does not. -->
-                                        <span class="w-5 shrink-0 text-center text-base leading-none" x-text="pkIcon(b)"></span>
-                                        <div class="min-w-0 flex-1">
-                                            <div class="flex items-center gap-2 flex-wrap">
-                                                <span class="font-semibold truncate"
-                                                    :class="b.canceled ? 'text-gray-500 line-through' : 'text-gray-100'"
-                                                    x-text="pkTitle(b)"></span>
-                                                <template x-if="b.kind === 'event' && b.covered_by">
-                                                    <span class="inline-flex items-center max-w-full truncate px-2 py-0.5 rounded-full text-[11px] font-semibold text-gray-400 border border-gray-700 shrink-0" x-text="b.covered_by"></span>
-                                                </template>
-                                            </div>
-                                            <!-- Driver + car: the same muted chip the covered-by
-                                                 badge wears above, not a floating text run. -->
-                                            <template x-if="b.kind === 'outing'">
-                                                <div class="mt-1">
-                                                    <span class="inline-flex items-center max-w-full truncate px-2 py-0.5 rounded-full text-[11px] font-semibold text-gray-400 border border-gray-700"
-                                                        x-text="b.driver + (b.car ? ' · ' + b.car : '')"></span>
-                                                </div>
-                                            </template>
-                                        </div>
-                                        <!-- The pill: two states, and only two. The amber fill is
-                                             this card's one saturated element -- everything else on
-                                             a resting row stays muted on purpose. -->
-                                        <template x-if="!b.canceled && pkPillState(b) === 'amber'">
-                                            <span class="pk-pill pk-pill-amber inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30 shrink-0 tabular-nums"
-                                                x-text="(b.needed - b.packed) + ' to pack'"></span>
-                                        </template>
-                                        <template x-if="!b.canceled && pkPillState(b) === 'done'">
-                                            <span class="pk-pill pk-pill-done w-5 h-5 rounded-full bg-gray-800 border border-gray-700 text-gray-400 font-bold text-[11px] flex items-center justify-center shrink-0">✓</span>
-                                        </template>
-                                        <template x-if="!b.canceled">
-                                            <span class="text-gray-600 shrink-0 transition-transform w-3 text-center text-xs"
-                                                :class="pkOpen(b) ? 'rotate-90' : ''">›</span>
-                                        </template>
-{% endmacro %}
 
 {% macro rows() %}
                     <template x-if="pkLoaded">
@@ -133,11 +104,13 @@
                             </span>
                         </template>
 
-                        <!-- All-day banner: one slim muted line, ahead of
-                             every block -- all-day events have no time to
-                             anchor a block to. -->
+                        <!-- All-day banner: the agenda's own "Entire day" row
+                             treatment, one per title, ahead of every timed
+                             block -- all-day events have no time to anchor a
+                             block to, the same reason the calendar's agenda
+                             pins them first. -->
                         <template x-if="allDay.length">
-                            <div class="text-xs text-gray-500 truncate" x-text="allDay.join(' · ')"></div>
+                            <div class="space-y-1.5" x-html="pkAllDayHtml()"></div>
                         </template>
 
                         <!-- The day-level quiet answer (rule 1's surviving
@@ -152,68 +125,66 @@
                         <template x-if="blocks.length">
                         <div class="space-y-2">
                         <template x-for="b in blocks" :key="'fd-block-' + b.key">
-                            <!-- Every block is a card-language panel now, not
-                                 a bare row in a divided list -- the same
-                                 rounded/translucent surface the lane cards
-                                 use for their own rows. Canceled dims rather
-                                 than losing the panel: nothing to unfold, but
-                                 it is still a happening that was on the day. -->
+                            <!-- The user's own framing: a day is a container
+                                 for multiple events, and an outing is the
+                                 same concept -- so it wears the same builder
+                                 and styling as the calendar's agenda, not a
+                                 bespoke panel language. A container (an
+                                 outing at two or more events) is an
+                                 agenda-day panel holding agenda-event rows,
+                                 exactly the nesting the agenda uses for a day
+                                 full of events. A flat block (a one-event
+                                 outing, an at-home event, a covered ride) IS
+                                 the row -- no panel of its own, because a box
+                                 around one event is chrome the agenda never
+                                 draws either. -->
                             <div :data-fd-key="b.key"
-                                class="rounded-xl border border-gray-800 bg-gray-800/40"
-                                :class="b.canceled ? 'opacity-60' : ''">
-                                <!-- The row itself. Expand/collapse is local
-                                     state, not a server action, so the row is
-                                     a button whether or not the card is
-                                     interactive -- canceled blocks are the
-                                     one exception: nothing to unfold on a
-                                     thing not happening. The bottom border
-                                     only appears when something actually
-                                     follows -- the container's own inner
-                                     lines, or an open block's items -- the
-                                     same "header separated by a rule, body
-                                     plain" split the lane cards use. -->
+                                :class="pkIsContainer(b) ? 'agenda-day rounded-2xl p-3 flex flex-col gap-2' : ''">
+                                <!-- The row itself, built by the shared
+                                     agenda builder (components/agenda_row.html)
+                                     and dropped in via x-html -- Alpine has no
+                                     dynamic component, and the row's own
+                                     badge ladder (driver/car chips, the
+                                     covered 🤝 chip) is exactly the calendar
+                                     agenda's, computed in JS either way.
+                                     Expand/collapse is local state, not a
+                                     server action, so the row is a button
+                                     whether or not the card is interactive --
+                                     canceled blocks are the one exception:
+                                     nothing to unfold on a thing not
+                                     happening. -->
                                 <template x-if="!b.canceled">
                                     <button type="button" @click="pkToggle(b)"
-                                        class="w-full text-left flex items-center gap-2.5 px-3 py-2.5"
-                                        :class="(pkIsContainer(b) || pkOpen(b)) ? 'border-b border-gray-800/70' : ''">
-                                        {{ block_header() }}
+                                        class="w-full text-left flex items-center gap-1.5">
+                                        <div class="flex-1 min-w-0" x-html="pkRowHtml(b)"></div>
+                                        <span class="text-gray-600 shrink-0 transition-transform w-3 text-center text-xs"
+                                            :class="pkOpen(b) ? 'rotate-90' : ''">›</span>
                                     </button>
                                 </template>
                                 <template x-if="b.canceled">
-                                    <div class="w-full flex items-center gap-2.5 px-3 py-2.5"
-                                        :class="pkIsContainer(b) ? 'border-b border-gray-800/70' : ''">
-                                        {{ block_header() }}
+                                    <div class="w-full flex items-center gap-1.5">
+                                        <div class="flex-1 min-w-0" x-html="pkRowHtml(b)"></div>
                                     </div>
                                 </template>
 
-                                <!-- Container inner lines: title + time only,
-                                     ALWAYS VISIBLE, never gated behind a tap --
-                                     the box says "one trip, one packing job"
-                                     but each event still owes its own time.
-                                     Indented against a left rule, the same
-                                     nested-content guide trip.html's own
-                                     activity list uses. -->
+                                <!-- Container inner lines: REAL agenda event
+                                     rows -- title, time, the driver's own
+                                     color bar -- ALWAYS VISIBLE, never gated
+                                     behind a tap, because the box itself is a
+                                     claim ("one trip, one packing job") that
+                                     still owes each event its own scannable
+                                     time. `fd-inner-line` stays on each as an
+                                     extra class for the tests that grew up on
+                                     it, alongside the agenda's own classes. -->
                                 <template x-if="pkIsContainer(b)">
-                                    <div class="px-3 py-2">
-                                        <div class="border-l-2 border-gray-700/60 pl-3 space-y-1">
-                                        <template x-for="ev in b.events" :key="'fd-inner-' + b.key + '-' + ev.id">
-                                            <div class="fd-inner-line flex items-center gap-2 text-xs text-gray-400">
-                                                <span class="font-bold tabular-nums w-12 shrink-0" x-text="pkTime(ev.start)"></span>
-                                                <span class="truncate" x-text="ev.title"></span>
-                                            </div>
-                                        </template>
-                                        </div>
-                                    </div>
+                                    <div class="space-y-1.5" x-html="pkInnerLinesHtml(b)"></div>
                                 </template>
 
                                 <!-- Expansion: the shipped packing mechanics,
-                                     moved inside unchanged, now in an inset
-                                     panel one tier down from the block's own
-                                     surface -- the same depth the lane cards'
-                                     "My chores" / "Available" rows sit at
-                                     inside their own lane. -->
+                                     unchanged, in an inset panel one tier
+                                     down from the row/panel above. -->
                                 <template x-if="pkOpen(b) && !b.canceled">
-                                    <div class="px-3 py-2.5">
+                                    <div class="mt-2">
                                         <div class="rounded-xl bg-gray-900 border border-gray-800 p-3 space-y-3">
                                         <template x-if="!b.groups.length">
                                             <div class="text-xs text-gray-500">Nothing to pack.</div>
@@ -405,13 +376,6 @@
                 } catch (e) { return ''; }
             },
 
-            // 🚗 an outing, 🏠 an at-home event, 🤝 a covered ride — kits are
-            // driver-blind, so the icon is the only place "who is taking
-            // this" shows up on a bare event block.
-            pkIcon(b) {
-                if (b.kind === 'outing') return '🚗';
-                return b.covered_by ? '🤝' : '🏠';
-            },
             // The row's title. An outing has no title of its own — only its
             // events do — so a multi-event outing's header joins them
             // ("Soccer + Band"); a single-event outing's header is just that
@@ -430,6 +394,70 @@
             pkPillState(b) {
                 if (!b.needed) return 'none';
                 return b.packed >= b.needed ? 'done' : 'amber';
+            },
+            // The pill's OWN markup, in the same badge slot the agenda's
+            // driver/car/covered chips already occupy — the amber fill is
+            // this card's one saturated element, everything else on a
+            // resting row stays muted on purpose. A canceled block carries
+            // no pill: nothing left to finish on a thing not happening.
+            pkPillHtml(b) {
+                if (b.canceled) return '';
+                const state = this.pkPillState(b);
+                if (state === 'amber') {
+                    return `<span class="pk-pill pk-pill-amber inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30 shrink-0 tabular-nums">${b.needed - b.packed} to pack</span>`;
+                }
+                if (state === 'done') {
+                    return '<span class="pk-pill pk-pill-done w-5 h-5 rounded-full bg-gray-800 border border-gray-700 text-gray-400 font-bold text-[11px] flex items-center justify-center shrink-0">✓</span>';
+                }
+                return '';
+            },
+            // One block, as the agenda's own event shape — `agendaEventRow`
+            // (components/agenda_row.html) is the SAME builder the
+            // calendar's agenda draws its own rows with, the user's own
+            // framing that a day and an outing are both just a container for
+            // events. An outing's driver/car live on the block itself; an
+            // at-home event has neither (a bare row) unless it is covered,
+            // which becomes `assistName` and earns the agenda's own 🤝 chip
+            // for free. The pill rides along in the same badge slot.
+            pkRowHtml(b) {
+                const ev = b.kind === 'outing'
+                    ? { title: this.pkTitle(b), start: b.start, end: b.end,
+                        extendedProps: { driverName: b.driver, carName: b.car, rawColor: b.color } }
+                    : { title: b.title, start: b.start, end: b.end,
+                        extendedProps: b.covered_by ? { assistName: b.covered_by } : {} };
+                const row = agendaEventRow(ev, {
+                    canceled: !!b.canceled,
+                    extraBadgeHtml: this.pkPillHtml(b),
+                });
+                return row.outerHTML;
+            },
+            // A container's inner lines: REAL agenda event rows (time,
+            // title, the driver's own color bar), not a bespoke compact
+            // list — `family_day.py`'s `_line()` only ever hands over
+            // `{id, title, start}`, so there is no end time or badge to draw,
+            // which is exactly what the old compact line showed too.
+            // `fd-inner-line` rides alongside the agenda's own classes so
+            // the tests built on it keep working.
+            pkInnerLinesHtml(b) {
+                return (b.events || []).map(e => {
+                    const row = agendaEventRow(
+                        { title: e.title, start: e.start, end: null,
+                          extendedProps: { rawColor: b.color } }, {});
+                    row.classList.add('fd-inner-line');
+                    return row.outerHTML;
+                }).join('');
+            },
+            // All-day titles, one agenda "Entire day" row each — the day's
+            // own banner is not a bespoke muted strip any more than an
+            // outing's container is a bespoke panel. No id, color or time
+            // survives past `family_day.py`'s all-day list (just titles), so
+            // there is nothing more to hand the builder than that.
+            pkAllDayHtml() {
+                return (this.allDay || []).map(title => {
+                    const row = agendaEventRow(
+                        { title: title, allDay: true, extendedProps: {} }, {});
+                    return row.outerHTML;
+                }).join('');
             },
 
             pkOpen(b) { return this.expandedKeys.has(b.key); },
