@@ -59,6 +59,35 @@ also what keeps the app from over-warning: when the driver *is* coming home in
 between, the two events stay two packing jobs, because carrying the whole day's
 gear on every trip is its own kind of wrong.
 
+## The density this has to survive
+
+Asked how big a day is, the household's answer: **a light weekday is at least two
+activities, an average day is four, a weekend runs eight to ten.**
+
+That settles a question this design was carrying — whether outing grouping earns its
+place — and it changes two things.
+
+**The chain is normal, not exceptional.** At four activities a day, going straight
+from one to the next without passing home is most days, not a curiosity. So the
+"you are not stopping home between these two" fact must NOT become a sentence the
+tile says: at this frequency an announcement is wallpaper within a week, and this
+design has been careful not to add a notifier. **The grouping is the message** — two
+events under one heading with one list is the app saying it, in the only register
+that survives repetition.
+
+**Eight outings cannot all be open at once.** Ten activities at four items each is
+forty lines on a wall panel read from across a room, which is a tile nobody uses. So
+the tile is a **list of outings, not a list of items**: one row each, in departure
+order, carrying its progress (`Soccer + swim · 2/6`); the **next** outing expanded to
+its items; anything already packed collapsing out of the way. A household headline
+("2 of 5 outings ready") is what somebody actually reads from the doorway.
+
+**Two cars out at once is a new way to be wrong.** At this density several drivers
+overlap, and "is it in the car" becomes *is it in the right car* — the bag packed
+perfectly and loaded into the wrong boot is the same lost afternoon as the bag left
+at home. An outing already belongs to a driver, so every outing row names its driver
+and car, and the drive sheet at the car shows that outing's list and no other.
+
 ## An item is a count, not a checkbox
 
 The household's insight, and the one that makes the rest work. Two kids at the
@@ -251,11 +280,12 @@ does. That is the existing prep-kit editor's job and its existing rules apply.
 
 ## What this deliberately does not do
 
-- **No new nagging.** The tile is a surface, not a notifier. The one thing worth
-  *saying* is the non-obvious fact — "you are not stopping home between these two"
-  — said once, on the outing that has it. Everything else is a list that sits there
-  until somebody reads it. This follows the standing rule for findings: time-critical,
-  actionable, solution attached, or silent.
+- **No new nagging, and no sentence about the chain.** The tile is a surface, not a
+  notifier. An earlier draft had it announce "you are not stopping home between
+  these two"; at four activities a day that sentence fires constantly and stops
+  being read. The grouping carries the same fact silently and permanently. This
+  follows the standing rule for findings: time-critical, actionable, solution
+  attached, or silent.
 - **A tick never touches routines, streaks or points.** It mints critter XP and
   nothing else — see *The routine boundary*. Packing is not a chore somebody
   assigned, and a routine is a habit, not a to-do list for the day's logistics.
@@ -276,10 +306,12 @@ no storage, no UI. Fold in the union of prep across an outing's events, deduped 
 person. This is the piece the whole arc stands on and it is small, because the
 chain data already exists.
 
-**P2 — the panel tile.** The family-day card: today's outings, kits, steppers,
-interactive ticking, evening flip to tomorrow. Claims storage lands here (it is what
-the ticking writes). Ships the incident fix: two events in one outing show as one
-packing job, with the reason said once.
+**P2 — the panel tile.** The family-day card: outings as rows in departure order,
+each naming its driver and car, the next one expanded to its items, steppers,
+interactive ticking, and the turn-over to tomorrow when the last outing is home.
+Claims storage lands here (it is what the ticking writes). Ships the incident fix:
+two events in one outing appear as one packing job, which is the fact stated in the
+only way that survives being true most days.
 
 **P3 — the phone half.** The kid's My Day gets its own event-sourced items with the
 same claims; the driver's phone gets the outing list; the drive sheet's checklist
@@ -309,6 +341,9 @@ The parts that have burned this codebase before decide where the tests go.
   card grid did — a tick on the wall changes the count, and the count survives a
   poll (the board rebuilds every 20 seconds; a checklist that resets on poll is
   worse than no checklist).
+- **A ten-activity Saturday** is a fixture in its own right: the tile stays readable
+  (one row per outing, one expanded), items dedupe by person across an outing rather
+  than summing, and two drivers out at once keep their lists apart.
 - **The turn-over** is now a function of the day rather than a clock, so it is
   tested as one: a day with an outing still ahead shows today; the same day with
   that outing ended shows tomorrow; a day with no outings shows tomorrow throughout.
@@ -334,9 +369,6 @@ Small, and honest to do while we are in here:
 
 ## Open questions
 
-- **How many outings is a day, really?** If a household's typical day is one outing,
-  the tile is a list of one and much of this ceremony is unearned. Worth counting
-  against a real week before building P2's grouping.
 - **Does the kid's view need the outing at all**, or only their own items? A kid does
   not care that their band run and their sister's soccer run are one trip.
 - **Should the family tile ever show tomorrow early?** It follows the day, so an
