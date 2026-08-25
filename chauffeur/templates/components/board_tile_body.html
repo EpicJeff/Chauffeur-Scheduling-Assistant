@@ -3,6 +3,7 @@
 {% import 'components/shopping_lists.html' as shopping_lists %}
 {% import 'components/routine_lanes.html' as routine_lanes %}
 {% import 'components/kid_digest_lanes.html' as kid_digest_lanes %}
+{% import 'components/packing_card.html' as packing %}
 <!-- ── What a tile of a given type DRAWS, and nothing else.
 
      Pulled out of the board's tile loop so that a card inside a group tile can
@@ -455,6 +456,18 @@
                         <div x-data="routineLanesCard(t, apiBase)" x-init="startRoutineLanes()"
                             class="min-w-0">
                             {{ routine_lanes.lane_grid(interactive='lanesInteractive') }}
+                        </div>
+                    </template>
+
+                    <!-- ── The family packing card: every outing today (or
+                         tomorrow, once the last one is home) and what has to
+                         be packed for it. Self-fetching, the same shape as
+                         the lanes cards above (rule 2 — a payload rebuilding
+                         under the finger doing the ticking cannot carry
+                         counts). -->
+                    <template x-if="t.type === 'packing'">
+                        <div x-data="packingCard(t, apiBase)" x-init="startPacking()">
+                            {{ packing.rows() }}
                         </div>
                     </template>
 

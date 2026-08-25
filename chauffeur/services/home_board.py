@@ -433,6 +433,19 @@ WIDGETS = [
      'heading': '',
      'blurb': "The pooled-reward thermometers, one per shared goal.",
      'options': []},
+    {'key': 'packing', 'icon': '🎒', 'label': 'Packing',
+     'heading': "Getting out of the door",
+     'blurb': "Every trip out of the house today and what has to be packed "
+              "for it — two events on one trip are one list.",
+     'options': [
+         # ON by default, the same reasoning the lanes card settled: a packing
+         # list nobody can tick is a poster. Off remains for a wall that really
+         # is only a display.
+         _opt('interactive', 'Interactive', 'bool', True,
+              help='Tick things off on the wall. Off, the card is a display.'),
+         _opt('members', 'People', 'select', [], source='members', multi=True,
+              help='Leave empty for the whole household.'),
+     ]},
     {'key': 'routines', 'icon': '🔁', 'label': 'Routines',
      'heading': 'Streaks',
      'blurb': "Who has kept their routine going, and for how long.",
@@ -1839,6 +1852,24 @@ def _tile_chores_goals(now, config=None, **_):
         return {'goals': goals} if goals else None
     except Exception as e:
         print(f"[home_board] family goals failed: {e}")
+        return None
+
+
+def _tile_packing(now, config=None, **_):
+    """Today's outings and what they need packed. Interactive depth, so the
+    card fetches its own list (rule 2) — this is only the mount config.
+
+    Nothing to pack is nothing drawn (rule 1): the builder cannot know that
+    without doing the work, so it does the cheap half — no prep kits at all
+    means the household has never set this up.
+    """
+    try:
+        if not storage.get_prep_kits():
+            return None
+        return {'interactive': _cfg_bool(config, 'interactive', True),
+                'members': _cfg_ids(config, 'members')}
+    except Exception as e:
+        print(f"[home_board] packing card failed: {e}")
         return None
 
 
@@ -3449,6 +3480,7 @@ REQUIRED_EMPTY = {
     'meals_week': "No dinners planned yet.",
     'chores_lanes': "No chores set up yet.",
     'chores_rewards': "No family goals yet.",
+    'packing': "Nothing to pack for today's outings.",
     'routines_lanes': "No routines set up yet.",
     'kids': "Nothing on for the kids today.",
     'occasions': "Nothing coming up.",
@@ -3700,6 +3732,7 @@ _BUILDERS: dict = {
     'meals_week': _tile_meals_week, 'shopping_staples': _tile_shopping_staples,
     'shopping_list': _tile_shopping_list,
     'chores_lanes': _tile_chores_lanes, 'chores_rewards': _tile_chores_goals,
+    'packing': _tile_packing,
     'routines': _tile_routines, 'routines_lanes': _tile_routines_lanes,
     'avatar_editor': _tile_avatar_editor, 'pets': _tile_pets,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,

@@ -1,0 +1,277 @@
+<!-- ── The family packing card: every outing today (or tomorrow, once the
+     last one is home) and what has to be packed for it.
+
+     Self-fetching, the same shape `chores_lanes.html` and `routine_lanes.html`
+     settled: an interactive card cannot ride a board payload that rebuilds
+     under the finger doing the ticking (rule 2), so the builder ships only
+     `{interactive, members}` and this component fetches `GET
+     api/packing/day` itself, on the same 30-second cadence the lanes cards
+     poll on, and posts one claim at a time to `POST api/packing/claim`.
+
+     ONE ROW PER OUTING, in the order the day already sorts them (departure
+     time) — the whole point of an outing is that two events on one trip out
+     of the house are one packing job, not two. A row is driver, car, time,
+     title ("Soccer + swim") and a packed/needed fraction; tapping it expands
+     to the kit groups underneath. The FIRST UNFINISHED outing starts
+     expanded — the one thing worth an extra tap to see without a tap at all
+     — and stays that way until somebody taps a different row; explicitly
+     collapsing one stops the auto-follow for that visit.
+
+     An item needing more than one (two kids, two water bottles) draws a
+     stepper (− n/needed +); needing exactly one draws a plain tick, the same
+     circle-and-checkmark `routine_lanes.html` uses for its own checklist, so
+     a packing item and a routine item read as the same kind of thing.
+
+     Ticking is OPTIMISTIC — applied to the local count before the request
+     lands, the way `togglePrepConfirmed` in app.html does for the agenda's
+     own prep pills — and a failed POST rolls the number back, alerts through
+     `showGlobalAlert` (never a browser dialog) and re-fetches so the card
+     recovers the server's real count rather than staying wrong.
+
+     The card renders NOTHING at all when today's outings are empty. That is
+     not rule 1's "hide what is not set up" — the builder already handled
+     that half by returning None when there are no prep kits at all — it is
+     the board's own required-tile machinery answering for a day that is
+     merely quiet, the same sentence (`REQUIRED_EMPTY['packing']`) a household
+     that pinned a Packing board sees when it asks for one on an empty
+     install. This card does not repeat that sentence itself.
+
+     Jinja `import` renders none of this file, so the logic script at the
+     bottom is emitted by `include` exactly once per page. -->
+
+{% macro rows() %}
+                    <template x-if="outings.length">
+                    <div class="space-y-3">
+                        <!-- A card silently answering a different day than the
+                             one somebody is looking at is the wrong-question
+                             failure this whole design exists to avoid. -->
+                        <template x-if="isTomorrow">
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wide bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                                Tomorrow
+                            </span>
+                        </template>
+                        <template x-for="o in outings" :key="'pk-row-' + o.key">
+                            <div class="bg-gray-800/60 rounded-2xl border transition-colors"
+                                :class="pkOpen(o) ? 'border-gray-600' : 'border-gray-700'">
+                                <!-- The row itself: identity (driver dot + car)
+                                     on the left, the trip in the middle, the
+                                     fraction on the right — the same order the
+                                     eye reads a schedule row in everywhere else
+                                     in the app. Expand/collapse is local state,
+                                     not a server action, so the row is a button
+                                     whether or not the card is interactive. -->
+                                <button type="button" @click="pkToggle(o)"
+                                    class="w-full text-left flex items-center gap-3 p-3">
+                                    <span class="w-3 h-3 rounded-full shrink-0"
+                                        :style="'background-color:' + (o.color || '#6b7280')"></span>
+                                    <div class="min-w-0 flex-1">
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <span class="text-blue-400 font-bold text-xs shrink-0" x-text="pkTime(o.start)"></span>
+                                            <span class="text-white font-semibold truncate" x-text="o.title"></span>
+                                        </div>
+                                        <div class="text-[11px] text-gray-400 truncate"
+                                            x-text="o.driver + (o.car ? ' · ' + o.car : '')"></div>
+                                    </div>
+                                    <span class="text-xs font-black tabular-nums shrink-0"
+                                        :class="o.needed && o.packed >= o.needed ? 'text-green-400' : 'text-gray-300'"
+                                        x-text="o.packed + '/' + o.needed"></span>
+                                    <span class="text-gray-500 shrink-0 transition-transform w-4 text-center"
+                                        :class="pkOpen(o) ? 'rotate-90' : ''">›</span>
+                                </button>
+                                <template x-if="pkOpen(o)">
+                                    <div class="px-3 pb-3 pt-2 border-t border-gray-800 space-y-3">
+                                        <template x-for="g in o.groups" :key="'pk-grp-' + o.key + '-' + g.kit_id">
+                                            <div>
+                                                <div class="text-[11px] uppercase tracking-widest text-gray-500 font-bold mb-1.5"
+                                                    x-text="g.kit"></div>
+                                                <div class="space-y-1">
+                                                    <template x-for="it in g.items" :key="'pk-item-' + o.key + '-' + it.key">
+                                                        <div>
+                                                            <!-- Needing exactly one is a tick; needing more than
+                                                                 one is a stepper. Two separate branches, the
+                                                                 lanes' own reason: Alpine has no dynamic tag and
+                                                                 no dynamic control, so one hand-copied inside
+                                                                 drawing two different controls is how they drift. -->
+                                                            <template x-if="it.needed <= 1 && pkInteractive">
+                                                                <button type="button"
+                                                                    @click="pkTapTick(o, it)"
+                                                                    class="w-full text-left flex items-center gap-2.5 py-1">
+                                                                    {{ tick_glyph() }}
+                                                                </button>
+                                                            </template>
+                                                            <template x-if="it.needed <= 1 && !pkInteractive">
+                                                                <div class="flex items-center gap-2.5 py-1">
+                                                                    {{ tick_glyph() }}
+                                                                </div>
+                                                            </template>
+                                                            <template x-if="it.needed > 1">
+                                                                <div class="flex items-center gap-2.5 py-1">
+                                                                    <span class="text-sm font-semibold flex-1 min-w-0 truncate"
+                                                                        :class="it.packed >= it.needed ? 'text-gray-500 line-through' : 'text-gray-200'"
+                                                                        x-text="it.label"></span>
+                                                                    <div class="flex items-center gap-1.5 shrink-0" x-show="pkInteractive">
+                                                                        <button type="button" @click="pkClaim(o, it, -1)"
+                                                                            :disabled="it.packed <= 0"
+                                                                            class="w-6 h-6 rounded-full bg-gray-900 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">−</button>
+                                                                        <span class="text-xs font-bold w-9 text-center tabular-nums"
+                                                                            :class="it.packed >= it.needed ? 'text-green-400' : 'text-gray-300'"
+                                                                            x-text="it.packed + '/' + it.needed"></span>
+                                                                        <button type="button" @click="pkClaim(o, it, 1)"
+                                                                            :disabled="it.packed >= it.needed"
+                                                                            class="w-6 h-6 rounded-full bg-gray-900 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">+</button>
+                                                                    </div>
+                                                                    <span class="text-xs font-bold w-9 text-center text-gray-400 tabular-nums" x-show="!pkInteractive"
+                                                                        x-text="it.packed + '/' + it.needed"></span>
+                                                                </div>
+                                                            </template>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                    </template>
+{% endmacro %}
+
+{# The inside of one tick row: circle-and-checkmark, then the label. Its own
+   macro for the same reason `routine_lanes.html`'s `routine_row()` is one —
+   a button branch and a div branch share it so an interactive card and a
+   display-only one never quietly draw two different things. #}
+{% macro tick_glyph() %}
+                                                                    <span class="rounded-full border-2 flex items-center justify-center shrink-0 w-5 h-5 text-[11px] font-bold"
+                                                                        :class="it.packed >= it.needed ? 'bg-green-500 border-green-500 text-white' : 'border-gray-600 text-transparent'">✓</span>
+                                                                    <span class="text-sm font-semibold"
+                                                                        :class="it.packed >= it.needed ? 'text-gray-500 line-through' : 'text-gray-200'"
+                                                                        x-text="it.label"></span>
+{% endmacro %}
+
+<script>
+    // The board's packing card: self-fetching (rule 2), on the lanes cards'
+    // own 30-second cadence, so a phone ticking something off and the wall
+    // agreeing take at most half a minute either way.
+    const PACKING_CARD_POLL_MS = 30000;
+
+    function packingCard(t, apiBase) {
+        const cfg = (t && t.data) || {};
+        const wanted = new Set(cfg.members || []);
+        return {
+            outings: [],
+            date: '',
+            isTomorrow: false,
+            pkInteractive: cfg.interactive !== false,
+            // null = follow the first unfinished outing automatically; ''
+            // means somebody explicitly collapsed the followed row; any
+            // other value is the outing key somebody tapped open.
+            pkExpandedKey: null,
+
+            // The card's member filter — "build your own views, filter by
+            // person" is half the reason boards exist. Applied to both which
+            // OUTINGS show (none of their kit groups touch a wanted member)
+            // and which GROUPS within a kept outing count toward its
+            // fraction, the same slicing the chores lanes do for balances.
+            pkFilterMembers(outings) {
+                if (!wanted.size) return outings;
+                const kept = [];
+                for (const o of outings) {
+                    const groups = (o.groups || []).filter(
+                        g => (g.people || []).some(p => wanted.has(p)));
+                    if (!groups.length) continue;
+                    const copy = { ...o, groups: groups };
+                    this.pkTotals(copy);
+                    kept.push(copy);
+                }
+                return kept;
+            },
+
+            async loadPacking() {
+                try {
+                    const res = await fetch(`${apiBase}api/packing/day`);
+                    const data = await res.json();
+                    this.outings = this.pkFilterMembers(
+                        Array.isArray(data.outings) ? data.outings : []);
+                    this.date = data.date || '';
+                    this.isTomorrow = !!data.is_tomorrow;
+                } catch (e) { this.outings = []; }
+            },
+            startPacking() {
+                this.loadPacking();
+                setInterval(() => this.loadPacking(), PACKING_CARD_POLL_MS);
+            },
+
+            // The household's clock, the same tolerant parse the schedule
+            // timeline uses: an outing's start/end are full ISO stamps, and
+            // this only ever prints the wall-clock time on them.
+            pkTime(iso) {
+                try {
+                    return new Date(iso).toLocaleTimeString(
+                        [], { hour: 'numeric', minute: '2-digit' });
+                } catch (e) { return ''; }
+            },
+
+            // The first outing not yet fully packed — worth the one look a
+            // tap would otherwise have cost. Falls back to the first outing
+            // once every one of the day's outings is done.
+            pkDefaultKey() {
+                const first = this.outings.find(o => o.packed < o.needed);
+                return (first || this.outings[0] || {}).key;
+            },
+            pkOpen(o) {
+                if (this.pkExpandedKey === '') return false;
+                return (this.pkExpandedKey || this.pkDefaultKey()) === o.key;
+            },
+            pkToggle(o) {
+                this.pkExpandedKey = this.pkOpen(o) ? '' : o.key;
+            },
+
+            // Recomputed from the groups actually being counted (which,
+            // filtered to members, can be fewer than the server sent) —
+            // never trusted from the payload once a claim has moved a count.
+            pkTotals(o) {
+                let packed = 0, needed = 0;
+                for (const g of o.groups || []) {
+                    for (const it of g.items || []) {
+                        packed += it.packed;
+                        needed += it.needed;
+                    }
+                }
+                o.packed = packed;
+                o.needed = needed;
+            },
+            // A tick toggles between fully packed and not — the only two
+            // states a needed-one item has.
+            pkTapTick(o, it) {
+                this.pkClaim(o, it, it.packed >= it.needed ? -1 : 1);
+            },
+            // The optimistic tick: applied locally before the request lands
+            // (the pattern `togglePrepConfirmed` uses in app.html), the
+            // server's own count kept on success, and a failure rolled back
+            // and re-fetched rather than left to disagree with the wall.
+            async pkClaim(o, it, delta) {
+                const prev = it.packed;
+                it.packed = Math.max(0, Math.min(it.needed, prev + delta));
+                this.pkTotals(o);
+                try {
+                    const res = await fetch(`${apiBase}api/packing/claim`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ outing_key: o.key, item_key: it.key, delta: delta })
+                    });
+                    if (!res.ok) throw new Error('claim failed');
+                    const data = await res.json().catch(() => ({}));
+                    if (typeof data.packed === 'number') {
+                        it.packed = Math.min(it.needed, data.packed);
+                    }
+                    this.pkTotals(o);
+                } catch (e) {
+                    it.packed = prev;
+                    this.pkTotals(o);
+                    showGlobalAlert('Could not save that — try again');
+                    await this.loadPacking();
+                }
+            },
+        };
+    }
+</script>

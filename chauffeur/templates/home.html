@@ -1486,6 +1486,9 @@
     {% include 'components/shopping_lists.html' %}
     <!-- And the routines kiosk's lanes, plus the kid digest card's wrapper. -->
     {% include 'components/routine_lanes.html' %}
+    <!-- The family packing card: self-fetching (rule 2), so this include
+         carries its own script the same way the lanes cards do. -->
+    {% include 'components/packing_card.html' %}
     {% include 'components/avatar_editor.html' %}
     {% include 'components/pet_editor.html' %}
     {% include 'components/pet_battle.html' %}
@@ -5234,7 +5237,7 @@
                 PAGELESS: ['ha', 'ha_image', 'ha_dashboard', 'ha_card', 'web',
                            'music',
                            'custom', 'clock', 'hero', 'heading',
-                           'chores_lanes', 'chores_rewards',
+                           'chores_lanes', 'chores_rewards', 'packing',
                            'task_list', 'errand_list',
                            'shopping_staples', 'shopping_list',
                            'routines_lanes', 'avatar_editor', 'pets'],
