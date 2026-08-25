@@ -86,6 +86,8 @@ def scenario_the_day_endpoint_groups_by_outing():
           f"the outing does not carry both events: {outing['event_ids']}")
     check(outing['driver_id'] == 'd1' and outing['driver'] == 'Dad',
           f"the outing lost its driver: {outing}")
+    check(outing['color'] == '#2563eb',
+          f"the outing should carry the driver's real color_code: {outing['color']}")
     labels = sorted(i['label'] for g in outing['groups'] for i in g['items'])
     check(labels == ['Sheet music', 'Water bottle'],
           f"both kits' items should be on the outing: {labels}")

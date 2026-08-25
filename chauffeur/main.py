@@ -8305,7 +8305,7 @@ def packing_day(date: str = None):
         d = drivers.get(o['driver_id']) or {}
         titles = [(events.get(e) or {}).get('title') or 'Event' for e in o['event_ids']]
         out.append({**o, 'groups': groups, 'packed': packed, 'needed': needed,
-                    'driver': d.get('name') or 'Driver', 'color': d.get('color'),
+                    'driver': d.get('name') or 'Driver', 'color': d.get('color_code'),
                     'car': _car_for(o, sched),
                     'title': ' + '.join(titles)})
     return {'date': target.isoformat(),
