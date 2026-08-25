@@ -180,6 +180,21 @@ function capture() {
       key: w.getAttribute('data-fd-key'),
       present: !!w.querySelector('.fd-caret'),
     })),
+    // The fix itself, pinned so it cannot silently regress: for a FLAT
+    // block (never a container — its heading is deliberately not an
+    // `.agenda-event` chip at all) the caret must be a DESCENDANT of the
+    // row's own `.agenda-event` chip, not a sibling drawn beside it. A
+    // sibling caret is exactly the old bug — it shrank the row's own right
+    // edge, so rows with a caret and rows without one went ragged against
+    // each other instead of sharing one full-width chip.
+    caretInsideRow: wrappers.map(w => {
+      const car = w.querySelector('.fd-caret');
+      return {
+        key: w.getAttribute('data-fd-key'),
+        hasCaret: !!car,
+        insideAgendaEvent: !!(car && car.closest('.agenda-event')),
+      };
+    }),
   }));
 }
 
@@ -307,6 +322,43 @@ def scenario_a_two_event_outing_is_a_container_with_inner_lines():
           f"a cargo-less block wrongly drew a caret: {got['caret']}")
     check(by_caret.get('d1:soccer', {}).get('present'),
           f"the outing container (with cargo) is missing its caret: {got['caret']}")
+
+
+def scenario_the_caret_sits_inside_the_row_not_beside_it():
+    """The user's own fix, pinned so it cannot silently regress: a caret
+    drawn as a flex SIBLING of the row used to shrink that row's own right
+    edge, so blocks with a caret were narrower than blocks without one and
+    the card's chips went ragged instead of lining up on the right. The
+    caret now lives INSIDE the row — a descendant of the same
+    `.agenda-event` chip `agendaEventRow` draws, trailing the badge slot via
+    the shared builder's own `trailingHtml` seam — so every row's own fill
+    spans the block's full width whether or not it carries a caret. Checked
+    against a flat, cargo-bearing block: a container's heading is a
+    different, deliberately bare shape (no `.agenda-event` fill at all), so
+    it is not what this assertion is about."""
+    day = {
+        'date': '2026-09-08', 'is_tomorrow': False, 'all_day': [],
+        'blocks': [
+            {'kind': 'event', 'key': 'home:1', 'event_id': 1, 'title': 'Piano',
+             'start': '2026-09-08T09:00:00', 'end': '2026-09-08T09:30:00',
+             'canceled': False, 'covered_by': None,
+             'groups': [{'kit_id': 'k1', 'kit': 'Bag', 'people': [],
+                        'items': [{'key': 'i1', 'label': 'Item one',
+                                  'needed': 1, 'packed': 0}]}],
+             'packed': 0, 'needed': 1},
+        ],
+    }
+    got = _run(day, interactive=True, expand='')
+    if got is None:
+        return
+    check(not got['errors'], f"the card threw while drawing: {got['errors'][:3]}")
+    by_key = {c['key']: c for c in got['caretInsideRow']}
+    row = by_key.get('home:1')
+    check(row is not None and row['hasCaret'],
+          f"the cargo-bearing flat block should draw a caret: {got['caretInsideRow']}")
+    check(row['insideAgendaEvent'],
+          f"the caret must be a descendant of the row's own .agenda-event "
+          f"chip, not a sibling beside it: {row}")
 
 
 def scenario_the_pill_has_two_states_and_only_two():

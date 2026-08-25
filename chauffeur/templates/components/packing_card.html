@@ -197,15 +197,22 @@
                                      though it is not a row. The caret is the
                                      ONLY way to expand it -- a container has
                                      no single event to answer "what is this"
-                                     with, so the heading itself is inert. -->
+                                     with, so the heading itself is inert. Its
+                                     own `px-2.5` matches the inset a flat
+                                     row's caret sits at inside its own chip
+                                     (`agenda-event`'s own `px-2.5`), so the
+                                     heading's caret ends this line at the
+                                     same right edge the rows underneath end
+                                     theirs -- one panel, one right margin,
+                                     whether the line is a heading or a row. -->
                                 <template x-if="pkIsContainer(b)">
-                                    <div class="flex items-baseline justify-between gap-2 px-1">
+                                    <div class="flex items-baseline justify-between gap-2 px-2.5">
                                         <div class="flex items-baseline gap-2 min-w-0 flex-1" x-html="pkHeadingIdentityHtml(b)"></div>
                                         <div class="flex items-center gap-1.5 shrink-0">
                                             <span x-html="pkHeadingBadgeHtml(b)"></span>
                                             <template x-if="pkExpandable(b)">
                                                 <button type="button" @click="pkToggle(b)"
-                                                    class="fd-caret text-gray-600 shrink-0 transition-transform w-3 text-center text-xs"
+                                                    class="fd-caret text-gray-600 shrink-0 transition-transform w-6 h-6 flex items-center justify-center text-xs"
                                                     :class="pkOpen(b) ? 'rotate-90' : ''">›</button>
                                             </template>
                                         </div>
@@ -218,30 +225,36 @@
                                      badge ladder (driver/car chips, the
                                      covered 🤝 chip) is exactly the calendar
                                      agenda's, computed in JS either way. The
-                                     row itself is a button that opens the
-                                     same event details dialog the agenda's
-                                     own tap does (the user's own words:
-                                     "tapping on the event should open the
-                                     event details") -- canceled blocks are
-                                     no exception, they still answer a tap,
-                                     just with no caret next to them (see
+                                     caret (`pkCaretHtml`) rides INSIDE that
+                                     same row now, through the builder's own
+                                     generic `trailingHtml` seam, trailing the
+                                     badge slot -- the user's own fix: a caret
+                                     drawn as a flex SIBLING of the row used to
+                                     shrink the row's own right edge whenever
+                                     one was present, so rows with a caret and
+                                     rows without went ragged against each
+                                     other instead of sharing one full-width
+                                     chip. Because the caret is now serialized
+                                     INTO the row's own markup string, Alpine
+                                     cannot bind a `@click` to it directly
+                                     (same reason `pkInnerLineClick` exists for
+                                     the container's inner lines below) -- so
+                                     this wrapper is a plain div, not the row's
+                                     own tap button any more, and one click
+                                     handler on it (`pkFlatRowClick`) tells the
+                                     caret's tap from the rest of the row's by
+                                     `.fd-caret` membership: hit the caret and
+                                     it toggles, hit anything else in the row
+                                     (the user's own words: "tapping on the
+                                     event should open the event details") and
+                                     it opens the same shared details dialog
+                                     the agenda's own tap does. Canceled blocks
+                                     are no exception, they still answer a tap,
+                                     just with no caret to hit (see
                                      `pkExpandable`: nothing to unfold on a
-                                     thing not happening). Expanding is the
-                                     CARET's job alone now, never the row
-                                     body's ("expanding should be limited to
-                                     tapping the arrow on the right"). -->
+                                     thing not happening). -->
                                 <template x-if="!pkIsContainer(b)">
-                                    <div class="w-full flex items-center gap-1.5">
-                                        <button type="button" @click="pkOpenDetails(b)"
-                                            class="flex-1 min-w-0 text-left">
-                                            <div x-html="pkRowHtml(b)"></div>
-                                        </button>
-                                        <template x-if="pkExpandable(b)">
-                                            <button type="button" @click="pkToggle(b)"
-                                                class="fd-caret text-gray-600 shrink-0 transition-transform w-3 text-center text-xs"
-                                                :class="pkOpen(b) ? 'rotate-90' : ''">›</button>
-                                        </template>
-                                    </div>
+                                    <div class="w-full" @click="pkFlatRowClick($event, b)" x-html="pkRowHtml(b)"></div>
                                 </template>
 
                                 <!-- Container inner lines: REAL agenda event
@@ -500,6 +513,26 @@
                 }
                 return '';
             },
+            // The caret, drawn as part of the row's own markup now — the
+            // user's own fix: it used to sit OUTSIDE the row as a flex
+            // sibling, which shrank the row's own right edge whenever one
+            // was present and left rows with a caret narrower than rows
+            // without one, so the card's chips never lined up on the right.
+            // Riding the shared builder's generic `trailingHtml` seam
+            // (components/agenda_row.html) instead means every row's own
+            // fill spans the block's full width, caret or none, and the
+            // caret ends up a DESCENDANT of the row's own `.agenda-event`
+            // chip rather than a sibling beside it. A block with nothing to
+            // pack draws no caret at all — `pkExpandable` — there is nothing
+            // behind it to unfold. Real `<button>`, not a span: nothing
+            // wraps this row in a button of its own any more (see
+            // `pkFlatRowClick`), so nesting one here is safe and keeps the
+            // caret a proper tap target rather than a styled span.
+            pkCaretHtml(b) {
+                if (!this.pkExpandable(b)) return '';
+                const open = this.pkOpen(b) ? ' rotate-90' : '';
+                return `<button type="button" class="fd-caret text-gray-600 shrink-0 transition-transform w-6 h-6 flex items-center justify-center text-xs${open}">›</button>`;
+            },
             // One block, as the agenda's own event shape — `agendaEventRow`
             // (components/agenda_row.html) is the SAME builder the
             // calendar's agenda draws its own rows with, the user's own
@@ -507,7 +540,9 @@
             // events. An outing's driver/car live on the block itself; an
             // at-home event has neither (a bare row) unless it is covered,
             // which becomes `assistName` and earns the agenda's own 🤝 chip
-            // for free. The pill rides along in the same badge slot.
+            // for free. The pill rides along in the same badge slot, and the
+            // caret (`pkCaretHtml`) rides one seam further right, inside the
+            // row itself.
             pkRowHtml(b) {
                 const ev = b.kind === 'outing'
                     ? { title: this.pkTitle(b), start: b.start, end: b.end,
@@ -518,8 +553,22 @@
                     canceled: !!b.canceled,
                     tappable: true,
                     extraBadgeHtml: this.pkPillHtml(b),
+                    trailingHtml: this.pkCaretHtml(b),
                 });
                 return row.outerHTML;
+            },
+            // The flat row's one click handler, on the plain div wrapping
+            // `pkRowHtml`'s output — the row itself can no longer be its own
+            // tap-target button (the caret is now serialized INSIDE it, and
+            // a button cannot contain another button without the browser's
+            // own parser silently un-nesting them). Same delegation shape as
+            // `pkInnerLineClick` below: `.fd-caret` under the tap means
+            // expand, anything else in the row means the same details tap
+            // the agenda's own rows answer ("tapping on the event should
+            // open the event details").
+            pkFlatRowClick(evt, b) {
+                if (evt.target.closest('.fd-caret')) { this.pkToggle(b); return; }
+                this.pkOpenDetails(b);
             },
             // A container's inner lines: REAL agenda event rows (time,
             // title, the driver's own color bar), not a bespoke compact

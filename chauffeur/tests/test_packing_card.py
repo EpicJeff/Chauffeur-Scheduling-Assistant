@@ -340,20 +340,20 @@ def scenario_a_ten_activity_saturday_stays_readable():
                 check(any(title in t for t in inner_texts),
                       f"an inner line for {title!r} is missing: {inner_texts}")
             # Nothing auto-expands: no claim controls (tick or stepper) exist
-            # anywhere in the DOM before any tap. Two separate buttons now,
-            # not one: a row-tap button that opens details (every FLAT block
-            # gets one; a container's own heading is not a single event and
-            # gets none) plus a caret that expands (only blocks with
-            # something to pack at all — `needed > 0` — draw one). Piano and
-            # Reading carry empty cargo lists and so draw no caret; the
-            # three-event container draws a caret but no row-tap button (it
-            # has no single event for a tap to answer "what is this" with).
-            # Flat blocks: Piano, Reading, Activity 1-7 = 9 row buttons.
-            # Carets: the container + Activity 1-7 (all have cargo) = 8.
+            # anywhere in the DOM before any tap. The row body is no longer a
+            # `<button>` of its own (the caret moved INSIDE the row, and a
+            # button cannot safely nest another button) — a flat block's tap
+            # target is now the plain div `pkFlatRowClick` delegates from, so
+            # the only real buttons left before any expansion are carets:
+            # only blocks with something to pack at all (`needed > 0`) draw
+            # one. Piano and Reading carry empty cargo lists and so draw no
+            # caret; the three-event container's own heading draws one real,
+            # directly-bound caret button of its own. Carets: the container +
+            # Activity 1-7 (all have cargo) = 8.
             buttons = page.locator('#pk-root button')
-            check(buttons.count() == 17,
+            check(buttons.count() == 8,
                   f"nothing should be expanded yet, but {buttons.count()} buttons "
-                  f"exist (want exactly 9 row-tap buttons + 8 carets = 17)")
+                  f"exist (want exactly 8 carets, no more)")
             # Rows stack without overlapping and stay inside the tile — the
             # geometry a source read cannot see at all.
             boxes = [rows.nth(i).bounding_box() for i in range(10)]
@@ -615,8 +615,11 @@ def scenario_expanding_one_block_leaves_the_others_at_rest():
 def scenario_a_row_body_tap_does_not_expand():
     """The second correction, binding: "expanding should probably be
     limited to tapping on the arrow on the right." The row's own tap
-    target — the button WRAPPING `pkRowHtml`'s output, not the caret, a
-    separate sibling button — must never unfold the block's items."""
+    target is now the plain div wrapping `pkRowHtml`'s output (the caret
+    lives INSIDE that same row's markup, not beside it as a separate
+    sibling any more), so this clicks the row's own title text — nowhere
+    near the caret, which `pkFlatRowClick` carves out by `.fd-caret`
+    membership alone — and must never unfold the block's items."""
     sp = _chromium()
     if sp is None:
         return
@@ -626,7 +629,7 @@ def scenario_a_row_body_tap_does_not_expand():
         try:
             _boot(page, {'interactive': True, 'members': []}, _one_item_day(0, 2))
             row = _row(page, 'home:1')
-            row.locator('button').first.click()
+            row.get_by_text('Soccer practice').click()
             check(row.locator('button:text-is("+")').count() == 0,
                   "tapping the row body expanded the block anyway")
         finally:
@@ -635,9 +638,12 @@ def scenario_a_row_body_tap_does_not_expand():
 
 def scenario_a_cargo_less_block_has_no_caret():
     """The third bullet: a block with nothing to pack (`needed === 0`)
-    draws no arrow at all — there is nothing behind it to unfold. The row
-    itself stays a real, tappable button regardless — a wall that is
-    read-only should still let somebody see what an event is."""
+    draws no arrow at all — there is nothing behind it to unfold, so the row
+    carries zero real `<button>` elements (no caret, and the row body itself
+    is a plain, delegated div, not a button of its own any more — see
+    `pkFlatRowClick`). The row stays tappable regardless — a wall that is
+    read-only should still let somebody see what an event is — proven here
+    by an actual click reaching the details dialog."""
     sp = _chromium()
     if sp is None:
         return
@@ -659,9 +665,17 @@ def scenario_a_cargo_less_block_has_no_caret():
             row = _row(page, 'home:1')
             check(row.locator('.fd-caret').count() == 0,
                   "a block with nothing to pack still drew a caret")
-            check(row.locator('button').count() == 1,
-                  f"the cargo-less row should still be exactly one tappable "
-                  f"button (details, no caret): {row.locator('button').count()}")
+            check(row.locator('button').count() == 0,
+                  f"the cargo-less row should carry no buttons at all (no "
+                  f"caret, and its body is a plain tappable div): "
+                  f"{row.locator('button').count()}")
+            row.get_by_text('Chill time').click()
+            page.wait_for_function(
+                "!document.getElementById('simple-event-modal').classList.contains('hidden')",
+                timeout=2000)
+            title = page.locator('#modal-title').inner_text()
+            check('Chill time' in title,
+                  f"the cargo-less row's body tap should still open details: {title!r}")
         finally:
             browser.close()
 
@@ -670,7 +684,9 @@ def scenario_a_row_tap_opens_the_details_dialog():
     """The user's own words, binding: "tapping on the event should open the
     event details." A flat block's row reuses the shared dialog
     (`window.FamilyCalendar.showEvent`) exactly the way the board's Drives
-    card already does — no forked second dialog."""
+    card already does — no forked second dialog. Clicks the row's own title
+    text (not `button.first`, which would now hit the caret nested inside
+    the row rather than the row's body)."""
     sp = _chromium()
     if sp is None:
         return
@@ -680,7 +696,7 @@ def scenario_a_row_tap_opens_the_details_dialog():
         try:
             _boot(page, {'interactive': True, 'members': []}, _one_item_day(0, 2))
             row = _row(page, 'home:1')
-            row.locator('button').first.click()
+            row.get_by_text('Soccer practice').click()
             page.wait_for_function(
                 "!document.getElementById('simple-event-modal').classList.contains('hidden')",
                 timeout=2000)

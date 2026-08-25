@@ -29,12 +29,21 @@
         tripSuppressed, rawColor } } — FullCalendar's own event shape, the
    one the calendar's `eventContent` and agenda both already speak.
 
-   opts: { canceled, extraBadgeHtml } — canceled reuses the row's own
-   past/tripSuppressed opacity treatment (nearest agenda precedent) and adds
-   a line-through title; extraBadgeHtml is appended into the same badge slot
-   the driver/car/covered chips already occupy, which is how a caller with
-   its own badge (the Family Day card's amber/done pill) sits inline with
-   the agenda's rather than beside it. #}
+   opts: { canceled, extraBadgeHtml, trailingHtml } — canceled reuses the
+   row's own past/tripSuppressed opacity treatment (nearest agenda
+   precedent) and adds a line-through title; extraBadgeHtml is appended
+   into the same badge slot the driver/car/covered chips already occupy,
+   which is how a caller with its own badge (the Family Day card's
+   amber/done pill) sits inline with the agenda's rather than beside it.
+   trailingHtml is a second, GENERIC seam one step further right — the last
+   thing in the row's own title/badge line, after everything else — for a
+   caller that needs to end the row with something that is not a badge (the
+   Family Day card's expand caret: it used to sit OUTSIDE the row as a flex
+   sibling, which shrank the row's own right edge whenever a caret was
+   present and left rows ragged, so it moved inside, here, as a plain
+   trailing slot rather than a caret-shaped opt — this builder still knows
+   nothing about expansion). Unset by every other caller, so the calendar's
+   own agenda row is byte-for-byte unchanged. #}
 <style>
         .agenda-day { background-color: rgba(30, 41, 59, 0.5); border: 1px solid rgba(255, 255, 255, 0.08); }
         .agenda-today { border-color: rgba(59, 130, 246, 0.6); box-shadow: 0 0 12px rgba(59, 130, 246, 0.15); }
@@ -112,6 +121,7 @@ function agendaEventRow(ev, opts) {
         : `${_agRowFmtTime(new Date(ev.start))}${ev.end ? ' – ' + _agRowFmtTime(new Date(ev.end)) : ''}`;
 
     const badge = _agRowBadgeHtml(props, opts.extraBadgeHtml);
+    const trailing = opts.trailingHtml || '';
 
     // What has already happened stays, greyed — dropping it makes a busy
     // morning invisible. A canceled row (the Family Day card's own state,
@@ -126,7 +136,7 @@ function agendaEventRow(ev, opts) {
         <span class="text-[11px] font-semibold text-gray-400">${_agRowEsc(timeLabel)}</span>
         <div class="flex items-center justify-between gap-2">
             <span class="text-[13px] font-bold text-white truncate${opts.canceled ? ' line-through' : ''}">${_agRowEsc(ev.title)}</span>
-            ${badge}
+            ${badge}${trailing}
         </div>`;
     if (opts.tappable && opts.onClick) row.onclick = () => opts.onClick(ev);
     return row;
