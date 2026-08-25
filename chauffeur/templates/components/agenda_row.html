@@ -58,24 +58,15 @@ function _agRowFmtTime(d) {
     return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
-// The one agenda event row. Moved verbatim out of `_renderAgenda`'s own row
-// section — same colour rule, same badge ladder, same past/suppressed
-// greying — with two seams added for a second caller: `opts.canceled` (the
-// Family Day card's own state, with no agenda equivalent) and
-// `opts.extraBadgeHtml` (a caller's own badge, appended into the same slot).
-// `opts.onClick(ev)` fires on a tap when `opts.tappable` is set — the
-// calendar's own use, to open the shared details dialog. A caller that
-// wires its own tap target instead (the Family Day card expands a block by
-// tapping a button that WRAPS this row, not the row itself) leaves both
-// unset and gets a plain, inert row.
-function agendaEventRow(ev, opts) {
-    opts = opts || {};
-    const props = ev.extendedProps || {};
-    const barColor = props.isUnassigned ? (props.isConflict ? '#f59e0b' : '#ef4444')
-        : (props.rawColor || ev.backgroundColor || '#3b82f6');
-    const timeLabel = ev.allDay ? 'Entire day'
-        : `${_agRowFmtTime(new Date(ev.start))}${ev.end ? ' – ' + _agRowFmtTime(new Date(ev.end)) : ''}`;
-
+// The badge ladder alone — driver/car chips, the covered 🤝 chip, the
+// conflict/unassigned/errand states — split out of the row builder below so
+// a caller that draws its OWN heading line (not a full agenda-event row: the
+// Family Day card's outing container heading, which the row's fill-and-bar
+// treatment does not belong on per the user's own mockup) can still speak
+// the agenda's exact badge vocabulary instead of hand-copying it. Unchanged
+// behaviour, only pulled out — `agendaEventRow` below calls this too.
+function _agRowBadgeHtml(props, extraBadgeHtml) {
+    props = props || {};
     let badge = '';
     if (props.tripSuppressed) {
         badge = '<span class="text-[10px] font-bold text-gray-400 shrink-0">✈️ Trip conflict</span>';
@@ -96,7 +87,31 @@ function agendaEventRow(ev, opts) {
     } else if (props.isErrand) {
         badge = '<span class="text-[10px] font-bold text-amber-400 shrink-0">Errand</span>';
     }
-    if (opts.extraBadgeHtml) badge += opts.extraBadgeHtml;
+    if (extraBadgeHtml) badge += extraBadgeHtml;
+    return badge;
+}
+window.agendaEventBadgeHtml = _agRowBadgeHtml;
+window.agendaEventEsc = _agRowEsc;
+
+// The one agenda event row. Moved verbatim out of `_renderAgenda`'s own row
+// section — same colour rule, same badge ladder, same past/suppressed
+// greying — with two seams added for a second caller: `opts.canceled` (the
+// Family Day card's own state, with no agenda equivalent) and
+// `opts.extraBadgeHtml` (a caller's own badge, appended into the same slot).
+// `opts.onClick(ev)` fires on a tap when `opts.tappable` is set — the
+// calendar's own use, to open the shared details dialog. A caller that
+// wires its own tap target instead (the Family Day card taps a row body to
+// open details and a separate caret to expand) leaves both unset and gets a
+// plain, inert row, drawing its own tap handling around it instead.
+function agendaEventRow(ev, opts) {
+    opts = opts || {};
+    const props = ev.extendedProps || {};
+    const barColor = props.isUnassigned ? (props.isConflict ? '#f59e0b' : '#ef4444')
+        : (props.rawColor || ev.backgroundColor || '#3b82f6');
+    const timeLabel = ev.allDay ? 'Entire day'
+        : `${_agRowFmtTime(new Date(ev.start))}${ev.end ? ' – ' + _agRowFmtTime(new Date(ev.end)) : ''}`;
+
+    const badge = _agRowBadgeHtml(props, opts.extraBadgeHtml);
 
     // What has already happened stays, greyed — dropping it makes a busy
     // morning invisible. A canceled row (the Family Day card's own state,

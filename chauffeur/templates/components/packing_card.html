@@ -27,13 +27,17 @@
      redundant chrome, and most outings are single-event, so a single-event
      outing draws as one flat agenda row exactly like an event block does. At
      two or more events the container appears as an `agenda-day` panel — the
-     same nesting the agenda uses for a day full of events — holding the
-     outing's own header row (time, driver chip, car chip, the pill) and its
-     events as their own agenda rows underneath, title and time only (no end,
-     no badges — `family_day.py`'s inner-event shape carries nothing else),
-     ALWAYS VISIBLE, never gated behind a tap — because the box itself is a
-     claim ("one trip, one packing job") that still owes each event its own
-     scannable time.
+     same nesting the agenda uses for a day full of events — but the second
+     mockup pass corrected the first one: the outing's own summary is NOT
+     another agenda row inside that panel, it is the panel's own HEADING,
+     drawn straight onto the bare `agenda-day` surface (no `.agenda-event`
+     fill, no color bar) — time, the joined title, driver chip, car chip,
+     the pill — the same shape `agenda-day`'s own header line uses in the
+     agenda itself. Its events still draw underneath as their own agenda
+     rows, title and time only (no end, no badges — `family_day.py`'s
+     inner-event shape carries nothing else), ALWAYS VISIBLE, never gated
+     behind a tap — because the box itself is a claim ("one trip, one
+     packing job") that still owes each event its own scannable time.
 
      THE PILL IS TWO STATES AND ONLY TWO, and it is the only saturated thing
      on a resting row: work remaining is a filled amber pill ("3 to pack"),
@@ -43,9 +47,17 @@
      or nothing at all. No colour ramp, no pulsing, no proximity escalation —
      this card is a surface, not a notifier.
 
-     TAP A ROW OR CONTAINER to unfold its items — kit groups, steppers where
-     `needed > 1`, ticks where `needed == 1`, the shipped packing markup
-     verbatim. NO BLOCK AUTO-EXPANDS: "what to look at first" is the hero's
+     TWO TAPS, TWO JOBS — the user's own correction, binding: tapping an
+     EVENT (a flat block's row, or one of a container's inner lines) opens
+     the same event details dialog the agenda's own tap does
+     (`pkOpenDetails`, reused wholesale from `window.FamilyCalendar.showEvent`
+     the way the board's Drives card already reuses it — no fork, no second
+     dialog). Tapping the CARET — the container heading's own, or a flat
+     block's own, never the row body — unfolds its items: kit groups,
+     steppers where `needed > 1`, ticks where `needed == 1`, the shipped
+     packing markup verbatim. A block with nothing to pack (`needed === 0`)
+     draws no caret at all — `pkExpandable` — there is nothing behind it to
+     unfold. NO BLOCK AUTO-EXPANDS: "what to look at first" is the hero's
      job, not this card's, and an auto-followed row on a shared wall is the
      next person's clutter. Expansion state is `expandedKeys`, a plain Set of
      block keys, reassigned (never mutated in place) so Alpine's reactivity
@@ -57,11 +69,14 @@
      line-through — the agenda's own past/tripSuppressed treatment, reused
      rather than invented, plus the line-through the agenda has no equivalent
      state for — carry no pill, and are not expandable — nothing to unfold on
-     a thing not happening. `interactive: false` removes the claim controls (the tick,
-     the stepper) from the DOM entirely — the shipped `x-if` split — but a
-     row stays a button either way, because expand/collapse is local state,
-     not a server action, and a wall that is read-only should still let
-     somebody see what a bag needs.
+     a thing not happening — but STILL answer a details tap: a canceled
+     event is still an event somebody might want to read about.
+     `interactive: false` removes the claim controls (the tick, the
+     stepper) from the DOM entirely — the shipped `x-if` split — but a row
+     stays tappable either way for both jobs (details, and expand where
+     there is anything to expand), because neither is a server action, and
+     a wall that is read-only should still let somebody see what a bag
+     needs.
 
      THE MEMBER FILTER covers a parked finding: a kit with no passenger_ids
      (`people: []`) covers the whole household by design, and a filter aimed
@@ -131,13 +146,15 @@
                                  and styling as the calendar's agenda, not a
                                  bespoke panel language. A container (an
                                  outing at two or more events) is an
-                                 agenda-day panel holding agenda-event rows,
-                                 exactly the nesting the agenda uses for a day
-                                 full of events. A flat block (a one-event
-                                 outing, an at-home event, a covered ride) IS
-                                 the row -- no panel of its own, because a box
-                                 around one event is chrome the agenda never
-                                 draws either. -->
+                                 agenda-day panel whose OWN HEADING is the
+                                 outing's identity (see below) and whose
+                                 events underneath are real agenda-event
+                                 rows -- exactly the nesting the agenda uses
+                                 for a day full of events. A flat block (a
+                                 one-event outing, an at-home event, a
+                                 covered ride) IS the row -- no panel of its
+                                 own, because a box around one event is
+                                 chrome the agenda never draws either. -->
                             <div :data-fd-key="b.key"
                                 :class="pkIsContainer(b) ? 'agenda-day rounded-2xl p-3 flex flex-col gap-2' : ''">
                                 <!-- The container's own heading chip: a
@@ -159,30 +176,71 @@
                                 <template x-if="pkIsContainer(b)">
                                     <span class="self-start -mb-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300">Outing</span>
                                 </template>
-                                <!-- The row itself, built by the shared
+                                <!-- The CONTAINER's own heading: not an
+                                     `agendaEventRow` -- no `.agenda-event`
+                                     fill, no left color bar -- because a
+                                     multi-event outing's heading is not one
+                                     event, it is the box's own identity line,
+                                     the user's own mockup. Sibling precedent
+                                     is `agenda-day`'s own header
+                                     (`_renderAgenda`'s `flex items-baseline
+                                     justify-between gap-2 px-1`), not the
+                                     row builder -- drawn directly on the bare
+                                     panel, time+title on the left,
+                                     driver/car chips and the pill on the
+                                     right, in the agenda's own time/title
+                                     classes (`pkHeadingIdentityHtml`) and its
+                                     own badge ladder
+                                     (`agendaEventBadgeHtml`,
+                                     components/agenda_row.html) so it still
+                                     reads as the agenda's vocabulary even
+                                     though it is not a row. The caret is the
+                                     ONLY way to expand it -- a container has
+                                     no single event to answer "what is this"
+                                     with, so the heading itself is inert. -->
+                                <template x-if="pkIsContainer(b)">
+                                    <div class="flex items-baseline justify-between gap-2 px-1">
+                                        <div class="flex items-baseline gap-2 min-w-0 flex-1" x-html="pkHeadingIdentityHtml(b)"></div>
+                                        <div class="flex items-center gap-1.5 shrink-0">
+                                            <span x-html="pkHeadingBadgeHtml(b)"></span>
+                                            <template x-if="pkExpandable(b)">
+                                                <button type="button" @click="pkToggle(b)"
+                                                    class="fd-caret text-gray-600 shrink-0 transition-transform w-3 text-center text-xs"
+                                                    :class="pkOpen(b) ? 'rotate-90' : ''">›</button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                                <!-- The FLAT block's row: built by the shared
                                      agenda builder (components/agenda_row.html)
                                      and dropped in via x-html -- Alpine has no
                                      dynamic component, and the row's own
                                      badge ladder (driver/car chips, the
                                      covered 🤝 chip) is exactly the calendar
-                                     agenda's, computed in JS either way.
-                                     Expand/collapse is local state, not a
-                                     server action, so the row is a button
-                                     whether or not the card is interactive --
-                                     canceled blocks are the one exception:
-                                     nothing to unfold on a thing not
-                                     happening. -->
-                                <template x-if="!b.canceled">
-                                    <button type="button" @click="pkToggle(b)"
-                                        class="w-full text-left flex items-center gap-1.5">
-                                        <div class="flex-1 min-w-0" x-html="pkRowHtml(b)"></div>
-                                        <span class="text-gray-600 shrink-0 transition-transform w-3 text-center text-xs"
-                                            :class="pkOpen(b) ? 'rotate-90' : ''">›</span>
-                                    </button>
-                                </template>
-                                <template x-if="b.canceled">
+                                     agenda's, computed in JS either way. The
+                                     row itself is a button that opens the
+                                     same event details dialog the agenda's
+                                     own tap does (the user's own words:
+                                     "tapping on the event should open the
+                                     event details") -- canceled blocks are
+                                     no exception, they still answer a tap,
+                                     just with no caret next to them (see
+                                     `pkExpandable`: nothing to unfold on a
+                                     thing not happening). Expanding is the
+                                     CARET's job alone now, never the row
+                                     body's ("expanding should be limited to
+                                     tapping the arrow on the right"). -->
+                                <template x-if="!pkIsContainer(b)">
                                     <div class="w-full flex items-center gap-1.5">
-                                        <div class="flex-1 min-w-0" x-html="pkRowHtml(b)"></div>
+                                        <button type="button" @click="pkOpenDetails(b)"
+                                            class="flex-1 min-w-0 text-left">
+                                            <div x-html="pkRowHtml(b)"></div>
+                                        </button>
+                                        <template x-if="pkExpandable(b)">
+                                            <button type="button" @click="pkToggle(b)"
+                                                class="fd-caret text-gray-600 shrink-0 transition-transform w-3 text-center text-xs"
+                                                :class="pkOpen(b) ? 'rotate-90' : ''">›</button>
+                                        </template>
                                     </div>
                                 </template>
 
@@ -194,15 +252,27 @@
                                      still owes each event its own scannable
                                      time. `fd-inner-line` stays on each as an
                                      extra class for the tests that grew up on
-                                     it, alongside the agenda's own classes. -->
+                                     it, alongside the agenda's own classes.
+                                     Each inner line is ALSO a details tap
+                                     target -- the same "tapping on the event"
+                                     rule applies inside a container, one
+                                     click handler on the wrapper (Alpine has
+                                     no way to bind `@click` inside x-html'd
+                                     markup) that finds which `.fd-inner-line`
+                                     was actually hit by its own
+                                     `data-ev-id`. -->
                                 <template x-if="pkIsContainer(b)">
-                                    <div class="space-y-1.5" x-html="pkInnerLinesHtml(b)"></div>
+                                    <div class="space-y-1.5" @click="pkInnerLineClick($event, b)" x-html="pkInnerLinesHtml(b)"></div>
                                 </template>
 
                                 <!-- Expansion: the shipped packing mechanics,
                                      unchanged, in an inset panel one tier
-                                     down from the row/panel above. -->
-                                <template x-if="pkOpen(b) && !b.canceled">
+                                     down from the row/panel above. Gated on
+                                     `pkExpandable`, not merely `!b.canceled`
+                                     -- the same rule that hides the caret
+                                     also hides what the caret would have
+                                     opened onto, one source of truth. -->
+                                <template x-if="pkOpen(b) && pkExpandable(b)">
                                     <div class="mt-2">
                                         <div class="rounded-xl bg-gray-900 border border-gray-800 p-3 space-y-3">
                                         <template x-if="!b.groups.length">
@@ -446,6 +516,7 @@
                         extendedProps: b.covered_by ? { assistName: b.covered_by } : {} };
                 const row = agendaEventRow(ev, {
                     canceled: !!b.canceled,
+                    tappable: true,
                     extraBadgeHtml: this.pkPillHtml(b),
                 });
                 return row.outerHTML;
@@ -456,15 +527,44 @@
             // `{id, title, start}`, so there is no end time or badge to draw,
             // which is exactly what the old compact line showed too.
             // `fd-inner-line` rides alongside the agenda's own classes so
-            // the tests built on it keep working.
+            // the tests built on it keep working. `data-ev-id` is how
+            // `pkInnerLineClick` finds which one was actually tapped once
+            // this is serialized to a string and dropped in via x-html —
+            // Alpine cannot bind `@click` inside that markup, so the click
+            // is caught on the wrapper and traced back here by id.
             pkInnerLinesHtml(b) {
                 return (b.events || []).map(e => {
                     const row = agendaEventRow(
                         { title: e.title, start: e.start, end: null,
-                          extendedProps: { rawColor: b.color } }, {});
+                          extendedProps: { rawColor: b.color } }, { tappable: true });
                     row.classList.add('fd-inner-line');
+                    row.dataset.evId = String(e.id);
                     return row.outerHTML;
                 }).join('');
+            },
+            // The container's own heading — no `.agenda-event` fill, no
+            // color bar, drawn straight onto the bare panel (the user's own
+            // mockup: the box's own identity line, not another event row).
+            // Same time/title classes `agendaEventRow` uses for its own
+            // time label and title, so it still reads as the agenda's
+            // vocabulary. Split from the badge half below only because the
+            // markup drops each into a different flex group (identity left,
+            // chips + caret right) — `flex items-baseline justify-between
+            // gap-2 px-1`, the agenda-day header's own shape
+            // (`_renderAgenda`, components/family_calendar.html).
+            pkHeadingIdentityHtml(b) {
+                const esc = window.agendaEventEsc || (s => s);
+                const timeLabel = `${this.pkTime(b.start)}${b.end ? ' – ' + this.pkTime(b.end) : ''}`;
+                return `<span class="text-[11px] font-semibold text-gray-400 shrink-0">${esc(timeLabel)}</span>`
+                    + `<span class="text-[13px] font-bold text-white truncate">${esc(this.pkTitle(b))}</span>`;
+            },
+            // The heading's badge half: the agenda's own driver/car chips
+            // (`agendaEventBadgeHtml`, components/agenda_row.html — the same
+            // ladder a flat outing row draws through `pkRowHtml`), with this
+            // card's own pill riding in the same slot it always has.
+            pkHeadingBadgeHtml(b) {
+                const badgeFn = window.agendaEventBadgeHtml || (() => '');
+                return badgeFn({ driverName: b.driver, carName: b.car }, this.pkPillHtml(b));
             },
             // All-day titles, one agenda "Entire day" row each — the day's
             // own banner is not a bespoke muted strip any more than an
@@ -480,11 +580,82 @@
             },
 
             pkOpen(b) { return this.expandedKeys.has(b.key); },
+            // A block with nothing to pack has nothing to unfold — the
+            // caret itself disappears rather than opening onto an empty
+            // "Nothing to pack." panel (the user's own words: "events with
+            // no packing list probably shouldn't have an arrow to expand at
+            // all"). Canceled blocks are excluded too, on top of already
+            // carrying `needed === 0` (the server never builds their
+            // groups): nothing to unfold on a thing not happening. The one
+            // check both the caret's own visibility and the expansion panel
+            // gate on, so there is exactly one place that can disagree with
+            // itself.
+            pkExpandable(b) {
+                return !b.canceled && (b.needed || 0) > 0;
+            },
             pkToggle(b) {
-                if (b.canceled) return;
+                if (!this.pkExpandable(b)) return;
                 const next = new Set(this.expandedKeys);
                 if (next.has(b.key)) next.delete(b.key); else next.add(b.key);
                 this.expandedKeys = next;
+            },
+
+            // Reuse the shared details dialog exactly the way the board's
+            // Drives card already does (home.html's `showDrive`, wired to
+            // schedule_timeline.html's rows): hand
+            // `FamilyCalendar.showEvent()` a plain event-shaped object and
+            // get the same dialog a tapped calendar event opens, with no
+            // FullCalendar instance behind this card at all. Every board
+            // page carries family_calendar.html unconditionally (the same
+            // way it carries this card), so the guard is defensive, not a
+            // real gap — a wall card has nowhere else this tap could go.
+            pkOpenDetails(b, innerEvent) {
+                if (window.FamilyCalendar && FamilyCalendar.showEvent) {
+                    FamilyCalendar.showEvent(this.pkDetailsEv(b, innerEvent));
+                }
+            },
+            // The block -> ev adapter, extended for the dialog: the row's
+            // OWN rendering (`pkRowHtml` / `pkInnerLinesHtml`) stays exactly
+            // the badge-scoped shape it always was — an inner line still
+            // draws title and time only — but a TAP answers with everything
+            // this card actually knows: driver, car, who is covering an
+            // at-home ride. An inner row (one event inside a multi-event
+            // outing) gets THAT event's own title/start, not the
+            // container's joined title or span, because the question a tap
+            // answers is "what is this event" — but the container's
+            // driver/car still apply, because one outing is one drive, and
+            // whoever drives it drives every leg.
+            pkDetailsEv(b, innerEvent) {
+                if (innerEvent) {
+                    return {
+                        id: innerEvent.id, title: innerEvent.title,
+                        start: innerEvent.start, end: null,
+                        extendedProps: { driverName: b.driver, carName: b.car, rawColor: b.color },
+                    };
+                }
+                if (b.kind === 'outing') {
+                    return {
+                        id: (b.event_ids || [])[0], title: this.pkTitle(b),
+                        start: b.start, end: b.end,
+                        extendedProps: { driverName: b.driver, carName: b.car, rawColor: b.color },
+                    };
+                }
+                return {
+                    id: b.event_id, title: b.title, start: b.start, end: b.end,
+                    extendedProps: b.covered_by ? { assistName: b.covered_by } : {},
+                };
+            },
+            // A container's inner lines are one `x-html` blob — Alpine has
+            // no way to bind a click to any one of them individually — so
+            // the click is caught once on their shared wrapper and traced
+            // back to the actual `.fd-inner-line` under the tap by the
+            // `data-ev-id` `pkInnerLinesHtml` stamped onto it.
+            pkInnerLineClick(evt, b) {
+                const row = evt.target.closest('.fd-inner-line');
+                if (!row) return;
+                const id = row.dataset.evId;
+                const inner = (b.events || []).find(e => String(e.id) === id);
+                if (inner) this.pkOpenDetails(b, inner);
             },
 
             // One item, addressed the way the server addresses it, so a

@@ -246,7 +246,13 @@ def _render_html(cfg, day_json, tile_width=480):
     files — the same split `board_tile_body.html` / `home.html` make between
     them. Alpine and the fetch stub are plain inline scripts, in DOCUMENT
     ORDER ahead of Alpine's own boot, the same ordering `set_content` gives
-    every other harness in this repo that fakes a network."""
+    every other harness in this repo that fakes a network.
+
+    `components/family_calendar.html` rides along unconditionally, the same
+    as it does on every real board page (home.html includes it whether or
+    not a calendar card is on the board) — it is where the shared details
+    dialog (`#simple-event-modal`, `window.FamilyCalendar.showEvent`) lives,
+    and a tapped row's whole job now is to reach it."""
     import main
     cfg_json = json.dumps({'data': cfg})
     stub = FETCH_STUB.replace('PK_DAY', json.dumps(day_json))
@@ -263,6 +269,7 @@ def _render_html(cfg, day_json, tile_width=480):
         "</div>"
         "{% include 'components/agenda_row.html' %}"
         "{% include 'components/packing_card.html' %}"
+        "{% include 'components/family_calendar.html' %}"
         "</div>"
         "<script>" + alpine + "</script>"
         "</body></html>"
@@ -296,10 +303,10 @@ def _row(page, key):
 
 def _expand(page, key):
     """The only way any item reaches the DOM now: a tap on the block's own
-    header button. `_row(...).locator('button').first` is safe to use as the
-    header even after other buttons exist elsewhere on the page, since it is
-    scoped to this one block's wrapper."""
-    _row(page, key).locator('button').first.click()
+    CARET (`.fd-caret`), not the row body — the user's own correction:
+    "expanding should probably be limited to tapping on the arrow on the
+    right". Scoped to this one block's wrapper, same as before."""
+    _row(page, key).locator('.fd-caret').click()
 
 
 # ── (a) a ten-activity Saturday stays readable ──────────────────────────────
@@ -333,12 +340,20 @@ def scenario_a_ten_activity_saturday_stays_readable():
                 check(any(title in t for t in inner_texts),
                       f"an inner line for {title!r} is missing: {inner_texts}")
             # Nothing auto-expands: no claim controls (tick or stepper) exist
-            # anywhere in the DOM before any tap, and every button visible is
-            # exactly one header per block.
+            # anywhere in the DOM before any tap. Two separate buttons now,
+            # not one: a row-tap button that opens details (every FLAT block
+            # gets one; a container's own heading is not a single event and
+            # gets none) plus a caret that expands (only blocks with
+            # something to pack at all — `needed > 0` — draw one). Piano and
+            # Reading carry empty cargo lists and so draw no caret; the
+            # three-event container draws a caret but no row-tap button (it
+            # has no single event for a tap to answer "what is this" with).
+            # Flat blocks: Piano, Reading, Activity 1-7 = 9 row buttons.
+            # Carets: the container + Activity 1-7 (all have cargo) = 8.
             buttons = page.locator('#pk-root button')
-            check(buttons.count() == 10,
+            check(buttons.count() == 17,
                   f"nothing should be expanded yet, but {buttons.count()} buttons "
-                  f"exist (want exactly 10 row headers)")
+                  f"exist (want exactly 9 row-tap buttons + 8 carets = 17)")
             # Rows stack without overlapping and stay inside the tile — the
             # geometry a source read cannot see at all.
             boxes = [rows.nth(i).bounding_box() for i in range(10)]
@@ -590,6 +605,114 @@ def scenario_expanding_one_block_leaves_the_others_at_rest():
             check('Sheet music' not in sibling.inner_text(),
                   f"expanding the container also expanded its sibling: "
                   f"{sibling.inner_text()[:200]}")
+        finally:
+            browser.close()
+
+
+# ── (f) the two-tap contract: the row body answers with details, the caret
+#        alone answers with expand — the user's own correction ────────────
+
+def scenario_a_row_body_tap_does_not_expand():
+    """The second correction, binding: "expanding should probably be
+    limited to tapping on the arrow on the right." The row's own tap
+    target — the button WRAPPING `pkRowHtml`'s output, not the caret, a
+    separate sibling button — must never unfold the block's items."""
+    sp = _chromium()
+    if sp is None:
+        return
+    with sp() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        try:
+            _boot(page, {'interactive': True, 'members': []}, _one_item_day(0, 2))
+            row = _row(page, 'home:1')
+            row.locator('button').first.click()
+            check(row.locator('button:text-is("+")').count() == 0,
+                  "tapping the row body expanded the block anyway")
+        finally:
+            browser.close()
+
+
+def scenario_a_cargo_less_block_has_no_caret():
+    """The third bullet: a block with nothing to pack (`needed === 0`)
+    draws no arrow at all — there is nothing behind it to unfold. The row
+    itself stays a real, tappable button regardless — a wall that is
+    read-only should still let somebody see what an event is."""
+    sp = _chromium()
+    if sp is None:
+        return
+    with sp() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        try:
+            day = {
+                'date': '2026-09-08', 'is_tomorrow': False, 'all_day': [],
+                'blocks': [
+                    {'kind': 'event', 'key': 'home:1', 'event_id': 1,
+                     'title': 'Chill time',
+                     'start': '2026-09-08T16:00:00', 'end': '2026-09-08T16:30:00',
+                     'canceled': False, 'covered_by': None, 'groups': [],
+                     'packed': 0, 'needed': 0},
+                ],
+            }
+            _boot(page, {'interactive': True, 'members': []}, day)
+            row = _row(page, 'home:1')
+            check(row.locator('.fd-caret').count() == 0,
+                  "a block with nothing to pack still drew a caret")
+            check(row.locator('button').count() == 1,
+                  f"the cargo-less row should still be exactly one tappable "
+                  f"button (details, no caret): {row.locator('button').count()}")
+        finally:
+            browser.close()
+
+
+def scenario_a_row_tap_opens_the_details_dialog():
+    """The user's own words, binding: "tapping on the event should open the
+    event details." A flat block's row reuses the shared dialog
+    (`window.FamilyCalendar.showEvent`) exactly the way the board's Drives
+    card already does — no forked second dialog."""
+    sp = _chromium()
+    if sp is None:
+        return
+    with sp() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        try:
+            _boot(page, {'interactive': True, 'members': []}, _one_item_day(0, 2))
+            row = _row(page, 'home:1')
+            row.locator('button').first.click()
+            page.wait_for_function(
+                "!document.getElementById('simple-event-modal').classList.contains('hidden')",
+                timeout=2000)
+            title = page.locator('#modal-title').inner_text()
+            check('Soccer practice' in title,
+                  f"the details dialog did not show the tapped event's title: {title!r}")
+        finally:
+            browser.close()
+
+
+def scenario_an_inner_line_tap_opens_details_for_that_event_alone():
+    """Fix 2 reaches inside a container too: a tap on ONE inner line opens
+    THAT event's own details — the data note, binding: "for outing INNER
+    rows use that inner event's own data, not the container's" — so tapping
+    "Band practice" must show "Band practice", not the outing's own joined
+    title ("Soccer + Band practice")."""
+    sp = _chromium()
+    if sp is None:
+        return
+    with sp() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        try:
+            _boot(page, {'interactive': True, 'members': []}, _two_block_day())
+            container = _row(page, 'd1:soccer')
+            container.locator('.fd-inner-line', has_text='Band practice').click()
+            page.wait_for_function(
+                "!document.getElementById('simple-event-modal').classList.contains('hidden')",
+                timeout=2000)
+            title = page.locator('#modal-title').inner_text()
+            check(title == 'Band practice',
+                  f"the inner line's own tap should open ITS event alone, got: {title!r}")
         finally:
             browser.close()
 

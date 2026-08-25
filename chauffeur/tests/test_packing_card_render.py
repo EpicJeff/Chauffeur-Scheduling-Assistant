@@ -91,9 +91,12 @@ const html = fs.readFileSync(process.argv[2], 'utf8')
   .replace(/<script src="[^"]*"[^>]*><\/script>/g, '')
   .replace(/<link href="https:[^"]*"[^>]*>/g, '');
 const data = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
-// 'ALL' expands every non-canceled block before capturing; '' expands
+// 'ALL' expands every expandable block before capturing; '' expands
 // nothing; a comma list expands only those block keys — the harness clicks
-// the real header button, the same tap a wall would take.
+// the block's own CARET (`.fd-caret`), the same tap a wall would take now
+// that expansion moved off the row body and onto the arrow alone. A block
+// with nothing to pack has no caret at all (`querySelector` finds none),
+// which is the point: there is nothing to unfold.
 const expand = process.argv[4] || '';
 
 const posted = [];
@@ -156,6 +159,27 @@ function capture() {
       chip: [...w.children].some(
         c => c.tagName === 'SPAN' && c.textContent.trim() === 'Outing'),
     })),
+    // The second mockup pass: a container's own heading must NOT be an
+    // `agendaEventRow` (no `.agenda-event` fill, no color bar) — only its
+    // INNER LINES (`.fd-inner-line`, always also `.agenda-event`) may carry
+    // that class. `nonInnerCount` is the number of `.agenda-event` elements
+    // that are NOT an inner line — zero for a container (the heading is
+    // bare), exactly one for a flat block (the row itself IS the event).
+    agendaEventCheck: wrappers.map(w => {
+      const evts = [...w.querySelectorAll('.agenda-event')];
+      return {
+        key: w.getAttribute('data-fd-key'),
+        total: evts.length,
+        nonInnerCount: evts.filter(e => !e.classList.contains('fd-inner-line')).length,
+      };
+    }),
+    // Per block: does a caret (`.fd-caret`) exist anywhere in its wrapper?
+    // Absent entirely for a block with nothing to pack (`needed === 0`) —
+    // there is nothing behind it to unfold.
+    caret: wrappers.map(w => ({
+      key: w.getAttribute('data-fd-key'),
+      present: !!w.querySelector('.fd-caret'),
+    })),
   }));
 }
 
@@ -167,7 +191,7 @@ setTimeout(() => {
     for (const w of [...root.querySelectorAll('[data-fd-key]')]) {
       const key = w.getAttribute('data-fd-key');
       if (wanted && !wanted.includes(key)) continue;
-      const btn = w.querySelector(':scope > button');
+      const btn = w.querySelector('.fd-caret');
       if (btn) btn.click();
     }
     setTimeout(() => { capture(); process.exit(0); }, 300);
@@ -260,6 +284,29 @@ def scenario_a_two_event_outing_is_a_container_with_inner_lines():
           f"the outing container is missing its 'Outing' chip: {got['outingChip']}")
     check(not by_key.get('home:99', {}).get('chip'),
           f"a flat block wrongly drew the 'Outing' chip: {got['outingChip']}")
+    # The second mockup pass: the container's own heading is NOT another
+    # agenda-event row (no fill, no color bar) — only its two inner lines
+    # carry that class. The flat at-home block's own row still does.
+    by_ev = {c['key']: c for c in got['agendaEventCheck']}
+    soccer_ev = by_ev.get('d1:soccer', {})
+    check(soccer_ev.get('nonInnerCount') == 0,
+          f"the outing container's own heading wrongly drew as an "
+          f"agenda-event row: {soccer_ev}")
+    check(soccer_ev.get('total') == 2,
+          f"the outing container should carry exactly its two inner-line "
+          f"agenda-event rows: {soccer_ev}")
+    home99_ev = by_ev.get('home:99', {})
+    check(home99_ev.get('nonInnerCount') == 1 and home99_ev.get('total') == 1,
+          f"the flat at-home block should draw exactly one agenda-event "
+          f"row (itself): {home99_ev}")
+    # Fix 2, the third bullet: a block with nothing to pack (`needed === 0`)
+    # gets no caret at all — Grandma's birthday has an empty cargo list —
+    # while the outing container (needed=4) does.
+    by_caret = {c['key']: c for c in got['caret']}
+    check(not by_caret.get('home:99', {}).get('present'),
+          f"a cargo-less block wrongly drew a caret: {got['caret']}")
+    check(by_caret.get('d1:soccer', {}).get('present'),
+          f"the outing container (with cargo) is missing its caret: {got['caret']}")
 
 
 def scenario_the_pill_has_two_states_and_only_two():
