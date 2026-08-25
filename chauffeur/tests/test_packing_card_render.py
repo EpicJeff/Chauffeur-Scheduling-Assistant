@@ -235,6 +235,123 @@ def scenario_interactive_false_draws_no_claim_buttons_at_all():
           f"merely drawing the read-only card called something: {got['posted']}")
 
 
+# ── a failed poll after a real one must not draw the quiet-day sentence ────
+#
+# Fix round finding #1: `loadPacking`'s catch set `this.outings = []` on ANY
+# fetch failure. A transient one after the first real load (an add-on
+# rebuild, an HA restart) wiped real outings and drew "Nothing to pack for
+# today's outings." over data that was still true. This harness lets the
+# FIRST `api/packing/day` call succeed with real data, then forces the
+# component's own `loadPacking()` to reject on a second call — a poll racing
+# a restart, not a mount — and checks the rows are still standing.
+
+POLL_FAIL_HARNESS = r"""
+const fs = require('fs');
+const { JSDOM } = require('jsdom');
+process.on('unhandledRejection', () => {});
+
+const html = fs.readFileSync(process.argv[2], 'utf8')
+  .replace(/<script src="[^"]*"[^>]*><\/script>/g, '')
+  .replace(/<link href="https:[^"]*"[^>]*>/g, '');
+const data = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+
+let dayCalls = 0;
+const dom = new JSDOM(html, {
+  runScripts: 'dangerously', pretendToBeVisual: true,
+  url: 'http://localhost/home?panel=true',
+  beforeParse(w) {
+    w.fetch = (u, opt) => {
+      if (String(u).endsWith('api/packing/day')) {
+        dayCalls++;
+        // First call (the mount) succeeds with real data; every call after
+        // that rejects, the way a fetch does mid-poll when the add-on is
+        // rebuilding or HA is restarting.
+        if (dayCalls === 1) {
+          return Promise.resolve({ ok: true, text: () => Promise.resolve(''),
+            json: () => Promise.resolve(data) });
+        }
+        return Promise.reject(new Error('network down'));
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(''),
+        json: () => Promise.resolve({}) });
+    };
+    w.showGlobalAlert = () => {};
+    w.matchMedia = () => ({ matches: false, addEventListener() {} });
+    w.EventSource = function () { return { addEventListener() {}, close() {} }; };
+  }
+});
+const win = dom.window;
+win.document.addEventListener('DOMContentLoaded', () => {
+  const s = win.document.createElement('script');
+  s.textContent = fs.readFileSync(require.resolve('alpinejs/dist/cdn.js'), 'utf8');
+  win.document.head.appendChild(s);
+});
+
+setTimeout(() => {
+  const doc = win.document;
+  const root = doc.getElementById('pk-root');
+  const comp = win.Alpine.$data(root);
+  // The mount's own GET already resolved (pkLoaded is true, outings real).
+  // Now force exactly the failing poll this test exists for.
+  comp.loadPacking().then(() => {
+    const txt = e => e.textContent.replace(/\s+/g, ' ').trim();
+    console.log(JSON.stringify({
+      text: root ? txt(root) : '',
+      outingsLength: comp.outings.length,
+      dayCalls: dayCalls,
+    }));
+    process.exit(0);
+  });
+}, 1500);
+"""
+
+
+def _run_poll_fail():
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node is not installed — the packing card was not drawn')
+        return None
+    have = subprocess.run([node, '-e',
+                           "require.resolve('jsdom'); require.resolve('alpinejs')"],
+                          capture_output=True, text=True, cwd=SCRATCH)
+    if have.returncode != 0:
+        print('  skip  jsdom/alpinejs not resolvable')
+        return None
+    probe = os.path.join(SCRATCH, 'harness-poll-fail.js')
+    with open(probe, 'w', encoding='utf-8') as f:
+        f.write(POLL_FAIL_HARNESS)
+    page = os.path.join(SCRATCH, 'packing-poll-fail.html')
+    with open(page, 'w', encoding='utf-8') as f:
+        f.write(_render_page(True))
+    data = os.path.join(SCRATCH, 'day-poll-fail.json')
+    with open(data, 'w', encoding='utf-8') as f:
+        json.dump(DAY, f)
+    proc = subprocess.run([node, probe, page, data], capture_output=True,
+                          text=True, encoding='utf-8', errors='replace',
+                          cwd=SCRATCH, timeout=180)
+    check(proc.returncode == 0, f"the packing card threw:\n{proc.stderr[-2000:]}")
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def scenario_a_failed_poll_after_success_keeps_the_rows_standing():
+    """Stale beats false-empty (fix round finding #1): a transient failure on
+    a poll AFTER the mount's own real load must leave `outings` — and the
+    rows drawn from it — exactly as they were, not wiped to the quiet-day
+    sentence "Nothing to pack for today's outings."."""
+    got = _run_poll_fail()
+    if got is None:
+        return
+    check(got['dayCalls'] == 2,
+          f"expected the mount's GET plus the one forced failing poll: {got['dayCalls']}")
+    check(got['outingsLength'] == 2,
+          f"a failed poll wiped `outings` instead of leaving it alone: {got['outingsLength']}")
+    for want in ('Soccer + swim', 'Band practice'):
+        check(want in got['text'],
+              f"a failed poll erased real rows from the card: {got['text'][:300]}")
+    check('Nothing to pack' not in got['text'],
+          f"a failed poll drew the quiet-day sentence over real data: {got['text'][:300]}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

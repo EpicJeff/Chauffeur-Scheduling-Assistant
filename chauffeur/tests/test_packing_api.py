@@ -136,6 +136,65 @@ def scenario_a_claim_needs_a_real_outing_and_item():
           "the refused claim was written anyway")
 
 
+def scenario_a_garbage_item_key_on_a_real_outing_is_refused():
+    """Fix round finding #2a: the endpoint validated `outing_key` against the
+    day's real outings but trusted `item_key` outright — a garbage item_key
+    against a REAL outing minted a fresh XP row (the once-guard keys on
+    `ref_id=item_key`, so every distinct garbage string is a new grant) and
+    filed a claim row nothing ever prunes. It must be refused, the same as a
+    garbage outing_key already is."""
+    _seed_incident()
+    import main
+    from fastapi import HTTPException
+    try:
+        main.packing_claim(payload={'outing_key': 'd1:soccer',
+                                    'item_key': 'k1:not-a-real-item',
+                                    'delta': 1, 'date': DAY})
+        raise AssertionError("a claim against a garbage item_key was filed instead of refused")
+    except HTTPException as e:
+        check(e.status_code in (400, 404), f"wrong refusal: {e.status_code}")
+    check(storage.get_packing_claims(DAY) == [],
+          "the refused claim was written anyway")
+
+
+def scenario_a_claimed_member_id_from_the_payload_never_reaches_the_ledger():
+    """Fix round finding #2b: the endpoint trusted a client-asserted
+    `member_id` — anyone on the DEVICE lane could mint XP to any member. No
+    shipped surface produces a named claim yet (that is P3, which will derive
+    identity server-side), so P1+P2 must ignore whatever member_id the
+    payload sends and file every claim anonymously."""
+    _seed_incident()
+    import main
+    from services import storage as _storage
+    res = main.packing_claim(payload={'outing_key': 'd1:soccer',
+                                      'item_key': 'k1:water bottle',
+                                      'member_id': 'ellie', 'delta': 1, 'date': DAY})
+    check(res['ok'] is True and res['packed'] == 1, f"the claim itself should still land: {res}")
+    rows = _storage.get_packing_claims(DAY)
+    check(len(rows) == 1 and rows[0].get('member_id') is None,
+          f"a client-asserted member_id reached the ledger: {rows}")
+    check(res.get('xp', 0) == 0,
+          f"an anonymous claim should never mint XP through this path: {res}")
+
+
+def scenario_delta_zero_is_refused_not_treated_as_plus_one():
+    """Fix round finding #2c: `int(payload.get('delta') or 1)` silently
+    turned an explicit `delta: 0` into +1. `delta` is parsed explicitly now,
+    and 0 is invalid — not a quiet +1."""
+    _seed_incident()
+    import main
+    from fastapi import HTTPException
+    try:
+        main.packing_claim(payload={'outing_key': 'd1:soccer',
+                                    'item_key': 'k1:water bottle',
+                                    'delta': 0, 'date': DAY})
+        raise AssertionError("delta: 0 was treated as a claim instead of refused")
+    except HTTPException as e:
+        check(e.status_code == 400, f"wrong refusal for delta 0: {e.status_code}")
+    check(storage.get_packing_claims(DAY) == [],
+          "a delta: 0 request still filed a claim")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

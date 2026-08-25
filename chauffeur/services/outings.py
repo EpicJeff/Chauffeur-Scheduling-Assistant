@@ -56,6 +56,7 @@ def outings_for(target_date=None, sched: dict = None,
     sched = sched if sched is not None else (storage.get_cached_schedule() or {})
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     route_edges = sched.get('route_edges') or {}
+    final_edges = sched.get('final_edges') or {}
 
     # A driver's events for the day, in time order. Ghost drivers are the
     # solver's "nobody real can do this" placeholder and are not people.
@@ -73,6 +74,7 @@ def outings_for(target_date=None, sched: dict = None,
     for d_id, rows in by_driver.items():
         rows.sort(key=lambda r: (r[0], str(r[1])))
         edges = route_edges.get(d_id) or {}
+        d_final_edges = final_edges.get(d_id) or {}
         chain = []
         for i, (start, ev_id, ev) in enumerate(rows):
             chain.append((start, ev_id, ev))
@@ -82,20 +84,35 @@ def outings_for(target_date=None, sched: dict = None,
             last = i == len(rows) - 1
             went_home = bool((edges.get(ev_id) or {}).get('home_waypoint'))
             if last or went_home:
-                out.append(_outing(d_id, chain))
+                # Only the chain that IS the driver's actual last outing of
+                # the day gets the drive home added — a mid-day outing cut at
+                # a home_waypoint already ends when the layover starts at
+                # home, and the spec does not touch that.
+                out.append(_outing(d_id, chain, d_final_edges if last else None))
                 chain = []
     out.sort(key=lambda o: (o['start'], o['key']))
     return out
 
 
-def _outing(d_id: str, chain: list) -> dict:
+def _outing(d_id: str, chain: list, final_edges_for_driver: dict = None) -> dict:
     ends = [_parse(ev.get('end')) or start for start, _eid, ev in chain]
+    end = max(ends)
+    # The turn-over point is the last outing's end — the drive home — rather
+    # than the last event's end. `final_edges[d_id][last_event_id]` is the
+    # solver's own travel_mins for that leg; an absent or malformed edge
+    # leaves `end` exactly what it already was.
+    if final_edges_for_driver:
+        last_ev_id = chain[-1][1]
+        edge = final_edges_for_driver.get(last_ev_id) or {}
+        travel_mins = edge.get('travel_mins')
+        if isinstance(travel_mins, (int, float)) and not isinstance(travel_mins, bool):
+            end = end + datetime.timedelta(minutes=travel_mins)
     return {
         'key': f"{d_id}:{chain[0][1]}",
         'driver_id': d_id,
         'event_ids': [eid for _s, eid, _e in chain],
         'start': chain[0][0].isoformat(),
-        'end': max(ends).isoformat(),
+        'end': end.isoformat(),
     }
 
 

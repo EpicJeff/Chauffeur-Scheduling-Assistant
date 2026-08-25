@@ -191,6 +191,81 @@ def scenario_the_day_turns_over_when_the_last_outing_is_home():
           "once the last outing is home the day turns over to tomorrow")
 
 
+def scenario_the_last_outings_end_includes_the_drive_home():
+    """Fix round finding #3: the spec says the turn-over point is the last
+    outing's end — the drive home — not the last event's end. `final_edges`
+    already carries the solver's own `travel_mins` for that leg (the driver's
+    trip home after the day's last event); nothing consumed it before this."""
+    sched = _sched([_ev('soccer', 16, dur=60)], {'soccer': 'd1'})
+    sched['final_edges'] = {'d1': {'soccer': {'from_event': 'soccer', 'travel_mins': 25}}}
+    got = outings.outings_for(DAY, sched)
+    check(len(got) == 1, f"expected one outing: {got}")
+    event_end = datetime.datetime(2026, 9, 8, 17, 0)
+    want_end = (event_end + datetime.timedelta(minutes=25)).isoformat()
+    check(got[0]['end'] == want_end,
+          f"the outing's end should include the drive home: {got[0]['end']} != {want_end}")
+
+
+def scenario_a_mid_day_home_layover_keeps_its_own_end():
+    """Only the LAST outing of a driver's day gets the drive-home add-on. A
+    mid-day outing cut at a home_waypoint already ends when the layover
+    starts at home — the spec does not touch that end at all, even when a
+    final edge exists for the day's actual last outing."""
+    sched = _sched([_ev('soccer', 9), _ev('band', 17, 30)],
+                   {'soccer': 'd1', 'band': 'd1'},
+                   {'d1': {'soccer': {'to_event': 'band', 'travel_mins': 20,
+                                      'home_waypoint': {'layover_mins': 240}}}})
+    sched['final_edges'] = {'d1': {'band': {'from_event': 'band', 'travel_mins': 15}}}
+    got = outings.outings_for(DAY, sched)
+    soccer_outing = next(o for o in got if o['event_ids'] == ['soccer'])
+    band_outing = next(o for o in got if o['event_ids'] == ['band'])
+    soccer_end = datetime.datetime(2026, 9, 8, 10, 0).isoformat()
+    check(soccer_outing['end'] == soccer_end,
+          f"a mid-day outing's end should not move: {soccer_outing['end']} != {soccer_end}")
+    band_end = (datetime.datetime(2026, 9, 8, 18, 30)
+               + datetime.timedelta(minutes=15)).isoformat()
+    check(band_outing['end'] == band_end,
+          f"the day's actual last outing should include the drive home: "
+          f"{band_outing['end']} != {band_end}")
+
+
+def scenario_missing_final_edges_leaves_ends_unchanged():
+    """No final edge for this driver — the common case today — must draw
+    exactly what it always has: the last event's own end."""
+    sched = _sched([_ev('soccer', 16, dur=60)], {'soccer': 'd1'})
+    got = outings.outings_for(DAY, sched)
+    want_end = datetime.datetime(2026, 9, 8, 17, 0).isoformat()
+    check(got[0]['end'] == want_end,
+          f"an outing with no final edge should keep the event's own end: "
+          f"{got[0]['end']} != {want_end}")
+
+
+def scenario_a_malformed_final_edge_leaves_the_end_unchanged():
+    """A `travel_mins` that is not a number is a malformed edge, not a
+    reason to guess — the end must stay exactly what it was."""
+    sched = _sched([_ev('soccer', 16, dur=60)], {'soccer': 'd1'})
+    sched['final_edges'] = {'d1': {'soccer': {'from_event': 'soccer', 'travel_mins': 'lots'}}}
+    got = outings.outings_for(DAY, sched)
+    want_end = datetime.datetime(2026, 9, 8, 17, 0).isoformat()
+    check(got[0]['end'] == want_end,
+          f"a malformed final edge should not move the end: {got[0]['end']} != {want_end}")
+
+
+def scenario_day_in_focus_stays_on_today_during_the_drive_home():
+    """The turn-over point is the drive home, not the last event's end: a
+    check ten minutes after the event ended but still inside a 25-minute
+    drive home must still find today's outing ahead, and only turn over once
+    the drive home itself is actually over."""
+    sched = _sched([_ev('soccer', 16, dur=60)], {'soccer': 'd1'})
+    sched['final_edges'] = {'d1': {'soccer': {'from_event': 'soccer', 'travel_mins': 25}}}
+    during_drive = datetime.datetime(2026, 9, 8, 17, 10)
+    check(outings.day_in_focus(during_drive, sched) == datetime.date(2026, 9, 8),
+          "the day should stay on today while the drive home is still ahead")
+    after_home = datetime.datetime(2026, 9, 8, 17, 30)
+    check(outings.day_in_focus(after_home, sched) == datetime.date(2026, 9, 9),
+          "once the drive home is over the day should turn over to tomorrow")
+
+
 def scenario_a_day_with_no_outings_is_already_tomorrow():
     """Nothing ahead, so nothing to wait for — and no empty-day special case."""
     quiet = datetime.datetime(2026, 9, 8, 9, 0)

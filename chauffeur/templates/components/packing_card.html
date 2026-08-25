@@ -42,6 +42,13 @@
      quiet-day sentence instead of a wrong day's data. The Tomorrow chip
      still draws on a quiet tomorrow, so that day reads honestly too.
 
+     A poll that FAILS after that first fetch resolved is the same failure
+     wearing a different face: stale beats false-empty, so `loadPacking`
+     leaves `outings` exactly as it was on a rejected fetch rather than
+     wiping it to `[]` — one transient failure (an add-on rebuild, an HA
+     restart) must never draw the quiet-day sentence over real, still-true
+     data.
+
      Jinja `import` renders none of this file, so the logic script at the
      bottom is emitted by `include` exactly once per page. -->
 
@@ -255,7 +262,15 @@
                     this.outings = incoming;
                     this.date = data.date || '';
                     this.isTomorrow = !!data.is_tomorrow;
-                } catch (e) { this.outings = []; }
+                } catch (e) {
+                    // Stale beats false-empty: a transient failure (add-on
+                    // rebuild, HA restart) must not wipe real outings just
+                    // because one poll in the middle of the day missed. Leave
+                    // `outings` exactly as it was — real rows from the last
+                    // good poll, or still its initial `[]` if this is the
+                    // very first load, which `pkLoaded` gates below either
+                    // way.
+                }
                 finally { this.pkLoaded = true; }
             },
             startPacking() {

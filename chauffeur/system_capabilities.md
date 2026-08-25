@@ -5597,7 +5597,7 @@ tile and sub-cards inside a Home Assistant stack.
   the swallowed sub-card drag resolving and moving) and `test_board_cards.py`
   (the 0..1000 server-side clamp).
 
-## Outings, and what leaves the house today (packing arc P1–P2, v2.388.0–v2.393.1 — `docs/packing_design.md`, `services/outings.py`)
+## Outings, and what leaves the house today (packing arc P1–P2, v2.388.0–v2.395.0 — `docs/packing_design.md`, `services/outings.py`)
 
 A driver took a passenger to one event, drove straight on to a second without
 coming home in between, and arrived without the second event's gear. Prep-kit
@@ -5633,14 +5633,24 @@ concept the app never had, not another pill.
   all; clearing it pins `needed` to 1 regardless — the team snack, the
   folding chair, the fundraiser cash don't scale with how many kids are
   going, and without the exception the counter trains people to ignore it.
-- **A claim is anonymous on the wall, named on a phone.** A claim is
-  `{outing_key, item_key, date, member_id or null}` (`storage.
-  add_packing_claim`); the board's own packing card carries no member on its
-  taps, because the wall has no identity, and `prep_status.confirmed_by`
+- **A claim is anonymous on the wall, named on a phone — and nothing the
+  payload asserts is trusted.** `POST /api/packing/claim` re-derives the
+  outing from the live schedule (a garbage `outing_key` 404s) and validates
+  `item_key` against that outing's own `packing_for` items (a garbage
+  `item_key` 404s too — before this it minted its own fresh XP, since the
+  once-guard keys on `ref_id=item_key`, and filed a claim row nothing ever
+  pruned). `member_id` from the payload is ignored outright in P1+P2 — the
+  endpoint files every claim as `member_id=None` regardless of what's sent,
+  because the DEVICE lane has no real identity to assert and nothing should
+  be trusted to name one. A claim is `{outing_key, item_key, date, member_id
+  or null}` (`storage.add_packing_claim`), and `prep_status.confirmed_by`
   already taught this codebase what a field pretending otherwise costs. A
   kid ticking their own item on their own phone claims a slot with their
-  name on it — that surface is P3 and not built yet, so every claim the
-  shipped card produces today is the wall's anonymous kind.
+  name on it — that surface is P3, which will derive identity server-side
+  from the session (never the payload), and is not built yet, so every claim
+  the shipped card produces today is the wall's anonymous kind. `delta` is
+  parsed explicitly and a `delta: 0` is refused (400), not quietly rounded
+  up to +1.
 - **A tick mints critter XP and nothing else.** `grant_pet_xp('prep', …,
   once=True)` per member/item/day — the same anti-faucet guard routines pass,
   because a child can tick and untick a box all afternoon. It never pays

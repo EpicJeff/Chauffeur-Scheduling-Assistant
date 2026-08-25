@@ -8318,10 +8318,20 @@ def packing_claim(payload: dict = Body(...)):
     """One thing packed, or one un-packed. A count, not a checkbox."""
     import datetime
     from services import outings as _outings
+    from services import prep_kits as _prep
     outing_key = str(payload.get('outing_key') or '').strip()
     item_key = str(payload.get('item_key') or '').strip()
     if not outing_key or not item_key:
         raise HTTPException(status_code=400, detail="outing_key and item_key are required")
+    # Explicit, not `int(payload.get('delta') or 1)` — that quietly turned an
+    # actual `delta: 0` into +1. Zero moves nothing and is refused, not
+    # rounded up.
+    try:
+        delta = int(payload.get('delta', 1))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="delta must be a whole number")
+    if delta == 0:
+        raise HTTPException(status_code=400, detail="delta must not be zero")
     now = datetime.datetime.now()
     sched = storage.get_cached_schedule() or {}
     target = (_outings._as_date(payload.get('date'))
@@ -8329,12 +8339,28 @@ def packing_claim(payload: dict = Body(...)):
     date_str = target.isoformat()
     # The outing has to be real, or a stale card files claims against a trip
     # that no longer exists and they are invisible for ever.
-    live = {o['key'] for o in _outings.outings_for(target, sched, now)}
-    if outing_key not in live:
+    live_outings = {o['key']: o for o in _outings.outings_for(target, sched, now)}
+    outing = live_outings.get(outing_key)
+    if outing is None:
         raise HTTPException(status_code=404, detail="that outing is not on this day")
-    member_id = payload.get('member_id') or None
+    # The item has to be something this outing actually needs packed. Without
+    # this, any distinct garbage item_key minted its own XP (the once-guard
+    # keys on `ref_id=item_key`, so every new string is a fresh grant) and
+    # filed a claim row nothing ever prunes.
+    kits, pax = storage.get_prep_kits(), _prep.passenger_objs()
+    valid_items = {item['key'] for g in _outings.packing_for(outing, sched, kits, pax)
+                   for item in g['items']}
+    if item_key not in valid_items:
+        raise HTTPException(status_code=404, detail="that item is not part of this outing")
+    # Client-asserted identity is not trusted here: today's only caller is the
+    # DEVICE lane, and nothing stops it from POSTing any member_id it likes to
+    # mint XP for someone else. No shipped surface produces a NAMED claim yet
+    # — that is P3, which will derive identity server-side from the session,
+    # never from the payload — so every claim in P1+P2 is anonymous
+    # regardless of what was sent.
+    member_id = None
     xp = 0
-    if int(payload.get('delta') or 1) >= 0:
+    if delta > 0:
         xp = storage.add_packing_claim(outing_key, item_key, date_str, member_id)
     else:
         storage.remove_packing_claim(outing_key, item_key, date_str, member_id)
