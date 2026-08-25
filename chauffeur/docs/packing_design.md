@@ -291,7 +291,12 @@ does. That is the existing prep-kit editor's job and its existing rules apply.
   assigned, and a routine is a habit, not a to-do list for the day's logistics.
 - **No attribution on the wall.** The wall has no identity. Anonymous claims are
   honest; a name guessed from who usually stands there is not.
-- **Blank means blank.** A day with no outing needing anything draws no card.
+- **Hide what is not set up; never hide what is merely quiet.** This is the board's
+  own rule and it is stricter than "blank means blank", for a reason it learned the
+  hard way: the panel kept dropping to four tiles and the family could not tell
+  whether a tile was empty or broken. So a household with no prep kits at all gets
+  no card (the feature is unconfigured), and a household with kits and a quiet day
+  gets an honest sentence.
 - **Not a shopping list.** "We are out of sunscreen" is the supply intake arc's
   question, not this one.
 
