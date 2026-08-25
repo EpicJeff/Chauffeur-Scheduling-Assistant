@@ -360,6 +360,67 @@ def scenario_one_day_is_still_the_default():
           "the legacy top-level shape must survive")
 
 
+def scenario_prep_lands_in_the_day_before_the_outing_it_serves():
+    """F1 drew the list at the moment it was too late. A prep block is a
+    position in the list, not an appointment -- and claiming against the
+    outing moves the prep block's own count, because they are two views of
+    one truth."""
+    _seed_incident()
+    import main
+    res = main.packing_day(date=DAY, days=2)
+    preps = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'prep']
+    check(preps, f"no prep block was placed at all: "
+                 f"{[b['kind'] for d in res['days'] for b in d['blocks']]}")
+    p = preps[0]
+    check(p['for_key'] and p['for_title'],
+          f"a prep block must name the outing it serves: {p}")
+    check(p['groups'] and p['needed'] > 0,
+          f"a prep block should carry its outing's items: {p}")
+    src = [b for d in res['days'] for b in d['blocks']
+           if b['kind'] != 'prep' and b['key'] == p['for_key']]
+    check(src and src[0]['needed'] == p['needed'],
+          "the prep block and its outing must agree on what is needed")
+    check(p['start'] <= p['for_start'],
+          f"prep must sit before the thing it is for: {p['start']} vs {p['for_start']}")
+
+
+def scenario_a_tick_on_the_outing_shows_on_its_prep_block():
+    """One truth, two views: the claim is stored against the outing and the
+    item, never against the place a finger touched it."""
+    _seed_incident()
+    import main
+    res = main.packing_day(date=DAY, days=2)
+    p = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'prep'][0]
+    item = p['groups'][0]['items'][0]
+    main.packing_claim(payload={'outing_key': p['for_key'],
+                                'item_key': item['key'], 'delta': 1,
+                                'date': DAY})
+    fresh = main.packing_day(date=DAY, days=2)
+    p2 = [b for d in fresh['days'] for b in d['blocks']
+          if b['key'] == p['key']][0]
+    check(p2['packed'] == 1,
+          f"the prep block did not see the outing's claim: {p2['packed']}")
+
+
+def scenario_a_prep_key_is_not_itself_claimable():
+    """The prep block is a lens. Letting it hold claims of its own would make
+    two counts for one bag, and they would drift."""
+    _seed_incident()
+    import main
+    from fastapi import HTTPException
+    res = main.packing_day(date=DAY, days=2)
+    p = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'prep'][0]
+    item = p['groups'][0]['items'][0]
+    try:
+        main.packing_claim(payload={'outing_key': p['key'],
+                                    'item_key': item['key'], 'delta': 1,
+                                    'date': DAY})
+    except HTTPException as e:
+        check(e.status_code == 404, f"expected a 404, got {e.status_code}")
+        return
+    raise AssertionError("a claim filed against a prep key was accepted")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

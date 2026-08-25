@@ -8308,7 +8308,20 @@ def _packing_day_payload(target, sched, now, drivers, kits, pax) -> dict:
     import datetime
     from services import family_day as _fam
     from services import outings as _outings
-    day = _fam.blocks_for(target, sched, now)
+    # Two passes: the first works out which blocks have anything to pack, so
+    # `blocks_for` can place a prep block for each of them (it never touches
+    # kits or claims itself); the second resolves every block's items against
+    # the day's claims.
+    counts = {}
+    for b in _fam.blocks_for(target, sched, now, items_by_key={})['blocks']:
+        if b.get('canceled'):
+            continue
+        groups = _outings.packing_for(
+            {'event_ids': (b['event_ids'] if b['kind'] == 'outing'
+                           else [b['event_id']])}, sched, kits, pax)
+        counts[b['key']] = sum(len(g.get('items') or []) for g in groups)
+
+    day = _fam.blocks_for(target, sched, now, items_by_key=counts)
     claims = {}
     for row in storage.get_packing_claims(target.isoformat()):
         k = (row.get('outing_key'), row.get('item_key'))
@@ -8316,14 +8329,20 @@ def _packing_day_payload(target, sched, now, drivers, kits, pax) -> dict:
 
     out = []
     for b in day['blocks']:
-        groups = [] if b.get('canceled') else _outings.packing_for(
-            {'event_ids': (b['event_ids'] if b['kind'] == 'outing'
-                           else [b['event_id']])}, sched, kits, pax)
+        # A prep block is a VIEW of the outing it serves: same groups, same
+        # claim keys, so ticking in either place moves the other. The claim
+        # is stored against the outing and the item, never against the place
+        # a finger happened to touch it.
+        source_key = b.get('for_key') if b['kind'] == 'prep' else b['key']
+        source = b if b['kind'] != 'prep' else _fam_source(day['blocks'], source_key)
+        groups = [] if (b.get('canceled') or not source) else _outings.packing_for(
+            {'event_ids': (source['event_ids'] if source['kind'] == 'outing'
+                           else [source['event_id']])}, sched, kits, pax)
         packed = needed = 0
         for g in groups:
             for item in g['items']:
                 item['packed'] = min(item['needed'],
-                                     claims.get((b['key'], item['key']), 0))
+                                     claims.get((source_key, item['key']), 0))
                 packed += item['packed']
                 needed += item['needed']
         row = {**b, 'groups': groups, 'packed': packed, 'needed': needed}
@@ -8340,6 +8359,14 @@ def _packing_day_payload(target, sched, now, drivers, kits, pax) -> dict:
             'label': _day_label(target, today),
             'all_day': day['all_day'],
             'blocks': out}
+
+
+def _fam_source(blocks, key):
+    """The happening a prep block is for."""
+    for b in blocks:
+        if b['kind'] != 'prep' and b['key'] == key:
+            return b
+    return None
 
 
 def _day_label(target, today) -> str:
@@ -8384,6 +8411,12 @@ def packing_claim(payload: dict = Body(...)):
     block = by_key.get(outing_key)
     if block is None:
         raise HTTPException(status_code=404, detail="that block is not on this day")
+    # A prep block is a LENS on the outing it serves — it shows that outing's
+    # items and its claims. Letting it hold claims of its own would make two
+    # counts for one bag, and they would drift the moment one was ticked.
+    if block.get('kind') == 'prep':
+        raise HTTPException(status_code=404,
+                            detail="prep is a view of its outing - claim against the outing")
     kits, pax = storage.get_prep_kits(), _prep.passenger_objs()
     groups = [] if block.get('canceled') else _outings.packing_for(
         {'event_ids': (block['event_ids'] if block['kind'] == 'outing'

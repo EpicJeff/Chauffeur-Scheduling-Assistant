@@ -17,11 +17,27 @@ from services import outings, storage
 
 
 def blocks_for(target_date=None, sched: dict = None,
-               now: datetime.datetime = None) -> dict:
-    """Every block of one day, time-ordered, plus the all-day banner."""
+               now: datetime.datetime = None,
+               items_by_key: dict = None) -> dict:
+    """Every block of one day, time-ordered, plus the all-day banner.
+
+    `items_by_key` maps a block key to how many things it needs packed. It is
+    how the caller (the endpoint, which owns kits and claims) tells this
+    module which blocks deserve a prep block — this module never touches kits
+    or claims itself. Passing `None` means "work it out from the kits", which
+    is what a caller without the counts already to hand gets.
+    """
     now = now or datetime.datetime.now()
     target = outings._as_date(target_date) or now.date()
     sched = sched if sched is not None else (storage.get_cached_schedule() or {})
+    day = _raw_blocks(target, sched, now)
+    day['blocks'].extend(_prep_blocks(target, sched, now, items_by_key))
+    day['blocks'].sort(key=lambda b: (b['start'], b['key']))
+    return day
+
+
+def _raw_blocks(target, sched: dict, now: datetime.datetime) -> dict:
+    """One day's happenings, before prep is placed among them."""
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     assist = sched.get('assist_assignments') or {}
     contacts = {str(c.get('id')): c
@@ -75,6 +91,102 @@ def blocks_for(target_date=None, sched: dict = None,
     blocks.sort(key=lambda b: (b['start'], b['key']))
     all_day.sort()
     return {'blocks': blocks, 'all_day': all_day}
+
+
+# ── Prep is work, and work has a place in the day ────────────────────────
+#
+# F1 drew a trip's items on the trip, so the list for a 4:00 PM departure
+# appeared at 4:00 PM — a report, not help. A prep block is NOT an
+# appointment: no duration, no owner, never seen by the solver. It is a
+# POSITION in the list, at the start of the last part of the day that ends
+# before the outing leaves:
+#
+#   leaves before 12:00  ->  the PREVIOUS day's evening (17:00)
+#   leaves 12:00-17:00   ->  that day's morning        (00:00)
+#   leaves after 17:00   ->  that day's afternoon      (12:00)
+#
+# This is the rule the packing design already wrote for a child's own day
+# ("the last bucket before its outing leaves, and never after it"), which the
+# family tile never inherited. Derived on read, like everything else here.
+
+_MORNING_ENDS = 12
+_AFTERNOON_ENDS = 17
+
+
+def _prep_window(depart: datetime.datetime):
+    """Where the prep sits, and when that window shuts.
+
+    The window's END is what decides whether prep is late — being at 6am
+    inside a morning window is not "passed", it is early, which is the whole
+    point of putting the work there.
+    """
+    day = depart.date()
+    if depart.hour < _MORNING_ENDS:
+        anchor = datetime.datetime.combine(
+            day - datetime.timedelta(days=1),
+            datetime.time(_AFTERNOON_ENDS, 0))
+        return anchor, depart          # the whole evening and night to do it
+    if depart.hour < _AFTERNOON_ENDS:
+        return (datetime.datetime.combine(day, datetime.time(0, 0)),
+                datetime.datetime.combine(day, datetime.time(_MORNING_ENDS, 0)))
+    return (datetime.datetime.combine(day, datetime.time(_MORNING_ENDS, 0)),
+            datetime.datetime.combine(day, datetime.time(_AFTERNOON_ENDS, 0)))
+
+
+def _prep_blocks(target, sched: dict, now: datetime.datetime,
+                 items_by_key: dict = None) -> List[dict]:
+    """The prep blocks that belong to `target`.
+
+    A morning outing's prep belongs to the evening BEFORE it, so this looks
+    at tomorrow's happenings as well as today's — and a block whose window
+    has already gone moves to the front of what is left, because a list you
+    can act on beats a list that is filed correctly and invisible.
+    """
+    out = []
+    for offset in (0, 1):
+        day = target + datetime.timedelta(days=offset)
+        for b in _raw_blocks(day, sched, now)['blocks']:
+            if b.get('canceled') or b['kind'] == 'prep':
+                continue
+            if not _has_items(b, sched, items_by_key):
+                continue
+            depart = outings._parse(b.get('start'))
+            if not depart:
+                continue
+            anchor, window_ends = _prep_window(depart)
+            if window_ends < now < depart:
+                anchor = now          # passed, still wanted: keep asking
+            if anchor.date() != target:
+                continue
+            out.append({
+                'kind': 'prep',
+                'key': f"prep:{b['key']}",
+                'for_key': b['key'],
+                'for_title': _block_title(b),
+                'for_start': b.get('start'),
+                'passengers': b.get('passengers') or [],
+                'start': anchor.isoformat(),
+                'end': anchor.isoformat(),
+            })
+    return out
+
+
+def _has_items(b: dict, sched: dict, items_by_key: dict = None) -> bool:
+    if items_by_key is not None:
+        return bool(items_by_key.get(b['key']))
+    try:
+        groups = outings.packing_for(
+            {'event_ids': (b['event_ids'] if b['kind'] == 'outing'
+                           else [b['event_id']])}, sched)
+        return any(g.get('items') for g in groups)
+    except Exception:
+        return False
+
+
+def _block_title(b: dict) -> str:
+    if b['kind'] == 'outing':
+        return ' + '.join(e.get('title') or 'Event' for e in b.get('events') or [])
+    return b.get('title') or 'Event'
 
 
 def day_in_focus(now: datetime.datetime = None, sched: dict = None) -> datetime.date:

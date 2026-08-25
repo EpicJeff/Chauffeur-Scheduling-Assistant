@@ -160,6 +160,21 @@ function capture() {
     paxDots: root ? [...root.querySelectorAll('.fd-pax-dot')].map(
       e => ({ color: e.style.backgroundColor || '', name: e.getAttribute('title') || '' })) : [],
     containers: root ? root.querySelectorAll('.agenda-day').length : 0,
+    // F3: the prep block is the one thing on the card a household is MEANT to
+    // act on, so its chips are always on screen -- no caret to open, no pill
+    // to summarise what is already visible.
+    preps: root ? [...root.querySelectorAll('.fd-prep')].map(e => ({
+      text: txt(e),
+      chips: [...e.querySelectorAll('.fd-item-chip')].map(c => txt(c)),
+      todo: e.querySelectorAll('.fd-chip-todo').length,
+      done: e.querySelectorAll('.fd-chip-done').length,
+      caret: !!e.querySelector('.fd-caret'),
+      pill: !!(e.querySelector('.pk-pill-amber') || e.querySelector('.pk-pill-done')),
+      dots: e.querySelectorAll('.fd-pax-dot').length,
+      steppers: [...e.querySelectorAll('button')].map(b => txt(b))
+                  .filter(t => t === '+' || t === '\u2212').length,
+    })) : [],
+    chips: root ? [...root.querySelectorAll('.fd-item-chip')].map(c => txt(c)) : [],
     daySeps: root ? root.querySelectorAll('.fd-day-sep').length : 0,
     // Per block: which pill class (if any) its row carries, and the row's
     // own text — enough to pin the two-state rule without trusting colour.
@@ -670,6 +685,107 @@ def scenario_every_trip_is_a_container_even_with_one_event():
     chip = {c['key']: c['chip'] for c in got['outingChip']}
     check(chip.get('d1:soccer'),
           f"a single-event outing should still wear its Outing chip: {chip}")
+
+
+# ── F3: prep is work, and work has a place in the day ────────────────────
+
+PREP_DAY = {
+    'date': '2026-09-08', 'is_tomorrow': False, 'all_day': [],
+    'days': [{'date': '2026-09-08', 'label': 'Today', 'is_today': True,
+              'all_day': [], 'blocks': [
+        {'kind': 'prep', 'key': 'prep:d1:soccer', 'for_key': 'd1:soccer',
+         'for_title': 'Soccer + Band practice',
+         'for_start': '2026-09-08T16:00:00',
+         'start': '2026-09-08T00:00:00', 'end': '2026-09-08T00:00:00',
+         'passengers': [{'id': 'm-ellie', 'name': 'Ellie', 'color': '#ec4899'}],
+         'groups': [
+             {'kit_id': 'k1', 'kit': 'Soccer bag', 'people': ['ellie', 'theo'],
+              'items': [
+                  {'key': 'k1:water bottle', 'label': 'Water bottle',
+                   'needed': 2, 'packed': 0},
+                  {'key': 'k1:cleats', 'label': 'Cleats',
+                   'needed': 1, 'packed': 1},
+              ]},
+         ], 'packed': 1, 'needed': 3},
+        {'kind': 'outing', 'key': 'd1:soccer', 'driver': 'Dad', 'driver_id': 'd1',
+         'color': '#2563eb', 'car': 'Van',
+         'start': '2026-09-08T16:00:00', 'end': '2026-09-08T19:00:00',
+         'events': [
+             {'id': 'soccer', 'title': 'Soccer', 'start': '2026-09-08T16:00:00',
+              'color': '#ec4899', 'passengers': []},
+             {'id': 'band', 'title': 'Band practice', 'start': '2026-09-08T17:30:00',
+              'color': '#22d3ee', 'passengers': []},
+         ],
+         'passengers': [],
+         'groups': [
+             {'kit_id': 'k1', 'kit': 'Soccer bag', 'people': ['ellie', 'theo'],
+              'items': [
+                  {'key': 'k1:water bottle', 'label': 'Water bottle',
+                   'needed': 2, 'packed': 0},
+                  {'key': 'k1:cleats', 'label': 'Cleats',
+                   'needed': 1, 'packed': 1},
+              ]},
+         ], 'packed': 1, 'needed': 3},
+    ]}],
+    'blocks': [],
+}
+PREP_DAY['blocks'] = PREP_DAY['days'][0]['blocks']
+
+
+def scenario_a_prep_block_shows_its_work_without_being_opened():
+    """The one block a household is MEANT to act on. F1 hid the list behind
+    the outing it was for, at the moment it was already too late."""
+    got = _run(PREP_DAY, interactive=True, expand='')
+    if got is None:
+        return
+    check(not got['errors'], f"the card threw while drawing: {got['errors'][:3]}")
+    check(len(got['preps']) == 1, f"expected one prep block: {got['preps']}")
+    prep = got['preps'][0]
+    check(sorted(prep['chips']) == ['Cleats', 'Water bottle'] or
+          any('Water bottle' in c for c in prep['chips']),
+          f"the prep block should show its items as chips: {prep['chips']}")
+    check('Soccer + Band practice' in prep['text'],
+          f"the prep block must name the outing it serves: {prep['text']}")
+    check(prep['dots'] >= 1,
+          f"the prep block must say who it is for: {prep}")
+
+
+def scenario_a_prep_block_has_no_caret_and_no_pill():
+    """Its chips ARE the status, so a pill would be redundant and an arrow
+    would open onto what is already on screen — and six amber chips beside an
+    amber pill breaks the one-saturated-element rule by volume."""
+    got = _run(PREP_DAY, interactive=True, expand='')
+    if got is None:
+        return
+    prep = got['preps'][0]
+    check(not prep['caret'], "a prep block drew an expand arrow")
+    check(not prep['pill'], "a prep block drew the pill its chips replace")
+
+
+def scenario_a_chip_carries_its_state_and_its_stepper():
+    """One-of-a-thing is a toggle; several people needing one each makes the
+    count the whole story, so that chip keeps its stepper."""
+    got = _run(PREP_DAY, interactive=True, expand='')
+    if got is None:
+        return
+    prep = got['preps'][0]
+    check(prep['todo'] == 1 and prep['done'] == 1,
+          f"expected one to-pack chip and one packed chip: {prep}")
+    check(any(c.startswith('\u2713') for c in prep['chips']),
+          f"a packed chip should wear its checkmark: {prep['chips']}")
+    check(prep['steppers'] == 2,
+          f"the needed>1 item should carry a - and a + : {prep}")
+
+
+def scenario_a_display_only_wall_gets_chips_but_no_buttons():
+    got = _run(PREP_DAY, interactive=False, expand='')
+    if got is None:
+        return
+    prep = got['preps'][0]
+    check(prep['chips'], f"a read-only card should still show the chips: {prep}")
+    check(prep['steppers'] == 0,
+          f"a read-only card must carry no claim controls at all: {prep}")
+    check(not got['posted'], f"merely drawing the card posted: {got['posted']}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

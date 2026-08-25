@@ -270,7 +270,34 @@
                                      just with no caret to hit (see
                                      `pkExpandable`: nothing to unfold on a
                                      thing not happening). -->
-                                <template x-if="!pkIsContainer(b)">
+                                <!-- A PREP BLOCK: the packing itself, sitting
+                                     where a household could actually do it
+                                     rather than beside the outing it serves
+                                     (docs/family_day_design.md, "Prep is
+                                     work"). No pill and no caret: its chips
+                                     ARE the status and they are always
+                                     visible, so a summary would be redundant
+                                     and an arrow would open onto what is
+                                     already on screen. -->
+                                <template x-if="b.kind === 'prep'">
+                                    <div class="fd-prep rounded-xl border border-dashed border-gray-700 bg-gray-900/60 p-2.5 space-y-1.5">
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 shrink-0">Pack</span>
+                                            <span class="text-[13px] font-bold text-white truncate" x-text="b.for_title"></span>
+                                            <span class="text-[11px] font-semibold text-gray-400 shrink-0"
+                                                x-text="pkClock(b.for_start)"></span>
+                                            <span class="flex items-center gap-1 shrink-0 ml-auto">
+                                                <template x-for="pp in (b.passengers || [])" :key="'fd-prep-pax-' + b.key + '-' + pp.id">
+                                                    <span class="fd-pax-dot w-2.5 h-2.5 rounded-full border border-white/20 shrink-0"
+                                                        :style="'background-color: ' + (pp.color || '#6b7280')"
+                                                        :title="pp.name"></span>
+                                                </template>
+                                            </span>
+                                        </div>
+                                        {{ item_chips() }}
+                                    </div>
+                                </template>
+                                <template x-if="b.kind !== 'prep' && !pkIsContainer(b)">
                                     <div class="w-full" @click="pkFlatRowClick($event, b)" x-html="pkRowHtml(b)"></div>
                                 </template>
 
@@ -305,66 +332,7 @@
                                 <template x-if="pkOpen(b) && pkExpandable(b)">
                                     <div class="mt-2">
                                         <div class="rounded-xl bg-gray-900 border border-gray-800 p-3 space-y-3">
-                                        <template x-if="!b.groups.length">
-                                            <div class="text-xs text-gray-500">Nothing to pack.</div>
-                                        </template>
-                                        <template x-for="g in b.groups" :key="'fd-grp-' + b.key + '-' + g.kit_id">
-                                            <div>
-                                                <div class="text-[11px] uppercase tracking-widest text-gray-500 font-bold mb-1.5"
-                                                    x-text="g.kit"></div>
-                                                <div class="space-y-1">
-                                                    <template x-for="it in g.items" :key="'fd-item-' + b.key + '-' + it.key">
-                                                        <div>
-                                                            <!-- Needing exactly one is a tick; needing more than
-                                                                 one is a stepper. Two separate branches, the
-                                                                 lanes' own reason: Alpine has no dynamic tag and
-                                                                 no dynamic control, so one hand-copied inside
-                                                                 drawing two different controls is how they drift. -->
-                                                            <template x-if="it.needed <= 1 && pkInteractive">
-                                                                <button type="button"
-                                                                    @click="pkTapTick(b, it)"
-                                                                    class="w-full text-left flex items-center gap-2.5 py-1">
-                                                                    {{ tick_glyph() }}
-                                                                </button>
-                                                            </template>
-                                                            <template x-if="it.needed <= 1 && !pkInteractive">
-                                                                <div class="flex items-center gap-2.5 py-1">
-                                                                    {{ tick_glyph() }}
-                                                                </div>
-                                                            </template>
-                                                            <template x-if="it.needed > 1">
-                                                                <div class="flex items-center gap-2.5 py-1">
-                                                                    <span class="text-sm font-semibold flex-1 min-w-0 truncate"
-                                                                        :class="it.packed >= it.needed ? 'text-gray-500 line-through' : 'text-gray-200'"
-                                                                        x-text="it.label"></span>
-                                                                    <!-- Two branches, not one div toggled with x-show: a
-                                                                         hidden button still answers querySelector, and a
-                                                                         read-only wall panel must not carry live claim
-                                                                         controls just because nobody can see them. -->
-                                                                    <template x-if="pkInteractive">
-                                                                    <div class="flex items-center gap-1.5 shrink-0">
-                                                                        <button type="button" @click="pkClaim(b, it, -1)"
-                                                                            :disabled="it.packed <= 0"
-                                                                            class="w-6 h-6 rounded-full bg-gray-800 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">−</button>
-                                                                        <span class="text-xs font-bold w-9 text-center tabular-nums"
-                                                                            :class="it.packed >= it.needed ? 'text-green-400' : 'text-gray-300'"
-                                                                            x-text="it.packed + '/' + it.needed"></span>
-                                                                        <button type="button" @click="pkClaim(b, it, 1)"
-                                                                            :disabled="it.packed >= it.needed"
-                                                                            class="w-6 h-6 rounded-full bg-gray-800 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">+</button>
-                                                                    </div>
-                                                                    </template>
-                                                                    <template x-if="!pkInteractive">
-                                                                    <span class="text-xs font-bold w-9 text-center text-gray-400 tabular-nums"
-                                                                        x-text="it.packed + '/' + it.needed"></span>
-                                                                    </template>
-                                                                </div>
-                                                            </template>
-                                                        </div>
-                                                    </template>
-                                                </div>
-                                            </div>
-                                        </template>
+                                        {{ item_chips() }}
                                         </div>
                                     </div>
                                 </template>
@@ -382,6 +350,62 @@
    macro for the same reason `routine_lanes.html`'s `routine_row()` is one —
    a button branch and a div branch share it so an interactive card and a
    display-only one never quietly draw two different things. #}
+{% macro item_chips() %}
+                                        <template x-if="!b.groups.length">
+                                            <div class="text-xs text-gray-500">Nothing to pack.</div>
+                                        </template>
+                                        <template x-for="g in b.groups" :key="'fd-grp-' + b.key + '-' + g.kit_id">
+                                            <div class="flex flex-wrap items-center gap-1.5">
+                                                <!-- The kit name takes the slot the My Drives row gives
+                                                     its own "Bring" label (app.html:1886-1889) — you pack
+                                                     INTO a bag, so which bag is the first thing a row of
+                                                     chips has to say. -->
+                                                <span class="text-[10px] uppercase tracking-widest text-gray-500 font-bold mr-0.5"
+                                                    x-text="g.kit"></span>
+                                                <template x-for="it in g.items" :key="'fd-item-' + b.key + '-' + it.key">
+                                                    <!-- Chip and stepper are ONE non-breaking unit: a wrap
+                                                         between them strands a count from what it counts. -->
+                                                    <span class="inline-flex items-center gap-1 whitespace-nowrap">
+                                                        <template x-if="pkInteractive">
+                                                            <button type="button" @click="pkTapChip(b, it)"
+                                                                class="fd-item-chip px-3 py-1.5 rounded-xl border-2 font-bold text-sm"
+                                                                :class="it.packed >= it.needed
+                                                                    ? 'fd-chip-done bg-green-600/20 border-green-500/60 text-green-200'
+                                                                    : 'fd-chip-todo bg-amber-500/10 border-amber-500/40 text-amber-200'"
+                                                                x-text="(it.packed >= it.needed ? '\u2713 ' : '') + it.label"></button>
+                                                        </template>
+                                                        <template x-if="!pkInteractive">
+                                                            <span class="fd-item-chip px-3 py-1.5 rounded-xl border-2 font-bold text-sm"
+                                                                :class="it.packed >= it.needed
+                                                                    ? 'fd-chip-done bg-green-600/20 border-green-500/60 text-green-200'
+                                                                    : 'fd-chip-todo bg-amber-500/10 border-amber-500/40 text-amber-200'"
+                                                                x-text="(it.packed >= it.needed ? '\u2713 ' : '') + it.label"></span>
+                                                        </template>
+                                                        <!-- Several people needing one each makes the COUNT the
+                                                             whole story; a boolean chip would hide it. -->
+                                                        <template x-if="it.needed > 1 && pkInteractive">
+                                                            <span class="inline-flex items-center gap-1">
+                                                                <button type="button" @click="pkClaim(b, it, -1)"
+                                                                    :disabled="it.packed <= 0"
+                                                                    class="w-6 h-6 rounded-full bg-gray-800 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">−</button>
+                                                                <span class="text-xs font-bold w-8 text-center tabular-nums"
+                                                                    :class="it.packed >= it.needed ? 'text-green-400' : 'text-gray-300'"
+                                                                    x-text="it.packed + '/' + it.needed"></span>
+                                                                <button type="button" @click="pkClaim(b, it, 1)"
+                                                                    :disabled="it.packed >= it.needed"
+                                                                    class="w-6 h-6 rounded-full bg-gray-800 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">+</button>
+                                                            </span>
+                                                        </template>
+                                                        <template x-if="it.needed > 1 && !pkInteractive">
+                                                            <span class="text-xs font-bold w-8 text-center text-gray-400 tabular-nums"
+                                                                x-text="it.packed + '/' + it.needed"></span>
+                                                        </template>
+                                                    </span>
+                                                </template>
+                                            </div>
+                                        </template>
+{% endmacro %}
+
 {% macro tick_glyph() %}
                                                                     <span class="rounded-full border-2 flex items-center justify-center shrink-0 w-5 h-5 text-[11px] font-bold"
                                                                         :class="it.packed >= it.needed ? 'bg-green-500 border-green-500 text-white' : 'border-gray-600 text-transparent'">✓</span>
@@ -530,6 +554,16 @@
             // trip is an outing").
             pkIsContainer(b) {
                 return b.kind === 'outing';
+            },
+            // A prep block's own time, borrowed from the thing it serves --
+            // the block itself has no duration and no appointment, only a
+            // position in the list.
+            pkClock(iso) {
+                if (!iso) return '';
+                const d = new Date(iso);
+                if (isNaN(d)) return '';
+                return d.toLocaleTimeString(undefined,
+                    { hour: 'numeric', minute: '2-digit' });
             },
             // A separator's date, in the agenda's own compact form.
             pkDayDate(d) {
@@ -793,6 +827,18 @@
             // states a needed-one item has.
             pkTapTick(b, it) {
                 this.pkClaim(b, it, it.packed >= it.needed ? -1 : 1);
+            },
+            // A chip tap: for the ordinary one-of-a-thing item it toggles, the
+            // way the drive sheet's own prep chips have always worked
+            // (app.html:6601-6607). For an item several people each need one
+            // of, a tap adds one and the stepper beside it takes one back --
+            // toggling a count would throw away work somebody else did.
+            pkTapChip(b, it) {
+                if (it.needed > 1) {
+                    if (it.packed < it.needed) this.pkClaim(b, it, 1);
+                    return;
+                }
+                this.pkTapTick(b, it);
             },
             // The optimistic tick: applied locally before the request lands
             // (the pattern `togglePrepConfirmed` uses in app.html), the

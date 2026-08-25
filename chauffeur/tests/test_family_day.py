@@ -19,7 +19,7 @@ os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp(prefix='chauffeur_f
 
 import datetime  # noqa: E402
 
-from services import family_day  # noqa: E402
+from services import family_day, outings  # noqa: E402
 
 
 def check(cond, msg):
@@ -233,6 +233,107 @@ def scenario_nobody_is_invented_for_an_unmatched_calendar():
     check(got['passengers'] == [], f"invented a person: {got['passengers']}")
     check(got.get('color') in (None, ''),
           f"an unknown calendar has no colour to borrow: {got.get('color')}")
+
+
+# ── F3: prep is work, and work has a place in the day ────────────────────
+#
+# F1 drew the items on the outing they belong to, which means the list for a
+# 4:00 PM departure appeared at 4:00 PM. That is a report, not help. A prep
+# block is not an appointment -- it has no duration and never reaches the
+# solver -- it is a POSITION in the list, placed where a household could
+# actually do the packing.
+
+
+def _kit_sched(events, assignments=None, **extra):
+    return _pax_sched(events, assignments, **extra)
+
+
+def _preps(day, sched, key, now=None):
+    """`items_by_key` is how the caller says which blocks have anything to
+    pack — family_day itself never touches kits or claims."""
+    got = family_day.blocks_for(day, sched, now or datetime.datetime(2026, 9, 8, 6, 0),
+                                items_by_key={key: 2})
+    return [b for b in got['blocks'] if b['kind'] == 'prep']
+
+
+def scenario_a_morning_outing_is_packed_the_night_before():
+    """06:40 on the way out of the door is not a time anybody packs a bag."""
+    ev = _ev('swim', 7, 30, title='Swim')
+    ev['calendar_ids'] = ['ellie@cal']
+    sched = _kit_sched([ev], {'swim': 'd1'})
+    got = family_day.blocks_for(DAY, sched, datetime.datetime(2026, 9, 7, 9, 0),
+                                items_by_key={'d1:swim': 2})
+    prep = [b for b in got['blocks'] if b['kind'] == 'prep']
+    check(prep == [], "a morning outing's prep belongs to the day BEFORE it")
+    prior = family_day.blocks_for('2026-09-07', sched,
+                                  datetime.datetime(2026, 9, 7, 9, 0),
+                                  items_by_key={'d1:swim': 2})
+    prep = [b for b in prior['blocks'] if b['kind'] == 'prep']
+    check(len(prep) == 1, f"the night before should carry the prep: {prior['blocks']}")
+    anchor = outings._parse(prep[0]['start'])
+    check(anchor.hour == 17 and anchor.date() == datetime.date(2026, 9, 7),
+          f"prep for a morning outing sits in the previous evening: {prep[0]}")
+    check(prep[0]['for_key'] == 'd1:swim', f"prep must name its outing: {prep[0]}")
+
+
+def scenario_an_afternoon_outing_is_packed_that_morning():
+    ev = _ev('soccer', 16, title='Soccer')
+    ev['calendar_ids'] = ['ellie@cal']
+    sched = _kit_sched([ev], {'soccer': 'd1'})
+    prep = _preps(DAY, sched, 'd1:soccer')
+    check(len(prep) == 1, f"expected one prep block: {prep}")
+    anchor = outings._parse(prep[0]['start'])
+    check(anchor.hour == 0 and anchor.date() == datetime.date(2026, 9, 8),
+          f"prep for an afternoon outing sits in that morning: {prep[0]}")
+
+
+def scenario_an_evening_outing_is_packed_that_afternoon():
+    """Not at dawn: a cooler packed ten hours early is its own kind of wrong,
+    which is why the rule is bucket-shaped rather than everything-at-once."""
+    ev = _ev('game', 19, title='Game')
+    ev['calendar_ids'] = ['ellie@cal']
+    sched = _kit_sched([ev], {'game': 'd1'})
+    prep = _preps(DAY, sched, 'd1:game')
+    anchor = outings._parse(prep[0]['start'])
+    check(anchor.hour == 12, f"prep for an evening outing sits that afternoon: {prep[0]}")
+
+
+def scenario_a_passed_window_keeps_asking():
+    """A list you can act on beats a list that is filed correctly and
+    invisible: if its window has gone and it is still unpacked, it moves to
+    the front of what is left."""
+    ev = _ev('soccer', 16, title='Soccer')
+    ev['calendar_ids'] = ['ellie@cal']
+    sched = _kit_sched([ev], {'soccer': 'd1'})
+    late = datetime.datetime(2026, 9, 8, 14, 30)
+    prep = _preps(DAY, sched, 'd1:soccer', now=late)
+    anchor = outings._parse(prep[0]['start'])
+    check(anchor >= late,
+          f"a passed, unpacked prep block should move to now: {prep[0]}")
+
+
+def scenario_an_outing_with_nothing_to_pack_has_no_prep_block():
+    ev = _ev('soccer', 16, title='Soccer')
+    ev['calendar_ids'] = ['ellie@cal']
+    sched = _kit_sched([ev], {'soccer': 'd1'})
+    got = family_day.blocks_for(DAY, sched, datetime.datetime(2026, 9, 8, 6, 0),
+                                items_by_key={})
+    check([b for b in got['blocks'] if b['kind'] == 'prep'] == [],
+          "an outing with no items invented a prep block")
+
+
+def scenario_a_prep_block_names_the_event_and_its_people():
+    """You might pack cleats for the wrong kid if you do not know who the
+    activity is for."""
+    ev = _ev('soccer', 16, title='Soccer practice')
+    ev['calendar_ids'] = ['ellie@cal']
+    sched = _kit_sched([ev], {'soccer': 'd1'})
+    prep = _preps(DAY, sched, 'd1:soccer')[0]
+    check('Soccer practice' in prep['for_title'],
+          f"the prep block should name the event it serves: {prep}")
+    check([p['name'] for p in prep['passengers']] == ['Ellie'],
+          f"the prep block should name who it is for: {prep}")
+    check(prep['key'] == 'prep:d1:soccer', f"unexpected prep key: {prep['key']}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
