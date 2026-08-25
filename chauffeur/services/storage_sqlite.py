@@ -48,6 +48,7 @@ INDEX_SPEC = {
     "pool_contributions": [["reward_id"], ["member_id"]],
     "agent_action_proposals": [["id"], ["status"]],
     "prep_status": [["event_id"]],
+    "packing_claims": [["date_str"], ["outing_key"]],
     "shopping_lists": [["id"]],
     # list_id is the hot lookup (every read is "the items on this list"); id
     # indexed because per-item PATCH is the ONLY write path (design §M1).

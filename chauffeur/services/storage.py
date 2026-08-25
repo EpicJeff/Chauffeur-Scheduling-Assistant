@@ -446,6 +446,7 @@ with db_lock:
     ingest_log_table = db.table('ingest_log')
     prep_kits_table = db.table('prep_kits')
     prep_status_table = db.table('prep_status')
+    packing_claims_table = db.table('packing_claims')
     daily_stats_table = db.table('daily_stats')
     cars_table = db.table('cars')
     status_protocols_table = db.table('status_protocols')
@@ -3928,6 +3929,8 @@ PET_XP_RATES = {
     'pet_xp_routine_all_bonus': 10,
 }
 
+PACKING_XP = 2                       # one item packed; a routine item is 3
+
 
 def pet_xp_rate(key: str):
     s = get_settings() or {}
@@ -6441,6 +6444,65 @@ def set_prep_confirmed(event_id: str, confirmed: bool, member_id: str = None):
 def get_confirmed_preps() -> List[str]:
     with db_lock:
         return [doc['event_id'] for doc in prep_status_table.all()]
+
+# A packing CLAIM: one person (or one anonymous pair of hands at the wall)
+# has packed one of something for one outing on one day.
+#
+# A count, not a checkbox, because an item needs as many as there are people
+# it covers — two children at one practice need two water bottles, and a
+# single tick is how one of them goes thirsty.
+#
+# `member_id` is None for a tap on the wall. The wall has no identity and
+# guessing one would be a lie with a currency attached: `prep_status` already
+# writes a `confirmed_by` nobody ever reads, and this does not repeat it.
+def add_packing_claim(outing_key: str, item_key: str, date_str: str,
+                      member_id: str = None) -> int:
+    """Record one claim. Returns the xp minted (0 for an anonymous tap)."""
+    import time
+    import uuid as _uuid
+    with db_lock:
+        packing_claims_table.insert({
+            'id': _uuid.uuid4().hex, 'outing_key': str(outing_key),
+            'item_key': str(item_key), 'date_str': str(date_str),
+            'member_id': member_id, 'ts': time.time()})
+    if not member_id:
+        return 0
+    # Packing your own bag is real work and the household wanted it to feel
+    # that way — but it is not a chore somebody assigned (no points) and not a
+    # habit (no routine, no streak). `once` per (member, item, day) is the
+    # same anti-faucet guard routines pass, because a child can tick and untick
+    # a box all afternoon.
+    return grant_pet_xp(member_id, PACKING_XP, 'prep',
+                        ref_id=str(item_key), date_str=str(date_str), once=True)
+
+
+def remove_packing_claim(outing_key: str, item_key: str, date_str: str,
+                         member_id: str = None) -> bool:
+    """Drop ONE claim — the member's own if named, else any anonymous one.
+
+    The xp is never clawed back: a thing earned is never taken away, and a box
+    tapped by accident must not cost a child anything.
+    """
+    with db_lock:
+        rows = packing_claims_table.search(
+            (Query().outing_key == str(outing_key))
+            & (Query().item_key == str(item_key))
+            & (Query().date_str == str(date_str)))
+        if member_id:
+            mine = [r for r in rows if r.get('member_id') == member_id]
+            rows = mine or [r for r in rows if not r.get('member_id')]
+        else:
+            anon = [r for r in rows if not r.get('member_id')]
+            rows = anon or rows
+        if not rows:
+            return False
+        packing_claims_table.remove(Query().id == rows[0]['id'])
+        return True
+
+
+def get_packing_claims(date_str: str) -> List[dict]:
+    with db_lock:
+        return packing_claims_table.search(Query().date_str == str(date_str))
 
 def get_completed_drives():
     with db_lock:
