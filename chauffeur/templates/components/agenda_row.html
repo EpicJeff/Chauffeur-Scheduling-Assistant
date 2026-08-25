@@ -112,6 +112,16 @@ window.agendaEventEsc = _agRowEsc;
 // wires its own tap target instead (the Family Day card taps a row body to
 // open details and a separate caret to expand) leaves both unset and gets a
 // plain, inert row, drawing its own tap handling around it instead.
+function _agRowPassengerDots(passengers) {
+    if (!passengers || !passengers.length) return '';
+    const dots = passengers.slice(0, 5).map(p =>
+        `<span class="fd-pax-dot w-2.5 h-2.5 rounded-full border border-white/20 shrink-0"
+               style="background-color: ${_agRowEsc(p.color || '#6b7280')}"
+               title="${_agRowEsc(p.name || '')}"></span>`).join('');
+    return `<span class="flex items-center gap-1 shrink-0 ml-auto mr-1">${dots}</span>`;
+}
+
+
 function agendaEventRow(ev, opts) {
     opts = opts || {};
     const props = ev.extendedProps || {};
@@ -122,6 +132,14 @@ function agendaEventRow(ev, opts) {
 
     const badge = _agRowBadgeHtml(props, opts.extraBadgeHtml);
     const trailing = opts.trailingHtml || '';
+    // Who is this for? The bar already answers it for ONE person (the
+    // calendar's colour is the person's colour), but a two-child event reads
+    // as one child's, and packing cleats for the wrong child is a real
+    // failure. Dots are the calendar GRID's own answer to the same question
+    // (`family_calendar.html:730-742`) — the agenda simply never borrowed
+    // them. `opts.passengers` is opt-in so the calendar's own rows are
+    // untouched until it asks.
+    const dots = _agRowPassengerDots(opts.passengers);
 
     // What has already happened stays, greyed — dropping it makes a busy
     // morning invisible. A canceled row (the Family Day card's own state,
@@ -136,7 +154,7 @@ function agendaEventRow(ev, opts) {
         <span class="text-[11px] font-semibold text-gray-400">${_agRowEsc(timeLabel)}</span>
         <div class="flex items-center justify-between gap-2">
             <span class="text-[13px] font-bold text-white truncate${opts.canceled ? ' line-through' : ''}">${_agRowEsc(ev.title)}</span>
-            ${badge}${trailing}
+            ${dots}${badge}${trailing}
         </div>`;
     if (opts.tappable && opts.onClick) row.onclick = () => opts.onClick(ev);
     return row;

@@ -445,6 +445,11 @@ WIDGETS = [
               help='Tick things off on the wall. Off, the card is a display.'),
          _opt('members', 'People', 'select', [], source='members', multi=True,
               help='Leave empty for the whole household.'),
+         # The agenda this card replaces shows a week, and prep for tomorrow
+         # morning has to be visible tonight — a one-day card cannot show
+         # work that belongs to the evening before.
+         _opt('days', 'Days', 'int', 1, min=1, max=7,
+              help='How many days ahead to show. One day is just today.'),
      ]},
     {'key': 'routines', 'icon': '🔁', 'label': 'Routines',
      'heading': 'Streaks',
@@ -1870,7 +1875,8 @@ def _tile_packing(now, config=None, **_):
     """
     try:
         return {'interactive': _cfg_bool(config, 'interactive', True),
-                'members': _cfg_ids(config, 'members')}
+                'members': _cfg_ids(config, 'members'),
+                'days': _cfg_int(config, 'days', 1, 1, 7)}
     except Exception as e:
         print(f"[home_board] packing card failed: {e}")
         return None

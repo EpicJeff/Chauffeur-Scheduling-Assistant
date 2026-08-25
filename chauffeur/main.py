@@ -8268,14 +8268,17 @@ def suggest_prep_kits():
     return {"kits": kits}
 
 @app.get("/api/packing/day")
-def packing_day(date: str = None):
-    """Every block of the day the household is thinking about — outings,
-    at-home events, covered rides — with what each needs packed and how much
-    is done. The Family Day card's feed (self-fetched, rule 2).
+def packing_day(date: str = None, days: int = 1):
+    """The household's day (or several), as blocks: outings, at-home events,
+    covered rides, and the prep that has to happen before them.
 
     A block with nothing to pack still draws: a drive is a happening whether
     or not it has cargo. That inverts the packing tile's old rule on purpose
     (docs/family_day_design.md, "What changes underneath").
+
+    `days` exists because the agenda this card replaces shows several, and
+    because prep for tomorrow morning has to be visible tonight -- a one-day
+    card cannot show work that belongs to the evening before.
     """
     import datetime
     from services import family_day as _fam
@@ -8283,14 +8286,33 @@ def packing_day(date: str = None):
     from services import prep_kits as _prep
     now = datetime.datetime.now()
     sched = storage.get_cached_schedule() or {}
-    target = (_outings._as_date(date) if date else None) or _fam.day_in_focus(now, sched)
+    first = (_outings._as_date(date) if date else None) or _fam.day_in_focus(now, sched)
+    span = max(1, min(int(days or 1), 14))
+    drivers = {str(d.get('id')): d for d in storage.get_all_drivers()}
+    kits, pax = storage.get_prep_kits(), _prep.passenger_objs()
+
+    out_days = []
+    for i in range(span):
+        target = first + datetime.timedelta(days=i)
+        out_days.append(_packing_day_payload(target, sched, now, drivers, kits, pax))
+    return {'date': first.isoformat(),
+            'is_tomorrow': first > now.date(),
+            'days': out_days,
+            # Day one stays at the top level so an older card keeps working.
+            'all_day': out_days[0]['all_day'],
+            'blocks': out_days[0]['blocks']}
+
+
+def _packing_day_payload(target, sched, now, drivers, kits, pax) -> dict:
+    """One day, with every block's packing resolved against its claims."""
+    import datetime
+    from services import family_day as _fam
+    from services import outings as _outings
     day = _fam.blocks_for(target, sched, now)
     claims = {}
     for row in storage.get_packing_claims(target.isoformat()):
         k = (row.get('outing_key'), row.get('item_key'))
         claims[k] = claims.get(k, 0) + 1
-    drivers = {str(d.get('id')): d for d in storage.get_all_drivers()}
-    kits, pax = storage.get_prep_kits(), _prep.passenger_objs()
 
     out = []
     for b in day['blocks']:
@@ -8311,10 +8333,22 @@ def packing_day(date: str = None):
                         'color': d.get('color_code'),
                         'car': _car_for(b, sched)})
         out.append(row)
+    today = now.date()
     return {'date': target.isoformat(),
-            'is_tomorrow': target > now.date(),
+            'is_today': target == today,
+            'is_tomorrow': target == today + datetime.timedelta(days=1),
+            'label': _day_label(target, today),
             'all_day': day['all_day'],
             'blocks': out}
+
+
+def _day_label(target, today) -> str:
+    import datetime
+    if target == today:
+        return 'Today'
+    if target == today + datetime.timedelta(days=1):
+        return 'Tomorrow'
+    return target.strftime('%A')
 
 
 @app.post("/api/packing/claim")

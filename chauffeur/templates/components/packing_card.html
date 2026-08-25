@@ -139,7 +139,24 @@
 
                         <template x-if="blocks.length">
                         <div class="space-y-2">
-                        <template x-for="b in blocks" :key="'fd-block-' + b.key">
+                        <template x-for="d in days" :key="'fd-day-' + d.date">
+                        <div class="space-y-2">
+                        <!-- A day boundary is a SEPARATOR, not another
+                             nested panel: day > outing > event > items is
+                             one level too deep to read from three metres
+                             (docs/family_day_design.md, "More than one
+                             day"). Drawn only when the card is showing more
+                             than one, so a single-day wall is unchanged. -->
+                        <template x-if="days.length > 1">
+                            <div class="fd-day-sep flex items-baseline gap-2 pt-1 px-1">
+                                <span class="text-sm font-bold text-gray-300" x-text="d.label"></span>
+                                <span class="text-[11px] font-semibold text-gray-500" x-text="pkDayDate(d)"></span>
+                            </div>
+                        </template>
+                        <template x-if="days.length > 1 && !d.blocks.length">
+                            <div class="text-xs text-gray-500 italic px-1 py-1">Nothing scheduled</div>
+                        </template>
+                        <template x-for="b in d.blocks" :key="'fd-block-' + b.key">
                             <!-- The user's own framing: a day is a container
                                  for multiple events, and an outing is the
                                  same concept -- so it wears the same builder
@@ -355,6 +372,8 @@
                         </template>
                         </div>
                         </template>
+                        </div>
+                        </template>
                     </div>
                     </template>
 {% endmacro %}
@@ -382,6 +401,12 @@
         const wanted = new Set(cfg.members || []);
         return {
             blocks: [],
+            // Several days, the way the agenda this card replaces shows
+            // them — and the reason prep for tomorrow morning can appear
+            // tonight at all. `blocks` stays as day one's, so every existing
+            // helper (claims, pending merge, totals) keeps one flat list to
+            // walk.
+            days: [],
             allDay: [],
             date: '',
             isTomorrow: false,
@@ -390,6 +415,7 @@
             // calendar today." never flashes ahead of real data.
             pkLoaded: false,
             pkInteractive: cfg.interactive !== false,
+            pkDays: Math.max(1, Math.min(parseInt(cfg.days, 10) || 1, 7)),
             // Which block keys are unfolded. A plain Set, always REASSIGNED
             // (never mutated with .add/.delete alone) so Alpine's reactivity
             // sees every change — survives the 30-second poll exactly the
@@ -422,9 +448,17 @@
 
             async loadPacking() {
                 try {
-                    const res = await fetch(`${apiBase}api/packing/day`);
+                    const res = await fetch(`${apiBase}api/packing/day?days=${this.pkDays}`);
                     const data = await res.json();
-                    const incoming = Array.isArray(data.blocks) ? data.blocks : [];
+                    const dayRows = Array.isArray(data.days) && data.days.length
+                        ? data.days
+                        : [{ date: data.date, label: 'Today', is_today: true,
+                             blocks: Array.isArray(data.blocks) ? data.blocks : [] }];
+                    const incoming = [];
+                    for (const d of dayRows) {
+                        d.blocks = Array.isArray(d.blocks) ? d.blocks : [];
+                        for (const b of d.blocks) incoming.push(b);
+                    }
                     for (const b of incoming) {
                         b.groups = this.pkFilterGroups(b.groups || []);
                         // A poll replaces every group/item with fresh
@@ -448,6 +482,7 @@
                         this.pkTotals(b);
                     }
                     this.blocks = incoming;
+                    this.days = dayRows;
                     this.allDay = Array.isArray(data.all_day) ? data.all_day : [];
                     this.date = data.date || '';
                     this.isTomorrow = !!data.is_tomorrow;
@@ -486,11 +521,23 @@
                 if (b.kind === 'event') return b.title;
                 return (b.events || []).map(e => e.title).join(' + ');
             },
-            // The container rule: a box appears only at two or more events.
-            // One event in a box is redundant chrome most outings would
-            // wear, so a single-event outing draws as a flat row instead.
+            // EVERY trip out of the house is a container now. F1 drew the
+            // box only at two or more events, and living with it showed the
+            // cost is elsewhere: with two shapes the driver, the car and the
+            // pill move depending on how many events a trip has, and the
+            // colour law has nowhere consistent to live. One shape, one
+            // place for every trip fact (docs/family_day_design.md, "Every
+            // trip is an outing").
             pkIsContainer(b) {
-                return b.kind === 'outing' && (b.events || []).length >= 2;
+                return b.kind === 'outing';
+            },
+            // A separator's date, in the agenda's own compact form.
+            pkDayDate(d) {
+                if (!d || !d.date) return '';
+                const parts = String(d.date).split('-').map(Number);
+                const dt = new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1);
+                return dt.toLocaleDateString(undefined,
+                    { month: 'short', day: 'numeric' });
             },
             // The pill: two states, and only two. `none` draws nothing.
             pkPillState(b) {
@@ -548,10 +595,13 @@
                     ? { title: this.pkTitle(b), start: b.start, end: b.end,
                         extendedProps: { driverName: b.driver, carName: b.car, rawColor: b.color } }
                     : { title: b.title, start: b.start, end: b.end,
-                        extendedProps: b.covered_by ? { assistName: b.covered_by } : {} };
+                        extendedProps: Object.assign(
+                            { rawColor: b.color },
+                            b.covered_by ? { assistName: b.covered_by } : {}) };
                 const row = agendaEventRow(ev, {
                     canceled: !!b.canceled,
                     tappable: true,
+                    passengers: b.kind === 'outing' ? null : b.passengers,
                     extraBadgeHtml: this.pkPillHtml(b),
                     trailingHtml: this.pkCaretHtml(b),
                 });
@@ -585,7 +635,8 @@
                 return (b.events || []).map(e => {
                     const row = agendaEventRow(
                         { title: e.title, start: e.start, end: null,
-                          extendedProps: { rawColor: b.color } }, { tappable: true });
+                          extendedProps: { rawColor: e.color } },
+                        { tappable: true, passengers: e.passengers });
                     row.classList.add('fd-inner-line');
                     row.dataset.evId = String(e.id);
                     return row.outerHTML;

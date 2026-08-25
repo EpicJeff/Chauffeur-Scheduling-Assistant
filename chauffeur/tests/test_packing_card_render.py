@@ -57,9 +57,15 @@ BASE_DAY = {
          'color': '#2563eb', 'car': 'Van',
          'start': '2026-09-08T16:00:00', 'end': '2026-09-08T19:00:00',
          'events': [
-             {'id': 'soccer', 'title': 'Soccer', 'start': '2026-09-08T16:00:00'},
-             {'id': 'band', 'title': 'Band practice', 'start': '2026-09-08T17:30:00'},
+             {'id': 'soccer', 'title': 'Soccer', 'start': '2026-09-08T16:00:00',
+              'color': '#ec4899',
+              'passengers': [{'id': 'm-ellie', 'name': 'Ellie', 'color': '#ec4899'}]},
+             {'id': 'band', 'title': 'Band practice', 'start': '2026-09-08T17:30:00',
+              'color': '#22d3ee',
+              'passengers': [{'id': 'm-sam', 'name': 'Sam', 'color': '#22d3ee'}]},
          ],
+         'passengers': [{'id': 'm-ellie', 'name': 'Ellie', 'color': '#ec4899'},
+                        {'id': 'm-sam', 'name': 'Sam', 'color': '#22d3ee'}],
          'groups': [
              {'kit_id': 'k1', 'kit': 'Soccer bag', 'people': ['ellie', 'theo'],
               'items': [
@@ -78,6 +84,8 @@ BASE_DAY = {
          'title': "Grandma's birthday",
          'start': '2026-09-08T12:00:00', 'end': '2026-09-08T14:00:00',
          'canceled': False, 'covered_by': None, 'groups': [],
+         'color': '#f59e0b',
+         'passengers': [{'id': 'm-sam', 'name': 'Sam', 'color': '#22d3ee'}],
          'packed': 0, 'needed': 0},
     ],
 }
@@ -107,7 +115,7 @@ const dom = new JSDOM(html, {
   beforeParse(w) {
     w.fetch = (u, opt) => {
       if (opt && opt.method === 'POST') { posted.push(String(u)); }
-      if (String(u).endsWith('api/packing/day')) {
+      if (String(u).split('?')[0].endsWith('api/packing/day')) {
         return Promise.resolve({ ok: true, text: () => Promise.resolve(''),
           json: () => Promise.resolve(data) });
       }
@@ -143,6 +151,16 @@ function capture() {
     buttons: root ? [...root.querySelectorAll('button')].map(b => txt(b)) : [],
     posted: posted,
     innerLines: root ? [...root.querySelectorAll('.fd-inner-line')].map(txt) : [],
+    // F2's colour law: an event's left bar is ITS OWN person's colour, never
+    // the driver's. Captured as the inline style the shared row builder
+    // writes, so this pins the rendered pixel rather than the payload.
+    innerBars: root ? [...root.querySelectorAll('.fd-inner-line')].map(
+      e => e.style.borderLeft || '') : [],
+    // Who is going, answerable without a tap.
+    paxDots: root ? [...root.querySelectorAll('.fd-pax-dot')].map(
+      e => ({ color: e.style.backgroundColor || '', name: e.getAttribute('title') || '' })) : [],
+    containers: root ? root.querySelectorAll('.agenda-day').length : 0,
+    daySeps: root ? root.querySelectorAll('.fd-day-sep').length : 0,
     // Per block: which pill class (if any) its row carries, and the row's
     // own text — enough to pin the two-state rule without trusting colour.
     pills: wrappers.map(w => ({
@@ -515,7 +533,7 @@ const dom = new JSDOM(html, {
   url: 'http://localhost/home?panel=true',
   beforeParse(w) {
     w.fetch = (u, opt) => {
-      if (String(u).endsWith('api/packing/day')) {
+      if (String(u).split('?')[0].endsWith('api/packing/day')) {
         dayCalls++;
         // First call (the mount) succeeds with real data; every call after
         // that rejects, the way a fetch does mid-poll when the add-on is
@@ -604,6 +622,54 @@ def scenario_a_failed_poll_after_success_keeps_the_rows_standing():
               f"a failed poll erased real rows from the card: {got['text'][:300]}")
     check('Nothing on the calendar' not in got['text'],
           f"a failed poll drew the quiet-day sentence over real data: {got['text'][:300]}")
+
+
+def scenario_the_colour_law_holds_on_the_row():
+    """The bug the household actually caught: every event wore the DRIVER's
+    colour, so the colours meant nothing anybody could name. Everywhere else
+    in this app an event's bar is its calendar's colour, which is the
+    person's. The trip is the driver's; the events inside belong to the
+    people going."""
+    got = _run(BASE_DAY, interactive=True, expand='')
+    if got is None:
+        return
+    bars = got['innerBars']
+    check(len(bars) == 2, f"expected two inner lines, got {len(bars)}: {bars}")
+    joined = ' '.join(bars).lower()
+    check('236, 72, 153' in joined or '#ec4899' in joined,
+          f"the first inner line should wear its own person's colour: {bars}")
+    check('34, 211, 238' in joined or '#22d3ee' in joined,
+          f"the second inner line should wear its own person's colour: {bars}")
+    check('37, 99, 235' not in joined and '#2563eb' not in joined,
+          f"the driver's colour leaked onto an event row: {bars}")
+
+
+def scenario_you_can_see_who_is_going_without_tapping():
+    """Cleats for the wrong kid is the failure this prevents; before F2 the
+    only answer lived inside the details dialog."""
+    got = _run(BASE_DAY, interactive=True, expand='')
+    if got is None:
+        return
+    dots = got['paxDots']
+    check(len(dots) >= 2, f"expected a dot per person on the rows: {dots}")
+    names = {d['name'] for d in dots}
+    check('Ellie' in names and 'Sam' in names,
+          f"the dots should name their person: {dots}")
+
+
+def scenario_every_trip_is_a_container_even_with_one_event():
+    """F1 drew the box only at two or more events, so the driver, the car and
+    the pill moved depending on how many events a trip had. One shape now."""
+    one = json.loads(json.dumps(BASE_DAY))
+    one['blocks'][0]['events'] = one['blocks'][0]['events'][:1]
+    got = _run(one, interactive=True, expand='')
+    if got is None:
+        return
+    check(got['containers'] >= 1,
+          "a single-event outing should still draw as a container panel")
+    chip = {c['key']: c['chip'] for c in got['outingChip']}
+    check(chip.get('d1:soccer'),
+          f"a single-event outing should still wear its Outing chip: {chip}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

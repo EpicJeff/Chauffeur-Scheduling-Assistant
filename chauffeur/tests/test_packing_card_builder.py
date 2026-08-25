@@ -66,7 +66,7 @@ def scenario_a_household_with_no_kits_still_gets_the_day():
         built = home_board._tile_packing(None, config={})
         check(built is not None,
               "a household with no prep kits at all should still get the day tile")
-        check(built == {'interactive': True, 'members': []},
+        check(built == {'interactive': True, 'members': [], 'days': 1},
               f"the day tile with no config should still carry its mount config: {built}")
     finally:
         storage.get_prep_kits = orig
@@ -91,16 +91,22 @@ def scenario_a_quiet_day_says_so_rather_than_vanishing():
 
 def scenario_the_card_carries_only_its_mount_config():
     """Rule 2: interactive depth means the card fetches its own data. The
-    builder ships `interactive` and the members filter and nothing else — a
-    payload rebuilding under the finger doing the ticking cannot carry counts."""
+    builder ships MOUNT CONFIG ONLY — how to draw, never what to draw. A
+    payload rebuilding under the finger doing the ticking cannot carry
+    counts, so no block, item or claim may ever appear here. (`days` joined
+    interactive and members in F2: it says how far ahead to look, which is
+    still a question about the mount and not an answer about the day.)"""
     orig = storage.get_prep_kits
     try:
         storage.get_prep_kits = lambda: [{'id': 'k1', 'name': 'Soccer bag',
                                           'items': ['Water bottle']}]
         built = home_board._tile_packing(
             None, config={'interactive': False, 'members': ['m1', 'm2']})
-        check(built == {'interactive': False, 'members': ['m1', 'm2']},
-              f"the packing mount config carries more than interactive+members: {built}")
+        check(built == {'interactive': False, 'members': ['m1', 'm2'], 'days': 1},
+              f"the packing mount config is not the expected shape: {built}")
+        check(not any(k in built for k in ('blocks', 'days_payload', 'groups',
+                                           'items', 'packed', 'needed')),
+              f"the builder leaked DATA into a self-fetching card: {built}")
     finally:
         storage.get_prep_kits = orig
 

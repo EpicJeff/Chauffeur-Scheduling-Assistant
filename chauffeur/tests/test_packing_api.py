@@ -335,6 +335,31 @@ def scenario_a_canceled_block_carries_no_items():
     check(block['groups'] == [], f"a canceled block should carry no items: {block['groups']}")
 
 
+def scenario_the_card_can_ask_for_several_days():
+    """The agenda this card replaces shows a week, and prep for tomorrow
+    morning has to be visible tonight -- one day cannot hold that."""
+    _seed_incident()
+    import main
+    res = main.packing_day(date=DAY, days=3)
+    check(len(res['days']) == 3, f"asked for three days, got {len(res.get('days', []))}")
+    dates = [d['date'] for d in res['days']]
+    check(dates == sorted(dates) and len(set(dates)) == 3,
+          f"days should run forward without repeating: {dates}")
+    check(res['blocks'] == res['days'][0]['blocks'],
+          "day one must stay at the top level so an older card keeps working")
+    check(res['days'][0]['label'] and res['days'][1]['label'],
+          f"every day should carry a label: {[d.get('label') for d in res['days']]}")
+
+
+def scenario_one_day_is_still_the_default():
+    _seed_incident()
+    import main
+    res = main.packing_day(date=DAY)
+    check(len(res['days']) == 1, f"default should be a single day: {res.get('days')}")
+    check('blocks' in res and 'all_day' in res,
+          "the legacy top-level shape must survive")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
