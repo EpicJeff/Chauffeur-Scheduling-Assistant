@@ -148,6 +148,14 @@ function capture() {
       done: !!w.querySelector('.pk-pill-done'),
       text: txt(w),
     })),
+    // Per block: does its own wrapper carry the container's "Outing"
+    // heading chip as a direct child span (not merely present somewhere in
+    // an inner event's own title text)?
+    outingChip: wrappers.map(w => ({
+      key: w.getAttribute('data-fd-key'),
+      chip: [...w.children].some(
+        c => c.tagName === 'SPAN' && c.textContent.trim() === 'Outing'),
+    })),
   }));
 }
 
@@ -245,6 +253,13 @@ def scenario_a_two_event_outing_is_a_container_with_inner_lines():
     for absent in ('Water bottle', 'Goggles', 'Sheet music'):
         check(absent not in got['text'],
               f"an item drew before any tap: {absent!r} in {got['text'][:300]}")
+    # The container's own heading chip: the two-event outing wears it, the
+    # flat at-home block does not.
+    by_key = {c['key']: c for c in got['outingChip']}
+    check(by_key.get('d1:soccer', {}).get('chip'),
+          f"the outing container is missing its 'Outing' chip: {got['outingChip']}")
+    check(not by_key.get('home:99', {}).get('chip'),
+          f"a flat block wrongly drew the 'Outing' chip: {got['outingChip']}")
 
 
 def scenario_the_pill_has_two_states_and_only_two():

@@ -140,6 +140,25 @@
                                  draws either. -->
                             <div :data-fd-key="b.key"
                                 :class="pkIsContainer(b) ? 'agenda-day rounded-2xl p-3 flex flex-col gap-2' : ''">
+                                <!-- The container's own heading chip: a
+                                     container is an outing, and now says so
+                                     on the box itself rather than leaving
+                                     that to be inferred from "two events and
+                                     a border" — the user's own mockup. Same
+                                     translucent-tint chip vocabulary as the
+                                     agenda's covered 🤝 chip
+                                     (components/agenda_row.html, teal
+                                     `bg-teal-500/20 text-teal-300`), first
+                                     element in the panel, `-mb-1` pulling it
+                                     in tighter than the panel's own `gap-2`
+                                     so it nestles at the top edge instead of
+                                     floating a full row above the header.
+                                     Flat blocks (a one-event outing, an
+                                     at-home event, a covered ride) get no
+                                     chip — there is no box for it to sit on. -->
+                                <template x-if="pkIsContainer(b)">
+                                    <span class="self-start -mb-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300">Outing</span>
+                                </template>
                                 <!-- The row itself, built by the shared
                                      agenda builder (components/agenda_row.html)
                                      and dropped in via x-html -- Alpine has no
