@@ -178,6 +178,26 @@ def scenario_a_kit_naming_nobody_needs_one():
           f"an unfiltered kit needs one: {got}")
 
 
+def scenario_the_day_turns_over_when_the_last_outing_is_home():
+    """The household's own rule, and it beats a clock in both directions: 19:00
+    is too early on a day with a 20:30 pickup and three hours late on a day
+    that ended at 15:00."""
+    sched = _sched([_ev('soccer', 16, dur=60)], {'soccer': 'd1'})
+    mid = datetime.datetime(2026, 9, 8, 15, 0)
+    check(outings.day_in_focus(mid, sched) == datetime.date(2026, 9, 8),
+          "an outing still ahead should keep the day on today")
+    after = datetime.datetime(2026, 9, 8, 18, 0)
+    check(outings.day_in_focus(after, sched) == datetime.date(2026, 9, 9),
+          "once the last outing is home the day turns over to tomorrow")
+
+
+def scenario_a_day_with_no_outings_is_already_tomorrow():
+    """Nothing ahead, so nothing to wait for — and no empty-day special case."""
+    quiet = datetime.datetime(2026, 9, 8, 9, 0)
+    check(outings.day_in_focus(quiet, _sched([], {})) == datetime.date(2026, 9, 9),
+          "a day with no outings should already be looking at tomorrow")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

@@ -304,6 +304,7 @@ RULES = [
     (ANY, '/api/meals/*', WALL, 'meals.plan'),
     (ANY, '/api/prep-kits/*', WALL, 'meals.prep'),
     (ANY, '/api/prep_status/*', WALL, 'meals.prep'),
+    (ANY, '/api/packing/*', WALL, 'meals.prep'),
     (ANY, '/api/stream/*', WALL, None),
 
     # --- signed-in members: the ordinary app ------------------------------

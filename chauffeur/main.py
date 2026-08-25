@@ -8267,6 +8267,94 @@ def suggest_prep_kits():
         raise HTTPException(status_code=400, detail=str(e))
     return {"kits": kits}
 
+@app.get("/api/packing/day")
+def packing_day(date: str = None):
+    """Every trip out of the house on the day the household is thinking about,
+    with what each one needs packed and how much of it is done.
+
+    Self-fetched by the wall's packing card on the kiosk cadence — an
+    interactive card cannot ride a board payload that rebuilds under the finger
+    doing the ticking (rule 2).
+    """
+    import datetime
+    from services import outings as _outings
+    from services import prep_kits as _prep
+    now = datetime.datetime.now()
+    sched = storage.get_cached_schedule() or {}
+    target = (_outings._as_date(date) if date else None) or _outings.day_in_focus(now, sched)
+    claims = {}
+    for row in storage.get_packing_claims(target.isoformat()):
+        claims[(row.get('outing_key'), row.get('item_key'))] = \
+            claims.get((row.get('outing_key'), row.get('item_key')), 0) + 1
+    drivers = {str(d.get('id')): d for d in storage.get_all_drivers()}
+    events = {e.get('id'): e for e in (sched.get('events') or [])}
+    kits, pax = storage.get_prep_kits(), _prep.passenger_objs()
+
+    out = []
+    for o in _outings.outings_for(target, sched, now):
+        groups = _outings.packing_for(o, sched, kits, pax)
+        if not groups:
+            continue                      # nothing to pack is nothing to draw
+        packed = needed = 0
+        for g in groups:
+            for item in g['items']:
+                item['packed'] = min(item['needed'],
+                                     claims.get((o['key'], item['key']), 0))
+                packed += item['packed']
+                needed += item['needed']
+        d = drivers.get(o['driver_id']) or {}
+        titles = [(events.get(e) or {}).get('title') or 'Event' for e in o['event_ids']]
+        out.append({**o, 'groups': groups, 'packed': packed, 'needed': needed,
+                    'driver': d.get('name') or 'Driver', 'color': d.get('color'),
+                    'car': _car_for(o, sched),
+                    'title': ' + '.join(titles)})
+    return {'date': target.isoformat(),
+            'is_tomorrow': target > now.date(),
+            'outings': out}
+
+
+@app.post("/api/packing/claim")
+def packing_claim(payload: dict = Body(...)):
+    """One thing packed, or one un-packed. A count, not a checkbox."""
+    import datetime
+    from services import outings as _outings
+    outing_key = str(payload.get('outing_key') or '').strip()
+    item_key = str(payload.get('item_key') or '').strip()
+    if not outing_key or not item_key:
+        raise HTTPException(status_code=400, detail="outing_key and item_key are required")
+    now = datetime.datetime.now()
+    sched = storage.get_cached_schedule() or {}
+    target = (_outings._as_date(payload.get('date'))
+              or _outings.day_in_focus(now, sched))
+    date_str = target.isoformat()
+    # The outing has to be real, or a stale card files claims against a trip
+    # that no longer exists and they are invisible for ever.
+    live = {o['key'] for o in _outings.outings_for(target, sched, now)}
+    if outing_key not in live:
+        raise HTTPException(status_code=404, detail="that outing is not on this day")
+    member_id = payload.get('member_id') or None
+    xp = 0
+    if int(payload.get('delta') or 1) >= 0:
+        xp = storage.add_packing_claim(outing_key, item_key, date_str, member_id)
+    else:
+        storage.remove_packing_claim(outing_key, item_key, date_str, member_id)
+    packed = sum(1 for r in storage.get_packing_claims(date_str)
+                 if r.get('outing_key') == outing_key and r.get('item_key') == item_key)
+    return {'ok': True, 'packed': packed, 'xp': xp}
+
+
+def _car_for(outing: dict, sched: dict) -> str:
+    """Which car this trip goes in. At four activities a day two cars are out
+    at once, and a bag packed perfectly into the wrong boot loses the same
+    afternoon as one left at home."""
+    cars = {str(c.get('id')): c for c in (sched.get('cars') or [])}
+    for ev_id in outing.get('event_ids') or []:
+        cid = (sched.get('car_assignments') or {}).get(ev_id)
+        if cid and str(cid) in cars:
+            return cars[str(cid)].get('name') or ''
+    return ''
+
+
 class RoutineCheckRequest(BaseModel):
     member_id: str
     date: Optional[str] = None
