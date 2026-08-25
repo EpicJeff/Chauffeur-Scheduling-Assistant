@@ -106,6 +106,78 @@ def scenario_another_day_is_not_this_day():
           "an outing leaked across days")
 
 
+def _kit(kid, name, items, passengers=None, per_person=True):
+    return {'id': kid, 'name': name, 'items': items, 'enabled': True,
+            'passenger_ids': passengers or [], 'per_person': per_person,
+            'keywords': [name.split()[0].lower()]}
+
+
+class _Pax:
+    def __init__(self, pid, name, cal_ids=None):
+        self.id, self.name = pid, name
+        self.calendar_ids = cal_ids or []
+
+
+def scenario_two_children_at_one_event_need_two_of_everything():
+    """The silent failure this exists to stop: prep items are deduped
+    case-insensitively today, so two kids at one practice get ONE water bottle
+    ticked and one child goes thirsty."""
+    ev = _ev('soccer', 16, title='Soccer practice')
+    ev['calendar_ids'] = ['ellie', 'sam']
+    sched = _sched([ev], {'soccer': 'd1'})
+    out = outings.outings_for(DAY, sched)[0]
+    got = outings.packing_for(out, sched,
+                              kits=[_kit('k1', 'Soccer bag', ['Water bottle', 'Cleats'],
+                                         passengers=['ellie', 'sam'])],
+                              passengers=[_Pax('ellie', 'Ellie'), _Pax('sam', 'Sam')])
+    check(len(got) == 1, f"one kit should produce one group: {got}")
+    check([i['needed'] for i in got[0]['items']] == [2, 2],
+          f"two children need two of each item: {got[0]['items']}")
+
+
+def scenario_one_child_at_two_events_still_needs_one_bottle():
+    """The kid carries it all afternoon. Needed is DISTINCT PEOPLE across the
+    outing, never the sum of the events."""
+    a, b = _ev('soccer', 16, title='Soccer practice'), _ev('band', 17, 30, title='Soccer social')
+    a['calendar_ids'] = b['calendar_ids'] = ['ellie']
+    sched = _sched([a, b], {'soccer': 'd1', 'band': 'd1'},
+                   {'d1': {'soccer': {'to_event': 'band', 'travel_mins': 15}}})
+    out = outings.outings_for(DAY, sched)[0]
+    got = outings.packing_for(out, sched,
+                              kits=[_kit('k1', 'Soccer bag', ['Water bottle'],
+                                         passengers=['ellie'])],
+                              passengers=[_Pax('ellie', 'Ellie')])
+    check([i['needed'] for i in got[0]['items']] == [1],
+          f"one child on two events still needs one bottle: {got}")
+
+
+def scenario_a_group_kit_is_one_however_many_are_going():
+    """The team snack, the folding chair, the cash for the fundraiser. A
+    counter that is wrong about these teaches the household to ignore counters."""
+    ev = _ev('soccer', 16, title='Soccer practice')
+    ev['calendar_ids'] = ['ellie', 'sam']
+    sched = _sched([ev], {'soccer': 'd1'})
+    out = outings.outings_for(DAY, sched)[0]
+    got = outings.packing_for(out, sched,
+                              kits=[_kit('k2', 'Soccer snack', ['Orange slices'],
+                                         passengers=['ellie', 'sam'], per_person=False)],
+                              passengers=[_Pax('ellie', 'Ellie'), _Pax('sam', 'Sam')])
+    check([i['needed'] for i in got[0]['items']] == [1],
+          f"a group item is one however many are going: {got}")
+
+
+def scenario_a_kit_naming_nobody_needs_one():
+    ev = _ev('soccer', 16, title='Soccer practice')
+    ev['calendar_ids'] = ['ellie']
+    sched = _sched([ev], {'soccer': 'd1'})
+    out = outings.outings_for(DAY, sched)[0]
+    got = outings.packing_for(out, sched,
+                              kits=[_kit('k3', 'Soccer bag', ['Ball'])],
+                              passengers=[_Pax('ellie', 'Ellie')])
+    check([i['needed'] for i in got[0]['items']] == [1],
+          f"an unfiltered kit needs one: {got}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

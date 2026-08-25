@@ -97,3 +97,71 @@ def _outing(d_id: str, chain: list) -> dict:
         'start': chain[0][0].isoformat(),
         'end': max(ends).isoformat(),
     }
+
+
+def packing_for(outing: dict, sched: dict = None, kits: list = None,
+                passengers: list = None) -> List[dict]:
+    """What one outing needs packed, grouped by kit, with a NEEDED count.
+
+    The count is the point. Prep items are deduped case-insensitively today,
+    so two children at one practice see one water bottle — which is a silent
+    way to leave one child's bottle at home. Needed is the number of DISTINCT
+    PEOPLE the kit covers across the whole outing: the child who needs a
+    bottle at soccer and again at band is carrying it between the two and
+    needs one, not two.
+    """
+    from services import prep_kits as _prep
+    sched = sched if sched is not None else (storage.get_cached_schedule() or {})
+    events = {e.get('id'): e for e in (sched.get('events') or [])}
+    if kits is None:
+        kits = storage.get_prep_kits()
+    if passengers is None:
+        passengers = _prep.passenger_objs()
+
+    groups = {}                      # kit_id -> {'kit', 'people': set, 'items': [...]}
+    for ev_id in outing.get('event_ids') or []:
+        ev = events.get(ev_id)
+        if not ev or ev.get('event_type') in ('errand', 'background_trip'):
+            continue
+        cal_ids = {str(c) for c in (ev.get('calendar_ids') or [])}
+        for kit in _prep.match_kits_for_event(ev, kits, passengers):
+            kid = str(kit.get('id') or kit.get('name') or '')
+            g = groups.setdefault(kid, {
+                'kit_id': kid, 'kit': kit.get('name') or 'Bring',
+                'per_person': kit.get('per_person') is not False,
+                'people': set(),
+                'items': [i.strip() for i in (kit.get('items') or []) if i.strip()],
+            })
+            g['people'].update(_people_on(kit, cal_ids, passengers))
+
+    out = []
+    for g in groups.values():
+        n = max(1, len(g['people'])) if g['per_person'] else 1
+        out.append({
+            'kit_id': g['kit_id'], 'kit': g['kit'],
+            'people': sorted(g['people']),
+            'items': [{'key': f"{g['kit_id']}:{i.lower()}", 'label': i, 'needed': n}
+                      for i in g['items']],
+        })
+    out.sort(key=lambda g: g['kit'].lower())
+    return out
+
+
+def _people_on(kit: dict, cal_ids: set, passengers: list) -> set:
+    """The members this kit covers who are actually on this event.
+
+    Resolution mirrors the solver's own rule (`does_event_match_rule`): a
+    passenger is named by id, by any of their calendar ids, or by name.
+    """
+    named = [str(p) for p in (kit.get('passenger_ids') or [])]
+    if not named:
+        return set()
+    found = set()
+    for p in passengers or []:
+        pid, pname = str(getattr(p, 'id', '')), str(getattr(p, 'name', '') or '')
+        p_cals = {str(c) for c in (getattr(p, 'calendar_ids', None) or [])}
+        if not any(n == pid or n in p_cals or n.lower() == pname.lower() for n in named):
+            continue
+        if pid in cal_ids or (p_cals & cal_ids):
+            found.add(pid)
+    return found

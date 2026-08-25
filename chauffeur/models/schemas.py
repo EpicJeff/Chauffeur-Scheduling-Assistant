@@ -487,6 +487,12 @@ class PrepKit(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str
     items: List[str] = Field(default_factory=list)
+    # Does each item scale with the number of people the kit covers? A soccer
+    # bag does: two children need two water bottles, and a single tick against
+    # "water bottle" is how one of them goes thirsty. The team snack does not.
+    # Kit-level rather than per-item because an item is a bare string today; a
+    # kit that mixes the two is two kits, which is what the editor is for.
+    per_person: bool = True
     enabled: bool = True
     keywords: List[str] = Field(default_factory=list)
     keywords_match_all: bool = False

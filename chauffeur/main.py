@@ -8158,6 +8158,7 @@ class PrepKitRequest(BaseModel):
     keywords: List[str] = []
     items: List[str] = []
     enabled: bool = True
+    per_person: bool = True
     keywords_match_all: bool = False
     passenger_ids: List[str] = []
     passengers_match_all: bool = False
@@ -8185,6 +8186,7 @@ def _prep_kit_fields(req: PrepKitRequest) -> dict:
     return {'name': req.name.strip(),
             'items': [i.strip() for i in req.items if i.strip()],
             'enabled': req.enabled,
+            'per_person': req.per_person,
             'keywords': [k.strip().lower() for k in req.keywords if k.strip()],
             'keywords_match_all': req.keywords_match_all,
             'passenger_ids': [str(p) for p in req.passenger_ids],
