@@ -8269,54 +8269,59 @@ def suggest_prep_kits():
 
 @app.get("/api/packing/day")
 def packing_day(date: str = None):
-    """Every trip out of the house on the day the household is thinking about,
-    with what each one needs packed and how much of it is done.
+    """Every block of the day the household is thinking about — outings,
+    at-home events, covered rides — with what each needs packed and how much
+    is done. The Family Day card's feed (self-fetched, rule 2).
 
-    Self-fetched by the wall's packing card on the kiosk cadence — an
-    interactive card cannot ride a board payload that rebuilds under the finger
-    doing the ticking (rule 2).
+    A block with nothing to pack still draws: a drive is a happening whether
+    or not it has cargo. That inverts the packing tile's old rule on purpose
+    (docs/family_day_design.md, "What changes underneath").
     """
     import datetime
+    from services import family_day as _fam
     from services import outings as _outings
     from services import prep_kits as _prep
     now = datetime.datetime.now()
     sched = storage.get_cached_schedule() or {}
-    target = (_outings._as_date(date) if date else None) or _outings.day_in_focus(now, sched)
+    target = (_outings._as_date(date) if date else None) or _fam.day_in_focus(now, sched)
+    day = _fam.blocks_for(target, sched, now)
     claims = {}
     for row in storage.get_packing_claims(target.isoformat()):
-        claims[(row.get('outing_key'), row.get('item_key'))] = \
-            claims.get((row.get('outing_key'), row.get('item_key')), 0) + 1
+        k = (row.get('outing_key'), row.get('item_key'))
+        claims[k] = claims.get(k, 0) + 1
     drivers = {str(d.get('id')): d for d in storage.get_all_drivers()}
-    events = {e.get('id'): e for e in (sched.get('events') or [])}
     kits, pax = storage.get_prep_kits(), _prep.passenger_objs()
 
     out = []
-    for o in _outings.outings_for(target, sched, now):
-        groups = _outings.packing_for(o, sched, kits, pax)
-        if not groups:
-            continue                      # nothing to pack is nothing to draw
+    for b in day['blocks']:
+        groups = [] if b.get('canceled') else _outings.packing_for(
+            {'event_ids': (b['event_ids'] if b['kind'] == 'outing'
+                           else [b['event_id']])}, sched, kits, pax)
         packed = needed = 0
         for g in groups:
             for item in g['items']:
                 item['packed'] = min(item['needed'],
-                                     claims.get((o['key'], item['key']), 0))
+                                     claims.get((b['key'], item['key']), 0))
                 packed += item['packed']
                 needed += item['needed']
-        d = drivers.get(o['driver_id']) or {}
-        titles = [(events.get(e) or {}).get('title') or 'Event' for e in o['event_ids']]
-        out.append({**o, 'groups': groups, 'packed': packed, 'needed': needed,
-                    'driver': d.get('name') or 'Driver', 'color': d.get('color_code'),
-                    'car': _car_for(o, sched),
-                    'title': ' + '.join(titles)})
+        row = {**b, 'groups': groups, 'packed': packed, 'needed': needed}
+        if b['kind'] == 'outing':
+            d = drivers.get(b['driver_id']) or {}
+            row.update({'driver': d.get('name') or 'Driver',
+                        'color': d.get('color_code'),
+                        'car': _car_for(b, sched)})
+        out.append(row)
     return {'date': target.isoformat(),
             'is_tomorrow': target > now.date(),
-            'outings': out}
+            'all_day': day['all_day'],
+            'blocks': out}
 
 
 @app.post("/api/packing/claim")
 def packing_claim(payload: dict = Body(...)):
     """One thing packed, or one un-packed. A count, not a checkbox."""
     import datetime
+    from services import family_day as _fam
     from services import outings as _outings
     from services import prep_kits as _prep
     outing_key = str(payload.get('outing_key') or '').strip()
@@ -8335,35 +8340,40 @@ def packing_claim(payload: dict = Body(...)):
     now = datetime.datetime.now()
     sched = storage.get_cached_schedule() or {}
     target = (_outings._as_date(payload.get('date'))
-              or _outings.day_in_focus(now, sched))
+              or _fam.day_in_focus(now, sched))
     date_str = target.isoformat()
-    # The outing has to be real, or a stale card files claims against a trip
-    # that no longer exists and they are invisible for ever.
-    live_outings = {o['key']: o for o in _outings.outings_for(target, sched, now)}
-    outing = live_outings.get(outing_key)
-    if outing is None:
-        raise HTTPException(status_code=404, detail="that outing is not on this day")
-    # The item has to be something this outing actually needs packed. Without
-    # this, any distinct garbage item_key minted its own XP (the once-guard
-    # keys on `ref_id=item_key`, so every new string is a fresh grant) and
-    # filed a claim row nothing ever prunes.
+    # The block has to be real and the item has to be one of its own — a
+    # stale card must not file claims into the void, and a fabricated
+    # item_key must not mint XP (each distinct key is a fresh once-guard).
+    day = _fam.blocks_for(target, sched, now)
+    by_key = {b['key']: b for b in day['blocks']}
+    block = by_key.get(outing_key)
+    if block is None:
+        raise HTTPException(status_code=404, detail="that block is not on this day")
     kits, pax = storage.get_prep_kits(), _prep.passenger_objs()
-    valid_items = {item['key'] for g in _outings.packing_for(outing, sched, kits, pax)
-                   for item in g['items']}
-    if item_key not in valid_items:
-        raise HTTPException(status_code=404, detail="that item is not part of this outing")
+    groups = [] if block.get('canceled') else _outings.packing_for(
+        {'event_ids': (block['event_ids'] if block['kind'] == 'outing'
+                       else [block['event_id']])}, sched, kits, pax)
+    needed_by_item = {i['key']: i['needed'] for g in groups for i in g['items']}
+    if item_key not in needed_by_item:
+        raise HTTPException(status_code=404, detail="that item is not on this block")
     # Client-asserted identity is not trusted here: today's only caller is the
     # DEVICE lane, and nothing stops it from POSTing any member_id it likes to
     # mint XP for someone else. No shipped surface produces a NAMED claim yet
     # — that is P3, which will derive identity server-side from the session,
     # never from the payload — so every claim in P1+P2 is anonymous
-    # regardless of what was sent.
-    member_id = None
+    # regardless of what was sent (identity below is always `None`).
+    current = sum(1 for r in storage.get_packing_claims(date_str)
+                  if r.get('outing_key') == outing_key
+                  and r.get('item_key') == item_key)
     xp = 0
     if delta > 0:
-        xp = storage.add_packing_claim(outing_key, item_key, date_str, member_id)
+        # Server-side cap: two walls racing past the client's disabled button
+        # must not file surplus claims that make the first untick look dead.
+        if current < needed_by_item[item_key]:
+            xp = storage.add_packing_claim(outing_key, item_key, date_str, None)
     else:
-        storage.remove_packing_claim(outing_key, item_key, date_str, member_id)
+        storage.remove_packing_claim(outing_key, item_key, date_str, None)
     packed = sum(1 for r in storage.get_packing_claims(date_str)
                  if r.get('outing_key') == outing_key and r.get('item_key') == item_key)
     return {'ok': True, 'packed': packed, 'xp': xp}

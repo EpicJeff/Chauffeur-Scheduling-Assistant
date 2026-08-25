@@ -142,6 +142,22 @@ def scenario_an_empty_day_is_already_tomorrow():
           "a day with no blocks should already be looking at tomorrow")
 
 
+def scenario_day_in_focus_stays_on_today_during_the_drive_home():
+    """(Moved from test_outings.py.) The turn-over point is the drive home,
+    not the last event's end: a check ten minutes after the event ended but
+    still inside a 25-minute drive home must still find today's outing
+    ahead, and only turn over once the drive home itself is actually over --
+    the widened rule must not lose the drive home."""
+    sched = _sched([_ev('soccer', 16, dur=60)], {'soccer': 'd1'},
+                   final_edges={'d1': {'soccer': {'from_event': 'soccer', 'travel_mins': 25}}})
+    during_drive = datetime.datetime(2026, 9, 8, 17, 10)
+    check(family_day.day_in_focus(during_drive, sched) == datetime.date(2026, 9, 8),
+          "the day should stay on today while the drive home is still ahead")
+    after_home = datetime.datetime(2026, 9, 8, 17, 30)
+    check(family_day.day_in_focus(after_home, sched) == datetime.date(2026, 9, 9),
+          "once the drive home is over the day should turn over to tomorrow")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

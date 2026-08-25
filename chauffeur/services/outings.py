@@ -164,24 +164,6 @@ def packing_for(outing: dict, sched: dict = None, kits: list = None,
     return out
 
 
-def day_in_focus(now: datetime.datetime = None, sched: dict = None) -> datetime.date:
-    """The day the household is actually thinking about.
-
-    Today while any outing is still ahead; tomorrow once the last one is home.
-    A clock was the first design and it is wrong in both directions — 19:00 is
-    too early on a day with a 20:30 pickup, and hours late on a day that ended
-    at three. Following the day also makes two rules free: a trip in progress
-    can never be hidden, and a day with no outings at all needs no special case.
-    """
-    now = now or datetime.datetime.now()
-    today = now.date()
-    for o in outings_for(today, sched, now):
-        end = _parse(o.get('end'))
-        if end and end > now:
-            return today
-    return today + datetime.timedelta(days=1)
-
-
 def _people_on(kit: dict, cal_ids: set, passengers: list) -> set:
     """The members this kit covers who are actually on this event.
 
