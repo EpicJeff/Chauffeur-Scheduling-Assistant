@@ -131,9 +131,14 @@ are the daily repeats, the day's activities are the source of truth for what tod
 needs.* A kid's "pack your backpack" habit stays a routine item with its photo
 steps; "shin guards for Tuesday" comes from the event.
 
-**A kid's day flips in the evening too**, for exactly the reason the wall does: a
-child who can only see today has no way to pack for tomorrow morning, which is when
-the packing has to happen. Same hour, same number — see *Timing* below.
+**A child's day never flips.** An earlier draft of this design had it turning over
+to tomorrow in the evening, and the household corrected it: *the routine has to stay
+until it is over time-wise, which is bedtime, so there is no time in their day after
+the routine ends.* A flip would hide a child's own unfinished evening at exactly the
+hour they are working through it.
+
+Instead, **tomorrow's packing slots into tonight's evening routine**, which is where
+that work actually belongs — see *Timing*.
 
 ### The routine boundary
 
@@ -186,27 +191,50 @@ it is an *event* feature, reachable from the PWA's event modal, the schedule and
 calendar admin pages, and the wall's own event dialog. The calendar dialog is
 already a shared component, which keeps this from being four implementations.
 
-## Timing: one evening, one number
+## Timing: no clock, no setting
 
-Both surfaces flip from today to tomorrow at the same hour, on the reasoning the
-kid digest board already carries in its own code: *"a 'Tomorrow' board at 3pm
-answers the wrong question."* Packing for a 7am departure happens the night
-before, so a surface that is dark at that hour misses the only moment that
-mattered — and that is as true for the child who has to find their own shin guards
-as it is for the wall.
+An earlier draft gave both surfaces a cutover hour and had them share
+`kid_digest_cutover_time`. **That decision is withdrawn.** The household's own rule
+is better than a clock on both surfaces, and it costs no setting at all.
 
-**One setting, not three.** `kid_digest_cutover_time` (default 19:00) already means
-"when the evening starts answering tomorrow" and already governs the kiosk digest
-strip. The family tile and the child's day read the same number rather than
-minting a second and a third one that mean the same thing and drift apart. Its
-label in the settings registry needs widening to say what it now governs; that is
-the whole cost, and the alternative — three cutovers a household must keep in
-step — is worse.
+### A child's day: the item lands where there is still time to act on it
 
-**A live outing is never hidden by the flip.** If the cutover passes while somebody
-is still out, that outing stays pinned above tomorrow's. The rule is *add
-tomorrow*, not *replace today*: a surface that hides a trip in progress to talk
-about the morning has picked the wrong question again, in the other direction.
+A child's day is drawn in buckets by time of day — morning before 12:00, afternoon
+to 17:00, evening after, and anytime for the untimed (`KID_BUCKETS`,
+`app.html:1216-1221`). A prep item is placed in **the last bucket before its outing
+leaves**, and never after it:
+
+- an outing leaving tomorrow morning → **tonight's evening**, beside "brush teeth"
+  and "pack your backpack", because 06:40 on the way out of the door is not a time
+  anybody packs a bag;
+- an outing leaving later today → the bucket before its departure;
+- an outing whose window has already passed → the current bucket, still asking.
+  A list you can act on beats a list that is filed correctly and invisible.
+
+Tomorrow's packing therefore appears *inside tonight's evening routine*, which is
+the household's framing and also the honest one: it is evening work, on the evening
+list, done before bed. It still does not count toward routine completion or a
+streak — see *The routine boundary* — it simply sits where the work happens.
+
+### The family tile: it follows the day, not the clock
+
+The tile shows **what is still ahead**: today's remaining outings while any remain,
+and tomorrow's once the last one is over. "The last event of the day concludes" is
+the household's own trigger, and it is the moment a family starts thinking about
+tomorrow — 19:00 on a day with a 20:30 pickup is not, and 19:00 on a day that ended
+at 15:00 is three hours late.
+
+Two properties fall out of it for free, both of which the clock version needed
+rules to buy:
+
+- **A live outing can never be hidden**, because the tile cannot turn over while
+  something is still ahead. The pinning rule the previous draft needed is gone.
+- **A day with no outings at all shows tomorrow from the start**, because nothing
+  is ahead. No empty-day special case.
+
+The turn-over point is the last outing's **end** — the drive home — rather than the
+last event's end. Same moment plus the drive, and it avoids a wall at home
+announcing tomorrow while the family is still standing in a car park.
 
 ## One-off items
 
@@ -281,9 +309,12 @@ The parts that have burned this codebase before decide where the tests go.
   card grid did — a tick on the wall changes the count, and the count survives a
   poll (the board rebuilds every 20 seconds; a checklist that resets on poll is
   worse than no checklist).
-- **The evening flip** gets a clock-injected test at the cutover boundary, both
-  sides, on both surfaces — and one that puts a live outing across the cutover and
-  asserts it is still there.
+- **The turn-over** is now a function of the day rather than a clock, so it is
+  tested as one: a day with an outing still ahead shows today; the same day with
+  that outing ended shows tomorrow; a day with no outings shows tomorrow throughout.
+- **Bucket placement** for a child: an outing leaving tomorrow morning puts its
+  items in tonight's evening; one leaving this afternoon lands earlier in the day;
+  neither ever lands after its own departure.
 - **The routine boundary** is three assertions, because all three are silent when
   wrong: an unpacked item leaves the day's routine complete; a parent's claim does
   not complete a child's routine or extend a streak; and a prep tick grants XP
@@ -308,6 +339,10 @@ Small, and honest to do while we are in here:
   against a real week before building P2's grouping.
 - **Does the kid's view need the outing at all**, or only their own items? A kid does
   not care that their band run and their sister's soccer run are one trip.
+- **Should the family tile ever show tomorrow early?** It follows the day, so an
+  adult who wants to pack tomorrow's swim bag at lunchtime cannot see it until the
+  day is done. Adding tomorrow as a quiet second section would fix that and would
+  also start filling a tile that is meant to be readable across a room.
 - **What happens to an item nobody claims by departure?** Silence is defensible.
   Saying something is a notification, and this design has been careful not to add one.
 - **Should a child be paid XP for an item an adult packed for them?** This design
