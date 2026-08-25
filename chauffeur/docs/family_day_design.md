@@ -128,6 +128,133 @@ living with it is reversible by anyone in board edit mode, and the trial the
 household actually wants ("does one card really beat three?") costs nothing
 to run or to unwind.
 
+## What F1 shipped, and what it did not
+
+*Added after living with F1 (v2.398.0–v2.406.1). The household's verdict is
+the section that follows, and it is worth recording plainly rather than
+quietly fixing.*
+
+F1 delivered a **better agenda**: one feed instead of four cards, covered
+rides repaired, two events on one trip drawn as one job, a turnover that
+follows the day, and packing state that survives the board's poll.
+
+It did not deliver **load reduction**, which was the point. Items were drawn
+on the outing they belong to, which means the list for a 4:00 PM departure
+appears at 4:00 PM. That is a report, not help. The household said it
+exactly: *"it still falls into the trap of putting the packing at the time of
+the event you are packing for, when it is too late."* Everything below is the
+correction, and none of F1's substrate is wasted — the block spine, the
+claims, the shared row builder and the endpoint are what the correction is
+built from.
+
+Two smaller things came out of the same look:
+
+**The card spoke a different colour language than the rest of the app.** The
+calendar's agenda colours an event's left bar from
+`calendar_metadata[ev.calendar_ids[0]].backgroundColor`
+(`family_calendar.html:1468-1470`) — the colour of the calendar the event
+lives on, which in this household is the person's own. Every other surface
+therefore says *whose* event it is at a glance. The Family Day card overrode
+that with the driver's colour (`packing_card.html:549` and its siblings), and
+the result was unreadable in the strictest sense: the household could not
+work out what the colours meant. **Passenger colour belongs to the event,
+driver colour belongs to the trip.** An event is a person's commitment; an
+outing is a logistics job. Where they disagreed, the card was wrong.
+
+**Who is going was a tap away, and that is a regression.** The agenda answers
+"whose is this" with the bar colour; the grids answer it with passenger dots
+(`family_calendar.html:730-742`). The Family Day card answered it only inside
+the details dialog. A packing card that cannot say who an activity is for is
+how cleats get packed for the wrong child.
+
+## Prep is work, and work belongs where you can do it
+
+The correction, in one sentence: **the packing for an outing appears in the
+day as its own block, positioned where a household could actually do it, and
+not beside the outing it serves.**
+
+This is not a calendar appointment. A prep block has no start time and no
+duration and never touches the solver — it is a **position in the list**, and
+the list is the thing a family reads top to bottom. The household was
+explicit that a slot right before the outing solves nothing.
+
+**The placement rule.** A prep block lands at the start of the last part of
+the day that ends *before* the outing departs:
+
+| The outing leaves | Its prep sits at the start of |
+|---|---|
+| tomorrow morning (before ~12:00) | **tonight's evening** |
+| this afternoon (12:00–17:00) | **this morning** |
+| this evening (after 17:00) | **this afternoon** |
+
+This is the rule the packing design already wrote for a child's own day —
+*"a prep item is placed in the last bucket before its outing leaves, and
+never after it"* — which the family tile simply never inherited. The naive
+alternative (all of today's prep at the top of today, morning outings' prep
+at the end of yesterday) is close to the same thing and would be defensible;
+the reason to prefer the rule above is that it stays honest once **meals**
+join, because a cooler packed ten hours early is a different kind of wrong.
+
+**The catch-up rule, which is the one that keeps it usable.** If a prep
+block's window has already passed and the items are not packed, it moves to
+the front of what is left and keeps asking. *A list you can act on beats a
+list that is filed correctly and invisible.* Without this rule, a single-day
+view would silently lose the prep for this morning's outing, because that
+block's proper home was last night.
+
+**What a prep block says.** The outing it serves and when that outing leaves,
+the **passengers it is for** — cleats for the wrong child is the specific
+failure this prevents — and the items with their counts and steppers. It
+carries the same amber pill as everything else.
+
+**Nobody owns it.** There is no assignee. The wall has no identity, claims
+stay anonymous there, and a prep block that named a person would be inventing
+one. It is household work sitting in the household's day.
+
+**The outing keeps its list too.** Items appear both in the prep block and
+inside the outing, and this is deliberate rather than duplication: they are
+two views of one truth, because a claim is stored against the outing and the
+item, not against the place it was ticked. The prep block is where the work
+is *scheduled*; the outing is the check at the door. The household's reason
+is the right one: *"if you get to that in the day and it isn't packed, you
+shouldn't have to go hunting back in the day to find the list."*
+
+**Derived, never stored.** A prep block is computed on read from the outing
+it serves, exactly as outings are computed from route edges. No new table, no
+new state, the lens still never writes — the only thing written anywhere in
+this arc remains a claim.
+
+## Every trip is an outing
+
+F1 drew the container only at two or more events, on the reasoning that a box
+around one line is redundant chrome. Living with it showed the cost is
+elsewhere: with two shapes, the driver, the car and the readiness pill move
+depending on how many events a trip has, and the colour rule has nowhere
+consistent to live. **Every trip out of the house is drawn as an outing
+container** — driver colour down its left side, the full time of the trip,
+driver, car, and whether it is packed — with its events inside it as ordinary
+event rows in passenger colours, showing their passengers exactly as the
+agenda does.
+
+An event that needs no driving is an ordinary event row at the top level,
+identical to its agenda self. Nothing about it is special here.
+
+This costs a row per single-event trip. It buys one place for every trip
+fact, one meaning for every colour, and it is paid for by prep moving out of
+the outing into its own block.
+
+## More than one day
+
+A card that replaces the agenda has to do what the agenda does, and the
+agenda shows several days (1–14, `agendaDays`). One day is also not enough
+for prep to work: tomorrow morning's swim bag is packed tonight, so tonight's
+view must be able to show tomorrow. Days become a card option, the way the
+calendar card already has one.
+
+The nesting this implies — day, then outing, then event, then items — is one
+level too deep to read from three metres. **Day boundaries are separators,
+not another nested panel**; the outing stays the only container.
+
 ## Slices
 
 **F1 — the reshape.** The packing card evolves in place (keeps placements,
@@ -135,16 +262,28 @@ config, tests, claims): blocks, the container rule, the amber pill, the three
 rule flips, the all-day banner, the board swap. Packing is the only cargo
 type.
 
-Shipped v2.398.0–v2.402.0.
+Shipped v2.398.0–v2.406.1.
 
-**F2 — meals join.** Meal-prep items as a second kit source on the same rows
-— the family eats full meals in the car between activities, so a prepped
-cooler is outing cargo exactly like a soccer bag. Same claims, same pill.
-Designed for now, built later.
+**F2 — the family's own language.** Passenger colour on events and driver
+colour on outings, passengers visible on the row without a tap, every trip
+drawn as an outing, and more than one day. This is the slice that makes the
+card readable by somebody who was not in the room when it was designed.
+
+**F3 — prep lands where you can act on it.** Prep blocks, the placement rule
+and its catch-up rule, passengers named on the block, the outing keeping its
+list as the door-check. This is the slice that turns the card from a better
+agenda into help.
+
+**F4 — meals join** (was F2 before the F3 work was understood). Meal-prep
+items as a second kit source on the same rows and the same prep blocks — the
+family eats full meals in the car between activities, so a prepped cooler is
+outing cargo exactly like a soccer bag. Same claims, same pill. Perishables
+are why F3's placement rule is bucket-shaped rather than everything-at-dawn.
 
 The packing arc's P3 (the phone half) is untouched by this design and
 composes with it: the kid's My Day items and the driver's list read the same
-blocks.
+blocks — and after F3, the same prep blocks, which is the same rule the kid
+design already stated.
 
 ## What this deliberately does not do
 
@@ -166,10 +305,20 @@ blocks.
 - **Should expanded blocks fold themselves after idle?** A wall card is
   shared; one person's expansion is the next person's clutter. Undecided —
   ship without, watch.
-- **Should tomorrow appear early as a quiet second section?** Carried over
-  from the packing design, and a family-day card strengthens the case — an
-  adult packing tomorrow's swim bag at lunch cannot see it until the day
-  turns. Still deferred; the day-follows-the-day rule ships unmodified.
+- ~~**Should tomorrow appear early as a quiet second section?**~~ **Answered
+  by F2:** the card shows several days, so tomorrow is simply there. The
+  day-in-focus rule survives as the answer to *which day leads*, not as a
+  limit on what can be seen.
+- **Does a prep block auto-expand?** It is the one thing on the card a
+  household is meant to act on, which argues for its items being visible
+  without a tap; the no-auto-expand rule exists to protect the scan, which
+  argues the other way. Lean: prep blocks show their items when the day in
+  focus is the day they sit in, and stay collapsed on the days beyond it.
+  Settle it while building F3.
+- **How is a multi-passenger event coloured?** The agenda takes the first
+  calendar's colour and the grids draw a dot per passenger. Matching the
+  agenda exactly is the safe start; if a two-child event reads as one
+  child's, the grids' dot row is the precedent to borrow.
 - **Does the `drives` card's per-driver grouping have a constituency the
   block spine loses?** Blocks group by time, not driver. If a driver at the
   wall misses "just my drives", a member filter already exists on the card
