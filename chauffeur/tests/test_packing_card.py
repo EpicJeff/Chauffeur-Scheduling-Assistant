@@ -134,7 +134,7 @@ def _tailwind_css():
 # fixture bug indistinguishable from the real one this file exists to catch.
 FETCH_STUB = r"""
 window.__pk = { day: PK_DAY, dayCalls: 0, posts: [], claimGate: false,
-                claimRelease: null, alerts: [], counts: {} };
+                claimRelease: null, alerts: [], counts: {}, claimFailNext: false };
 (window.__pk.day.outings || []).forEach(function (o) {
     (o.groups || []).forEach(function (g) {
         (g.items || []).forEach(function (it) {
@@ -158,6 +158,16 @@ window.fetch = function (url, opt) {
         var body = JSON.parse((opt && opt.body) || '{}');
         window.__pk.posts.push(body);
         var key = body.outing_key + '::' + body.item_key;
+        // A once-only failure the test arms ahead of the tap: the POST never
+        // applies (no count update), so `pkClaim`'s catch rolls the local
+        // count back and re-fetches to reconcile with whatever the server
+        // (here, `window.__pk.day`, moved independently by the test to stand
+        // in for "another device already changed this") actually thinks.
+        if (window.__pk.claimFailNext) {
+            window.__pk.claimFailNext = false;
+            return Promise.resolve({ ok: false,
+                json: function () { return Promise.resolve({ ok: false }); } });
+        }
         var cur = Math.max(0, (window.__pk.counts[key] || 0) + (body.delta || 0));
         window.__pk.counts[key] = cur;
         var answer = { ok: true,
@@ -365,6 +375,72 @@ def scenario_a_poll_racing_a_claim_does_not_reset_the_tick():
                   f"the outing's fraction did not settle either: {outing_badge.inner_text()}")
             check(not page.evaluate("window.__pk.alerts.length"),
                   f"the tick survived but still complained: {page.evaluate('window.__pk.alerts')}")
+        finally:
+            browser.close()
+
+
+# ── (c2) a failed claim rolls back AND the reconciling re-fetch actually
+#         adopts what the server says, rather than the guard silently
+#         re-discarding it ─────────────────────────────────────────────────
+
+def scenario_a_failed_claims_reconcile_adopts_the_server_count():
+    """`pkClaim`'s catch path rolls the optimistic tick back to `prev`, alerts,
+    and re-fetches so the card recovers the server's real count. Fix round
+    finding #2: that re-fetch used to run while the item's key was STILL
+    marked pending (`pkPending.delete(key)` lived only in the `finally`,
+    after the catch's own `await this.loadPacking()` had already resolved),
+    so `loadPacking()`'s own pending-guard — the thing rule 2's poll-race fix
+    added — saw a pending key during the very re-fetch meant to clear it, kept
+    the just-rolled-back LOCAL count instead of the incoming one, and threw
+    away the server's answer this fetch exists to recover in the first place.
+
+    This arms a claim to fail once, moves the fixture's `day` (the stand-in
+    for the server, e.g. another device having already ticked this item) to a
+    count that differs from both the pre-tap and rolled-back value, taps, and
+    asserts the card lands on the SERVER's number, not stuck at the
+    rolled-back local one."""
+    sp = _chromium()
+    if sp is None:
+        return
+    with sp() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        try:
+            _boot(page, {'interactive': True, 'members': []}, _one_item_day(0, 2))
+            plus = page.locator('#pk-root button:text-is("+")')
+            count = plus.locator('xpath=preceding-sibling::span[1]')
+            outing_badge = page.locator('#pk-root span.font-black').first
+            check(count.inner_text() == '0/2', f"the stepper did not start at 0/2: {count.inner_text()}")
+
+            # Arm the next claim POST to fail, and move the "server" to a
+            # count (1) that is neither the pre-tap value (0) nor whatever the
+            # optimistic tap will show (1 momentarily, then rolled back to 0)
+            # — distinct enough that landing on it can only mean the
+            # reconcile's GET actually won, not a coincidence.
+            page.evaluate("window.__pk.claimFailNext = true")
+            page.evaluate(
+                "window.__pk.day.outings[0].groups[0].items[0].packed = 1;"
+                "window.__pk.day.outings[0].packed = 1;"
+                "window.__pk.counts['d1:soccer::k1:water bottle'] = 1;")
+
+            plus.click()
+            check(count.inner_text() == '1/2',
+                  f"the optimistic tap did not move the count at all: {count.inner_text()}")
+
+            # Let the failed POST, the rollback, and the reconciling re-fetch
+            # all settle.
+            page.wait_for_function(
+                "Alpine.$data(document.getElementById('pk-root')).pkPending.size === 0",
+                timeout=5000)
+            check(page.evaluate("window.__pk.alerts.length") == 1,
+                  f"a failed claim should alert exactly once: {page.evaluate('window.__pk.alerts')}")
+            check(count.inner_text() == '1/2',
+                  f"the reconcile did not adopt the server's count (1) — it "
+                  f"landed on {count.inner_text()!r} instead, which is what a "
+                  f"pending guard still held during the reconcile would produce")
+            check(outing_badge.inner_text() == '1/2',
+                  f"the outing's own fraction did not reconcile either: "
+                  f"{outing_badge.inner_text()}")
         finally:
             browser.close()
 

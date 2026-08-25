@@ -223,8 +223,13 @@ def scenario_interactive_false_draws_no_claim_buttons_at_all():
     check(not claim_like,
           f"a read-only packing card is still drawing claim buttons: {claim_like}")
     # The card itself is unchanged otherwise — the same outings, the same
-    # fractions, just nothing left to tap on the items.
-    for want in ('Soccer + swim', 'Band practice', '1/1'):
+    # fractions, just nothing left to tap on the items. '1/1' is the
+    # needed-exactly-one tick item's (Sheet music) `!pkInteractive` branch;
+    # '0/2' is the OTHER branch — the needed-more-than-one stepper item
+    # (Water bottle)'s own `!pkInteractive` count, which a check that only
+    # ever looked at the tick branch would never catch going missing or
+    # wrong.
+    for want in ('Soccer + swim', 'Band practice', '1/1', '0/2'):
         check(want in got['text'], f"the read-only card lost {want!r}: {got['text'][:300]}")
     check(not got['posted'],
           f"merely drawing the read-only card called something: {got['posted']}")

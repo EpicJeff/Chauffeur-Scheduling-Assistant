@@ -357,6 +357,16 @@
                     found.it.packed = prev;
                     this.pkTotals(found.o);
                     showGlobalAlert('Could not save that — try again');
+                    // Release the guard BEFORE the reconciling re-fetch below,
+                    // not after. loadPacking()'s merge keeps a PENDING item's
+                    // local count instead of the poll's — exactly right while
+                    // a claim is still in flight, but if this key were still
+                    // marked pending during this very re-fetch, that merge
+                    // would keep the just-rolled-back local number and throw
+                    // away the server's real answer this fetch exists to
+                    // recover. The `finally` below is then a no-op safety net
+                    // for the success path, not the thing doing the release.
+                    this.pkPending.delete(key);
                     await this.loadPacking();
                 } finally {
                     this.pkPending.delete(key);
