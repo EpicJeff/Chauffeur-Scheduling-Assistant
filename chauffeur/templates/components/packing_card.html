@@ -80,21 +80,29 @@
      bottom is emitted by `include` exactly once per page. -->
 
 {% macro block_header() %}
-                                        <span class="text-blue-400 font-bold text-xs tabular-nums w-12 shrink-0"
+                                        <span class="w-12 shrink-0 text-center text-xs font-bold tabular-nums text-blue-400"
                                             x-text="pkTime(b.start)"></span>
-                                        <span class="text-sm shrink-0" x-text="pkIcon(b)"></span>
+                                        <!-- The kind marker (drive / home / covered) in its own
+                                             fixed slot, aligned the same way the time column is --
+                                             a glyph in a sentence drifts with the text around it;
+                                             a glyph in a column does not. -->
+                                        <span class="w-5 shrink-0 text-center text-base leading-none" x-text="pkIcon(b)"></span>
                                         <div class="min-w-0 flex-1">
                                             <div class="flex items-center gap-2 flex-wrap">
                                                 <span class="font-semibold truncate"
                                                     :class="b.canceled ? 'text-gray-500 line-through' : 'text-gray-100'"
                                                     x-text="pkTitle(b)"></span>
                                                 <template x-if="b.kind === 'event' && b.covered_by">
-                                                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold text-gray-400 border border-gray-700 shrink-0" x-text="b.covered_by"></span>
+                                                    <span class="inline-flex items-center max-w-full truncate px-2 py-0.5 rounded-full text-[11px] font-semibold text-gray-400 border border-gray-700 shrink-0" x-text="b.covered_by"></span>
                                                 </template>
                                             </div>
+                                            <!-- Driver + car: the same muted chip the covered-by
+                                                 badge wears above, not a floating text run. -->
                                             <template x-if="b.kind === 'outing'">
-                                                <div class="text-[11px] text-gray-500 truncate"
-                                                    x-text="b.driver + (b.car ? ' · ' + b.car : '')"></div>
+                                                <div class="mt-1">
+                                                    <span class="inline-flex items-center max-w-full truncate px-2 py-0.5 rounded-full text-[11px] font-semibold text-gray-400 border border-gray-700"
+                                                        x-text="b.driver + (b.car ? ' · ' + b.car : '')"></span>
+                                                </div>
                                             </template>
                                         </div>
                                         <!-- The pill: two states, and only two. The amber fill is
@@ -105,7 +113,7 @@
                                                 x-text="(b.needed - b.packed) + ' to pack'"></span>
                                         </template>
                                         <template x-if="!b.canceled && pkPillState(b) === 'done'">
-                                            <span class="pk-pill pk-pill-done text-gray-500 font-bold text-xs shrink-0">✓</span>
+                                            <span class="pk-pill pk-pill-done w-5 h-5 rounded-full bg-gray-800 border border-gray-700 text-gray-400 font-bold text-[11px] flex items-center justify-center shrink-0">✓</span>
                                         </template>
                                         <template x-if="!b.canceled">
                                             <span class="text-gray-600 shrink-0 transition-transform w-3 text-center text-xs"
@@ -142,24 +150,38 @@
                         </template>
 
                         <template x-if="blocks.length">
-                        <div class="divide-y divide-gray-800/70">
+                        <div class="space-y-2">
                         <template x-for="b in blocks" :key="'fd-block-' + b.key">
+                            <!-- Every block is a card-language panel now, not
+                                 a bare row in a divided list -- the same
+                                 rounded/translucent surface the lane cards
+                                 use for their own rows. Canceled dims rather
+                                 than losing the panel: nothing to unfold, but
+                                 it is still a happening that was on the day. -->
                             <div :data-fd-key="b.key"
-                                :class="pkIsContainer(b) ? 'my-1.5 rounded-xl border border-gray-800 bg-gray-800/40' : ''">
+                                class="rounded-xl border border-gray-800 bg-gray-800/40"
+                                :class="b.canceled ? 'opacity-60' : ''">
                                 <!-- The row itself. Expand/collapse is local
                                      state, not a server action, so the row is
                                      a button whether or not the card is
                                      interactive -- canceled blocks are the
                                      one exception: nothing to unfold on a
-                                     thing not happening. -->
+                                     thing not happening. The bottom border
+                                     only appears when something actually
+                                     follows -- the container's own inner
+                                     lines, or an open block's items -- the
+                                     same "header separated by a rule, body
+                                     plain" split the lane cards use. -->
                                 <template x-if="!b.canceled">
                                     <button type="button" @click="pkToggle(b)"
-                                        class="w-full text-left flex items-center gap-2.5 py-2 px-1.5">
+                                        class="w-full text-left flex items-center gap-2.5 px-3 py-2.5"
+                                        :class="(pkIsContainer(b) || pkOpen(b)) ? 'border-b border-gray-800/70' : ''">
                                         {{ block_header() }}
                                     </button>
                                 </template>
                                 <template x-if="b.canceled">
-                                    <div class="w-full flex items-center gap-2.5 py-2 px-1.5 opacity-60">
+                                    <div class="w-full flex items-center gap-2.5 px-3 py-2.5"
+                                        :class="pkIsContainer(b) ? 'border-b border-gray-800/70' : ''">
                                         {{ block_header() }}
                                     </div>
                                 </template>
@@ -167,28 +189,37 @@
                                 <!-- Container inner lines: title + time only,
                                      ALWAYS VISIBLE, never gated behind a tap --
                                      the box says "one trip, one packing job"
-                                     but each event still owes its own time. -->
+                                     but each event still owes its own time.
+                                     Indented against a left rule, the same
+                                     nested-content guide trip.html's own
+                                     activity list uses. -->
                                 <template x-if="pkIsContainer(b)">
-                                    <div class="pl-8 pb-2 space-y-1">
+                                    <div class="px-3 py-2">
+                                        <div class="border-l-2 border-gray-700/60 pl-3 space-y-1">
                                         <template x-for="ev in b.events" :key="'fd-inner-' + b.key + '-' + ev.id">
                                             <div class="fd-inner-line flex items-center gap-2 text-xs text-gray-400">
                                                 <span class="font-bold tabular-nums w-12 shrink-0" x-text="pkTime(ev.start)"></span>
                                                 <span class="truncate" x-text="ev.title"></span>
                                             </div>
                                         </template>
+                                        </div>
                                     </div>
                                 </template>
 
                                 <!-- Expansion: the shipped packing mechanics,
-                                     moved inside unchanged. No block
-                                     auto-expands. -->
+                                     moved inside unchanged, now in an inset
+                                     panel one tier down from the block's own
+                                     surface -- the same depth the lane cards'
+                                     "My chores" / "Available" rows sit at
+                                     inside their own lane. -->
                                 <template x-if="pkOpen(b) && !b.canceled">
-                                    <div class="px-1.5 pb-2.5 pt-1 space-y-3">
+                                    <div class="px-3 py-2.5">
+                                        <div class="rounded-xl bg-gray-900 border border-gray-800 p-3 space-y-3">
                                         <template x-if="!b.groups.length">
-                                            <div class="text-xs text-gray-500 pl-8">Nothing to pack.</div>
+                                            <div class="text-xs text-gray-500">Nothing to pack.</div>
                                         </template>
                                         <template x-for="g in b.groups" :key="'fd-grp-' + b.key + '-' + g.kit_id">
-                                            <div class="pl-8">
+                                            <div>
                                                 <div class="text-[11px] uppercase tracking-widest text-gray-500 font-bold mb-1.5"
                                                     x-text="g.kit"></div>
                                                 <div class="space-y-1">
@@ -224,13 +255,13 @@
                                                                     <div class="flex items-center gap-1.5 shrink-0">
                                                                         <button type="button" @click="pkClaim(b, it, -1)"
                                                                             :disabled="it.packed <= 0"
-                                                                            class="w-6 h-6 rounded-full bg-gray-900 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">−</button>
+                                                                            class="w-6 h-6 rounded-full bg-gray-800 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">−</button>
                                                                         <span class="text-xs font-bold w-9 text-center tabular-nums"
                                                                             :class="it.packed >= it.needed ? 'text-green-400' : 'text-gray-300'"
                                                                             x-text="it.packed + '/' + it.needed"></span>
                                                                         <button type="button" @click="pkClaim(b, it, 1)"
                                                                             :disabled="it.packed >= it.needed"
-                                                                            class="w-6 h-6 rounded-full bg-gray-900 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">+</button>
+                                                                            class="w-6 h-6 rounded-full bg-gray-800 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">+</button>
                                                                     </div>
                                                                     </template>
                                                                     <template x-if="!pkInteractive">
@@ -244,6 +275,7 @@
                                                 </div>
                                             </div>
                                         </template>
+                                        </div>
                                     </div>
                                 </template>
                             </div>
