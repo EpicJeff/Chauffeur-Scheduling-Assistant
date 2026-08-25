@@ -35,16 +35,8 @@
     }
    },
    {
-    "id": "calendar",
-    "type": "calendar",
-    "config": {
-     "show_legend": false,
-     "days": 5
-    }
-   },
-   {
-    "id": "drives",
-    "type": "drives",
+    "id": "family_day",
+    "type": "packing",
     "config": {}
    },
    {
@@ -111,17 +103,13 @@
     "rows": 54,
     "cols": 14
    },
-   "calendar": {
+   "family_day": {
     "rows": 54,
     "cols": 15
    },
    "moments": {
     "cols": 23,
     "rows": 54
-   },
-   "drives": {
-    "rows": 54,
-    "cols": 27
    },
    "chores": {
     "rows": 26,
