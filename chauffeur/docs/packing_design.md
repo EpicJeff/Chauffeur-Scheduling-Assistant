@@ -122,10 +122,7 @@ everyone can see what is left.
 Read from three metres, so: outing → kit → progress (`Soccer bag 2/4`), items on
 tap. Twenty bare strings in a tile is a tile nobody reads.
 
-**It flips to tomorrow in the evening**, on the same reasoning the kid digest board
-already uses at 19:00 — "a 'Tomorrow' board at 3pm answers the wrong question."
-The packing for a 7am departure happens the night before, and a tile that is dark
-at that hour misses the only moment that mattered.
+**It flips to tomorrow in the evening** — see *Timing*.
 
 **The kid's own day.** Prep for an event a kid is attending appears in their My Day,
 sourced from the event and ticked once, everywhere. This is the household's own
@@ -133,6 +130,52 @@ framing and it is the right architecture as well as the right parenting: *routin
 are the daily repeats, the day's activities are the source of truth for what today
 needs.* A kid's "pack your backpack" habit stays a routine item with its photo
 steps; "shin guards for Tuesday" comes from the event.
+
+**A kid's day flips in the evening too**, for exactly the reason the wall does: a
+child who can only see today has no way to pack for tomorrow morning, which is when
+the packing has to happen. Same hour, same number — see *Timing* below.
+
+### The routine boundary
+
+Prep items appear in a child's day beside their routine. They are **not routine
+items**, and three properties follow from that — all three asked for by the
+household, all three free by construction as long as prep never enters
+`routines_for_day`:
+
+- **An unpacked item cannot fail a routine.** The day's routine is complete when
+  its routine items are ticked; a bag nobody has packed is a real problem, and it
+  is not a broken habit.
+- **Somebody else packing it cannot complete a child's routine.** A parent who
+  drops the shin guards by the door has helped the household, not kept the child's
+  streak.
+- **Streaks are untouched, in both directions.** No prep tick lengthens one and no
+  missed item breaks one.
+
+The one thing prep DOES pay is **critter XP** (below), because getting your own
+stuff ready is real work and the household wants it to feel that way.
+
+### What a prep tick mints
+
+One ledger row through the existing `grant_pet_xp`, with its own reason
+(`'prep'`), and three rules borrowed from what routines already learned:
+
+- **`once=True` per (member, item, day).** A child can tick and untick a box all
+  afternoon; without the guard that is an XP faucet. Routines pass this flag for
+  exactly this reason.
+- **Unticking never claws it back** — "a thing earned is never taken away", the
+  rule the routine ledger already states.
+- **An anonymous wall tap mints nothing.** No member, no XP. The wall has no
+  identity and inventing one to pay somebody would be a lie with a currency
+  attached.
+
+**XP goes to whoever did the packing**, not to whoever the item was for. If a
+parent packs a child's kit, the child is not paid for work they did not do — that
+would hollow out the one lesson this half of the design exists to teach, and it
+would make a farm out of a helpful adult. Stated as a decision because it is
+arguable: see *Open questions*.
+
+Prep pays **no points**. Points are the chore ledger's currency and packing your
+own bag is not a chore somebody assigned; XP is the right and only sink here.
 
 **The driver's phone.** The same outing list, for the adult who is not in the room —
 and, at the car, the drive sheet becomes the outing's list with one confirmation
@@ -142,6 +185,28 @@ instead of one event's list.
 it is an *event* feature, reachable from the PWA's event modal, the schedule and
 calendar admin pages, and the wall's own event dialog. The calendar dialog is
 already a shared component, which keeps this from being four implementations.
+
+## Timing: one evening, one number
+
+Both surfaces flip from today to tomorrow at the same hour, on the reasoning the
+kid digest board already carries in its own code: *"a 'Tomorrow' board at 3pm
+answers the wrong question."* Packing for a 7am departure happens the night
+before, so a surface that is dark at that hour misses the only moment that
+mattered — and that is as true for the child who has to find their own shin guards
+as it is for the wall.
+
+**One setting, not three.** `kid_digest_cutover_time` (default 19:00) already means
+"when the evening starts answering tomorrow" and already governs the kiosk digest
+strip. The family tile and the child's day read the same number rather than
+minting a second and a third one that mean the same thing and drift apart. Its
+label in the settings registry needs widening to say what it now governs; that is
+the whole cost, and the alternative — three cutovers a household must keep in
+step — is worse.
+
+**A live outing is never hidden by the flip.** If the cutover passes while somebody
+is still out, that outing stays pinned above tomorrow's. The rule is *add
+tomorrow*, not *replace today*: a surface that hides a trip in progress to talk
+about the morning has picked the wrong question again, in the other direction.
 
 ## One-off items
 
@@ -163,8 +228,9 @@ does. That is the existing prep-kit editor's job and its existing rules apply.
   — said once, on the outing that has it. Everything else is a list that sits there
   until somebody reads it. This follows the standing rule for findings: time-critical,
   actionable, solution attached, or silent.
-- **A tick mints nothing.** No points, no XP, no streak. Packing is not a chore
-  ledger and routine steps already set this precedent.
+- **A tick never touches routines, streaks or points.** It mints critter XP and
+  nothing else — see *The routine boundary*. Packing is not a chore somebody
+  assigned, and a routine is a habit, not a to-do list for the day's logistics.
 - **No attribution on the wall.** The wall has no identity. Anonymous claims are
   honest; a name guessed from who usually stands there is not.
 - **Blank means blank.** A day with no outing needing anything draws no card.
@@ -215,7 +281,13 @@ The parts that have burned this codebase before decide where the tests go.
   card grid did — a tick on the wall changes the count, and the count survives a
   poll (the board rebuilds every 20 seconds; a checklist that resets on poll is
   worse than no checklist).
-- **The evening flip** gets a clock-injected test at the cutover boundary, both sides.
+- **The evening flip** gets a clock-injected test at the cutover boundary, both
+  sides, on both surfaces — and one that puts a live outing across the cutover and
+  asserts it is still there.
+- **The routine boundary** is three assertions, because all three are silent when
+  wrong: an unpacked item leaves the day's routine complete; a parent's claim does
+  not complete a child's routine or extend a streak; and a prep tick grants XP
+  exactly once per (member, item, day) however many times it is toggled.
 
 ## Cleanups this touches
 
@@ -238,3 +310,9 @@ Small, and honest to do while we are in here:
   not care that their band run and their sister's soccer run are one trip.
 - **What happens to an item nobody claims by departure?** Silence is defensible.
   Saying something is a notification, and this design has been careful not to add one.
+- **Should a child be paid XP for an item an adult packed for them?** This design
+  says no — the payer is the packer — because paying the child for a parent's work
+  hollows out the lesson and turns a helpful adult into a farm. The counter-argument
+  is real: a young child whose parent packs most things sees a list they can never
+  earn from, which is its own discouragement. Worth revisiting once a kid has lived
+  with it for a week.
