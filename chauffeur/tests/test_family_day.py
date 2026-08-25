@@ -158,6 +158,83 @@ def scenario_day_in_focus_stays_on_today_during_the_drive_home():
           "once the drive home is over the day should turn over to tomorrow")
 
 
+# ── F2: whose event is it? ────────────────────────────────────────────────
+#
+# The card overrode every event's colour with the DRIVER's, and the household
+# could not work out what the colours meant. Everywhere else in this app an
+# event's colour is the colour of the calendar it lives on, which is the
+# person's own. An event is a person's commitment; an outing is a logistics
+# job. Passenger colour belongs to the event, driver colour to the trip.
+
+_CAL_META = {
+    'ellie@cal': {'summary': 'Ellie', 'backgroundColor': '#ec4899'},
+    'sam@cal': {'summary': 'Sam', 'backgroundColor': '#22d3ee'},
+}
+_MEMBERS = [
+    {'id': 'm-ellie', 'name': 'Ellie', 'calendar_ids': ['ellie@cal'],
+     'color_code': '#ec4899'},
+    {'id': 'm-sam', 'name': 'Sam', 'calendar_ids': ['sam@cal'],
+     'color_code': '#22d3ee'},
+]
+
+
+def _pax_sched(events, assignments=None, **extra):
+    return _sched(events, assignments, calendar_metadata=dict(_CAL_META),
+                  members=[dict(m) for m in _MEMBERS], **extra)
+
+
+def scenario_an_event_wears_its_own_persons_colour():
+    ev = _ev('piano', 15, title='Piano')
+    ev['calendar_ids'] = ['ellie@cal']
+    got = family_day.blocks_for(DAY, _pax_sched([ev]))['blocks'][0]
+    check(got['color'] == '#ec4899',
+          f"the event should carry its calendar's colour, got {got.get('color')}")
+    check([p['name'] for p in got['passengers']] == ['Ellie'],
+          f"the event should name who it is for: {got.get('passengers')}")
+
+
+def scenario_two_people_on_one_event_are_both_named():
+    """Cleats for the wrong kid is the failure this prevents."""
+    ev = _ev('swim', 14, title='Swim')
+    ev['calendar_ids'] = ['ellie@cal', 'sam@cal']
+    got = family_day.blocks_for(DAY, _pax_sched([ev]))['blocks'][0]
+    check(sorted(p['name'] for p in got['passengers']) == ['Ellie', 'Sam'],
+          f"both people should be named: {got.get('passengers')}")
+    check(sorted(p['color'] for p in got['passengers']) == ['#22d3ee', '#ec4899'],
+          f"each person brings their own colour: {got.get('passengers')}")
+
+
+def scenario_an_outing_keeps_the_drivers_colour_but_its_events_do_not():
+    """The colour law, in one scenario: the trip is the driver's, the events
+    inside it belong to the people going."""
+    a = _ev('soccer', 16, title='Soccer')
+    a['calendar_ids'] = ['ellie@cal']
+    b = _ev('band', 17, 30, title='Band')
+    b['calendar_ids'] = ['sam@cal']
+    sched = _pax_sched([a, b], {'soccer': 'd1', 'band': 'd1'},
+                       route_edges={'d1': {'soccer': {'to_event': 'band',
+                                                      'travel_mins': 15}}})
+    out = family_day.blocks_for(DAY, sched)['blocks'][0]
+    check(out['kind'] == 'outing', f"expected one outing: {out}")
+    check('color' not in out or out.get('color') is None,
+          "an outing must not claim an event colour - the driver colour is "
+          "added by the endpoint, which is the only thing that knows drivers")
+    lines = out['events']
+    check([l['color'] for l in lines] == ['#ec4899', '#22d3ee'],
+          f"inner lines should wear their own people's colours: {lines}")
+    check(sorted(p['name'] for p in out['passengers']) == ['Ellie', 'Sam'],
+          f"the outing should union its events' people: {out.get('passengers')}")
+
+
+def scenario_nobody_is_invented_for_an_unmatched_calendar():
+    ev = _ev('meeting', 10, title='Work thing')
+    ev['calendar_ids'] = ['someone-elses@cal']
+    got = family_day.blocks_for(DAY, _pax_sched([ev]))['blocks'][0]
+    check(got['passengers'] == [], f"invented a person: {got['passengers']}")
+    check(got.get('color') in (None, ''),
+          f"an unknown calendar has no colour to borrow: {got.get('color')}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

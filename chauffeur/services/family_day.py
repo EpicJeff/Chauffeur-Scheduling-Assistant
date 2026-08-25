@@ -28,13 +28,17 @@ def blocks_for(target_date=None, sched: dict = None,
                 for c in (sched.get('assist_contacts')
                           or _assist_contacts_fallback())}
 
+    cal_meta = sched.get('calendar_metadata') or {}
+    members = sched.get('members') or _members_fallback()
+
     blocks = []
     all_day = []
     outing_rows = outings.outings_for(target, sched, now)
     inside_an_outing = {eid for o in outing_rows for eid in o['event_ids']}
     for o in outing_rows:
-        blocks.append({'kind': 'outing', **o,
-                       'events': [_line(events.get(e)) for e in o['event_ids']]})
+        lines = [_line(events.get(e), members, cal_meta) for e in o['event_ids']]
+        blocks.append({'kind': 'outing', **o, 'events': lines,
+                       'passengers': _union_people(lines)})
 
     for ev_id, ev in events.items():
         start = outings._parse((ev or {}).get('start'))
@@ -64,6 +68,8 @@ def blocks_for(target_date=None, sched: dict = None,
             'canceled': bool(ev.get('canceled')),
             'covered_by': ((c.get('relation_label') or c.get('name')
                             or 'Outside help') if cov else None),
+            'color': _event_color(ev, cal_meta),
+            'passengers': _passengers_for(ev, members, cal_meta),
         })
 
     blocks.sort(key=lambda b: (b['start'], b['key']))
@@ -91,12 +97,83 @@ def day_in_focus(now: datetime.datetime = None, sched: dict = None) -> datetime.
     return today + datetime.timedelta(days=1)
 
 
-def _line(ev) -> dict:
-    """The compact inner line an outing container shows: title and time only —
-    driver and car live on the container."""
+def _line(ev, members: list = None, cal_meta: dict = None) -> dict:
+    """The compact inner line an outing container shows: title, time, and the
+    people it is for — driver and car live on the container, because those are
+    facts about the trip rather than about the event."""
     ev = ev or {}
     return {'id': ev.get('id'), 'title': ev.get('title') or 'Event',
-            'start': ev.get('start')}
+            'start': ev.get('start'),
+            'color': _event_color(ev, cal_meta or {}),
+            'passengers': _passengers_for(ev, members or [], cal_meta or {})}
+
+
+# ── Whose event is this? ─────────────────────────────────────────────────
+#
+# Everywhere else in this app an event's colour is the colour of the calendar
+# it lives on (`family_calendar.html:1468-1470`), and in this household a
+# calendar belongs to a person. The Family Day card once overrode that with
+# the driver's colour and the family could not read it. So: passenger colour
+# belongs to the event, driver colour to the trip.
+#
+# `calendar_metadata` on the schedule cache already has each member's chosen
+# identity colour overlaid onto their calendar ids (`main.py:16097`), so the
+# colour here is the same one every other surface draws.
+
+def _event_color(ev: dict, cal_meta: dict) -> Optional[str]:
+    for cid in (ev or {}).get('calendar_ids') or []:
+        meta = cal_meta.get(str(cid)) or {}
+        if meta.get('backgroundColor'):
+            return meta['backgroundColor']
+    return None
+
+
+def _passengers_for(ev: dict, members: list, cal_meta: dict) -> List[dict]:
+    """The people an event is for — nobody invented.
+
+    Matching mirrors the rule the kit resolver already uses
+    (`outings._people_on`): a member is on an event when the event names their
+    member id or any of their calendar ids.
+    """
+    cal_ids = {str(c) for c in ((ev or {}).get('calendar_ids') or [])}
+    if not cal_ids:
+        return []
+    out = []
+    for m in members or []:
+        mid = str(m.get('id') or '')
+        m_cals = {str(c) for c in (m.get('calendar_ids') or [])}
+        if mid not in cal_ids and not (m_cals & cal_ids):
+            continue
+        color = None
+        for cid in m_cals:
+            meta = cal_meta.get(cid) or {}
+            if meta.get('backgroundColor'):
+                color = meta['backgroundColor']
+                break
+        out.append({'id': mid, 'name': m.get('name') or 'Somebody',
+                    'color': color or m.get('color_code') or None})
+    out.sort(key=lambda p: p['name'].lower())
+    return out
+
+
+def _union_people(lines: list) -> List[dict]:
+    """An outing is for everyone its events are for, each named once."""
+    seen, out = set(), []
+    for line in lines or []:
+        for p in line.get('passengers') or []:
+            if p['id'] in seen:
+                continue
+            seen.add(p['id'])
+            out.append(p)
+    out.sort(key=lambda p: p['name'].lower())
+    return out
+
+
+def _members_fallback() -> list:
+    try:
+        return storage.get_all_members()
+    except Exception:
+        return []
 
 
 def _assist_contacts_fallback() -> list:
