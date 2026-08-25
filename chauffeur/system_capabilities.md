@@ -5681,11 +5681,14 @@ ready for it."
   member/item/day and never claws it back on an untick, and `delta: 0` is
   refused rather than quietly rounded up.
 - **The board swap: the default home board leads with this one card**,
-  replacing `calendar` + `drives` + `packing`. The card keeps the `packing`
-  catalog key on purpose — placements, config, and every existing claim
-  survive the reshape underneath a new label ("Family day"). All three
-  replaced cards stay in the catalog, untouched and placeable, so reverting
-  to the old three-card layout is a board-edit-mode action, not a rollback.
+  removing `calendar` + `drives` from the default layout and adding this
+  card in `calendar`'s slot. (`packing` itself was never on the default
+  board — catalog-only since v2.392.0 — so nothing was "replaced" by name;
+  the card keeps the `packing` catalog key on purpose, so its own placements,
+  config, and every existing claim survive the reshape underneath a new
+  label, "Family day".) Both removed cards stay in the catalog, untouched
+  and placeable, so restoring the old calendar+drives layout — or building
+  any other — is a board-edit-mode action, not a rollback.
 - **Known gap, watched, not fixed:** an outing's key is
   `f"{driver_id}:{first_event_id}"`. A midday re-solve that changes which
   event leads an outing's chain changes that key, which orphans every claim

@@ -120,8 +120,9 @@ clawback, anonymous wall taps) carries over unchanged.
 
 ## The board swap
 
-The default home board replaces **`calendar` + `drives` + `packing`** with
-this one card. The hero stays. All three replaced cards remain in the
+The default home board replaces **`calendar` + `drives`** with this one card
+(the packing card was catalog-only, never on the default board; this card
+takes calendar's slot). The hero stays. Both replaced cards remain in the
 catalog, untouched and placeable — the swap is board configuration, so
 living with it is reversible by anyone in board edit mode, and the trial the
 household actually wants ("does one card really beat three?") costs nothing
