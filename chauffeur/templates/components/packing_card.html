@@ -89,7 +89,7 @@
                                                     :class="b.canceled ? 'text-gray-500 line-through' : 'text-gray-100'"
                                                     x-text="pkTitle(b)"></span>
                                                 <template x-if="b.kind === 'event' && b.covered_by">
-                                                    <span class="text-[11px] text-gray-400 shrink-0" x-text="b.covered_by"></span>
+                                                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold text-gray-400 border border-gray-700 shrink-0" x-text="b.covered_by"></span>
                                                 </template>
                                             </div>
                                             <template x-if="b.kind === 'outing'">

@@ -1,4 +1,4 @@
-"""The family packing card, on the thing jsdom cannot answer: a real screen.
+"""The family day card, on the thing jsdom cannot answer: a real screen.
 
 `test_packing_card_render.py` proves the markup wires up right in a real DOM;
 this drives the real component in real chromium, using
@@ -7,23 +7,20 @@ absent) and its technique — the actual `<script>` this component ships,
 loaded into a page it fully controls, so there is nothing left to fake about
 whether a tap does what the markup claims it does.
 
-The regression this file exists for: **the board rebuilds every 20 seconds,
-and a checklist that resets on poll is worse than no checklist** (the
-design's own words). `packingCard`'s poll (`loadPacking`) used to replace
-`outings` wholesale every time it ran. Two things followed from that, both
-invisible to a source read:
+Rewritten for the family_day_plan reshape (task 3, `docs/family_day_design.md`):
+the feed is `blocks`, not `outings`; a block is a container only at two or
+more events, with its inner lines always visible; the pill is two states
+only (`pkPillState`); nothing auto-expands — `expandedKeys` is a plain Set a
+tap toggles, and the board's 30-second poll must never collapse whatever
+somebody just opened, exactly as it must never reset a tick in flight. That
+last property was already new surface `test_packing_card_render.py` cannot
+reach (jsdom never actually schedules a poll racing a real click), so this
+file is still where it gets proven.
 
-  * a claim still in flight when a poll landed lost the object its own
-    response was going to write into — the count that came back from the
-    server updated a row nobody was looking at any more;
-  * a poll that has not yet caught up with a tap in flight overwrote the
-    optimistic count with what the server thought BEFORE that tap, so the
-    tick visibly reverted until the claim's own response arrived (if it ever
-    found the right object to arrive at).
-
-`scenario_a_poll_racing_a_claim_does_not_reset_the_tick` constructs exactly
-that race with a held-open fetch, and is the one that actually falls over on
-the code as it stood before this file — see the report for the RED run.
+The regression this file has always existed for: **the board rebuilds every
+20 seconds, and a checklist that resets on poll is worse than no checklist**
+(the design's own words). `scenario_a_poll_racing_a_claim_does_not_reset_the_tick`
+constructs exactly that race with a held-open fetch.
 
 Run from chauffeur/:  python tests/test_packing_card.py
 """
@@ -48,14 +45,19 @@ def check(cond, msg):
         raise AssertionError(msg)
 
 
-# --- one outing, one stepper item — the fixture the tap scenarios share ----
+# --- one block, one stepper item — the fixture the tap scenarios share -----
+# A bare at-home event block (kind `event`) is enough to carry the shared
+# claim mechanics: a container's expansion is identical, just nested under
+# one more `data-fd-key` box (proven separately by scenario (f)).
 
 def _one_item_day(packed=0, needed=2):
     return {
-        'date': '2026-09-08', 'is_tomorrow': False,
-        'outings': [
-            {'key': 'd1:soccer', 'driver': 'Dad', 'color': '#2563eb', 'car': 'Van',
-             'start': '2026-09-08T16:00:00', 'title': 'Soccer practice',
+        'date': '2026-09-08', 'is_tomorrow': False, 'all_day': [],
+        'blocks': [
+            {'kind': 'event', 'key': 'home:1', 'event_id': 1,
+             'title': 'Soccer practice',
+             'start': '2026-09-08T16:00:00', 'end': '2026-09-08T17:00:00',
+             'canceled': False, 'covered_by': None,
              'groups': [
                  {'kit_id': 'k1', 'kit': 'Soccer bag', 'people': ['ellie'],
                   'items': [{'key': 'k1:water bottle', 'label': 'Water bottle',
@@ -65,25 +67,77 @@ def _one_item_day(packed=0, needed=2):
     }
 
 
-# --- a ten-activity Saturday — every outing carries its own driver, time and
-# a single needed-one item, so the fixture stays small while still standing
+# --- a two-block day: a container beside a plain block — the fixture
+# scenario (f) needs to prove one block's expansion leaves its sibling alone.
+def _two_block_day():
+    return {
+        'date': '2026-09-08', 'is_tomorrow': False, 'all_day': [],
+        'blocks': [
+            {'kind': 'outing', 'key': 'd1:soccer', 'driver': 'Dad',
+             'driver_id': 'd1', 'color': '#2563eb', 'car': 'Van',
+             'start': '2026-09-08T16:00:00', 'end': '2026-09-08T18:00:00',
+             'events': [
+                 {'id': 'soccer', 'title': 'Soccer', 'start': '2026-09-08T16:00:00'},
+                 {'id': 'band', 'title': 'Band practice', 'start': '2026-09-08T17:00:00'},
+             ],
+             'groups': [
+                 {'kit_id': 'k1', 'kit': 'Soccer bag', 'people': ['ellie'],
+                  'items': [{'key': 'k1:water bottle', 'label': 'Water bottle',
+                             'needed': 1, 'packed': 0}]},
+             ], 'packed': 0, 'needed': 1},
+            {'kind': 'event', 'key': 'home:1', 'event_id': 1, 'title': 'Piano',
+             'start': '2026-09-08T09:00:00', 'end': '2026-09-08T09:30:00',
+             'canceled': False, 'covered_by': None,
+             'groups': [
+                 {'kit_id': 'k2', 'kit': 'Music bag', 'people': ['ellie'],
+                  'items': [{'key': 'k2:sheet music', 'label': 'Sheet music',
+                             'needed': 1, 'packed': 0}]},
+             ], 'packed': 0, 'needed': 1},
+        ],
+    }
+
+
+# --- a ten-activity Saturday: ten TOP-LEVEL blocks, one of which is a
+# three-event container and two of which are bare at-home events — standing
 # in for "four activities a day, ten at a weekend" (the sizing brief this
-# design was built against).
+# design was built against) while keeping the fixture small.
 def _ten_activity_day():
-    outings = []
-    for i in range(10):
-        hour = 7 + i
-        packed = 0 if i == 0 else 1        # only the first is unfinished
-        outings.append({
-            'key': f'd1:ev{i}', 'driver': 'Dad', 'color': '#2563eb', 'car': 'Van',
-            'start': f'2026-09-08T{hour:02d}:00:00',
+    blocks = [
+        {'kind': 'event', 'key': 'home:1', 'event_id': 1, 'title': 'Piano',
+         'start': '2026-09-08T07:00:00', 'end': '2026-09-08T07:30:00',
+         'canceled': False, 'covered_by': None, 'groups': [],
+         'packed': 0, 'needed': 0},
+        {'kind': 'event', 'key': 'home:2', 'event_id': 2, 'title': 'Reading',
+         'start': '2026-09-08T08:00:00', 'end': '2026-09-08T08:30:00',
+         'canceled': False, 'covered_by': None, 'groups': [],
+         'packed': 0, 'needed': 0},
+        {'kind': 'outing', 'key': 'd1:triple', 'driver': 'Dad', 'driver_id': 'd1',
+         'color': '#2563eb', 'car': 'Van',
+         'start': '2026-09-08T09:00:00', 'end': '2026-09-08T13:00:00',
+         'events': [
+             {'id': 'e1', 'title': 'Soccer', 'start': '2026-09-08T09:00:00'},
+             {'id': 'e2', 'title': 'Lunch stop', 'start': '2026-09-08T11:00:00'},
+             {'id': 'e3', 'title': 'Band', 'start': '2026-09-08T12:00:00'},
+         ],
+         'groups': [{'kit_id': 'kt', 'kit': 'Trip bag', 'people': ['ellie'],
+                     'items': [{'key': 'kt:water', 'label': 'Water',
+                                'needed': 1, 'packed': 0}]}],
+         'packed': 0, 'needed': 1},
+    ]
+    for i in range(7):
+        hour = 14 + i
+        blocks.append({
+            'kind': 'event', 'key': f'act:{i}', 'event_id': 100 + i,
             'title': f'Activity {i + 1}',
+            'start': f'2026-09-08T{hour:02d}:00:00',
+            'end': f'2026-09-08T{hour:02d}:30:00',
+            'canceled': False, 'covered_by': None,
             'groups': [{'kit_id': f'k{i}', 'kit': f'Kit {i + 1}', 'people': ['ellie'],
                         'items': [{'key': f'k{i}:item', 'label': f'Item {i + 1}',
-                                   'needed': 1, 'packed': packed}]}],
-            'packed': packed, 'needed': 1,
+                                   'needed': 1, 'packed': 0}]}],
+            'packed': 0, 'needed': 1,
         })
-    return {'date': '2026-09-08', 'is_tomorrow': False, 'outings': outings}
+    return {'date': '2026-09-08', 'is_tomorrow': False, 'all_day': [], 'blocks': blocks}
 
 
 _CACHE = {}
@@ -127,18 +181,21 @@ def _tailwind_css():
 # simply a poll that runs again before the test moves that value, which is
 # what makes the race scenario constructible on demand rather than by luck.
 #
-# The claim handler tracks a running count per (outing, item) the same way
+# The claim handler tracks a running count per (block, item) the same way
 # the real endpoint does (packed = the claims filed so far, clamped to
 # [0, needed]) — a fixed canned response would itself overwrite an
 # optimistic tick with the wrong number the moment it resolved, which is a
 # fixture bug indistinguishable from the real one this file exists to catch.
+# The wire field is still `outing_key` regardless of block kind — that field
+# name is the API contract (`main.py::packing_claim`), unchanged by the
+# reshape.
 FETCH_STUB = r"""
 window.__pk = { day: PK_DAY, dayCalls: 0, posts: [], claimGate: false,
                 claimRelease: null, alerts: [], counts: {}, claimFailNext: false };
-(window.__pk.day.outings || []).forEach(function (o) {
-    (o.groups || []).forEach(function (g) {
+(window.__pk.day.blocks || []).forEach(function (b) {
+    (b.groups || []).forEach(function (g) {
         (g.items || []).forEach(function (it) {
-            window.__pk.counts[o.key + '::' + it.key] = it.packed;
+            window.__pk.counts[b.key + '::' + it.key] = it.packed;
         });
     });
 });
@@ -232,11 +289,25 @@ def _chromium():
     return sync_playwright
 
 
+def _row(page, key):
+    return page.locator(f'#pk-root [data-fd-key="{key}"]')
+
+
+def _expand(page, key):
+    """The only way any item reaches the DOM now: a tap on the block's own
+    header button. `_row(...).locator('button').first` is safe to use as the
+    header even after other buttons exist elsewhere on the page, since it is
+    scoped to this one block's wrapper."""
+    _row(page, key).locator('button').first.click()
+
+
 # ── (a) a ten-activity Saturday stays readable ──────────────────────────────
 
 def scenario_a_ten_activity_saturday_stays_readable():
-    """One row per outing, one expanded — the density shape this design was
-    sized for ("four activities a day, ten at a weekend"). Readability is a
+    """One row per BLOCK — not per event — is the density shape this design
+    was sized for ("four activities a day, ten at a weekend"). The
+    three-event container's inner lines are always visible without a tap;
+    nothing else is, because nothing auto-expands any more. Readability is a
     real-layout question: the rows must actually stack without overlapping
     and without spilling past the tile's own width, which jsdom cannot see at
     all (it does no layout)."""
@@ -249,25 +320,31 @@ def scenario_a_ten_activity_saturday_stays_readable():
         try:
             _boot(page, {'interactive': True, 'members': []},
                   _ten_activity_day(), tile_width=480)
-            rows = page.locator('#pk-root .rounded-2xl')
+            rows = page.locator('#pk-root [data-fd-key]')
             check(rows.count() == 10,
-                  f"a ten-activity day drew {rows.count()} rows, not one per outing")
-            # Exactly one row's group content is open — the first unfinished
-            # outing, the one look worth taking without a tap at all.
-            expanded = page.locator('#pk-root .border-t.border-gray-800')
-            check(expanded.count() == 1,
-                  f"{expanded.count()} outings are expanded at once, not one")
-            expanded_row = expanded.first.locator('xpath=..')
-            check('Activity 1' in expanded_row.inner_text(),
-                  f"the expanded row is not the first unfinished outing: "
-                  f"{expanded_row.inner_text()[:80]!r}")
+                  f"a ten-block day drew {rows.count()} top-level rows, not one per block")
+            inner = page.locator('#pk-root .fd-inner-line')
+            check(inner.count() == 3,
+                  f"the three-event container should show three always-visible "
+                  f"inner lines, drew {inner.count()}")
+            inner_texts = inner.all_inner_texts()
+            for title in ('Soccer', 'Lunch stop', 'Band'):
+                check(any(title in t for t in inner_texts),
+                      f"an inner line for {title!r} is missing: {inner_texts}")
+            # Nothing auto-expands: no claim controls (tick or stepper) exist
+            # anywhere in the DOM before any tap, and every button visible is
+            # exactly one header per block.
+            buttons = page.locator('#pk-root button')
+            check(buttons.count() == 10,
+                  f"nothing should be expanded yet, but {buttons.count()} buttons "
+                  f"exist (want exactly 10 row headers)")
             # Rows stack without overlapping and stay inside the tile — the
             # geometry a source read cannot see at all.
             boxes = [rows.nth(i).bounding_box() for i in range(10)]
             check(all(b is not None for b in boxes), "a row failed to lay out at all")
             for prev, cur in zip(boxes, boxes[1:]):
                 check(cur['y'] + 0.5 >= prev['y'] + prev['height'],
-                      f"two outing rows overlap: {prev} then {cur}")
+                      f"two blocks overlap: {prev} then {cur}")
                 check(prev['height'] > 20,
                       f"a row collapsed to {prev['height']}px — unreadable")
             tile_width = page.locator('#pk-root').bounding_box()['width']
@@ -278,9 +355,12 @@ def scenario_a_ten_activity_saturday_stays_readable():
             browser.close()
 
 
-# ── (b) tapping + moves the item count and the outing's progress ───────────
+# ── (b) tapping + moves the item count and the block's pill ────────────────
 
 def scenario_tapping_plus_moves_the_item_and_the_outing_fraction():
+    """Items no longer draw before a tap, so this expands the block first,
+    then ticks the stepper item to its cap and watches the pill go from
+    amber ("N to pack") down to the done state at zero remaining."""
     sp = _chromium()
     if sp is None:
         return
@@ -289,42 +369,43 @@ def scenario_tapping_plus_moves_the_item_and_the_outing_fraction():
         page = browser.new_page()
         try:
             _boot(page, {'interactive': True, 'members': []}, _one_item_day(0, 2))
-            plus = page.locator('#pk-root button:text-is("+")')
+            row = _row(page, 'home:1')
+            check(row.locator('.pk-pill-amber').count() == 1
+                  and '2 to pack' in row.locator('.pk-pill-amber').inner_text(),
+                  "the block should start with an amber '2 to pack' pill")
+            _expand(page, 'home:1')
+            plus = row.locator('button:text-is("+")')
             count = plus.locator('xpath=preceding-sibling::span[1]')
-            outing_badge = page.locator('#pk-root span.font-black').first
             check(count.inner_text() == '0/2', f"the stepper did not start at 0/2: {count.inner_text()}")
-            check(outing_badge.inner_text() == '0/2',
-                  f"the outing's own fraction did not start at 0/2: {outing_badge.inner_text()}")
             plus.click()
             check(count.inner_text() == '1/2', f"the tap did not move the item's count: {count.inner_text()}")
-            check(outing_badge.inner_text() == '1/2',
-                  f"the tap did not move the outing's own fraction: {outing_badge.inner_text()}")
+            check('1 to pack' in row.locator('.pk-pill-amber').inner_text(),
+                  f"the pill did not decrement: {row.locator('.pk-pill-amber').inner_text()}")
             plus.click()
             check(count.inner_text() == '2/2', f"a second tap did not reach 2/2: {count.inner_text()}")
-            check(outing_badge.inner_text() == '2/2',
-                  f"the outing did not reach 2/2: {outing_badge.inner_text()}")
+            check(row.locator('.pk-pill-amber').count() == 0,
+                  "the pill is still amber at zero remaining")
+            check(row.locator('.pk-pill-done').count() == 1,
+                  "the pill did not flip to the done state at zero remaining")
             posts = page.evaluate("window.__pk.posts")
             check(len(posts) == 2, f"two taps should file two claims, filed {len(posts)}")
         finally:
             browser.close()
 
 
-# ── (c) THE regression: a poll racing a claim must not reset the tick ──────
+# ── (c) THE regression: a poll racing a claim must not reset the tick, and
+#        must not collapse a block somebody just opened ────────────────────
 
 def scenario_a_poll_racing_a_claim_does_not_reset_the_tick():
     """The board's own poll fires on a clock a tap knows nothing about. This
-    holds the claim's response open, taps `+`, and forces a poll to land
-    WHILE that response is still pending — with the poll answering exactly
-    the pre-tap data, the same shape a poll that has not yet caught up with a
-    just-filed claim would have. The count must stay at the tapped value
-    throughout, and must still be right once the claim's own response
-    finally lands.
-
-    This is the scenario that falls over on the card as it stood before this
-    task: `loadPacking` replaced `outings` wholesale, so the racing poll's
-    stale numbers overwrote the optimistic tick, and the claim's own
-    response — arriving after — wrote into an object no longer in `outings`
-    and never reached the screen at all.
+    expands the block, holds the claim's response open, taps `+`, and forces
+    a poll to land WHILE that response is still pending — with the poll
+    answering exactly the pre-tap data, the same shape a poll that has not
+    yet caught up with a just-filed claim would have. The count must stay at
+    the tapped value throughout, and must still be right once the claim's
+    own response finally lands. `expandedKeys` survival is new surface this
+    reshape introduced: a poll rebuilding `blocks` wholesale must not also
+    reset which block a person just tapped open.
     """
     sp = _chromium()
     if sp is None:
@@ -337,9 +418,10 @@ def scenario_a_poll_racing_a_claim_does_not_reset_the_tick():
             check(page.evaluate("window.__pk.dayCalls") == 1,
                   "the mount did not do its one initial GET")
 
-            plus = page.locator('#pk-root button:text-is("+")')
+            _expand(page, 'home:1')
+            row = _row(page, 'home:1')
+            plus = row.locator('button:text-is("+")')
             count = plus.locator('xpath=preceding-sibling::span[1]')
-            outing_badge = page.locator('#pk-root span.font-black').first
 
             # Hold the claim's response open, then tap.
             page.evaluate("window.__pk.claimGate = true")
@@ -357,9 +439,11 @@ def scenario_a_poll_racing_a_claim_does_not_reset_the_tick():
             check(count.inner_text() == '1/2',
                   f"a poll that has not caught up with the tap reset the tick "
                   f"back to what the server thought before it: {count.inner_text()}")
-            check(outing_badge.inner_text() == '1/2',
-                  f"the outing's own fraction was reset by the racing poll: "
-                  f"{outing_badge.inner_text()}")
+            # The block must still be open — a poll rebuilding `blocks`
+            # wholesale collapsing whatever was just tapped open would be as
+            # unusable as one that reset a tick.
+            check(plus.count() == 1,
+                  "the racing poll collapsed the block someone just expanded")
 
             # Now let the claim's own response land, with the server's real
             # answer — and confirm it reaches the CURRENT row, not an object
@@ -371,8 +455,6 @@ def scenario_a_poll_racing_a_claim_does_not_reset_the_tick():
             check(count.inner_text() == '1/2',
                   f"the claim's own response did not settle on the count the "
                   f"tap made: {count.inner_text()}")
-            check(outing_badge.inner_text() == '1/2',
-                  f"the outing's fraction did not settle either: {outing_badge.inner_text()}")
             check(not page.evaluate("window.__pk.alerts.length"),
                   f"the tick survived but still complained: {page.evaluate('window.__pk.alerts')}")
         finally:
@@ -398,7 +480,9 @@ def scenario_a_failed_claims_reconcile_adopts_the_server_count():
     for the server, e.g. another device having already ticked this item) to a
     count that differs from both the pre-tap and rolled-back value, taps, and
     asserts the card lands on the SERVER's number, not stuck at the
-    rolled-back local one."""
+    rolled-back local one. Field rename only from the pre-reshape version:
+    `window.__pk.day.blocks[0]` in place of `.outings[0]`, and the block
+    expanded first since items no longer draw before a tap."""
     sp = _chromium()
     if sp is None:
         return
@@ -407,9 +491,10 @@ def scenario_a_failed_claims_reconcile_adopts_the_server_count():
         page = browser.new_page()
         try:
             _boot(page, {'interactive': True, 'members': []}, _one_item_day(0, 2))
-            plus = page.locator('#pk-root button:text-is("+")')
+            _expand(page, 'home:1')
+            row = _row(page, 'home:1')
+            plus = row.locator('button:text-is("+")')
             count = plus.locator('xpath=preceding-sibling::span[1]')
-            outing_badge = page.locator('#pk-root span.font-black').first
             check(count.inner_text() == '0/2', f"the stepper did not start at 0/2: {count.inner_text()}")
 
             # Arm the next claim POST to fail, and move the "server" to a
@@ -419,9 +504,9 @@ def scenario_a_failed_claims_reconcile_adopts_the_server_count():
             # reconcile's GET actually won, not a coincidence.
             page.evaluate("window.__pk.claimFailNext = true")
             page.evaluate(
-                "window.__pk.day.outings[0].groups[0].items[0].packed = 1;"
-                "window.__pk.day.outings[0].packed = 1;"
-                "window.__pk.counts['d1:soccer::k1:water bottle'] = 1;")
+                "window.__pk.day.blocks[0].groups[0].items[0].packed = 1;"
+                "window.__pk.day.blocks[0].packed = 1;"
+                "window.__pk.counts['home:1::k1:water bottle'] = 1;")
 
             plus.click()
             check(count.inner_text() == '1/2',
@@ -438,9 +523,6 @@ def scenario_a_failed_claims_reconcile_adopts_the_server_count():
                   f"the reconcile did not adopt the server's count (1) — it "
                   f"landed on {count.inner_text()!r} instead, which is what a "
                   f"pending guard still held during the reconcile would produce")
-            check(outing_badge.inner_text() == '1/2',
-                  f"the outing's own fraction did not reconcile either: "
-                  f"{outing_badge.inner_text()}")
         finally:
             browser.close()
 
@@ -456,7 +538,9 @@ def scenario_an_item_at_needed_cannot_be_pushed_past_it():
         page = browser.new_page()
         try:
             _boot(page, {'interactive': True, 'members': []}, _one_item_day(1, 2))
-            plus = page.locator('#pk-root button:text-is("+")')
+            _expand(page, 'home:1')
+            row = _row(page, 'home:1')
+            plus = row.locator('button:text-is("+")')
             count = plus.locator('xpath=preceding-sibling::span[1]')
             plus.click()
             check(count.inner_text() == '2/2', f"the tap to the cap did not land: {count.inner_text()}")
@@ -475,10 +559,51 @@ def scenario_an_item_at_needed_cannot_be_pushed_past_it():
             browser.close()
 
 
+# ── (e) expanding one block leaves the others at rest ───────────────────────
+
+def scenario_expanding_one_block_leaves_the_others_at_rest():
+    """Tap one block open on a shared wall and the next person's block must
+    not move — `expandedKeys` is per-key, not a single "the open one" slot.
+    This taps the container and checks its own items reached the DOM while
+    the sibling block still shows none of its own."""
+    sp = _chromium()
+    if sp is None:
+        return
+    with sp() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        try:
+            _boot(page, {'interactive': True, 'members': []}, _two_block_day())
+            container = _row(page, 'd1:soccer')
+            sibling = _row(page, 'home:1')
+            check('Water bottle' not in container.inner_text(),
+                  "the container's items drew before any tap")
+            check('Sheet music' not in sibling.inner_text(),
+                  "the sibling's items drew before any tap")
+
+            _expand(page, 'd1:soccer')
+
+            check('Water bottle' in container.inner_text(),
+                  f"the tapped container's own item did not reach the DOM: "
+                  f"{container.inner_text()[:200]}")
+            check('Sheet music' not in sibling.inner_text(),
+                  f"expanding the container also expanded its sibling: "
+                  f"{sibling.inner_text()[:200]}")
+        finally:
+            browser.close()
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
+    ran_for_real = _chromium() is not None
     for fn in SCENARIOS:
         fn()
         print(f"  ok  {fn.__name__}")
-    print(f"\n{len(SCENARIOS)}/{len(SCENARIOS)} packing-card browser scenarios passed")
+    if ran_for_real:
+        print(f"\n{len(SCENARIOS)}/{len(SCENARIOS)} packing-card browser "
+              f"scenarios passed (chromium actually ran)")
+    else:
+        print(f"\n{len(SCENARIOS)}/{len(SCENARIOS)} packing-card browser "
+              f"scenarios passed (SKIPPED — playwright/chromium/node/alpine "
+              f"was not available; nothing was actually proven)")
