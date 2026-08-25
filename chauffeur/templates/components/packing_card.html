@@ -1,60 +1,121 @@
-<!-- ── The family packing card: every outing today (or tomorrow, once the
-     last one is home) and what has to be packed for it.
+<!-- ── Family Day: the whole day, drawn once.
 
-     Self-fetching, the same shape `chores_lanes.html` and `routine_lanes.html`
-     settled: an interactive card cannot ride a board payload that rebuilds
-     under the finger doing the ticking (rule 2), so the builder ships only
-     `{interactive, members}` and this component fetches `GET
-     api/packing/day` itself, on the same 30-second cadence the lanes cards
-     poll on, and posts one claim at a time to `POST api/packing/claim`.
+     Evolved in place from the packing tile (family_day_plan task 3,
+     docs/family_day_design.md) — the factory keeps its name (`packingCard`),
+     its self-fetch (`GET api/packing/day`, rule 2: interactive depth means
+     the card fetches its own data, so the builder ships only `{interactive,
+     members}`), its 30-second poll, and every claim mechanic the packing arc
+     already built (optimistic ticks, `POST api/packing/claim`, pending-guard
+     release-before-reconcile). What changed is the SPINE: not outings, but
+     BLOCKS — the day's one time-ordered list, atoms `services/family_day.py`
+     already builds (an at-home event, an outing, a covered ride), so the
+     card no longer answers "what has to be packed" alone but "what is
+     happening today and is it ready" — the agenda's job, with the driving
+     schedule and the packing list woven in.
 
-     ONE ROW PER OUTING, in the order the day already sorts them (departure
-     time) — the whole point of an outing is that two events on one trip out
-     of the house are one packing job, not two. A row is driver, car, time,
-     title ("Soccer + swim") and a packed/needed fraction; tapping it expands
-     to the kit groups underneath. The FIRST UNFINISHED outing starts
-     expanded — the one thing worth an extra tap to see without a tap at all
-     — and stays that way until somebody taps a different row; explicitly
-     collapsing one stops the auto-follow for that visit.
+     ONE ROW PER BLOCK, time-ordered (server order — `family_day.blocks_for`
+     already sorts). The event block is the atom: an at-home event is a bare
+     row; a covered ride names its coverage ("Swim — Grandma driving"). The
+     outing is a container only at TWO OR MORE events — a box around one
+     event is redundant chrome, and most outings are single-event, so a
+     single-event outing draws as one flat line exactly like an event block
+     does (time, icon, title, driver + car, the pill). At two or more events
+     the container appears: the outer row carries the trip facts (driver,
+     car, the pill) and the events sit inside as compact lines — title and
+     time only, ALWAYS VISIBLE, never gated behind a tap — because the box
+     itself is a claim ("one trip, one packing job") that still owes each
+     event its own scannable time.
 
-     An item needing more than one (two kids, two water bottles) draws a
-     stepper (− n/needed +); needing exactly one draws a plain tick, the same
-     circle-and-checkmark `routine_lanes.html` uses for its own checklist, so
-     a packing item and a routine item read as the same kind of thing.
+     THE PILL IS TWO STATES AND ONLY TWO, and it is the only saturated thing
+     on a resting row: work remaining is a filled amber pill ("3 to pack"),
+     the token layer's own amber (`bg-amber-500/10 text-amber-300
+     border-amber-500/30` — the same combination the Tomorrow chip already
+     uses on this very card); done, or nothing to pack, is a muted checkmark
+     or nothing at all. No colour ramp, no pulsing, no proximity escalation —
+     this card is a surface, not a notifier.
 
-     Ticking is OPTIMISTIC — applied to the local count before the request
-     lands, the way `togglePrepConfirmed` in app.html does for the agenda's
-     own prep pills — and a failed POST rolls the number back, alerts through
-     `showGlobalAlert` (never a browser dialog) and re-fetches so the card
-     recovers the server's real count rather than staying wrong.
+     TAP A ROW OR CONTAINER to unfold its items — kit groups, steppers where
+     `needed > 1`, ticks where `needed == 1`, the shipped packing markup
+     verbatim. NO BLOCK AUTO-EXPANDS: "what to look at first" is the hero's
+     job, not this card's, and an auto-followed row on a shared wall is the
+     next person's clutter. Expansion state is `expandedKeys`, a plain Set of
+     block keys, reassigned (never mutated in place) so Alpine's reactivity
+     always sees the change; it survives the 30-second poll exactly the way
+     tick state does, because a poll that collapsed whatever somebody just
+     opened would be as unusable as one that reset a tick.
 
-     Rule 1's second half lives here, not in a vanished card: a day that
-     needs nothing packed is a REAL answer, not an unconfigured feature, and
-     a card that disappears cannot be told from one that broke. So once the
-     first fetch resolves, an empty `outings` draws the same inline sentence
-     `REQUIRED_EMPTY['packing']` carries for the board's own pinned/editing
-     machinery — "Nothing to pack for today's outings." — the way
-     `routine_lanes.html` draws "No routines set up yet." for its own empty
-     case, rather than leaving a blank box under the card's chrome. Before
-     that first fetch resolves, the card draws nothing at all — a flash of
-     "nothing to pack" while data is still in flight would be the exact
-     wrong-question failure this design exists to avoid, just wearing the
-     quiet-day sentence instead of a wrong day's data. The Tomorrow chip
-     still draws on a quiet tomorrow, so that day reads honestly too.
+     Canceled blocks (an event the household called off) draw line-through,
+     carry no pill, and are not expandable — nothing to unfold on a thing not
+     happening. `interactive: false` removes the claim controls (the tick,
+     the stepper) from the DOM entirely — the shipped `x-if` split — but a
+     row stays a button either way, because expand/collapse is local state,
+     not a server action, and a wall that is read-only should still let
+     somebody see what a bag needs.
 
-     A poll that FAILS after that first fetch resolved is the same failure
-     wearing a different face: stale beats false-empty, so `loadPacking`
-     leaves `outings` exactly as it was on a rejected fetch rather than
-     wiping it to `[]` — one transient failure (an add-on rebuild, an HA
-     restart) must never draw the quiet-day sentence over real, still-true
-     data.
+     THE MEMBER FILTER covers a parked finding: a kit with no passenger_ids
+     (`people: []`) covers the whole household by design, and a filter aimed
+     at one child must not make it disappear along with that child's own
+     kits. `pkFilterGroups` keeps a group when the filter is off, when the
+     group's own people intersect it, OR when the group names nobody at all.
+
+     Rule 1's old shape — nothing to pack is nothing drawn — is inverted on
+     purpose (family_day_plan's first rule flip): a drive with an empty
+     cargo list is still a happening, so every block draws regardless of
+     whether it has anything to pack. What is left of rule 1 is the DAY-LEVEL
+     quiet answer: once the first fetch resolves (`pkLoaded`), a day with
+     NO BLOCKS AT ALL draws "Nothing on the calendar today." — the sentence
+     `REQUIRED_EMPTY['packing']` also carries for the board's own
+     pinned/editing machinery — rather than leaving a blank box under the
+     card's chrome. Before that first fetch resolves the card draws nothing,
+     so the sentence never flashes ahead of real data. All-day events are a
+     banner above everything else, one slim muted line — they have no time
+     to anchor a block to and must never reach the solver.
+
+     A poll that FAILS after that first fetch resolved leaves `blocks`
+     exactly as it was rather than wiping it to `[]` — stale beats
+     false-empty, so one transient failure (an add-on rebuild, an HA
+     restart) never draws the quiet sentence over real, still-true data.
 
      Jinja `import` renders none of this file, so the logic script at the
      bottom is emitted by `include` exactly once per page. -->
 
+{% macro block_header() %}
+                                        <span class="text-blue-400 font-bold text-xs tabular-nums w-12 shrink-0"
+                                            x-text="pkTime(b.start)"></span>
+                                        <span class="text-sm shrink-0" x-text="pkIcon(b)"></span>
+                                        <div class="min-w-0 flex-1">
+                                            <div class="flex items-center gap-2 flex-wrap">
+                                                <span class="font-semibold truncate"
+                                                    :class="b.canceled ? 'text-gray-500 line-through' : 'text-gray-100'"
+                                                    x-text="pkTitle(b)"></span>
+                                                <template x-if="b.kind === 'event' && b.covered_by">
+                                                    <span class="text-[11px] text-gray-400 shrink-0" x-text="b.covered_by"></span>
+                                                </template>
+                                            </div>
+                                            <template x-if="b.kind === 'outing'">
+                                                <div class="text-[11px] text-gray-500 truncate"
+                                                    x-text="b.driver + (b.car ? ' · ' + b.car : '')"></div>
+                                            </template>
+                                        </div>
+                                        <!-- The pill: two states, and only two. The amber fill is
+                                             this card's one saturated element -- everything else on
+                                             a resting row stays muted on purpose. -->
+                                        <template x-if="!b.canceled && pkPillState(b) === 'amber'">
+                                            <span class="pk-pill pk-pill-amber inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30 shrink-0 tabular-nums"
+                                                x-text="(b.needed - b.packed) + ' to pack'"></span>
+                                        </template>
+                                        <template x-if="!b.canceled && pkPillState(b) === 'done'">
+                                            <span class="pk-pill pk-pill-done text-gray-500 font-bold text-xs shrink-0">✓</span>
+                                        </template>
+                                        <template x-if="!b.canceled">
+                                            <span class="text-gray-600 shrink-0 transition-transform w-3 text-center text-xs"
+                                                :class="pkOpen(b) ? 'rotate-90' : ''">›</span>
+                                        </template>
+{% endmacro %}
+
 {% macro rows() %}
                     <template x-if="pkLoaded">
-                    <div class="space-y-3">
+                    <div class="space-y-2">
                         <!-- A card silently answering a different day than the
                              one somebody is looking at is the wrong-question
                              failure this whole design exists to avoid. -->
@@ -63,53 +124,75 @@
                                 Tomorrow
                             </span>
                         </template>
-                        <!-- Quiet but configured (rule 1's second half): say so
-                             inline, the same way routine_lanes.html's own empty
-                             case does, instead of leaving a blank box under the
-                             card's chrome. -->
-                        <template x-if="!outings.length">
+
+                        <!-- All-day banner: one slim muted line, ahead of
+                             every block -- all-day events have no time to
+                             anchor a block to. -->
+                        <template x-if="allDay.length">
+                            <div class="text-xs text-gray-500 truncate" x-text="allDay.join(' · ')"></div>
+                        </template>
+
+                        <!-- The day-level quiet answer (rule 1's surviving
+                             half): NO BLOCKS AT ALL, not "nothing to pack" --
+                             a block with empty cargo still draws. -->
+                        <template x-if="!blocks.length">
                             <div class="text-gray-500 bg-gray-800 rounded-xl p-6">
-                                Nothing to pack for today's outings.
+                                Nothing on the calendar today.
                             </div>
                         </template>
-                        <template x-if="outings.length">
-                        <div class="space-y-3">
-                        <template x-for="o in outings" :key="'pk-row-' + o.key">
-                            <div class="bg-gray-800/60 rounded-2xl border transition-colors"
-                                :class="pkOpen(o) ? 'border-gray-600' : 'border-gray-700'">
-                                <!-- The row itself: identity (driver dot + car)
-                                     on the left, the trip in the middle, the
-                                     fraction on the right — the same order the
-                                     eye reads a schedule row in everywhere else
-                                     in the app. Expand/collapse is local state,
-                                     not a server action, so the row is a button
-                                     whether or not the card is interactive. -->
-                                <button type="button" @click="pkToggle(o)"
-                                    class="w-full text-left flex items-center gap-3 p-3">
-                                    <span class="w-3 h-3 rounded-full shrink-0"
-                                        :style="'background-color:' + (o.color || '#6b7280')"></span>
-                                    <div class="min-w-0 flex-1">
-                                        <div class="flex items-center gap-2 flex-wrap">
-                                            <span class="text-blue-400 font-bold text-xs shrink-0" x-text="pkTime(o.start)"></span>
-                                            <span class="text-white font-semibold truncate" x-text="o.title"></span>
-                                        </div>
-                                        <div class="text-[11px] text-gray-400 truncate"
-                                            x-text="o.driver + (o.car ? ' · ' + o.car : '')"></div>
+
+                        <template x-if="blocks.length">
+                        <div class="divide-y divide-gray-800/70">
+                        <template x-for="b in blocks" :key="'fd-block-' + b.key">
+                            <div :data-fd-key="b.key"
+                                :class="pkIsContainer(b) ? 'my-1.5 rounded-xl border border-gray-800 bg-gray-800/40' : ''">
+                                <!-- The row itself. Expand/collapse is local
+                                     state, not a server action, so the row is
+                                     a button whether or not the card is
+                                     interactive -- canceled blocks are the
+                                     one exception: nothing to unfold on a
+                                     thing not happening. -->
+                                <template x-if="!b.canceled">
+                                    <button type="button" @click="pkToggle(b)"
+                                        class="w-full text-left flex items-center gap-2.5 py-2 px-1.5">
+                                        {{ block_header() }}
+                                    </button>
+                                </template>
+                                <template x-if="b.canceled">
+                                    <div class="w-full flex items-center gap-2.5 py-2 px-1.5 opacity-60">
+                                        {{ block_header() }}
                                     </div>
-                                    <span class="text-xs font-black tabular-nums shrink-0"
-                                        :class="o.needed && o.packed >= o.needed ? 'text-green-400' : 'text-gray-300'"
-                                        x-text="o.packed + '/' + o.needed"></span>
-                                    <span class="text-gray-500 shrink-0 transition-transform w-4 text-center"
-                                        :class="pkOpen(o) ? 'rotate-90' : ''">›</span>
-                                </button>
-                                <template x-if="pkOpen(o)">
-                                    <div class="px-3 pb-3 pt-2 border-t border-gray-800 space-y-3">
-                                        <template x-for="g in o.groups" :key="'pk-grp-' + o.key + '-' + g.kit_id">
-                                            <div>
+                                </template>
+
+                                <!-- Container inner lines: title + time only,
+                                     ALWAYS VISIBLE, never gated behind a tap --
+                                     the box says "one trip, one packing job"
+                                     but each event still owes its own time. -->
+                                <template x-if="pkIsContainer(b)">
+                                    <div class="pl-8 pb-2 space-y-1">
+                                        <template x-for="ev in b.events" :key="'fd-inner-' + b.key + '-' + ev.id">
+                                            <div class="fd-inner-line flex items-center gap-2 text-xs text-gray-400">
+                                                <span class="font-bold tabular-nums w-12 shrink-0" x-text="pkTime(ev.start)"></span>
+                                                <span class="truncate" x-text="ev.title"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+
+                                <!-- Expansion: the shipped packing mechanics,
+                                     moved inside unchanged. No block
+                                     auto-expands. -->
+                                <template x-if="pkOpen(b) && !b.canceled">
+                                    <div class="px-1.5 pb-2.5 pt-1 space-y-3">
+                                        <template x-if="!b.groups.length">
+                                            <div class="text-xs text-gray-500 pl-8">Nothing to pack.</div>
+                                        </template>
+                                        <template x-for="g in b.groups" :key="'fd-grp-' + b.key + '-' + g.kit_id">
+                                            <div class="pl-8">
                                                 <div class="text-[11px] uppercase tracking-widest text-gray-500 font-bold mb-1.5"
                                                     x-text="g.kit"></div>
                                                 <div class="space-y-1">
-                                                    <template x-for="it in g.items" :key="'pk-item-' + o.key + '-' + it.key">
+                                                    <template x-for="it in g.items" :key="'fd-item-' + b.key + '-' + it.key">
                                                         <div>
                                                             <!-- Needing exactly one is a tick; needing more than
                                                                  one is a stepper. Two separate branches, the
@@ -118,7 +201,7 @@
                                                                  drawing two different controls is how they drift. -->
                                                             <template x-if="it.needed <= 1 && pkInteractive">
                                                                 <button type="button"
-                                                                    @click="pkTapTick(o, it)"
+                                                                    @click="pkTapTick(b, it)"
                                                                     class="w-full text-left flex items-center gap-2.5 py-1">
                                                                     {{ tick_glyph() }}
                                                                 </button>
@@ -139,13 +222,13 @@
                                                                          controls just because nobody can see them. -->
                                                                     <template x-if="pkInteractive">
                                                                     <div class="flex items-center gap-1.5 shrink-0">
-                                                                        <button type="button" @click="pkClaim(o, it, -1)"
+                                                                        <button type="button" @click="pkClaim(b, it, -1)"
                                                                             :disabled="it.packed <= 0"
                                                                             class="w-6 h-6 rounded-full bg-gray-900 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">−</button>
                                                                         <span class="text-xs font-bold w-9 text-center tabular-nums"
                                                                             :class="it.packed >= it.needed ? 'text-green-400' : 'text-gray-300'"
                                                                             x-text="it.packed + '/' + it.needed"></span>
-                                                                        <button type="button" @click="pkClaim(o, it, 1)"
+                                                                        <button type="button" @click="pkClaim(b, it, 1)"
                                                                             :disabled="it.packed >= it.needed"
                                                                             class="w-6 h-6 rounded-full bg-gray-900 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">+</button>
                                                                     </div>
@@ -184,7 +267,7 @@
 {% endmacro %}
 
 <script>
-    // The board's packing card: self-fetching (rule 2), on the lanes cards'
+    // The board's Family Day card: self-fetching (rule 2), on the lanes cards'
     // own 30-second cadence, so a phone ticking something off and the wall
     // agreeing take at most half a minute either way.
     const PACKING_CARD_POLL_MS = 30000;
@@ -193,18 +276,21 @@
         const cfg = (t && t.data) || {};
         const wanted = new Set(cfg.members || []);
         return {
-            outings: [],
+            blocks: [],
+            allDay: [],
             date: '',
             isTomorrow: false,
             // False until the first fetch resolves (success or failure) — the
-            // card draws nothing at all until then, so "Nothing to pack for
-            // today's outings." never flashes ahead of real data.
+            // card draws nothing at all until then, so "Nothing on the
+            // calendar today." never flashes ahead of real data.
             pkLoaded: false,
             pkInteractive: cfg.interactive !== false,
-            // null = follow the first unfinished outing automatically; ''
-            // means somebody explicitly collapsed the followed row; any
-            // other value is the outing key somebody tapped open.
-            pkExpandedKey: null,
+            // Which block keys are unfolded. A plain Set, always REASSIGNED
+            // (never mutated with .add/.delete alone) so Alpine's reactivity
+            // sees every change — survives the 30-second poll exactly the
+            // way tick state does. No block starts in here: nothing
+            // auto-expands.
+            expandedKeys: new Set(),
             // Item keys with a claim still in flight — the board's own poll
             // (rule 2) runs on a clock a tap under a finger knows nothing
             // about, and can land WHILE a POST is still waiting on its
@@ -215,58 +301,56 @@
             pkPending: new Set(),
 
             // The card's member filter — "build your own views, filter by
-            // person" is half the reason boards exist. Applied to both which
-            // OUTINGS show (none of their kit groups touch a wanted member)
-            // and which GROUPS within a kept outing count toward its
-            // fraction, the same slicing the chores lanes do for balances.
-            pkFilterMembers(outings) {
-                if (!wanted.size) return outings;
-                const kept = [];
-                for (const o of outings) {
-                    const groups = (o.groups || []).filter(
-                        g => (g.people || []).some(p => wanted.has(p)));
-                    if (!groups.length) continue;
-                    const copy = { ...o, groups: groups };
-                    this.pkTotals(copy);
-                    kept.push(copy);
-                }
-                return kept;
+            // person" is half the reason boards exist. Narrows which
+            // people's ITEMS show within a block, never whether the block
+            // itself draws (a drive is a happening independent of who is
+            // filtered in). A kit naming nobody (`people: []`) covers the
+            // whole household and survives any filter — the parked finding
+            // this reshape fixes.
+            pkFilterGroups(groups) {
+                return (groups || []).filter(g => {
+                    if (!wanted.size) return true;
+                    const people = g.people || [];
+                    return !people.length || people.some(p => wanted.has(p));
+                });
             },
 
             async loadPacking() {
                 try {
                     const res = await fetch(`${apiBase}api/packing/day`);
                     const data = await res.json();
-                    const incoming = this.pkFilterMembers(
-                        Array.isArray(data.outings) ? data.outings : []);
-                    // A poll replaces every outing/group/item with fresh
-                    // objects, which is fine once a claim has actually heard
-                    // back — but an item with a claim still PENDING keeps its
-                    // locally-applied count rather than whatever this poll
-                    // saw, or the tick a finger just made visibly reverts
-                    // itself for a few hundred milliseconds every time the
-                    // two race. This is THE failure the board has been burned
-                    // by before: a checklist that resets on poll is worse
-                    // than no checklist.
-                    for (const o of incoming) {
-                        for (const g of o.groups || []) {
+                    const incoming = Array.isArray(data.blocks) ? data.blocks : [];
+                    for (const b of incoming) {
+                        b.groups = this.pkFilterGroups(b.groups || []);
+                        // A poll replaces every group/item with fresh
+                        // objects, which is fine once a claim has actually
+                        // heard back — but an item with a claim still
+                        // PENDING keeps its locally-applied count rather
+                        // than whatever this poll saw, or the tick a finger
+                        // just made visibly reverts itself for a few hundred
+                        // milliseconds every time the two race. This is THE
+                        // failure the board has been burned by before: a
+                        // checklist that resets on poll is worse than no
+                        // checklist.
+                        for (const g of b.groups) {
                             for (const it of g.items || []) {
-                                const key = this.pkKey(o.key, it.key);
+                                const key = this.pkKey(b.key, it.key);
                                 if (!this.pkPending.has(key)) continue;
-                                const prior = this.pkFindItem(o.key, it.key);
+                                const prior = this.pkFindItem(b.key, it.key);
                                 if (prior) it.packed = prior.it.packed;
                             }
                         }
-                        this.pkTotals(o);
+                        this.pkTotals(b);
                     }
-                    this.outings = incoming;
+                    this.blocks = incoming;
+                    this.allDay = Array.isArray(data.all_day) ? data.all_day : [];
                     this.date = data.date || '';
                     this.isTomorrow = !!data.is_tomorrow;
                 } catch (e) {
                     // Stale beats false-empty: a transient failure (add-on
-                    // rebuild, HA restart) must not wipe real outings just
+                    // rebuild, HA restart) must not wipe real blocks just
                     // because one poll in the middle of the day missed. Leave
-                    // `outings` exactly as it was — real rows from the last
+                    // `blocks` exactly as it was — real rows from the last
                     // good poll, or still its initial `[]` if this is the
                     // very first load, which `pkLoaded` gates below either
                     // way.
@@ -279,8 +363,9 @@
             },
 
             // The household's clock, the same tolerant parse the schedule
-            // timeline uses: an outing's start/end are full ISO stamps, and
-            // this only ever prints the wall-clock time on them.
+            // timeline uses: a block's start/end (and an inner event's start)
+            // are full ISO stamps, and this only ever prints the wall-clock
+            // time on them.
             pkTime(iso) {
                 try {
                     return new Date(iso).toLocaleTimeString(
@@ -288,32 +373,52 @@
                 } catch (e) { return ''; }
             },
 
-            // The first outing not yet fully packed — worth the one look a
-            // tap would otherwise have cost. Falls back to the first outing
-            // once every one of the day's outings is done.
-            pkDefaultKey() {
-                const first = this.outings.find(o => o.packed < o.needed);
-                return (first || this.outings[0] || {}).key;
+            // 🚗 an outing, 🏠 an at-home event, 🤝 a covered ride — kits are
+            // driver-blind, so the icon is the only place "who is taking
+            // this" shows up on a bare event block.
+            pkIcon(b) {
+                if (b.kind === 'outing') return '🚗';
+                return b.covered_by ? '🤝' : '🏠';
             },
-            pkOpen(o) {
-                if (this.pkExpandedKey === '') return false;
-                return (this.pkExpandedKey || this.pkDefaultKey()) === o.key;
+            // The row's title. An outing has no title of its own — only its
+            // events do — so a multi-event outing's header joins them
+            // ("Soccer + Band"); a single-event outing's header is just that
+            // one event's title, the same as a bare event block.
+            pkTitle(b) {
+                if (b.kind === 'event') return b.title;
+                return (b.events || []).map(e => e.title).join(' + ');
             },
-            pkToggle(o) {
-                this.pkExpandedKey = this.pkOpen(o) ? '' : o.key;
+            // The container rule: a box appears only at two or more events.
+            // One event in a box is redundant chrome most outings would
+            // wear, so a single-event outing draws as a flat row instead.
+            pkIsContainer(b) {
+                return b.kind === 'outing' && (b.events || []).length >= 2;
+            },
+            // The pill: two states, and only two. `none` draws nothing.
+            pkPillState(b) {
+                if (!b.needed) return 'none';
+                return b.packed >= b.needed ? 'done' : 'amber';
+            },
+
+            pkOpen(b) { return this.expandedKeys.has(b.key); },
+            pkToggle(b) {
+                if (b.canceled) return;
+                const next = new Set(this.expandedKeys);
+                if (next.has(b.key)) next.delete(b.key); else next.add(b.key);
+                this.expandedKeys = next;
             },
 
             // One item, addressed the way the server addresses it, so a
             // claim's own response can find where it landed even if a poll
-            // swapped every outing/group/item object out from under it while
+            // swapped every block/group/item object out from under it while
             // the request was in flight.
-            pkKey(outingKey, itemKey) { return outingKey + '::' + itemKey; },
-            pkFindItem(outingKey, itemKey) {
-                for (const o of this.outings) {
-                    if (o.key !== outingKey) continue;
-                    for (const g of o.groups || []) {
+            pkKey(blockKey, itemKey) { return blockKey + '::' + itemKey; },
+            pkFindItem(blockKey, itemKey) {
+                for (const b of this.blocks) {
+                    if (b.key !== blockKey) continue;
+                    for (const g of b.groups || []) {
                         for (const it of g.items || []) {
-                            if (it.key === itemKey) return { o, it };
+                            if (it.key === itemKey) return { b, it };
                         }
                     }
                 }
@@ -323,54 +428,54 @@
             // Recomputed from the groups actually being counted (which,
             // filtered to members, can be fewer than the server sent) —
             // never trusted from the payload once a claim has moved a count.
-            pkTotals(o) {
+            pkTotals(b) {
                 let packed = 0, needed = 0;
-                for (const g of o.groups || []) {
+                for (const g of b.groups || []) {
                     for (const it of g.items || []) {
                         packed += it.packed;
                         needed += it.needed;
                     }
                 }
-                o.packed = packed;
-                o.needed = needed;
+                b.packed = packed;
+                b.needed = needed;
             },
             // A tick toggles between fully packed and not — the only two
             // states a needed-one item has.
-            pkTapTick(o, it) {
-                this.pkClaim(o, it, it.packed >= it.needed ? -1 : 1);
+            pkTapTick(b, it) {
+                this.pkClaim(b, it, it.packed >= it.needed ? -1 : 1);
             },
             // The optimistic tick: applied locally before the request lands
             // (the pattern `togglePrepConfirmed` uses in app.html), the
             // server's own count kept on success, and a failure rolled back
             // and re-fetched rather than left to disagree with the wall.
-            async pkClaim(o, it, delta) {
-                const outingKey = o.key, itemKey = it.key;
-                const key = this.pkKey(outingKey, itemKey);
+            async pkClaim(b, it, delta) {
+                const blockKey = b.key, itemKey = it.key;
+                const key = this.pkKey(blockKey, itemKey);
                 const prev = it.packed;
                 it.packed = Math.max(0, Math.min(it.needed, prev + delta));
-                this.pkTotals(o);
+                this.pkTotals(b);
                 this.pkPending.add(key);
                 try {
                     const res = await fetch(`${apiBase}api/packing/claim`, {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ outing_key: outingKey, item_key: itemKey, delta: delta })
+                        body: JSON.stringify({ outing_key: blockKey, item_key: itemKey, delta: delta })
                     });
                     if (!res.ok) throw new Error('claim failed');
                     const data = await res.json().catch(() => ({}));
                     // Found FRESH, by key — a poll racing this same request
-                    // may already have replaced `outings` with new objects,
+                    // may already have replaced `blocks` with new objects,
                     // and writing the server's answer onto the stale `it`
                     // this closure opened with would land on a row nobody is
                     // looking at any more.
-                    const found = this.pkFindItem(outingKey, itemKey);
+                    const found = this.pkFindItem(blockKey, itemKey);
                     if (found && typeof data.packed === 'number') {
                         found.it.packed = Math.min(found.it.needed, data.packed);
-                        this.pkTotals(found.o);
+                        this.pkTotals(found.b);
                     }
                 } catch (e) {
-                    const found = this.pkFindItem(outingKey, itemKey) || { o, it };
+                    const found = this.pkFindItem(blockKey, itemKey) || { b, it };
                     found.it.packed = prev;
-                    this.pkTotals(found.o);
+                    this.pkTotals(found.b);
                     showGlobalAlert('Could not save that — try again');
                     // Release the guard BEFORE the reconciling re-fetch below,
                     // not after. loadPacking()'s merge keeps a PENDING item's

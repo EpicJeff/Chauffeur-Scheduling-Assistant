@@ -810,12 +810,20 @@ def scenario_an_unconfigured_feature_has_no_tile():
         # The calendar is never hidden — a family calendar is not a feature you
         # opt into, and a missing calendar tile reads as a broken panel. Every
         # other tile belongs to something this blank install has not set up.
-        check(keys == ['calendar'],
-              f"blank install -> the calendar and nothing else, got {keys}")
+        #
+        # DISCLOSED CHANGE (family_day_plan task 3): `packing`'s builder gate
+        # (`get_prep_kits()`) is gone, because the card is no longer a
+        # packing feature — it is the wall's day surface, and the calendar
+        # underneath it is core, the same as `calendar` itself. A blank
+        # install now draws both. Task 5 makes `packing` the default board's
+        # lead card; this only widens what a blank install may draw.
+        check(set(keys) == {'calendar', 'packing'},
+              f"blank install -> the calendar and the family day card, got {keys}")
+        cal = next(t for t in board['tiles'] if t['type'] == 'calendar')
         # The quiet message moved with the drawing: the tile is a component
         # mount now, and the component's agenda says "Nothing scheduled" on
         # each of its day cards — a real answer, drawn where the days are.
-        check(board['tiles'][0]['data'].get('grid', {}).get('view') == 'agenda',
+        check(cal['data'].get('grid', {}).get('view') == 'agenda',
               "a blank install's calendar is still the component agenda mount")
         check(board['hero']['next'] is None and not board['hero']['all_done'],
               "no drives at all is distinct from all drives done")

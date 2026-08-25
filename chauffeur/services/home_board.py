@@ -433,10 +433,10 @@ WIDGETS = [
      'heading': '',
      'blurb': "The pooled-reward thermometers, one per shared goal.",
      'options': []},
-    {'key': 'packing', 'icon': '🎒', 'label': 'Packing',
-     'heading': "Getting out of the door",
-     'blurb': "Every trip out of the house today and what has to be packed "
-              "for it — two events on one trip are one list.",
+    {'key': 'packing', 'icon': '🗓️', 'label': 'Family day',
+     'heading': "The family's day",
+     'blurb': "Everything happening today and what has to be ready for it "
+              "— trips, home, and who is driving.",
      'options': [
          # ON by default, the same reasoning the lanes card settled: a packing
          # list nobody can tick is a poster. Off remains for a wall that really
@@ -1856,16 +1856,19 @@ def _tile_chores_goals(now, config=None, **_):
 
 
 def _tile_packing(now, config=None, **_):
-    """Today's outings and what they need packed. Interactive depth, so the
+    """The wall's day surface: every block today (or tomorrow, once the last
+    one is home) and what has to be ready for it. Interactive depth, so the
     card fetches its own list (rule 2) — this is only the mount config.
 
-    Nothing to pack is nothing drawn (rule 1): the builder cannot know that
-    without doing the work, so it does the cheap half — no prep kits at all
-    means the household has never set this up.
+    Rule 1's None-for-unconfigured half (family_day_plan task 3 flip,
+    docs/family_day_design.md "What changes underneath") no longer applies
+    here: that half hides FEATURES a household never set up (no prep kits,
+    no shopping list). The day itself is not a feature — the calendar
+    underneath it is core — so this always returns mount config, whether or
+    not any prep kits exist and whether or not today has any blocks. The
+    old `get_prep_kits()` gate is gone.
     """
     try:
-        if not storage.get_prep_kits():
-            return None
         return {'interactive': _cfg_bool(config, 'interactive', True),
                 'members': _cfg_ids(config, 'members')}
     except Exception as e:
@@ -3480,7 +3483,7 @@ REQUIRED_EMPTY = {
     'meals_week': "No dinners planned yet.",
     'chores_lanes': "No chores set up yet.",
     'chores_rewards': "No family goals yet.",
-    'packing': "Nothing to pack for today's outings.",
+    'packing': "Nothing on the calendar today.",
     'routines_lanes': "No routines set up yet.",
     'kids': "Nothing on for the kids today.",
     'occasions': "Nothing coming up.",

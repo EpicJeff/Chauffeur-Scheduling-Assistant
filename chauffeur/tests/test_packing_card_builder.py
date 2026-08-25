@@ -10,13 +10,21 @@ commit d284293's `tests/test_packing_card.py` and were dropped, unreplaced,
 when that file was rewritten into the playwright harness; this file restores
 them verbatim (see the fix report for task 6 for the finding).
 
-Rule 1 splits in two, and both halves are load-bearing: no prep kits at all
-means the household never set this up (no tile — the same as any other
-unconfigured feature); prep kits but a quiet day is a REAL answer, and gets a
-sentence rather than vanishing, because a card that disappears cannot be told
-from one that broke. Rule 2: interactive depth means the card fetches its own
-data, so the builder ships only mount config — a payload rebuilding under the
-finger doing the ticking cannot carry counts.
+Rule 1 used to split in two: no prep kits at all meant the household never
+set packing up (no tile — the same as any other unconfigured feature); prep
+kits but a quiet day was a REAL answer, and got a sentence rather than
+vanishing, because a card that disappears cannot be told from one that broke.
+
+The family_day_plan (task 3, docs/family_day_design.md "What changes
+underneath") flips the FIRST half: the card is no longer a packing feature
+somebody opts into, it is the wall's day surface, built on the calendar —
+which is core, not opt-in. So a household with zero prep kits still gets the
+tile; kits only change what (if anything) a block has to pack. The SECOND
+half survives, just retargeted: the quiet-day sentence is no longer "kits
+exist but nothing to pack" but "no blocks on the calendar at all" — the
+day-level empty state. Rule 2 is untouched: interactive depth means the card
+fetches its own data, so the builder ships only mount config — a payload
+rebuilding under the finger doing the ticking cannot carry counts.
 
 Run from chauffeur/:  python tests/test_packing_card_builder.py
 """
@@ -42,42 +50,43 @@ def check(cond, msg):
         raise AssertionError(msg)
 
 
-def scenario_a_household_with_no_kits_gets_no_card():
-    """Rule 1's first half: hide what is not SET UP. No prep kits at all means
-    the household has never used this, and the card vanishes the way any
-    unconfigured feature's does."""
+def scenario_a_household_with_no_kits_still_gets_the_day():
+    """Inverts the old `scenario_a_household_with_no_kits_gets_no_card`
+    (rule 1 flip #1, docs/family_day_design.md "What changes underneath").
+    That scenario proved a household with no prep kits at all got NO card —
+    the packing feature was opt-in, and nobody had opted in. This card is no
+    longer a packing feature; it is the wall's day surface, and the calendar
+    underneath it is core, not opt-in — a household with zero kits still has
+    a day. So the builder now always mounts, kits or none; what a household
+    has (or has not) set up for packing only changes whether any BLOCK has
+    something to pack, never whether the day itself draws."""
     orig = storage.get_prep_kits
     try:
         storage.get_prep_kits = lambda: []
-        check(home_board._tile_packing(None, config={}) is None,
-              "a household with no prep kits at all should get no card")
+        built = home_board._tile_packing(None, config={})
+        check(built is not None,
+              "a household with no prep kits at all should still get the day tile")
+        check(built == {'interactive': True, 'members': []},
+              f"the day tile with no config should still carry its mount config: {built}")
     finally:
         storage.get_prep_kits = orig
 
 
 def scenario_a_quiet_day_says_so_rather_than_vanishing():
-    """Rule 1's second half, and the half that was learned the hard way: never
-    hide what is merely quiet. A household with kits and a day that needs
-    nothing packed gets a sentence, because a card that disappears is
+    """Never hide what is merely quiet — the half of rule 1 that survives the
+    flip above, just retargeted. The tile always mounts now, so what is left
+    to pin is the SENTENCE `REQUIRED_EMPTY` carries for the board's own
+    pinned/editing machinery to show when the self-fetch comes back with no
+    blocks at all: not "kits exist but nothing to pack" (packing is no longer
+    the card's question — the day is), but the day-level quiet answer,
+    "Nothing on the calendar today." A card that disappears is
     indistinguishable from a card that broke."""
-    orig = storage.get_prep_kits
-    try:
-        # The builder cannot know the day is quiet without doing the work
-        # (rule 2 says it must not) — so kits existing at all is enough to
-        # keep the card. "Nothing to pack for today's outings." is the
-        # sentence REQUIRED_EMPTY carries for the board machinery to show
-        # when the self-fetch itself comes back with no outings.
-        storage.get_prep_kits = lambda: [{'id': 'k1', 'name': 'Soccer bag',
-                                          'items': ['Water bottle']}]
-        built = home_board._tile_packing(None, config={})
-        check(built is not None,
-              "a household with kits set up should keep its card on a quiet day")
-        check(home_board.REQUIRED_EMPTY.get('packing')
-              == "Nothing to pack for today's outings.",
-              f"the required-empty sentence is missing or wrong: "
-              f"{home_board.REQUIRED_EMPTY.get('packing')!r}")
-    finally:
-        storage.get_prep_kits = orig
+    built = home_board._tile_packing(None, config={})
+    check(built is not None, "the day tile should always mount")
+    check(home_board.REQUIRED_EMPTY.get('packing')
+          == "Nothing on the calendar today.",
+          f"the required-empty sentence is missing or wrong: "
+          f"{home_board.REQUIRED_EMPTY.get('packing')!r}")
 
 
 def scenario_the_card_carries_only_its_mount_config():
@@ -114,13 +123,14 @@ def scenario_interactive_defaults_on():
 
 
 def scenario_the_quiet_day_sentence_is_gated_on_a_resolved_empty_fetch():
-    """Fix round finding #2 (task 6's predecessor): the builder-level
-    quiet-day check above only proves `_tile_packing` keeps the tile and that
+    """Fix round finding #2 (task 6's predecessor), retargeted for the
+    family_day_plan's day-level sentence: the builder-level quiet-day check
+    above only proves `_tile_packing` keeps the tile and that
     `REQUIRED_EMPTY['packing']` holds a string — neither exercises the card's
     OWN quiet-day rendering, which is where a household actually sees (or
-    fails to see) the sentence. This pins that the macro draws "Nothing to
-    pack for today's outings." inline, gated on the resolved outings list
-    being empty (not shown whenever there IS something to pack) and nested
+    fails to see) the sentence. This pins that the macro draws "Nothing on
+    the calendar today." inline, gated on the resolved BLOCKS list being
+    empty (not shown whenever there IS something on the day) and nested
     inside the first-fetch-resolved gate (`pkLoaded`, flipped once
     `loadPacking()` settles either way), so a quiet day says so and a
     still-loading card never flashes the sentence ahead of real data. It
@@ -130,18 +140,18 @@ def scenario_the_quiet_day_sentence_is_gated_on_a_resolved_empty_fetch():
     # prose and names the same sentence, which would otherwise satisfy a
     # naive substring check without the markup ever drawing it.
     src = full_src[full_src.index('{% macro rows()'):]
-    sentence = "Nothing to pack for today's outings."
+    sentence = "Nothing on the calendar today."
     check(sentence in src,
           "the card's own macro no longer draws the quiet-day sentence "
           "inline — REQUIRED_EMPTY alone does not reach the wall")
 
-    # Gated on the resolved-empty outings list, not drawn unconditionally.
-    gate_idx = src.index('x-if="!outings.length"')
+    # Gated on the resolved-empty blocks list, not drawn unconditionally.
+    gate_idx = src.index('x-if="!blocks.length"')
     sentence_idx = src.index(sentence)
     gate_close_idx = src.index('</template>', gate_idx)
     check(gate_idx < sentence_idx < gate_close_idx,
-          "the quiet-day sentence is not gated on the resolved-empty outings "
-          "list, so it would draw even on a day with something to pack")
+          "the quiet-day sentence is not gated on the resolved-empty blocks "
+          "list, so it would draw even on a day with something on it")
 
     # And nested inside the gate that waits for the first fetch to resolve.
     loaded_idx = src.index('x-if="pkLoaded"')
