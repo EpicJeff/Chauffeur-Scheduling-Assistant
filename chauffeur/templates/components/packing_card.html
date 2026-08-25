@@ -28,19 +28,25 @@
      `showGlobalAlert` (never a browser dialog) and re-fetches so the card
      recovers the server's real count rather than staying wrong.
 
-     The card renders NOTHING at all when today's outings are empty. That is
-     not rule 1's "hide what is not set up" — the builder already handled
-     that half by returning None when there are no prep kits at all — it is
-     the board's own required-tile machinery answering for a day that is
-     merely quiet, the same sentence (`REQUIRED_EMPTY['packing']`) a household
-     that pinned a Packing board sees when it asks for one on an empty
-     install. This card does not repeat that sentence itself.
+     Rule 1's second half lives here, not in a vanished card: a day that
+     needs nothing packed is a REAL answer, not an unconfigured feature, and
+     a card that disappears cannot be told from one that broke. So once the
+     first fetch resolves, an empty `outings` draws the same inline sentence
+     `REQUIRED_EMPTY['packing']` carries for the board's own pinned/editing
+     machinery — "Nothing to pack for today's outings." — the way
+     `routine_lanes.html` draws "No routines set up yet." for its own empty
+     case, rather than leaving a blank box under the card's chrome. Before
+     that first fetch resolves, the card draws nothing at all — a flash of
+     "nothing to pack" while data is still in flight would be the exact
+     wrong-question failure this design exists to avoid, just wearing the
+     quiet-day sentence instead of a wrong day's data. The Tomorrow chip
+     still draws on a quiet tomorrow, so that day reads honestly too.
 
      Jinja `import` renders none of this file, so the logic script at the
      bottom is emitted by `include` exactly once per page. -->
 
 {% macro rows() %}
-                    <template x-if="outings.length">
+                    <template x-if="pkLoaded">
                     <div class="space-y-3">
                         <!-- A card silently answering a different day than the
                              one somebody is looking at is the wrong-question
@@ -50,6 +56,17 @@
                                 Tomorrow
                             </span>
                         </template>
+                        <!-- Quiet but configured (rule 1's second half): say so
+                             inline, the same way routine_lanes.html's own empty
+                             case does, instead of leaving a blank box under the
+                             card's chrome. -->
+                        <template x-if="!outings.length">
+                            <div class="text-gray-500 bg-gray-800 rounded-xl p-6">
+                                Nothing to pack for today's outings.
+                            </div>
+                        </template>
+                        <template x-if="outings.length">
+                        <div class="space-y-3">
                         <template x-for="o in outings" :key="'pk-row-' + o.key">
                             <div class="bg-gray-800/60 rounded-2xl border transition-colors"
                                 :class="pkOpen(o) ? 'border-gray-600' : 'border-gray-700'">
@@ -133,6 +150,8 @@
                                 </template>
                             </div>
                         </template>
+                        </div>
+                        </template>
                     </div>
                     </template>
 {% endmacro %}
@@ -162,6 +181,10 @@
             outings: [],
             date: '',
             isTomorrow: false,
+            // False until the first fetch resolves (success or failure) — the
+            // card draws nothing at all until then, so "Nothing to pack for
+            // today's outings." never flashes ahead of real data.
+            pkLoaded: false,
             pkInteractive: cfg.interactive !== false,
             // null = follow the first unfinished outing automatically; ''
             // means somebody explicitly collapsed the followed row; any
@@ -196,6 +219,7 @@
                     this.date = data.date || '';
                     this.isTomorrow = !!data.is_tomorrow;
                 } catch (e) { this.outings = []; }
+                finally { this.pkLoaded = true; }
             },
             startPacking() {
                 this.loadPacking();

@@ -17,11 +17,16 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault('CHAUFFEUR_DATA_DIR',
                       tempfile.mkdtemp(prefix='chauffeur_packing_card_'))
 
+import tpl_source  # noqa: E402
 from services import home_board  # noqa: E402
 from services import storage  # noqa: E402
+
+TPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                   'templates')
 
 
 def check(cond, msg):
@@ -98,6 +103,50 @@ def scenario_interactive_defaults_on():
               f"interactive should default on with no config at all: {built_blank}")
     finally:
         storage.get_prep_kits = orig
+
+
+def scenario_the_quiet_day_sentence_is_gated_on_a_resolved_empty_fetch():
+    """Fix round finding #2: the builder-level quiet-day check above only
+    proves `_tile_packing` keeps the tile and that `REQUIRED_EMPTY['packing']`
+    holds a string — neither exercises the card's OWN quiet-day rendering,
+    which is where a household actually sees (or fails to see) the sentence.
+    This pins that the macro draws "Nothing to pack for today's outings."
+    inline, gated on the resolved outings list being empty (not shown
+    whenever there IS something to pack) and nested inside the
+    first-fetch-resolved gate (`pkLoaded`, flipped once `loadPacking()`
+    settles either way), so a quiet day says so and a still-loading card
+    never flashes the sentence ahead of real data. It fails if the inline
+    empty state is deleted or its gating is loosened."""
+    full_src = tpl_source.read('components/packing_card.html')
+    # The macro body only — the file's own top comment explains the design in
+    # prose and names the same sentence, which would otherwise satisfy a
+    # naive substring check without the markup ever drawing it.
+    src = full_src[full_src.index('{% macro rows()'):]
+    sentence = "Nothing to pack for today's outings."
+    check(sentence in src,
+          "the card's own macro no longer draws the quiet-day sentence "
+          "inline — REQUIRED_EMPTY alone does not reach the wall")
+
+    # Gated on the resolved-empty outings list, not drawn unconditionally.
+    gate_idx = src.index('x-if="!outings.length"')
+    sentence_idx = src.index(sentence)
+    gate_close_idx = src.index('</template>', gate_idx)
+    check(gate_idx < sentence_idx < gate_close_idx,
+          "the quiet-day sentence is not gated on the resolved-empty outings "
+          "list, so it would draw even on a day with something to pack")
+
+    # And nested inside the gate that waits for the first fetch to resolve.
+    loaded_idx = src.index('x-if="pkLoaded"')
+    check(loaded_idx < gate_idx,
+          "the quiet-day sentence is not nested inside the pkLoaded gate, so "
+          "it could flash before the first fetch resolves")
+
+    script = src[src.index('function packingCard'):]
+    check('pkLoaded: false' in script,
+          "pkLoaded is not declared as reactive state on the card")
+    check('this.pkLoaded = true' in script,
+          "the first fetch resolving (success or failure) never flips "
+          "pkLoaded, so the card would draw nothing forever")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
