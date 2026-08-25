@@ -211,6 +211,45 @@ carries the same amber pill as everything else.
 stay anonymous there, and a prep block that named a person would be inventing
 one. It is household work sitting in the household's day.
 
+### Items are chips, and the app already draws them
+
+A prep block's items are **chips flowing horizontally**, not a vertical list:
+the kit's name as a leading label, then one chip per item, wrapping. Tapping
+a chip claims it; tapping it again releases it. An item needing more than one
+carries a `−  n  +` stepper immediately after its chip, as one non-breaking
+unit.
+
+This is not a new pattern. The drive sheet already ships exactly this control
+— `app.html:6601-6607` draws each prep item as a **tappable chip**, amber
+while it is still to pack, green with a `✓` once it is, toggled by tap — and
+the My Drives event row already draws the read-only version, a `🎒 Bring`
+label followed by amber chips flowing and wrapping (`app.html:1886-1889`).
+The Family Day card should adopt that vocabulary rather than invent a third
+one, and the kit name takes the position `🎒 Bring` holds there.
+
+Two things fall out of it, both of which resolve questions this design had
+left open:
+
+- **A prep block never needs expanding.** Six items as rows is six rows; as
+  chips it is one wrapping line. Compact enough to be always visible, which
+  is what a block you are *meant to act on* should be. The no-auto-expand
+  rule exists to protect the scan from walls of item rows; chips do not
+  threaten the scan, so the rule has nothing to protect against here.
+- **A prep block carries no amber pill.** The pill's job is to say "there is
+  work here you cannot see". When the work is visible as chips, the pill is
+  redundant — and a block showing both would put six amber chips beside an
+  amber pill, which breaks the one-saturated-element rule by volume. So:
+  **the pill lives on the outing** (where the items are one tap away) **and
+  the chips live on the prep block** (where they are not). Each surface says
+  the thing the other cannot.
+
+The item chip's own states stay the drive sheet's: soft amber tint while
+unpacked, green with a `✓` when packed. Neither is a saturated fill, so the
+outing's filled amber pill remains the loudest thing on the card.
+
+For consistency the outing's door-check list uses the same chips — one item
+presentation everywhere, and the outing's expansion gets shorter as a bonus.
+
 **The outing keeps its list too.** Items appear both in the prep block and
 inside the outing, and this is deliberate rather than duplication: they are
 two views of one truth, because a claim is stored against the outing and the
@@ -309,12 +348,9 @@ design already stated.
   by F2:** the card shows several days, so tomorrow is simply there. The
   day-in-focus rule survives as the answer to *which day leads*, not as a
   limit on what can be seen.
-- **Does a prep block auto-expand?** It is the one thing on the card a
-  household is meant to act on, which argues for its items being visible
-  without a tap; the no-auto-expand rule exists to protect the scan, which
-  argues the other way. Lean: prep blocks show their items when the day in
-  focus is the day they sit in, and stay collapsed on the days beyond it.
-  Settle it while building F3.
+- ~~**Does a prep block auto-expand?**~~ **Answered by the chip form:** it
+  does not expand at all, because its items are always visible as chips. See
+  *Items are chips*.
 - **How is a multi-passenger event coloured?** The agenda takes the first
   calendar's colour and the grids draw a dot per passenger. Matching the
   agenda exactly is the safe start; if a two-child event reads as one
