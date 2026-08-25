@@ -126,7 +126,12 @@
                                                                     <span class="text-sm font-semibold flex-1 min-w-0 truncate"
                                                                         :class="it.packed >= it.needed ? 'text-gray-500 line-through' : 'text-gray-200'"
                                                                         x-text="it.label"></span>
-                                                                    <div class="flex items-center gap-1.5 shrink-0" x-show="pkInteractive">
+                                                                    <!-- Two branches, not one div toggled with x-show: a
+                                                                         hidden button still answers querySelector, and a
+                                                                         read-only wall panel must not carry live claim
+                                                                         controls just because nobody can see them. -->
+                                                                    <template x-if="pkInteractive">
+                                                                    <div class="flex items-center gap-1.5 shrink-0">
                                                                         <button type="button" @click="pkClaim(o, it, -1)"
                                                                             :disabled="it.packed <= 0"
                                                                             class="w-6 h-6 rounded-full bg-gray-900 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">−</button>
@@ -137,8 +142,11 @@
                                                                             :disabled="it.packed >= it.needed"
                                                                             class="w-6 h-6 rounded-full bg-gray-900 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">+</button>
                                                                     </div>
-                                                                    <span class="text-xs font-bold w-9 text-center text-gray-400 tabular-nums" x-show="!pkInteractive"
+                                                                    </template>
+                                                                    <template x-if="!pkInteractive">
+                                                                    <span class="text-xs font-bold w-9 text-center text-gray-400 tabular-nums"
                                                                         x-text="it.packed + '/' + it.needed"></span>
+                                                                    </template>
                                                                 </div>
                                                             </template>
                                                         </div>
@@ -190,6 +198,14 @@
             // means somebody explicitly collapsed the followed row; any
             // other value is the outing key somebody tapped open.
             pkExpandedKey: null,
+            // Item keys with a claim still in flight — the board's own poll
+            // (rule 2) runs on a clock a tap under a finger knows nothing
+            // about, and can land WHILE a POST is still waiting on its
+            // answer. That poll's data reflects what the server thought
+            // before this tap, so it must not stomp the optimistic count
+            // while the claim is pending; pkClaim clears the guard itself
+            // once it hears back, and ordinary polls flow through again.
+            pkPending: new Set(),
 
             // The card's member filter — "build your own views, filter by
             // person" is half the reason boards exist. Applied to both which
@@ -214,8 +230,29 @@
                 try {
                     const res = await fetch(`${apiBase}api/packing/day`);
                     const data = await res.json();
-                    this.outings = this.pkFilterMembers(
+                    const incoming = this.pkFilterMembers(
                         Array.isArray(data.outings) ? data.outings : []);
+                    // A poll replaces every outing/group/item with fresh
+                    // objects, which is fine once a claim has actually heard
+                    // back — but an item with a claim still PENDING keeps its
+                    // locally-applied count rather than whatever this poll
+                    // saw, or the tick a finger just made visibly reverts
+                    // itself for a few hundred milliseconds every time the
+                    // two race. This is THE failure the board has been burned
+                    // by before: a checklist that resets on poll is worse
+                    // than no checklist.
+                    for (const o of incoming) {
+                        for (const g of o.groups || []) {
+                            for (const it of g.items || []) {
+                                const key = this.pkKey(o.key, it.key);
+                                if (!this.pkPending.has(key)) continue;
+                                const prior = this.pkFindItem(o.key, it.key);
+                                if (prior) it.packed = prior.it.packed;
+                            }
+                        }
+                        this.pkTotals(o);
+                    }
+                    this.outings = incoming;
                     this.date = data.date || '';
                     this.isTomorrow = !!data.is_tomorrow;
                 } catch (e) { this.outings = []; }
@@ -251,6 +288,23 @@
                 this.pkExpandedKey = this.pkOpen(o) ? '' : o.key;
             },
 
+            // One item, addressed the way the server addresses it, so a
+            // claim's own response can find where it landed even if a poll
+            // swapped every outing/group/item object out from under it while
+            // the request was in flight.
+            pkKey(outingKey, itemKey) { return outingKey + '::' + itemKey; },
+            pkFindItem(outingKey, itemKey) {
+                for (const o of this.outings) {
+                    if (o.key !== outingKey) continue;
+                    for (const g of o.groups || []) {
+                        for (const it of g.items || []) {
+                            if (it.key === itemKey) return { o, it };
+                        }
+                    }
+                }
+                return null;
+            },
+
             // Recomputed from the groups actually being counted (which,
             // filtered to members, can be fewer than the server sent) —
             // never trusted from the payload once a claim has moved a count.
@@ -275,25 +329,37 @@
             // server's own count kept on success, and a failure rolled back
             // and re-fetched rather than left to disagree with the wall.
             async pkClaim(o, it, delta) {
+                const outingKey = o.key, itemKey = it.key;
+                const key = this.pkKey(outingKey, itemKey);
                 const prev = it.packed;
                 it.packed = Math.max(0, Math.min(it.needed, prev + delta));
                 this.pkTotals(o);
+                this.pkPending.add(key);
                 try {
                     const res = await fetch(`${apiBase}api/packing/claim`, {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ outing_key: o.key, item_key: it.key, delta: delta })
+                        body: JSON.stringify({ outing_key: outingKey, item_key: itemKey, delta: delta })
                     });
                     if (!res.ok) throw new Error('claim failed');
                     const data = await res.json().catch(() => ({}));
-                    if (typeof data.packed === 'number') {
-                        it.packed = Math.min(it.needed, data.packed);
+                    // Found FRESH, by key — a poll racing this same request
+                    // may already have replaced `outings` with new objects,
+                    // and writing the server's answer onto the stale `it`
+                    // this closure opened with would land on a row nobody is
+                    // looking at any more.
+                    const found = this.pkFindItem(outingKey, itemKey);
+                    if (found && typeof data.packed === 'number') {
+                        found.it.packed = Math.min(found.it.needed, data.packed);
+                        this.pkTotals(found.o);
                     }
-                    this.pkTotals(o);
                 } catch (e) {
-                    it.packed = prev;
-                    this.pkTotals(o);
+                    const found = this.pkFindItem(outingKey, itemKey) || { o, it };
+                    found.it.packed = prev;
+                    this.pkTotals(found.o);
                     showGlobalAlert('Could not save that — try again');
                     await this.loadPacking();
+                } finally {
+                    this.pkPending.delete(key);
                 }
             },
         };
