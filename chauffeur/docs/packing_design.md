@@ -311,12 +311,16 @@ no storage, no UI. Fold in the union of prep across an outing's events, deduped 
 person. This is the piece the whole arc stands on and it is small, because the
 chain data already exists.
 
+Shipped v2.388.0–v2.391.1.
+
 **P2 — the panel tile.** The family-day card: outings as rows in departure order,
 each naming its driver and car, the next one expanded to its items, steppers,
 interactive ticking, and the turn-over to tomorrow when the last outing is home.
 Claims storage lands here (it is what the ticking writes). Ships the incident fix:
 two events in one outing appear as one packing job, which is the fact stated in the
 only way that survives being true most days.
+
+Shipped v2.392.0–v2.393.1.
 
 **P3 — the phone half.** The kid's My Day gets its own event-sourced items with the
 same claims; the driver's phone gets the outing list; the drive sheet's checklist
