@@ -36,16 +36,18 @@ So the unit generalizes. The day is a time-ordered list of **blocks**:
   An at-home event is a bare event block. Kits are driver-blind
   (`match_kits_for_event` never asks who drives), so the birthday-cake kit
   against an at-home party is the same code path as the soccer bag.
-- **The outing is a container, and it materializes only at two or more
-  events.** A single-event outing drawn as a box around one line is redundant
-  chrome, and most outings are single-event — that day would be all boxes. A
-  single-event outing is one flat line carrying time, title, driver, car, and
-  readiness. At two or more events the container appears: the outing's outer
-  block carries what is trip-level — driver, car, the promoted readiness pill
-  — and the events sit inside it as compact lines, title and time only,
-  always visible. The box itself says "one trip, one packing job", which is
-  the incident's fact stated more strongly than a joined title ever did.
-  Expanding the container unfolds the inner event blocks to their full form.
+- **The outing is a container.** Its outer block carries what is trip-level —
+  driver colour down its side, the full time of the trip, driver, car, the
+  readiness pill — and its events sit inside it as ordinary event rows in
+  their own people's colours, always visible. The box itself says "one trip,
+  one packing job", which is the incident's fact stated more strongly than a
+  joined title ever did. Because the events carry the titles, the container's
+  heading does not repeat them.
+
+  *(F1 drew the box only at two or more events, on the reasoning that a box
+  around one line is redundant chrome. Living with it showed the cost is
+  elsewhere — see **Every trip is an outing** below, which supersedes that
+  rule.)*
 - **A covered ride is a block too.** `outings_for` builds only from driver
   assignments, so an event an outside hand covers (load arc; no household
   driver, `leave_by.ready_for_covered` is its wall presence today) currently
@@ -303,12 +305,12 @@ type.
 
 Shipped v2.398.0–v2.406.1.
 
-**F2 — the family's own language.** Passenger colour on events and driver
+**F2 — the family's own language.** *Shipped v2.409.0.* Passenger colour on events and driver
 colour on outings, passengers visible on the row without a tap, every trip
 drawn as an outing, and more than one day. This is the slice that makes the
 card readable by somebody who was not in the room when it was designed.
 
-**F3 — prep lands where you can act on it.** Prep blocks, the placement rule
+**F3 — prep lands where you can act on it.** *Shipped v2.410.0.* Prep blocks, the placement rule
 and its catch-up rule, passengers named on the block, the outing keeping its
 list as the door-check. This is the slice that turns the card from a better
 agenda into help.

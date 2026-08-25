@@ -5597,7 +5597,7 @@ tile and sub-cards inside a Home Assistant stack.
   the swallowed sub-card drag resolving and moving) and `test_board_cards.py`
   (the 0..1000 server-side clamp).
 
-## The Family Day card — one place the day lives (packing arc P1–P2 + reshape F1, v2.388.0–v2.402.0 — `docs/packing_design.md`, `docs/family_day_design.md`, `services/outings.py`, `services/family_day.py`)
+## The Family Day card — one place the day lives (packing arc P1–P2, reshape F1–F3, v2.388.0–v2.410.0 — `docs/packing_design.md`, `docs/family_day_design.md`, `docs/family_day_f2_f3_plan.md`, `services/outings.py`, `services/family_day.py`)
 
 A driver took a passenger to one event, drove straight on to a second without
 coming home in between, and arrived without the second event's gear. Fixing
@@ -5694,3 +5694,86 @@ ready for it."
   event leads an outing's chain changes that key, which orphans every claim
   already filed against the outing for the day — accepted for F1; P3+ may
   need to re-key claims by outing membership rather than by first event.
+
+### F2 — the card speaks the family's own language (v2.409.0)
+
+F1 was a better agenda, and the household said so: it read the day back
+rather than helping anybody run it. Three things came out of living with it.
+
+- **The colour law.** Every other surface colours an event by the calendar it
+  lives on (`family_calendar.html:1468-1470`), which in this house is the
+  person's own — so colour answers *whose is this* at a glance. The card had
+  overridden that with the driver's colour, and the family could not work out
+  what the colours meant. Now: **passenger colour on the event, driver colour
+  on the outing.** An event is a person's commitment; an outing is a
+  logistics job. `family_day._event_color` / `_passengers_for` read the
+  schedule cache's own `calendar_metadata`, which already carries each
+  member's identity colour (`main.py:16097`), so it is the same colour every
+  other surface draws — not a second opinion about it.
+- **Who is going, without a tap.** Passenger dots ride the shared row builder
+  (`agenda_row.html`, `opts.passengers`), copied from the calendar grid's own
+  dots (`family_calendar.html:730-742`). Before this the only answer was
+  inside the details dialog, which is how cleats get packed for the wrong
+  child. The opt is opt-in, so the calendar's own agenda rows are unchanged
+  until they ask for it.
+- **Every trip is an outing, and the card sees the week.** F1 drew the
+  container only at two or more events; with two shapes the driver, the car
+  and the pill moved depending on how many events a trip had. One shape now,
+  and the container's own heading carries what the household asked it to —
+  the full time of the trip, driver, car, packed — while the *title* belongs
+  to the events inside it, which is why the heading does not repeat it. A
+  `days` option (1–7) draws several days, separated by a label rather than
+  nested in another panel: day → outing → event → items is one level too
+  deep to read from three metres.
+
+### F3 — prep lands where you can act on it (v2.410.0)
+
+The real defect in F1: items were drawn on the outing they belonged to, so
+the list for a 4:00 PM departure appeared at 4:00 PM. **A prep block is the
+packing itself, placed in the day where a household could actually do it.**
+
+It is not an appointment — no duration, no owner, never seen by the solver.
+It is a POSITION in the list, at the start of the last part of the day that
+ends before the outing leaves (`family_day._prep_window`):
+
+| The outing leaves | Its prep sits at the start of |
+|---|---|
+| before 12:00 | the **previous day's evening** |
+| 12:00–17:00 | that day's **morning** |
+| after 17:00 | that day's **afternoon** |
+
+Two rules make it usable rather than merely correct. **Catch-up:** when the
+window has shut and the bag is still unpacked, the block moves to the front
+of what is left and keeps asking — a list you can act on beats a list that is
+filed correctly and invisible. **Cross-day:** a morning outing's prep belongs
+to the evening before, so `_prep_blocks` looks at tomorrow's happenings as
+well as today's, and the block is served on the day its anchor falls in.
+
+- **Items are chips, and the app already drew them.** The drive sheet has
+  always drawn prep items as tappable chips — amber while unpacked, green
+  with a ✓ once packed (`app.html:6601-6607`) — and the My Drives row draws
+  the read-only version (`app.html:1886-1889`). The card adopts that
+  vocabulary rather than inventing a third; the kit name takes the slot
+  `🎒 Bring` holds there. An item several people each need one of keeps a
+  `− n +` stepper beside its chip, as one non-breaking unit.
+- **Chips made two rules fall out.** A prep block **never expands** (its
+  items are always visible, which is what a block you are meant to act on
+  should be) and **never draws the pill** (the chips are the status, and six
+  amber chips beside an amber pill would break the one-saturated-element rule
+  by volume). The pill lives on outings, where items are a tap away; the
+  chips live on prep blocks, where they are not.
+- **One truth, two views.** The outing keeps its list as the door-check —
+  arriving unpacked should not mean hunting back through the day — and both
+  surfaces show the same claims, because a claim is stored against the outing
+  and the item, never against the place a finger touched it. A prep key is
+  therefore **not claimable**: `POST /api/packing/claim` refuses it with a
+  404 rather than letting two counts exist for one bag and drift.
+- **Derived, never stored.** Prep blocks are computed on read from the
+  outings they serve. No table, no new state; the only thing this arc has
+  ever written is a claim. `blocks_for(..., items_by_key=)` is how the
+  endpoint tells the module which blocks have anything to pack, so
+  `family_day` still touches neither kits nor claims itself.
+
+**Known gap, unchanged:** a midday re-solve that changes an outing's first
+event changes its key, orphaning that outing's claims for the day. Accepted
+and watched; a re-key is P3+ work.

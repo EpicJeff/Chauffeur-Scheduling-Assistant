@@ -173,7 +173,9 @@
                                  own, because a box around one event is
                                  chrome the agenda never draws either. -->
                             <div :data-fd-key="b.key"
-                                :class="pkIsContainer(b) ? 'agenda-day rounded-2xl p-3 flex flex-col gap-2' : ''">
+                                :class="pkIsContainer(b) ? 'agenda-day rounded-2xl p-3 flex flex-col gap-2' : ''"
+                                :style="pkIsContainer(b) && b.color
+                                    ? 'border-left: 4px solid ' + b.color : ''">
                                 <!-- The container's own heading chip: a
                                      container is an outing, and now says so
                                      on the box itself rather than leaving
@@ -689,8 +691,7 @@
             pkHeadingIdentityHtml(b) {
                 const esc = window.agendaEventEsc || (s => s);
                 const timeLabel = `${this.pkTime(b.start)}${b.end ? ' – ' + this.pkTime(b.end) : ''}`;
-                return `<span class="text-[11px] font-semibold text-gray-400 shrink-0">${esc(timeLabel)}</span>`
-                    + `<span class="text-[13px] font-bold text-white truncate">${esc(this.pkTitle(b))}</span>`;
+                return `<span class="text-[13px] font-bold text-white shrink-0">${esc(timeLabel)}</span>`;
             },
             // The heading's badge half: the agenda's own driver/car chips
             // (`agendaEventBadgeHtml`, components/agenda_row.html — the same
