@@ -120,6 +120,16 @@
         --panel-amber-ink: rgb(252 211 77);
         --panel-green-ink: rgb(74 222 128);
 
+        /* The agenda vocabulary (.agenda-day panels, .agenda-event rows —
+           the calendar's agenda and the Family Day card that borrows it)
+           ships dark-theme constants in agenda_row.html. On light they read
+           as dark holes in white paper, so they become tokens too: light is
+           a faint slate tint on the card, not a darker card. */
+        --panel-agenda: rgb(30 41 59 / 0.5);
+        --panel-agenda-line: rgb(255 255 255 / 0.08);
+        --panel-agenda-row: rgb(51 65 85 / 0.5);
+        --panel-agenda-row-hi: rgb(71 85 105 / 0.7);
+
         /* A CAPTION ON A PHOTOGRAPH is its own little theme, and it is the one
            place the panel's ink cannot simply follow the page. The picture
            underneath is any brightness at all, so the text needs a band of
@@ -159,6 +169,10 @@
         --panel-scrim: linear-gradient(180deg, rgb(255 255 255 / .34) 0%, rgb(255 255 255 / .22) 45%, rgb(255 255 255 / .40) 100%);
         --panel-amber-ink: rgb(120 53 15);
         --panel-green-ink: rgb(22 101 52);
+        --panel-agenda: rgb(15 23 42 / 0.04);
+        --panel-agenda-line: rgb(15 23 42 / 0.10);
+        --panel-agenda-row: rgb(15 23 42 / 0.07);
+        --panel-agenda-row-hi: rgb(15 23 42 / 0.13);
         /* Light mode LIGHTENS the picture instead of darkening it. A dark card
            in a light theme reads as a hole in the page — the meals and trips
            blocks felt like they had not been themed at all, because a dark
@@ -197,6 +211,10 @@
             --panel-scrim: linear-gradient(180deg, rgb(255 255 255 / .34) 0%, rgb(255 255 255 / .22) 45%, rgb(255 255 255 / .40) 100%);
             --panel-amber-ink: rgb(120 53 15);
             --panel-green-ink: rgb(22 101 52);
+            --panel-agenda: rgb(15 23 42 / 0.04);
+            --panel-agenda-line: rgb(15 23 42 / 0.10);
+            --panel-agenda-row: rgb(15 23 42 / 0.07);
+            --panel-agenda-row-hi: rgb(15 23 42 / 0.13);
         /* Light mode LIGHTENS the picture instead of darkening it. A dark card
            in a light theme reads as a hole in the page — the meals and trips
            blocks felt like they had not been themed at all, because a dark
@@ -649,6 +667,15 @@
     html[data-panel] .text-green-400 {
         color: var(--panel-green-ink) !important;
     }
+
+    /* Agenda surfaces (the --panel-agenda note above). */
+    html[data-panel] .agenda-day {
+        background-color: var(--panel-agenda);
+        border-color: var(--panel-agenda-line);
+    }
+
+    html[data-panel] .agenda-event { background-color: var(--panel-agenda-row); }
+    html[data-panel] .agenda-event:hover { background-color: var(--panel-agenda-row-hi); }
 
     /* The screensaver's Next-up corner is a caption on a photograph with its
        own FIXED dark band (hero_card.html compact backing, rgba(10,10,14,.55))
