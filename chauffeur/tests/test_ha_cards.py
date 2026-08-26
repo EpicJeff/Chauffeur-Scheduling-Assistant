@@ -434,6 +434,37 @@ def scenario_the_entities_box_is_gone_with_its_job():
           "prepare still emits the sent-no-entities note the pool obsoleted")
 
 
+def scenario_cards_see_state_change_between_board_polls():
+    """The live refresher, as a hand path in three parts. The board poll is
+    a minute apart and its payload 20s cached, so without this a lock
+    toggled from a card looked dead until the next poll: the server must
+    answer /api/ha/card/states, the host must poll it while cards are
+    mounted and ask again right after a service call, and the merge must
+    keep the NEWEST copy of a row so a stale cached payload landing between
+    ticks cannot drag a card backwards."""
+    import inspect
+    import os as _os
+    import main
+    src = inspect.getsource(main)
+    check('/api/ha/card/states' in src and 'states_all(ttl=0 if fresh else' in src,
+          "the server has no live states endpoint for the card host")
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    host = open(_os.path.join(root, 'static', 'ha_card_host.js'),
+                encoding='utf-8').read()
+    check("api/ha/card/states" in host and 'function refreshStates' in host,
+          "the host never asks for states between board polls")
+    check('watchStates' in host and 'setInterval' in host,
+          "the refresher has no clock — cards still wait for the board poll")
+    check(host.count('refreshStates(true)') >= 2,
+          "a service call must trigger an immediate refresh (and a second "
+          "for slow actuators), or a tapped lock still looks dead")
+    check('function newerRow' in host and 'last_updated' in host,
+          "without newest-wins merging, a cached board payload drags a "
+          "just-toggled card back to its old state")
+    check('if (!pool) return;' in host,
+          "setStates(null) must keep the refresher's pool, not blank it")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

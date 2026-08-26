@@ -6313,6 +6313,25 @@ def ha_entities(domain: str):
 
 # --- Hosting a real Home Assistant custom card (services/ha_cards.py) ---
 
+@app.get("/api/ha/card/states")
+def ha_card_states(fresh: int = 0):
+    """The whole house's states, for the hosted cards' live refresher.
+
+    The board payload already carries a states pool, but it rides a payload
+    that is rebuilt at most once a minute and cached for 20s on top — which
+    is why a lock toggled from a card looked dead until the next poll. The
+    card host polls this every ten seconds while any card is mounted, and
+    with `fresh=1` right after a card calls a service, when the cached copy
+    is by definition the state somebody just changed. Empty (not an error)
+    when HA is away: the host keeps showing what the cards last knew.
+    """
+    from services import ha_cards
+    try:
+        return {'states': ha_cards.states_all(ttl=0 if fresh else 5)}
+    except Exception as e:
+        print(f"[main] card states failed: {e}")
+        return {'states': {}}
+
 @app.get("/api/ha/card/resources")
 def ha_card_resources():
     """Home Assistant's registered Lovelace resources, so the editor can show

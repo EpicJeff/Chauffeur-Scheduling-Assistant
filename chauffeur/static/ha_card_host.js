@@ -334,16 +334,42 @@
     // sync; empty on pages that never set it.
     var statesPool = {};
 
-    function setStates(pool) { statesPool = pool || {}; }
+    // Newest copy of a row wins wherever two meet: the board payload can be
+    // up to 20s cached while the live refresher just asked HA, and letting
+    // an older row overwrite a newer one is how a lock snaps visibly back to
+    // "locked" for a poll cycle after somebody unlocked it. ISO timestamps
+    // compare correctly as strings. Ties (and rows with no stamp at all) go
+    // to `b`, the incoming side — which keeps the old rule that a card's
+    // NAMED slice beats the pool's copy when nothing says otherwise.
+    function newerRow(a, b) {
+        if (!a) return b;
+        if (!b) return a;
+        return String(a.last_updated || '') > String(b.last_updated || '')
+            ? a : b;
+    }
+
+    function setStates(pool) {
+        // Null means "this board ships no pool", not "the house is empty" —
+        // the refresher may have filled statesPool since, and clearing it
+        // here would blank every card between refresh ticks.
+        if (!pool) return;
+        var merged = {};
+        var k;
+        for (k in pool) merged[k] = newerRow(statesPool[k], pool[k]);
+        statesPool = merged;
+    }
 
     function makeHass(spec) {
-        // Named states win over the pool: they carry the same rows, and if
-        // the two ever disagree the per-card slice is the one `missing` was
-        // computed against.
+        // The per-card slice carries the same rows as the pool; where the
+        // two disagree the NEWER one is shown, because either side can be
+        // the stale one (a cached payload's slice, or a pool the refresher
+        // has not ticked yet).
         var states = {};
         var k;
         for (k in statesPool) states[k] = statesPool[k];
-        for (k in (spec.states || {})) states[k] = (spec.states || {})[k];
+        for (k in (spec.states || {})) {
+            states[k] = newerRow(states[k], (spec.states || {})[k]);
+        }
         return {
             states: states,
             // hui-image wipes its loaded photograph on any hass update
@@ -436,6 +462,13 @@
                     body: JSON.stringify({ domain: domain, service: service, data: data || {} }),
                 }).then(function (r) {
                     if (!r.ok) throw new Error('Home Assistant refused that');
+                    // The next board poll is up to a minute out, which on a
+                    // lock card somebody just tapped reads as "nothing
+                    // happened". Ask for the house again now, and once more
+                    // for the slow actuators (locks, covers) whose state
+                    // changes seconds after HA accepts the call.
+                    setTimeout(function () { refreshStates(true); }, 800);
+                    setTimeout(function () { refreshStates(true); }, 4000);
                     return {};
                 });
             },
@@ -535,6 +568,7 @@
             watchWidth(live);
         }
         try { live.el.hass = buildHass(spec); } catch (e) { /* mid-teardown */ }
+        watchStates();
         return Promise.resolve(true);
     }
 
@@ -582,6 +616,7 @@
             var held = { el: el, container: container, signature: signature, spec: spec };
             mounted[spec.id] = held;
             watchWidth(held);
+            watchStates();
             return true;
         }).catch(function (e) {
             delete mounted[spec.id];
@@ -697,6 +732,60 @@
         if (!live) return;
         try { live.el.remove(); } catch (e) { /* already gone with its tile */ }
         delete mounted[id];
+    }
+
+    // ── Live state refresh.
+    //
+    // The board poll is a minute apart and its payload can be another 20s
+    // cached, so a card's world used to update at most once a minute — a
+    // lock toggled from the wall looked dead until the next poll and people
+    // reloaded the page to see what they had done. While any card is
+    // mounted, the host asks the server for the house's states directly:
+    // every ten seconds on a timer, immediately after a card calls a
+    // service. setStates keeps the newest copy of each row, so a stale
+    // board payload landing between ticks cannot drag a card backwards.
+    var refresh = { timer: null, inflight: false };
+
+    function refreshHeld(live) {
+        if (!live || !live.el) return;
+        try {
+            live.el.hass = live.builtin ? buildBuiltinHass(live.spec)
+                                        : makeHass(live.spec);
+        } catch (e) { /* mid-teardown */ }
+    }
+
+    function refreshStates(fresh) {
+        if (refresh.inflight || !Object.keys(mounted).length) return;
+        refresh.inflight = true;
+        fetch(API.base + 'api/ha/card/states' + (fresh ? '?fresh=1' : ''))
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (body) {
+                var pool = body && body.states;
+                // An empty answer is HA being away, not an empty house:
+                // keep showing what the cards last knew.
+                if (!pool || !Object.keys(pool).length) return;
+                setStates(pool);
+                Object.keys(mounted).forEach(function (id) {
+                    refreshHeld(mounted[id]);
+                });
+            })
+            .catch(function () { /* HA away; the next tick tries again */ })
+            .finally(function () { refresh.inflight = false; });
+    }
+
+    function watchStates() {
+        if (refresh.timer) return;
+        refresh.timer = setInterval(function () {
+            // The last card unmounting stops the clock; a hidden panel
+            // keeps it running but skips the work, same as the board poll.
+            if (!Object.keys(mounted).length) {
+                clearInterval(refresh.timer);
+                refresh.timer = null;
+                return;
+            }
+            if (document.hidden) return;
+            refreshStates(false);
+        }, 10000);
     }
 
     // ── Hosting HA's OWN built-in cards.
@@ -1383,6 +1472,7 @@
                              signature: signature, spec: spec, builtin: true };
                 mounted[spec.id] = held;
                 watchWidth(held);
+                watchStates();
                 return true;
             });
         }).catch(function (e) {

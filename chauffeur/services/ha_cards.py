@@ -154,7 +154,7 @@ def _shape(s):
     }
 
 
-def states_all():
+def states_all(ttl: float = 10):
     """The WHOLE house, for the board's shared pool.
 
     Exists because a card that DISCOVERS its entities — builds its own list
@@ -171,7 +171,7 @@ def states_all():
     """
     from services import ha_api
     return {s['entity_id']: _shape(s)
-            for s in ha_api.get_states(ttl=10) or [] if s.get('entity_id')}
+            for s in ha_api.get_states(ttl=ttl) or [] if s.get('entity_id')}
 
 
 def states_for(ids):
