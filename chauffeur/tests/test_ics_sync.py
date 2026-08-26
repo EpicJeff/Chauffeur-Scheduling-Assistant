@@ -201,8 +201,29 @@ def test_sync_lifecycle():
         ics_sync.fetch_ics = real_fetch
 
 
+def test_clean_title():
+    """Course codes are machine noise on every surface a family reads —
+    stripped at import. Only code-shaped brackets go; a teacher's own
+    bracketed words stay."""
+    c = ics_sync._clean_title
+    check(c('Today in Science [502.Knox.30062Y0.6001.2027]')
+          == 'Today in Science', "trailing course code stripped")
+    check(c('First Day of School! [m.502.espeaks.6thGrade.2026]')
+          == 'First Day of School!', "dotted mixed code stripped")
+    check(c('Read [IMPORTANT] chapter 4') == 'Read [IMPORTANT] chapter 4',
+          "a teacher's bracketed word is not a code")
+    check(c('Read [chapter 4] tonight') == 'Read [chapter 4] tonight',
+          "bracketed words with spaces survive")
+    check(c('[502.Strahl.20092Y06.6002.2027]')
+          == '[502.Strahl.20092Y06.6002.2027]',
+          "a title that IS only a code keeps it rather than going blank")
+    check(c('Mid [502.A.1] term [503.B.2] quiz') == 'Mid term quiz',
+          "every code goes, single spaces remain")
+
+
 if __name__ == '__main__':
     test_parse()
     test_sync_lifecycle()
+    test_clean_title()
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

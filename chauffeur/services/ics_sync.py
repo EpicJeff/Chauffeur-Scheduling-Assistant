@@ -20,6 +20,7 @@ Sync rules:
 import datetime
 import hashlib
 import json
+import re
 
 import requests
 
@@ -175,6 +176,28 @@ def _entry_start_dt(entry: dict):
     return dt
 
 
+_CODE_TOKEN = re.compile(r'\s*\[([^\]]*)\]\s*')
+
+
+def _clean_title(title: str) -> str:
+    """Strip machine course codes from assignment titles.
+
+    A gradebook feed suffixes every item with its section id —
+    'Today in Science [502.Knox.30062Y0.6001.2027]' — which is pure noise
+    on every surface a family reads. Only CODE-SHAPED brackets go (one
+    token of letters/digits/dots with at least a digit and a dot); a
+    teacher's own '[IMPORTANT]' stays."""
+    def cut(m):
+        inner = m.group(1)
+        if (re.fullmatch(r'[A-Za-z0-9._\-]+', inner)
+                and re.search(r'\d', inner) and '.' in inner):
+            return ' '
+        return m.group(0)
+    out = _CODE_TOKEN.sub(cut, str(title or ''))
+    out = re.sub(r'\s{2,}', ' ', out).strip()
+    return out or str(title or '')
+
+
 def _task_kind_for(title: str) -> str:
     """Kind heuristic for assignment feeds — drives the emoji, nothing else."""
     low = (title or '').lower()
@@ -213,7 +236,12 @@ def _sync_feed_tasks(feed: dict, items: dict, summary: dict, now) -> dict:
             continue
         if due_d < today - PAST_GRACE:
             continue  # don't import ancient assignments
-        wanted[ref_prefix + key] = {'title': item['title'], 'due_date': due}
+        # Cleaned at import so the stored task is clean on EVERY surface
+        # (digest, My Day, DMs). Already-imported tasks catch up on the next
+        # sync: their stored title mismatches the cleaned one, which is the
+        # ordinary title-change patch path below.
+        wanted[ref_prefix + key] = {'title': _clean_title(item['title']),
+                                    'due_date': due}
 
     for ref, w in wanted.items():
         t = existing.pop(ref, None)

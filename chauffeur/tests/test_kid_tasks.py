@@ -92,6 +92,55 @@ def scenario_digest_lines_and_inclusion():
         check("📚 Math worksheet — due tomorrow" in body, f"DM includes tasks, got {body}")
 
 
+def scenario_the_digest_is_not_the_gradebook():
+    """An assignment feed imports everything, and seventeen undifferentiated
+    lines bury the quiz while pushing the routines off the screen (family
+    verdict, 2026-08-26). Tests/projects/bring-items keep their own line;
+    plain homework rolls up into one count line. The FULL list still lives
+    on the kid's My Day (due_soon is untouched) — consolidation, not loss."""
+    _reset()
+    import main
+    from unittest import mock as _m
+    for i in range(7):
+        _task("kid1", f"Worksheet {i}", TOMORROW)                # homework
+    _task("kid1", "Overdue reading", TODAY - datetime.timedelta(days=2))
+    _task("kid1", "Lab Safety Quiz", TOMORROW, kind="test")
+    _task("kid1", "Science fair", TOMORROW + datetime.timedelta(days=1),
+          kind="project")
+    storage.set_cached_schedule({"events": [], "assignments": {}, "matched_rules": {},
+                                 "scheduled_errands": []})
+    with _m.patch.object(family_digest, 'weather_line', return_value=None):
+        digest = main._build_kid_digests()
+    tasks = digest["kids"]["kid1"]["tasks"]
+    check(any("Lab Safety Quiz" in t for t in tasks)
+          and any("Science fair" in t for t in tasks),
+          f"tests and projects keep their own lines, got {tasks}")
+    check(not any("Worksheet" in t for t in tasks),
+          f"plain homework must not be narrated item by item, got {tasks}")
+    check(any(t == "📚 8 more on your school list" for t in tasks),
+          f"homework rolls up into one count line, got {tasks}")
+    check(len(tasks) == 3, f"three lines, not eleven: {tasks}")
+    # A single homework item is a line, not a count — no page-open to learn
+    # six words.
+    _reset()
+    _task("kid1", "Math worksheet", TOMORROW)
+    storage.set_cached_schedule({"events": [], "assignments": {}, "matched_rules": {},
+                                 "scheduled_errands": []})
+    with _m.patch.object(family_digest, 'weather_line', return_value=None):
+        digest = main._build_kid_digests()
+    check(digest["kids"]["kid1"]["tasks"] == ["📚 Math worksheet — due tomorrow"],
+          f"one thing stays a line: {digest['kids']['kid1']['tasks']}")
+    # My Day keeps everything — the digest consolidates, the list does not.
+    _reset()
+    for i in range(7):
+        _task("kid1", f"Worksheet {i}", TOMORROW)
+    storage.set_cached_schedule({"events": [], "assignments": {}, "matched_rules": {},
+                                 "scheduled_errands": []})
+    day = main.member_day("kid1", TODAY.isoformat())
+    check(len(day["due_soon"]) == 7,
+          f"My Day still lists every task: {len(day['due_soon'])}")
+
+
 def scenario_completion_identity_rules():
     _reset()
     import main
@@ -149,6 +198,7 @@ SCENARIOS = [
     scenario_digest_lines_and_inclusion,
     scenario_completion_identity_rules,
     scenario_agent_tool_scoping,
+    scenario_the_digest_is_not_the_gradebook,
 ]
 
 if __name__ == "__main__":

@@ -11979,15 +11979,38 @@ def _build_kid_digests(target_date=None, routine_bus=True):
                             + (f" with {who}" if who else ""))
 
         # K4a: school tasks due within 3 days of the digest day, plus
-        # overdue (gentle wording — see _task_due_label).
-        task_lines = []
+        # overdue (gentle wording — see _task_due_label). NOISE CONTROL: an
+        # assignment feed imports the whole gradebook, and seventeen
+        # undifferentiated lines bury the two that matter while shoving the
+        # routines off the screen. Tests, projects and bring-items get their
+        # own line — those are the things a family plans around; plain
+        # homework rolls up into ONE count line. Nothing is hidden: the full
+        # list is the kid's own My Day / school list, it is just not
+        # narrated item by item on a digest whose job is the day's shape.
+        important, homework = [], []
         for t in storage.get_kid_tasks(m['id']):
             try:
                 due = _dt.date.fromisoformat(t.get('due_date') or '')
             except ValueError:
                 continue
             if due <= target + _dt.timedelta(days=2):
-                task_lines.append(_task_line(t, target))
+                (important if t.get('kind') in ('test', 'project', 'bring')
+                 else homework).append((due, t))
+        important.sort(key=lambda p: p[0])
+        homework.sort(key=lambda p: p[0])
+        # Capped even for the important kinds: a feed that calls everything
+        # a quiz must not rebuild the wall of lines this exists to retire.
+        task_lines = [_task_line(t, target) for _, t in important[:6]]
+        rolled = homework + important[6:]
+        if len(rolled) == 1:
+            # One thing is a line, not a count — "1 more on your list" makes
+            # somebody open a page to learn six words.
+            task_lines.append(_task_line(rolled[0][1], target))
+        elif rolled:
+            task_lines.append(
+                f"📚 {len(rolled)} "
+                + ("more on your school list" if task_lines
+                   else "things on your school list"))
 
         if status_lines:
             lines[:0] = status_lines  # status leads, before even the launch line
