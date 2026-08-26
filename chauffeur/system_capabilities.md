@@ -5655,7 +5655,13 @@ ready for it."
     `family_day` blocks get `conflict_reason` (→ card dialog via
     `pkDetailsEv`), the calendar's event builder stashes
     `conflictReason` in extendedProps (cleared when a merge un-conflicts
-    or coverage arrives), HTML-escaped at the banner.
+    or coverage arrives), HTML-escaped at the banner. **The PWA Family tab
+    speaks it too (v2.424.1)**: `buildFamilyCards` classifies via the same
+    diagnostics rule (leg merge: conflict only while EVERY unassigned leg
+    is one), chips go amber "⚠ CONFLICT" / "⚠ Dropoff: Conflict" instead
+    of red NEEDS DRIVER, and the shared reason renders as an amber note on
+    the card and inside the event modal (rides on `driverHtml`, so the
+    keeping-up-adult redaction hides it with the rest of the facet).
   - **All-day events are a banner, never a block** — one slim line, because
     they have no time to anchor to, and they must never reach the solver
     (`driver_events`); the card is a read-only lens over the event feed and

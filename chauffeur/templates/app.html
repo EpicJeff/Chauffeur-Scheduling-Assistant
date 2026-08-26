@@ -7311,6 +7311,19 @@
             // a missing key means "not yours to know", never a crash.
             const { events = [], assignments = {}, ghost_assignments = {} } = scheduleData;
             const trueUnassigned = scheduleData.true_unassigned || [];
+            // Unassignable vs. merely unassigned — the calendar's own rule:
+            // when every driver's diagnostic is a hard block (none is a mere
+            // 'optimization' drop), assigning a driver isn't the fix, so
+            // "NEEDS DRIVER" is the wrong sentence. One shared reason (a
+            // passenger double-booked blocks everybody identically) is the
+            // honest label; mixed reasons stay generic.
+            const diagnostics = scheduleData.diagnostics || {};
+            function conflictFor(evId) {
+                const reasons = Object.values(diagnostics[evId] || {});
+                if (!reasons.length || !reasons.every(r => r && r.type !== 'optimization')) return null;
+                const texts = [...new Set(reasons.map(r => r && r.text).filter(Boolean))];
+                return { reason: texts.length === 1 ? texts[0] : null };
+            }
             const cards = new Map();
 
             (events || []).forEach(ev => {
@@ -7344,6 +7357,8 @@
                         carIds: new Set(),
                         legs: [],
                         isUnassigned: false,
+                        isConflict: false,
+                        conflictReason: null,
                         suppressed: !!ev.trip_suppressed,
                         isErrand: false
                     };
@@ -7362,7 +7377,17 @@
                     if (!card.carIds) card.carIds = new Set();
                     card.carIds.add(carId);
                 }
-                if (trueUnassigned.includes(ev.id)) card.isUnassigned = true;
+                const legUnassigned = trueUnassigned.includes(ev.id);
+                const legConflict = legUnassigned ? conflictFor(ev.id) : null;
+                if (legUnassigned) {
+                    // Conflict only while EVERY unassigned leg is a conflict —
+                    // one assignable leg keeps the actionable red chip.
+                    card.isConflict = card.isUnassigned
+                        ? (card.isConflict && !!legConflict) : !!legConflict;
+                    card.conflictReason = card.isConflict
+                        ? (card.conflictReason || (legConflict && legConflict.reason)) : null;
+                    card.isUnassigned = true;
+                }
 
                 // Split dropoff/pickup halves are independently overridable by
                 // their exact variant id (instance overrides beat base-id ones),
@@ -7373,7 +7398,8 @@
                         type: legType,
                         start: ev.start,
                         driverId: assigned || null,
-                        isUnassigned: trueUnassigned.includes(ev.id)
+                        isUnassigned: legUnassigned,
+                        isConflict: !!legConflict
                     });
                 }
             });
@@ -7433,6 +7459,9 @@
                 return `<span class="px-2 py-0.5 text-xs font-bold rounded-full border flex items-center gap-1" style="background-color: ${d.color_code}20; color: ${d.color_code}; border-color: ${d.color_code}50;">${carIcon}${label ? label + ': ' : ''}${d.name}</span>`;
             };
             const needsChip = (label) => `<span class="px-2 py-0.5 text-xs font-black rounded-full bg-red-500/20 text-red-400 border border-red-500/50">⚠ ${label}</span>`;
+            // Amber, not red: red says "somebody pick this up" and a conflict
+            // is the one case where picking it up cannot fix it.
+            const conflictChip = (label) => `<span class="px-2 py-0.5 text-xs font-black rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/50">⚠ ${label}</span>`;
             const grayChip = (label) => `<span class="px-2 py-0.5 text-xs font-bold rounded-full bg-gray-700/40 text-gray-400 border border-gray-600">${label}</span>`;
 
             // Car chips (absent for zero-car families). Amber ⇄ = not this
@@ -7451,10 +7480,13 @@
                 return [...card.legs].sort((a, b) => new Date(a.start) - new Date(b.start)).map(l => {
                     const label = l.type === 'dropoff' ? 'Dropoff' : 'Pickup';
                     if (l.driverId) return driverChip(l.driverId, label) || grayChip(`${label}: ?`);
-                    return l.isUnassigned ? needsChip(`${label}: Needs Driver`) : grayChip(`${label}: Unassigned`);
+                    if (!l.isUnassigned) return grayChip(`${label}: Unassigned`);
+                    return l.isConflict ? conflictChip(`${label}: Conflict`)
+                                        : needsChip(`${label}: Needs Driver`);
                 }).join('') + carChips;
             }
-            if (card.isUnassigned) return needsChip('NEEDS DRIVER');
+            if (card.isUnassigned) return card.isConflict ? conflictChip('CONFLICT')
+                                                          : needsChip('NEEDS DRIVER');
             return [...card.driverIds].map(id => driverChip(id, '')).join('') + carChips;
         }
 
@@ -7492,6 +7524,14 @@
             // scope map; until then the retiring heuristic stands in.)
             const keepingUpCard = isKeepingUpAdult();
             const driverChips = keepingUpCard ? '' : familyDriverChips(card);
+            // The conflict's actual cause, when every blocked driver shares
+            // one ("Passenger cannot travel from/to '…' in time") — the chip
+            // alone reads as a driver problem, and it is not one. Rides with
+            // the driver facet: it explains an assignment gap.
+            const conflictNote = (!keepingUpCard && card.isConflict)
+                ? `<div class="text-xs text-amber-400/90 font-semibold mb-2">${mfEscape(card.conflictReason
+                    || "Every driver is blocked for this event — assigning one won't fix it.")}</div>`
+                : '';
 
             const legsData = keepingUpCard ? [] : [...(card.legs || [])]
                 .sort((a, b) => new Date(a.start) - new Date(b.start))
@@ -7510,7 +7550,8 @@
                 location: card.location,
                 passengerHtml: paxBadges,
                 driverHtml: keepingUpCard ? ''
-                    : (driverChips || '<span class="text-gray-500 italic text-sm">Not assigned</span>'),
+                    : ((driverChips || '<span class="text-gray-500 italic text-sm">Not assigned</span>')
+                       + conflictNote),
                 isErrand: card.isErrand,
                 dateStr: (card.start || '').split('T')[0],
                 legs: legsData,
@@ -7531,6 +7572,7 @@
                             ${card.title}
                         </div>
                         ${(paxBadges || driverChips) ? `<div class="flex flex-wrap items-center gap-1 mb-2">${paxBadges}${driverChips}</div>` : ''}
+                        ${conflictNote}
                         ${prepPillsHtml(prepItemsFor(card.id))}
                         ${card.location ? `<div class="text-sm text-gray-500 flex items-start gap-1"><svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg><span class="break-words line-clamp-2">${card.location}</span></div>` : ''}
                     </div>

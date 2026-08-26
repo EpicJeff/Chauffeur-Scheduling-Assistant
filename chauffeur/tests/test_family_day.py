@@ -506,6 +506,18 @@ def scenario_the_flags_reach_the_row_the_card_draws():
     check('"true_unassigned": combined_true_unassigned' in src,
           "the slow /api/schedule combine dropped true_unassigned again — "
           "agenda badges vanish on every range that path builds or caches")
+    # The PWA Family tab speaks the same vocabulary: an unassignable event
+    # wears the amber CONFLICT chip and its shared reason, never a red
+    # "NEEDS DRIVER" that blames the drivers for a passenger's double-booking.
+    app = open(os.path.join(root, 'templates', 'app.html'),
+               encoding='utf-8').read()
+    check('function conflictFor' in app and "r.type !== 'optimization'" in app,
+          "the Family tab no longer classifies unassignable events")
+    check("conflictChip('CONFLICT')" in app
+          and 'conflictChip(`${label}: Conflict`)' in app,
+          "the Family tab's card or leg chips lost the conflict flavour")
+    check('card.conflictReason' in app,
+          "the Family tab dropped the conflict's actual cause")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
