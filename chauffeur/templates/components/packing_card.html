@@ -312,9 +312,12 @@
                                             </template>
                                         </div>
                                         <template x-if="!b.done">
-                                            <div class="flex flex-wrap gap-2">
+                                            <div class="flex flex-wrap items-stretch gap-2">
                                                 <template x-for="t in (b.tiles || [])" :key="'fd-tile-' + t.key">
-                                                    <div class="fd-tile rounded-xl border p-2.5 w-[10.5rem] flex flex-col gap-1.5"
+                                                    <!-- `items-stretch` on the row plus `mt-auto` on the
+                                                         control keeps every button on one baseline when a
+                                                         neighbouring title wraps to two lines. -->
+                                                    <div class="fd-tile rounded-xl border p-2.5 w-[10.5rem] flex flex-col gap-1.5 self-stretch"
                                                         :class="t.done ? 'border-green-500/40 bg-green-600/10' : 'border-gray-700 bg-gray-800/60'">
                                                         <span class="text-[12px] font-bold text-white leading-tight line-clamp-2"
                                                             x-text="t.title"></span>
@@ -331,14 +334,14 @@
                                                                 x-text="t.needed + (t.needed === 1 ? ' item' : ' items')"></span>
                                                         </span>
                                                         <template x-if="t.done">
-                                                            <span class="fd-tile-done text-[11px] font-bold text-green-300">Packed ✓</span>
+                                                            <span class="fd-tile-done mt-auto text-[11px] font-bold text-green-300">Packed ✓</span>
                                                         </template>
                                                         <template x-if="!t.done && pkInteractive">
                                                             <button type="button" @click="pkOpenPack(b, t)"
-                                                                class="fd-pack-btn w-full px-2 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 text-[11px] font-bold">Pack Items</button>
+                                                                class="fd-pack-btn mt-auto w-full px-2 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 text-[11px] font-bold">Pack Items</button>
                                                         </template>
                                                         <template x-if="!t.done && !pkInteractive">
-                                                            <span class="text-[11px] font-semibold text-gray-500"
+                                                            <span class="mt-auto text-[11px] font-semibold text-gray-500"
                                                                 x-text="t.packed + '/' + t.needed"></span>
                                                         </template>
                                                     </div>
@@ -929,14 +932,33 @@
             pkMirror(b, it) {
                 const mine = b.for_key || b.key;
                 for (const other of this.blocks) {
-                    if (other === b) continue;
-                    if ((other.for_key || other.key) !== mine) continue;
-                    for (const g of other.groups || []) {
-                        for (const o of g.items || []) {
-                            if (o.key === it.key) o.packed = it.packed;
+                    if ((other.for_key || other.key) === mine && other !== b) {
+                        for (const g of other.groups || []) {
+                            for (const o of g.items || []) {
+                                if (o.key === it.key) o.packed = it.packed;
+                            }
+                        }
+                        this.pkTotals(other);
+                    }
+                    // A prep block's TILES hold their own copies of the same
+                    // items. Without this a tick on the outing's own chips
+                    // only reached the tile at the next poll — and then
+                    // appeared to flip on its own, which is worse than not
+                    // moving at all.
+                    if (!(other.tiles || []).length) continue;
+                    let touched = false;
+                    for (const t of other.tiles) {
+                        if (t.for_key !== mine) continue;
+                        for (const g of t.groups || []) {
+                            for (const o of g.items || []) {
+                                if (o.key === it.key) { o.packed = it.packed; touched = true; }
+                            }
                         }
                     }
-                    this.pkTotals(other);
+                    if (touched) {
+                        this.pkTileTotals(other);
+                        if (this.pkDialogTile) this.pkRefreshDialog(this.pkDialogTile.tileKey);
+                    }
                 }
             },
             // The work, event by event. Counts stay outing-wide (a child

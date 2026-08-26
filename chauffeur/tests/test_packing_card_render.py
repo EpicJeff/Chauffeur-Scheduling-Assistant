@@ -106,7 +106,7 @@ const data = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 // with nothing to pack has no caret at all (`querySelector` finds none),
 // which is the point: there is nothing to unfold.
 const expand = process.argv[4] || '';
-const clickPack = process.argv[5] === 'pack';
+const clickPack = process.argv[5] || '';
 
 const posted = [];
 const errors = [];
@@ -144,7 +144,16 @@ function capture() {
   const txt = e => e.textContent.replace(/\s+/g, ' ').trim();
   const wrappers = root ? [...root.querySelectorAll('[data-fd-key]')] : [];
   if (clickPack) {
-    const btn = doc.querySelector('.fd-pack-btn');
+    // 'pack' taps the first tile's button; any other value names the tile to
+    // open by matching its title text, so a scenario can open a DONE tile.
+    let btn = doc.querySelector('.fd-pack-btn');
+    if (clickPack !== 'pack') {
+      for (const tile of doc.querySelectorAll('.fd-tile')) {
+        if (tile.textContent.toLowerCase().includes(clickPack)) {
+          btn = tile.querySelector('.fd-pack-btn') || btn;
+        }
+      }
+    }
     if (btn) btn.click();
   }
   console.log(JSON.stringify({
@@ -178,6 +187,8 @@ function capture() {
       title: txt(doc.querySelector('.pack-dialog-title')),
       chips: [...doc.querySelectorAll('.pack-dialog .fd-item-chip')].map(c => txt(c)),
     } : null,
+    dialogDeltas: [...doc.querySelectorAll('.pack-dialog .pack-chip[data-pack-delta]')]
+      .map(c => parseInt(c.getAttribute('data-pack-delta'), 10)),
     preps: root ? [...root.querySelectorAll('.fd-prep')].map(e => ({
       text: txt(e),
       chips: [...e.querySelectorAll('.fd-item-chip')].map(c => txt(c)),
@@ -315,7 +326,7 @@ def _run(day, interactive=True, members=None, expand='', click_pack=False):
     with open(data_path, 'w', encoding='utf-8') as f:
         json.dump(day, f)
     proc = subprocess.run([node, probe, page, data_path, expand,
-                           'pack' if click_pack else ''],
+                           (click_pack if isinstance(click_pack, str) else 'pack') if click_pack else ''],
                           capture_output=True, text=True, encoding='utf-8',
                           errors='replace', cwd=SCRATCH, timeout=180)
     check(proc.returncode == 0, f"the family day card threw:\n{proc.stderr[-2000:]}")
@@ -858,6 +869,30 @@ def scenario_a_multi_day_card_says_tomorrow_once():
         return
     check(got['text'].count('Tomorrow') == 1,
           f"the card said Tomorrow more than once: {got['text'][:200]}")
+
+
+def scenario_a_packed_chip_in_the_dialog_can_be_tapped_off():
+    """A mis-tap has to be undoable where it happened. Before this the only
+    way back was the card behind the dialog, which is not a place anybody
+    thinks to look."""
+    # A tile that still has work, holding one item already packed — which is
+    # the real shape of a mis-tap you want to undo.
+    day = json.loads(json.dumps(PREP_DAY))
+    tile = day['days'][0]['blocks'][0]['tiles'][0]
+    tile['groups'][0]['items'].append(
+        {'key': 'k1:towel', 'label': 'Towel', 'needed': 1, 'packed': 1})
+    tile['packed'] = 1
+    tile['needed'] = 3
+    day['blocks'] = day['days'][0]['blocks']
+    got = _run(day, interactive=True, expand='', click_pack='pack')
+    if got is None:
+        return
+    check(got['dialog'], "tapping Pack Items opened no dialog")
+    check(got['dialogDeltas'],
+          f"the dialog drew no tappable chips: {got['dialog']}")
+    check(-1 in got['dialogDeltas'],
+          f"a packed one-of-a-thing chip must offer to release it: "
+          f"{got['dialogDeltas']}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

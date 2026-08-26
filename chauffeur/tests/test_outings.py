@@ -274,6 +274,45 @@ def scenario_missing_initial_edges_leave_the_start_alone():
           f"with no initial edge the start is the first event: {got['start']}")
 
 
+def scenario_a_mid_day_outing_carries_both_of_its_drives():
+    """An outing is the whole time out of the house, and that is true of the
+    SECOND trip of a day as much as the first. The solver hangs the two legs
+    on the home waypoint that cuts them apart: `to_home_mins` is the drive
+    back that ends the earlier outing, `from_home_mins` the drive out that
+    begins the later one. Reading only initial/final edges meant a day with
+    two trips showed the drive there on one and the drive back on the other,
+    with the middle two silently missing."""
+    sched = _sched([_ev('soccer', 9, dur=60), _ev('band', 17, 30, dur=60)],
+                   {'soccer': 'd1', 'band': 'd1'},
+                   {'d1': {'soccer': {'to_event': 'band', 'travel_mins': 40,
+                                      'home_waypoint': {'layover_mins': 240,
+                                                        'to_home_mins': 15,
+                                                        'from_home_mins': 25}}}})
+    sched['initial_edges'] = {'d1': {'soccer': {'travel_mins': 20}}}
+    sched['final_edges'] = {'d1': {'band': {'travel_mins': 30}}}
+    first, second = outings.outings_for(DAY, sched)
+    check(first['start'].endswith('08:40:00'),
+          f"the first outing should leave home 20 minutes early: {first['start']}")
+    check(first['end'].endswith('10:15:00'),
+          f"the first outing should include its 15 minute drive home: {first['end']}")
+    check(second['start'].endswith('17:05:00'),
+          f"the second outing should include its 25 minute drive out: {second['start']}")
+    check(second['end'].endswith('19:00:00'),
+          f"the second outing should include its 30 minute drive home: {second['end']}")
+
+
+def scenario_a_waypoint_without_numbers_changes_nothing():
+    sched = _sched([_ev('soccer', 9, dur=60), _ev('band', 17, 30, dur=60)],
+                   {'soccer': 'd1', 'band': 'd1'},
+                   {'d1': {'soccer': {'to_event': 'band', 'travel_mins': 40,
+                                      'home_waypoint': {'layover_mins': 240}}}})
+    first, second = outings.outings_for(DAY, sched)
+    check(first['end'].endswith('10:00:00'),
+          f"a waypoint with no numbers must not move the end: {first['end']}")
+    check(second['start'].endswith('17:30:00'),
+          f"a waypoint with no numbers must not move the start: {second['start']}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

@@ -194,6 +194,20 @@ def _prep_blocks(target, sched: dict, now: datetime.datetime,
                     'passengers': ev.get('passengers') or b.get('passengers') or [],
                 })
 
+    # The evening block is tomorrow's work, so it belongs at the END of the
+    # day rather than wherever 17:00 happens to fall — a 17:00 anchor put it
+    # ahead of a 5:15 practice, which reads as "pack before you leave" when
+    # the truth is "pack when you get back".
+    evening = buckets.get('evening')
+    if evening:
+        ends = [b.get('end') or b.get('start')
+                for b in _raw_blocks(target, sched, now)['blocks']
+                if not b.get('canceled')]
+        latest = max(ends) if ends else None
+        if latest and latest > evening['start']:
+            evening['start'] = latest
+            evening['end'] = latest
+
     out = []
     for slot in buckets.values():
         # The order the day will actually happen in — the whole point.

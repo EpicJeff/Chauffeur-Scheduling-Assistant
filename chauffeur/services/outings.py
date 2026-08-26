@@ -77,7 +77,13 @@ def outings_for(target_date=None, sched: dict = None,
         edges = route_edges.get(d_id) or {}
         d_final_edges = final_edges.get(d_id) or {}
         d_initial_edges = initial_edges.get(d_id) or {}
-        first_leg = True          # only the day's first outing leaves from home
+        # The drive OUT for this chain: for the day's first outing the solver
+        # records it as an initial edge; for every later one it is the
+        # `from_home_mins` of the home waypoint that ended the previous
+        # outing. An outing is the whole time out of the house, so both ends
+        # of every outing count — not just the first one's start and the last
+        # one's end.
+        out_mins = None
         chain = []
         for i, (start, ev_id, ev) in enumerate(rows):
             chain.append((start, ev_id, ev))
@@ -85,7 +91,8 @@ def outings_for(target_date=None, sched: dict = None,
             # solver says so by hanging a home_waypoint on the edge leaving
             # THIS event; an edge with none means they carried straight on.
             last = i == len(rows) - 1
-            went_home = bool((edges.get(ev_id) or {}).get('home_waypoint'))
+            waypoint = (edges.get(ev_id) or {}).get('home_waypoint') or None
+            went_home = bool(waypoint)
             if last or went_home:
                 # Only the chain that IS the driver's actual last outing of
                 # the day gets the drive home added — a mid-day outing cut at
@@ -93,15 +100,30 @@ def outings_for(target_date=None, sched: dict = None,
                 # home, and the spec does not touch that.
                 out.append(_outing(d_id, chain,
                                    d_final_edges if last else None,
-                                   d_initial_edges if first_leg else None))
-                first_leg = False
+                                   d_initial_edges if out_mins is None else None,
+                                   out_mins,
+                                   _mins(waypoint, 'to_home_mins') if went_home else None))
+                # The next outing leaves from home again, and the waypoint the
+                # solver hung on this edge says how long that drive takes.
+                out_mins = _mins(waypoint, 'from_home_mins') if went_home else None
+                if out_mins is None and went_home:
+                    out_mins = 0        # it went home; it just costs nothing
                 chain = []
     out.sort(key=lambda o: (o['start'], o['key']))
     return out
 
 
+def _mins(edge: dict, field: str):
+    """A travel number off a solver edge, or None when it is absent or junk."""
+    v = (edge or {}).get(field)
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return v
+    return None
+
+
 def _outing(d_id: str, chain: list, final_edges_for_driver: dict = None,
-            initial_edges_for_driver: dict = None) -> dict:
+            initial_edges_for_driver: dict = None,
+            out_mins=None, home_mins=None) -> dict:
     ends = [_parse(ev.get('end')) or start for start, _eid, ev in chain]
     end = max(ends)
     start = chain[0][0]
@@ -114,20 +136,28 @@ def _outing(d_id: str, chain: list, final_edges_for_driver: dict = None,
     # day's FIRST outing gets it — a later one begins wherever the previous one
     # dropped the driver, which is not this leg.
     if initial_edges_for_driver:
-        edge = initial_edges_for_driver.get(chain[0][1]) or {}
-        travel_mins = edge.get('travel_mins')
-        if isinstance(travel_mins, (int, float)) and not isinstance(travel_mins, bool):
+        travel_mins = _mins(initial_edges_for_driver.get(chain[0][1]), 'travel_mins')
+        if travel_mins is not None:
             start = start - datetime.timedelta(minutes=travel_mins)
+    elif out_mins:
+        # A later outing leaves from home too — the previous outing's home
+        # waypoint carries how long that drive out takes.
+        start = start - datetime.timedelta(minutes=out_mins)
     # The turn-over point is the last outing's end — the drive home — rather
     # than the last event's end. `final_edges[d_id][last_event_id]` is the
     # solver's own travel_mins for that leg; an absent or malformed edge
     # leaves `end` exactly what it already was.
     if final_edges_for_driver:
         last_ev_id = chain[-1][1]
-        edge = final_edges_for_driver.get(last_ev_id) or {}
-        travel_mins = edge.get('travel_mins')
-        if isinstance(travel_mins, (int, float)) and not isinstance(travel_mins, bool):
+        travel_mins = _mins(final_edges_for_driver.get(last_ev_id), 'travel_mins')
+        if travel_mins is not None:
             end = end + datetime.timedelta(minutes=travel_mins)
+    # A MID-DAY outing ends by going home, and the waypoint that cut it says
+    # how long that drive is. Without this an outing that is not the day's
+    # last one reported the last event's end as its own — the drive back
+    # silently missing from exactly the trips that have one.
+    elif home_mins is not None:
+        end = end + datetime.timedelta(minutes=home_mins)
     return {
         'key': f"{d_id}:{chain[0][1]}",
         'driver_id': d_id,

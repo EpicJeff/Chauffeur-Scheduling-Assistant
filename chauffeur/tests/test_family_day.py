@@ -393,6 +393,28 @@ def scenario_buckets_do_not_merge_across_days():
           f"a block must belong to the day it is drawn on: {keys}")
 
 
+def scenario_the_evening_block_sits_after_the_last_event_of_the_day():
+    """Evening prep is TOMORROW's work, so it belongs at the end of the day.
+    Anchored at a flat 17:00 it landed ahead of a 5:15 practice, which reads
+    as "pack before you leave" when the truth is "pack when you get back"."""
+    tonight = _ev('practice', 17, 15, dur=90, title='Practice')
+    tonight['calendar_ids'] = ['ellie@cal']
+    tomorrow = _ev('swim', 7, 30, title='Swim')
+    tomorrow['start'] = '2026-09-09T07:30:00'
+    tomorrow['end'] = '2026-09-09T08:30:00'
+    tomorrow['calendar_ids'] = ['ellie@cal']
+    sched = _kit_sched([tonight, tomorrow],
+                       {'practice': 'd1', 'swim': 'd2'})
+    got = family_day.blocks_for(DAY, sched, datetime.datetime(2026, 9, 8, 9, 0),
+                                items_by_key={'d2:swim': 2})
+    kinds = [b['kind'] for b in got['blocks']]
+    check(kinds and kinds[-1] == 'prep',
+          f"the evening block should come last on the day: {kinds}")
+    prep = got['blocks'][-1]
+    check(prep['start'] >= '2026-09-08T18:45:00',
+          f"it should sit after the last event ends, not at a flat 17:00: {prep['start']}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

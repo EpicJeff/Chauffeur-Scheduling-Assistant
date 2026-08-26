@@ -45,8 +45,13 @@
             ? 'fd-chip-done bg-green-600/20 border-green-500/60 text-green-200'
             : 'fd-chip-todo bg-amber-500/10 border-amber-500/40 text-amber-200';
         const label = (done ? '✓ ' : '') + ESC(it.label);
+        // A one-of-a-thing chip TOGGLES: tapping a packed one releases it,
+        // the way the drive sheet's own chips have always worked. Without
+        // this a mis-tap could only be undone from the card behind the
+        // dialog, which is not a place anybody thinks to look.
+        const toggleDelta = (done && (it.needed || 1) <= 1) ? -1 : 1;
         const chip = interactive
-            ? `<button type="button" data-pack-item="${ESC(it.key)}" data-pack-delta="1"
+            ? `<button type="button" data-pack-item="${ESC(it.key)}" data-pack-delta="${toggleDelta}"
                    class="pack-chip fd-item-chip px-3 py-1.5 rounded-xl border-2 font-bold text-sm ${cls}">${label}</button>`
             : `<span class="pack-chip fd-item-chip px-3 py-1.5 rounded-xl border-2 font-bold text-sm ${cls}">${label}</span>`;
         // Several people each needing one makes the COUNT the whole story, so
