@@ -57,6 +57,7 @@ def outings_for(target_date=None, sched: dict = None,
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     route_edges = sched.get('route_edges') or {}
     final_edges = sched.get('final_edges') or {}
+    initial_edges = sched.get('initial_edges') or {}
 
     # A driver's events for the day, in time order. Ghost drivers are the
     # solver's "nobody real can do this" placeholder and are not people.
@@ -75,6 +76,8 @@ def outings_for(target_date=None, sched: dict = None,
         rows.sort(key=lambda r: (r[0], str(r[1])))
         edges = route_edges.get(d_id) or {}
         d_final_edges = final_edges.get(d_id) or {}
+        d_initial_edges = initial_edges.get(d_id) or {}
+        first_leg = True          # only the day's first outing leaves from home
         chain = []
         for i, (start, ev_id, ev) in enumerate(rows):
             chain.append((start, ev_id, ev))
@@ -88,15 +91,33 @@ def outings_for(target_date=None, sched: dict = None,
                 # the day gets the drive home added — a mid-day outing cut at
                 # a home_waypoint already ends when the layover starts at
                 # home, and the spec does not touch that.
-                out.append(_outing(d_id, chain, d_final_edges if last else None))
+                out.append(_outing(d_id, chain,
+                                   d_final_edges if last else None,
+                                   d_initial_edges if first_leg else None))
+                first_leg = False
                 chain = []
     out.sort(key=lambda o: (o['start'], o['key']))
     return out
 
 
-def _outing(d_id: str, chain: list, final_edges_for_driver: dict = None) -> dict:
+def _outing(d_id: str, chain: list, final_edges_for_driver: dict = None,
+            initial_edges_for_driver: dict = None) -> dict:
     ends = [_parse(ev.get('end')) or start for start, _eid, ev in chain]
     end = max(ends)
+    start = chain[0][0]
+    # An outing is the whole time OUT OF THE HOUSE, so it starts when the car
+    # leaves rather than when the first event begins. The end already carried
+    # the drive home, and a range that included the way back but not the way
+    # there was asymmetric in a way nobody could explain.
+    # `initial_edges[d_id][first_event_id]` is the solver's own travel for the
+    # leg from home; an absent or malformed edge leaves `start` alone. Only the
+    # day's FIRST outing gets it — a later one begins wherever the previous one
+    # dropped the driver, which is not this leg.
+    if initial_edges_for_driver:
+        edge = initial_edges_for_driver.get(chain[0][1]) or {}
+        travel_mins = edge.get('travel_mins')
+        if isinstance(travel_mins, (int, float)) and not isinstance(travel_mins, bool):
+            start = start - datetime.timedelta(minutes=travel_mins)
     # The turn-over point is the last outing's end — the drive home — rather
     # than the last event's end. `final_edges[d_id][last_event_id]` is the
     # solver's own travel_mins for that leg; an absent or malformed edge
@@ -111,7 +132,7 @@ def _outing(d_id: str, chain: list, final_edges_for_driver: dict = None) -> dict
         'key': f"{d_id}:{chain[0][1]}",
         'driver_id': d_id,
         'event_ids': [eid for _s, eid, _e in chain],
-        'start': chain[0][0].isoformat(),
+        'start': start.isoformat(),
         'end': end.isoformat(),
     }
 

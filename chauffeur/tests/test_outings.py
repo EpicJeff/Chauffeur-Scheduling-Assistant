@@ -238,6 +238,42 @@ def scenario_a_malformed_final_edge_leaves_the_end_unchanged():
           f"a malformed final edge should not move the end: {got[0]['end']} != {want_end}")
 
 
+def scenario_the_first_outings_start_includes_the_drive_there():
+    """An outing is the whole time OUT OF THE HOUSE. The end already carried
+    the drive home; a range that included the way back but not the way there
+    was asymmetric in a way nobody could explain (and it made a 5:00 PM
+    practice read as a 5:00 PM departure, which is exactly the lateness this
+    arc exists to prevent)."""
+    sched = _sched([_ev('soccer', 16, dur=60)], {'soccer': 'd1'})
+    sched['initial_edges'] = {'d1': {'soccer': {'to_event': 'soccer',
+                                                'travel_mins': 20}}}
+    got = outings.outings_for(DAY, sched)[0]
+    check(got['start'].endswith('15:40:00'),
+          f"the outing should leave home 20 minutes before kickoff: {got['start']}")
+
+
+def scenario_a_later_outing_does_not_borrow_the_drive_from_home():
+    """The second trip of a day starts wherever the first one dropped the
+    driver, not at the front door."""
+    sched = _sched([_ev('soccer', 9, dur=60), _ev('band', 17, 30)],
+                   {'soccer': 'd1', 'band': 'd1'},
+                   {'d1': {'soccer': {'to_event': 'band', 'travel_mins': 20,
+                                      'home_waypoint': {'layover_mins': 240}}}})
+    sched['initial_edges'] = {'d1': {'soccer': {'travel_mins': 20}}}
+    got = outings.outings_for(DAY, sched)
+    check(got[0]['start'].endswith('08:40:00'),
+          f"the first outing should include its drive there: {got[0]['start']}")
+    check(got[1]['start'].endswith('17:30:00'),
+          f"a later outing must not subtract the drive from home again: {got[1]['start']}")
+
+
+def scenario_missing_initial_edges_leave_the_start_alone():
+    sched = _sched([_ev('soccer', 16)], {'soccer': 'd1'})
+    got = outings.outings_for(DAY, sched)[0]
+    check(got['start'].endswith('16:00:00'),
+          f"with no initial edge the start is the first event: {got['start']}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
