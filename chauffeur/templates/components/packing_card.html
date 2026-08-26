@@ -225,17 +225,25 @@
                                      theirs -- one panel, one right margin,
                                      whether the line is a heading or a row. -->
                                 <template x-if="pkIsContainer(b)">
-                                    <div class="flex items-center justify-between gap-2 px-2.5">
-                                        <div class="flex items-center gap-2 min-w-0 flex-1" x-html="pkHeadingIdentityHtml(b)"></div>
-                                        <div class="flex items-center gap-1.5 shrink-0">
-                                            <span x-html="pkHeadingBadgeHtml(b)"></span>
-                                            <template x-if="pkExpandable(b)">
-                                                <button type="button" @click="pkToggle(b)"
-                                                    class="fd-caret text-gray-600 shrink-0 transition-transform w-6 h-6 flex items-center justify-center text-xs"
-                                                    :class="pkOpen(b) ? 'rotate-90' : ''">›</button>
-                                            </template>
+                                    <div class="space-y-0.5">
+                                        <!-- One line for what this trip IS: the
+                                             Outing chip, the driver as plain
+                                             text, the car as a chip, and the
+                                             packed status right-aligned with
+                                             the caret. The time follows on its
+                                             own line beneath. -->
+                                        <div class="flex items-center justify-between gap-2 px-2.5">
+                                            <div class="flex items-center gap-2 min-w-0 flex-1" x-html="pkHeadingIdentityHtml(b)"></div>
+                                            <div class="flex items-center gap-1.5 shrink-0">
+                                                <span x-html="pkHeadingBadgeHtml(b)"></span>
+                                                <template x-if="pkExpandable(b)">
+                                                    <button type="button" @click="pkToggle(b)"
+                                                        class="fd-caret text-gray-600 shrink-0 transition-transform w-6 h-6 flex items-center justify-center text-xs"
+                                                        :class="pkOpen(b) ? 'rotate-90' : ''">›</button>
+                                                </template>
+                                            </div>
                                         </div>
-                                    <div class="px-2.5 -mt-1" x-html="pkHeadingTimeHtml(b)"></div>
+                                        <div class="px-2.5" x-html="pkHeadingTimeHtml(b)"></div>
                                     </div>
                                 </template>
                                 <!-- The FLAT block's row: built by the shared
