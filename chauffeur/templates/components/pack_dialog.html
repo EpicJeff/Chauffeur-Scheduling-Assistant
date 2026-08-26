@@ -1,0 +1,167 @@
+<!-- ── Pack Items: one event's list, somewhere with room for it ─────────
+     Packing is a decided act. You do not tick one thing in passing from
+     across the room; you decide to pack, and then you work one event's list.
+     So the list lives here rather than as chips on a wall row: a row holds
+     four chips, a dialog holds twelve, and later it can hold the step photos
+     routine items already have.
+
+     SHARED on purpose. The kid's My Day (packing arc P3) and the driver's
+     list both need exactly this — one event, its people, its list, ticked —
+     and building it inside the Family Day card is how they would end up
+     forking it.
+
+     The host owns the data and the writing: this file draws what it is
+     given and calls back. It never fetches, so the caller's own optimistic
+     claim, pending-guard and poll-survival machinery keeps working
+     unchanged, and a poll landing while this is open cannot close it or
+     revert a tick made in it.
+
+       window.packDialog.open({
+         title, subtitle, passengers: [{id, name, color}],
+         groups: [{kit_id, kit, items: [{key, label, needed, packed}]}],
+         interactive: bool,
+         onClaim(itemKey, delta) -> Promise|void,
+       })
+       window.packDialog.close()
+       window.packDialog.update({groups})     // re-draw after a claim lands
+-->
+<script>
+(function () {
+    if (window.packDialog) return;          // one per page, like the card
+
+    const ESC = s => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    let state = null;
+    let rootEl = null;
+
+    function chipHtml(it, interactive) {
+        // The drive sheet's own prep chip, verbatim in spirit
+        // (app.html:6601-6607): amber while it is still to pack, green with a
+        // checkmark once it is. The card borrowed it for F3; it lives here now.
+        const done = (it.packed || 0) >= (it.needed || 1);
+        const cls = done
+            ? 'fd-chip-done bg-green-600/20 border-green-500/60 text-green-200'
+            : 'fd-chip-todo bg-amber-500/10 border-amber-500/40 text-amber-200';
+        const label = (done ? '✓ ' : '') + ESC(it.label);
+        const chip = interactive
+            ? `<button type="button" data-pack-item="${ESC(it.key)}" data-pack-delta="1"
+                   class="pack-chip fd-item-chip px-3 py-1.5 rounded-xl border-2 font-bold text-sm ${cls}">${label}</button>`
+            : `<span class="pack-chip fd-item-chip px-3 py-1.5 rounded-xl border-2 font-bold text-sm ${cls}">${label}</span>`;
+        // Several people each needing one makes the COUNT the whole story, so
+        // that item keeps a stepper beside its chip — as one non-breaking unit,
+        // or a wrap strands the count from what it counts.
+        let stepper = '';
+        if ((it.needed || 1) > 1) {
+            stepper = interactive
+                ? `<span class="inline-flex items-center gap-1">
+                     <button type="button" data-pack-item="${ESC(it.key)}" data-pack-delta="-1"
+                        ${(it.packed || 0) <= 0 ? 'disabled' : ''}
+                        class="w-6 h-6 rounded-full bg-gray-800 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">−</button>
+                     <span class="text-xs font-bold w-8 text-center tabular-nums ${done ? 'text-green-400' : 'text-gray-300'}">${it.packed || 0}/${it.needed}</span>
+                     <button type="button" data-pack-item="${ESC(it.key)}" data-pack-delta="1"
+                        ${done ? 'disabled' : ''}
+                        class="w-6 h-6 rounded-full bg-gray-800 border border-gray-700 text-gray-300 font-bold text-sm leading-none disabled:opacity-30">+</button>
+                   </span>`
+                : `<span class="text-xs font-bold w-8 text-center text-gray-400 tabular-nums">${it.packed || 0}/${it.needed}</span>`;
+        }
+        return `<span class="inline-flex items-center gap-1 whitespace-nowrap">${chip}${stepper}</span>`;
+    }
+
+    function bodyHtml(s) {
+        const groups = s.groups || [];
+        const items = groups.reduce((n, g) => n + ((g.items || []).length), 0);
+        if (!items) {
+            return '<p class="text-sm text-gray-500 italic">Nothing to pack for this one.</p>';
+        }
+        // Grouped by kit here, and named — inside a dialog the bag IS useful
+        // ("which bag am I filling?"), where on a wall row the same label ate
+        // a line and told nobody anything.
+        return groups.filter(g => (g.items || []).length).map(g => `
+            <div class="space-y-1.5">
+                <div class="text-[10px] uppercase tracking-widest text-gray-500 font-bold">${ESC(g.kit || 'Bring')}</div>
+                <div class="flex flex-wrap items-center gap-1.5">
+                    ${(g.items || []).map(it => chipHtml(it, s.interactive !== false)).join('')}
+                </div>
+            </div>`).join('');
+    }
+
+    function dotsHtml(passengers) {
+        if (!passengers || !passengers.length) return '';
+        return `<span class="flex items-center gap-1.5">` + passengers.map(p =>
+            `<span class="flex items-center gap-1">
+                <span class="fd-pax-dot w-2.5 h-2.5 rounded-full border border-white/20"
+                      style="background-color: ${ESC(p.color || '#6b7280')}"></span>
+                <span class="text-[11px] font-semibold text-gray-300">${ESC(p.name || '')}</span>
+             </span>`).join('') + `</span>`;
+    }
+
+    function render() {
+        if (!state || !rootEl) return;
+        rootEl.innerHTML = `
+            <div class="pack-dialog-backdrop fixed inset-0 z-[70] flex items-center justify-center p-4"
+                 style="background: rgba(2,6,23,0.72)">
+                <div class="pack-dialog w-full max-w-lg rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+                    <div class="px-4 py-3 border-b border-gray-800 flex items-start gap-3">
+                        <div class="min-w-0 flex-1">
+                            <div class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 inline-block mb-1">Pack</div>
+                            <h2 class="pack-dialog-title text-lg font-black text-white truncate">${ESC(state.title || 'Pack')}</h2>
+                            ${state.subtitle ? `<p class="text-[11px] font-semibold text-gray-400">${ESC(state.subtitle)}</p>` : ''}
+                        </div>
+                        <button type="button" data-pack-close
+                            class="pack-dialog-close w-8 h-8 rounded-full bg-gray-800 border border-gray-700 text-gray-300 font-bold shrink-0">×</button>
+                    </div>
+                    <div class="px-4 py-3 space-y-3">
+                        ${dotsHtml(state.passengers)}
+                        ${bodyHtml(state)}
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function ensureRoot() {
+        if (rootEl && document.body.contains(rootEl)) return rootEl;
+        rootEl = document.createElement('div');
+        rootEl.id = 'pack-dialog-root';
+        document.body.appendChild(rootEl);
+        // Delegated, so a re-render after a claim never loses its handlers.
+        rootEl.addEventListener('click', ev => {
+            if (ev.target.closest('[data-pack-close]')
+                || ev.target.classList.contains('pack-dialog-backdrop')) {
+                api.close();
+                return;
+            }
+            const hit = ev.target.closest('[data-pack-item]');
+            if (!hit || hit.disabled || !state) return;
+            const key = hit.getAttribute('data-pack-item');
+            const delta = parseInt(hit.getAttribute('data-pack-delta'), 10) || 1;
+            if (typeof state.onClaim === 'function') state.onClaim(key, delta);
+        });
+        return rootEl;
+    }
+
+    const api = {
+        open(opts) {
+            state = Object.assign({}, opts || {});
+            ensureRoot();
+            render();
+        },
+        // A claim landed (or a poll brought fresh numbers): redraw the list
+        // WITHOUT touching what is open, so nothing a finger is mid-way
+        // through disappears under it.
+        update(next) {
+            if (!state) return;
+            Object.assign(state, next || {});
+            render();
+        },
+        close() {
+            state = null;
+            if (rootEl) rootEl.innerHTML = '';
+        },
+        isOpen() { return !!state; },
+        openFor() { return state ? state.tileKey : null; },
+    };
+    window.packDialog = api;
+})();
+</script>

@@ -372,16 +372,19 @@ def scenario_prep_lands_in_the_day_before_the_outing_it_serves():
     check(preps, f"no prep block was placed at all: "
                  f"{[b['kind'] for d in res['days'] for b in d['blocks']]}")
     p = preps[0]
-    check(p['for_key'] and p['for_title'],
-          f"a prep block must name the outing it serves: {p}")
-    check(p['groups'] and p['needed'] > 0,
-          f"a prep block should carry its outing's items: {p}")
+    check(p['tiles'] and all(t['for_key'] and t['title'] for t in p['tiles']),
+          f"every tile must name the outing it serves: {p}")
+    check(p['tiles'] and p['needed'] > 0,
+          f"a prep block should carry tiles with items: {p}")
+    check(all(t['groups'] for t in p['tiles']),
+          f"every tile should carry its own event's list: {p['tiles']}")
+    for_key = p['tiles'][0]['for_key']
     src = [b for d in res['days'] for b in d['blocks']
-           if b['kind'] != 'prep' and b['key'] == p['for_key']]
+           if b['kind'] != 'prep' and b['key'] == for_key]
     check(src and src[0]['needed'] == p['needed'],
           "the prep block and its outing must agree on what is needed")
-    check(p['start'] <= p['for_start'],
-          f"prep must sit before the thing it is for: {p['start']} vs {p['for_start']}")
+    check(p['start'] <= p['tiles'][0]['depart'],
+          f"prep must sit before the thing it is for: {p['start']}")
 
 
 def scenario_a_tick_on_the_outing_shows_on_its_prep_block():
@@ -391,8 +394,8 @@ def scenario_a_tick_on_the_outing_shows_on_its_prep_block():
     import main
     res = main.packing_day(date=DAY, days=2)
     p = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'prep'][0]
-    item = p['groups'][0]['items'][0]
-    main.packing_claim(payload={'outing_key': p['for_key'],
+    item = p['tiles'][0]['groups'][0]['items'][0]
+    main.packing_claim(payload={'outing_key': p['tiles'][0]['for_key'],
                                 'item_key': item['key'], 'delta': 1,
                                 'date': DAY})
     fresh = main.packing_day(date=DAY, days=2)
@@ -410,7 +413,7 @@ def scenario_a_prep_key_is_not_itself_claimable():
     from fastapi import HTTPException
     res = main.packing_day(date=DAY, days=2)
     p = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'prep'][0]
-    item = p['groups'][0]['items'][0]
+    item = p['tiles'][0]['groups'][0]['items'][0]
     try:
         main.packing_claim(payload={'outing_key': p['key'],
                                     'item_key': item['key'], 'delta': 1,
@@ -442,7 +445,7 @@ def scenario_tomorrow_mornings_trip_is_packed_tonight():
     preps = [b for b in res['days'][0]['blocks'] if b['kind'] == 'prep']
     check(preps, "tomorrow morning's trip got no prep block tonight — the "
                  "whole point of the placement rule")
-    check(preps[0]['groups'] and preps[0]['needed'] > 0,
+    check(preps[0]['tiles'] and preps[0]['needed'] > 0,
           f"the prep block came through with nothing to pack: {preps[0]}")
     anchor = preps[0]['start'][:10]
     check(anchor == DAY,
@@ -457,10 +460,11 @@ def scenario_a_claim_from_a_prep_block_is_filed_against_its_outing():
     _seed_incident()
     res = main.packing_day(date=DAY, days=2)
     prep = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'prep'][0]
-    item = prep['groups'][0]['items'][0]
-    out = main.packing_claim(payload={'outing_key': prep['for_key'],
+    tile = prep['tiles'][0]
+    item = tile['groups'][0]['items'][0]
+    out = main.packing_claim(payload={'outing_key': tile['for_key'],
                                       'item_key': item['key'], 'delta': 1,
-                                      'date': prep['for_start'][:10]})
+                                      'date': tile['depart'][:10]})
     check(out['ok'] and out['packed'] == 1,
           f"a claim filed the way the card now files it should stick: {out}")
 
@@ -477,6 +481,44 @@ def scenario_a_group_says_which_events_wanted_it():
               f"a kit group should name the events that pulled it in: {g}")
         check(all(e in outing['event_ids'] for e in g['event_ids']),
               f"a group named an event that is not on its outing: {g}")
+
+
+def scenario_a_tile_carries_only_its_own_events_list():
+    """You work one event at a time, so a tile shows that event's list — not
+    the whole trip's."""
+    import main
+    _seed_incident()
+    res = main.packing_day(date=DAY, days=2)
+    prep = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'prep'][0]
+    check(len(prep['tiles']) >= 1, f"expected tiles: {prep}")
+    total = sum(t['needed'] for t in prep['tiles'])
+    check(prep['needed'] == total,
+          f"the block's count must be its tiles' counts: {prep['needed']} vs {total}")
+    for t in prep['tiles']:
+        check(t['event_id'] and t['title'],
+              f"a tile must name its event: {t}")
+        check('done' in t, f"a tile must say whether it is finished: {t}")
+
+
+def scenario_packing_a_tile_finishes_it():
+    """Once everything on a tile is claimed it reads as done, and so does the
+    block that holds it."""
+    import main
+    _seed_incident()
+    res = main.packing_day(date=DAY, days=2)
+    prep = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'prep'][0]
+    tile = prep['tiles'][0]
+    for g in tile['groups']:
+        for item in g['items']:
+            for _ in range(item['needed']):
+                main.packing_claim(payload={'outing_key': tile['for_key'],
+                                            'item_key': item['key'], 'delta': 1,
+                                            'date': tile['depart'][:10]})
+    fresh = main.packing_day(date=DAY, days=2)
+    p2 = [b for d in fresh['days'] for b in d['blocks']
+          if b['key'] == prep['key']][0]
+    t2 = [t for t in p2['tiles'] if t['key'] == tile['key']][0]
+    check(t2['done'], f"a fully claimed tile should read as done: {t2}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

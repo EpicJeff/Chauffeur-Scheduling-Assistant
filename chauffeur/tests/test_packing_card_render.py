@@ -106,6 +106,7 @@ const data = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 // with nothing to pack has no caret at all (`querySelector` finds none),
 // which is the point: there is nothing to unfold.
 const expand = process.argv[4] || '';
+const clickPack = process.argv[5] === 'pack';
 
 const posted = [];
 const errors = [];
@@ -142,6 +143,10 @@ function capture() {
   const root = doc.getElementById('pk-root');
   const txt = e => e.textContent.replace(/\s+/g, ' ').trim();
   const wrappers = root ? [...root.querySelectorAll('[data-fd-key]')] : [];
+  if (clickPack) {
+    const btn = doc.querySelector('.fd-pack-btn');
+    if (btn) btn.click();
+  }
   console.log(JSON.stringify({
     errors: errors,
     text: root ? txt(root) : '',
@@ -163,6 +168,16 @@ function capture() {
     // F3: the prep block is the one thing on the card a household is MEANT to
     // act on, so its chips are always on screen -- no caret to open, no pill
     // to summarise what is already visible.
+    tiles: root ? [...root.querySelectorAll('.fd-tile')].map(e => ({
+      text: txt(e),
+      packBtn: !!e.querySelector('.fd-pack-btn'),
+      done: !!e.querySelector('.fd-tile-done'),
+      dots: e.querySelectorAll('.fd-pax-dot').length,
+    })) : [],
+    dialog: doc.querySelector('.pack-dialog') ? {
+      title: txt(doc.querySelector('.pack-dialog-title')),
+      chips: [...doc.querySelectorAll('.pack-dialog .fd-item-chip')].map(c => txt(c)),
+    } : null,
     preps: root ? [...root.querySelectorAll('.fd-prep')].map(e => ({
       text: txt(e),
       chips: [...e.querySelectorAll('.fd-item-chip')].map(c => txt(c)),
@@ -189,8 +204,10 @@ function capture() {
     // an inner event's own title text)?
     outingChip: wrappers.map(w => ({
       key: w.getAttribute('data-fd-key'),
-      chip: [...w.children].some(
-        c => c.tagName === 'SPAN' && c.textContent.trim() === 'Outing'),
+      // F4 moved the chip INTO the heading line (chip, driver, car, pill
+      // on one row), so it is no longer a direct child of the wrapper.
+      chip: [...w.querySelectorAll('span')].some(
+        c => c.textContent.trim() === 'Outing'),
     })),
     // The second mockup pass: a container's own heading must NOT be an
     // `agendaEventRow` (no `.agenda-event` fill, no color bar) — only its
@@ -267,13 +284,14 @@ def _render_page(interactive, members=None):
         "{{ packing.rows() }}"
         "</div>"
         "{% include 'components/agenda_row.html' %}"
+        "{% include 'components/pack_dialog.html' %}"
         "{% include 'components/packing_card.html' %}"
         "</body></html>"
     )
     return main.templates.env.from_string(src).render()
 
 
-def _run(day, interactive=True, members=None, expand=''):
+def _run(day, interactive=True, members=None, expand='', click_pack=False):
     node = shutil.which('node')
     if not node:
         print('  skip  node is not installed — the family day card was not drawn')
@@ -284,7 +302,7 @@ def _run(day, interactive=True, members=None, expand=''):
     if have.returncode != 0:
         print('  skip  jsdom/alpinejs not resolvable')
         return None
-    tag = f"{interactive}-{','.join(members or [])}-{expand}".replace(' ', '_')
+    tag = f"{interactive}-{','.join(members or [])}-{expand}-{click_pack}".replace(' ', '_')
     probe = os.path.join(SCRATCH, f'harness-{tag}.js')
     with open(probe, 'w', encoding='utf-8') as f:
         f.write(HARNESS)
@@ -296,7 +314,8 @@ def _run(day, interactive=True, members=None, expand=''):
     data_path = os.path.join(SCRATCH, f'day-{tag}.json')
     with open(data_path, 'w', encoding='utf-8') as f:
         json.dump(day, f)
-    proc = subprocess.run([node, probe, page, data_path, expand],
+    proc = subprocess.run([node, probe, page, data_path, expand,
+                           'pack' if click_pack else ''],
                           capture_output=True, text=True, encoding='utf-8',
                           errors='replace', cwd=SCRATCH, timeout=180)
     check(proc.returncode == 0, f"the family day card threw:\n{proc.stderr[-2000:]}")
@@ -693,29 +712,32 @@ PREP_DAY = {
     'date': '2026-09-08', 'is_tomorrow': False, 'all_day': [],
     'days': [{'date': '2026-09-08', 'label': 'Today', 'is_today': True,
               'all_day': [], 'blocks': [
-        {'kind': 'prep', 'key': 'prep:d1:soccer', 'for_key': 'd1:soccer',
-         'for_title': 'Soccer + Band practice',
-         'for_start': '2026-09-08T16:00:00',
+        {'kind': 'prep', 'key': 'prep:2026-09-08:morning',
+         'bucket': 'morning',
          'start': '2026-09-08T00:00:00', 'end': '2026-09-08T00:00:00',
-         'passengers': [{'id': 'm-ellie', 'name': 'Ellie', 'color': '#ec4899'}],
-         'for_events': [
-             {'id': 'soccer', 'title': 'Soccer', 'start': '2026-09-08T16:00:00'},
-             {'id': 'band', 'title': 'Band practice', 'start': '2026-09-08T17:30:00'},
-         ],
-         'groups': [
-             {'kit_id': 'k1', 'kit': 'Soccer bag', 'people': ['ellie', 'theo'],
-              'event_ids': ['soccer'],
-              'items': [
-                  {'key': 'k1:water bottle', 'label': 'Water bottle',
-                   'needed': 2, 'packed': 0},
-              ]},
-             {'kit_id': 'k2', 'kit': 'Band bag', 'people': ['ellie'],
-              'event_ids': ['band'],
-              'items': [
-                  {'key': 'k2:cleats', 'label': 'Cleats',
-                   'needed': 1, 'packed': 1},
-              ]},
-         ], 'packed': 1, 'needed': 3},
+         'done': False, 'packed': 1, 'needed': 3, 'groups': [],
+         'tiles': [
+             {'key': 'prep:2026-09-08:morning:soccer', 'for_key': 'd1:soccer',
+              'event_id': 'soccer', 'title': 'Soccer',
+              'start': '2026-09-08T16:00:00', 'depart': '2026-09-08T16:00:00',
+              'passengers': [{'id': 'm-ellie', 'name': 'Ellie', 'color': '#ec4899'}],
+              'groups': [
+                  {'kit_id': 'k1', 'kit': 'Soccer bag', 'people': ['ellie', 'theo'],
+                   'event_ids': ['soccer'],
+                   'items': [{'key': 'k1:water bottle', 'label': 'Water bottle',
+                              'needed': 2, 'packed': 0}]},
+              ], 'packed': 0, 'needed': 2, 'done': False},
+             {'key': 'prep:2026-09-08:morning:band', 'for_key': 'd1:soccer',
+              'event_id': 'band', 'title': 'Band practice',
+              'start': '2026-09-08T17:30:00', 'depart': '2026-09-08T16:00:00',
+              'passengers': [{'id': 'm-sam', 'name': 'Sam', 'color': '#22d3ee'}],
+              'groups': [
+                  {'kit_id': 'k2', 'kit': 'Band bag', 'people': ['ellie'],
+                   'event_ids': ['band'],
+                   'items': [{'key': 'k2:cleats', 'label': 'Cleats',
+                              'needed': 1, 'packed': 1}]},
+              ], 'packed': 1, 'needed': 1, 'done': True},
+         ]},
         {'kind': 'outing', 'key': 'd1:soccer', 'driver': 'Dad', 'driver_id': 'd1',
          'color': '#2563eb', 'car': 'Van',
          'start': '2026-09-08T16:00:00', 'end': '2026-09-08T19:00:00',
@@ -741,93 +763,87 @@ PREP_DAY = {
 PREP_DAY['blocks'] = PREP_DAY['days'][0]['blocks']
 
 
-def scenario_a_prep_block_shows_its_work_without_being_opened():
-    """The one block a household is MEANT to act on. F1 hid the list behind
-    the outing it was for, at the moment it was already too late."""
+def scenario_a_prep_block_shows_a_tile_per_event():
+    """F4: the block holds a whole part of the day, so it names nothing
+    itself — its TILES name the events. (Was
+    scenario_a_prep_block_shows_its_work_without_being_opened, which asserted
+    the chips that have since moved into the dialog.)"""
     got = _run(PREP_DAY, interactive=True, expand='')
     if got is None:
         return
     check(not got['errors'], f"the card threw while drawing: {got['errors'][:3]}")
-    check(len(got['preps']) == 1, f"expected one prep block: {got['preps']}")
-    prep = got['preps'][0]
-    check(sorted(prep['chips']) == ['Cleats', 'Water bottle'] or
-          any('Water bottle' in c for c in prep['chips']),
-          f"the prep block should show its items as chips: {prep['chips']}")
-    check('Soccer + Band practice' in prep['text'],
-          f"the prep block must name the outing it serves: {prep['text']}")
-    check(prep['dots'] >= 1,
-          f"the prep block must say who it is for: {prep}")
+    check(len(got['tiles']) == 2, f"expected a tile per event: {got['tiles']}")
+    titles = ' '.join(t['text'] for t in got['tiles'])
+    check('Soccer' in titles and 'Band practice' in titles,
+          f"tiles should name their events: {titles}")
+    check(any('2 items' in t['text'] for t in got['tiles']),
+          f"a tile should say how big the job is: {titles}")
+    check(got['tiles'][0]['dots'] >= 1,
+          f"a tile should say who it is for: {got['tiles'][0]}")
 
 
 def scenario_a_prep_block_has_no_caret_and_no_pill():
-    """Its chips ARE the status, so a pill would be redundant and an arrow
-    would open onto what is already on screen — and six amber chips beside an
-    amber pill breaks the one-saturated-element rule by volume."""
+    """The tiles ARE the status, so a pill would be redundant and an arrow
+    would open onto what is already on screen."""
     got = _run(PREP_DAY, interactive=True, expand='')
     if got is None:
         return
     prep = got['preps'][0]
     check(not prep['caret'], "a prep block drew an expand arrow")
-    check(not prep['pill'], "a prep block drew the pill its chips replace")
+    check(not prep['pill'], "a prep block drew the pill its tiles replace")
 
 
-def scenario_a_chip_carries_its_state_and_its_stepper():
-    """One-of-a-thing is a toggle; several people needing one each makes the
-    count the whole story, so that chip keeps its stepper."""
+def scenario_a_finished_tile_says_so_instead_of_offering_the_button():
+    """Packing is a decided act, and a decided act that is done should look
+    done rather than inviting you to do it again."""
     got = _run(PREP_DAY, interactive=True, expand='')
     if got is None:
         return
-    prep = got['preps'][0]
-    check(prep['todo'] == 1 and prep['done'] == 1,
-          f"expected one to-pack chip and one packed chip: {prep}")
-    check('Cleats' in ' '.join(prep['chips']),
-          f"the second event's item should be listed too: {prep['chips']}")
-    check(any(c.startswith('\u2713') for c in prep['chips']),
-          f"a packed chip should wear its checkmark: {prep['chips']}")
-    check(prep['steppers'] == 2,
-          f"the needed>1 item should carry a - and a + : {prep}")
+    done = [t for t in got['tiles'] if t['done']]
+    todo = [t for t in got['tiles'] if not t['done']]
+    check(len(done) == 1 and len(todo) == 1,
+          f"expected one packed tile and one still to do: {got['tiles']}")
+    check('Packed' in done[0]['text'], f"a done tile should say so: {done[0]}")
+    check(not done[0]['packBtn'], "a done tile still offered Pack Items")
+    check(todo[0]['packBtn'], "an unpacked tile is missing its Pack Items button")
 
 
-def scenario_a_display_only_wall_gets_chips_but_no_buttons():
+def scenario_pack_items_opens_the_dialog_with_that_events_list():
+    """The intentional act: one event's list, in a place with room for it."""
+    got = _run(PREP_DAY, interactive=True, expand='', click_pack=True)
+    if got is None:
+        return
+    check(got['dialog'], "tapping Pack Items opened no dialog")
+    check('Soccer' in got['dialog']['title'],
+          f"the dialog should name the event: {got['dialog']}")
+    check(any('Water bottle' in c for c in got['dialog']['chips']),
+          f"the dialog should carry that event's list: {got['dialog']}")
+    check(not any('Cleats' in c for c in got['dialog']['chips']),
+          f"the dialog must show ONE event's list, not the trip's: {got['dialog']}")
+
+
+def scenario_a_display_only_wall_gets_tiles_but_no_buttons():
     got = _run(PREP_DAY, interactive=False, expand='')
     if got is None:
         return
-    prep = got['preps'][0]
-    check(prep['chips'], f"a read-only card should still show the chips: {prep}")
-    check(prep['steppers'] == 0,
-          f"a read-only card must carry no claim controls at all: {prep}")
+    check(got['tiles'], f"a read-only card should still show its tiles: {got['tiles']}")
+    check(not any(t['packBtn'] for t in got['tiles']),
+          f"a read-only card must carry no claim controls at all: {got['tiles']}")
     check(not got['posted'], f"merely drawing the card posted: {got['posted']}")
 
 
-def scenario_the_prep_block_lists_work_event_by_event_not_kit_by_kit():
-    """The wall's own verdict: the kit's name ate a line and told nobody
-    anything. A household packs for Practice and then for the Game — the kit
-    is how the app stores the list, not how anybody reads it."""
+def scenario_the_block_lists_work_event_by_event():
+    """A household packs for Practice and then for the Game — the kit is how
+    the app stores the list, not how anybody reads the day."""
     got = _run(PREP_DAY, interactive=True, expand='')
     if got is None:
         return
-    prep = got['preps'][0]
-    check('Soccer bag' not in prep['text'] and 'Band bag' not in prep['text'],
-          f"the kit names are still eating space: {prep['text']}")
-    check('Soccer' in prep['text'] and 'Band practice' in prep['text'],
-          f"the prep block should name the events it is packing for: {prep['text']}")
+    text = ' '.join(t['text'] for t in got['tiles'])
+    check('Soccer bag' not in text and 'Band bag' not in text,
+          f"kit names are on the tiles, where they say nothing: {text}")
+    check('Soccer' in text and 'Band practice' in text,
+          f"the tiles should name the events: {text}")
 
-
-def scenario_one_event_needs_no_heading_above_its_own_chips():
-    """With a single event the row above already said the title; saying it
-    again is the same noise in a different place."""
-    day = json.loads(json.dumps(PREP_DAY))
-    prep = day['days'][0]['blocks'][0]
-    prep['for_events'] = prep['for_events'][:1]
-    prep['groups'] = [g for g in prep['groups'] if g['event_ids'] == ['soccer']]
-    prep['for_title'] = 'Soccer'
-    day['blocks'] = day['days'][0]['blocks']
-    got = _run(day, interactive=True, expand='')
-    if got is None:
-        return
-    p = got['preps'][0]
-    check(p['text'].count('Soccer') == 1,
-          f"a single-event prep block said its title twice: {p['text']}")
 
 
 def scenario_a_multi_day_card_says_tomorrow_once():

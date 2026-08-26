@@ -268,6 +268,7 @@ def _render_html(cfg, day_json, tile_width=480):
         "{{ packing.rows() }}"
         "</div>"
         "{% include 'components/agenda_row.html' %}"
+        "{% include 'components/pack_dialog.html' %}"
         "{% include 'components/packing_card.html' %}"
         "{% include 'components/family_calendar.html' %}"
         "</div>"

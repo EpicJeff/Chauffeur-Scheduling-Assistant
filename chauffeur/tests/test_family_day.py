@@ -273,7 +273,8 @@ def scenario_a_morning_outing_is_packed_the_night_before():
     anchor = outings._parse(prep[0]['start'])
     check(anchor.hour == 17 and anchor.date() == datetime.date(2026, 9, 7),
           f"prep for a morning outing sits in the previous evening: {prep[0]}")
-    check(prep[0]['for_key'] == 'd1:swim', f"prep must name its outing: {prep[0]}")
+    check([t['for_key'] for t in prep[0]['tiles']] == ['d1:swim'],
+          f"the tile must name its outing: {prep[0]}")
 
 
 def scenario_an_afternoon_outing_is_packed_that_morning():
@@ -322,18 +323,74 @@ def scenario_an_outing_with_nothing_to_pack_has_no_prep_block():
           "an outing with no items invented a prep block")
 
 
-def scenario_a_prep_block_names_the_event_and_its_people():
+def scenario_a_tile_names_the_event_and_its_people():
     """You might pack cleats for the wrong kid if you do not know who the
-    activity is for."""
+    activity is for. (F4: the naming moved from the block to its tiles, since
+    one block now serves a whole part of the day.)"""
     ev = _ev('soccer', 16, title='Soccer practice')
     ev['calendar_ids'] = ['ellie@cal']
     sched = _kit_sched([ev], {'soccer': 'd1'})
     prep = _preps(DAY, sched, 'd1:soccer')[0]
-    check('Soccer practice' in prep['for_title'],
-          f"the prep block should name the event it serves: {prep}")
-    check([p['name'] for p in prep['passengers']] == ['Ellie'],
-          f"the prep block should name who it is for: {prep}")
-    check(prep['key'] == 'prep:d1:soccer', f"unexpected prep key: {prep['key']}")
+    check(prep['key'] == f'prep:{DAY}:morning',
+          f"a prep block is now keyed by the part of the day: {prep['key']}")
+    check(len(prep['tiles']) == 1, f"expected one tile: {prep['tiles']}")
+    tile = prep['tiles'][0]
+    check(tile['title'] == 'Soccer practice',
+          f"the tile should name its event: {tile}")
+    check([p['name'] for p in tile['passengers']] == ['Ellie'],
+          f"the tile should name who it is for: {tile}")
+    check(tile['for_key'] == 'd1:soccer',
+          f"the tile must point at the block a claim is filed against: {tile}")
+
+
+def scenario_one_block_holds_a_whole_part_of_the_day():
+    """The incident: a Friday evening carrying four Saturday-morning trips
+    drew FOUR blocks stacked at the same anchor, and — sharing a timestamp —
+    they sorted by their internal keys, which is alphabetical by event id. To
+    a household that is no order at all."""
+    a = _ev('cages', 8, title='Cages')
+    b = _ev('practice', 9, title='Practice')
+    c = _ev('game', 11, 30, title='Game')
+    for ev in (a, b, c):
+        ev['calendar_ids'] = ['ellie@cal']
+    sched = _kit_sched([a, b, c],
+                       {'cages': 'd1', 'practice': 'd2', 'game': 'd3'})
+    prior = family_day.blocks_for(
+        '2026-09-07', sched, datetime.datetime(2026, 9, 7, 9, 0),
+        items_by_key={'d1:cages': 2, 'd2:practice': 2, 'd3:game': 2})
+    preps = [x for x in prior['blocks'] if x['kind'] == 'prep']
+    check(len(preps) == 1,
+          f"three morning trips should share ONE evening block: {len(preps)}")
+    check([t['title'] for t in preps[0]['tiles']] == ['Cages', 'Practice', 'Game'],
+          f"tiles must run in the order the day happens: "
+          f"{[t['title'] for t in preps[0]['tiles']]}")
+
+
+def scenario_an_outing_of_two_events_is_two_tiles():
+    """You work one event's list at a time, so the tile is per event even
+    when one trip covers two."""
+    a, b = _ev('soccer', 16, title='Soccer'), _ev('band', 17, 30, title='Band')
+    a['calendar_ids'] = b['calendar_ids'] = ['ellie@cal']
+    sched = _kit_sched([a, b], {'soccer': 'd1', 'band': 'd1'},
+                       route_edges={'d1': {'soccer': {'to_event': 'band',
+                                                      'travel_mins': 15}}})
+    prep = _preps(DAY, sched, 'd1:soccer')[0]
+    check([t['title'] for t in prep['tiles']] == ['Soccer', 'Band'],
+          f"one tile per event, in order: {prep['tiles']}")
+    check(all(t['for_key'] == 'd1:soccer' for t in prep['tiles']),
+          "both tiles file their claims against the one outing")
+
+
+def scenario_buckets_do_not_merge_across_days():
+    """Tomorrow's morning work is not tonight's morning work."""
+    today = _ev('soccer', 16, title='Soccer')
+    today['calendar_ids'] = ['ellie@cal']
+    sched = _kit_sched([today], {'soccer': 'd1'})
+    got = family_day.blocks_for(DAY, sched, datetime.datetime(2026, 9, 8, 6, 0),
+                                items_by_key={'d1:soccer': 2})
+    keys = [b['key'] for b in got['blocks'] if b['kind'] == 'prep']
+    check(all(k.startswith(f'prep:{DAY}:') for k in keys),
+          f"a block must belong to the day it is drawn on: {keys}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

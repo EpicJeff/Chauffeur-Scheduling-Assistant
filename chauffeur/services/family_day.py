@@ -135,14 +135,22 @@ def _prep_window(depart: datetime.datetime):
 
 def _prep_blocks(target, sched: dict, now: datetime.datetime,
                  items_by_key: dict = None) -> List[dict]:
-    """The prep blocks that belong to `target`.
+    """The prep blocks that belong to `target` — at most one per part of the
+    day, each holding a tile per event.
 
-    A morning outing's prep belongs to the evening BEFORE it, so this looks
-    at tomorrow's happenings as well as today's — and a block whose window
-    has already gone moves to the front of what is left, because a list you
-    can act on beats a list that is filed correctly and invisible.
+    F3 drew one block per outing, and a Friday evening carrying four
+    Saturday-morning trips became four blocks stacked at one anchor, sorted
+    (because they shared a timestamp) by their internal keys — alphabetical
+    by event id, which to a household is no order at all. One block per
+    bucket, tiles inside it ordered by the departure they serve.
+
+    A morning outing's prep belongs to the evening BEFORE it, so this looks at
+    tomorrow's happenings as well as today's — and a tile whose window has
+    already gone moves into the block for the part of the day we are in now,
+    because a list you can act on beats a list that is filed correctly and
+    invisible.
     """
-    out = []
+    buckets = {}
     for offset in (0, 1):
         day = target + datetime.timedelta(days=offset)
         for b in _raw_blocks(day, sched, now)['blocks']:
@@ -154,29 +162,74 @@ def _prep_blocks(target, sched: dict, now: datetime.datetime,
             if not depart:
                 continue
             anchor, window_ends = _prep_window(depart)
-            if window_ends < now < depart:
-                anchor = now          # passed, still wanted: keep asking
+            caught_up = window_ends < now < depart
+            if caught_up:
+                anchor = _bucket_anchor(now)   # it joins the block for NOW
             if anchor.date() != target:
                 continue
-            out.append({
+            name = _bucket_name(anchor)
+            slot = buckets.setdefault(name, {
                 'kind': 'prep',
-                'key': f"prep:{b['key']}",
-                'for_key': b['key'],
-                'for_title': _block_title(b),
-                'for_start': b.get('start'),
-                # The events this prep is for, so the work can be listed event
-                # by event rather than kit by kit: a household packs for
-                # "Practice" and then for "Game", never for "Softball Bag".
-                'for_events': ([dict(e) for e in b.get('events') or []]
-                               if b['kind'] == 'outing'
-                               else [{'id': b.get('event_id'),
-                                      'title': b.get('title'),
-                                      'start': b.get('start')}]),
-                'passengers': b.get('passengers') or [],
+                'key': f"prep:{target.isoformat()}:{name}",
+                'bucket': name,
                 'start': anchor.isoformat(),
                 'end': anchor.isoformat(),
+                'tiles': [],
             })
+            if caught_up:
+                # A block holding work that is already late sits at the FRONT
+                # of what is left, not back at the start of a bucket most of
+                # which has gone. A list you can act on beats a list that is
+                # filed correctly and invisible.
+                slot['start'] = max(slot['start'], now.isoformat())
+                slot['end'] = slot['start']
+            for ev in _tile_events(b):
+                slot['tiles'].append({
+                    'key': f"{slot['key']}:{ev['id']}",
+                    'for_key': b['key'],
+                    'event_id': ev['id'],
+                    'title': ev.get('title') or 'Event',
+                    'start': ev.get('start') or b.get('start'),
+                    'depart': b.get('start'),
+                    'passengers': ev.get('passengers') or b.get('passengers') or [],
+                })
+
+    out = []
+    for slot in buckets.values():
+        # The order the day will actually happen in — the whole point.
+        slot['tiles'].sort(key=lambda t: (str(t.get('depart') or ''),
+                                          str(t.get('start') or ''),
+                                          t['title'].lower()))
+        out.append(slot)
     return out
+
+
+def _tile_events(b: dict) -> List[dict]:
+    """One tile per EVENT: you work one event's list at a time, even when one
+    trip covers two."""
+    if b['kind'] == 'outing':
+        return [dict(e) for e in (b.get('events') or [])]
+    return [{'id': b.get('event_id'), 'title': b.get('title'),
+             'start': b.get('start'), 'passengers': b.get('passengers') or []}]
+
+
+def _bucket_name(anchor: datetime.datetime) -> str:
+    if anchor.hour < _MORNING_ENDS:
+        return 'morning'
+    if anchor.hour < _AFTERNOON_ENDS:
+        return 'afternoon'
+    return 'evening'
+
+
+def _bucket_anchor(when: datetime.datetime) -> datetime.datetime:
+    """The start of the part of the day `when` falls in — a caught-up tile
+    joins the block for now, it does not invent an anchor of its own."""
+    day = when.date()
+    if when.hour < _MORNING_ENDS:
+        return datetime.datetime.combine(day, datetime.time(0, 0))
+    if when.hour < _AFTERNOON_ENDS:
+        return datetime.datetime.combine(day, datetime.time(_MORNING_ENDS, 0))
+    return datetime.datetime.combine(day, datetime.time(_AFTERNOON_ENDS, 0))
 
 
 def _has_items(b: dict, sched: dict, items_by_key: dict = None) -> bool:

@@ -195,9 +195,6 @@
                                      Flat blocks (a one-event outing, an
                                      at-home event, a covered ride) get no
                                      chip — there is no box for it to sit on. -->
-                                <template x-if="pkIsContainer(b)">
-                                    <span class="self-start -mb-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300">Outing</span>
-                                </template>
                                 <!-- The CONTAINER's own heading: not an
                                      `agendaEventRow` -- no `.agenda-event`
                                      fill, no left color bar -- because a
@@ -228,8 +225,8 @@
                                      theirs -- one panel, one right margin,
                                      whether the line is a heading or a row. -->
                                 <template x-if="pkIsContainer(b)">
-                                    <div class="flex items-baseline justify-between gap-2 px-2.5">
-                                        <div class="flex items-baseline gap-2 min-w-0 flex-1" x-html="pkHeadingIdentityHtml(b)"></div>
+                                    <div class="flex items-center justify-between gap-2 px-2.5">
+                                        <div class="flex items-center gap-2 min-w-0 flex-1" x-html="pkHeadingIdentityHtml(b)"></div>
                                         <div class="flex items-center gap-1.5 shrink-0">
                                             <span x-html="pkHeadingBadgeHtml(b)"></span>
                                             <template x-if="pkExpandable(b)">
@@ -238,6 +235,7 @@
                                                     :class="pkOpen(b) ? 'rotate-90' : ''">›</button>
                                             </template>
                                         </div>
+                                    <div class="px-2.5 -mt-1" x-html="pkHeadingTimeHtml(b)"></div>
                                     </div>
                                 </template>
                                 <!-- The FLAT block's row: built by the shared
@@ -284,22 +282,61 @@
                                      visible, so a summary would be redundant
                                      and an arrow would open onto what is
                                      already on screen. -->
+                                <!-- A PREP BLOCK: one per part of the day,
+                                     holding a tile per event. Packing is a
+                                     decided act — you do not tick one thing
+                                     in passing, you decide to pack and then
+                                     work one event's list — so the tile's
+                                     control is a single button and the list
+                                     itself lives in the dialog it opens
+                                     (docs/family_day_design.md, "Packing is a
+                                     decided act"). No pill and no caret: the
+                                     tiles ARE the status. -->
                                 <template x-if="b.kind === 'prep'">
-                                    <div class="fd-prep rounded-xl border border-dashed border-gray-700 bg-gray-900/60 p-2.5 space-y-1.5">
+                                    <div class="fd-prep rounded-xl border border-dashed border-gray-700 bg-gray-900/60 p-2.5 space-y-2">
                                         <div class="flex items-center gap-2">
                                             <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 shrink-0">Pack</span>
-                                            <span class="text-[13px] font-bold text-white truncate" x-text="b.for_title"></span>
-                                            <span class="text-[11px] font-semibold text-gray-400 shrink-0"
-                                                x-text="pkClock(b.for_start)"></span>
-                                            <span class="flex items-center gap-1 shrink-0 ml-auto">
-                                                <template x-for="pp in (b.passengers || [])" :key="'fd-prep-pax-' + b.key + '-' + pp.id">
-                                                    <span class="fd-pax-dot w-2.5 h-2.5 rounded-full border border-white/20 shrink-0"
-                                                        :style="'background-color: ' + (pp.color || '#6b7280')"
-                                                        :title="pp.name"></span>
-                                                </template>
-                                            </span>
+                                            <!-- A block whose every tile is done says so once, rather
+                                                 than vanishing: hiding what is merely quiet is the one
+                                                 thing this board has learned never to do. -->
+                                            <template x-if="b.done">
+                                                <span class="fd-prep-done text-[11px] font-bold text-green-400">Packed ✓</span>
+                                            </template>
                                         </div>
-                                        {{ item_chips() }}
+                                        <template x-if="!b.done">
+                                            <div class="flex flex-wrap gap-2">
+                                                <template x-for="t in (b.tiles || [])" :key="'fd-tile-' + t.key">
+                                                    <div class="fd-tile rounded-xl border p-2.5 w-[10.5rem] flex flex-col gap-1.5"
+                                                        :class="t.done ? 'border-green-500/40 bg-green-600/10' : 'border-gray-700 bg-gray-800/60'">
+                                                        <span class="text-[12px] font-bold text-white leading-tight line-clamp-2"
+                                                            x-text="t.title"></span>
+                                                        <span class="flex items-center gap-1">
+                                                            <template x-for="pp in (t.passengers || [])" :key="'fd-tile-pax-' + t.key + '-' + pp.id">
+                                                                <span class="fd-pax-dot w-2.5 h-2.5 rounded-full border border-white/20 shrink-0"
+                                                                    :style="'background-color: ' + (pp.color || '#6b7280')"
+                                                                    :title="pp.name"></span>
+                                                            </template>
+                                                            <!-- The size of the job. Without it every tile
+                                                                 looks the same weight and a household cannot
+                                                                 judge whether to start now. -->
+                                                            <span class="text-[10px] font-semibold text-gray-400 ml-auto"
+                                                                x-text="t.needed + (t.needed === 1 ? ' item' : ' items')"></span>
+                                                        </span>
+                                                        <template x-if="t.done">
+                                                            <span class="fd-tile-done text-[11px] font-bold text-green-300">Packed ✓</span>
+                                                        </template>
+                                                        <template x-if="!t.done && pkInteractive">
+                                                            <button type="button" @click="pkOpenPack(b, t)"
+                                                                class="fd-pack-btn w-full px-2 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 text-[11px] font-bold">Pack Items</button>
+                                                        </template>
+                                                        <template x-if="!t.done && !pkInteractive">
+                                                            <span class="text-[11px] font-semibold text-gray-500"
+                                                                x-text="t.packed + '/' + t.needed"></span>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </template>
                                     </div>
                                 </template>
                                 <template x-if="b.kind !== 'prep' && !pkIsContainer(b)">
@@ -449,6 +486,7 @@
             pkLoaded: false,
             pkInteractive: cfg.interactive !== false,
             pkDays: Math.max(1, Math.min(parseInt(cfg.days, 10) || 1, 7)),
+            pkDialogTile: null,
             // Which block keys are unfolded. A plain Set, always REASSIGNED
             // (never mutated with .add/.delete alone) so Alpine's reactivity
             // sees every change — survives the 30-second poll exactly the
@@ -513,9 +551,28 @@
                             }
                         }
                         this.pkTotals(b);
+                        if (b.tiles && b.tiles.length) {
+                            for (const t of b.tiles) {
+                                t.groups = this.pkFilterGroups(t.groups || []);
+                                for (const g of t.groups) {
+                                    for (const it of g.items || []) {
+                                        const key = this.pkKey(t.for_key, it.key);
+                                        if (!this.pkPending.has(key)) continue;
+                                        const prior = this.pkFindItem(t.for_key, it.key);
+                                        if (prior) it.packed = prior.it.packed;
+                                    }
+                                }
+                            }
+                            this.pkTileTotals(b);
+                        }
                     }
                     this.blocks = incoming;
                     this.days = dayRows;
+                    // A dialog open across a poll keeps its place and picks up
+                    // the fresh numbers — the board rebuilds every thirty
+                    // seconds and this card has been burned twice by state
+                    // that resets under a finger.
+                    if (this.pkDialogTile) this.pkRefreshDialog(this.pkDialogTile.tileKey);
                     this.allDay = Array.isArray(data.all_day) ? data.all_day : [];
                     this.date = data.date || '';
                     this.isTomorrow = !!data.is_tomorrow;
@@ -695,7 +752,23 @@
             // chips + caret right) — `flex items-baseline justify-between
             // gap-2 px-1`, the agenda-day header's own shape
             // (`_renderAgenda`, components/family_calendar.html).
+            // One line: what this trip IS (an outing), who is driving it and
+            // in what — the driver as plain TEXT, because a person's name is
+            // not a tag and the prep tiles name people the same way — with
+            // the packed status right-aligned. The time follows underneath.
             pkHeadingIdentityHtml(b) {
+                const esc = window.agendaEventEsc || (s => s);
+                let html = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 shrink-0">Outing</span>`;
+                if (b.driver) {
+                    html += `<span class="text-[13px] font-bold text-white truncate">${esc(b.driver)}</span>`;
+                }
+                if (b.car) {
+                    html += `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 shrink-0 max-w-[7rem] truncate">${esc(b.car)}</span>`;
+                }
+                return html;
+            },
+            // The time range, on its own line beneath the identity.
+            pkHeadingTimeHtml(b) {
                 const esc = window.agendaEventEsc || (s => s);
                 const timeLabel = `${this.pkTime(b.start)}${b.end ? ' – ' + this.pkTime(b.end) : ''}`;
                 return `<span class="text-[13px] font-bold text-white shrink-0">${esc(timeLabel)}</span>`;
@@ -705,8 +778,7 @@
             // ladder a flat outing row draws through `pkRowHtml`), with this
             // card's own pill riding in the same slot it always has.
             pkHeadingBadgeHtml(b) {
-                const badgeFn = window.agendaEventBadgeHtml || (() => '');
-                return badgeFn({ driverName: b.driver, carName: b.car }, this.pkPillHtml(b));
+                return this.pkPillHtml(b);
             },
             // All-day titles, one agenda "Entire day" row each — the day's
             // own banner is not a bespoke muted strip any more than an
@@ -897,6 +969,74 @@
                 if (rest.length) out.push({ id: 'rest', title: '', items: rest });
                 for (const sec of out) sec.show_title = out.length > 1 && !!sec.title;
                 return out;
+            },
+            // "Pack Items" is the intentional act: I am ready to pack for
+            // THIS event. The dialog is a shared component that draws and
+            // calls back — the claim still runs through pkClaim, so the
+            // optimistic tick, the pending guard and poll survival all apply
+            // exactly as they do on the card itself.
+            pkOpenPack(b, t) {
+                if (!window.packDialog) return;
+                this.pkDialogTile = { blockKey: b.key, tileKey: t.key };
+                window.packDialog.open({
+                    title: t.title,
+                    subtitle: this.pkClock(t.depart || t.start),
+                    passengers: t.passengers || [],
+                    groups: t.groups || [],
+                    interactive: this.pkInteractive,
+                    tileKey: t.key,
+                    onClaim: (itemKey, delta) => {
+                        const live = this.pkTileByKey(t.key);
+                        if (!live) return;
+                        let item = null;
+                        for (const g of live.tile.groups || []) {
+                            for (const it of g.items || []) {
+                                if (it.key === itemKey) item = it;
+                            }
+                        }
+                        if (!item) return;
+                        // The claim belongs to the OUTING the tile serves.
+                        this.pkClaim({ key: live.tile.for_key,
+                                       for_key: live.tile.for_key,
+                                       groups: live.tile.groups,
+                                       tiles: null }, item, delta)
+                            .finally(() => this.pkRefreshDialog(t.key));
+                        this.pkRefreshDialog(t.key);
+                    },
+                });
+            },
+            pkTileByKey(tileKey) {
+                for (const b of this.blocks) {
+                    for (const t of b.tiles || []) {
+                        if (t.key === tileKey) return { block: b, tile: t };
+                    }
+                }
+                return null;
+            },
+            pkRefreshDialog(tileKey) {
+                if (!window.packDialog || !window.packDialog.isOpen()) return;
+                const live = this.pkTileByKey(tileKey);
+                if (!live) return;
+                this.pkTileTotals(live.block);
+                window.packDialog.update({ groups: live.tile.groups });
+            },
+            // A tile's own count, and its block's, recomputed from the items
+            // under it — the same job pkTotals does for a plain block.
+            pkTileTotals(b) {
+                let packed = 0, needed = 0;
+                for (const t of b.tiles || []) {
+                    let tp = 0, tn = 0;
+                    for (const g of t.groups || []) {
+                        for (const it of g.items || []) {
+                            tp += Math.min(it.packed || 0, it.needed || 0);
+                            tn += it.needed || 0;
+                        }
+                    }
+                    t.packed = tp; t.needed = tn; t.done = tn > 0 && tp >= tn;
+                    packed += tp; needed += tn;
+                }
+                b.packed = packed; b.needed = needed;
+                b.done = needed > 0 && packed >= needed;
             },
             pkTapChip(b, it) {
                 if (it.needed > 1) {

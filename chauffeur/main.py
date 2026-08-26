@@ -8329,26 +8329,50 @@ def _packing_day_payload(target, sched, now, drivers, kits, pax) -> dict:
 
     day = _fam.blocks_for(target, sched, now, items_by_key=counts)
     claims = {}
-    for row in storage.get_packing_claims(target.isoformat()):
-        k = (row.get('outing_key'), row.get('item_key'))
-        claims[k] = claims.get(k, 0) + 1
+    # A prep block on tonight holds tiles for TOMORROW's trips, and those
+    # claims are filed on tomorrow's date — reading only today's would show
+    # every one of them as unpacked.
+    for offset in (0, 1):
+        for row in storage.get_packing_claims(
+                (target + datetime.timedelta(days=offset)).isoformat()):
+            k = (row.get('outing_key'), row.get('item_key'))
+            claims[k] = claims.get(k, 0) + 1
 
     out = []
     for b in day['blocks']:
-        # A prep block is a VIEW of the outing it serves: same groups, same
-        # claim keys, so ticking in either place moves the other. The claim
-        # is stored against the outing and the item, never against the place
-        # a finger happened to touch it.
-        source_key = b.get('for_key') if b['kind'] == 'prep' else b['key']
-        source = b if b['kind'] != 'prep' else (
-            _fam_source(day['blocks'], source_key)
-            # Tomorrow's morning trip, whose prep sits in tonight's evening.
-            or _fam_source(_fam.blocks_for(target + datetime.timedelta(days=1),
-                                           sched, now,
-                                           items_by_key={})['blocks'], source_key))
-        groups = [] if (b.get('canceled') or not source) else _outings.packing_for(
-            {'event_ids': (source['event_ids'] if source['kind'] == 'outing'
-                           else [source['event_id']])}, sched, kits, pax)
+        # A prep block is a VIEW of the outings it serves: its tiles show
+        # their own event's list and file claims against the block that owns
+        # them, so ticking in either place moves the other. A claim is stored
+        # against the source block and the item, never against the place a
+        # finger happened to touch it.
+        if b['kind'] == 'prep':
+            packed = needed = 0
+            tiles = []
+            for t in b.get('tiles') or []:
+                t_groups = _outings.packing_for(
+                    {'event_ids': [t['event_id']]}, sched, kits, pax)
+                t_packed = t_needed = 0
+                for g in t_groups:
+                    for item in g['items']:
+                        item['packed'] = min(
+                            item['needed'],
+                            claims.get((t['for_key'], item['key']), 0))
+                        t_packed += item['packed']
+                        t_needed += item['needed']
+                tiles.append({**t, 'groups': t_groups,
+                              'packed': t_packed, 'needed': t_needed,
+                              'done': t_needed > 0 and t_packed >= t_needed})
+                packed += t_packed
+                needed += t_needed
+            out.append({**b, 'tiles': tiles, 'groups': [],
+                        'packed': packed, 'needed': needed,
+                        'done': needed > 0 and packed >= needed})
+            continue
+
+        source_key = b['key']
+        groups = [] if b.get('canceled') else _outings.packing_for(
+            {'event_ids': (b['event_ids'] if b['kind'] == 'outing'
+                           else [b['event_id']])}, sched, kits, pax)
         packed = needed = 0
         for g in groups:
             for item in g['items']:
