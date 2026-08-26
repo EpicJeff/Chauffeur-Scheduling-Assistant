@@ -343,6 +343,13 @@ def _passengers_for(ev: dict, members: list, cal_meta: dict,
     Resolving by calendar alone found nobody on this household's real data,
     and every tile and dialog said "No passengers" while the kits underneath
     them were matching those same people perfectly well.
+
+    Either way, the id being compared is a PASSENGER id: rules name
+    passengers, and the solver rewrites a matched event's `calendar_ids`
+    into resolved passenger ids. A real member record keeps that id in
+    `passenger_id`, one field over from its own `id` — so both fields have
+    to be tried, or a household whose member ids differ from their passenger
+    ids (every real one) finds nobody.
     """
     cal_ids = {str(c) for c in ((ev or {}).get('calendar_ids') or [])}
     named = set()
@@ -354,9 +361,11 @@ def _passengers_for(ev: dict, members: list, cal_meta: dict,
     out = []
     for m in members or []:
         mid = str(m.get('id') or '')
+        pax_id = str(m.get('passenger_id') or '')
+        my_ids = {i for i in (mid, pax_id) if i}
         m_cals = {str(c) for c in (m.get('calendar_ids') or [])}
-        on_calendar = bool(mid and mid in cal_ids) or bool(m_cals & cal_ids)
-        by_rule = bool(mid and mid in named)
+        on_calendar = bool(my_ids & cal_ids) or bool(m_cals & cal_ids)
+        by_rule = bool(my_ids & named)
         if not on_calendar and not by_rule:
             continue
         color = None
@@ -422,6 +431,11 @@ def _members_fallback() -> list:
         pass
     for m in members:
         mid = str(m.get('id') or '')
+        # A member whose passenger is already on the list IS that passenger —
+        # two entries would draw the same person twice now that
+        # `_passengers_for` matches through `passenger_id` as well.
+        if str(m.get('passenger_id') or '') in seen:
+            continue
         if mid and mid not in seen:
             seen.add(mid)
             out.append(m)

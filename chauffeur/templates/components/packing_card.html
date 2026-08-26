@@ -871,7 +871,9 @@
                 }
                 return {
                     id: b.event_id, title: b.title, start: b.start, end: b.end,
-                    extendedProps: b.covered_by ? { assistName: b.covered_by } : {},
+                    extendedProps: Object.assign(
+                        { rawColor: b.color, passengers: b.passengers || [] },
+                        b.covered_by ? { assistName: b.covered_by } : {}),
                 };
             },
             // A container's inner lines are one `x-html` blob — Alpine has

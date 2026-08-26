@@ -601,6 +601,36 @@ def scenario_a_rule_puts_people_on_an_event_their_calendar_never_owned():
           f"every tile should name its people: {preps and preps[0]['tiles']}")
 
 
+def scenario_a_member_is_found_through_their_passenger_id():
+    """The real household's shape: `sched['members']` holds MEMBER records,
+    whose `id` is the member id — the passenger the solver and the rules talk
+    about lives one field over, in `passenger_id`. Matching member ids
+    against passenger ids finds nobody, which is why the device showed "No
+    passengers" on every tile and dialog while the seeded tests (which build
+    people from passengers, ids aligned) stayed green."""
+    import main
+    _seed_incident()
+    sched = storage.get_cached_schedule()
+    # A real member record: its own id, the passenger id one field over.
+    sched['members'] = [{'id': 'member-ellie', 'name': 'Ellie',
+                         'passenger_id': 'ellie', 'driver_id': None,
+                         'color_code': '#f59e0b', 'calendar_ids': []}]
+    # Post-solve, a matched event's calendar_ids ARE the resolved passenger
+    # ids (main.py's four-way binding note) — the seeded events already have
+    # that shape (cal_ids=['ellie']). One of them is additionally rule-bound.
+    sched['matched_rules'] = {'band': [{'passenger_ids': ['ellie']}]}
+    storage.set_cached_schedule(sched)
+
+    res = main.packing_day(date=DAY, days=2)
+    outings = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'outing']
+    check(outings and [p['name'] for p in outings[0]['passengers']] == ['Ellie'],
+          f"a member must be found through their passenger_id: "
+          f"{outings and outings[0].get('passengers')}")
+    for line in outings[0].get('events') or []:
+        check([p['name'] for p in line.get('passengers') or []] == ['Ellie'],
+              f"every inner line should carry the rider too: {line}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
