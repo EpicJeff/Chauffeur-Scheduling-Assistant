@@ -571,6 +571,36 @@ def scenario_a_tile_says_who_it_is_for():
           f"every tile should carry the people it is for: {prep['tiles']}")
 
 
+def scenario_a_rule_puts_people_on_an_event_their_calendar_never_owned():
+    """The wall's real shape: a family-calendar practice that two children
+    attend because a ROUTING RULE says so, not because the event sits on
+    their calendars. Resolving by calendar alone found nobody, so every tile
+    and every dialog said "No passengers" while the kits underneath were
+    matching those same people perfectly well."""
+    import main
+    _seed_incident()
+    # Kits that match on KEYWORDS alone, which is the ordinary shape: a
+    # "Soccer bag" belongs to soccer, whoever is going.
+    for kit in storage.get_prep_kits():
+        storage.update_prep_kit(kit['id'], {'passenger_ids': []})
+    sched = storage.get_cached_schedule()
+    for ev in sched['events']:
+        ev['calendar_ids'] = ['the-family-calendar']     # nobody's own
+    sched['matched_rules'] = {ev['id']: [{'passenger_ids': ['ellie']}]
+                              for ev in sched['events']}
+    storage.set_cached_schedule(sched)
+
+    res = main.packing_day(date=DAY, days=2)
+    outings = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'outing']
+    check(outings and outings[0]['passengers'],
+          f"a rule-bound rider was lost on the outing: {outings and outings[0]}")
+    check([p['name'] for p in outings[0]['passengers']] == ['Ellie'],
+          f"the rule's passenger should be named: {outings[0]['passengers']}")
+    preps = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'prep']
+    check(preps and all(t['passengers'] for t in preps[0]['tiles']),
+          f"every tile should name its people: {preps and preps[0]['tiles']}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

@@ -704,10 +704,11 @@
             pkRowHtml(b) {
                 const ev = b.kind === 'outing'
                     ? { title: this.pkTitle(b), start: b.start, end: b.end,
-                        extendedProps: { driverName: b.driver, carName: b.car, rawColor: b.color } }
+                        extendedProps: { driverName: b.driver, carName: b.car, rawColor: b.color,
+                                         passengers: b.passengers || [] } }
                     : { title: b.title, start: b.start, end: b.end,
                         extendedProps: Object.assign(
-                            { rawColor: b.color },
+                            { rawColor: b.color, passengers: b.passengers || [] },
                             b.covered_by ? { assistName: b.covered_by } : {}) };
                 const row = agendaEventRow(ev, {
                     canceled: !!b.canceled,
@@ -855,14 +856,17 @@
                     return {
                         id: innerEvent.id, title: innerEvent.title,
                         start: innerEvent.start, end: null,
-                        extendedProps: { driverName: b.driver, carName: b.car, rawColor: b.color },
+                        extendedProps: { driverName: b.driver, carName: b.car,
+                                         rawColor: innerEvent.color || b.color,
+                                         passengers: innerEvent.passengers || [] },
                     };
                 }
                 if (b.kind === 'outing') {
                     return {
                         id: (b.event_ids || [])[0], title: this.pkTitle(b),
                         start: b.start, end: b.end,
-                        extendedProps: { driverName: b.driver, carName: b.car, rawColor: b.color },
+                        extendedProps: { driverName: b.driver, carName: b.car, rawColor: b.color,
+                                         passengers: b.passengers || [] },
                     };
                 }
                 return {

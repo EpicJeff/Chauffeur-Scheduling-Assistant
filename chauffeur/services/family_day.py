@@ -46,13 +46,22 @@ def _raw_blocks(target, sched: dict, now: datetime.datetime) -> dict:
 
     cal_meta = sched.get('calendar_metadata') or {}
     members = sched.get('members') or _members_fallback()
+    # WHO RIDES an event is not only a question of whose calendar it is on.
+    # A routing rule binds passengers to events their own calendar never owns
+    # (a family calendar's "Practice" that two children attend), and
+    # `sched['matched_rules']` is where the solver records which rules matched
+    # which event -- the same resolution the calendar's own details dialog and
+    # the member-day endpoint use (`main.py:9637-9644`). Resolving by calendar
+    # alone is why every tile and every dialog said "No passengers".
+    matched = sched.get('matched_rules') or {}
 
     blocks = []
     all_day = []
     outing_rows = outings.outings_for(target, sched, now)
     inside_an_outing = {eid for o in outing_rows for eid in o['event_ids']}
     for o in outing_rows:
-        lines = [_line(events.get(e), members, cal_meta) for e in o['event_ids']]
+        lines = [_line(events.get(e), members, cal_meta, matched.get(e))
+                 for e in o['event_ids']]
         blocks.append({'kind': 'outing', **o, 'events': lines,
                        'passengers': _union_people(lines)})
 
@@ -85,7 +94,7 @@ def _raw_blocks(target, sched: dict, now: datetime.datetime) -> dict:
             'covered_by': ((c.get('relation_label') or c.get('name')
                             or 'Outside help') if cov else None),
             'color': _event_color(ev, cal_meta),
-            'passengers': _passengers_for(ev, members, cal_meta),
+            'passengers': _passengers_for(ev, members, cal_meta, matched.get(ev_id)),
         })
 
     blocks.sort(key=lambda b: (b['start'], b['key']))
@@ -284,7 +293,8 @@ def day_in_focus(now: datetime.datetime = None, sched: dict = None) -> datetime.
     return today + datetime.timedelta(days=1)
 
 
-def _line(ev, members: list = None, cal_meta: dict = None) -> dict:
+def _line(ev, members: list = None, cal_meta: dict = None,
+          rules: list = None) -> dict:
     """The compact inner line an outing container shows: title, time, and the
     people it is for — driver and car live on the container, because those are
     facts about the trip rather than about the event."""
@@ -292,7 +302,7 @@ def _line(ev, members: list = None, cal_meta: dict = None) -> dict:
     return {'id': ev.get('id'), 'title': ev.get('title') or 'Event',
             'start': ev.get('start'),
             'color': _event_color(ev, cal_meta or {}),
-            'passengers': _passengers_for(ev, members or [], cal_meta or {})}
+            'passengers': _passengers_for(ev, members or [], cal_meta or {}, rules)}
 
 
 # ── Whose event is this? ─────────────────────────────────────────────────
@@ -315,21 +325,39 @@ def _event_color(ev: dict, cal_meta: dict) -> Optional[str]:
     return None
 
 
-def _passengers_for(ev: dict, members: list, cal_meta: dict) -> List[dict]:
+def _passengers_for(ev: dict, members: list, cal_meta: dict,
+                    rules: list = None) -> List[dict]:
     """The people an event is for — nobody invented.
 
-    Matching mirrors the rule the kit resolver already uses
-    (`outings._people_on`): a member is on an event when the event names their
-    member id or any of their calendar ids.
+    Two ways somebody is on an event, and the app has always needed both:
+
+    * **Their calendar owns it.** The event names their member id or one of
+      their calendar ids — the rule the kit resolver uses
+      (`outings._people_on`).
+    * **A rule binds them to it.** A routing rule matched the event and names
+      them, which is how a family calendar's "Practice" carries two children
+      who have no calendar of their own. `sched['matched_rules']` is the
+      solver's record of which rules matched what, and it is the same source
+      the calendar's details dialog and the member-day endpoint read.
+
+    Resolving by calendar alone found nobody on this household's real data,
+    and every tile and dialog said "No passengers" while the kits underneath
+    them were matching those same people perfectly well.
     """
     cal_ids = {str(c) for c in ((ev or {}).get('calendar_ids') or [])}
-    if not cal_ids:
+    named = set()
+    for r in rules or []:
+        for pid in ((r.get('passenger_ids') if isinstance(r, dict) else None) or []):
+            named.add(str(pid))
+    if not cal_ids and not named:
         return []
     out = []
     for m in members or []:
         mid = str(m.get('id') or '')
         m_cals = {str(c) for c in (m.get('calendar_ids') or [])}
-        if mid not in cal_ids and not (m_cals & cal_ids):
+        on_calendar = bool(mid and mid in cal_ids) or bool(m_cals & cal_ids)
+        by_rule = bool(mid and mid in named)
+        if not on_calendar and not by_rule:
             continue
         color = None
         for cid in m_cals:
@@ -337,6 +365,9 @@ def _passengers_for(ev: dict, members: list, cal_meta: dict) -> List[dict]:
             if meta.get('backgroundColor'):
                 color = meta['backgroundColor']
                 break
+        if not color:
+            meta = cal_meta.get(mid) or {}
+            color = meta.get('backgroundColor')
         out.append({'id': mid, 'name': m.get('name') or 'Somebody',
                     'color': color or m.get('color_code') or None})
     out.sort(key=lambda p: p['name'].lower())
