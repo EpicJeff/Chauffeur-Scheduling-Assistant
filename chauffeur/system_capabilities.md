@@ -5645,6 +5645,17 @@ ready for it."
     `true_unassigned` too — it only shipped `unassigned`, and since
     `save_custom_schedule` persisted that blob, any range built by that
     path served the calendar/agenda flag-less until a fast-path rebuild.
+    **The dialog names the real cause (v2.422.1)**: the conflict banner's
+    hardcoded "every driver is blocked…" stated the mechanism as the cause
+    (a passenger double-booked at another activity blocks every driver
+    identically). When all blocked drivers share ONE distinct diagnostic
+    `text`, that text IS the banner ("Scheduling conflict — Passenger
+    cannot travel from/to '…' in time."); mixed reasons keep the generic
+    sentence, which is then the true summary. Both feeds carry it:
+    `family_day` blocks get `conflict_reason` (→ card dialog via
+    `pkDetailsEv`), the calendar's event builder stashes
+    `conflictReason` in extendedProps (cleared when a merge un-conflicts
+    or coverage arrives), HTML-escaped at the banner.
   - **All-day events are a banner, never a block** — one slim line, because
     they have no time to anchor to, and they must never reach the solver
     (`driver_events`); the card is a read-only lens over the event feed and

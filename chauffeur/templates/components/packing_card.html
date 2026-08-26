@@ -889,7 +889,8 @@
                         { rawColor: b.color, passengers: b.passengers || [] },
                         b.covered_by ? { assistName: b.covered_by } : {},
                         b.needs_driver ? { isUnassigned: true,
-                                           isConflict: !!b.conflict } : {}),
+                                           isConflict: !!b.conflict,
+                                           conflictReason: b.conflict_reason || null } : {}),
                 };
             },
             // A container's inner lines are one `x-html` blob — Alpine has

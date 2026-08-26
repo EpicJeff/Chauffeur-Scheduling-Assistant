@@ -100,10 +100,20 @@ def _raw_blocks(target, sched: dict, now: datetime.datetime) -> dict:
         needs_driver = (not cov and not ev.get('canceled')
                         and ev_id in unassigned)
         conflict = False
+        conflict_reason = None
         if needs_driver:
             reasons = [r for r in (diagnostics.get(ev_id) or {}).values() if r]
             conflict = bool(reasons) and all(
                 r.get('type') != 'optimization' for r in reasons)
+            # When every driver is blocked for the SAME reason — a passenger
+            # double-booked at another activity blocks everybody identically
+            # — that reason IS the conflict, and "every driver is blocked"
+            # is the mechanism, not the explanation. Only a single distinct
+            # text is safe to promote; mixed reasons keep the generic line.
+            if conflict:
+                texts = {r.get('text') for r in reasons if r.get('text')}
+                if len(texts) == 1:
+                    conflict_reason = texts.pop()
         blocks.append({
             'kind': 'event',
             'key': f"home:{ev_id}",
@@ -116,6 +126,7 @@ def _raw_blocks(target, sched: dict, now: datetime.datetime) -> dict:
                             or 'Outside help') if cov else None),
             'needs_driver': needs_driver,
             'conflict': conflict,
+            'conflict_reason': conflict_reason,
             'color': _event_color(ev, cal_meta),
             'passengers': _passengers_for(ev, members, cal_meta, matched.get(ev_id)),
         })

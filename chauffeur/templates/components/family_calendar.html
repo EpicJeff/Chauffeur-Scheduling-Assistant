@@ -1213,7 +1213,15 @@ function _openEventDetails(inst, evObj) {
         banner.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Ignored for the driving schedule \u2014 everyone attending is away on a trip during this event.';
     } else if (props.isConflict) {
         banner.className = 'rounded-lg p-3 text-sm font-bold flex items-center gap-2 bg-amber-500/20 text-amber-400 border border-amber-500/30 mb-4';
-        banner.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg> Scheduling conflict \u2014 every driver is blocked for this event, so assigning one won\u2019t fix it.';
+        // The ACTUAL reason when every driver shares one (a passenger
+        // double-booked at another activity blocks everybody identically) \u2014
+        // "every driver is blocked" is the mechanism, and stating it as the
+        // cause read as wrong the first time a household saw it. Mixed
+        // reasons keep the generic sentence, which is then the true summary.
+        const why = props.conflictReason
+            ? _agEsc(props.conflictReason)
+            : 'Every driver is blocked for this event, so assigning one won\u2019t fix it.';
+        banner.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg> Scheduling conflict \u2014 ' + why;
     } else if (props.isUnassigned) {
         banner.className = 'rounded-lg p-3 text-sm font-bold flex items-center gap-2 bg-red-500/20 text-red-400 border border-red-500/30 mb-4';
         banner.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg> This event has a scheduling conflict and needs a driver assigned.';
@@ -1523,9 +1531,18 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                     // a driver isn't the fix — surface it as a conflict
                                     // instead of shouting "Needs driver".
                                     let isConflict = false;
+                                    let conflictReason = null;
                                     if (isUnassigned) {
                                         const reasons = Object.values((data.diagnostics || {})[ev.id] || {});
                                         isConflict = reasons.length > 0 && reasons.every(r => r && r.type !== 'optimization');
+                                        // One shared reason (a passenger
+                                        // double-booked blocks every driver
+                                        // identically) is the honest banner;
+                                        // mixed reasons keep the generic one.
+                                        if (isConflict) {
+                                            const texts = [...new Set(reasons.map(r => r && r.text).filter(Boolean))];
+                                            if (texts.length === 1) conflictReason = texts[0];
+                                        }
                                     }
                                     let driverName = null;
                                     if (!isUnassigned && !covering && assignments[ev.id]) {
@@ -1568,6 +1585,8 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                             // one assignable leg keeps the actionable red badge.
                                             existing.extendedProps.isConflict = existing.extendedProps.isUnassigned
                                                 ? (existing.extendedProps.isConflict && isConflict) : isConflict;
+                                            existing.extendedProps.conflictReason = existing.extendedProps.isConflict
+                                                ? (existing.extendedProps.conflictReason || conflictReason) : null;
                                             existing.extendedProps.isUnassigned = true;
                                             existing.extendedProps.driverName = null;
                                         } else if (driverName) {
@@ -1590,6 +1609,7 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                             existing.extendedProps.assistPhone = (covering || {}).phone || null;
                                             existing.extendedProps.isUnassigned = false;
                                             existing.extendedProps.isConflict = false;
+                                            existing.extendedProps.conflictReason = null;
                                         }
                                         if (carName && !existing.extendedProps.isUnassigned) {
                                             if (!existing.extendedProps.carName) {
@@ -1613,6 +1633,7 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                                 passengers: [...passengerPills],
                                                 isUnassigned: isUnassigned,
                                                 isConflict: isConflict,
+                                                conflictReason: conflictReason,
                                                 driverName: driverName,
                                                 assistName: assistName,
                                                 assistPhone: (covering || {}).phone || null,

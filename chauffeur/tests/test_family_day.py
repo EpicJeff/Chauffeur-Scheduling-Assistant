@@ -428,12 +428,30 @@ def scenario_an_unsolved_ride_is_flagged_not_camouflaged():
 
     # Unassignable: every diagnostic reason is a hard block — a conflict,
     # not a plea for a driver (same rule the calendar computes client-side).
+    # Distinct reasons per driver: no single story to promote, so the
+    # banner's generic sentence stands and `conflict_reason` stays None.
     sched = _sched([_ev('game', 18)], true_unassigned=['game'],
-                   diagnostics={'game': {'d1': {'type': 'hard_conflict'},
-                                         'd2': {'type': 'unavailable'}}})
+                   diagnostics={'game': {'d1': {'type': 'hard_conflict',
+                                                'text': 'Away on a trip.'},
+                                         'd2': {'type': 'unavailable',
+                                                'text': 'Unavailable rule.'}}})
     b = family_day.blocks_for(DAY, sched)['blocks'][0]
     check(b['needs_driver'] and b['conflict'],
           f"all-hard-blocked must surface as a conflict: {b}")
+    check(b['conflict_reason'] is None,
+          f"mixed reasons must not promote one as THE cause: {b}")
+
+    # One SHARED reason — a passenger double-booked blocks every driver
+    # identically — is the actual cause, and the dialog must be able to say
+    # it instead of blaming the drivers ("every driver is blocked" was read
+    # as false the first time a household saw it).
+    why = "Passenger cannot travel from/to 'Practice (Lions)' in time."
+    sched = _sched([_ev('game', 18)], true_unassigned=['game'],
+                   diagnostics={'game': {'d1': {'type': 'conflict', 'text': why},
+                                         'd2': {'type': 'conflict', 'text': why}}})
+    b = family_day.blocks_for(DAY, sched)['blocks'][0]
+    check(b['conflict'] and b['conflict_reason'] == why,
+          f"a reason every driver shares must ride the block: {b}")
 
     # One merely-optimization reason keeps it an actionable "needs driver".
     sched = _sched([_ev('game', 18)], true_unassigned=['game'],
@@ -475,6 +493,14 @@ def scenario_the_flags_reach_the_row_the_card_draws():
           "shared agenda row")
     check('isConflict: !!b.conflict' in card,
           "the conflict flavour of the flag was dropped on the way to the row")
+    check('conflictReason: b.conflict_reason' in card,
+          "the card's details adapter no longer hands the real reason to the "
+          "dialog")
+    cal = open(os.path.join(root, 'templates', 'components',
+                            'family_calendar.html'), encoding='utf-8').read()
+    check('props.conflictReason' in cal and 'conflictReason: conflictReason' in cal,
+          "the dialog banner or the calendar's event builder lost the "
+          "shared-reason path — conflicts blame the drivers again")
     import main
     src = inspect.getsource(main)
     check('"true_unassigned": combined_true_unassigned' in src,
