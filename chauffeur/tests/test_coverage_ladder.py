@@ -177,8 +177,12 @@ def scenario_nudges_come_when_a_reply_would_exist():
     ev = _event()
     _cache([ev])
     res = cov.start_ask("ev1", asked_by="mom")
-    check(cov.due_nudges(NOON) == [], "nothing is asked the moment it is sent")
-    later = NOON + datetime.timedelta(hours=2)
+    # `asked_at` is stamped with REAL wall-clock now, so the probe times must
+    # anchor there too. Anchoring on NOON made this fail every run after
+    # 1 PM local (the two-hour probe was less than an hour after the ask).
+    asked = datetime.datetime.now()
+    check(cov.due_nudges(asked) == [], "nothing is asked the moment it is sent")
+    later = asked + datetime.timedelta(hours=2)
     due = cov.due_nudges(later)
     check(len(due) == 1, f"an hour on, the question is worth asking, got {due}")
     check("Did" in cov.nudge_body(due[0]), f"and it is one question: {cov.nudge_body(due[0])}")

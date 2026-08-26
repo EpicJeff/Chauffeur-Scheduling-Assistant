@@ -177,6 +177,19 @@
                     if (inst.map && !inst.map.getContainer().isConnected) inst.destroy();
                     if (!inst.map) {
                         if (!opts.interactive) el.classList.add('fm-quiet');
+                        // Leaflet's panes and controls carry z-index 400–1000
+                        // and escape into the PAGE's stacking order whenever
+                        // no ancestor forms a stacking context — which is
+                        // exactly what happened during a clip: the hearth
+                        // overlay's clip-playing mode strips every
+                        // backdrop-filter (a Pi decoding video cannot also
+                        // re-blur every frame), and a backdrop-filter was the
+                        // stacking context that had been keeping the map
+                        // under overlays. Photos left the blur on, so only
+                        // videos slid behind the map. Isolating the map's own
+                        // container pins its z-indexes inside it, whatever
+                        // the page around it is doing.
+                        el.style.isolation = 'isolate';
                         inst.map = L.map(el, {
                             zoomControl: opts.interactive,
                             dragging: opts.interactive,

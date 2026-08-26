@@ -126,11 +126,30 @@ def scenario_the_drive_sheets_own_fix_puts_a_driver_on_the_map():
           "a live HA tracker still wins for the member who has one")
 
 
+def scenario_the_map_stays_under_overlays():
+    """Leaflet's panes/controls carry z-index 400–1000 and escape into the
+    page whenever no ancestor forms a stacking context. The hearth's
+    clip-playing mode strips every backdrop-filter (Pi video decode), which
+    removed the accidental stacking context that had contained them — so
+    VIDEOS in the moments overlay slid behind the map tile while photos sat
+    on top. The map container must isolate itself, so its z-order can never
+    depend on what the page around it is doing."""
+    import os as _os
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    core = open(_os.path.join(root, 'templates', 'components',
+                              'family_map_core.html'), encoding='utf-8').read()
+    check("el.style.isolation = 'isolate'" in core
+          and core.index("isolation = 'isolate'") < core.index('L.map(el'),
+          "the map container no longer isolates its stacking context — "
+          "Leaflet floats over overlays whenever backdrop-filters stand down")
+
+
 SCENARIOS = [
     scenario_locations_assembly,
     scenario_the_drive_sheets_own_fix_puts_a_driver_on_the_map,
     scenario_leg_id_collapse,
     scenario_ha_unreachable_degrades,
+    scenario_the_map_stays_under_overlays,
 ]
 
 if __name__ == "__main__":
