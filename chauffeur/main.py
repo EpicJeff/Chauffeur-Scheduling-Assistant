@@ -8359,6 +8359,11 @@ def _packing_day_payload(target, sched, now, drivers, kits, pax) -> dict:
                             claims.get((t['for_key'], item['key']), 0))
                         t_packed += item['packed']
                         t_needed += item['needed']
+                # An event with nothing to pack draws no tile: the block is
+                # here because its OUTING has packing, but a "0 items" tile
+                # is a Pack Items button over an empty dialog.
+                if t_needed == 0:
+                    continue
                 tiles.append({**t, 'groups': t_groups,
                               'packed': t_packed, 'needed': t_needed,
                               'done': t_needed > 0 and t_packed >= t_needed})

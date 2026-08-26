@@ -631,6 +631,28 @@ def scenario_a_member_is_found_through_their_passenger_id():
               f"every inner line should carry the rider too: {line}")
 
 
+def scenario_an_event_with_nothing_to_pack_gets_no_tile():
+    """One outing, two events, only one of them matches a kit. The outing
+    still earns its prep block — there IS packing to do before that drive —
+    but the other event's tile said "0 items" over a Pack Items button that
+    opened an empty dialog. A tile is an invitation to pack; an event with
+    nothing to pack must not draw one."""
+    import main
+    _seed_incident()
+    # Kill the band kit: the outing now packs for soccer alone.
+    for kit in storage.get_prep_kits():
+        if kit['name'] == 'Band bag':
+            storage.delete_prep_kit(kit['id'])
+
+    res = main.packing_day(date=DAY, days=2)
+    preps = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'prep']
+    check(preps, "the outing still has packing, so its prep block must draw")
+    tiles = [t for b in preps for t in b['tiles']]
+    check([t['event_id'] for t in tiles] == ['soccer'],
+          f"only the event with items should get a tile: "
+          f"{[(t['event_id'], t['needed']) for t in tiles]}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
