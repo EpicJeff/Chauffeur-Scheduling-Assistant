@@ -1349,7 +1349,7 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
 
 # --- the hero -------------------------------------------------------------
 
-def _hero(now: datetime.datetime, runs: List[dict]) -> dict:
+def _hero(now: datetime.datetime, runs: List[dict], sched: dict = None) -> dict:
     """The one thing that matters right now.
 
     A wall board that only tiles six lists is a worse phone — the app already
@@ -1388,11 +1388,58 @@ def _hero(now: datetime.datetime, runs: List[dict]) -> dict:
                         # nobody standing in the kitchen is asking.
                         'minutes_left': int(round((end - now).total_seconds() / 60))}
         hero['later'] = [r for r in upcoming if r['id'] != nxt['id']][:3]
+        _hero_outing(hero['next'], sched, now)
     elif runs:
         # There WERE drives and they are all behind us. Saying so is a real
         # answer; a blank hero reads as a broken panel.
         hero['all_done'] = True
     return hero
+
+
+def _hero_outing(nxt: dict, sched: dict, now: datetime.datetime) -> None:
+    """The trip AROUND the next drive, on the hero itself.
+
+    The hero is the household's 3-metre surface, and it had two blindnesses
+    the tiles were already cured of: "leave at 4:34" said nothing about the
+    bags (and departure is exactly when unpacked matters), and a drive that
+    chains into a second stop read as a 6:30 return from a trip the car is
+    actually out on until 8:22.
+
+    `outing` — stops, the events after this one, when the car is back
+    (the outing's own end, drive home included) — only when the drive
+    chains; a single-stop trip has nothing to add. `pack` — the outing's
+    needed/packed, resolved by the same code the packing card uses
+    (family_day.pack_status_for), so wall and card cannot disagree.
+    Both best-effort: a hero that cannot answer says nothing."""
+    if not sched or not nxt:
+        return
+    try:
+        from services import outings as _o, family_day as _fd
+        start = _parse(nxt.get('start'))
+        if not start:
+            return
+        rows = _o.outings_for(start.date(), sched, now)
+        mine = next((r for r in rows if nxt.get('id') in r['event_ids']), None)
+        if not mine:
+            return
+        ids = mine['event_ids']
+        if len(ids) > 1:
+            events = {e.get('id'): e for e in (sched.get('events') or [])}
+            after = ids[ids.index(nxt['id']) + 1:] if nxt['id'] in ids else []
+            then = []
+            for eid in after:
+                ev = events.get(eid) or {}
+                t = _parse(ev.get('start'))
+                then.append({'title': ev.get('title') or 'Event',
+                             'at': _clock(t) if t else None})
+            end = _parse(mine.get('end'))
+            nxt['outing'] = {'stops': len(ids), 'then': then,
+                             'back_at': _clock(end) if end else None}
+        pack = _fd.pack_status_for(mine['key'], ids, sched, start.date())
+        if pack:
+            nxt['pack'] = pack
+    except Exception:
+        return
 
 
 def _hero_unbuilt(sched: dict) -> bool:
@@ -5070,7 +5117,7 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     # object nothing on that page draws. It vanished with no error anywhere,
     # which is this board's characteristic failure and the one rule 1 exists
     # to prevent. A board without a hero keeps the tile it asked for.
-    hero = _hero(now, runs)
+    hero = _hero(now, runs, sched)
     hero['unbuilt'] = _hero_unbuilt(sched)
     kid_tile = next((t for t in tiles if t['type'] == 'kids'), None)
     if kid_tile and any(t['type'] == 'hero' for t in tiles):

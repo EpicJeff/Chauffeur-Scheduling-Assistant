@@ -116,6 +116,39 @@
             return ` <span class="${cls || ''}">· ${this.esc(ab.short_label)}</span>`;
         },
 
+        // The bags, in the label row. Departure is exactly when unpacked
+        // matters, and this is the surface people stand in front of — same
+        // amber pill vocabulary as the Family Day card's "N to pack"
+        // (packing_card.html pkPillHtml), green flips to the optChip's own
+        // "✓ going" emerald once everything is in the car. Quiet while the
+        // event is ON — a bag warning about a thing already happening is
+        // the false urgency every chip here avoids.
+        packChip(next, now) {
+            const p = next && next.pack;
+            if (!p || !p.needed || this.onNow(next, now)) return '';
+            const left = p.needed - p.packed;
+            return left > 0
+                ? `<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 tabular-nums">🎒 ${left} to pack</span>`
+                : `<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">🎒 packed</span>`;
+        },
+
+        // The rest of the trip, under the location line: the hero's subject
+        // is one event, but the DRIVE is the whole outing — without this,
+        // "Practice: Threshers" promises a 6:30 return from a trip the car
+        // is out on until 8:22. "back ~" is the outing's own end, drive
+        // home included (services/outings), the same number the Family Day
+        // card's heading shows.
+        outingBit(next, cls) {
+            const o = next && next.outing;
+            if (!o) return '';
+            const esc = this.esc.bind(this);
+            const bits = (o.then || []).map(t =>
+                `then ${esc(t.title)}${t.at ? ' at ' + esc(t.at) : ''}`);
+            if (o.back_at) bits.push(`back ~${esc(o.back_at)}`);
+            if (!bits.length) return '';
+            return `<div class="${cls || ''}">${bits.join(' · ')}</div>`;
+        },
+
         html(next, opts) {
             if (!next) return '';
             opts = opts || {};
@@ -140,7 +173,7 @@
             const assistChip = !next.assist ? ''
                 : `<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300">🤝 covered</span>`;
             const label = `<span class="panel-label ${on ? 'text-emerald-300' : ''}">${on ? 'Happening now' : 'Next up'}</span>
-                <span class="text-xs font-bold px-2 py-0.5 rounded-full ${cd.cls}">${esc(cd.text)}</span>${optChip}${assistChip}`;
+                <span class="text-xs font-bold px-2 py-0.5 rounded-full ${cd.cls}">${esc(cd.text)}</span>${optChip}${assistChip}${this.packChip(next, now)}`;
             // LEAVE time leads, start time supports it: the departure is the
             // one a family sets an alarm by. No travel time -> no honest
             // departure, and the start takes the big slot back.
@@ -165,6 +198,7 @@
                         <div class="flex items-center justify-end gap-3 mb-1">${label}</div>
                         <div class="text-3xl font-black text-white leading-tight">${esc(next.title)}</div>
                         ${next.location ? `<div class="text-sm text-white/70 mt-0.5">${esc(next.location)}</div>` : ''}
+                        ${this.outingBit(next, 'text-sm text-white/70 mt-0.5')}
                         ${showLeave ? `
                         <div class="mt-2">
                             <span class="text-xs font-black uppercase tracking-[0.18em] text-white/60 align-middle mr-2">${bigWord}</span>
@@ -188,6 +222,7 @@
                         <div class="flex items-center gap-3 mb-1">${label}</div>
                         <div class="text-2xl md:text-4xl font-black panel-text truncate">${esc(next.title)}</div>
                         ${next.location ? `<div class="text-base md:text-lg panel-dim mt-1 truncate">${esc(next.location)}</div>` : ''}
+                        ${this.outingBit(next, 'text-sm md:text-base panel-dim mt-1 truncate')}
                     </div>
                     <div class="text-right shrink-0">
                         ${showLeave ? `

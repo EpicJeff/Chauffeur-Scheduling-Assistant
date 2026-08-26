@@ -5651,12 +5651,32 @@ ready for it."
   releases before the reconciling re-fetch, not after. **No block
   auto-expands**; tapping one unfolds it and `expandedKeys` survives the same
   poll — "what to look at first" is the hero's job, not this card's.
-- **The pill is two states and only two.** Work remaining is the one
-  saturated element on a resting row — a filled amber pill, `N to pack`;
-  done, or nothing to pack, is a muted checkmark or nothing at all. No
-  proximity escalation, no colour ramp toward departure — this card is a
-  surface, not a notifier, and a badge that's loud all day teaches a
-  household to ignore it.
+- **The pill is two states and only two — and it waits for its part of the
+  day (v2.420.0).** Work remaining is the one saturated element on a resting
+  row — a filled amber pill, `N to pack`; done, or nothing to pack, is a
+  muted checkmark or nothing at all. No colour ramp toward departure. Since
+  v2.420.0 the pill also draws NOTHING before `pack_from` — the start of the
+  part of the day the departure falls in (`family_day.pack_window_opens`,
+  the prep buckets' own boundaries: 00:00/12:00/17:00), stamped on every
+  non-prep block by `/api/packing/day`. Lived-with finding: prep anchors to
+  the window before departure and the list sorts by time, so the prep block
+  and its outing sit adjacent almost by construction, and an always-on pill
+  one row under an identical prep count read as one fact drawn twice. Before
+  the window the prep block alone talks about packing; the hero carries the
+  at-departure warning. A block without the stamp keeps the old always-on
+  pill (old cached payloads degrade gracefully).
+- **The hero knows its outing and its bags (v2.420.0,
+  `home_board._hero_outing`).** The hero band/screensaver corner — the
+  house's 3-metre surface — now carries: a 🎒 chip in the label row (amber
+  `N to pack` in the Family Day pill's own vocabulary; emerald `🎒 packed`
+  once everything is in; hidden while the event is ON), and, when the next
+  drive chains into more stops, a line under the location — `then <event> at
+  <time> · back ~<end>` — because "Practice: Threshers" alone promised a
+  6:30 return from a trip the car is out on until 8:22. `back ~` is the
+  outing's own end, drive home included. Pack counts resolve through the
+  same `family_day.pack_status_for` the packing card uses (same outing key,
+  same item keys, claims read off the outing's day) so wall and card cannot
+  disagree. Both best-effort: a hero that cannot answer says nothing.
 - **Three shipped rules flipped, and each inversion reverses a rule this same
   arc shipped a few versions earlier, on purpose:**
   1. An outing with nothing to pack now draws. "Nothing to pack is nothing to

@@ -793,6 +793,43 @@ def scenario_a_prep_block_shows_a_tile_per_event():
           f"a tile should say who it is for: {got['tiles'][0]}")
 
 
+def scenario_the_pill_waits_for_pack_from():
+    """Before `pack_from` the pill is absent however much is unpacked — the
+    prep block above already says so, and two counts one row apart read as
+    duplication. A block without the stamp keeps the old always-on pill."""
+    day = {
+        'date': '2026-09-08', 'is_tomorrow': False, 'all_day': [],
+        'blocks': [
+            {'kind': 'event', 'key': 'home:1', 'event_id': 1, 'title': 'Early',
+             'start': '2026-09-08T09:00:00', 'end': '2026-09-08T09:30:00',
+             'canceled': False, 'covered_by': None,
+             'pack_from': '2099-01-01T00:00:00',
+             'groups': [{'kit_id': 'k1', 'kit': 'Bag', 'people': [],
+                        'items': [{'key': 'i1', 'label': 'Item one',
+                                  'needed': 2, 'packed': 0}]}],
+             'packed': 0, 'needed': 2},
+            {'kind': 'event', 'key': 'home:2', 'event_id': 2, 'title': 'Soon',
+             'start': '2026-09-08T10:00:00', 'end': '2026-09-08T10:30:00',
+             'canceled': False, 'covered_by': None,
+             'pack_from': '2000-01-01T00:00:00',
+             'groups': [{'kit_id': 'k2', 'kit': 'Bag', 'people': [],
+                        'items': [{'key': 'i2', 'label': 'Item two',
+                                  'needed': 1, 'packed': 0}]}],
+             'packed': 0, 'needed': 1},
+        ],
+    }
+    got = _run(day, interactive=True, expand='')
+    if got is None:
+        return
+    check(not got['errors'], f"the card threw while drawing: {got['errors'][:3]}")
+    by_key = {p['key']: p for p in got['pills']}
+    early, soon = by_key.get('home:1'), by_key.get('home:2')
+    check(early is not None and not early['amber'] and not early['done'],
+          f"before pack_from the pill must not draw: {early}")
+    check(soon is not None and soon['amber'],
+          f"past pack_from the amber pill draws as before: {soon}")
+
+
 def scenario_a_prep_block_has_no_caret_and_no_pill():
     """The tiles ARE the status, so a pill would be redundant and an arrow
     would open onto what is already on screen."""

@@ -653,6 +653,21 @@ def scenario_an_event_with_nothing_to_pack_gets_no_tile():
           f"{[(t['event_id'], t['needed']) for t in tiles]}")
 
 
+def scenario_the_outing_pill_waits_for_its_part_of_the_day():
+    """The prep block sits right above its outing almost by construction
+    (prep anchors to the window before departure, the list sorts by time), so
+    an always-on status pill reads as one fact drawn twice. The server stamps
+    `pack_from` — the start of the part of the day the departure falls in —
+    and the card holds the pill until then; before that, the prep block alone
+    talks about packing."""
+    import main
+    _seed_incident()
+    res = main.packing_day(date=DAY, days=1)
+    outing = [b for b in res['blocks'] if b['kind'] == 'outing'][0]
+    check(str(outing.get('pack_from', '')).endswith('T12:00:00'),
+          f"a 4pm departure's pill opens with its afternoon: {outing.get('pack_from')}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

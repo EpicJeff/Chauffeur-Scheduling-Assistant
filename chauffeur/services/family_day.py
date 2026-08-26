@@ -267,6 +267,44 @@ def _has_items(b: dict, sched: dict, items_by_key: dict = None) -> bool:
         return False
 
 
+def pack_window_opens(start_iso: str) -> Optional[str]:
+    """When the outing's own part of the day begins — the moment the card
+    starts wearing its own "N to pack" pill. Before that the prep block alone
+    talks about packing: prep anchors to the window before departure and the
+    list sorts by time, so pill and prep count sat one row apart saying the
+    same thing all day."""
+    d = outings._parse(start_iso)
+    return _bucket_anchor(d).isoformat() if d else None
+
+
+def pack_status_for(key: str, event_ids, sched: dict,
+                    target: datetime.date) -> Optional[dict]:
+    """One block's needed/packed, resolved the way /api/packing/day resolves
+    it — same outing key, same item keys, claims read off the day the outing
+    is on — so the hero and the card cannot disagree about the same bags.
+    None when there is nothing to pack (or resolution fails): a surface
+    should say nothing rather than "0 of 0"."""
+    try:
+        from services import prep_kits as _prep
+        groups = outings.packing_for({'event_ids': list(event_ids)}, sched,
+                                     storage.get_prep_kits(), _prep.passenger_objs())
+        claims = {}
+        for row in storage.get_packing_claims(target.isoformat()):
+            k = (row.get('outing_key'), row.get('item_key'))
+            claims[k] = claims.get(k, 0) + 1
+        needed = packed = 0
+        for g in groups:
+            for item in g.get('items') or []:
+                n = item.get('needed') or 0
+                needed += n
+                packed += min(n, claims.get((key, item.get('key')), 0))
+        if not needed:
+            return None
+        return {'needed': needed, 'packed': packed}
+    except Exception:
+        return None
+
+
 def _block_title(b: dict) -> str:
     if b['kind'] == 'outing':
         return ' + '.join(e.get('title') or 'Event' for e in b.get('events') or [])

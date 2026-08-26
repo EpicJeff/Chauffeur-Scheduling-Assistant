@@ -651,8 +651,16 @@
                     { month: 'short', day: 'numeric' });
             },
             // The pill: two states, and only two. `none` draws nothing.
+            // Before `pack_from` (the start of the departure's own part of
+            // the day, stamped by the server) it draws nothing either: prep
+            // anchors to the window before departure and the list sorts by
+            // time, so an always-on pill sat one row under an identical prep
+            // count all day — one fact drawn twice. The hero carries the
+            // at-departure warning; this pill is the card's echo of it once
+            // the trip's part of the day has begun. No stamp = old behavior.
             pkPillState(b) {
                 if (!b.needed) return 'none';
+                if (b.pack_from && new Date() < new Date(b.pack_from)) return 'none';
                 return b.packed >= b.needed ? 'done' : 'amber';
             },
             // The pill's OWN markup, in the same badge slot the agenda's

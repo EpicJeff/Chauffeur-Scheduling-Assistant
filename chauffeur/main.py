@@ -8385,7 +8385,11 @@ def _packing_day_payload(target, sched, now, drivers, kits, pax) -> dict:
                                      claims.get((source_key, item['key']), 0))
                 packed += item['packed']
                 needed += item['needed']
-        row = {**b, 'groups': groups, 'packed': packed, 'needed': needed}
+        # The card's own pill waits for the departure's part of the day —
+        # before that the prep block alone talks about packing (family_day.
+        # pack_window_opens); the hero owns the at-departure warning.
+        row = {**b, 'groups': groups, 'packed': packed, 'needed': needed,
+               'pack_from': _fam.pack_window_opens(b.get('start'))}
         if b['kind'] == 'outing':
             d = drivers.get(b['driver_id']) or {}
             row.update({'driver': d.get('name') or 'Driver',

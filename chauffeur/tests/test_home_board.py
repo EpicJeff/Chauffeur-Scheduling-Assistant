@@ -174,6 +174,56 @@ def scenario_the_hero_is_the_next_drive_that_has_not_happened():
          storage.get_completed_drives, storage.get_in_progress_drives) = (orig_s, orig_d, orig_c, orig_p)
 
 
+def scenario_the_hero_knows_its_outing_and_its_bags():
+    """The hero is the house's 3-metre surface, and "leave at 4:34" is
+    exactly when an unpacked bag matters — so the next run carries its
+    outing's pack count. And a drive that chains into a second stop must say
+    so: "Practice: Threshers" alone promises a 6:30 return from a trip the
+    car is actually out on until 8:22."""
+    orig_s, orig_d, orig_c, orig_p = (storage.get_cached_schedule, storage.get_all_drivers,
+                                      storage.get_completed_drives, storage.get_in_progress_drives)
+    try:
+        storage.add_passenger({'id': 'hb-ellie', 'name': 'Ellie', 'calendar_ids': []})
+        storage.add_prep_kit({'id': 'hb-k1', 'name': 'Soccer bag',
+                              'items': ['Cleats', 'Water bottle'], 'enabled': True,
+                              'per_person': True, 'keywords': ['soccer'],
+                              'passenger_ids': ['hb-ellie']})
+        soccer = {'id': 'soccer', 'title': 'Soccer', 'start': _at(16).isoformat(),
+                  'end': _at(17).isoformat(), 'calendar_ids': ['hb-ellie']}
+        band = {'id': 'band', 'title': 'Band', 'start': _at(17, 30).isoformat(),
+                'end': _at(19).isoformat(), 'calendar_ids': ['hb-ellie']}
+        sched = {'events': [soccer, band],
+                 'assignments': {'soccer': 'drv1', 'band': 'drv1'},
+                 'route_edges': {'drv1': {'soccer': {'to_event': 'band',
+                                                     'travel_mins': 20}}},
+                 'final_edges': {'drv1': {'band': {'travel_mins': 22}}},
+                 'initial_edges': {}, 'scheduled_errands': []}
+        storage.get_cached_schedule = lambda: sched
+        storage.get_all_drivers = lambda: [{'id': 'drv1', 'name': 'Sam', 'color_code': '#fff'}]
+        storage.get_completed_drives = lambda: []
+        storage.get_in_progress_drives = lambda: []
+
+        hero = home_board._hero(_at(12), home_board.todays_runs(now=_at(12)), sched)
+        nxt = hero['next']
+        check(nxt and nxt['id'] == 'soccer', f"soccer should be next: {nxt and nxt['id']}")
+        o = nxt.get('outing') or {}
+        check(o.get('stops') == 2, f"the hero should know its drive has two stops: {o}")
+        check([t['title'] for t in o.get('then') or []] == ['Band'],
+              f"the hero should name the stop after this one: {o}")
+        check('7:22' in str(o.get('back_at')),
+              f"back home is the outing's end, drive home included: {o}")
+        p = nxt.get('pack') or {}
+        check(p.get('needed') == 2 and p.get('packed') == 0,
+              f"the hero should carry the outing's pack count: {p}")
+    finally:
+        (storage.get_cached_schedule, storage.get_all_drivers,
+         storage.get_completed_drives, storage.get_in_progress_drives) = (orig_s, orig_d, orig_c, orig_p)
+        try:
+            storage.delete_prep_kit('hb-k1')
+        except Exception:
+            pass
+
+
 def scenario_a_covered_event_still_reaches_the_wall():
     """Asked from the wall: "if an event is being covered by outside help
     does it still get shown on the hero tile so everyone knows it's coming
