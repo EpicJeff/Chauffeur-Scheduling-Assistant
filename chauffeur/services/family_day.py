@@ -357,10 +357,44 @@ def _union_people(lines: list) -> List[dict]:
 
 
 def _members_fallback() -> list:
+    """Everybody an event could name, with a colour each.
+
+    PASSENGERS first, because that is the app's own notion of who rides:
+    prep kits resolve their people through `passenger_objs()`, and a tile
+    that resolved people any other way named nobody at all on a household
+    whose riders are passenger records rather than members. Members are
+    merged in behind them so a member-only person is still found, and so a
+    passenger who is also a member inherits that member's chosen colour.
+    """
+    out, seen = [], set()
+    members = []
     try:
-        return storage.get_all_members()
+        members = storage.get_all_members()
     except Exception:
-        return []
+        members = []
+    color_by_name = {}
+    for m in members:
+        name = str(m.get('name') or '').lower()
+        if name and m.get('color_code'):
+            color_by_name[name] = m['color_code']
+    try:
+        for p in storage.get_all_passengers():
+            pid = str(p.get('id') or '')
+            if not pid or pid in seen:
+                continue
+            seen.add(pid)
+            out.append({'id': pid, 'name': p.get('name') or 'Somebody',
+                        'calendar_ids': p.get('calendar_ids') or [],
+                        'color_code': (p.get('color_code')
+                                       or color_by_name.get(str(p.get('name') or '').lower()))})
+    except Exception:
+        pass
+    for m in members:
+        mid = str(m.get('id') or '')
+        if mid and mid not in seen:
+            seen.add(mid)
+            out.append(m)
+    return out
 
 
 def _assist_contacts_fallback() -> list:

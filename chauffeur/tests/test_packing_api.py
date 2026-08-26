@@ -521,6 +521,56 @@ def scenario_packing_a_tile_finishes_it():
     check(t2['done'], f"a fully claimed tile should read as done: {t2}")
 
 
+def scenario_a_claim_from_tonights_tile_for_tomorrows_trip_sticks():
+    """The wall's own 404: a prep block sitting tonight holds tiles for
+    TOMORROW morning's trips, so the block a tap belongs to is not on the day
+    in focus at all. Validating only that day meant every claim from those
+    tiles -- the whole point of packing the night before -- came back 404 and
+    told the household its packing could not be saved.
+
+    Dated off the REAL today on purpose: the card sends no date, so the
+    endpoint falls back to the day in focus, and a fixture parked in a
+    far-off September would never exercise that path."""
+    import datetime
+    import main
+    _seed_incident()
+    sched = storage.get_cached_schedule()
+    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+    for ev in sched['events']:
+        ev['start'] = f"{tomorrow.isoformat()}T07:30:00"
+        ev['end'] = f"{tomorrow.isoformat()}T08:30:00"
+    storage.set_cached_schedule(sched)
+
+    res = main.packing_day(days=2)      # no date, exactly like the card
+    prep = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'prep']
+    check(prep, "tomorrow morning's trip got no prep block tonight")
+    tile = prep[0]['tiles'][0]
+    item = tile['groups'][0]['items'][0]
+    up = main.packing_claim(payload={'outing_key': tile['for_key'],
+                                     'item_key': item['key'], 'delta': 1})
+    check(up['ok'] and up['packed'] == 1,
+          f"packing tomorrow's bag tonight should stick: {up}")
+    down = main.packing_claim(payload={'outing_key': tile['for_key'],
+                                       'item_key': item['key'], 'delta': -1})
+    check(down['ok'] and down['packed'] == 0,
+          f"un-packing it again should stick too: {down}")
+    fresh = main.packing_day(days=2)
+    p2 = [b for d in fresh['days'] for b in d['blocks']
+          if b['key'] == prep[0]['key']][0]
+    check(p2['tiles'][0]['packed'] == 0,
+          f"the tile should read back what was actually filed: {p2['tiles'][0]}")
+
+
+def scenario_a_tile_says_who_it_is_for():
+    """Pack the cleats for the wrong child and the list was no help at all."""
+    import main
+    _seed_incident()
+    res = main.packing_day(date=DAY, days=2)
+    prep = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'prep'][0]
+    check(all(t.get('passengers') for t in prep['tiles']),
+          f"every tile should carry the people it is for: {prep['tiles']}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

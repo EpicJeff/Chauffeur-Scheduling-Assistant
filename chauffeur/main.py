@@ -8435,23 +8435,37 @@ def packing_claim(payload: dict = Body(...)):
         raise HTTPException(status_code=400, detail="delta must not be zero")
     now = datetime.datetime.now()
     sched = storage.get_cached_schedule() or {}
-    target = (_outings._as_date(payload.get('date'))
-              or _fam.day_in_focus(now, sched))
-    date_str = target.isoformat()
+    asked = _outings._as_date(payload.get('date'))
+    target = asked or _fam.day_in_focus(now, sched)
     # The block has to be real and the item has to be one of its own — a
     # stale card must not file claims into the void, and a fabricated
     # item_key must not mint XP (each distinct key is a fresh once-guard).
-    day = _fam.blocks_for(target, sched, now)
-    by_key = {b['key']: b for b in day['blocks']}
-    block = by_key.get(outing_key)
+    #
+    # The card shows SEVERAL days, and a prep block sitting tonight holds
+    # tiles for tomorrow morning's trips — so the block a tap belongs to is
+    # very often not on the day in focus. Looking only there is how every
+    # claim from those tiles came back 404. A claim belongs to the day its
+    # own block lives on, so find the block first and let it name the date.
+    block = None
+    found_on = target
+    for offset in (0, 1, -1):
+        probe = target + datetime.timedelta(days=offset)
+        for candidate in _fam.blocks_for(probe, sched, now)['blocks']:
+            if candidate['kind'] != 'prep' and candidate['key'] == outing_key:
+                block, found_on = candidate, probe
+                break
+        if block is not None:
+            break
+        if asked:
+            break            # an explicit date means that day, and only it
     if block is None:
         raise HTTPException(status_code=404, detail="that block is not on this day")
-    # A prep block is a LENS on the outing it serves — it shows that outing's
-    # items and its claims. Letting it hold claims of its own would make two
-    # counts for one bag, and they would drift the moment one was ticked.
-    if block.get('kind') == 'prep':
-        raise HTTPException(status_code=404,
-                            detail="prep is a view of its outing - claim against the outing")
+    date_str = found_on.isoformat()
+    # A prep block is a LENS on the outings it serves — its tiles show those
+    # outings' items and their claims. Letting one hold claims of its own
+    # would make two counts for one bag, and they would drift the moment
+    # either was ticked. The search above skips prep blocks, so a prep key
+    # simply never resolves and falls out as the 404 above.
     kits, pax = storage.get_prep_kits(), _prep.passenger_objs()
     groups = [] if block.get('canceled') else _outings.packing_for(
         {'event_ids': (block['event_ids'] if block['kind'] == 'outing'

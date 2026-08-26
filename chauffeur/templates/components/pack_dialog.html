@@ -80,26 +80,27 @@
         if (!items) {
             return '<p class="text-sm text-gray-500 italic">Nothing to pack for this one.</p>';
         }
-        // Grouped by kit here, and named — inside a dialog the bag IS useful
-        // ("which bag am I filling?"), where on a wall row the same label ate
-        // a line and told nobody anything.
-        return groups.filter(g => (g.items || []).length).map(g => `
-            <div class="space-y-1.5">
-                <div class="text-[10px] uppercase tracking-widest text-gray-500 font-bold">${ESC(g.kit || 'Bring')}</div>
-                <div class="flex flex-wrap items-center gap-1.5">
-                    ${(g.items || []).map(it => chipHtml(it, s.interactive !== false)).join('')}
-                </div>
-            </div>`).join('');
+        // ONE list, no kit headings. The kit's name is how the app stores the
+        // list, not something a packer needs: you are standing in front of
+        // one event's pile of things, and which internal list they came from
+        // answers no question you have.
+        const all = groups.reduce((acc, g) => acc.concat(g.items || []), []);
+        return `<div class="flex flex-wrap items-center gap-1.5">
+                    ${all.map(it => chipHtml(it, s.interactive !== false)).join('')}
+                </div>`;
     }
 
+    // WHO you are packing for, said plainly and before the list — pack the
+    // cleats for the wrong child and the list was no help at all. Each name
+    // wears its own colour, the same one the person has everywhere else.
     function dotsHtml(passengers) {
         if (!passengers || !passengers.length) return '';
-        return `<span class="flex items-center gap-1.5">` + passengers.map(p =>
-            `<span class="flex items-center gap-1">
-                <span class="fd-pax-dot w-2.5 h-2.5 rounded-full border border-white/20"
+        return `<div class="pack-dialog-pax flex flex-wrap items-center gap-1.5">` + passengers.map(p =>
+            `<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-gray-800 border border-gray-700">
+                <span class="fd-pax-dot w-3 h-3 rounded-full border border-white/20"
                       style="background-color: ${ESC(p.color || '#6b7280')}"></span>
-                <span class="text-[11px] font-semibold text-gray-300">${ESC(p.name || '')}</span>
-             </span>`).join('') + `</span>`;
+                <span class="text-[12px] font-bold text-gray-100">${ESC(p.name || '')}</span>
+             </span>`).join('') + `</div>`;
     }
 
     function render() {
