@@ -110,6 +110,16 @@
         --panel-glow: 0 2px 24px rgb(0 0 0 / 0.35);
         --panel-scrim: linear-gradient(180deg, rgb(6 8 16 / .72) 0%, rgb(6 8 16 / .58) 45%, rgb(6 8 16 / .78) 100%);
 
+        /* Status ink. The app's own stylesheet (tailwind-app.css) darkens
+           amber/green TEXT on light through theme.css's channel triples, but
+           the twenty shared pages compile against static/tailwind.css, whose
+           colours are baked — so the packing card's "Pack" chip and pills
+           kept their pale dark-theme amber on light paper. Same trick as the
+           greys above: the utilities become tokens and the theme flips them.
+           Light anchors mirror theme.css (amber text anchor 800, green 800). */
+        --panel-amber-ink: rgb(252 211 77);
+        --panel-green-ink: rgb(74 222 128);
+
         /* A CAPTION ON A PHOTOGRAPH is its own little theme, and it is the one
            place the panel's ink cannot simply follow the page. The picture
            underneath is any brightness at all, so the text needs a band of
@@ -147,6 +157,8 @@
         --panel-shadow: 0 10px 30px rgb(15 23 42 / 0.16);
         --panel-glow: 0 1px 2px rgb(255 255 255 / 0.9);
         --panel-scrim: linear-gradient(180deg, rgb(255 255 255 / .34) 0%, rgb(255 255 255 / .22) 45%, rgb(255 255 255 / .40) 100%);
+        --panel-amber-ink: rgb(120 53 15);
+        --panel-green-ink: rgb(22 101 52);
         /* Light mode LIGHTENS the picture instead of darkening it. A dark card
            in a light theme reads as a hole in the page — the meals and trips
            blocks felt like they had not been themed at all, because a dark
@@ -183,6 +195,8 @@
             --panel-shadow: 0 10px 30px rgb(15 23 42 / 0.16);
             --panel-glow: 0 1px 2px rgb(255 255 255 / 0.9);
             --panel-scrim: linear-gradient(180deg, rgb(255 255 255 / .34) 0%, rgb(255 255 255 / .22) 45%, rgb(255 255 255 / .40) 100%);
+            --panel-amber-ink: rgb(120 53 15);
+            --panel-green-ink: rgb(22 101 52);
         /* Light mode LIGHTENS the picture instead of darkening it. A dark card
            in a light theme reads as a hole in the page — the meals and trips
            blocks felt like they had not been themed at all, because a dark
@@ -623,6 +637,19 @@
         color: var(--panel-dim) !important;
     }
 
+    /* Status ink (the --panel-amber-ink note above): amber "to pack" pills
+       and chips, green "Packed ✓" — pale dark-theme ink on light paper
+       without this, because static/tailwind.css bakes its colours. */
+    html[data-panel] .text-amber-200,
+    html[data-panel] .text-amber-300 {
+        color: var(--panel-amber-ink) !important;
+    }
+
+    html[data-panel] .text-green-300,
+    html[data-panel] .text-green-400 {
+        color: var(--panel-green-ink) !important;
+    }
+
     /* The screensaver's Next-up corner is a caption on a photograph with its
        own FIXED dark band (hero_card.html compact backing, rgba(10,10,14,.55))
        — and the one mix that never works is a dark band with theme-following
@@ -646,6 +673,12 @@
 
     html[data-panel] #panel-ss-next .bg-gray-700\/60 {
         background-color: rgb(55 65 81 / 0.6) !important;
+    }
+
+    /* The countdown pill's amber sits on the same fixed dark band — it keeps
+       the dark-surface ink whatever the theme, like the greys above. */
+    html[data-panel] #panel-ss-next .text-amber-300 {
+        color: rgb(252 211 77) !important;
     }
 
     /* The "Next up" label follows --panel-accent, which light mode darkens
