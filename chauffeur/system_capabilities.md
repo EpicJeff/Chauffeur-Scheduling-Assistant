@@ -5774,6 +5774,46 @@ well as today's, and the block is served on the day its anchor falls in.
   endpoint tells the module which blocks have anything to pack, so
   `family_day` still touches neither kits nor claims itself.
 
+### F4 — packing is a decided act (v2.415.0)
+
+F3 put the packing in the right part of the day and then drew it wrong. One
+block per outing meant a Friday evening carrying four Saturday-morning trips
+became four blocks stacked at one anchor — and, sharing a timestamp, they
+sorted by their internal keys, which is alphabetical by event id. To a
+household that is no order at all.
+
+The deeper mistake was the unit. **You do not pack an item; you decide to
+pack, and then you work one event's list.**
+
+- **One block per part of the day.** At most three (`morning|afternoon|evening`,
+  keyed `prep:<date>:<bucket>`), each holding a **tile per event**, ordered by
+  the departure they serve — the day in the order it will happen. A tile names
+  its event, shows a dot per passenger, and says how big the job is (`4 items`),
+  because a tile without a count gives nobody a way to judge whether to start.
+- **`Pack Items` is the act.** One button per tile opens
+  `components/pack_dialog.html` — the event, its people, its list, the same
+  claims and the same chip vocabulary, somewhere with room for them. A finished
+  tile reads `Packed ✓` and drops its button; a block whose tiles are all done
+  collapses to one `Packed ✓` line rather than vanishing.
+- **The dialog is shared on purpose.** The kid's My Day (packing arc P3) and
+  the driver's list need exactly this, and building it inside the card is how
+  they would end up forking it. It draws what it is handed and calls back —
+  it never fetches — so the card's optimistic claim, pending guard and
+  poll-survival machinery keep working, and a poll landing while it is open
+  neither closes it nor reverts a tick made in it.
+- **Catch-up is per tile now.** A tile whose window has gone and is still
+  unpacked joins the block for the part of the day we are in, and that block
+  moves to the front of what is left.
+- **The outing heading is one line**: the `Outing` chip, the driver as plain
+  text (a person's name is not a tag), the car as a chip, the pill and caret
+  right-aligned, with the time beneath.
+- **The recorded trade:** a row of chips could be read from three metres —
+  you could see that the *water bottle* was missing. A tile says only that
+  four items are outstanding. The shape of the job survives; its contents
+  moved behind a tap. Against six blocks of repeated cleats-and-water-bottle
+  chips, worth it — but it is a real loss, written down rather than
+  rediscovered.
+
 **Known gap, unchanged:** a midday re-solve that changes an outing's first
 event changes its key, orphaning that outing's claims for the day. Accepted
 and watched; a re-key is P3+ work.

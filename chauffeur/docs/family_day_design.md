@@ -399,7 +399,7 @@ and its catch-up rule, passengers named on the block, the outing keeping its
 list as the door-check. This is the slice that turns the card from a better
 agenda into help.
 
-**F4 — packing is a decided act.** One prep block per part of the
+**F4 — packing is a decided act.** *Shipped v2.415.0.* One prep block per part of the
 day, per-event tiles ordered by departure, the `Pack Items` dialog as a
 shared component, and the outing heading on one line. See *Packing is a
 decided act* above.
