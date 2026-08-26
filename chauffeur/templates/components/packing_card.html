@@ -113,7 +113,10 @@
                         <!-- A card silently answering a different day than the
                              one somebody is looking at is the wrong-question
                              failure this whole design exists to avoid. -->
-                        <template x-if="isTomorrow">
+                        <!-- Only when the card is showing a single day: with
+                             several, every day already wears its own label in
+                             its separator, and the chip just says it twice. -->
+                        <template x-if="isTomorrow && days.length <= 1">
                             <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wide bg-amber-500/10 text-amber-300 border border-amber-500/30">
                                 Tomorrow
                             </span>
@@ -356,14 +359,18 @@
                                         <template x-if="!b.groups.length">
                                             <div class="text-xs text-gray-500">Nothing to pack.</div>
                                         </template>
-                                        <template x-for="g in b.groups" :key="'fd-grp-' + b.key + '-' + g.kit_id">
+                                        <!-- Grouped by EVENT, not by kit. The kit's name is how the app
+                                             stores the list, not how a household reads it: "SOFTBALL /
+                                             BASEBALL PRACTICE & CLINICS" ate a line and told nobody
+                                             anything. You pack for Practice, then for the Game. The
+                                             event title is dropped when there is only one, because the
+                                             row directly above already said it. -->
+                                        <template x-for="g in pkSections(b)" :key="'fd-sec-' + b.key + '-' + g.id">
                                             <div class="flex flex-wrap items-center gap-1.5">
-                                                <!-- The kit name takes the slot the My Drives row gives
-                                                     its own "Bring" label (app.html:1886-1889) — you pack
-                                                     INTO a bag, so which bag is the first thing a row of
-                                                     chips has to say. -->
-                                                <span class="text-[10px] uppercase tracking-widest text-gray-500 font-bold mr-0.5"
-                                                    x-text="g.kit"></span>
+                                                <template x-if="g.show_title">
+                                                    <span class="w-full text-[11px] font-bold text-gray-300"
+                                                        x-text="g.title"></span>
+                                                </template>
                                                 <template x-for="it in g.items" :key="'fd-item-' + b.key + '-' + it.key">
                                                     <!-- Chip and stepper are ONE non-breaking unit: a wrap
                                                          between them strands a count from what it counts. -->
@@ -834,6 +841,63 @@
             // (app.html:6601-6607). For an item several people each need one
             // of, a tap adds one and the stepper beside it takes one back --
             // toggling a count would throw away work somebody else did.
+            // The prep block and its outing show the same claims, so a tick
+            // in one has to land in the other without waiting for a poll --
+            // otherwise the door-check list and the work list disagree for up
+            // to thirty seconds, which is exactly long enough to pack a thing
+            // twice.
+            pkMirror(b, it) {
+                const mine = b.for_key || b.key;
+                for (const other of this.blocks) {
+                    if (other === b) continue;
+                    if ((other.for_key || other.key) !== mine) continue;
+                    for (const g of other.groups || []) {
+                        for (const o of g.items || []) {
+                            if (o.key === it.key) o.packed = it.packed;
+                        }
+                    }
+                    this.pkTotals(other);
+                }
+            },
+            // The work, event by event. Counts stay outing-wide (a child
+            // carrying one bottle between two events needs one, not two), so
+            // an item is listed under the FIRST event that wanted it and not
+            // again after that.
+            pkSections(b) {
+                const groups = b.groups || [];
+                const events = b.for_events || b.events
+                    || (b.event_id ? [{ id: b.event_id, title: b.title }] : []);
+                const seen = new Set();
+                const out = [];
+                for (const ev of events) {
+                    const items = [];
+                    for (const g of groups) {
+                        const ids = g.event_ids || [];
+                        if (ids.length && !ids.includes(ev.id)) continue;
+                        for (const it of g.items || []) {
+                            if (seen.has(it.key)) continue;
+                            seen.add(it.key);
+                            items.push(it);
+                        }
+                    }
+                    if (items.length) {
+                        out.push({ id: String(ev.id), title: ev.title, items: items });
+                    }
+                }
+                // Anything no event claimed (a kit that matched nothing we can
+                // name) still has to be packable.
+                const rest = [];
+                for (const g of groups) {
+                    for (const it of g.items || []) {
+                        if (seen.has(it.key)) continue;
+                        seen.add(it.key);
+                        rest.push(it);
+                    }
+                }
+                if (rest.length) out.push({ id: 'rest', title: '', items: rest });
+                for (const sec of out) sec.show_title = out.length > 1 && !!sec.title;
+                return out;
+            },
             pkTapChip(b, it) {
                 if (it.needed > 1) {
                     if (it.packed < it.needed) this.pkClaim(b, it, 1);
@@ -846,11 +910,16 @@
             // server's own count kept on success, and a failure rolled back
             // and re-fetched rather than left to disagree with the wall.
             async pkClaim(b, it, delta) {
-                const blockKey = b.key, itemKey = it.key;
+                // A prep block is a VIEW of its outing: the claim belongs to
+                // the outing, and posting the prep key is how a tap on a chip
+                // came back 404 and told a household its packing could not be
+                // saved.
+                const blockKey = b.for_key || b.key, itemKey = it.key;
                 const key = this.pkKey(blockKey, itemKey);
                 const prev = it.packed;
                 it.packed = Math.max(0, Math.min(it.needed, prev + delta));
                 this.pkTotals(b);
+                this.pkMirror(b, it);
                 this.pkPending.add(key);
                 try {
                     const res = await fetch(`${apiBase}api/packing/claim`, {

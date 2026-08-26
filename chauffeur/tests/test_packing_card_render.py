@@ -698,12 +698,21 @@ PREP_DAY = {
          'for_start': '2026-09-08T16:00:00',
          'start': '2026-09-08T00:00:00', 'end': '2026-09-08T00:00:00',
          'passengers': [{'id': 'm-ellie', 'name': 'Ellie', 'color': '#ec4899'}],
+         'for_events': [
+             {'id': 'soccer', 'title': 'Soccer', 'start': '2026-09-08T16:00:00'},
+             {'id': 'band', 'title': 'Band practice', 'start': '2026-09-08T17:30:00'},
+         ],
          'groups': [
              {'kit_id': 'k1', 'kit': 'Soccer bag', 'people': ['ellie', 'theo'],
+              'event_ids': ['soccer'],
               'items': [
                   {'key': 'k1:water bottle', 'label': 'Water bottle',
                    'needed': 2, 'packed': 0},
-                  {'key': 'k1:cleats', 'label': 'Cleats',
+              ]},
+             {'kit_id': 'k2', 'kit': 'Band bag', 'people': ['ellie'],
+              'event_ids': ['band'],
+              'items': [
+                  {'key': 'k2:cleats', 'label': 'Cleats',
                    'needed': 1, 'packed': 1},
               ]},
          ], 'packed': 1, 'needed': 3},
@@ -771,6 +780,8 @@ def scenario_a_chip_carries_its_state_and_its_stepper():
     prep = got['preps'][0]
     check(prep['todo'] == 1 and prep['done'] == 1,
           f"expected one to-pack chip and one packed chip: {prep}")
+    check('Cleats' in ' '.join(prep['chips']),
+          f"the second event's item should be listed too: {prep['chips']}")
     check(any(c.startswith('\u2713') for c in prep['chips']),
           f"a packed chip should wear its checkmark: {prep['chips']}")
     check(prep['steppers'] == 2,
@@ -786,6 +797,51 @@ def scenario_a_display_only_wall_gets_chips_but_no_buttons():
     check(prep['steppers'] == 0,
           f"a read-only card must carry no claim controls at all: {prep}")
     check(not got['posted'], f"merely drawing the card posted: {got['posted']}")
+
+
+def scenario_the_prep_block_lists_work_event_by_event_not_kit_by_kit():
+    """The wall's own verdict: the kit's name ate a line and told nobody
+    anything. A household packs for Practice and then for the Game — the kit
+    is how the app stores the list, not how anybody reads it."""
+    got = _run(PREP_DAY, interactive=True, expand='')
+    if got is None:
+        return
+    prep = got['preps'][0]
+    check('Soccer bag' not in prep['text'] and 'Band bag' not in prep['text'],
+          f"the kit names are still eating space: {prep['text']}")
+    check('Soccer' in prep['text'] and 'Band practice' in prep['text'],
+          f"the prep block should name the events it is packing for: {prep['text']}")
+
+
+def scenario_one_event_needs_no_heading_above_its_own_chips():
+    """With a single event the row above already said the title; saying it
+    again is the same noise in a different place."""
+    day = json.loads(json.dumps(PREP_DAY))
+    prep = day['days'][0]['blocks'][0]
+    prep['for_events'] = prep['for_events'][:1]
+    prep['groups'] = [g for g in prep['groups'] if g['event_ids'] == ['soccer']]
+    prep['for_title'] = 'Soccer'
+    day['blocks'] = day['days'][0]['blocks']
+    got = _run(day, interactive=True, expand='')
+    if got is None:
+        return
+    p = got['preps'][0]
+    check(p['text'].count('Soccer') == 1,
+          f"a single-event prep block said its title twice: {p['text']}")
+
+
+def scenario_a_multi_day_card_says_tomorrow_once():
+    """The separator already labels the day; the chip repeated it."""
+    day = json.loads(json.dumps(PREP_DAY))
+    day['is_tomorrow'] = True
+    day['days'].append({'date': '2026-09-09', 'label': 'Tomorrow',
+                        'is_today': False, 'is_tomorrow': True,
+                        'all_day': [], 'blocks': []})
+    got = _run(day, interactive=True, expand='')
+    if got is None:
+        return
+    check(got['text'].count('Tomorrow') == 1,
+          f"the card said Tomorrow more than once: {got['text'][:200]}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

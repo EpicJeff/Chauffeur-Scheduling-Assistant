@@ -421,6 +421,64 @@ def scenario_a_prep_key_is_not_itself_claimable():
     raise AssertionError("a claim filed against a prep key was accepted")
 
 
+def scenario_tomorrow_mornings_trip_is_packed_tonight():
+    """The bug the wall caught: a Saturday full of morning trips showed no
+    prep at all. Their prep belongs to FRIDAY EVENING, and the endpoint was
+    working out "does this have anything to pack?" from today's blocks only —
+    so every next-morning trip looked empty and never got a block placed."""
+    import datetime
+    import main
+    k1, _k2 = _seed_incident()
+    # Move the incident's events to tomorrow MORNING, which is the case that
+    # was silently dropped.
+    sched = storage.get_cached_schedule()
+    tomorrow = (datetime.date.fromisoformat(DAY) + datetime.timedelta(days=1))
+    for ev in sched['events']:
+        ev['start'] = f"{tomorrow.isoformat()}T07:30:00"
+        ev['end'] = f"{tomorrow.isoformat()}T08:30:00"
+    storage.set_cached_schedule(sched)
+
+    res = main.packing_day(date=DAY, days=1)
+    preps = [b for b in res['days'][0]['blocks'] if b['kind'] == 'prep']
+    check(preps, "tomorrow morning's trip got no prep block tonight — the "
+                 "whole point of the placement rule")
+    check(preps[0]['groups'] and preps[0]['needed'] > 0,
+          f"the prep block came through with nothing to pack: {preps[0]}")
+    anchor = preps[0]['start'][:10]
+    check(anchor == DAY,
+          f"the prep block should sit on tonight, not {anchor}")
+
+
+def scenario_a_claim_from_a_prep_block_is_filed_against_its_outing():
+    """A tap on a chip inside a prep block came back 404 and told the
+    household its packing could not be saved. The prep block is a VIEW; the
+    claim belongs to the outing it serves."""
+    import main
+    _seed_incident()
+    res = main.packing_day(date=DAY, days=2)
+    prep = [b for d in res['days'] for b in d['blocks'] if b['kind'] == 'prep'][0]
+    item = prep['groups'][0]['items'][0]
+    out = main.packing_claim(payload={'outing_key': prep['for_key'],
+                                      'item_key': item['key'], 'delta': 1,
+                                      'date': prep['for_start'][:10]})
+    check(out['ok'] and out['packed'] == 1,
+          f"a claim filed the way the card now files it should stick: {out}")
+
+
+def scenario_a_group_says_which_events_wanted_it():
+    """A surface that lists the work event by event needs to know whose work
+    it is — the counts stay outing-wide, the attribution is new."""
+    import main
+    _seed_incident()
+    res = main.packing_day(date=DAY)
+    outing = [b for b in res['blocks'] if b['kind'] == 'outing'][0]
+    for g in outing['groups']:
+        check(g.get('event_ids'),
+              f"a kit group should name the events that pulled it in: {g}")
+        check(all(e in outing['event_ids'] for e in g['event_ids']),
+              f"a group named an event that is not on its outing: {g}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

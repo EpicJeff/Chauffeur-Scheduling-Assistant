@@ -164,6 +164,14 @@ def _prep_blocks(target, sched: dict, now: datetime.datetime,
                 'for_key': b['key'],
                 'for_title': _block_title(b),
                 'for_start': b.get('start'),
+                # The events this prep is for, so the work can be listed event
+                # by event rather than kit by kit: a household packs for
+                # "Practice" and then for "Game", never for "Softball Bag".
+                'for_events': ([dict(e) for e in b.get('events') or []]
+                               if b['kind'] == 'outing'
+                               else [{'id': b.get('event_id'),
+                                      'title': b.get('title'),
+                                      'start': b.get('start')}]),
                 'passengers': b.get('passengers') or [],
                 'start': anchor.isoformat(),
                 'end': anchor.isoformat(),

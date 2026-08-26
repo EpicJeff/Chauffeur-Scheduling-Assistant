@@ -148,7 +148,14 @@ def packing_for(outing: dict, sched: dict = None, kits: list = None,
                 'per_person': kit.get('per_person') is not False,
                 'people': set(),
                 'items': [i.strip() for i in (kit.get('items') or []) if i.strip()],
+                # WHICH events pulled this kit in. The counts stay outing-wide
+                # (a child carrying one bottle between two events needs one),
+                # but a surface that lists work event by event needs to know
+                # whose work it is.
+                'event_ids': [],
             })
+            if ev_id not in g['event_ids']:
+                g['event_ids'].append(ev_id)
             g['people'].update(_people_on(kit, cal_ids, passengers))
 
     out = []
@@ -157,6 +164,7 @@ def packing_for(outing: dict, sched: dict = None, kits: list = None,
         out.append({
             'kit_id': g['kit_id'], 'kit': g['kit'],
             'people': sorted(g['people']),
+            'event_ids': list(g['event_ids']),
             'items': [{'key': f"{g['kit_id']}:{i.lower()}", 'label': i, 'needed': n}
                       for i in g['items']],
         })

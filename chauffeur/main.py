@@ -8313,13 +8313,19 @@ def _packing_day_payload(target, sched, now, drivers, kits, pax) -> dict:
     # kits or claims itself); the second resolves every block's items against
     # the day's claims.
     counts = {}
-    for b in _fam.blocks_for(target, sched, now, items_by_key={})['blocks']:
-        if b.get('canceled'):
-            continue
-        groups = _outings.packing_for(
-            {'event_ids': (b['event_ids'] if b['kind'] == 'outing'
-                           else [b['event_id']])}, sched, kits, pax)
-        counts[b['key']] = sum(len(g.get('items') or []) for g in groups)
+    # A morning outing's prep belongs to the evening BEFORE it, so the counts
+    # have to cover TOMORROW as well as today — built from today alone, every
+    # next-morning trip looked like it had nothing to pack and its prep block
+    # was never placed at all. That is most of a Saturday.
+    for offset in (0, 1):
+        probe = target + datetime.timedelta(days=offset)
+        for b in _fam.blocks_for(probe, sched, now, items_by_key={})['blocks']:
+            if b.get('canceled') or b['key'] in counts:
+                continue
+            groups = _outings.packing_for(
+                {'event_ids': (b['event_ids'] if b['kind'] == 'outing'
+                               else [b['event_id']])}, sched, kits, pax)
+            counts[b['key']] = sum(len(g.get('items') or []) for g in groups)
 
     day = _fam.blocks_for(target, sched, now, items_by_key=counts)
     claims = {}
@@ -8334,7 +8340,12 @@ def _packing_day_payload(target, sched, now, drivers, kits, pax) -> dict:
         # is stored against the outing and the item, never against the place
         # a finger happened to touch it.
         source_key = b.get('for_key') if b['kind'] == 'prep' else b['key']
-        source = b if b['kind'] != 'prep' else _fam_source(day['blocks'], source_key)
+        source = b if b['kind'] != 'prep' else (
+            _fam_source(day['blocks'], source_key)
+            # Tomorrow's morning trip, whose prep sits in tonight's evening.
+            or _fam_source(_fam.blocks_for(target + datetime.timedelta(days=1),
+                                           sched, now,
+                                           items_by_key={})['blocks'], source_key))
         groups = [] if (b.get('canceled') or not source) else _outings.packing_for(
             {'event_ids': (source['event_ids'] if source['kind'] == 'outing'
                            else [source['event_id']])}, sched, kits, pax)
