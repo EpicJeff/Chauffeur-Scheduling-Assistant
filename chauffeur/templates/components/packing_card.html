@@ -1122,6 +1122,13 @@
                         found.it.packed = Math.min(found.it.needed, data.packed);
                         this.pkTotals(found.b);
                     }
+                    // The hero draws these same bags (home_board._hero_outing)
+                    // on the same wall and repaints on the board's poll — a
+                    // saved tick must reach its 🎒 chip now, not in thirty
+                    // seconds. Announced AFTER the server said yes, never on
+                    // the optimistic move: whoever listens will re-read
+                    // server state, so the announcement has to follow it.
+                    document.dispatchEvent(new CustomEvent('chf-pack-change'));
                 } catch (e) {
                     const found = this.pkFindItem(blockKey, itemKey) || { b, it };
                     found.it.packed = prev;

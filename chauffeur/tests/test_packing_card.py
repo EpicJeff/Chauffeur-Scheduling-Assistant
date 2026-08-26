@@ -410,6 +410,33 @@ def scenario_tapping_plus_moves_the_item_and_the_outing_fraction():
             browser.close()
 
 
+def scenario_a_saved_claim_announces_itself():
+    """The hero draws these same bags on the same wall
+    (home_board._hero_outing) and repaints on the board's poll — so the card
+    announces `chf-pack-change` the moment a claim SAVES, and the board
+    reloads on it. After the server said yes, never on the optimistic move:
+    the listener re-reads server state, so the announcement must follow it."""
+    sp = _chromium()
+    if sp is None:
+        return
+    with sp() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        try:
+            _boot(page, {'interactive': True, 'members': []}, _one_item_day(0, 2))
+            page.evaluate("window.__pkEvents = 0;"
+                          "document.addEventListener('chf-pack-change',"
+                          " () => window.__pkEvents++)")
+            _expand(page, 'home:1')
+            row = _row(page, 'home:1')
+            row.locator('button:text-is("+")').click()
+            page.wait_for_function("window.__pkEvents === 1")
+            check(page.evaluate("window.__pkEvents") == 1,
+                  "a saved claim should announce exactly once")
+        finally:
+            browser.close()
+
+
 # ── (c) THE regression: a poll racing a claim must not reset the tick, and
 #        must not collapse a block somebody just opened ────────────────────
 

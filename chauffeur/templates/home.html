@@ -1854,6 +1854,17 @@
                     document.addEventListener('chf-server-update', () => {
                         if (!document.hidden) this.load();
                     });
+                    // A packing tick on this same board must reach the
+                    // hero's 🎒 chip now, not on the next poll. The card
+                    // announces only after its claim saved, so a reload here
+                    // reads the new counts. Debounced: a stepper fires fast,
+                    // and each reload is a whole board build.
+                    document.addEventListener('chf-pack-change', () => {
+                        clearTimeout(this._packChangeT);
+                        this._packChangeT = setTimeout(() => {
+                            if (!document.hidden) this.load();
+                        }, 600);
+                    });
 
                     if (!this.isPanel) this.loadSetup();
                 },
