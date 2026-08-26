@@ -296,6 +296,90 @@ The nesting this implies — day, then outing, then event, then items — is one
 level too deep to read from three metres. **Day boundaries are separators,
 not another nested panel**; the outing stays the only container.
 
+## Packing is a decided act (F4)
+
+*Added after living with F3 on the real wall. Six prep blocks, each repeating
+the same four chips, in an order nobody could explain.*
+
+F3 put the packing in the right part of the day and then drew it wrong. One
+prep block per outing meant a Friday evening carrying four Saturday-morning
+trips became four blocks stacked at the same anchor, sorted — because they
+shared a timestamp — by their internal keys, which is to say alphabetically
+by event id. To a household that is no order at all.
+
+The deeper mistake was the unit. **You do not pack an item; you decide to
+pack, and then you work one event's list.** The chips invited item-at-a-time
+ticking from across the room, which is not how anybody packs a bag.
+
+### One block per part of the day
+
+A day has at most three prep blocks — morning, afternoon, evening — and each
+is a single block wearing the `Pack` chip and no title, sitting at the start
+of its own part of the day. Inside it are **per-event tiles**, laid out
+horizontally and wrapping, ordered by the departure of the event they serve.
+That ordering is the fix for the incident above: tiles run in the order the
+day will actually happen, and one block replaces six.
+
+A tile says three things: the event's **title**, its **passengers**, and how
+big the job is — `4 items`. The size matters because a tile with no count
+gives a household no way to judge whether to start now, and every tile
+otherwise looks the same weight.
+
+Its control is a single **`Pack Items`** button. That button is the point: it
+is an intentional act — *I am ready to pack for this event* — rather than an
+invitation to tick one thing in passing. When everything on it is claimed the
+tile turns to **`Packed ✓`**, and the outing's own pill says `Packed ✓` too.
+
+### The dialog
+
+`Pack Items` opens a dialog naming the event, the people it is for, and the
+list — the same claims, the same counts, the same chip vocabulary F3 borrowed
+from the drive sheet, now somewhere with room for them. This is where the
+list belongs: a wall row can hold four chips, a dialog can hold twelve, and
+later it can hold the step photos routine items already have.
+
+Three rules bind it:
+
+- **It is a shared component.** The kid's My Day (packing arc P3) and the
+  driver's list need exactly this — one event's list, ticked — and if it is
+  built inside this card they will fork it.
+- **The board's poll must not touch it.** The wall rebuilds every thirty
+  seconds; an open dialog and its in-flight claims survive that, the same way
+  expansion state and pending claims already do. This card has been burned
+  twice by state that resets under a finger, so the rule gets a test rather
+  than a comment.
+- **It closes cleanly.** A shared wall must not be left holding somebody's
+  half-finished modal.
+
+### What stays
+
+**The outing keeps its own chips** as the door-check. At 5:15 with the car
+loading you want one tap, not a dialog — that fast path was argued for
+earlier and it still holds. The dialog becomes the primary path; the chips
+remain the last-minute one.
+
+**The passed-bucket rule is restated for the new unit.** A block whose part
+of the day has gone carries forward only its **unpacked** tiles — dragging
+finished ones along would make a household re-read work it has already done.
+A block whose tiles are all packed collapses to a single `Packed ✓` line
+rather than vanishing, because hiding what is merely quiet is the one thing
+this board has learned never to do.
+
+**The known trade.** A row of chips could be read from three metres: you
+could see that the *water bottle* was the missing thing. A tile says only
+that four items are outstanding. The shape of the job survives; its contents
+move behind a tap. Against six blocks of repeated cleats-and-water-bottle
+chips, that is a trade worth making — but it is a real loss and it is
+recorded here rather than discovered again later.
+
+### The outing's heading, corrected
+
+The heading put the trip's identity on a second line and its chips on a
+third. It reads better as one line: the `Outing` chip, then the **driver as
+plain text** (a person's name is not a tag — the prep tiles name people the
+same way), then the **car as a chip**, with the **packed status right-aligned
+on that same line**. The time range follows underneath.
+
 ## Slices
 
 **F1 — the reshape.** The packing card evolves in place (keeps placements,
@@ -315,7 +399,12 @@ and its catch-up rule, passengers named on the block, the outing keeping its
 list as the door-check. This is the slice that turns the card from a better
 agenda into help.
 
-**F4 — meals join** (was F2 before the F3 work was understood). Meal-prep
+**F4 — packing is a decided act.** One prep block per part of the
+day, per-event tiles ordered by departure, the `Pack Items` dialog as a
+shared component, and the outing heading on one line. See *Packing is a
+decided act* above.
+
+**F5 — meals join** (was F2 before the F3 work was understood). Meal-prep
 items as a second kit source on the same rows and the same prep blocks — the
 family eats full meals in the car between activities, so a prepped cooler is
 outing cargo exactly like a soccer bag. Same claims, same pill. Perishables
