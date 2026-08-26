@@ -301,6 +301,26 @@ def scenario_a_mid_day_outing_carries_both_of_its_drives():
           f"the second outing should include its 30 minute drive home: {second['end']}")
 
 
+def scenario_a_pickup_on_the_way_out_is_part_of_the_drive_out():
+    """The household's real shape: the layover is at home and the kid being
+    picked up for the second trip is picked up AT home — so the solver prices
+    `from_home_mins` at zero (home to home) and hangs the real drive on the
+    edge's `pickup_waypoint.from_pickup_mins`. The solver's own timeline sums
+    both legs for the departure; reading `from_home_mins` alone left every
+    non-first outing starting at its event's start time."""
+    sched = _sched([_ev('soccer', 9, dur=60), _ev('band', 17, 30, dur=60)],
+                   {'soccer': 'd1', 'band': 'd1'},
+                   {'d1': {'soccer': {'to_event': 'band', 'travel_mins': 40,
+                                      'pickup_waypoint': {'to_pickup_mins': 15,
+                                                          'from_pickup_mins': 25},
+                                      'home_waypoint': {'layover_mins': 240,
+                                                        'to_home_mins': 15,
+                                                        'from_home_mins': 0}}}})
+    first, second = outings.outings_for(DAY, sched)
+    check(second['start'].endswith('17:05:00'),
+          f"the drive out is home->pickup + pickup->event: {second['start']}")
+
+
 def scenario_a_waypoint_without_numbers_changes_nothing():
     sched = _sched([_ev('soccer', 9, dur=60), _ev('band', 17, 30, dur=60)],
                    {'soccer': 'd1', 'band': 'd1'},

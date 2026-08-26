@@ -105,9 +105,18 @@ def outings_for(target_date=None, sched: dict = None,
                                    _mins(waypoint, 'to_home_mins') if went_home else None))
                 # The next outing leaves from home again, and the waypoint the
                 # solver hung on this edge says how long that drive takes.
-                out_mins = _mins(waypoint, 'from_home_mins') if went_home else None
-                if out_mins is None and went_home:
-                    out_mins = 0        # it went home; it just costs nothing
+                # When somebody is picked up on the way out, the drive splits
+                # across two waypoints: `from_home_mins` is home -> pickup and
+                # the pickup waypoint's `from_pickup_mins` is pickup -> event.
+                # A pickup AT home prices the first leg at zero, so reading
+                # `from_home_mins` alone left the whole drive out uncounted —
+                # the solver's own timeline sums both (`main.py`'s dep2).
+                if went_home:
+                    pickup = (edges.get(ev_id) or {}).get('pickup_waypoint')
+                    out_mins = ((_mins(waypoint, 'from_home_mins') or 0)
+                                + (_mins(pickup, 'from_pickup_mins') or 0))
+                else:
+                    out_mins = None
                 chain = []
     out.sort(key=lambda o: (o['start'], o['key']))
     return out
