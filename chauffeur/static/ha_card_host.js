@@ -561,6 +561,12 @@
             Object.keys(theme).forEach(function (k) {
                 container.style.setProperty(k, theme[k]);
             });
+            // A hosted card is somebody else's DOM, and HA's own map card
+            // carries Leaflet panes at z-index 400-1000. Isolating the cell
+            // keeps those numbers competing inside it instead of floating
+            // the card over the page's overlays (same fix, same reason, as
+            // FamilyMap's own container).
+            container.style.isolation = 'isolate';
             container.textContent = '';
             container.appendChild(live.el);
             live.container = container;
@@ -585,6 +591,7 @@
 
         var theme = themeFrom(container);
         Object.keys(theme).forEach(function (k) { container.style.setProperty(k, theme[k]); });
+        container.style.isolation = 'isolate';   // see adopt()
 
         return loadResource(spec.resource, spec.resourceType).then(function () {
             // A bundle can load and still not define what we asked for —
@@ -1452,6 +1459,7 @@
                 Object.keys(theme).forEach(function (k) {
                     container.style.setProperty(k, theme[k]);
                 });
+                container.style.isolation = 'isolate';   // see adopt()
                 var el = document.createElement(tag);
                 el.setConfig(JSON.parse(JSON.stringify(spec.config || {})));
                 el.hass = buildBuiltinHass(spec);

@@ -142,6 +142,25 @@ def scenario_the_map_stays_under_overlays():
           and core.index("isolation = 'isolate'") < core.index('L.map(el'),
           "the map container no longer isolates its stacking context — "
           "Leaflet floats over overlays whenever backdrop-filters stand down")
+    # The container was only half of it: the map TILE's own chrome (the ⌖
+    # button and the empty-note chip) rides z-[500] OUTSIDE the Leaflet
+    # container, and the wrapper is rebuilt by x-html on every poll — so the
+    # containment must live in the template, not in post-render JS.
+    tile = open(_os.path.join(root, 'templates', 'components',
+                              'board_tile_body.html'), encoding='utf-8').read()
+    import re as _re
+    wrapper = _re.search(r'x-if="t\.type === \'map\' && !t\.data\.empty">.*?<div class="([^"]*)"',
+                         tile, _re.S)
+    check(wrapper and 'isolate' in wrapper.group(1),
+          "the map tile wrapper lost its isolate class — the ⌖ and chips "
+          "float over overlays again after every poll")
+    # And a HOSTED card is somebody else's DOM: HA's own map card ships its
+    # own Leaflet. Every cell the host dresses must isolate too.
+    host = open(_os.path.join(root, 'static', 'ha_card_host.js'),
+                encoding='utf-8').read()
+    check(host.count("container.style.isolation = 'isolate'") >= 3,
+          "a hosted-card cell no longer isolates — an embedded HA map card "
+          "floats over the page's overlays")
 
 
 SCENARIOS = [

@@ -837,7 +837,14 @@
                          sideways by somebody squeezing past the panel would
                          otherwise stay there until a human fixed it. -->
                     <template x-if="t.type === 'map' && !t.data.empty">
-                        <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden"
+                        <!-- isolation: the ⌖ and the empty-note ride z-[500]
+                             and Leaflet's own panes reach 1000 — numbers that
+                             must compete with each other INSIDE this card and
+                             with nothing outside it. Without a stacking
+                             context here they escape into the page and float
+                             over every overlay below z-1000 (the moments pop
+                             at 200, the global dialogs at 400). -->
+                        <div class="relative isolate flex-1 min-h-0 rounded-xl overflow-hidden"
                             style="border: 1px solid var(--panel-line)">
                             <div :id="'board-map-' + t.id" class="board-map absolute inset-0 bg-gray-800"
                                 :style="t.data.interactive ? '' : 'pointer-events: none'"></div>
