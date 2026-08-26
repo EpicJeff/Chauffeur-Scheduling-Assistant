@@ -16242,6 +16242,14 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "conflicts": combined_conflicts,
             "scheduled_errands": combined_scheduled_errands,
             "unassigned": combined_true_unassigned,
+            # Under BOTH names. The calendar (and its agenda) reads
+            # `true_unassigned` for the Needs-driver/Conflict flags; this
+            # builder only published `unassigned`, so any range served — or
+            # cached by save_custom_schedule below — from this path drew
+            # every unsolved ride in its calendar's own colour, badge-less.
+            # The day-merge fast path and the global cache always carried
+            # both keys; this was the one payload that dropped one.
+            "true_unassigned": combined_true_unassigned,
             "no_location": no_location_events,
             "overridden_events": matcher.get_effective_overridden_event_ids(list(all_events_for_ui.values()), overrides),
             "calendar_metadata": _apply_identity_colors(calendar_metadata),

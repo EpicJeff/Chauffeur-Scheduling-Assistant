@@ -5632,6 +5632,19 @@ ready for it."
     presence before this) now draws as a bare block naming its coverage
     ("Swim — Grandma driving") with its own items — before F1, an outside
     hand covering a ride meant the bag packed itself for nobody, silently.
+    **Unsolved rides are flagged again (v2.422.0)**: `_raw_blocks` reads
+    `true_unassigned` (falling back to the combined payloads' `unassigned`
+    spelling) + `diagnostics` and stamps home blocks `needs_driver` /
+    `conflict` (conflict = reasons exist and none is 'optimization', the
+    calendar agenda's own client-side rule); the card's adapters pass them
+    as `isUnassigned`/`isConflict` so the shared agenda row draws the red
+    "⚠️ Needs driver" / amber "⚠️ Conflict" badge and bar the replaced
+    agenda tile always had. Covered outranks unassigned; canceled needs
+    nobody. Same fix server-side for the agenda itself: the slow
+    `/api/schedule` combine (`data_payload`) now publishes
+    `true_unassigned` too — it only shipped `unassigned`, and since
+    `save_custom_schedule` persisted that blob, any range built by that
+    path served the calendar/agenda flag-less until a fast-path rebuild.
   - **All-day events are a banner, never a block** — one slim line, because
     they have no time to anchor to, and they must never reach the solver
     (`driver_events`); the card is a read-only lens over the event feed and

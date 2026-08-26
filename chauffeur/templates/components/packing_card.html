@@ -717,7 +717,13 @@
                     : { title: b.title, start: b.start, end: b.end,
                         extendedProps: Object.assign(
                             { rawColor: b.color, passengers: b.passengers || [] },
-                            b.covered_by ? { assistName: b.covered_by } : {}) };
+                            b.covered_by ? { assistName: b.covered_by } : {},
+                            // The agenda's own unsolved-ride vocabulary —
+                            // red "Needs driver" / amber "Conflict" badge
+                            // and matching bar — which the swap to this
+                            // card had silently dropped.
+                            b.needs_driver ? { isUnassigned: true,
+                                               isConflict: !!b.conflict } : {}) };
                 const row = agendaEventRow(ev, {
                     canceled: !!b.canceled,
                     tappable: true,
@@ -881,7 +887,9 @@
                     id: b.event_id, title: b.title, start: b.start, end: b.end,
                     extendedProps: Object.assign(
                         { rawColor: b.color, passengers: b.passengers || [] },
-                        b.covered_by ? { assistName: b.covered_by } : {}),
+                        b.covered_by ? { assistName: b.covered_by } : {},
+                        b.needs_driver ? { isUnassigned: true,
+                                           isConflict: !!b.conflict } : {}),
                 };
             },
             // A container's inner lines are one `x-html` blob — Alpine has

@@ -43,6 +43,17 @@ def _raw_blocks(target, sched: dict, now: datetime.datetime) -> dict:
     contacts = {str(c.get('id')): c
                 for c in (sched.get('assist_contacts')
                           or _assist_contacts_fallback())}
+    # The agenda this card replaced flagged an unsolved ride — red "Needs
+    # driver", or amber "Conflict" when every driver is hard-blocked and
+    # assigning one is not the fix. The card lost that in the swap, and an
+    # unhandled ride drawn in its calendar's own colour reads as handled.
+    # Same resolution the calendar's agenda does client-side:
+    # `true_unassigned` (the combined endpoints publish it as `unassigned`
+    # too), conflict when the event's diagnostics exist and none is a mere
+    # 'optimization' reason.
+    unassigned = set(sched.get('true_unassigned')
+                     or sched.get('unassigned') or [])
+    diagnostics = sched.get('diagnostics') or {}
 
     cal_meta = sched.get('calendar_metadata') or {}
     members = sched.get('members') or _members_fallback()
@@ -83,6 +94,16 @@ def _raw_blocks(target, sched: dict, now: datetime.datetime) -> dict:
         cov = assist.get(ev_id)
         c = contacts.get(str(cov)) or {}
         end = outings._parse(ev.get('end')) or start
+        # Covered beats unassigned (a ride somebody outside has is handled,
+        # whatever the solve said before they took it), and a canceled event
+        # needs nobody.
+        needs_driver = (not cov and not ev.get('canceled')
+                        and ev_id in unassigned)
+        conflict = False
+        if needs_driver:
+            reasons = [r for r in (diagnostics.get(ev_id) or {}).values() if r]
+            conflict = bool(reasons) and all(
+                r.get('type') != 'optimization' for r in reasons)
         blocks.append({
             'kind': 'event',
             'key': f"home:{ev_id}",
@@ -93,6 +114,8 @@ def _raw_blocks(target, sched: dict, now: datetime.datetime) -> dict:
             'canceled': bool(ev.get('canceled')),
             'covered_by': ((c.get('relation_label') or c.get('name')
                             or 'Outside help') if cov else None),
+            'needs_driver': needs_driver,
+            'conflict': conflict,
             'color': _event_color(ev, cal_meta),
             'passengers': _passengers_for(ev, members, cal_meta, matched.get(ev_id)),
         })

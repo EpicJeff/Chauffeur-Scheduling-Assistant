@@ -415,6 +415,73 @@ def scenario_the_evening_block_sits_after_the_last_event_of_the_day():
           f"it should sit after the last event ends, not at a flat 17:00: {prep['start']}")
 
 
+def scenario_an_unsolved_ride_is_flagged_not_camouflaged():
+    """The agenda this card replaced flagged an unassigned event red and an
+    unassignable one amber. The swap dropped both, and an unhandled ride
+    drawn in its calendar's own colour reads as handled — the exact false
+    calm the flags exist to break."""
+    sched = _sched([_ev('game', 18, title='Practice')],
+                   true_unassigned=['game'])
+    b = family_day.blocks_for(DAY, sched)['blocks'][0]
+    check(b['needs_driver'] and not b['conflict'],
+          f"an unassigned event must say it needs a driver: {b}")
+
+    # Unassignable: every diagnostic reason is a hard block — a conflict,
+    # not a plea for a driver (same rule the calendar computes client-side).
+    sched = _sched([_ev('game', 18)], true_unassigned=['game'],
+                   diagnostics={'game': {'d1': {'type': 'hard_conflict'},
+                                         'd2': {'type': 'unavailable'}}})
+    b = family_day.blocks_for(DAY, sched)['blocks'][0]
+    check(b['needs_driver'] and b['conflict'],
+          f"all-hard-blocked must surface as a conflict: {b}")
+
+    # One merely-optimization reason keeps it an actionable "needs driver".
+    sched = _sched([_ev('game', 18)], true_unassigned=['game'],
+                   diagnostics={'game': {'d1': {'type': 'optimization'}}})
+    b = family_day.blocks_for(DAY, sched)['blocks'][0]
+    check(b['needs_driver'] and not b['conflict'],
+          f"an assignable event is not a conflict: {b}")
+
+    # Covered outranks the solve (the coverage ladder's own rule), and a
+    # canceled event needs nobody.
+    sched = _sched([_ev('game', 18)], true_unassigned=['game'],
+                   assist_assignments={'game': 'c9'},
+                   assist_contacts=[{'id': 'c9', 'name': 'Carol'}])
+    b = family_day.blocks_for(DAY, sched)['blocks'][0]
+    check(not b['needs_driver'], f"a covered ride is handled: {b}")
+    sched = _sched([_ev('game', 18, canceled=True)], true_unassigned=['game'])
+    b = family_day.blocks_for(DAY, sched)['blocks'][0]
+    check(not b['needs_driver'], f"a canceled event needs nobody: {b}")
+
+    # The combined /api/schedule payloads publish the list as `unassigned`;
+    # the flag must survive a sched shaped that way too.
+    sched = _sched([_ev('game', 18)], unassigned=['game'])
+    b = family_day.blocks_for(DAY, sched)['blocks'][0]
+    check(b['needs_driver'], f"the `unassigned` spelling must count too: {b}")
+
+
+def scenario_the_flags_reach_the_row_the_card_draws():
+    """The hand path: the card's block→event adapter must pass the flags to
+    `agendaEventRow`, whose badge ladder is what actually prints ⚠️ — and
+    the slow /api/schedule combine must publish `true_unassigned`, or the
+    calendar's own agenda loses the same flags whenever that path built
+    (and cached) the range."""
+    import inspect
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    card = open(os.path.join(root, 'templates', 'components',
+                             'packing_card.html'), encoding='utf-8').read()
+    check(card.count('isUnassigned: true') >= 2,
+          "pkRowHtml/pkDetailsEv no longer hand the unassigned flag to the "
+          "shared agenda row")
+    check('isConflict: !!b.conflict' in card,
+          "the conflict flavour of the flag was dropped on the way to the row")
+    import main
+    src = inspect.getsource(main)
+    check('"true_unassigned": combined_true_unassigned' in src,
+          "the slow /api/schedule combine dropped true_unassigned again — "
+          "agenda badges vanish on every range that path builds or caches")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
