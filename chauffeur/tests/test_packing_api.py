@@ -668,6 +668,22 @@ def scenario_the_outing_pill_waits_for_its_part_of_the_day():
           f"a 4pm departure's pill opens with its afternoon: {outing.get('pack_from')}")
 
 
+def scenario_a_saved_claim_empties_the_board_cache():
+    """The hero's 🎒 chip draws these claims and board payloads are cached
+    TTL_SECONDS — the reload a tick triggers landed inside that window and
+    read its own stale hero back, so the wall still 'took a poll' to update.
+    A saved claim clears every held board."""
+    import main
+    from services import home_board
+    _seed_incident()
+    home_board._CACHE['probe'] = {'at': 9e12, 'data': {'stale': True}}
+    main.packing_claim(payload={'outing_key': 'd1:soccer',
+                                'item_key': 'k1:water bottle',
+                                'delta': 1, 'date': DAY})
+    check('probe' not in home_board._CACHE,
+          "a saved claim must clear the board cache")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

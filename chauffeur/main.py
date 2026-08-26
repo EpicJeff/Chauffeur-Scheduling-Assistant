@@ -8501,6 +8501,12 @@ def packing_claim(payload: dict = Body(...)):
         storage.remove_packing_claim(outing_key, item_key, date_str, None)
     packed = sum(1 for r in storage.get_packing_claims(date_str)
                  if r.get('outing_key') == outing_key and r.get('item_key') == item_key)
+    # The hero's 🎒 chip draws these claims (home_board._hero_outing), and
+    # board payloads are cached TTL_SECONDS — the card's chf-pack-change
+    # reload landed inside that window and read the same stale hero back,
+    # so a tick still "took a poll" to show. A saved claim empties the cache.
+    from services import home_board as _hb
+    _hb.invalidate_cache()
     return {'ok': True, 'packed': packed, 'xp': xp}
 
 

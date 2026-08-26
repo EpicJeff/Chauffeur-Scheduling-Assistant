@@ -992,6 +992,13 @@ _CACHE: dict = {}
 _CACHE_MAX = 8
 
 
+def invalidate_cache():
+    """A write a board draws — a packing claim — clears every held board, so
+    the reload the writer triggers (packing_card's chf-pack-change) rebuilds
+    instead of reading its own stale hero back out of the TTL window."""
+    _CACHE.clear()
+
+
 # --- small shared helpers -------------------------------------------------
 
 def _local_naive(dt: datetime.datetime) -> datetime.datetime:
