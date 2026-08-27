@@ -290,6 +290,17 @@
             <div id="proposals-content" class="p-3 space-y-2"></div>
         </div>
 
+        <!-- Argyle noticed (the Mind, phase C): observations Argyle surfaced
+             for whoever is signed in, identity-filtered server-side. Anyone
+             can see one; only a parent/adult can Handle it or Dismiss it
+             (server enforces regardless — the buttons just don't invite a
+             tap that would 403). Family view only, collapses away when
+             there is nothing to show. -->
+        <div id="mind-container" class="shrink-0 overflow-y-auto max-h-[35%] border-b border-gray-800 bg-gray-950"
+            style="display: none">
+            <div id="mind-content" class="p-3 space-y-2"></div>
+        </div>
+
         <!-- Schedule Container (Swipeable) -->
         <div id="days-container"
             class="flex-1 flex overflow-x-auto snap-x-mandatory no-scrollbar relative">
@@ -791,7 +802,7 @@
                 if (musicWidgetStarted && typeof mwRefresh === 'function') mwRefresh();
             } else {
                 buildTimeline();
-                if (view === 'family') fetchProposals();
+                if (view === 'family') { fetchProposals(); fetchMind(); }
             }
             if (view !== 'map' && typeof stopFamilyMapPolling === 'function') stopFamilyMapPolling();
         }
@@ -820,6 +831,11 @@
             // proposals it collapses to the one-row 📸 capture strip.
             const showProposals = currentView === 'family' && currentMemberRole() === 'parent';
             document.getElementById('proposals-container').style.display = showProposals ? 'block' : 'none';
+            // Argyle noticed (the Mind, phase C): everyone can see one, so
+            // this only depends on there being something to show — not on
+            // role, unlike the proposals intake above.
+            const showMind = currentView === 'family' && mindInsights.length > 0;
+            document.getElementById('mind-container').style.display = showMind ? 'block' : 'none';
             document.getElementById('messages-container').style.display = isMessages ? 'flex' : 'none';
             document.getElementById('map-container').style.display = isMap ? 'flex' : 'none';
             document.getElementById('myday-container').style.display = isMyDay ? 'flex' : 'none';
@@ -2045,6 +2061,66 @@
             });
         };
 
+        // --- The Mind (phase C): "Argyle noticed", Family tab lane -------
+        // Server-side insights, identity-filtered by the PWA session. The
+        // list itself is for everyone (a kid can see one about them); only
+        // dismiss/act are parent/adult (server 403s a child/helper/guest
+        // regardless, but the buttons don't invite the tap in the first
+        // place — same shape as currentMemberRole() gating elsewhere).
+        let mindInsights = [];
+
+        async function fetchMind() {
+            try {
+                const res = await fetch(`${apiBase}api/mind/insights`);
+                const data = res.ok ? await res.json() : { insights: [] };
+                mindInsights = data.insights || [];
+            } catch (e) { mindInsights = []; }
+            renderMind();
+            applyViewVisibility();
+        }
+
+        function renderMind() {
+            const wrap = document.getElementById('mind-content');
+            if (!wrap) return;
+            const canHandle = ['parent', 'adult'].includes(currentMemberRole());
+            wrap.innerHTML = '<div class="text-xs font-black uppercase tracking-widest text-violet-400 px-1">✨ Argyle noticed</div>'
+                + mindInsights.map(ins => `
+                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
+                    <div class="text-sm text-gray-100">${mfEscape(ins.line || '')}</div>
+                    ${ins.detail ? `<div class="text-xs text-gray-500 mt-0.5">${mfEscape(ins.detail)}</div>` : ''}
+                    ${canHandle ? `<div class="flex gap-2 mt-2">
+                        <button onclick="mindAct('${ins.id}')"
+                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Handle it</button>
+                        <button onclick="mindDismiss('${ins.id}')"
+                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Dismiss</button>
+                    </div>` : ''}
+                </div>`).join('');
+        }
+
+        async function mindDismiss(id) {
+            try {
+                const res = await fetch(`${apiBase}api/mind/insights/${id}/dismiss`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    showGlobalAlert(err.detail || "Couldn't dismiss that.");
+                }
+            } catch (e) { showGlobalAlert("Couldn't dismiss that."); }
+            fetchMind();
+        }
+
+        async function mindAct(id) {
+            try {
+                const res = await fetch(`${apiBase}api/mind/insights/${id}/act`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    showGlobalAlert(err.detail || "Couldn't handle that.");
+                }
+            } catch (e) { showGlobalAlert("Couldn't handle that."); }
+            fetchMind();
+        }
+
         // --- Intake proposals (parents approve/ignore from the Family tab) ---
         let proposalsData = [];
         let proposalTargets = null;  // [{id, label}] lazily fetched once
@@ -2594,6 +2670,10 @@
             // Parents: load the intake proposal queue so the Family tab (and
             // the ?view=family push deep link) shows it immediately.
             if (currentMemberRole() === 'parent') fetchProposals();
+            // The Mind (Task 10): unlike proposals above, this is for
+            // everyone — only the Handle it/Dismiss buttons are role-gated,
+            // inside renderMind() itself.
+            fetchMind();
             // Requests (load arc A3): both directions, for everyone. An
             // unanswered ask is the most time-sensitive thing on the screen.
             fetchRequests().then(() => {
