@@ -471,6 +471,8 @@ with db_lock:
     # holds: state, and the nudges that turn a forgotten conversation into one
     # lock-screen tap.
     coverage_asks_table = db.table('coverage_asks')
+    mind_noticings_table = db.table('mind_noticings')
+    mind_insights_table = db.table('mind_insights')
     # Per-member music (favorites + recently chosen). OURS on purpose: Music
     # Assistant's lead has declined per-user libraries outright — MA 2.7 user
     # profiles scope providers and speakers, favourites stay one shared pile.
@@ -2652,6 +2654,81 @@ def prune_findings(before_ts: float) -> int:
         for fid in doomed:
             findings_table.remove(Query().id == fid)
     return len(doomed)
+
+# --- Mind (noticings queue + insights lane) ---
+
+def add_mind_noticing(data: dict) -> str:
+    import uuid as _uuid
+    row = {'id': _uuid.uuid4().hex, 'ts': time.time(), 'consumed_at': None, **data}
+    with db_lock:
+        mind_noticings_table.insert(row)
+    return row['id']
+
+def get_mind_noticings(consumed: bool = None) -> List[dict]:
+    with db_lock:
+        rows = [dict(r) for r in mind_noticings_table.all()]
+    if consumed is True:
+        rows = [r for r in rows if r.get('consumed_at')]
+    elif consumed is False:
+        rows = [r for r in rows if not r.get('consumed_at')]
+    rows.sort(key=lambda r: r.get('ts') or 0)
+    return rows
+
+def consume_mind_noticings(ids: List[str]) -> int:
+    now = time.time()
+    n = 0
+    with db_lock:
+        for nid in ids:
+            n += len(mind_noticings_table.update({'consumed_at': now},
+                                                 Query().id == nid))
+    return n
+
+def add_mind_insight(data: dict) -> str:
+    import uuid as _uuid
+    row = {'id': _uuid.uuid4().hex, 'created_ts': time.time(), 'state': 'active',
+           'outcome': None, 'resolved_ts': None, 'sensitivity': 'normal',
+           'detail': '', 'domain': '', 'proposal_json': None, 'confidence': None,
+           **data}
+    with db_lock:
+        mind_insights_table.insert(row)
+    return row['id']
+
+def update_mind_insight(insight_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(mind_insights_table.update(data, Query().id == insight_id))
+
+def get_mind_insights(state: str = None) -> List[dict]:
+    with db_lock:
+        rows = [dict(r) for r in mind_insights_table.all()]
+    if state:
+        rows = [r for r in rows if r.get('state') == state]
+    rows.sort(key=lambda r: r.get('created_ts') or 0)
+    return rows
+
+def get_mind_insight_by_slug(slug: str) -> Optional[dict]:
+    with db_lock:
+        res = mind_insights_table.search(Query().slug == slug)
+        return dict(res[0]) if res else None
+
+def prune_mind(insights_before_ts: float, noticings_before_ts: float = None) -> int:
+    """Old noticings and old RETIRED insights, each on its own clock (spec:
+    noticings 14d, retired insights 120d). Active insights are live state and
+    never pruned — same rule as findings."""
+    if noticings_before_ts is None:
+        noticings_before_ts = insights_before_ts
+    doomed = 0
+    with db_lock:
+        for r in [dict(x) for x in mind_noticings_table.all()]:
+            if (r.get('ts') or 0) < noticings_before_ts:
+                mind_noticings_table.remove(Query().id == r['id'])
+                doomed += 1
+        for r in [dict(x) for x in mind_insights_table.all()]:
+            if r.get('state') != 'active' \
+                    and (r.get('resolved_ts') or r.get('created_ts') or 0) \
+                    < insights_before_ts:
+                mind_insights_table.remove(Query().id == r['id'])
+                doomed += 1
+    return doomed
 
 # --- Coverage asks (findings arc, slice 2) ---
 
