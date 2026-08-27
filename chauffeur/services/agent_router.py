@@ -680,6 +680,24 @@ sending or claiming, and never pass from_member/member_name for them.
                     from services.agent_tools_v2 import list_open_findings
                     res = list_open_findings()
                     if res.get("message"): agent_message = res["message"]
+                elif func_name in ("list_insights", "dismiss_insight"):
+                    from services import agent_tools_v2 as _atv2
+                    # member_role is resolved HERE, at dispatch, never taken
+                    # from the model — same actor resolution as the other
+                    # role-aware tools (family-chat acting_member, else the
+                    # PWA driver's own member; None in admin/voice contexts,
+                    # which mind.visible_insights treats like the wall panel).
+                    actor = acting_member
+                    if actor is None and driver:
+                        from services import storage as _st
+                        actor = _st.get_member_by_driver_id(driver_id)
+                    role = actor.get('role') if actor else None
+                    if func_name == "list_insights":
+                        res = _atv2.list_insights(member_role=role)
+                    else:
+                        res = _atv2.dismiss_insight(args.get("insight_id", ""),
+                                                    member_role=role)
+                    if res.get("message"): agent_message = res["message"]
                 elif func_name == "claim_chore":
                     from services.agent_tools_v2 import claim_chore
                     res = claim_chore(args.get("chore_title", ""),

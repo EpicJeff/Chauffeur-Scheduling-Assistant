@@ -449,6 +449,18 @@ class ListOpenFindingsTool(BaseModel):
     """
     pass
 
+class ListInsightsTool(BaseModel):
+    """
+    Lists what Argyle's Mind has noticed about the family lately (the 'Argyle noticed' lane) — patterns, gentle observations, and things it's keeping an eye on.
+    """
+    pass
+
+class DismissInsightTool(BaseModel):
+    """
+    Dismisses one Mind insight by id after the user says they don't want it or it's not useful.
+    """
+    insight_id: str = Field(..., description="The insight's id, from list_insights.")
+
 class ClaimChoreTool(BaseModel):
     """
     Claims an open chore for a family member ('Ben will take the dishes'). member_name is required; ask who is claiming if unknown.
@@ -878,6 +890,8 @@ TOOL_SCHEMAS = {
     "get_family_messages": GetFamilyMessagesTool.model_json_schema(),
     "list_chores": ListChoresTool.model_json_schema(),
     "list_open_findings": ListOpenFindingsTool.model_json_schema(),
+    "list_insights": ListInsightsTool.model_json_schema(),
+    "dismiss_insight": DismissInsightTool.model_json_schema(),
     "claim_chore": ClaimChoreTool.model_json_schema(),
     "get_routine_status": GetRoutineStatusTool.model_json_schema(),
     "post_weekly_digest": PostWeeklyDigestTool.model_json_schema(),
@@ -2029,6 +2043,19 @@ def handle_list_open_findings(args: dict) -> dict:
     from services.agent_tools_v2 import list_open_findings
     return list_open_findings()
 
+def handle_list_insights(args: dict) -> dict:
+    # v1 loop runs only in admin contexts, so no acting-member gate needed;
+    # member_role stays unset, which visible_insights treats like the wall
+    # panel (no sensitive rows) — the safe default with no resolved identity.
+    from services.agent_tools_v2 import list_insights
+    return list_insights()
+
+def handle_dismiss_insight(args: dict) -> dict:
+    # Same "admin-only context" reasoning as handle_post_weekly_digest: no
+    # acting-member gate needed here.
+    from services.agent_tools_v2 import dismiss_insight
+    return dismiss_insight(args.get("insight_id") or "")
+
 def handle_claim_chore(args: dict) -> dict:
     from services.agent_tools_v2 import claim_chore
     return claim_chore(args.get("chore_title", ""),
@@ -2352,6 +2379,8 @@ TOOL_HANDLERS = {
     "get_family_messages": handle_get_family_messages,
     "list_chores": handle_list_chores,
     "list_open_findings": handle_list_open_findings,
+    "list_insights": handle_list_insights,
+    "dismiss_insight": handle_dismiss_insight,
     "claim_chore": handle_claim_chore,
     "get_routine_status": handle_get_routine_status,
     "post_weekly_digest": handle_post_weekly_digest,

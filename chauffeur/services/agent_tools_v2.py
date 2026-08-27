@@ -1259,6 +1259,40 @@ def list_open_findings() -> Dict[str, Any]:
     return {"status": "success", "message": " | ".join(parts)}
 
 
+def list_insights(member_role: str = None) -> Dict[str, Any]:
+    """Things Argyle's Mind is currently keeping an eye on ('the Argyle
+    noticed lane'). member_role is filled by the DISPATCH LAYER from the
+    resolved caller identity (acting_member / driver's member), never taken
+    from the model — mind.visible_insights() is the same server-side
+    sensitivity gate the /api/mind/insights endpoint uses, and a caller with
+    no resolved identity gets the same no-sensitive-rows payload as the wall
+    panel."""
+    from services import mind as _mind
+    viewer = {'role': member_role} if member_role else None
+    rows = _mind.visible_insights(viewer)
+    return {"insights": [{"id": r['id'], "line": r['line'],
+                          "detail": r.get('detail') or '',
+                          "category": r.get('category')} for r in rows]}
+
+
+def dismiss_insight(insight_id: str, member_role: str = None) -> Dict[str, Any]:
+    """Dismiss one of the Mind's insights (the family said no). Dismissing
+    records family feedback the graduation logic learns from, so — mirroring
+    the /api/mind/insights/{id}/dismiss endpoint's parent/adult gate — a
+    caller resolved (by the dispatch layer, never the model) to child/helper/
+    guest is refused; an unresolved caller (legacy admin/voice contexts with
+    no identity) is trusted, same as the rest of the open-admin toolset."""
+    if member_role in ('child', 'helper', 'guest'):
+        return {"status": "error",
+                "message": "Only a parent or adult can dismiss this."}
+    import time as _t
+    from services import storage as _s
+    ok = _s.update_mind_insight(insight_id, {'state': 'retired',
+                                             'outcome': 'dismissed',
+                                             'resolved_ts': _t.time()})
+    return {"status": "success" if ok else "error"}
+
+
 def claim_chore(chore_title: str, member_name: str = None,
                 sender_driver_id: str = None) -> Dict[str, Any]:
     from services import storage
@@ -3303,6 +3337,18 @@ def get_available_tools() -> List[Dict]:
             "name": "list_open_findings",
             "description": "Lists what still needs a parent — drives with no driver, things waiting on an approval, decisions nobody has made ('what needs me?', 'anything outstanding?', 'what's still open?').",
             "parameters": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "list_insights",
+            "description": "Lists what Argyle's Mind has noticed about the family lately (the 'Argyle noticed' lane) — patterns, gentle observations, and things it's keeping an eye on.",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "dismiss_insight",
+            "description": "Dismisses one Mind insight by id after the user says they don't want it or it's not useful.",
+            "parameters": {"type": "object",
+                           "properties": {"insight_id": {"type": "string", "description": "The insight's id, from list_insights."}},
+                           "required": ["insight_id"]}
         },
         {
             "name": "claim_chore",
