@@ -769,6 +769,26 @@
                         </div>
                     </template>
 
+                    <!-- ── Argyle noticed: the Mind's curated lane, read-only
+                         and identity-free (the tile always asks with no
+                         viewer, so a sensitive row can never reach a wall).
+                         Same bulleted-glance shape as tasks/errands above:
+                         a line, and an optional detail underneath it. -->
+                    <template x-if="t.type === 'mind' && !t.data.empty">
+                        <div class="space-y-1.5">
+                            <template x-for="ins in t.data.insights" :key="ins.id">
+                                <div class="flex items-baseline gap-2">
+                                    <span class="shrink-0 panel-dim">•</span>
+                                    <div class="min-w-0">
+                                        <div class="text-base panel-text truncate" x-text="ins.line"></div>
+                                        <div class="text-xs panel-dim truncate" x-show="ins.detail"
+                                            x-text="ins.detail"></div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
                     <!-- ── The errands page's own two lists, as cards. The
                          SAME macros the page renders, self-fetching (an
                          interactive card cannot ride a twenty-second cache and

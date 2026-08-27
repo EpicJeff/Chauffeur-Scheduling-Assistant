@@ -665,6 +665,10 @@ WIDGETS = [
          _opt('show_location', 'Where it is', 'bool', True),
          _opt('show_when', 'Start and scheduled times', 'bool', True),
      ]},
+    {'key': 'mind', 'icon': '🧠', 'label': 'Argyle noticed',
+     'heading': '',
+     'blurb': "Argyle noticed — things the Mind is keeping an eye on.",
+     'options': []},
     {'key': 'trips', 'icon': '🧭', 'label': 'Trips',
      'heading': 'Next trip',
      'blurb': "The next trip and how long until it starts.",
@@ -2547,6 +2551,17 @@ def _tile_errand_list(now, config=None, **_):
         return None
 
 
+def _tile_mind(now, config=None, **_):
+    """Argyle noticed: the Mind's curated lane. Boards have no viewer, so this
+    payload is built with no identity — sensitive rows are never in it."""
+    from services import mind as _mind
+    rows = _mind.visible_insights(None)
+    return {'insights': [{'id': r['id'], 'line': r['line'],
+                          'detail': r.get('detail') or '',
+                          'domain': r.get('domain') or ''}
+                         for r in rows]} if rows else None
+
+
 def _trip_rows(now, back_days: int = 0, viewer: Optional[dict] = None):
     """Trips this install can know about WITHOUT calling Google, newest-first.
 
@@ -3802,6 +3817,7 @@ _BUILDERS: dict = {
     'moments_gallery': _tile_moments_gallery,
     'calendar': _tile_calendar, 'errands': _tile_errands, 'tasks': _tile_tasks,
     'task_list': _tile_task_list, 'errand_list': _tile_errand_list,
+    'mind': _tile_mind,
     'trips': _tile_trips, 'trips_gallery': _tile_trips_gallery,
     'map': _tile_map, 'intake': _tile_intake, 'music': _tile_music,
     'ha': _tile_ha, 'ha_image': _tile_ha_image,
