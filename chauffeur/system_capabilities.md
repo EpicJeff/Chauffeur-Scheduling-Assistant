@@ -5970,15 +5970,29 @@ against *this family's own baseline*, and the meaning lives in the derivative
 40% over her own baseline for eleven days" is a finding no watcher could
 write.
 
-**Five signs**, all from data the app already keeps: **load** (per person —
+**Six signs**, all from data the app already keeps: **load** (per person —
 driving minutes, plus `TASK_MINUTES` per household task finished and
 `FINDING_MINUTES` per finding resolved, because noticing is work too),
 **margin** (free waking minutes left after the day's commitments),
 **follow-through** (routine checks and tasks landed vs let go),
 **rest** (first commitment of the day, and whether the evening was empty),
-and **friction** (rides that reached their own day with nobody on them, plus
-cancellations — a thin proxy; a real scramble index wants counters that don't
-exist yet, and a thin honest sign beats a fat invented one).
+**friction** (see below), and **togetherness** (v2.427.2 — meals eaten
+together from `meals.eating_plan`'s sittings, moments captured, and kids who
+rode somewhere with a parent). Car meals are counted **apart and never
+subtracted**: the family eats in the car on purpose, and dinner in a minivan
+between two practices is still dinner together.
+
+**Friction is tallied live, not inferred** (v2.427.2). `daily_stats` is
+written once at 21:00, so anything counted as it happens needs its own rail:
+`day_counters` (`storage.bump_day_counter`), folded into the nightly row and
+pruned past the window. Three real scrambles are instrumented at their
+sources — an arrival nobody closed on time (`drive_arrival.run_nudges`), a
+driver rearranged **on the day of the event** (`storage.add_override`, which
+looks the date up because the override itself doesn't carry one — rearranging
+tomorrow is planning, not a scramble), and an outside hand the family had to
+ask for (`coverage_options.start_ask`) — alongside the original proxies
+(uncovered-at-day, cancellations). Every bump sits in its own try/except:
+**counting must never break the thing it counts.**
 
 **No table of its own.** A day's measures ride inside the existing
 `daily_stats` row that `family_digest.record_daily_stats` already writes
