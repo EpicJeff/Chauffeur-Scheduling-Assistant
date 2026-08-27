@@ -169,9 +169,16 @@ def snapshot(now: datetime.datetime = None) -> str:
             lines.append(f"- {car.get('name')}: {lv}")
         return '\n'.join(lines)
 
+    def _fmt_day(ts):
+        try:
+            return datetime.datetime.fromtimestamp(float(ts)).strftime('%a %m-%d')
+        except Exception:
+            return '?'
+
     def _noticings():
         rows = storage.get_mind_noticings(consumed=False)
-        return '\n'.join(f"- [{r.get('source')}] {r.get('line')}" for r in rows[:40])
+        return '\n'.join(f"- [{_fmt_day(r.get('ts'))}] [{r.get('source')}] "
+                         f"{r.get('line')}" for r in rows[:40])
 
     def _own_insights():
         rows = storage.get_mind_insights()
@@ -179,7 +186,8 @@ def snapshot(now: datetime.datetime = None) -> str:
         for r in rows[-30:]:
             tag = r['state'] if r['state'] == 'active' else \
                 f"{r['state']}/{r.get('outcome')}"
-            lines.append(f"- [{tag}] ({r.get('category')}) {r.get('line')}")
+            lines.append(f"- [{tag}] [{_fmt_day(r.get('created_ts'))}] "
+                         f"({r.get('category')}) {r.get('line')}")
         return '\n'.join(lines)
 
     section('CALENDAR NEXT 7 DAYS', _calendar)
@@ -309,12 +317,27 @@ def _gather_deltas(now: datetime.datetime) -> list:
     sched = storage.get_cached_schedule() or {}
     assignments = dict(sched.get('assignments') or {})
     assignments.update(sched.get('ghost_assignments') or {})
+    # Only FUTURE events are diffed. The cache is a rolling forward window,
+    # so a past event leaving it is time passing, not a removal — without
+    # this filter every morning's expiry reads as "removed from the
+    # calendar" and the Mind invents cancellations out of history.
+    today_iso = now.date().isoformat()
     cur = {str(e.get('id')): {
                'title': e.get('title') or '?',
                'fp': f"{e.get('start')}|{e.get('end')}|"
                      f"{assignments.get(e.get('id'))}"}
-           for e in (sched.get('events') or [])}
+           for e in (sched.get('events') or [])
+           if str(e.get('start') or '')[:10] >= today_iso}
     prev = dict(storage.get_app_state('mind_event_state') or {})
+
+    def _is_future(v):
+        fp = v.get('fp') if isinstance(v, dict) else str(v or '')
+        return (fp.split('|', 1)[0] or '')[:10] >= today_iso
+
+    # The stored side gets the same cut with TODAY's date, so an event whose
+    # date arrived and passed since the last look drops from both sides
+    # silently instead of surfacing as "removed".
+    prev = {k: v for k, v in prev.items() if _is_future(v)}
 
     def _cal_title(state, k):
         v = state.get(k)
@@ -381,6 +404,7 @@ def sentinel_sweep(now: datetime.datetime = None) -> dict:
     if not _bump_call('sentinel', cap):
         return {'status': 'capped'}
     res = _pool_call('background', api_key, SENTINEL_SYSTEM,
+                     f"Today is {now.strftime('%A %Y-%m-%d')}.\n"
                      "CHANGES SINCE LAST LOOK:\n" + '\n'.join(deltas[:60]),
                      timeout_s=60, gemma_timeout_s=180)
     if not isinstance(res, dict) or res.get('error'):
@@ -414,6 +438,11 @@ THINK_SYSTEM = (
     "job is what only whole-picture judgment can see: cross-domain patterns, "
     "load building on one person, needs said out loud in the family channel, "
     "collisions nobody planned for, small kindnesses worth suggesting.\n\n"
+    "DATES: the snapshot header states today's date; every noticing and "
+    "previous insight is stamped with its own date. The calendar shows the "
+    "NEXT 7 DAYS only — an event before today is history, not missing and "
+    "not cancelled; never claim something is absent this week from a memory "
+    "older than the calendar you can see.\n\n"
     "You are shown your own previous insights and how the family reacted. A "
     "dismissed insight means they heard you and said no — do not repeat it. "
     "Curate: return the FULL DESIRED set of current insights (max {max_n}); "

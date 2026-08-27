@@ -72,6 +72,10 @@ def scenario_cap_stops_calls():
     check(res['status'] == 'capped' and not CALLS, "cap reached = silent skip")
 
 
+def _day(offset):
+    return (datetime.date.today() + datetime.timedelta(days=offset)).isoformat()
+
+
 def scenario_calendar_deltas_name_events_and_see_ghosts():
     # Delta lines carry titles, never bare ids; ghost coverage is part of the
     # fingerprint, so an outside hand taking (or dropping) a ride is a change.
@@ -79,19 +83,19 @@ def scenario_calendar_deltas_name_events_and_see_ghosts():
     orig = storage.get_cached_schedule
     try:
         storage.get_cached_schedule = lambda: {
-            'events': [{'id': 'e1', 'title': 'Piano', 'start': '2026-08-28T15:00:00',
-                        'end': '2026-08-28T16:00:00'}],
+            'events': [{'id': 'e1', 'title': 'Piano', 'start': f'{_day(1)}T15:00:00',
+                        'end': f'{_day(1)}T16:00:00'}],
             'assignments': {}, 'ghost_assignments': {'e1': 'ghost_grandma'}}
         mind._gather_deltas(datetime.datetime.now())     # baseline, no storm
         storage.get_cached_schedule = lambda: {
-            'events': [{'id': 'e1', 'title': 'Piano', 'start': '2026-08-28T15:00:00',
-                        'end': '2026-08-28T16:00:00'},
-                       {'id': 'e2', 'title': 'Dentist', 'start': '2026-08-29T09:00:00',
-                        'end': '2026-08-29T10:00:00'}],
+            'events': [{'id': 'e1', 'title': 'Piano', 'start': f'{_day(1)}T15:00:00',
+                        'end': f'{_day(1)}T16:00:00'},
+                       {'id': 'e2', 'title': 'Dentist', 'start': f'{_day(2)}T09:00:00',
+                        'end': f'{_day(2)}T10:00:00'}],
             'assignments': {}, 'ghost_assignments': {}}
         cal = [d for d in mind._gather_deltas(datetime.datetime.now())
                if d.startswith('[calendar]')]
-        check(any('new: Dentist (2026-08-29' in d for d in cal),
+        check(any(f'new: Dentist ({_day(2)}' in d for d in cal),
               f"a new event delta names the event and its date, got {cal}")
         check(any('changed: Piano' in d for d in cal),
               f"losing the ghost coverage is a named change, got {cal}")
@@ -101,9 +105,47 @@ def scenario_calendar_deltas_name_events_and_see_ghosts():
         storage.get_cached_schedule = orig
 
 
+def scenario_past_events_expire_silently():
+    # The cache is a rolling forward window: an event whose date has passed
+    # falling out of it is time, not a removal. The Mind must never turn
+    # history into "removed from the calendar" — that is how it once claimed
+    # a weeks-old event was missing this week.
+    _reset()
+    orig = storage.get_cached_schedule
+    try:
+        storage.get_cached_schedule = lambda: {
+            'events': [{'id': 'old', 'title': 'Recital', 'start': f'{_day(-14)}T15:00:00',
+                        'end': f'{_day(-14)}T16:00:00'},
+                       {'id': 'e1', 'title': 'Piano', 'start': f'{_day(1)}T15:00:00',
+                        'end': f'{_day(1)}T16:00:00'}],
+            'assignments': {}, 'ghost_assignments': {}}
+        deltas = mind._gather_deltas(datetime.datetime.now())   # baseline
+        # Past event was never tracked at all.
+        state = dict(storage.get_app_state('mind_event_state') or {})
+        check('old' not in state, "a past-dated event is never fingerprinted")
+        # The past event vanishing from the cache produces NO delta.
+        storage.get_cached_schedule = lambda: {
+            'events': [{'id': 'e1', 'title': 'Piano', 'start': f'{_day(1)}T15:00:00',
+                        'end': f'{_day(1)}T16:00:00'}],
+            'assignments': {}, 'ghost_assignments': {}}
+        cal = [d for d in mind._gather_deltas(datetime.datetime.now())
+               if d.startswith('[calendar]')]
+        check(cal == [], f"expiry is silent, got {cal}")
+        # A stored FUTURE event that truly disappears still reads as removed.
+        storage.get_cached_schedule = lambda: {
+            'events': [], 'assignments': {}, 'ghost_assignments': {}}
+        cal = [d for d in mind._gather_deltas(datetime.datetime.now())
+               if d.startswith('[calendar]')]
+        check(any('removed: Piano' in d for d in cal),
+              f"a real removal of a future event still surfaces, got {cal}")
+    finally:
+        storage.get_cached_schedule = orig
+
+
 if __name__ == '__main__':
     scenario_delta_produces_noticing()
     scenario_no_deltas_no_call()
     scenario_cap_stops_calls()
     scenario_calendar_deltas_name_events_and_see_ghosts()
+    scenario_past_events_expire_silently()
     print("test_mind_sentinel OK")
