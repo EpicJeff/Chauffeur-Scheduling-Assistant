@@ -1314,6 +1314,7 @@ class Settings(BaseModel):
     mind_cap_think: Optional[int] = 20
     mind_cap_sentinel: Optional[int] = 400
     mind_cap_promote: Optional[int] = 50
+    mind_cap_handle: Optional[int] = 30
     # Insight categories graduated to direct delivery (phase B). Empty until
     # a category is promoted from the Mind page.
     mind_direct_categories: List[str] = Field(default_factory=list)

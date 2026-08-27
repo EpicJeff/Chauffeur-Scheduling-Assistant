@@ -5947,7 +5947,16 @@ of the time.
   needs the usual deployment ritual (Check for updates → rebuild) to pick up
   the code before the setting means anything.
 
-**Known gap, by design:** the spec's proposal-attachment (`proposal_json` on
-an insight, wired to the act endpoint and the approval rail) is live in the
-schema and the API but the think prompt doesn't ask the model for proposals
-yet — turning it on later is a prompt change, not a migration.
+**Proposals are on-demand, never volunteered (v2.426.21).** The think prompt
+still doesn't ask the model for proposals — the Mind observes; it does not
+pitch. The **Handle it** button on an insight is the human asking: it calls
+`POST /api/mind/insights/{id}/propose`, which runs the LIVE chat agent stack
+(`process_agent_request`, the tapping parent/adult as acting member — the
+same rail as the chat suggestion funnel) with the insight as the prompt. A
+returned card attaches `{proposal_id, summary}` to the insight and the
+button becomes **Approve: <summary>** (the existing act endpoint executes it
+via chat_actions on tap); no card is an honest "I don't have a move for this
+one," which is itself capability-gap data. **Clear** / **Clear anyway**
+retires the insight as `acted` without touching any proposal — useful, but
+the human handled it. Guard: `mind_cap_handle` (default 30/day), parent and
+adult only, and nothing ever executes without the separate approve tap.

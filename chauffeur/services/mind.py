@@ -20,7 +20,7 @@ WAKE_START_DEFAULT = '06:00'
 WAKE_END_DEFAULT = '22:00'
 RETENTION_DAYS = 14          # noticings; retired insights get 120d at the prune call
 MAX_INSIGHTS_DEFAULT = 7
-CAPS_DEFAULT = {'think': 20, 'sentinel': 400, 'promote': 50}
+CAPS_DEFAULT = {'think': 20, 'sentinel': 400, 'promote': 50, 'handle': 30}
 THINK_ATTEMPT_FLOOR_S = 300  # a due-but-erroring/unchanged think never
                              # re-attempts faster than this (promote bypasses)
 
@@ -237,6 +237,57 @@ def visible_insights(viewer: Optional[dict]) -> List[dict]:
     if viewer and viewer.get('role') in ('parent',):
         return rows
     return [r for r in rows if r.get('sensitivity') != 'sensitive']
+
+
+# --- Handle it: on-demand proposal for one insight ------------------------
+
+def _agent_request(prompt: str, actor: dict) -> dict:
+    """Indirection so tests stub one attribute. The live path is the same
+    agent stack chat uses — its tools build and validate the proposal payload
+    (the suggestion funnel in chat_actions.py rides the identical rail)."""
+    from services.agent_router import process_agent_request
+    return process_agent_request(prompt, source='family', acting_member=actor)
+
+
+def propose_fix(insight_id: str, actor: dict = None,
+                now: datetime.datetime = None) -> dict:
+    """Ask the agent for ONE concrete move on an insight. Attaches
+    {proposal_id, summary} to the insight when the agent produces a card;
+    an honest no-move otherwise. Never executes anything — the approve tap
+    stays a separate, human act."""
+    now = now or datetime.datetime.now()
+    rows = [r for r in storage.get_mind_insights() if r['id'] == insight_id]
+    if not rows or rows[0].get('state') != 'active':
+        return {'status': 'not_found'}
+    row = rows[0]
+    existing = row.get('proposal_json') or {}
+    if existing.get('proposal_id'):
+        return {'status': 'proposed', 'proposal_id': existing['proposal_id'],
+                'summary': existing.get('summary') or ''}
+    settings = storage.get_settings() or {}
+    if not settings.get('llm_gemini_api_key', ''):
+        return {'status': 'no_key'}
+    cap = int(settings.get('mind_cap_handle', CAPS_DEFAULT['handle']))
+    if not _bump_call('handle', cap):
+        return {'status': 'capped'}
+    prompt = (f"Today is {now.strftime('%A %Y-%m-%d')}. You noticed this about "
+              f"the family: \"{row.get('line')}\""
+              + (f" ({row.get('detail')})" if row.get('detail') else '')
+              + ". Propose exactly ONE concrete action that would resolve it, "
+                "using your action tools. If no schedule or household action "
+                "genuinely helps, say so plainly instead of forcing one.")
+    try:
+        res = _agent_request(prompt, actor) or {}
+    except Exception as e:
+        logger.warning(f"[mind] propose_fix agent run failed: {e}")
+        return {'status': 'error'}
+    card = res.get('card') or {}
+    if card.get('proposal_id'):
+        pj = {'proposal_id': card['proposal_id'],
+              'summary': card.get('title') or res.get('message') or 'proposed action'}
+        storage.update_mind_insight(insight_id, {'proposal_json': pj})
+        return {'status': 'proposed', **pj}
+    return {'status': 'no_move', 'note': res.get('message') or ''}
 
 
 GRADUATION_MIN_RESOLVED = 10

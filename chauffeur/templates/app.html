@@ -2074,9 +2074,43 @@
                 const res = await fetch(`${apiBase}api/mind/insights`);
                 const data = res.ok ? await res.json() : { insights: [] };
                 mindInsights = data.insights || [];
-            } catch (e) { mindInsights = []; }
+                mindLocal = {};
+            } catch (e) { mindInsights = []; mindLocal = {}; }
             renderMind();
             applyViewVisibility();
+        }
+
+        // Per-insight local state for the Handle-it flow: 'busy' while the
+        // agent thinks, or the no-move note it came back with. Cleared on
+        // every fetch — the server's proposal_json is the durable state.
+        let mindLocal = {};
+
+        function _mindButtons(ins) {
+            const dismiss = `<button onclick="mindDismiss('${ins.id}')"
+                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Dismiss</button>`;
+            const clear = (label) => `<button onclick="mindClear('${ins.id}')"
+                title="Marks this as useful and clears it — nothing else happens"
+                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">${label}</button>`;
+            const local = mindLocal[ins.id];
+            if (ins.proposal_json && ins.proposal_json.proposal_id) {
+                return `<div class="text-xs text-violet-300 mt-1.5">Argyle proposes: ${mfEscape(ins.proposal_json.summary || '')}</div>
+                    <div class="flex flex-wrap gap-2 mt-2">
+                    <button onclick="mindAct('${ins.id}')" title="Approves and runs this action"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Approve</button>
+                    ${clear('Clear anyway')}${dismiss}</div>`;
+            }
+            if (local === 'busy') {
+                return `<div class="flex gap-2 mt-2"><button disabled
+                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-500 border border-gray-700">Thinking…</button></div>`;
+            }
+            if (local && local.noMove) {
+                return `<div class="text-xs text-gray-400 mt-1.5 italic">${mfEscape(local.note || "I don't have a move for this one.")}</div>
+                    <div class="flex gap-2 mt-2">${clear('Clear')}${dismiss}</div>`;
+            }
+            return `<div class="flex gap-2 mt-2">
+                <button onclick="mindPropose('${ins.id}')" title="Asks Argyle to propose one concrete action — nothing runs until you approve it"
+                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Handle it</button>
+                ${dismiss}</div>`;
         }
 
         function renderMind() {
@@ -2088,19 +2122,46 @@
                 <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
                     <div class="text-sm text-gray-100">${mfEscape(ins.line || '')}</div>
                     ${ins.detail ? `<div class="text-xs text-gray-500 mt-0.5">${mfEscape(ins.detail)}</div>` : ''}
-                    ${canHandle ? `<div class="flex gap-2 mt-2">
-                        <button onclick="mindAct('${ins.id}')"
-                            title="${ins.proposal_json && ins.proposal_json.summary
-                                ? 'Approves and runs this action'
-                                : 'Marks this as useful and clears it — nothing else happens'}"
-                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">${
-                            ins.proposal_json && ins.proposal_json.summary
-                                ? 'Approve: ' + mfEscape(ins.proposal_json.summary)
-                                : 'Useful — clear it'}</button>
-                        <button onclick="mindDismiss('${ins.id}')"
-                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Dismiss</button>
-                    </div>` : ''}
+                    ${canHandle ? _mindButtons(ins) : ''}
                 </div>`).join('');
+        }
+
+        async function mindPropose(id) {
+            mindLocal[id] = 'busy';
+            renderMind();
+            try {
+                const res = await fetch(`${apiBase}api/mind/insights/${id}/propose`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                const data = res.ok ? await res.json() : {};
+                if (data.status === 'proposed') {
+                    delete mindLocal[id];
+                    const ins = mindInsights.find(i => i.id === id);
+                    if (ins) ins.proposal_json = { proposal_id: data.proposal_id, summary: data.summary };
+                } else if (data.status === 'no_move') {
+                    mindLocal[id] = { noMove: true, note: data.note };
+                } else {
+                    delete mindLocal[id];
+                    showGlobalAlert(data.status === 'capped'
+                        ? "Argyle has hit today's thinking budget — try tomorrow."
+                        : "Argyle couldn't come up with anything just now.");
+                }
+            } catch (e) {
+                delete mindLocal[id];
+                showGlobalAlert("Argyle couldn't come up with anything just now.");
+            }
+            renderMind();
+        }
+
+        async function mindClear(id) {
+            try {
+                const res = await fetch(`${apiBase}api/mind/insights/${id}/clear`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    showGlobalAlert(err.detail || "Couldn't clear that.");
+                }
+            } catch (e) { showGlobalAlert("Couldn't clear that."); }
+            fetchMind();
         }
 
         async function mindDismiss(id) {

@@ -509,6 +509,8 @@ ENTRIES: List[dict] = [
        'Hard ceiling on sentinel LLM calls per day (default 400).', page='mind'),
     _e('mind_cap_promote', 'mind', 'Daily promote cap',
        'Hard ceiling on urgency-check LLM calls per day (default 50).', page='mind'),
+    _e('mind_cap_handle', 'mind', 'Daily handle cap',
+       'Hard ceiling on Handle-it proposal runs per day (default 30).', page='mind'),
     _e('mind_direct_categories', 'mind', 'Graduated categories',
        'Insight categories approved for direct delivery (phase B). Empty until '
        'you graduate one from the Mind page.', page='mind'),

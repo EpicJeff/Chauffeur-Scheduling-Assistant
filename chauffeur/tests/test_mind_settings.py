@@ -7,7 +7,7 @@ def scenario_mind_settings_registered():
     for key in ('mind_enabled', 'mind_sentinel_cadence_s', 'mind_think_cadence_min',
                 'mind_wake_start', 'mind_wake_end', 'mind_max_insights',
                 'mind_cap_think', 'mind_cap_sentinel', 'mind_cap_promote',
-                'mind_direct_categories'):
+                'mind_cap_handle', 'mind_direct_categories'):
         check(key in entries, f"{key} registered")
         check(entries[key]['page'] == 'mind', f"{key} lives on the Mind page")
 

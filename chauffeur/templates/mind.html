@@ -97,6 +97,11 @@
                         <input type="number" min="0" x-model.number="s.mind_cap_promote" @change="save()"
                             class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
                     </div>
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Daily handle cap</div>
+                        <input type="number" min="0" x-model.number="s.mind_cap_handle" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
                 </div>
                 <p class="text-[11px] text-gray-500 -mt-2 px-1">
                     Hard ceilings on LLM calls per day for the think / sentinel / promote
@@ -146,15 +151,27 @@
                                     </div>
                                     <div class="text-xs text-gray-500 mt-0.5" x-show="ins.detail" x-text="ins.detail"></div>
                                     <div class="text-[11px] text-gray-600 mt-1" x-text="(ins.category || 'other') + ' · ' + fmtTs(ins.created_ts)"></div>
-                                    <div class="flex gap-2 mt-2">
-                                        <button @click="act(ins.id)"
-                                            :title="ins.proposal_json && ins.proposal_json.summary
-                                                ? 'Approves and runs this action'
-                                                : 'Marks this as useful and clears it — nothing else happens'"
-                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700"
-                                            x-text="ins.proposal_json && ins.proposal_json.summary
-                                                ? 'Approve: ' + ins.proposal_json.summary
-                                                : 'Useful — clear it'"></button>
+                                    <div class="text-xs text-violet-300 mt-1.5"
+                                        x-show="ins.proposal_json && ins.proposal_json.proposal_id"
+                                        x-text="'Argyle proposes: ' + ((ins.proposal_json || {}).summary || '')"></div>
+                                    <div class="text-xs text-gray-400 mt-1.5 italic"
+                                        x-show="noMove[ins.id]"
+                                        x-text="noMove[ins.id] || ''"></div>
+                                    <div class="flex flex-wrap gap-2 mt-2">
+                                        <template x-if="ins.proposal_json && ins.proposal_json.proposal_id">
+                                            <button @click="act(ins.id)" title="Approves and runs this action"
+                                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Approve</button>
+                                        </template>
+                                        <template x-if="!(ins.proposal_json && ins.proposal_json.proposal_id) && !noMove[ins.id]">
+                                            <button @click="propose(ins.id)" :disabled="busy[ins.id]"
+                                                title="Asks Argyle to propose one concrete action — nothing runs until you approve it"
+                                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:bg-gray-800 disabled:text-gray-500"
+                                                x-text="busy[ins.id] ? 'Thinking…' : 'Handle it'"></button>
+                                        </template>
+                                        <button @click="clearIt(ins.id)"
+                                            title="Marks this as useful and clears it — nothing else happens"
+                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700"
+                                            x-text="ins.proposal_json && ins.proposal_json.proposal_id ? 'Clear anyway' : 'Clear'"></button>
                                         <button @click="dismiss(ins.id)"
                                             class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Dismiss</button>
                                     </div>
@@ -243,7 +260,7 @@
                     mind_enabled: false, mind_wake_start: '06:00', mind_wake_end: '22:00',
                     mind_think_cadence_min: 60, mind_sentinel_cadence_s: 120,
                     mind_max_insights: 7, mind_cap_think: 20, mind_cap_sentinel: 400,
-                    mind_cap_promote: 50, mind_direct_categories: []
+                    mind_cap_promote: 50, mind_cap_handle: 30, mind_direct_categories: []
                 },
 
                 // Admin-only payload (403s a non-parent viewer; the settings
@@ -254,6 +271,8 @@
                 history: [],
                 counters: {},
                 graduation: [],
+                busy: {},      // insight id -> Handle-it call in flight
+                noMove: {},    // insight id -> the agent's no-move note
 
                 async load() {
                     try {
@@ -319,6 +338,40 @@
                     this.loadAdmin();
                 },
 
+                async propose(id) {
+                    this.busy[id] = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/propose`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                        const d = r.ok ? await r.json() : {};
+                        if (d.status === 'proposed') {
+                            const ins = this.insights.find(i => i.id === id);
+                            if (ins) ins.proposal_json = { proposal_id: d.proposal_id, summary: d.summary };
+                        } else if (d.status === 'no_move') {
+                            this.noMove[id] = d.note || "I don't have a move for this one.";
+                        } else {
+                            showGlobalAlert(d.status === 'capped'
+                                ? "Argyle has hit today's thinking budget — try tomorrow."
+                                : "Argyle couldn't come up with anything just now.");
+                        }
+                    } catch (e) {
+                        showGlobalAlert("Argyle couldn't come up with anything just now.");
+                    }
+                    delete this.busy[id];
+                },
+
+                async clearIt(id) {
+                    try {
+                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/clear`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            showGlobalAlert(err.detail || "Couldn't clear that.");
+                        }
+                    } catch (e) { showGlobalAlert("Couldn't clear that."); }
+                    this.loadAdmin();
+                },
+
                 // Appends to mind_direct_categories via the same merge-semantics
                 // POST /api/settings the form above uses — a single-key body
                 // touches nothing else.
@@ -357,7 +410,8 @@
                                 mind_max_insights: Math.max(1, parseInt(this.s.mind_max_insights, 10) || 7),
                                 mind_cap_think: Math.max(0, parseInt(this.s.mind_cap_think, 10) || 0),
                                 mind_cap_sentinel: Math.max(0, parseInt(this.s.mind_cap_sentinel, 10) || 0),
-                                mind_cap_promote: Math.max(0, parseInt(this.s.mind_cap_promote, 10) || 0)
+                                mind_cap_promote: Math.max(0, parseInt(this.s.mind_cap_promote, 10) || 0),
+                                mind_cap_handle: Math.max(0, parseInt(this.s.mind_cap_handle, 10) || 0)
                             })
                         });
                     } catch (e) {

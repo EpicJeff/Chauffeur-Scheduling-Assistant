@@ -4863,6 +4863,33 @@ def mind_act(insight_id: str, body: dict = Body(default={}),
     return result
 
 
+@app.post("/api/mind/insights/{insight_id}/propose")
+def mind_propose(insight_id: str, body: dict = Body(default={}),
+                 request: Request = None):
+    """Handle it: ask the agent for one concrete move on this insight. The
+    proposal only attaches — approval stays a separate human tap."""
+    from services import mind as _mind
+    actor = _mind_actor(request, body.get('member_id'))
+    res = _mind.propose_fix(insight_id, actor)
+    if res.get('status') == 'not_found':
+        raise HTTPException(status_code=404, detail="No such insight")
+    return res
+
+
+@app.post("/api/mind/insights/{insight_id}/clear")
+def mind_clear(insight_id: str, body: dict = Body(default={}),
+               request: Request = None):
+    """Useful, but the human handles it themselves: retires as acted WITHOUT
+    touching any attached proposal — the counterpart to act's approve."""
+    import time as _t
+    _mind_actor(request, body.get('member_id'))
+    ok = storage.update_mind_insight(insight_id, {
+        'state': 'retired', 'outcome': 'acted', 'resolved_ts': _t.time()})
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such insight")
+    return {"status": "success"}
+
+
 @app.get("/api/mind/admin")
 def mind_admin(request: Request = None):
     """Active + recent history + counters + graduation candidates — the
