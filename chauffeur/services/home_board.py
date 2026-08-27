@@ -4810,10 +4810,14 @@ def resolve_widgets(requested: Optional[str] = None, settings: dict = None) -> L
 # `intake` left this list in v2.232.0. It was the one nav slug that is not a
 # board — mail approvals and IMAP settings, an admin surface — and it was
 # already off DEFAULT_TABS for exactly that reason, so it could be added to a
-# shelf and never was on purpose. A vocabulary with one member that means
-# something else is a vocabulary with an exception to explain forever. It
-# stays on the desktop nav, where admin lives; if a kiosk-shaped intake is
-# ever designed, it joins the shipped boards like everything else.
+# shelf and never was on purpose. `mind` (v2.426.13) is the same shape: its
+# admin page carries the full insight lane, INCLUDING rows sensitivity-marked
+# for parents only — the one thing this whole feature exists to keep off a
+# shared wall display, so the page that administers it cannot itself become
+# one. A vocabulary with a couple of members that mean something else is a
+# vocabulary with exceptions to explain forever. Both stay on the desktop
+# nav, where admin lives; if a kiosk-shaped version of either is ever
+# designed, it joins the shipped boards like everything else.
 # `shopping` became `meals` in v2.351.0 and `lists` joined it. The page named
 # Shopping was never about shopping in general — it plans dinners and keeps the
 # one standing list a grocery run empties — so it is Meals & Groceries now, and
@@ -4822,13 +4826,14 @@ def resolve_widgets(requested: Optional[str] = None, settings: dict = None) -> L
 NAV_SLUGS = ['home', 'schedule', 'calendar', 'errands', 'meals', 'lists',
              'occasions', 'chores', 'routines', 'trips', 'map', 'moments',
              'music']
-# Every destination except the admin one. An earlier six-slug default put more
+# Every destination except the admin ones. An earlier six-slug default put more
 # than half the app out of reach from the panel, which is not a shelf, it is a
 # bookmark bar. The shelf measures itself and moves whatever does not fit into
 # a "More" flyout, so the number of destinations is no longer a design
-# constraint that has to be guessed here. Intake stays off: it is an admin
-# surface (mail approvals, IMAP settings) and the kiosk rule has always been to
-# keep it off shared screens.
+# constraint that has to be guessed here. Intake and Mind stay off: both are
+# admin surfaces (mail approvals/IMAP settings; dial settings and the
+# sensitive insight lane) and the kiosk rule has always been to keep those off
+# shared screens.
 DEFAULT_TABS = ['home', 'schedule', 'calendar', 'chores', 'routines', 'meals',
                 'lists', 'errands', 'occasions', 'trips', 'map', 'moments',
                 'music']

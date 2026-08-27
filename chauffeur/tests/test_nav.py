@@ -160,21 +160,26 @@ def scenario_the_home_board_is_in_the_nav():
         check(slug in slugs, f"'{slug}' is missing from NAV_ITEMS")
 
 
+ADMIN_ONLY_SLUGS = ('intake', 'mind')
+
+
 def scenario_every_slug_is_filterable():
     """`?tabs=` only hides links whose slug the panel profile recognises, so a
     content page missing from that vocabulary cannot be filtered off a kiosk
     card or a shelf at all."""
     from services import home_board
-    # `intake` is the ONE exception, and it is deliberate (v2.232.0): mail
-    # approvals and IMAP settings are an admin surface, it was already off
-    # DEFAULT_TABS for that reason, and a shelf vocabulary with one member
-    # that is not a board is an exception to explain forever. It keeps its
-    # desktop-nav link; it is simply not something a wall panel can show.
+    # `intake` and `mind` are the exceptions, and both are deliberate:
+    # intake (v2.232.0) is mail approvals and IMAP settings, mind (v2.426.13)
+    # is dial settings plus the full sensitive insight lane — both admin
+    # surfaces, both already off DEFAULT_TABS for that reason. A shelf
+    # vocabulary with members that are not boards is an exception to explain
+    # forever; each keeps its desktop-nav link, it is simply not something a
+    # wall panel can show.
     for it in _items():
-        if it['slug'] == 'intake':
+        if it['slug'] in ADMIN_ONLY_SLUGS:
             check(it['slug'] not in home_board.NAV_SLUGS,
-                  "intake is back in the shelf vocabulary — it is an admin "
-                  "page, and the shelf is boards")
+                  f"{it['slug']} is back in the shelf vocabulary — it is an "
+                  "admin page, and the shelf is boards")
             continue
         check(it['slug'] in home_board.NAV_SLUGS,
               f"'{it['slug']}' is in the nav but not in home_board.NAV_SLUGS")
@@ -204,8 +209,20 @@ def scenario_intake_stays_off_shared_screens():
     """Intake is mail approvals and IMAP credentials. It is in the nav for the
     browser and hidden on every kiosk unless a card opts back in."""
     kiosk = BODY[BODY.index('if (isKiosk) {'):]
-    check('data-slug="intake"' in kiosk,
+    check('data-slug="intake"' in kiosk or "'intake'" in kiosk,
           "the kiosk no longer hides intake")
+
+
+def scenario_mind_stays_off_shared_screens():
+    """Mind's admin page carries dial settings and the full insight lane,
+    sensitive rows included — the one thing the feature exists to keep off a
+    shared screen. It is in the nav for the browser and hidden on every kiosk
+    unless a card opts back in, same as intake."""
+    check('mind' in ADMIN_ONLY_SLUGS,
+          "mind dropped out of the admin-only exception list")
+    kiosk = BODY[BODY.index('if (isKiosk) {'):]
+    check("'mind'" in kiosk or 'data-slug="mind"' in kiosk,
+          "the kiosk no longer hides mind")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
