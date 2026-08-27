@@ -190,6 +190,12 @@ def snapshot(now: datetime.datetime = None) -> str:
                          f"({r.get('category')}) {r.get('line')}")
         return '\n'.join(lines)
 
+    def _vitals():
+        from services import vitals as _v
+        return _v.snapshot_section(now)
+
+    section('FAMILY VITALS (against this family\'s own baseline — never '
+            'another family, never another person)', _vitals)
     section('CALENDAR NEXT 7 DAYS', _calendar)
     section('OPEN FINDINGS (already watched — do not repeat these)', _findings)
     section('FAMILY CHANNEL (spoken in the living room)', _family_chat)
@@ -214,7 +220,7 @@ _TS_NOISE = re.compile(r'\b\d{1,2}:\d{2}\b')
 # it is read — hashing those would make the skip never fire. Chat still
 # triggers thinks, but through noticings, which deep_think checks separately.
 _HASH_SECTIONS = ('CALENDAR NEXT 7 DAYS', 'OPEN FINDINGS', 'SHOPPING LISTS',
-                  'CARS')
+                  'CARS', 'FAMILY VITALS')
 
 
 def snapshot_hash(text: str) -> str:
@@ -489,6 +495,11 @@ THINK_SYSTEM = (
     "job is what only whole-picture judgment can see: cross-domain patterns, "
     "load building on one person, needs said out loud in the family channel, "
     "collisions nobody planned for, small kindnesses worth suggesting.\n\n"
+    "VITALS: the FAMILY VITALS section is the family's pulse — each sign "
+    "against this family's own past, never another family and never another "
+    "person. Trends there are the richest thing you are shown: a level is a "
+    "fact, a trend is a finding. Speak about the WEEK, never about who is "
+    "failing it, and never render a person's load as a score.\n\n"
     "DATES: the snapshot header states today's date; every noticing and "
     "previous insight is stamped with its own date. The calendar shows the "
     "NEXT 7 DAYS only — an event before today is history, not missing and "

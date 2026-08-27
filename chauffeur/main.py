@@ -422,6 +422,15 @@ async def push_notification_loop():
                     from services import family_digest
                     family_digest.record_daily_stats(today_str)
                     storage.set_app_state("daily_stats_last_date", today_str)
+                    # Once, on the first night after the pulse ships: rebuild
+                    # ~8 weeks of schedule-derived vitals from real calendar
+                    # history, so baselines exist now rather than in October.
+                    # Marker FIRST — a failing backfill must not retry nightly.
+                    if not storage.get_app_state("vitals_backfilled"):
+                        storage.set_app_state("vitals_backfilled", today_str)
+                        from services import vitals as _vitals
+                        bf = _vitals.backfill()
+                        print(f"Vitals backfill: {bf}")
             except Exception as se:
                 print(f"Daily stats snapshot error: {se}")
 

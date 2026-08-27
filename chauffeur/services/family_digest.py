@@ -109,6 +109,13 @@ def record_daily_stats(date_str: str = None) -> dict:
             kids[m['id']] = len(seen_parents)
 
     row = {'date': date_str, 'drivers': drivers, 'kids': kids}
+    # The pulse rides along on this row: one nightly computation on a job that
+    # already runs, and no table of its own (services/vitals.py).
+    try:
+        from services import vitals as _vitals
+        row['vitals'] = _vitals.measure_day(date_str, sched=cache)
+    except Exception as e:
+        print(f"[vitals] measure failed for {date_str}: {e}")
     storage.upsert_daily_stats(date_str, row)
     return row
 
