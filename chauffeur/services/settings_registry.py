@@ -47,6 +47,7 @@ GROUPS = [
     ('ai', '✨', 'AI & the assistant'),
     ('maps', '🗺️', 'Maps & quotas'),
     ('solver', '⚙️', 'Solver behaviour'),
+    ('mind', '🧠', 'The Mind'),
 ]
 
 _CONFIG = 'config'
@@ -486,6 +487,31 @@ ENTRIES: List[dict] = [
        'How many battles pay experience each day. Past it the fight still '
        'happens and the replay still plays -- only the reward stops.',
        page='chores', anchor='petxp'),
+
+    # --- The Mind ---
+    _e('mind_enabled', 'mind', 'The Mind',
+       'Argyle watches whole-family state and keeps a small set of noticed '
+       'insights. Off means completely off — no reads, no LLM calls.', page='mind'),
+    _e('mind_wake_start', 'mind', 'Wakes at',
+       'The Mind only thinks between these times (default 06:00).', page='mind'),
+    _e('mind_wake_end', 'mind', 'Sleeps at',
+       'Thinking stops here (default 22:00). Equal times = always awake.', page='mind'),
+    _e('mind_think_cadence_min', 'mind', 'Thinks every (minutes)',
+       'How often the deep reflection runs while awake (default 60).', page='mind'),
+    _e('mind_sentinel_cadence_s', 'mind', 'Listens every (seconds)',
+       'How often changed state is checked for noticings (default 120).', page='mind'),
+    _e('mind_max_insights', 'mind', 'Insights kept',
+       'The most insights shown at once; the Mind curates down to this (default 7).',
+       page='mind'),
+    _e('mind_cap_think', 'mind', 'Daily think cap',
+       'Hard ceiling on deep-think LLM calls per day (default 20).', page='mind'),
+    _e('mind_cap_sentinel', 'mind', 'Daily listen cap',
+       'Hard ceiling on sentinel LLM calls per day (default 400).', page='mind'),
+    _e('mind_cap_promote', 'mind', 'Daily promote cap',
+       'Hard ceiling on urgency-check LLM calls per day (default 50).', page='mind'),
+    _e('mind_direct_categories', 'mind', 'Graduated categories',
+       'Insight categories approved for direct delivery (phase B). Empty until '
+       'you graduate one from the Mind page.', page='mind'),
 ]
 
 BY_KEY: Dict[str, dict] = {e['key']: e for e in ENTRIES}
