@@ -39,8 +39,32 @@ def scenario_listing_filters():
     check(storage.get_threads(owner='m1')[0]['id'] == a, "filter by who carries it")
 
 
+def scenario_all_fields_present():
+    _reset()
+    # Create a thread with minimal data
+    tid = storage.add_thread({'title': 'Minimal', 'owner_member_id': 'm1'})
+    row = storage.get_thread(tid)
+    # Check that all model fields are present with their defaults
+    check('id' in row, "id is present")
+    check('title' in row and row['title'] == 'Minimal', "title is preserved")
+    check('goal' in row and row['goal'] == '', "goal has default")
+    check('kind' in row and row['kind'] == 'project', "kind has default")
+    check('state' in row and row['state'] == 'open', "state has default")
+    check('owner_member_id' in row and row['owner_member_id'] == 'm1', "owner_member_id is preserved")
+    check('contact_id' in row and row['contact_id'] is None, "contact_id has default")
+    check('counterparty_name' in row and row['counterparty_name'] == '', "counterparty_name has default")
+    check('counterparty_email' in row and row['counterparty_email'] == '', "counterparty_email has default")
+    check('next_action' in row and row['next_action'] == '', "next_action has default")
+    check('next_action_at' in row and row['next_action_at'] is None, "next_action_at has default")
+    check('history' in row and row['history'] == [], "history has default")
+    check('created_by' in row and row['created_by'] is None, "created_by has default")
+    check('created_at' in row and isinstance(row['created_at'], float), "created_at is a float timestamp")
+    check('closed_at' in row and row['closed_at'] is None, "closed_at has default")
+
+
 if __name__ == '__main__':
     scenario_roundtrip_and_defaults()
     scenario_history_is_append_only()
     scenario_listing_filters()
+    scenario_all_fields_present()
     print("test_threads_storage OK")

@@ -2933,23 +2933,13 @@ def get_thread(thread_id: str) -> Optional[dict]:
         return dict(res[0]) if res else None
 
 def add_thread(data: dict) -> str:
-    import uuid as _uuid
+    from models.schemas import Thread
     with db_lock:
-        # Generate id if not provided
-        if 'id' not in data:
-            data['id'] = _uuid.uuid4().hex
-        # Set created_at if not provided
-        if 'created_at' not in data:
-            data['created_at'] = time.time()
-        # Initialize empty fields from Thread model defaults
-        if 'state' not in data:
-            data['state'] = 'open'
-        if 'kind' not in data:
-            data['kind'] = 'project'
-        if 'history' not in data:
-            data['history'] = []
-        threads_table.insert(data)
-        return data['id']
+        # Build through Thread model to apply all defaults
+        thread = Thread(**data)
+        row = thread.model_dump()
+        threads_table.insert(row)
+        return row['id']
 
 def get_threads(state: str = None, owner: str = None, include_closed: bool = False) -> List[dict]:
     with db_lock:
