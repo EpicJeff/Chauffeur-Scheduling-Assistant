@@ -1586,6 +1586,10 @@ def occasions_page(request: Request):
 def settings_page(request: Request):
     return templates.TemplateResponse(request=request, name="settings.html")
 
+@app.get("/mind")
+def mind_page(request: Request):
+    return templates.TemplateResponse(request=request, name="mind.html")
+
 @app.get("/chores")
 def chores_page(request: Request):
     return _page_or_board(request, "chores", "chores.html")

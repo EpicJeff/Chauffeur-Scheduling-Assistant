@@ -1297,6 +1297,26 @@ class Settings(BaseModel):
     panel_screensaver_media_path: str = ''
     # Seconds each photo holds before crossfading to the next.
     panel_screensaver_dwell_seconds: int = 20
+    # --- The Mind (whole-family noticing loop) ---
+    # Off means completely off: no reads, no LLM calls.
+    mind_enabled: Optional[bool] = False
+    # HH:MM. The Mind only thinks between wake_start and wake_end.
+    mind_wake_start: Optional[str] = '06:00'
+    mind_wake_end: Optional[str] = '22:00'
+    # Minutes between deep-reflection ("think") passes while awake.
+    mind_think_cadence_min: Optional[int] = 60
+    # Seconds between sentinel ("listen for changed state") passes.
+    mind_sentinel_cadence_s: Optional[int] = 120
+    # Most insights kept/shown at once; the Mind curates down to this.
+    mind_max_insights: Optional[int] = 7
+    # Hard daily ceilings on LLM calls per loop, independent knobs so one
+    # loop running hot cannot starve the others.
+    mind_cap_think: Optional[int] = 20
+    mind_cap_sentinel: Optional[int] = 400
+    mind_cap_promote: Optional[int] = 50
+    # Insight categories graduated to direct delivery (phase B). Empty until
+    # a category is promoted from the Mind page.
+    mind_direct_categories: List[str] = Field(default_factory=list)
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

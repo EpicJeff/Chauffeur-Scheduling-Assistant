@@ -199,6 +199,7 @@ RULES = [
     (ANY, '/dashboard', ANYONE, None),
     (ANY, '/dashboard_v2', ANYONE, None),
     (ANY, '/settings', ANYONE, None),
+    (ANY, '/mind', ANYONE, None),
 
     # FastAPI's generated docs. Found UNCLASSIFIED by the S1 test, which is
     # the first thing it caught and on its own worth the file: `/docs` is a

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Mind</title>
+    <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
+    {% include 'ha_theme.html' %}
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
+    <style>
+        body { background-color: #111827; color: #e5e7eb; }
+        [x-cloak] { display: none !important; }
+    </style>
+    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <div class="flex-1 overflow-y-auto bg-gray-900/50">
+        <div x-data="mindSettings()" x-init="load()" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
+
+            <h2 class="panel-page-title">The Mind</h2>
+            <p class="text-sm text-gray-500 mb-5">
+                Argyle watches whole-family state and keeps a small set of noticed
+                insights. This is a skeleton page for the dials underneath it — the
+                lane of insights themselves, dismiss/act, and graduation land on top
+                of this in a later slice.
+            </p>
+
+            <div class="space-y-4">
+                <label class="flex items-center justify-between bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                    <span class="text-sm font-semibold text-gray-200">The Mind is on</span>
+                    <input type="checkbox" x-model="s.mind_enabled" @change="save()"
+                        class="h-5 w-5 accent-pink-400">
+                </label>
+                <p class="text-[11px] text-gray-500 -mt-2 px-1">
+                    Off means completely off — no reads, no LLM calls.
+                </p>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Wakes at</div>
+                        <input type="time" x-model="s.mind_wake_start" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Sleeps at</div>
+                        <input type="time" x-model="s.mind_wake_end" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                </div>
+                <p class="text-[11px] text-gray-500 -mt-2 px-1">
+                    The Mind only thinks between these times. Equal times = always awake.
+                </p>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Thinks every (minutes)</div>
+                        <input type="number" min="1" x-model.number="s.mind_think_cadence_min" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Listens every (seconds)</div>
+                        <input type="number" min="1" x-model.number="s.mind_sentinel_cadence_s" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                </div>
+                <p class="text-[11px] text-gray-500 -mt-2 px-1">
+                    How often the deep reflection runs, and how often changed state is
+                    checked for noticings.
+                </p>
+
+                <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                    <div class="text-xs font-semibold text-gray-400 mb-1">Insights kept</div>
+                    <input type="number" min="1" x-model.number="s.mind_max_insights" @change="save()"
+                        class="w-32 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    <p class="text-[11px] text-gray-500 mt-1">
+                        The most insights shown at once; the Mind curates down to this.
+                    </p>
+                </div>
+
+                <div class="grid grid-cols-3 gap-3">
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Daily think cap</div>
+                        <input type="number" min="0" x-model.number="s.mind_cap_think" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Daily listen cap</div>
+                        <input type="number" min="0" x-model.number="s.mind_cap_sentinel" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                        <div class="text-xs font-semibold text-gray-400 mb-1">Daily promote cap</div>
+                        <input type="number" min="0" x-model.number="s.mind_cap_promote" @change="save()"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white">
+                    </div>
+                </div>
+                <p class="text-[11px] text-gray-500 -mt-2 px-1">
+                    Hard ceilings on LLM calls per day for the think / sentinel / promote
+                    loops, so one running hot cannot starve the others.
+                </p>
+
+                <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3">
+                    <div class="text-xs font-semibold text-gray-400 mb-1">Graduated categories</div>
+                    <div class="text-sm text-gray-300" x-show="(s.mind_direct_categories || []).length">
+                        <template x-for="c in (s.mind_direct_categories || [])" :key="c">
+                            <span class="inline-block bg-gray-900 border border-gray-700 rounded-full px-2.5 py-0.5 mr-1.5 mb-1 text-xs" x-text="c"></span>
+                        </template>
+                    </div>
+                    <p class="text-[11px] text-gray-500" x-show="!(s.mind_direct_categories || []).length">
+                        None yet. Insight categories approved for direct delivery (phase B)
+                        show here once you graduate one from this page.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% include 'components/control_center.html' %}
+    {% include 'components/moments_hearth.html' %}
+
+    <script>
+        function mindSettings() {
+            return {
+                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                s: {
+                    mind_enabled: false, mind_wake_start: '06:00', mind_wake_end: '22:00',
+                    mind_think_cadence_min: 60, mind_sentinel_cadence_s: 120,
+                    mind_max_insights: 7, mind_cap_think: 20, mind_cap_sentinel: 400,
+                    mind_cap_promote: 50, mind_direct_categories: []
+                },
+
+                async load() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/settings');
+                        const d = r.ok ? await r.json() : {};
+                        for (const k of Object.keys(this.s)) {
+                            if (d[k] !== undefined && d[k] !== null) this.s[k] = d[k];
+                        }
+                    } catch (e) { /* defaults already in place */ }
+                },
+
+                // Sends only the ten keys this page owns — /api/settings merges
+                // with exclude_unset, so no other surface's settings are at risk.
+                async save() {
+                    try {
+                        await fetch(this.apiBase + 'api/settings', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                mind_enabled: !!this.s.mind_enabled,
+                                mind_wake_start: this.s.mind_wake_start,
+                                mind_wake_end: this.s.mind_wake_end,
+                                mind_think_cadence_min: Math.max(1, parseInt(this.s.mind_think_cadence_min, 10) || 60),
+                                mind_sentinel_cadence_s: Math.max(1, parseInt(this.s.mind_sentinel_cadence_s, 10) || 120),
+                                mind_max_insights: Math.max(1, parseInt(this.s.mind_max_insights, 10) || 7),
+                                mind_cap_think: Math.max(0, parseInt(this.s.mind_cap_think, 10) || 0),
+                                mind_cap_sentinel: Math.max(0, parseInt(this.s.mind_cap_sentinel, 10) || 0),
+                                mind_cap_promote: Math.max(0, parseInt(this.s.mind_cap_promote, 10) || 0)
+                            })
+                        });
+                    } catch (e) {
+                        showGlobalAlert('Could not save that just now.');
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>
