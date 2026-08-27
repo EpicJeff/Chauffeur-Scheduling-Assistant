@@ -644,6 +644,15 @@ async def push_notification_loop():
             except Exception as ppe:
                 print(f"Presence prompt error: {ppe}")
 
+            # --- The Mind (phase C: docs/superpowers/specs/2026-08-27-...) ---
+            # All gating (enabled flag, cadences, wake window, caps, snapshot
+            # hash) lives in mind.tick; this block only keeps the loop alive.
+            try:
+                from services import mind as _mind
+                await asyncio.to_thread(_mind.tick)
+            except Exception as me:
+                print(f"Mind tick error: {me}")
+
         except Exception as e:
             print(f"Error in push loop: {e}")
 

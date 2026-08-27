@@ -427,6 +427,31 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
             'active': len(storage.get_mind_insights(state='active'))}
 
 
+def tick(now: datetime.datetime = None) -> dict:
+    """The one entry the push loop calls. All gating lives here so main.py
+    stays a two-line block and tests drive this directly."""
+    now = now or datetime.datetime.now()
+    settings = storage.get_settings() or {}
+    if not settings.get('mind_enabled', False):
+        return {'status': 'disabled'}
+    out = {'status': 'ticked'}
+    ts = now.timestamp()
+
+    cadence = int(settings.get('mind_sentinel_cadence_s', 120))
+    last = float(storage.get_app_state('mind_sentinel_last') or 0)
+    if ts - last >= cadence:
+        storage.set_app_state('mind_sentinel_last', ts)   # marker FIRST
+        out['sentinel'] = sentinel_sweep(now)
+        out['promote'] = maybe_promote()
+
+    think_every = int(settings.get('mind_think_cadence_min', 60)) * 60
+    last_think = float(storage.get_app_state('mind_last_think_ts') or 0)
+    requested = bool(storage.get_app_state('mind_think_requested'))
+    if requested or ts - last_think >= think_every:
+        out['think'] = deep_think(now)
+    return out
+
+
 def maybe_promote() -> dict:
     urgent = [r for r in storage.get_mind_noticings(consumed=False)
               if r.get('urgency') == 'high' and not r.get('promoted_checked')]
