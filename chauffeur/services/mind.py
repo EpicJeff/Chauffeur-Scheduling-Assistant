@@ -216,14 +216,36 @@ def visible_insights(viewer: Optional[dict]) -> List[dict]:
     return [r for r in rows if r.get('sensitivity') != 'sensitive']
 
 
+GRADUATION_MIN_RESOLVED = 10
+GRADUATION_MIN_ACT_RATE = 0.60
+
+
 def category_counters() -> dict:
     """Per-category counts for the admin lane. Task 11 fills this in."""
-    return {}
+    out = {}
+    for r in storage.get_mind_insights(state='retired'):
+        cat = r.get('category') or 'other'
+        bucket = out.setdefault(cat, {'acted': 0, 'dismissed': 0, 'expired': 0})
+        if r.get('outcome') in bucket:
+            bucket[r['outcome']] += 1
+    return out
 
 
 def graduation_candidates() -> list:
     """Categories worth promoting out of the lane. Task 11 fills this in."""
-    return []
+    settings = storage.get_settings() or {}
+    already = set(settings.get('mind_direct_categories') or [])
+    out = []
+    for cat, c in category_counters().items():
+        if cat in already:
+            continue
+        resolved = c['acted'] + c['dismissed'] + c['expired']
+        answered = c['acted'] + c['dismissed']
+        if resolved >= GRADUATION_MIN_RESOLVED and answered \
+                and c['acted'] / answered >= GRADUATION_MIN_ACT_RATE:
+            out.append({'category': cat, 'resolved': resolved,
+                        'act_rate': round(c['acted'] / answered, 2)})
+    return sorted(out, key=lambda x: -x['act_rate'])
 
 
 # --- Sentinel: coalesced deltas -> one gemma call -> noticings -------------
