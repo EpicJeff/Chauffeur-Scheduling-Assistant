@@ -328,3 +328,36 @@ def sentinel_sweep(now: datetime.datetime = None) -> dict:
                                        'refs': []})
             stored += 1
     return {'status': 'swept', 'noticings': stored}
+
+
+# --- Promoter: high-urgency noticings -> one lite call -> early think ------
+
+PROMOTER_SYSTEM = (
+    "A family home assistant noticed something and wonders whether to think "
+    "hard about it NOW or wait for its next scheduled reflection (within the "
+    "hour). Promote only genuinely time-relevant items. Return STRICT JSON: "
+    '{"think_now": true|false}'
+)
+
+
+def maybe_promote() -> dict:
+    urgent = [r for r in storage.get_mind_noticings(consumed=False)
+              if r.get('urgency') == 'high' and not r.get('promoted_checked')]
+    if not urgent:
+        return {'status': 'nothing'}
+    settings = storage.get_settings() or {}
+    api_key = settings.get('llm_gemini_api_key', '')
+    if not api_key:
+        return {'status': 'no_key'}
+    cap = int(settings.get('mind_cap_promote', CAPS_DEFAULT['promote']))
+    if not _bump_call('promote', cap):
+        return {'status': 'capped'}
+    storage.mark_mind_noticings_checked([r['id'] for r in urgent])
+    res = _pool_call('interactive', api_key, PROMOTER_SYSTEM,
+                     '\n'.join(f"- {r['line']}" for r in urgent[:10]), timeout_s=30)
+    if not isinstance(res, dict) or res.get('error'):
+        return {'status': 'error'}
+    if res.get('think_now'):
+        storage.set_app_state('mind_think_requested', True)
+        return {'status': 'promoted'}
+    return {'status': 'held'}

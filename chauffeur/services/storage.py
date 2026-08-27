@@ -2683,6 +2683,16 @@ def consume_mind_noticings(ids: List[str]) -> int:
                                                  Query().id == nid))
     return n
 
+def mark_mind_noticings_checked(ids: List[str]) -> int:
+    """Promoter rung (Task 4): marks noticings as already asked-about, so a
+    held/errored promote call doesn't re-ask the same urgent line forever."""
+    n = 0
+    with db_lock:
+        for nid in ids:
+            n += len(mind_noticings_table.update({'promoted_checked': True},
+                                                 Query().id == nid))
+    return n
+
 def add_mind_insight(data: dict) -> str:
     import uuid as _uuid
     row = {'id': _uuid.uuid4().hex, 'created_ts': time.time(), 'state': 'active',
