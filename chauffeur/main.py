@@ -4805,6 +4805,75 @@ def answer_coverage_ask(ask_id: str, body: dict = Body(default={}),
         trigger_background_refresh()
     return res
 
+# --- Mind: the insight lane (get / dismiss / act / admin) -----------------
+
+@app.get("/api/mind/insights")
+def mind_insights(request: Request = None):
+    """The lane, filtered server-side by who's asking — a wall panel or a
+    child never receives a sensitive row in the payload."""
+    from services import mind as _mind
+    viewer_id = _acting_id(request, None)
+    viewer = storage.get_member(viewer_id) if viewer_id else None
+    return {"insights": _mind.visible_insights(viewer)}
+
+
+def _mind_actor(request, claimed):
+    """Dismiss/act/admin are parent/adult work, same discipline as
+    `_needs_you_actor`."""
+    actor_id = _acting_id(request, claimed)
+    actor = storage.get_member(actor_id) if actor_id else None
+    if not actor or actor.get('role') in ('child', 'helper', 'guest'):
+        raise HTTPException(status_code=403,
+                            detail="Only a parent or adult can handle these")
+    return actor
+
+
+@app.post("/api/mind/insights/{insight_id}/dismiss")
+def mind_dismiss(insight_id: str, body: dict = Body(default={}),
+                 request: Request = None):
+    import time as _t
+    _mind_actor(request, body.get('member_id'))
+    ok = storage.update_mind_insight(insight_id, {
+        'state': 'retired', 'outcome': 'dismissed', 'resolved_ts': _t.time()})
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such insight")
+    return {"status": "success"}
+
+
+@app.post("/api/mind/insights/{insight_id}/act")
+def mind_act(insight_id: str, body: dict = Body(default={}),
+             request: Request = None):
+    """Approves the attached proposal, if any, then retires the insight
+    as acted — the lane's tap is the same tap chat_actions already knows."""
+    import time as _t
+    actor = _mind_actor(request, body.get('member_id'))
+    rows = [r for r in storage.get_mind_insights() if r['id'] == insight_id]
+    if not rows:
+        raise HTTPException(status_code=404, detail="No such insight")
+    row = rows[0]
+    result = {"status": "success", "message": "Marked handled."}
+    prop = row.get('proposal_json')
+    if prop and prop.get('proposal_id'):
+        from services import chat_actions as _ca
+        result = _ca.act_on_proposal(prop['proposal_id'], 'approve', actor)
+        if result.get('status') != 'success':
+            raise HTTPException(status_code=400, detail=result.get('message'))
+    storage.update_mind_insight(insight_id, {
+        'state': 'retired', 'outcome': 'acted', 'resolved_ts': _t.time()})
+    return result
+
+
+@app.get("/api/mind/admin")
+def mind_admin(request: Request = None):
+    """Active + recent history + counters + graduation candidates — the
+    parent-only view behind the lane."""
+    from services import mind as _mind
+    _mind_actor(request, None)
+    return {"insights": storage.get_mind_insights(state='active'),
+            "history": storage.get_mind_insights(state='retired')[-60:],
+            "counters": _mind.category_counters(),
+            "graduation": _mind.graduation_candidates()}
+
 # --- Stages: the child that grows (load arc A4) ---
 
 @app.get("/api/stages")

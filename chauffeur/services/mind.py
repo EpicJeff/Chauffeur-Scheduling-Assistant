@@ -216,6 +216,16 @@ def visible_insights(viewer: Optional[dict]) -> List[dict]:
     return [r for r in rows if r.get('sensitivity') != 'sensitive']
 
 
+def category_counters() -> dict:
+    """Per-category counts for the admin lane. Task 11 fills this in."""
+    return {}
+
+
+def graduation_candidates() -> list:
+    """Categories worth promoting out of the lane. Task 11 fills this in."""
+    return []
+
+
 # --- Sentinel: coalesced deltas -> one gemma call -> noticings -------------
 
 SENTINEL_SYSTEM = (

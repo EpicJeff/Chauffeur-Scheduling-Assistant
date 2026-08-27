@@ -336,6 +336,9 @@ RULES = [
     # point rather than belt-and-braces.
     (ANY, '/api/findings/*', SIGNED_IN, None),
     (ANY, '/api/findings', SIGNED_IN, None),
+    # Mind insight lane: same discipline — SIGNED_IN at the route, role
+    # decided in the handler (`_mind_actor`) for dismiss/act/admin.
+    (ANY, '/api/mind/*', SIGNED_IN, None),
     (ANY, '/api/coverage/*', SIGNED_IN, 'schedule.carpool_contacts'),
     (ANY, '/api/assist-contacts/*', SIGNED_IN, 'schedule.carpool_contacts'),
     (ANY, '/api/assist-coverage/*', SIGNED_IN, None),
