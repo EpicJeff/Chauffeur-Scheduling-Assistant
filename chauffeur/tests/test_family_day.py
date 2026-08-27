@@ -277,6 +277,39 @@ def scenario_a_morning_outing_is_packed_the_night_before():
           f"the tile must name its outing: {prep[0]}")
 
 
+def scenario_tonights_packing_survives_the_evening():
+    """The prep block's anchor is 17:00, and reading that anchor as its END
+    flipped the day at 17:01 — the block vanished during the exact hours it
+    exists for (the family packs tomorrow's bag at 8 PM, not 4:59). It holds
+    the day until the trip leaves, and past midnight it re-anchors into the
+    morning we are now in rather than staying filed on yesterday."""
+    ev = _ev('swim', 7, 30, title='Swim')
+    ev['calendar_ids'] = ['ellie@cal']
+    # The trip is on Sep 8; the evening in question is Sep 7 with NOTHING
+    # else on it — exactly the shape that flipped.
+    sched = _kit_sched([ev], {'swim': 'd1'})
+    at_8pm = datetime.datetime(2026, 9, 7, 20, 0)
+    # day_in_focus resolves kit items from storage (no items_by_key seam on
+    # that path), so the "this block has packing" answer is stubbed.
+    from unittest import mock
+    with mock.patch.object(family_day, '_has_items', return_value=True):
+        check(family_day.day_in_focus(at_8pm, sched) == datetime.date(2026, 9, 7),
+              "at 8 PM tonight's packing is still ahead — the day must not flip")
+    got = family_day.blocks_for('2026-09-07', sched, at_8pm,
+                                items_by_key={'d1:swim': 2})
+    prep = [b for b in got['blocks'] if b['kind'] == 'prep']
+    check(len(prep) == 1 and prep[0]['window_ends'].startswith('2026-09-08T07:30'),
+          f"the block's lifetime runs to the departure: {prep}")
+    # Past midnight the anchor's day is behind us but the window is open:
+    # the work joins the morning we are in, not a day nobody is drawing.
+    past_midnight = datetime.datetime(2026, 9, 8, 0, 30)
+    got = family_day.blocks_for(DAY, sched, past_midnight,
+                                items_by_key={'d1:swim': 2})
+    prep = [b for b in got['blocks'] if b['kind'] == 'prep']
+    check(len(prep) == 1 and [t['for_key'] for t in prep[0]['tiles']] == ['d1:swim'],
+          f"packing at 00:30 for a 07:30 trip must be visible: {got['blocks']}")
+
+
 def scenario_an_afternoon_outing_is_packed_that_morning():
     ev = _ev('soccer', 16, title='Soccer')
     ev['calendar_ids'] = ['ellie@cal']

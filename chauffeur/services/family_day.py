@@ -208,6 +208,12 @@ def _prep_blocks(target, sched: dict, now: datetime.datetime,
             caught_up = window_ends < now < depart
             if caught_up:
                 anchor = _bucket_anchor(now)   # it joins the block for NOW
+            elif anchor.date() < target == now.date() and now < window_ends:
+                # Past midnight before a morning trip: the evening anchor is
+                # on a day already behind the one being drawn, but the window
+                # is still open — the work joins the part of the day we are
+                # in now, same reasoning as caught_up.
+                anchor = _bucket_anchor(now)
             if anchor.date() != target:
                 continue
             name = _bucket_name(anchor)
@@ -217,8 +223,17 @@ def _prep_blocks(target, sched: dict, now: datetime.datetime,
                 'bucket': name,
                 'start': anchor.isoformat(),
                 'end': anchor.isoformat(),
+                # When the LAST tile's window shuts — the block's lifetime,
+                # as opposed to start/end, which are its POSITION in the
+                # day. day_in_focus reads this: packing for tomorrow is
+                # still ahead of the household all evening, and treating
+                # the 17:00 anchor as the end flipped the day at 17:01 and
+                # hid the block during the exact hours it exists for.
+                'window_ends': window_ends.isoformat(),
                 'tiles': [],
             })
+            slot['window_ends'] = max(slot['window_ends'],
+                                      window_ends.isoformat())
             if caught_up:
                 # A block holding work that is already late sits at the FRONT
                 # of what is left, not back at the start of a bucket most of
@@ -359,7 +374,11 @@ def day_in_focus(now: datetime.datetime = None, sched: dict = None) -> datetime.
     for b in blocks_for(today, sched, now)['blocks']:
         if b.get('canceled'):
             continue
-        end = outings._parse(b.get('end'))
+        # A prep block's `end` is its POSITION (the bucket anchor); its
+        # `window_ends` is its lifetime. Tonight's packing for tomorrow
+        # morning is ahead of the household until the trip leaves, and
+        # reading the anchor here flipped the day at 17:01 and hid it.
+        end = outings._parse(b.get('window_ends') or b.get('end'))
         if end and end > now:
             return today
     return today + datetime.timedelta(days=1)

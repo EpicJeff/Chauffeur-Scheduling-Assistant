@@ -642,9 +642,17 @@
         /* OpenStreetMap's raster tiles are daylight-bright, and a white
            rectangle in the middle of a dark board at ten at night is the
            brightest thing in the kitchen. The /map page is allowed to be
-           bright — you went there. A tile nobody asked for gets dimmed to sit
-           in the board rather than shout over it. */
-        .board-map .leaflet-tile-pane { filter: brightness(0.78) saturate(0.85); }
+           bright — you went there. A dark board gets a NIGHT map: OSM's own
+           tiles inverted (the standard dark-map trick — hue-rotate keeps
+           water blue instead of orange, the brightness/saturation trims stop
+           the inversion from glowing). Only the TILE pane: markers, avatars
+           and the attribution live in other panes and keep their real
+           colours. Chosen over a dark tile provider (Carto et al) on
+           purpose — no second tile host, no new attribution terms, nothing
+           else for a wall panel to depend on. */
+        .board-map .leaflet-tile-pane {
+            filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6);
+        }
         html[data-panel-theme="light"] .board-map .leaflet-tile-pane { filter: none; }
         @media (prefers-color-scheme: light) {
             html[data-panel-theme="auto"] .board-map .leaflet-tile-pane { filter: none; }

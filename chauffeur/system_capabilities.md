@@ -1117,7 +1117,7 @@ Two light-mode readability faults from the wall, one root cause: the skin maps T
 
 The last item outstanding from the v2.112.0 review, and the one the board's own notes said needed *"a real component extraction rather than a summary"*: the map tile drew a list of zone words, the drives tile drew a list of times, and the calendar tile drew a flat list of the next six things. Each was a table of contents for a view that already exists elsewhere in the app.
 
-- **The map tile is a map.** `components/family_map.html` was one map bolted to one pair of element ids held in file-level globals — right for a page that shows a map, useless to a board where the map is a tile. The drawing moved to **`components/family_map_core.html`**, a factory: `FamilyMap.create(el, opts)` returns an instance bound to whatever element it is given. `family_map.html` is now that factory bound to the page's two elements and keeps its four global functions, so `/map` and the PWA Map tab are untouched. One renderer, two callers: the marker a member gets on the tile is the same marker, from the same code, as the one on `/map`.
+- **The map tile is a map.** `components/family_map.html` was one map bolted to one pair of element ids held in file-level globals — right for a page that shows a map, useless to a board where the map is a tile. The drawing moved to **`components/family_map_core.html`**, a factory: `FamilyMap.create(el, opts)` returns an instance bound to whatever element it is given. `family_map.html` is now that factory bound to the page's two elements and keeps its four global functions, so `/map` and the PWA Map tab are untouched. One renderer, two callers: the marker a member gets on the tile is the same marker, from the same code, as the one on `/map`. **Night map on dark boards (v2.425.0)**: the board-map tile pane's old dim filter became a real night look — OSM's own tiles inverted (`invert + hue-rotate` so water stays blue, brightness/contrast/saturation trimmed so the inversion doesn't glow; home.html `.board-map .leaflet-tile-pane`). Tile pane ONLY — markers, avatars and attribution live in other Leaflet panes and keep their true colours. Light panel themes still get `filter: none`. Chosen over a dark tile provider (Carto et al) on purpose: no second tile host, no new attribution terms, nothing else for a wall panel to depend on.
 - **The tile's markers come from the board payload, not from a second fetch.** `_tile_map` was already reading every member's Home Assistant state and keeping only the zone word; it keeps `latitude`/`longitude` now, so the pins are **free**. Cars with a device tracker join at one state read each, as they do on `/map`. The payload deliberately speaks `/api/family/locations`' vocabulary (`member_id`, `latitude`, `driving: {leg_title}`) so the shared renderer takes either source with no translation layer between them.
 - **`interactive: false`, and `pointer-events: none` over the top.** On this board every tile is a door, and a Leaflet map swallows the drag and the tap the door depends on. The tile is a picture of where everyone is; touching it opens the real one. OSM's raster tiles are dimmed on a dark panel — `/map` may be bright because you went there, a tile nobody asked for should not be the brightest thing in the kitchen at ten at night.
 - **Chips carry what a pin cannot.** Anyone Home Assistant knows only by zone, *and* anyone driving — pin or not, because "en route to practice" is the more useful half and a marker cannot say it. When nothing has coordinates at all the chips are the whole tile, which is the old list, honestly.
@@ -5799,6 +5799,16 @@ of what is left and keeps asking — a list you can act on beats a list that is
 filed correctly and invisible. **Cross-day:** a morning outing's prep belongs
 to the evening before, so `_prep_blocks` looks at tomorrow's happenings as
 well as today's, and the block is served on the day its anchor falls in.
+
+**Lifetime vs position (v2.425.0):** the block also carries `window_ends`
+(when the last tile's window shuts — for a morning trip, the departure).
+`day_in_focus` reads it instead of the anchor: tonight's packing for
+tomorrow-morning's trip is ahead of the household until the trip LEAVES,
+and reading the 17:00 anchor as the block's end flipped the day at 17:01
+and hid the block during the exact hours it exists for (caught live by
+`test_packing_api`'s real-clock scenario crossing 5 PM). Past midnight
+before a morning trip, the still-open window re-anchors into the morning
+now underway — same reasoning as catch-up.
 
 - **Items are chips, and the app already drew them.** The drive sheet has
   always drawn prep items as tappable chips — amber while unpacked, green
