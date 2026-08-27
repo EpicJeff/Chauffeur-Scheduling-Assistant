@@ -5960,3 +5960,55 @@ one," which is itself capability-gap data. **Clear** / **Clear anyway**
 retires the insight as `acted` without touching any proposal — useful, but
 the human handled it. Guard: `mind_cap_handle` (default 30/day), parent and
 adult only, and nothing ever executes without the separate approve tap.
+
+## Family vitals — the pulse the Mind reads (v2.427.0 — `services/vitals.py`)
+
+Every other watcher in the app measures a **level**: this ride is unassigned,
+that list has nine items. A level is a fact. A vital sign is a level measured
+against *this family's own baseline*, and the meaning lives in the derivative
+— which is why "Ellie has six activities" is a fact and "Ellie's load has run
+40% over her own baseline for eleven days" is a finding no watcher could
+write.
+
+**Five signs**, all from data the app already keeps: **load** (per person —
+driving minutes, plus `TASK_MINUTES` per household task finished and
+`FINDING_MINUTES` per finding resolved, because noticing is work too),
+**margin** (free waking minutes left after the day's commitments),
+**follow-through** (routine checks and tasks landed vs let go),
+**rest** (first commitment of the day, and whether the evening was empty),
+and **friction** (rides that reached their own day with nobody on them, plus
+cancellations — a thin proxy; a real scramble index wants counters that don't
+exist yet, and a thin honest sign beats a fat invented one).
+
+**No table of its own.** A day's measures ride inside the existing
+`daily_stats` row that `family_digest.record_daily_stats` already writes
+nightly at 21:00 — one extra computation on a job that was already running.
+
+**Baselines** are the median of the trailing window (56 days) against the
+mean of the last 7. Under 21 days of history the reading refuses to compute a
+delta and says so; with no history the snapshot section is empty rather than
+speculative. Deltas under 10% are noise and never surface. A **run** is how
+many consecutive recent days a sign has sat on the same side of its baseline
+— the "eleven days" that turns a number into a story.
+
+**It surfaces in exactly one place: the Mind's snapshot**, as a FAMILY VITALS
+section of trends, and it is part of the snapshot hash so a worsening week
+actually wakes a think. There is deliberately no wall tile and no vitals page
+— the pulse is instrumentation for the Mind's reasoning, and sparklines are a
+byproduct that can come later.
+
+**The rule the code enforces and the think prompt repeats:** nothing is ever
+compared to another family, and nothing is ever compared to another *person*.
+Every reading is against that same subject's own past, and the Mind is told
+to speak about the week rather than about who is failing it. A per-person
+load score rendered on a shared wall is how instrumentation becomes a
+scoreboard, and a scoreboard is how this gets unplugged.
+
+**Backfill.** `vitals.backfill()` runs once (marker `vitals_backfilled`, set
+FIRST) on the first nightly pass after deploy, rebuilding ~8 weeks of
+schedule-derived signs from real calendar history via
+`calendar.fetch_upcoming_events` with a past range. Behaviour signs
+(follow-through) are deliberately **left absent** for backfilled days rather
+than recorded as zero — a family that was never measured did not do nothing,
+and inventing that would poison the very baseline the backfill exists to
+establish. Without it the pulse would say nothing useful for two months.
