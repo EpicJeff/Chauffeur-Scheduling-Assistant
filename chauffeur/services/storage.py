@@ -462,6 +462,7 @@ with db_lock:
     assist_assignments_table = db.table('assist_assignments')
     assist_history_table = db.table('assist_history')
     household_tasks_table = db.table('household_tasks')
+    threads_table = db.table('threads')
     requests_table = db.table('requests')
     protected_commitments_table = db.table('protected_commitments')
     # Needs You (findings arc). A watcher finding with a LIFECYCLE: it opens
@@ -2923,6 +2924,78 @@ def complete_household_task(task_id: str, done: bool = True,
         row['next_task_id'] = follow['id']
         row['next_due_date'] = follow['due_date']
     return row
+
+# --- Threads: open loops with people outside the family ---
+
+def get_thread(thread_id: str) -> Optional[dict]:
+    with db_lock:
+        res = threads_table.search(Query().id == thread_id)
+        return dict(res[0]) if res else None
+
+def add_thread(data: dict) -> str:
+    import uuid as _uuid
+    with db_lock:
+        # Generate id if not provided
+        if 'id' not in data:
+            data['id'] = _uuid.uuid4().hex
+        # Set created_at if not provided
+        if 'created_at' not in data:
+            data['created_at'] = time.time()
+        # Initialize empty fields from Thread model defaults
+        if 'state' not in data:
+            data['state'] = 'open'
+        if 'kind' not in data:
+            data['kind'] = 'project'
+        if 'history' not in data:
+            data['history'] = []
+        threads_table.insert(data)
+        return data['id']
+
+def get_threads(state: str = None, owner: str = None, include_closed: bool = False) -> List[dict]:
+    with db_lock:
+        rows = [dict(t) for t in threads_table.all()]
+
+    # Filter by state if provided
+    if state:
+        rows = [t for t in rows if t.get('state') == state]
+
+    # Filter by owner if provided
+    if owner:
+        rows = [t for t in rows if t.get('owner_member_id') == owner]
+
+    # Filter out closed threads unless requested
+    if not include_closed:
+        rows = [t for t in rows if t.get('state') not in ('done', 'dropped')]
+
+    # Sort by next_action_at (None last) then created_at
+    rows.sort(key=lambda t: (
+        (t.get('next_action_at') or '9999-99-99'),
+        t.get('created_at', 0)
+    ))
+
+    return rows
+
+def update_thread(thread_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(threads_table.update(data, Query().id == thread_id))
+
+def append_thread_history(thread_id: str, entry: dict) -> bool:
+    with db_lock:
+        res = threads_table.search(Query().id == thread_id)
+        if not res:
+            return False
+        row = dict(res[0])
+        # Stamp ts if not present
+        if 'ts' not in entry:
+            entry['ts'] = time.time()
+        # Append to history
+        row['history'].append(entry)
+        threads_table.update({'history': row['history']}, Query().id == thread_id)
+        return True
+
+def delete_thread(thread_id: str):
+    with db_lock:
+        threads_table.remove(Query().id == thread_id)
 
 # --- Shopping lists (meals & provisioning arc M1) ---
 # A STANDING list bound to a recurring errand by TAG, never by errand id: the

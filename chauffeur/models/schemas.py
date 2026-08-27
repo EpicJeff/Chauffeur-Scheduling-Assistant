@@ -770,6 +770,24 @@ class HouseholdTask(BaseModel):
     source_ref: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
 
+class Thread(BaseModel):
+    """An open loop with somebody outside the family."""
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    title: str
+    goal: Optional[str] = ""
+    kind: str = 'project'                   # vendor | project
+    state: str = 'open'                     # open | waiting | done | dropped
+    owner_member_id: Optional[str] = None
+    contact_id: Optional[str] = None        # an assist contact, when there is one
+    counterparty_name: Optional[str] = ""    # a loose name when there is not
+    counterparty_email: Optional[str] = ""
+    next_action: Optional[str] = ""
+    next_action_at: Optional[str] = None     # YYYY-MM-DD
+    history: List[Dict[str, Any]] = Field(default_factory=list)
+    created_by: Optional[str] = None
+    created_at: float = Field(default_factory=time.time)
+    closed_at: Optional[float] = None
+
 class AssistContact(BaseModel):
     """Someone outside the household who does work for it (load arc A1).
 
