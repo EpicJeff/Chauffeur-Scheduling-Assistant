@@ -19,14 +19,14 @@
     {% include 'nav.html' %}
 
     <div class="flex-1 overflow-y-auto bg-gray-900/50">
-        <div x-data="mindSettings()" x-init="load()" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
+        <div x-data="mindSettings()" x-init="load(); loadAdmin()" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
 
             <h2 class="panel-page-title">The Mind</h2>
             <p class="text-sm text-gray-500 mb-5">
                 Argyle watches whole-family state and keeps a small set of noticed
-                insights. This is a skeleton page for the dials underneath it — the
-                lane of insights themselves, dismiss/act, and graduation land on top
-                of this in a later slice.
+                insights. This page holds the dials underneath it, the full lane
+                (including anything held back from kids), its history, and which
+                categories have earned direct delivery.
             </p>
 
             <div class="space-y-4">
@@ -116,6 +116,114 @@
                     </p>
                 </div>
             </div>
+
+            <!-- Admin-only sections: /api/mind/admin 403s a non-parent, and the
+                 settings form above must keep working regardless. -->
+            <p class="text-xs text-gray-500 italic bg-gray-800/60 border border-gray-700 rounded-xl px-4 py-3 mt-6"
+                x-show="adminChecked && !adminAllowed" x-cloak>
+                Only a parent or adult can see the insight lane, its history, and
+                the graduation controls. The dials above still work for you.
+            </p>
+
+            <template x-if="adminChecked && adminAllowed">
+                <div class="mt-6 space-y-6">
+
+                    <!-- Current lane: full list, sensitive rows included. -->
+                    <div>
+                        <div class="text-xs font-black uppercase tracking-widest text-violet-400 px-1 mb-2">
+                            ✨ Current lane
+                        </div>
+                        <p class="text-xs text-gray-500 italic px-1" x-show="!insights.length">
+                            Nothing active right now.
+                        </p>
+                        <div class="space-y-2">
+                            <template x-for="ins in insights" :key="ins.id">
+                                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
+                                    <div class="flex items-start justify-between gap-2">
+                                        <div class="text-sm text-gray-100" x-text="ins.line"></div>
+                                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 shrink-0"
+                                            x-show="ins.sensitivity === 'sensitive'">sensitive</span>
+                                    </div>
+                                    <div class="text-xs text-gray-500 mt-0.5" x-show="ins.detail" x-text="ins.detail"></div>
+                                    <div class="text-[11px] text-gray-600 mt-1" x-text="(ins.category || 'other') + ' · ' + fmtTs(ins.created_ts)"></div>
+                                    <div class="flex gap-2 mt-2">
+                                        <button @click="act(ins.id)"
+                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Handle it</button>
+                                        <button @click="dismiss(ins.id)"
+                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Dismiss</button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- History: last 60 retired, outcome chips. -->
+                    <div>
+                        <div class="text-xs font-black uppercase tracking-widest text-gray-500 px-1 mb-2">History</div>
+                        <p class="text-xs text-gray-500 italic px-1" x-show="!history.length">
+                            Nothing retired yet.
+                        </p>
+                        <div class="space-y-1.5">
+                            <template x-for="row in [...history].reverse()" :key="row.id">
+                                <div class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 flex items-start justify-between gap-2">
+                                    <div>
+                                        <div class="text-sm text-gray-200" x-text="row.line"></div>
+                                        <div class="text-[11px] text-gray-500" x-text="(row.category || 'other') + ' · ' + fmtTs(row.resolved_ts)"></div>
+                                    </div>
+                                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0"
+                                        :class="outcomeChipClass(row.outcome)" x-text="row.outcome || '?'"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Counters + graduation. -->
+                    <div>
+                        <div class="text-xs font-black uppercase tracking-widest text-gray-500 px-1 mb-2">Counters</div>
+                        <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="text-[11px] text-gray-500 uppercase tracking-wide">
+                                        <th class="text-left px-3 py-2">Category</th>
+                                        <th class="text-right px-3 py-2">Acted</th>
+                                        <th class="text-right px-3 py-2">Dismissed</th>
+                                        <th class="text-right px-3 py-2">Expired</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="cat in Object.keys(counters)" :key="cat">
+                                        <tr class="border-t border-gray-700">
+                                            <td class="px-3 py-2 text-gray-200" x-text="cat"></td>
+                                            <td class="px-3 py-2 text-right text-teal-300" x-text="counters[cat].acted"></td>
+                                            <td class="px-3 py-2 text-right text-gray-400" x-text="counters[cat].dismissed"></td>
+                                            <td class="px-3 py-2 text-right text-amber-300" x-text="counters[cat].expired"></td>
+                                        </tr>
+                                    </template>
+                                    <tr x-show="!Object.keys(counters).length">
+                                        <td class="px-3 py-2 text-xs text-gray-500 italic" colspan="4">No history yet.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="text-xs font-black uppercase tracking-widest text-gray-500 px-1 mb-2 mt-4"
+                            x-show="graduation.length">Ready to graduate</div>
+                        <div class="space-y-2">
+                            <template x-for="g in graduation" :key="g.category">
+                                <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3 flex items-center justify-between gap-3">
+                                    <p class="text-sm text-gray-200">
+                                        <code class="text-violet-300" x-text="g.category"></code>
+                                        <span x-text="' — ' + g.resolved + ' answered, ' + Math.round(g.act_rate * 100) + '% acted. Deliver these directly?'"></span>
+                                    </p>
+                                    <button @click="graduate(g.category)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white active:bg-violet-700 shrink-0">Graduate</button>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                </div>
+            </template>
         </div>
     </div>
     {% include 'components/control_center.html' %}
@@ -132,6 +240,15 @@
                     mind_cap_promote: 50, mind_direct_categories: []
                 },
 
+                // Admin-only payload (403s a non-parent viewer; the settings
+                // form above must keep working regardless — see loadAdmin()).
+                adminChecked: false,
+                adminAllowed: false,
+                insights: [],
+                history: [],
+                counters: {},
+                graduation: [],
+
                 async load() {
                     try {
                         const r = await fetch(this.apiBase + 'api/settings');
@@ -140,6 +257,83 @@
                             if (d[k] !== undefined && d[k] !== null) this.s[k] = d[k];
                         }
                     } catch (e) { /* defaults already in place */ }
+                },
+
+                async loadAdmin() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/mind/admin');
+                        if (!r.ok) { this.adminAllowed = false; this.adminChecked = true; return; }
+                        const d = await r.json();
+                        this.insights = d.insights || [];
+                        this.history = d.history || [];
+                        this.counters = d.counters || {};
+                        this.graduation = d.graduation || [];
+                        this.adminAllowed = true;
+                    } catch (e) {
+                        this.adminAllowed = false;
+                    }
+                    this.adminChecked = true;
+                },
+
+                fmtTs(ts) {
+                    if (!ts) return '';
+                    try {
+                        return new Date(ts * 1000).toLocaleString(undefined,
+                            { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+                    } catch (e) { return ''; }
+                },
+
+                outcomeChipClass(outcome) {
+                    if (outcome === 'acted') return 'bg-teal-500/20 text-teal-300';
+                    if (outcome === 'expired') return 'bg-amber-500/20 text-amber-300';
+                    return 'bg-gray-700 text-gray-300';   // dismissed / unknown
+                },
+
+                async dismiss(id) {
+                    try {
+                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/dismiss`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            showGlobalAlert(err.detail || "Couldn't dismiss that.");
+                        }
+                    } catch (e) { showGlobalAlert("Couldn't dismiss that."); }
+                    this.loadAdmin();
+                },
+
+                async act(id) {
+                    try {
+                        const r = await fetch(this.apiBase + `api/mind/insights/${id}/act`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            showGlobalAlert(err.detail || "Couldn't handle that.");
+                        }
+                    } catch (e) { showGlobalAlert("Couldn't handle that."); }
+                    this.loadAdmin();
+                },
+
+                // Appends to mind_direct_categories via the same merge-semantics
+                // POST /api/settings the form above uses — a single-key body
+                // touches nothing else.
+                async graduate(category) {
+                    const ok = await promptConfirm('Graduate this category?',
+                        `${category} will be delivered directly from now on, ` +
+                        `skipping the lane entirely. This can't be easily undone ` +
+                        `from here — you'd need to remove it from the list below.`,
+                        'Graduate', 'Not yet');
+                    if (!ok) return;
+                    const next = Array.from(new Set([...(this.s.mind_direct_categories || []), category]));
+                    try {
+                        await fetch(this.apiBase + 'api/settings', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ mind_direct_categories: next })
+                        });
+                        this.s.mind_direct_categories = next;
+                    } catch (e) {
+                        showGlobalAlert('Could not graduate that just now.');
+                    }
+                    this.loadAdmin();
                 },
 
                 // Sends only the ten keys this page owns — /api/settings merges
