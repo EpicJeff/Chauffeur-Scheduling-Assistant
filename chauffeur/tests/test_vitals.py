@@ -17,6 +17,7 @@ def _reset():
     storage.daily_stats_table.truncate()
     storage.household_tasks_table.truncate()
     storage.routine_checks_table.truncate()
+    storage.day_counters_table.truncate()
 
 
 def _sched(events, assignments=None):
@@ -25,7 +26,9 @@ def _sched(events, assignments=None):
 
 
 def _seed(date_str, *, load=None, margin=None, done=0, missed=0,
-          first_hour=8, empty_evening=False, unassigned=0, canceled=0):
+          first_hour=8, empty_evening=False, unassigned=0, canceled=0,
+          nudges=0, late_overrides=0, coverage_asks=0,
+          meals_together=1, car_meals=0, moments=0, parent_rides=0):
     """One day's vitals row, written the way record_daily_stats will."""
     storage.upsert_daily_stats(date_str, {
         'date': date_str,
@@ -35,7 +38,11 @@ def _seed(date_str, *, load=None, margin=None, done=0, missed=0,
             'margin_mins': 240 if margin is None else margin,
             'follow_through': {'done': done, 'missed': missed},
             'rest': {'first_hour': first_hour, 'empty_evening': empty_evening},
-            'friction': {'unassigned': unassigned, 'canceled': canceled},
+            'friction': {'unassigned': unassigned, 'canceled': canceled,
+                         'arrival_nudge': nudges, 'late_override': late_overrides,
+                         'coverage_ask': coverage_asks},
+            'together': {'meals_together': meals_together, 'car_meals': car_meals,
+                         'moments': moments, 'parent_rides': parent_rides},
         }})
 
 
@@ -184,6 +191,132 @@ def scenario_snapshot_is_silent_without_history():
           "no history means no section — the Mind must not reason on nothing")
 
 
+# -------------------------------------------- together & the real friction
+
+def scenario_together_counts_connection_not_calories():
+    _reset()
+    d = _day(0)
+    orig_plan, orig_sched = None, storage.get_cached_schedule
+    from services import meals as _meals, presence as _presence
+    orig_plan = _meals.eating_plan
+    orig_count = _presence.count_moments_since
+    try:
+        storage.get_cached_schedule = lambda: _sched([])
+        _meals.eating_plan = lambda *a, **k: {'sittings': [
+            {'where_kind': 'at_home', 'member_ids': ['m1', 'm2', 'm3']},
+            {'where_kind': 'in_car', 'member_ids': ['m4']},
+        ]}
+        _presence.count_moments_since = lambda ts: 2
+        row = vitals.measure_day(d)
+        t = row['together']
+        check(t['meals_together'] == 1, f"a shared sitting counts once, got {t}")
+        check(t['car_meals'] == 1, f"a car sitting is counted apart, got {t}")
+        check(t['moments'] == 2, f"got {t}")
+    finally:
+        storage.get_cached_schedule = orig_sched
+        _meals.eating_plan = orig_plan
+        _presence.count_moments_since = orig_count
+
+
+def scenario_a_kid_riding_with_a_parent_is_togetherness():
+    _reset()
+    d = _day(0)
+    # add_member returns a doc id and does NOT mint an 'id' field — a member
+    # without one leaks into every later scenario and breaks anything that
+    # reads m['id'], so build them the way the app does.
+    storage.add_member({'id': 'vit_p', 'name': 'Jeff', 'role': 'parent',
+                        'driver_id': 'vit_drv'})
+    storage.add_member({'id': 'vit_k', 'name': 'Lily', 'role': 'child',
+                        'passenger_id': 'vit_pax'})
+    orig = storage.get_cached_schedule
+    from services import meals as _meals
+    orig_plan = _meals.eating_plan
+    try:
+        _meals.eating_plan = lambda *a, **k: {'sittings': []}
+        storage.get_cached_schedule = lambda: _sched([
+            {'id': 'e1', 'title': 'Practice', 'start': f'{d}T17:00:00',
+             'end': f'{d}T18:00:00', 'attendees': ['vit_pax']}],
+            assignments={'e1': 'vit_drv'})
+        row = vitals.measure_day(d)
+        check(row['together']['parent_rides'] == 1,
+              f"car time with a parent is connection time, got {row['together']}")
+    finally:
+        storage.get_cached_schedule = orig
+        _meals.eating_plan = orig_plan
+        storage.delete_member('vit_p')
+        storage.delete_member('vit_k')
+
+
+def scenario_friction_folds_in_the_live_counters():
+    _reset()
+    d = _day(0)
+    storage.bump_day_counter(d, 'arrival_nudge')
+    storage.bump_day_counter(d, 'arrival_nudge')
+    storage.bump_day_counter(d, 'late_override')
+    orig = storage.get_cached_schedule
+    from services import meals as _meals
+    orig_plan = _meals.eating_plan
+    try:
+        _meals.eating_plan = lambda *a, **k: {'sittings': []}
+        storage.get_cached_schedule = lambda: _sched([])
+        row = vitals.measure_day(d)
+        f = row['friction']
+        check(f['arrival_nudge'] == 2 and f['late_override'] == 1,
+              f"the day's live scrambles land in the row, got {f}")
+    finally:
+        storage.get_cached_schedule = orig
+        _meals.eating_plan = orig_plan
+
+
+def scenario_a_same_day_override_counts_a_tomorrow_one_does_not():
+    """The counters are only worth anything if the real code paths bump them."""
+    _reset()
+    today, tomorrow = _day(0), _day(1)
+    orig = storage.get_cached_schedule
+    try:
+        storage.get_cached_schedule = lambda: _sched([
+            {'id': 'ev_today', 'title': 'Practice', 'start': f'{today}T17:00:00',
+             'end': f'{today}T18:00:00'},
+            {'id': 'ev_tmrw', 'title': 'Game', 'start': f'{tomorrow}T17:00:00',
+             'end': f'{tomorrow}T18:00:00'}])
+        storage.add_override({'event_id': 'ev_tmrw', 'override_type': 'driver',
+                              'driver_id': 'd1'})
+        check(storage.get_day_counters(today).get('late_override') is None,
+              "rearranging tomorrow is planning, not a scramble")
+        storage.add_override({'event_id': 'ev_today', 'override_type': 'driver',
+                              'driver_id': 'd1'})
+        check(storage.get_day_counters(today).get('late_override') == 1,
+              f"rearranging today is, got {storage.get_day_counters(today)}")
+    finally:
+        storage.get_cached_schedule = orig
+        storage.overrides_table.truncate()
+
+
+def scenario_friction_series_sums_every_kind():
+    _reset()
+    for i in range(14, 56):
+        _seed(_day(-i), unassigned=0, nudges=0, late_overrides=0)
+    for i in range(0, 14):
+        _seed(_day(-i), unassigned=1, nudges=1, late_overrides=1)
+    res = vitals.read()
+    fr = [v for v in res['household'] if v['name'] == 'friction'][0]
+    check(fr['current'] == 3.0,
+          f"friction is every scramble kind, not just the proxy, got {fr}")
+    check(fr['worse'] is True, "more friction is bad news")
+
+
+def scenario_together_trends_and_reads_as_worse_when_falling():
+    _reset()
+    for i in range(14, 56):
+        _seed(_day(-i), meals_together=2, moments=2)
+    for i in range(0, 14):
+        _seed(_day(-i), meals_together=1, moments=0)
+    res = vitals.read()
+    tg = [v for v in res['household'] if v['name'] == 'together'][0]
+    check(tg['delta_pct'] == -75, f"got {tg['delta_pct']}")
+    check(tg['worse'] is True, "less togetherness is the bad direction")
+
+
 # ------------------------------------------------------- the wire, for real
 
 def scenario_the_mind_actually_reads_the_pulse():
@@ -235,6 +368,12 @@ if __name__ == '__main__':
     scenario_days_since_an_empty_evening()
     scenario_snapshot_names_the_trend_not_the_number()
     scenario_snapshot_is_silent_without_history()
+    scenario_together_counts_connection_not_calories()
+    scenario_a_kid_riding_with_a_parent_is_togetherness()
+    scenario_friction_folds_in_the_live_counters()
+    scenario_a_same_day_override_counts_a_tomorrow_one_does_not()
+    scenario_friction_series_sums_every_kind()
+    scenario_together_trends_and_reads_as_worse_when_falling()
     scenario_the_mind_actually_reads_the_pulse()
     scenario_nightly_job_writes_vitals()
     print("test_vitals OK")

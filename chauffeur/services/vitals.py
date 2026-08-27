@@ -40,11 +40,18 @@ EVENING_FROM = 17       # an "evening" commitment starts at or after this
 TASK_MINUTES = 15       # a finished household task, as minutes of doing
 FINDING_MINUTES = 5     # noticing and resolving something is load too
 
-HOUSEHOLD_SIGNS = ('margin', 'follow_through', 'rest', 'friction')
+HOUSEHOLD_SIGNS = ('margin', 'follow_through', 'rest', 'friction', 'together')
+
+# Every kind of scramble, tallied live by storage.bump_day_counter as it
+# happens (the nightly row is written once, so a during-the-day count needs
+# its own rail). See _FRICTION_KEYS for what folds into the sign.
+FRICTION_COUNTERS = ('arrival_nudge', 'late_override', 'coverage_ask')
+_FRICTION_KEYS = ('unassigned', 'canceled') + FRICTION_COUNTERS
 
 # Which direction is bad news, so the Mind can be told plainly.
 _WORSE_WHEN = {'margin': 'down', 'follow_through': 'down',
-               'friction': 'up', 'load': 'up', 'rest': 'down'}
+               'friction': 'up', 'load': 'up', 'rest': 'down',
+               'together': 'down'}
 
 
 def _day_str(d):
@@ -79,6 +86,10 @@ def measure_day(date_str: str, sched: dict = None) -> dict:
     unassigned = 0
     canceled = 0
     driving = {}
+    kid_rides = 0
+    kid_pax = {p for m in storage.get_all_members()
+               if m.get('role') == 'child' and m.get('passenger_id')
+               for p in [m['passenger_id']]}
 
     for e in events:
         start = _parse(e.get('start'))
@@ -99,6 +110,13 @@ def measure_day(date_str: str, sched: dict = None) -> dict:
             unassigned += 1
         elif not str(d_id).startswith('ghost_'):
             driving[str(d_id)] = driving.get(str(d_id), 0) + mins
+            # A kid in the car with a parent driving is time together, not
+            # just logistics — the family eats in that car, and it is where
+            # most of the talking happens.
+            drv = storage.get_member_by_driver_id(str(d_id))
+            if (drv or {}).get('role') in ('parent', 'adult') \
+                    and kid_pax.intersection(e.get('attendees') or []):
+                kid_rides += 1
 
     # Driving minutes belong to the MEMBER, not the driver record.
     load = {}
@@ -134,6 +152,19 @@ def measure_day(date_str: str, sched: dict = None) -> dict:
         if who and ts and day0 <= float(ts) < day1:
             load[who] = load.get(who, 0) + FINDING_MINUTES
 
+    friction = {'unassigned': unassigned, 'canceled': canceled}
+    try:
+        counters = storage.get_day_counters(date_str) or {}
+        for k in FRICTION_COUNTERS:
+            friction[k] = int(counters.get(k) or 0)
+        # The tallies have been folded into the day's row; anything older than
+        # the window they feed is dead weight.
+        cutoff = (datetime.date.fromisoformat(date_str)
+                  - datetime.timedelta(days=WINDOW_DAYS + 7)).isoformat()
+        storage.prune_day_counters(cutoff)
+    except Exception as e:
+        logger.warning(f"[vitals] day counters unreadable for {date_str}: {e}")
+
     waking = (WAKING_END - WAKING_START) * 60
     return {
         'load': load,
@@ -141,8 +172,41 @@ def measure_day(date_str: str, sched: dict = None) -> dict:
         'follow_through': {'done': done, 'missed': missed},
         'rest': {'first_hour': first_hour if first_hour is not None else WAKING_START,
                  'empty_evening': not evening},
-        'friction': {'unassigned': unassigned, 'canceled': canceled},
+        'friction': friction,
+        'together': _together(date_str, sched, kid_rides),
     }
+
+
+def _together(date_str, sched, parent_rides):
+    """Occasions of connection, in one unit: a meal eaten together, a moment
+    captured, a kid who rode somewhere with a parent. Car meals are counted
+    apart rather than subtracted — the family eats in the car on purpose, and
+    a dinner in a minivan between two practices is still dinner together."""
+    meals_together = car_meals = 0
+    try:
+        from services import meals as _meals
+        plan = _meals.eating_plan(date_str, 'dinner', sched=sched) or {}
+        for s in (plan.get('sittings') or []):
+            if s.get('where_kind') == 'in_car':
+                car_meals += 1
+            elif len(s.get('member_ids') or []) >= 2:
+                meals_together += 1
+    except Exception as e:
+        logger.warning(f"[vitals] eating plan unreadable for {date_str}: {e}")
+
+    moments = 0
+    try:
+        from services import presence as _presence
+        day0 = datetime.datetime.fromisoformat(f'{date_str}T00:00:00').timestamp()
+        since = _presence.count_moments_since(day0)
+        # count_moments_since is open-ended; only today's number is exact, so
+        # older days keep whatever the nightly pass recorded at the time.
+        moments = int(since or 0) if date_str == datetime.date.today().isoformat() else 0
+    except Exception as e:
+        logger.warning(f"[vitals] moments unreadable for {date_str}: {e}")
+
+    return {'meals_together': meals_together, 'car_meals': car_meals,
+            'moments': moments, 'parent_rides': parent_rides}
 
 
 # ------------------------------------------------------------ the reading
@@ -223,8 +287,12 @@ def read(now: datetime.datetime = None, days: int = WINDOW_DAYS) -> dict:
              (v.get('follow_through') or {}).get('missed', 0))),
         ('rest', 'rest', lambda v: 1 if (v.get('rest') or {}).get('empty_evening') else 0),
         ('friction', 'friction',
-         lambda v: (v.get('friction') or {}).get('unassigned', 0)
-         + (v.get('friction') or {}).get('canceled', 0)),
+         lambda v: sum(int((v.get('friction') or {}).get(k) or 0)
+                       for k in _FRICTION_KEYS)),
+        ('together', 'togetherness',
+         lambda v: (lambda t: (t.get('meals_together', 0) + t.get('moments', 0)
+                               + t.get('parent_rides', 0)) if t else None)(
+             v.get('together'))),
     ]
     for name, label, pick in picks:
         r = _reading(name, _series(rows, pick), label)

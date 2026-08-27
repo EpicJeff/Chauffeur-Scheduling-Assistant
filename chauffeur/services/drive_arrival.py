@@ -328,6 +328,14 @@ def run_nudges(now_ts: float, notify) -> List[str]:
                    "Tap to check the drive off — or send the family a new time.",
                    f"/app?arrival={leg_id}")
             nudged.append(leg_id)
+            # A drive nobody closed on time is friction (services/vitals.py).
+            # Counting must never break the notifying.
+            try:
+                storage.bump_day_counter(
+                    datetime.datetime.fromtimestamp(now_ts).date().isoformat(),
+                    'arrival_nudge')
+            except Exception:
+                pass
         except Exception as e:
             print(f"drive_arrival nudge: {row.get('leg_id')}: {e}")
     return nudged

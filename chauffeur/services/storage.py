@@ -448,6 +448,10 @@ with db_lock:
     prep_status_table = db.table('prep_status')
     packing_claims_table = db.table('packing_claims')
     daily_stats_table = db.table('daily_stats')
+    # Live tallies of things that happen DURING a day (scrambles, mostly).
+    # daily_stats is written once at 21:00, so anything counted as it happens
+    # needs its own row or the nightly write clobbers it.
+    day_counters_table = db.table('day_counters')
     cars_table = db.table('cars')
     status_protocols_table = db.table('status_protocols')
     status_days_table = db.table('status_days')
@@ -4857,6 +4861,35 @@ def get_daily_stats(date_strs: List[str]) -> List[dict]:
     with db_lock:
         return [dict(r) for r in daily_stats_table.all() if r.get('date') in wanted]
 
+
+def bump_day_counter(date_str: str, key: str, by: int = 1) -> int:
+    """Tally something as it happens (services/vitals.py reads these at night).
+
+    Deliberately fire-and-forget for callers: a counter that throws must never
+    take down the thing it was counting."""
+    with db_lock:
+        res = day_counters_table.search(Query().date == date_str)
+        row = dict(res[0]) if res else {'date': date_str}
+        row[key] = int(row.get(key) or 0) + by
+        day_counters_table.upsert(row, Query().date == date_str)
+    return row[key]
+
+
+def get_day_counters(date_str: str) -> dict:
+    with db_lock:
+        res = day_counters_table.search(Query().date == date_str)
+        return dict(res[0]) if res else {}
+
+
+def prune_day_counters(before_date: str) -> int:
+    """Counters older than the vitals window are dead weight."""
+    with db_lock:
+        doomed = [r['date'] for r in day_counters_table.all()
+                  if str(r.get('date') or '') < before_date]
+        for d in doomed:
+            day_counters_table.remove(Query().date == d)
+    return len(doomed)
+
 # --- Rewards + redemptions ---
 
 def get_rewards() -> List[dict]:
@@ -6215,6 +6248,21 @@ def get_all_overrides() -> List[dict]:
 
 def add_override(override_data: dict) -> int:
     invalidate_daily_schedule_cache_for_event(override_data['event_id'])
+    # An override written ON the day of the event is a scramble — somebody
+    # rearranged the driving while the day was already running. Overrides set
+    # ahead of time are just planning and are not counted (services/vitals.py).
+    # The date lives on the event, not on the override, so it is looked up.
+    try:
+        import datetime as _dt
+        today = _dt.date.today().isoformat()
+        ev_id = str(override_data.get('event_id') or '')
+        cache = get_cached_schedule() or {}
+        ev = next((e for e in (cache.get('events') or [])
+                   if str(e.get('id')) == ev_id), None)
+        if ev and str(ev.get('start') or '')[:10] == today:
+            bump_day_counter(today, 'late_override')
+    except Exception:
+        pass
     with db_lock:
         # Overrides are unique per event_id, so remove existing if present
         overrides_table.remove(Query().event_id == override_data['event_id'])

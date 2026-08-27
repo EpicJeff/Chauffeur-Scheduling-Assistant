@@ -287,6 +287,13 @@ def start_ask(event_id: str, contact_id: str = None, contact_name: str = None,
         'event_start': ev.get('start') or '',
         'contact_id': contact_id or '', 'contact_name': name,
         'asked_by': asked_by or '', 'state': 'waiting'})
+    # Needing an outside hand at all is friction (services/vitals.py) — a ride
+    # the family could not cover itself. Counting never breaks the asking.
+    try:
+        import datetime as _dt
+        storage.bump_day_counter(_dt.date.today().isoformat(), 'coverage_ask')
+    except Exception:
+        pass
     text = draft_ask(ev, name or None)
     return {'status': 'success', 'ask_id': ask_id, 'text': text,
             'message': f"Asked{' ' + name if name else ''} — I'll check back. "
