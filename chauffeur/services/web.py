@@ -2,24 +2,31 @@
 the house, and therefore the one most able to make things up.
 
 The whole module is built around a single rule: **a claim carries the page it
-came from, or it does not survive.** The model is never asked what it knows —
-it is handed text this app actually fetched and asked what that text says, and
-any "fact" citing a page we did not read is dropped before the caller sees it.
+came from, or it does not survive.**
 
-Two backends, because the quotas are shaped very differently:
+Three routes to an answer, tried in order:
 
-- **Brave** (`web_search_api_key`) — a dedicated allowance, generous enough
-  that research can be an ordinary thing to do. Preferred whenever present.
-- **SerpApi** — already configured for flights, gift shortlists and Walmart,
-  and capped at 250 requests A MONTH ACROSS ALL OF THEM. Research is the
-  newest and least urgent consumer, so it may only borrow from that pool
-  above a reserve (`serpapi_reserve`); past that line the remaining calls
-  belong to the features that had them first. "Why did my flight lookup stop
-  working" must never have a research question as its unexplained answer.
+1. **Gemini Search grounding** (the default, and nearly always the one used).
+   `tools: [{"google_search": {}}]` lets the model run its own Google queries
+   and return an answer annotated with the pages it used. Google does the
+   searching, so there is no second API key and no separate allowance — it
+   bills against the same Gemini pool everything else here already uses.
+   Citations come back as redirect URLs, which are resolved to the real
+   publisher page so a family can click through and check.
+2. **Brave** (`web_search_api_key`) — its own allowance, for households that
+   would rather not route research through Google, or whose model pool has
+   no grounding support.
+3. **SerpApi** — already configured for flights, gift shortlists and Walmart,
+   and capped at 250 requests A MONTH ACROSS ALL OF THEM. Research is the
+   newest and least urgent consumer, so it may only borrow from that pool
+   above a reserve (`serpapi_reserve`); past that line the remaining calls
+   belong to the features that had them first. "Why did my flight lookup stop
+   working" must never have a research question as its unexplained answer.
 
-Fetching is direct HTTP and costs nothing but time, so the metered call is
-one search per question — cached for a month, because which beginner guitar
-course is good does not change weekly.
+Routes 2 and 3 search, then FETCH the top pages and ask the model what that
+text says — never what it remembers — and any fact citing a page we did not
+read is dropped before the caller sees it. Route 1 gets the same discipline
+from Google's own grounding metadata.
 """
 import html as _html
 import json
@@ -198,6 +205,121 @@ def _pool_call(tier, api_key, system, prompt, **kw):
     return model_pools.call_pool_json(tier, api_key, system, prompt, **kw)
 
 
+# --------------------------------------------- gemini search grounding
+
+GEMINI_URL = ('https://generativelanguage.googleapis.com/v1beta/models/'
+              '{model}:generateContent?key={key}')
+
+GROUND_SYSTEM = (
+    "Answer this household's practical question using Google Search. Be "
+    "concrete and local where the question is local. Prefer established, "
+    "well-known sources over blogs and content farms. Two to four plain "
+    "sentences, no preamble. If the web does not answer it, say so."
+)
+
+
+def _parse_grounded(data: dict) -> dict:
+    """Pull the answer, its sources and the required search-suggestions HTML
+    out of a grounded response.
+
+    Handles BOTH shapes the API has used: `groundingMetadata.groundingChunks`
+    and per-part `annotations[].url_citation`. Which one arrives depends on
+    the model and endpoint version, and a research verb that breaks when
+    Google ships a new response shape is a research verb that breaks."""
+    cand = ((data or {}).get('candidates') or [{}])[0]
+    parts = ((cand.get('content') or {}).get('parts') or [])
+    answer = ''.join(p.get('text') or '' for p in parts).strip()
+
+    sources, seen = [], set()
+
+    def _add(url, title):
+        url = (url or '').strip()
+        if url and url not in seen:
+            seen.add(url)
+            sources.append({'title': (title or '').strip() or url, 'url': url})
+
+    for p in parts:
+        for ann in (p.get('annotations') or []):
+            cit = ann.get('url_citation') or {}
+            _add(cit.get('url'), cit.get('title'))
+
+    gm = cand.get('groundingMetadata') or {}
+    for chunk in (gm.get('groundingChunks') or []):
+        web_c = chunk.get('web') or {}
+        _add(web_c.get('uri'), web_c.get('title'))
+
+    suggestions = ((gm.get('searchEntryPoint') or {}).get('renderedContent')
+                   or (data or {}).get('search_suggestions') or '')
+    return {'answer': answer, 'sources': sources,
+            'suggestions_html': suggestions}
+
+
+def _gemini_grounded(question: str, api_key: str, model: str = None) -> Optional[dict]:
+    """One grounded call. Returns None when the pool has no model that can do
+    it, so the caller falls through to a search backend."""
+    import urllib.request
+    import urllib.error
+    from services import model_pools
+    settings = storage.get_settings() or {}
+    candidates = [model] if model else model_pools.models_for('heavy', settings)[:3]
+    last_err = None
+    for m in [c for c in candidates if c and not model_pools.is_gemma(c)]:
+        payload = {
+            'contents': [{'role': 'user',
+                          'parts': [{'text': f"{GROUND_SYSTEM}\n\nQUESTION: {question}"}]}],
+            'tools': [{'google_search': {}}],
+            'generationConfig': {'temperature': 0.1},
+        }
+        req = urllib.request.Request(
+            GEMINI_URL.format(model=m.replace('models/', ''), key=api_key),
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}, method='POST')
+        try:
+            with urllib.request.urlopen(req, timeout=SEARCH_TIMEOUT + 40) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            body = e.read().decode('utf-8', errors='replace')[:300]
+            last_err = f"{e.code} {body}"
+            model_pools.note_failure(m, last_err)
+            # 400 usually means this model does not take the search tool at
+            # all; anything else is worth trying the next model for.
+            continue
+        except Exception as e:
+            last_err = str(e)
+            continue
+        out = _parse_grounded(data)
+        if out.get('answer'):
+            out['model'] = m
+            return out
+    if last_err:
+        logger.info(f"[web] no pool model grounded the search: {last_err}")
+    return None
+
+
+def _resolve_url(url: str) -> str:
+    """Follow a grounding redirect to the page it actually points at.
+
+    Grounded citations come back as opaque redirect links. A source a family
+    cannot recognise is barely a source, so they are resolved for display —
+    and the original is kept if the resolve fails."""
+    try:
+        import requests
+        r = requests.head(url, timeout=8, allow_redirects=True)
+        return r.url or url
+    except Exception:
+        return url
+
+
+def _resolve_sources(sources: list) -> list:
+    out = []
+    for s in sources:
+        url = s.get('url') or ''
+        real = _resolve_url(url) if 'grounding-api-redirect' in url \
+            or 'redirect' in url else url
+        out.append({'title': s.get('title') or real, 'url': real})
+    return out
+
+
 # ------------------------------------------------------------- research
 
 EXTRACT_SYSTEM = (
@@ -258,8 +380,6 @@ def research(question: str, read_pages: int = PAGES_READ) -> dict:
     settings = storage.get_settings() or {}
     if not settings.get('web_research_enabled', False):
         return {'status': 'disabled'}
-    if not (_brave_key() or _serpapi_key()):
-        return {'status': 'no_key'}
     api_key = settings.get('llm_gemini_api_key', '')
     if not api_key:
         return {'status': 'no_key'}
@@ -274,6 +394,28 @@ def research(question: str, read_pages: int = PAGES_READ) -> dict:
         return {'status': 'capped',
                 'message': f"That's {cap} research questions this month."}
 
+    # Route 1: let Google do the searching. No second key, no separate
+    # allowance, and the citations arrive with the answer.
+    if settings.get('llm_provider', 'gemini') == 'gemini':
+        try:
+            grounded = _gemini_grounded(question, api_key)
+        except Exception as e:
+            logger.warning(f"[web] grounding failed: {e}")
+            grounded = None
+        if grounded and grounded.get('answer'):
+            _month_count(bump=True)
+            sources = _resolve_sources(grounded.get('sources') or [])
+            out = {'status': 'ok', 'answer': grounded['answer'],
+                   'facts': [{'claim': grounded['answer'], 'url': s['url']}
+                             for s in sources[:1]],
+                   'dropped': 0, 'sources': sources, 'via': 'grounding',
+                   'suggestions_html': grounded.get('suggestions_html') or ''}
+            _cache_put(ck, out)
+            return out
+
+    # Routes 2 and 3: search a backend ourselves, read the pages, extract.
+    if not (_brave_key() or _serpapi_key()):
+        return {'status': 'no_key'}
     found = search(question)
     if found['status'] != 'ok':
         return found
@@ -311,7 +453,7 @@ def research(question: str, read_pages: int = PAGES_READ) -> dict:
             dropped += 1
 
     out = {'status': 'ok', 'answer': (res.get('answer') or '').strip(),
-           'facts': facts, 'dropped': dropped,
+           'facts': facts, 'dropped': dropped, 'via': 'pages',
            'sources': [{'title': r['title'], 'url': r['url']} for r in results]}
     _cache_put(ck, out)
     return out

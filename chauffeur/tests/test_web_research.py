@@ -22,6 +22,10 @@ def _reset():
                                     'web_research_enabled': True}
     web._serpapi_key = lambda: 'serp-key'
     web._brave_key = lambda: ''
+    # Grounding is the primary path, so every non-grounding scenario has to
+    # switch it off explicitly or it would never reach the fallback.
+    web._gemini_grounded = lambda q, key, model=None: None
+    web._resolve_url = lambda u: u
 
 
 def _fake_serp(results):
@@ -51,6 +55,87 @@ RESULTS = [
     {'title': 'Some Blog', 'url': 'https://blog.example/guitar',
      'snippet': 'My thoughts on learning guitar.'},
 ]
+
+
+# ------------------------------------------------- gemini search grounding
+
+GROUNDED_CLASSIC = {
+    'candidates': [{
+        'content': {'parts': [{'text': 'Justin Guitar Grade 1 is the usual start.'}]},
+        'groundingMetadata': {
+            'groundingChunks': [
+                {'web': {'uri': 'https://redirect.example/abc',
+                         'title': 'justinguitar.com'}},
+            ],
+            'searchEntryPoint': {'renderedContent': '<div>suggestions</div>'},
+        }}]}
+
+GROUNDED_ANNOTATED = {
+    'candidates': [{
+        'content': {'parts': [{
+            'text': 'Couch to 5K is a nine-week plan.',
+            'annotations': [{'url_citation': {
+                'url': 'https://nhs.uk/c25k', 'title': 'NHS Couch to 5K'}}]}]},
+    }]}
+
+
+def scenario_grounding_is_preferred_and_costs_no_extra_key():
+    _reset()
+    web._serpapi_key = lambda: 'serp-key'
+    web._brave_key = lambda: 'brave-key'
+    hits = []
+    web._gemini_grounded = lambda q, key, model=None: (
+        hits.append(q) or {'answer': 'Grounded answer.',
+                           'sources': [{'title': 'A', 'url': 'https://a.example'}],
+                           'suggestions_html': ''})
+    web._serp_search = _fake_serp(RESULTS)
+    web._brave_search = _fake_serp(RESULTS)
+    res = web.research('what is a good beginner guitar course')
+    check(res['status'] == 'ok' and res['answer'] == 'Grounded answer.',
+          f"got {res}")
+    check(hits and not CALLS['search'] and not CALLS['fetch'],
+          "Google does the searching; no metered key and no page fetching")
+    check(res['facts'][0]['url'] == 'https://a.example',
+          f"grounded sources are the citations, got {res['facts']}")
+
+
+def scenario_both_grounding_response_shapes_are_read():
+    classic = web._parse_grounded(GROUNDED_CLASSIC)
+    check(classic['answer'].startswith('Justin Guitar'), f"got {classic}")
+    check(classic['sources'][0]['url'] == 'https://redirect.example/abc',
+          f"classic groundingChunks, got {classic['sources']}")
+    check('suggestions' in classic['suggestions_html'],
+          "the search-suggestions HTML the terms require is kept")
+    annotated = web._parse_grounded(GROUNDED_ANNOTATED)
+    check(annotated['sources'][0]['url'] == 'https://nhs.uk/c25k',
+          f"newer url_citation annotations, got {annotated['sources']}")
+
+
+def scenario_grounding_failure_falls_back_to_search():
+    _reset()
+    web._brave_key = lambda: 'brave-key'
+
+    def boom(q, key, model=None):
+        raise RuntimeError('grounding unavailable on this model')
+    web._gemini_grounded = boom
+    web._brave_search = _fake_serp(RESULTS)
+    web._fetch = _fake_fetch({'https://justinguitar.com/g1': 'Grade 1 text.',
+                              'https://blog.example/guitar': 'Blog.'})
+    web._pool_call = _fake_llm({'answer': 'From pages.', 'facts': [
+        {'claim': 'x', 'url': 'https://justinguitar.com/g1'}]})
+    res = web.research('anything')
+    check(res['status'] == 'ok' and res['answer'] == 'From pages.',
+          f"an old model without grounding still researches, got {res}")
+
+
+def scenario_redirect_citations_resolve_to_the_real_page():
+    _reset()
+    web._resolve_url = lambda u: ('https://justinguitar.com/g1'
+                                  if 'redirect.example' in u else u)
+    out = web._resolve_sources([{'title': 'justinguitar.com',
+                                 'url': 'https://redirect.example/abc'}])
+    check(out[0]['url'] == 'https://justinguitar.com/g1',
+          f"a family must be able to click through and check, got {out}")
 
 
 # ------------------------------------------------------------- plumbing
@@ -206,6 +291,10 @@ def scenario_only_http_urls_are_fetched():
 
 
 if __name__ == '__main__':
+    scenario_grounding_is_preferred_and_costs_no_extra_key()
+    scenario_both_grounding_response_shapes_are_read()
+    scenario_grounding_failure_falls_back_to_search()
+    scenario_redirect_citations_resolve_to_the_real_page()
     scenario_html_becomes_readable_text()
     scenario_disabled_and_keyless_degrade_quietly()
     scenario_facts_carry_their_source()
