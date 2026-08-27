@@ -292,7 +292,7 @@
 
         <!-- Argyle noticed (the Mind, phase C): observations Argyle surfaced
              for whoever is signed in, identity-filtered server-side. Anyone
-             can see one; only a parent/adult can Handle it or Dismiss it
+             can see one; only a parent/adult can clear or Dismiss it
              (server enforces regardless — the buttons just don't invite a
              tap that would 403). Family view only, collapses away when
              there is nothing to show. -->
@@ -2090,7 +2090,13 @@
                     ${ins.detail ? `<div class="text-xs text-gray-500 mt-0.5">${mfEscape(ins.detail)}</div>` : ''}
                     ${canHandle ? `<div class="flex gap-2 mt-2">
                         <button onclick="mindAct('${ins.id}')"
-                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Handle it</button>
+                            title="${ins.proposal_json && ins.proposal_json.summary
+                                ? 'Approves and runs this action'
+                                : 'Marks this as useful and clears it — nothing else happens'}"
+                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">${
+                            ins.proposal_json && ins.proposal_json.summary
+                                ? 'Approve: ' + mfEscape(ins.proposal_json.summary)
+                                : 'Useful — clear it'}</button>
                         <button onclick="mindDismiss('${ins.id}')"
                             class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Dismiss</button>
                     </div>` : ''}
@@ -2671,7 +2677,7 @@
             // the ?view=family push deep link) shows it immediately.
             if (currentMemberRole() === 'parent') fetchProposals();
             // The Mind (Task 10): unlike proposals above, this is for
-            // everyone — only the Handle it/Dismiss buttons are role-gated,
+            // everyone — only the clear/Dismiss buttons are role-gated,
             // inside renderMind() itself.
             fetchMind();
             // Requests (load arc A3): both directions, for everyone. An

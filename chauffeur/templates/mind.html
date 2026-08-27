@@ -148,7 +148,13 @@
                                     <div class="text-[11px] text-gray-600 mt-1" x-text="(ins.category || 'other') + ' · ' + fmtTs(ins.created_ts)"></div>
                                     <div class="flex gap-2 mt-2">
                                         <button @click="act(ins.id)"
-                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Handle it</button>
+                                            :title="ins.proposal_json && ins.proposal_json.summary
+                                                ? 'Approves and runs this action'
+                                                : 'Marks this as useful and clears it — nothing else happens'"
+                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700"
+                                            x-text="ins.proposal_json && ins.proposal_json.summary
+                                                ? 'Approve: ' + ins.proposal_json.summary
+                                                : 'Useful — clear it'"></button>
                                         <button @click="dismiss(ins.id)"
                                             class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Dismiss</button>
                                     </div>
