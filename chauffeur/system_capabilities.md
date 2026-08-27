@@ -5911,9 +5911,11 @@ of the time.
   isn't a filter that could be misconfigured; there is nothing to turn off.
 - **Curation, not accumulation.** Deep think curates down to at most 7 live
   insights (`mind_max_insights`), each keyed by a stable slug it's told to
-  reuse across calls — new / update / retire per cycle. A slug that gets
-  retired is never resurrected, even if the model raises the same point
-  again later; the family already answered it.
+  reuse across calls — new / update / retire per cycle. Only a **dismissed**
+  slug stays suppressed — the family heard it and said no. A slug that was
+  acted on or that simply expired out of the lane may return later: the
+  situation being back is exactly what the lane should say, and it revives
+  the same row rather than minting a duplicate.
 - **Sensitivity gating is server-side.** An insight the model marks
   `sensitive` (the curation prompt asks for this explicitly on anything
   about a child's emotional state) is stripped out before the response body
@@ -5925,7 +5927,9 @@ of the time.
   see it), a lane on the PWA Family tab sitting below intake proposals with
   Handle it / Dismiss for parents and adults, and a full admin page at
   `/mind` — settings, the live lane, history with outcome chips, per-category
-  counters, and graduation cards.
+  counters, and graduation cards. The admin payload is **parent-only**
+  (sensitive rows sit in it unfiltered); the settings dials on `/mind` still
+  work for any adult.
 - **Graduation** is a recommendation, not a mechanism yet: once a category
   racks up ≥10 resolved insights and a ≥60% act-rate (of acted+dismissed —
   untouched insights don't count either way), the admin page proposes

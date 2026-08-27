@@ -1,7 +1,10 @@
 """Deep think: reconcile new/update/retire by slug, consume noticings,
-skip when nothing changed, hard cap on active insights."""
+skip when nothing changed, hard cap on active insights. Suppression is
+dismissed-only: acted and expired slugs may return."""
 import datetime
+import time
 from harness import check
+from models.schemas import ChatMessage
 from services import storage, mind
 
 CALLS = []
@@ -72,10 +75,63 @@ def scenario_dismissed_insights_stay_dismissed():
     row = storage.get_mind_insight_by_slug('nagged')
     check(row['state'] == 'retired', "a dismissed slug is never resurrected")
 
+def scenario_expired_can_return_dismissed_cannot():
+    # Controller ruling: suppression is DISMISSED-only. An insight that aged
+    # out of the lane (expired) comes back when the situation does; the
+    # family never said no to it.
+    _reset()
+    i1 = storage.add_mind_insight({'slug': 'came-back', 'line': 'old', 'category': 'c'})
+    storage.update_mind_insight(i1, {'state': 'retired', 'outcome': 'expired',
+                                     'resolved_ts': time.time()})
+    i2 = storage.add_mind_insight({'slug': 'said-no', 'line': 'y', 'category': 'c'})
+    storage.update_mind_insight(i2, {'state': 'retired', 'outcome': 'dismissed',
+                                     'resolved_ts': time.time()})
+    mind._pool_call = _fake_pool([
+        {'slug': 'came-back', 'line': 'it is back', 'category': 'c'},
+        {'slug': 'said-no', 'line': 'y again', 'category': 'c'}])
+    mind.deep_think(NOON, force=True)
+    back = storage.get_mind_insight_by_slug('came-back')
+    check(back['state'] == 'active' and back['line'] == 'it is back'
+          and back['outcome'] is None,
+          f"an expired slug returns when the situation does, got {back}")
+    check(len([r for r in storage.get_mind_insights() if r['slug'] == 'came-back']) == 1,
+          "the return revives the same row, no duplicate slug rows")
+    check(storage.get_mind_insight_by_slug('said-no')['state'] == 'retired',
+          "a dismissed slug still never comes back")
+
+def scenario_mid_think_chat_is_not_skipped():
+    # The chat cutoff is captured when the snapshot is taken; a message that
+    # lands DURING the (long) LLM call must stay ahead of the watermark.
+    _reset()
+    fam = storage.get_family_channel()
+    if not fam:
+        storage.chat_channels_table.insert({'id': 'fam1', 'kind': 'family',
+                                            'member_ids': [], 'dm_key': None,
+                                            'title': '', 'created_at': time.time(),
+                                            'archived': False})
+        fam = storage.get_family_channel()
+
+    def pool(tier, api_key, system, prompt, **kw):
+        storage.add_chat_message(ChatMessage(
+            channel_id=fam['id'], sender_member_id='dad',
+            body='mid-think message', ts=time.time() + 0.01).model_dump())
+        return {'insights': []}
+
+    mind._pool_call = pool
+    res = mind.deep_think(NOON, force=True)
+    check(res['status'] == 'thought', f"got {res}")
+    wm = float(storage.get_app_state('mind_chat_snapshot_ts') or 0)
+    row = [m for m in storage.get_channel_messages(fam['id'])
+           if m.get('body') == 'mid-think message'][0]
+    check(wm < row['ts'],
+          "the watermark predates the mid-think message: the next snapshot sees it")
+
 if __name__ == '__main__':
     scenario_think_reconciles()
     scenario_unchanged_snapshot_skips()
     scenario_force_overrides_hash()
     scenario_active_cap()
     scenario_dismissed_insights_stay_dismissed()
+    scenario_expired_can_return_dismissed_cannot()
+    scenario_mid_think_chat_is_not_skipped()
     print("test_mind_think OK")

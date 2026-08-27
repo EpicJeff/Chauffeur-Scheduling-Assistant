@@ -2,11 +2,15 @@
 structurally absent; hash ignores clock noise; sensitivity gate is server-side."""
 import datetime, time, inspect
 from harness import check
+from models.schemas import ChatMessage
 from services import storage, mind
 
 
 def _seed_chat():
-    # Family channel + one DM. The snapshot must carry the first, never the second.
+    # Family channel + one DM. The snapshot must carry the first, never the
+    # second. Messages go through the REAL ChatMessage schema + storage path
+    # so the field names (body / sender_member_id) are pinned against the
+    # schema — a mind.py reading 'text'/'member_id' must fail here.
     fam = storage.get_family_channel()
     if not fam:
         storage.chat_channels_table.insert({'id': 'fam1', 'kind': 'family',
@@ -14,13 +18,13 @@ def _seed_chat():
                                             'title': '', 'created_at': time.time(),
                                             'archived': False})
         fam = storage.get_family_channel()
-    storage.chat_messages_table.insert({'id': 'm1', 'channel_id': fam['id'],
-                                        'member_id': 'mom', 'ts': time.time(),
-                                        'text': 'we are out of sunscreen'})
+    storage.add_chat_message(ChatMessage(
+        channel_id=fam['id'], sender_member_id='mom',
+        body='we are out of sunscreen').model_dump())
     dm = storage.get_or_create_dm('mom', 'dad')
-    storage.chat_messages_table.insert({'id': 'm2', 'channel_id': dm['id'],
-                                        'member_id': 'mom', 'ts': time.time(),
-                                        'text': 'SECRET-DM-LINE'})
+    storage.add_chat_message(ChatMessage(
+        channel_id=dm['id'], sender_member_id='mom',
+        body='SECRET-DM-LINE').model_dump())
 
 
 def scenario_family_channel_in_dms_out():
@@ -59,6 +63,27 @@ def scenario_visibility_gate():
           "a parent sees the full lane")
 
 
+def scenario_ghost_coverage_reads_as_covered():
+    # An outside hand covering a ride (ghost_assignments, family_digest.py:64)
+    # must never render as unassigned.
+    orig = storage.get_cached_schedule
+    try:
+        start = (datetime.datetime.now() + datetime.timedelta(days=1)) \
+            .strftime('%Y-%m-%dT10:00:00')
+        storage.get_cached_schedule = lambda: {
+            'events': [{'id': 'g1', 'title': 'Karate', 'start': start,
+                        'end': start}],
+            'assignments': {}, 'ghost_assignments': {'g1': 'ghost_grandma'}}
+        text = mind.snapshot(datetime.datetime.now())
+        karate = [l for l in text.splitlines() if 'Karate' in l]
+        check(karate and 'covered (outside hand)' in karate[0],
+              f"ghost-covered event reads as covered, got {karate}")
+        check('unassigned' not in (karate[0] if karate else ''),
+              "a covered ride never reads as unassigned")
+    finally:
+        storage.get_cached_schedule = orig
+
+
 def scenario_wake_window():
     s = {'mind_wake_start': '06:00', 'mind_wake_end': '22:00'}
     check(mind.in_wake_window(datetime.datetime(2026, 8, 27, 12, 0), s), "noon is awake")
@@ -70,5 +95,6 @@ if __name__ == '__main__':
     scenario_dms_and_gifts_structurally_absent()
     scenario_hash_stability()
     scenario_visibility_gate()
+    scenario_ghost_coverage_reads_as_covered()
     scenario_wake_window()
     print("test_mind_snapshot OK")

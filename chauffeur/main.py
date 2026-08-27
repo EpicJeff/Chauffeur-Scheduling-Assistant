@@ -4866,9 +4866,14 @@ def mind_act(insight_id: str, body: dict = Body(default={}),
 @app.get("/api/mind/admin")
 def mind_admin(request: Request = None):
     """Active + recent history + counters + graduation candidates — the
-    parent-only view behind the lane."""
+    parent-only view behind the lane. PARENT only, not adult: history and
+    the live list here carry sensitive rows unfiltered, and sensitive
+    renders to parents alone (spec §sensitivity)."""
     from services import mind as _mind
-    _mind_actor(request, None)
+    actor = _mind_actor(request, None)
+    if actor.get('role') != 'parent':
+        raise HTTPException(status_code=403,
+                            detail="Only a parent can open the Mind's admin view")
     return {"insights": storage.get_mind_insights(state='active'),
             "history": storage.get_mind_insights(state='retired')[-60:],
             "counters": _mind.category_counters(),

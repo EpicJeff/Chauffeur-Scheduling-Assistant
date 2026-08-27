@@ -9,6 +9,7 @@ storage.get_family_channel() on an empty DB returns None and 'fam['id']'
 would crash before the scenario even starts."""
 import datetime, time
 from harness import check
+from models.schemas import ChatMessage
 from services import storage, mind, home_board
 
 
@@ -28,16 +29,18 @@ def scenario_full_cycle():
     storage.mind_noticings_table.truncate()
     for k in ('mind_chat_watermark', 'mind_event_state', 'mind_finding_keys',
               'mind_shop_hash', 'mind_last_snapshot_hash', 'mind_sentinel_last',
-              'mind_last_think_ts'):
+              'mind_last_think_ts', 'mind_think_attempt_ts'):
         storage.set_app_state(k, None)
     storage.get_settings = lambda: {'mind_enabled': True,
                                     'llm_gemini_api_key': 'k',
                                     'mind_wake_start': '00:00',
                                     'mind_wake_end': '00:00'}
     fam = _ensure_family_channel()
-    storage.chat_messages_table.insert({'id': 'rt1', 'channel_id': fam['id'],
-                                        'member_id': 'mom', 'ts': time.time(),
-                                        'text': 'we are out of sunscreen again'})
+    # Real ChatMessage schema + storage path: field names (body /
+    # sender_member_id) stay pinned against models/schemas.py.
+    storage.add_chat_message(ChatMessage(
+        channel_id=fam['id'], sender_member_id='mom',
+        body='we are out of sunscreen again').model_dump())
 
     def fake_pool(tier, api_key, system, prompt, **kw):
         if tier == 'background':

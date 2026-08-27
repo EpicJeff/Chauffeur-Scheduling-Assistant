@@ -21,6 +21,8 @@ WAKE_END_DEFAULT = '22:00'
 RETENTION_DAYS = 14          # noticings; retired insights get 120d at the prune call
 MAX_INSIGHTS_DEFAULT = 7
 CAPS_DEFAULT = {'think': 20, 'sentinel': 400, 'promote': 50}
+THINK_ATTEMPT_FLOOR_S = 300  # a due-but-erroring/unchanged think never
+                             # re-attempts faster than this (promote bypasses)
 
 
 def _mins(val, dflt):
@@ -101,6 +103,10 @@ def snapshot(now: datetime.datetime = None) -> str:
         sched = storage.get_cached_schedule() or {}
         events = sched.get('events') or []
         assignments = dict(sched.get('assignments') or {})
+        # Ghost assignments are outside hands covering a ride — merged the
+        # way family_digest.py:64 does, so a covered event never reads as
+        # unassigned here.
+        assignments.update(sched.get('ghost_assignments') or {})
         horizon = (now + datetime.timedelta(days=7)).date()
         # calendar_ids -> member name, so an event's attendees read as people
         # rather than opaque calendar ids (members own calendar_ids now).
@@ -115,7 +121,12 @@ def snapshot(now: datetime.datetime = None) -> str:
                 continue
             attendees = [cal_owner.get(str(c), str(c)) for c in (e.get('calendar_ids') or [])]
             d_id = assignments.get(e.get('id'))
-            driver = _driver_name(d_id) if d_id and not str(d_id).startswith('ghost_') else 'unassigned'
+            if not d_id:
+                driver = 'unassigned'
+            elif str(d_id).startswith('ghost_'):
+                driver = 'covered (outside hand)'
+            else:
+                driver = _driver_name(d_id)
             lines.append(f"- {dt.strftime('%Y-%m-%d %H:%M')} "
                          f"{e.get('title') or '?'} [{', '.join(attendees)}] "
                          f"driver: {driver}")
@@ -133,9 +144,11 @@ def snapshot(now: datetime.datetime = None) -> str:
         since = float(storage.get_app_state('mind_chat_snapshot_ts') or 0) \
             or (time.time() - 86400)
         msgs = storage.get_channel_messages(fam['id'], after_ts=since, limit=80)
-        return '\n'.join(f"- [{_fmt_ts(m.get('ts'))}] {m.get('member_id')}: "
-                         f"{m.get('text') or ''}" for m in msgs
-                         if (m.get('text') or '').strip())
+        # Real ChatMessage rows carry body/sender_member_id (models/schemas.py
+        # ChatMessage) — never text/member_id.
+        return '\n'.join(f"- [{_fmt_ts(m.get('ts'))}] {m.get('sender_member_id')}: "
+                         f"{m.get('body') or ''}" for m in msgs
+                         if (m.get('body') or '').strip())
 
     def _shopping():
         from services import shopping as _shop
@@ -211,7 +224,9 @@ def visible_insights(viewer: Optional[dict]) -> List[dict]:
     """Server-side sensitivity gate. No identity (wall panel) or non-parent
     identity gets a payload that never contained sensitive rows."""
     rows = storage.get_mind_insights(state='active')
-    if viewer and viewer.get('role') in ('parent', 'admin'):
+    # 'parent' is the only role that sees sensitive rows — the codebase has
+    # no 'admin' role.
+    if viewer and viewer.get('role') in ('parent',):
         return rows
     return [r for r in rows if r.get('sensitivity') != 'sensitive']
 
@@ -279,19 +294,37 @@ def _gather_deltas(now: datetime.datetime) -> list:
         if msgs:
             storage.set_app_state('mind_chat_watermark', max(m['ts'] for m in msgs))
             for m in msgs:
-                if (m.get('text') or '').strip():
-                    deltas.append(f"[chat] {m.get('member_id')}: {m['text']}")
+                # body/sender_member_id: the real ChatMessage field names.
+                if (m.get('body') or '').strip():
+                    deltas.append(f"[chat] {m.get('sender_member_id')}: {m['body']}")
 
-    # Calendar: id->fingerprint map diffed against the stored one. Same real
+    # Calendar: id -> {title, fp} map diffed against the stored one. Same real
     # cached-schedule shape snapshot()'s _calendar() reads: events carry
     # id/title/start/end, and the driver for an event lives in the separate
-    # assignments map keyed by event id (not on the event itself).
+    # assignments map keyed by event id (not on the event itself). Ghost
+    # assignments merge in (family_digest.py:64) so an outside hand covering
+    # a ride fingerprints as covered, not unassigned. Titles ride along so
+    # the delta lines the sentinel reads name the event, not an opaque id —
+    # and a removed event still names itself from the stored value.
     sched = storage.get_cached_schedule() or {}
     assignments = dict(sched.get('assignments') or {})
-    cur = {str(e.get('id')): f"{e.get('start')}|{e.get('end')}|"
-           f"{assignments.get(e.get('id'))}"
+    assignments.update(sched.get('ghost_assignments') or {})
+    cur = {str(e.get('id')): {
+               'title': e.get('title') or '?',
+               'fp': f"{e.get('start')}|{e.get('end')}|"
+                     f"{assignments.get(e.get('id'))}"}
            for e in (sched.get('events') or [])}
     prev = dict(storage.get_app_state('mind_event_state') or {})
+
+    def _cal_title(state, k):
+        v = state.get(k)
+        return v.get('title') if isinstance(v, dict) else str(k)
+
+    def _cal_when(state, k):
+        v = state.get(k)
+        fp = v.get('fp') if isinstance(v, dict) else str(v or '')
+        return (fp.split('|', 1)[0] or '?')[:16]
+
     if cur != prev:
         storage.set_app_state('mind_event_state', cur)
         added = [k for k in cur if k not in prev]
@@ -299,11 +332,14 @@ def _gather_deltas(now: datetime.datetime) -> list:
         changed = [k for k in cur if k in prev and cur[k] != prev[k]]
         if prev:  # first run is baseline, not a delta storm
             for k in added[:10]:
-                deltas.append(f"[calendar] new: {k}")
+                deltas.append(f"[calendar] new: {_cal_title(cur, k)} "
+                              f"({_cal_when(cur, k)})")
             for k in gone[:10]:
-                deltas.append(f"[calendar] removed: {k}")
+                deltas.append(f"[calendar] removed: {_cal_title(prev, k)} "
+                              f"({_cal_when(prev, k)})")
             for k in changed[:10]:
-                deltas.append(f"[calendar] changed: {k} -> {cur[k]}")
+                deltas.append(f"[calendar] changed: {_cal_title(cur, k)} -> "
+                              f"{cur[k]['fp']}")
 
     # Findings: new open keys.
     from services import findings as _f
@@ -406,6 +442,10 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
     if not force and not in_wake_window(now, settings):
         return {'status': 'asleep'}
 
+    # The chat cutoff is the moment the snapshot is TAKEN, not the moment the
+    # think finishes — a 90-180s LLM call later, time.time() would silently
+    # skip every message that arrived mid-think.
+    chat_cutoff = time.time()
     text = snapshot(now)
     h = snapshot_hash(text)
     fresh_noticings = storage.get_mind_noticings(consumed=False)
@@ -434,7 +474,12 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
             storage.update_mind_insight(row['id'], {
                 'state': 'retired', 'outcome': 'expired',
                 'resolved_ts': time.time()})
-    retired_slugs = {r['slug'] for r in storage.get_mind_insights(state='retired')}
+    # Only a DISMISSED slug stays suppressed — the family heard it and said
+    # no. Acted and expired slugs may return: the situation being back is
+    # exactly what the lane should say.
+    dismissed_slugs = {r['slug']
+                       for r in storage.get_mind_insights(state='retired')
+                       if r.get('outcome') == 'dismissed'}
     for item in desired:
         existing = storage.get_mind_insight_by_slug(item['slug'])
         fields = {'line': item['line'], 'detail': item.get('detail') or '',
@@ -444,14 +489,21 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
                   'confidence': item.get('confidence')}
         if existing and existing['state'] == 'active':
             storage.update_mind_insight(existing['id'], fields)
-        elif item['slug'] not in retired_slugs:
+        elif item['slug'] in dismissed_slugs:
+            pass  # a dismissed slug is never resurrected
+        elif existing:
+            # acted/expired slug returning: revive the SAME row (slugs stay
+            # unique) as a fresh observation.
+            storage.update_mind_insight(existing['id'], {
+                **fields, 'state': 'active', 'outcome': None,
+                'resolved_ts': None, 'created_ts': time.time()})
+        else:
             storage.add_mind_insight({'slug': item['slug'], **fields})
-        # a retired slug is never resurrected — the family already answered
 
     storage.consume_mind_noticings([r['id'] for r in fresh_noticings])
     storage.set_app_state('mind_last_snapshot_hash', h)
     storage.set_app_state('mind_last_think_ts', time.time())
-    storage.set_app_state('mind_chat_snapshot_ts', time.time())
+    storage.set_app_state('mind_chat_snapshot_ts', chat_cutoff)
     storage.set_app_state('mind_think_requested', False)
     storage.prune_mind(time.time() - 120 * 86400,
                        time.time() - RETENTION_DAYS * 86400)
@@ -480,7 +532,15 @@ def tick(now: datetime.datetime = None) -> dict:
     last_think = float(storage.get_app_state('mind_last_think_ts') or 0)
     requested = bool(storage.get_app_state('mind_think_requested'))
     if requested or ts - last_think >= think_every:
-        out['think'] = deep_think(now)
+        # Attempt floor: a think that errors (or keeps coming back
+        # 'unchanged') leaves mind_last_think_ts alone, so without this the
+        # 30s push loop would rebuild the snapshot — and on error re-fire a
+        # heavy LLM call — every single tick. A promoted request may go
+        # sooner; everything else waits the floor out.
+        last_attempt = float(storage.get_app_state('mind_think_attempt_ts') or 0)
+        if requested or ts - last_attempt >= THINK_ATTEMPT_FLOOR_S:
+            storage.set_app_state('mind_think_attempt_ts', ts)  # marker FIRST
+            out['think'] = deep_think(now)
     return out
 
 
