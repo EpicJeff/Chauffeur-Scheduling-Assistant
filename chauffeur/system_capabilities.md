@@ -5878,3 +5878,72 @@ pack, and then you work one event's list.**
 **Known gap, unchanged:** a midday re-solve that changes an outing's first
 event changes its key, orphaning that outing's claims for the day. Accepted
 and watched; a re-key is P3+ work.
+
+## The Mind — an executive loop that watches the household on its own (phase C, v2.426.0–v2.426.15 — `services/mind.py`, `docs/superpowers/specs/2026-08-27-mind-executive-loop-design.md`)
+
+Everything else in this app answers a question or reacts to a tap. The Mind
+is the first thing that just sits there watching, and says something only
+when it has noticed something — cheaply most of the time, carefully the rest
+of the time.
+
+- **Three rungs, three cadences, one purse.** A **sentinel** (`gemma` pool,
+  background tier) wakes every 120s but only spends an LLM call when
+  something actually moved since last time: new family-channel messages past
+  its watermark, a changed calendar fingerprint, a fresh finding, or a
+  shopping-list hash that isn't what it was — all four deltas coalesced into
+  one call, and the result is stored as noticings, not insights. A
+  **promoter** (`lite` pool, interactive tier) looks at high-urgency
+  noticings and can request an early think out of turn instead of waiting
+  for the clock. **Deep think** (`flash` pool, heavy tier) runs hourly inside
+  a wake window (default 06:00–22:00) and skips itself outright when the
+  slow-state snapshot hash hasn't changed and nothing fresh came in from the
+  sentinel — an unchanged household costs nothing. Daily caps (20 think / 400
+  sentinel / 50 promote) are checked marker-first, before the call goes out,
+  not after; an LLM failure skips that cycle rather than retrying blind.
+- **What it reads:** the last 7 days of calendar, open findings, the family
+  channel, shopping lists, car telemetry (folded into the hourly snapshot
+  rather than polled by the sentinel — telemetry drifts slowly enough that
+  hourly is fresh), and its own insight history, so it doesn't re-notice the
+  same thing forever.
+- **What it structurally never reads:** DMs and gifts. `mind.py` contains no
+  DM accessor at all and never touches an occasion-secrecy record — the file
+  says so in its own docstring, and a test asserts on the source for it. This
+  isn't a filter that could be misconfigured; there is nothing to turn off.
+- **Curation, not accumulation.** Deep think curates down to at most 7 live
+  insights (`mind_max_insights`), each keyed by a stable slug it's told to
+  reuse across calls — new / update / retire per cycle. A slug that gets
+  retired is never resurrected, even if the model raises the same point
+  again later; the family already answered it.
+- **Sensitivity gating is server-side.** An insight the model marks
+  `sensitive` (the curation prompt asks for this explicitly on anything
+  about a child's emotional state) is stripped out before the response body
+  is built for any non-parent identity and for no identity at all — the wall
+  panel and every kiosk board. There's no client-side hiding to bypass;
+  the row never arrives.
+- **Where it surfaces:** an "Argyle noticed" board tile (tile type `mind`,
+  admin-only nav slug, hidden from the kiosk nav — a wall walking by doesn't
+  see it), a lane on the PWA Family tab sitting below intake proposals with
+  Handle it / Dismiss for parents and adults, and a full admin page at
+  `/mind` — settings, the live lane, history with outcome chips, per-category
+  counters, and graduation cards.
+- **Graduation** is a recommendation, not a mechanism yet: once a category
+  racks up ≥10 resolved insights and a ≥60% act-rate (of acted+dismissed —
+  untouched insights don't count either way), the admin page proposes
+  flipping that category into `mind_direct_categories`. What a graduated
+  category would actually be allowed to do on its own is phase-B work and
+  isn't built; graduating one today just records that the family keeps
+  agreeing with it.
+- **Agent tools:** `list_insights` / `dismiss_insight`, wired into the live
+  v2 stack (`agent_router` / `agent_tools_v2`) — identity comes from the
+  dispatch layer the same way every other v2 tool gets it, never from the
+  model.
+- **Off by default.** `mind_enabled` ships `false`; nothing reads a table,
+  calls an LLM, or writes a row while it's off. Turn it on from Config → The
+  Mind, or by opening `/mind` directly. On an HA installation this still
+  needs the usual deployment ritual (Check for updates → rebuild) to pick up
+  the code before the setting means anything.
+
+**Known gap, by design:** the spec's proposal-attachment (`proposal_json` on
+an insight, wired to the act endpoint and the approval rail) is live in the
+schema and the API but the think prompt doesn't ask the model for proposals
+yet — turning it on later is a prompt change, not a migration.

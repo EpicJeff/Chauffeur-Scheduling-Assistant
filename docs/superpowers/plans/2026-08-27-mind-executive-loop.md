@@ -1239,7 +1239,9 @@ _e('mind_direct_categories', 'mind', 'Graduated categories',
 
 Subject: `The Mind gets its dials, on its own page (vX.Y.Z)`
 
----### Task 8: HTTP endpoints — lane, dismiss, act
+---
+
+### Task 8: HTTP endpoints — lane, dismiss, act
 
 **Files:**
 - Modify: `chauffeur/main.py` (beside the findings endpoints, ~line 4729)
