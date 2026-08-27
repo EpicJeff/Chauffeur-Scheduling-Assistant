@@ -680,6 +680,10 @@ sending or claiming, and never pass from_member/member_name for them.
                     from services.agent_tools_v2 import list_open_findings
                     res = list_open_findings()
                     if res.get("message"): agent_message = res["message"]
+                elif func_name == "research_question":
+                    from services.agent_tools_v2 import research_question
+                    res = research_question(args.get("question", "") or "")
+                    if res.get("message"): agent_message = res["message"]
                 elif func_name in ("list_insights", "dismiss_insight"):
                     from services import agent_tools_v2 as _atv2
                     # member_role is resolved HERE, at dispatch, never taken

@@ -990,6 +990,15 @@ class Settings(BaseModel):
     llm_gemini_model: str = "gemini-3.5-flash-lite"
     llm_ollama_url: str = "http://localhost:11434"
     llm_ollama_model: str = "qwen2.5:7b"
+    # Web research (services/web.py). Off by default: this is the only thing
+    # in the app that reaches outside the house.
+    web_research_enabled: Optional[bool] = False
+    web_search_api_key: Optional[str] = ''
+    web_research_cap: Optional[int] = 40
+    # SerpApi is 250/month shared with flights, gifts and Walmart. Research
+    # may only borrow above this reserve.
+    serpapi_reserve: Optional[int] = 100
+    serpapi_monthly_limit: Optional[int] = 250
     # Family-hub / HA bridge. public_base_url is the family-facing HTTPS
     # origin (reverse proxy) used to build absolute deep links in
     # notifications. ha_base_url/ha_token are the dev fallback for the HA

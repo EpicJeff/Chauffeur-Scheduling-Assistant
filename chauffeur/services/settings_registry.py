@@ -405,6 +405,19 @@ ENTRIES: List[dict] = [
     _e('llm_gemini_api_key', 'ai', 'Gemini API key',
        'The key every extraction, suggestion and chat turn runs on.'),
     _e('llm_gemini_model', 'ai', 'Gemini model', 'Overrides the default model pool.'),
+    _e('web_research_enabled', 'ai', 'Web research',
+       'Lets Argyle look things up on the web and answer with sources. Off '
+       'means it never reaches outside the house.'),
+    _e('web_search_api_key', 'ai', 'Web search key',
+       'A Brave Search key gives research its own allowance. Without one it '
+       'borrows from the shared SerpApi quota, above a reserve.'),
+    _e('web_research_cap', 'ai', 'Research questions per month',
+       'Hard ceiling on web research runs (default 40).'),
+    _e('serpapi_reserve', 'ai', 'SerpApi reserve',
+       'Calls of the shared 250/month SerpApi allowance that research may '
+       'never spend — they stay for flight and gift lookups (default 100).'),
+    _e('serpapi_monthly_limit', 'ai', 'SerpApi monthly allowance',
+       'The plan ceiling the reserve is measured against (default 250).'),
     _e('llm_ollama_url', 'ai', 'Ollama URL', 'Where a local model server lives.'),
     _e('llm_ollama_model', 'ai', 'Ollama model', 'Which local model to call.'),
     _e('chat_suggestions_enabled', 'ai', 'Chat suggestions',

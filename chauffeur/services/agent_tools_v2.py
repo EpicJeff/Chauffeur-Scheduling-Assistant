@@ -1259,6 +1259,31 @@ def list_open_findings() -> Dict[str, Any]:
     return {"status": "success", "message": " | ".join(parts)}
 
 
+def research_question(question: str) -> Dict[str, Any]:
+    """Look something up on the web and answer with sources attached.
+
+    For the practical questions a household actually has — what a service
+    costs around here, whether a provider is licensed, which beginner course
+    people recommend. Every fact comes back with the page it was read from,
+    and a fact the model could not source is dropped before it gets here."""
+    from services import web as _web
+    res = _web.research(question)
+    status = res.get('status')
+    if status == 'ok':
+        return {"status": "success", "answer": res.get('answer') or '',
+                "facts": res.get('facts') or [],
+                "sources": res.get('sources') or []}
+    friendly = {
+        'disabled': "Web research is switched off in settings.",
+        'no_key': "There's no search key configured for research.",
+        'capped': res.get('message') or "That's this month's research budget.",
+        'reserved': res.get('message') or "The shared search allowance is reserved.",
+        'no_results': "I couldn't find anything readable on that.",
+    }
+    return {"status": "error",
+            "message": friendly.get(status, res.get('message') or "Search failed.")}
+
+
 def list_insights(member_role: str = None) -> Dict[str, Any]:
     """Things Argyle's Mind is currently keeping an eye on ('the Argyle
     noticed lane'). member_role is filled by the DISPATCH LAYER from the
@@ -3337,6 +3362,13 @@ def get_available_tools() -> List[Dict]:
             "name": "list_open_findings",
             "description": "Lists what still needs a parent — drives with no driver, things waiting on an approval, decisions nobody has made ('what needs me?', 'anything outstanding?', 'what's still open?').",
             "parameters": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "research_question",
+            "description": "Looks something up on the web and answers with sources attached. Use for practical household questions the app cannot answer from its own data — local service pricing, whether a provider is licensed, what a good beginner course for something is, how a process works. Every fact returned names the page it came from.",
+            "parameters": {"type": "object",
+                           "properties": {"question": {"type": "string", "description": "The question, phrased as you would type it into a search engine."}},
+                           "required": ["question"]}
         },
         {
             "name": "list_insights",

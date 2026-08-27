@@ -557,6 +557,47 @@
                             </div>
                         </div>
 
+                        <!-- Web research: the only thing in the app that
+                             reaches outside the house, so it is off until
+                             somebody turns it on. -->
+                        <div class="mt-2 mb-6 pt-6 border-t border-gray-700">
+                            <label class="flex items-center gap-3 mb-3 cursor-pointer">
+                                <input type="checkbox" x-model="webResearchEnabled" @change="saveSettings()"
+                                    class="w-5 h-5 rounded bg-gray-900 border-gray-600 text-blue-500 focus:ring-blue-500">
+                                <span class="text-gray-200 font-semibold">Let Argyle research on the web</span>
+                            </label>
+                            <p class="text-gray-500 text-sm mb-4">
+                                Answers practical questions with the page each fact came from.
+                                A Brave Search key gives research its own allowance; without one it
+                                borrows from the shared SerpApi quota, but never below the reserve
+                                that flight and gift lookups depend on.
+                            </p>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Web Search Key</label>
+                                    <input type="password" x-model="webSearchApiKey" @change="saveSettings()"
+                                        placeholder="Brave Search API key (optional)"
+                                        class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Research questions / month</label>
+                                    <input type="number" min="0" x-model.number="webResearchCap" @change="saveSettings()"
+                                        class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">SerpApi monthly allowance</label>
+                                    <input type="number" min="0" x-model.number="serpapiMonthlyLimit" @change="saveSettings()"
+                                        class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">SerpApi reserve</label>
+                                    <input type="number" min="0" x-model.number="serpapiReserve" @change="saveSettings()"
+                                        class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white">
+                                    <p class="text-gray-600 text-xs mt-1">Kept for flights and gifts.</p>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Action Buttons -->
                         <div class="flex flex-wrap gap-4 items-center mb-6">
                             <button @click="testLLMConnection()" :disabled="!llmProvider"
@@ -4275,6 +4316,11 @@
                 // AI assistant LLM settings
                 llmProvider: '',
                 llmGeminiApiKey: '',
+                webResearchEnabled: false,
+                webSearchApiKey: '',
+                webResearchCap: 40,
+                serpapiReserve: 100,
+                serpapiMonthlyLimit: 250,
                 llmGeminiModel: 'gemini-3.5-flash-lite',
                 llmOllamaUrl: 'http://localhost:11434',
                 llmOllamaModel: 'qwen2.5:7b',
@@ -4723,6 +4769,11 @@
                     // LLM Settings
                     this.llmProvider = data.llm_provider || '';
                     this.llmGeminiApiKey = data.llm_gemini_api_key || '';
+                    this.webResearchEnabled = !!data.web_research_enabled;
+                    this.webSearchApiKey = data.web_search_api_key || '';
+                    this.webResearchCap = data.web_research_cap ?? 40;
+                    this.serpapiReserve = data.serpapi_reserve ?? 100;
+                    this.serpapiMonthlyLimit = data.serpapi_monthly_limit ?? 250;
                     this.llmGeminiModel = data.llm_gemini_model || 'gemini-3.5-flash-lite';
                     this.llmOllamaUrl = data.llm_ollama_url || 'http://localhost:11434';
                     this.llmOllamaModel = data.llm_ollama_model || 'qwen2.5:7b';
@@ -4887,6 +4938,11 @@
                             trip_hashtags: this.tripHashtags || [],
                             llm_provider: this.llmProvider,
                             llm_gemini_api_key: this.llmGeminiApiKey,
+                            web_research_enabled: this.webResearchEnabled,
+                            web_search_api_key: this.webSearchApiKey,
+                            web_research_cap: Math.max(0, parseInt(this.webResearchCap, 10) || 0),
+                            serpapi_reserve: Math.max(0, parseInt(this.serpapiReserve, 10) || 0),
+                            serpapi_monthly_limit: Math.max(0, parseInt(this.serpapiMonthlyLimit, 10) || 0),
                             llm_gemini_model: this.llmGeminiModel,
                             llm_ollama_url: this.llmOllamaUrl,
                             llm_ollama_model: this.llmOllamaModel,
