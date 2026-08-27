@@ -6,6 +6,7 @@ any DM accessor (family channel only) and never touches occasion-secrecy
 records. Keep it that way — tests assert on this file's source."""
 import datetime
 import hashlib
+import json
 import logging
 import re
 import time
@@ -213,3 +214,117 @@ def visible_insights(viewer: Optional[dict]) -> List[dict]:
     if viewer and viewer.get('role') in ('parent', 'admin'):
         return rows
     return [r for r in rows if r.get('sensitivity') != 'sensitive']
+
+
+# --- Sentinel: coalesced deltas -> one gemma call -> noticings -------------
+
+SENTINEL_SYSTEM = (
+    "You are Argyle, the quiet ear of a family's home assistant. You are shown "
+    "only what CHANGED since your last look: new family-channel messages "
+    "(spoken openly, as in the living room), calendar changes, new findings, "
+    "shopping changes. Note anything the house should remember or act on: a "
+    "need said out loud, a new conflict, something unusual. Return STRICT JSON: "
+    '{"noticings": [{"line": "<one short sentence>", '
+    '"source": "chat|calendar|findings|supply", "urgency": "low|high"}]} '
+    "Return {\"noticings\": []} when nothing matters. Never invent facts."
+)
+
+
+def _pool_call(tier, api_key, system, prompt, **kw):
+    """Indirection so tests stub one attribute."""
+    from services import model_pools
+    return model_pools.call_pool_json(tier, api_key, system, prompt, **kw)
+
+
+def _gather_deltas(now: datetime.datetime) -> list:
+    deltas = []
+
+    # Chat: new family-channel messages past the watermark.
+    fam = storage.get_family_channel()
+    if fam:
+        wm = float(storage.get_app_state('mind_chat_watermark') or 0)
+        msgs = storage.get_channel_messages(fam['id'], after_ts=wm, limit=40)
+        if msgs:
+            storage.set_app_state('mind_chat_watermark', max(m['ts'] for m in msgs))
+            for m in msgs:
+                if (m.get('text') or '').strip():
+                    deltas.append(f"[chat] {m.get('member_id')}: {m['text']}")
+
+    # Calendar: id->fingerprint map diffed against the stored one. Same real
+    # cached-schedule shape snapshot()'s _calendar() reads: events carry
+    # id/title/start/end, and the driver for an event lives in the separate
+    # assignments map keyed by event id (not on the event itself).
+    sched = storage.get_cached_schedule() or {}
+    assignments = dict(sched.get('assignments') or {})
+    cur = {str(e.get('id')): f"{e.get('start')}|{e.get('end')}|"
+           f"{assignments.get(e.get('id'))}"
+           for e in (sched.get('events') or [])}
+    prev = dict(storage.get_app_state('mind_event_state') or {})
+    if cur != prev:
+        storage.set_app_state('mind_event_state', cur)
+        added = [k for k in cur if k not in prev]
+        gone = [k for k in prev if k not in cur]
+        changed = [k for k in cur if k in prev and cur[k] != prev[k]]
+        if prev:  # first run is baseline, not a delta storm
+            for k in added[:10]:
+                deltas.append(f"[calendar] new: {k}")
+            for k in gone[:10]:
+                deltas.append(f"[calendar] removed: {k}")
+            for k in changed[:10]:
+                deltas.append(f"[calendar] changed: {k} -> {cur[k]}")
+
+    # Findings: new open keys.
+    from services import findings as _f
+    keys = sorted(r.get('key') or r.get('id') for r in _f.open_findings())
+    prev_keys = list(storage.get_app_state('mind_finding_keys') or [])
+    if keys != prev_keys:
+        storage.set_app_state('mind_finding_keys', keys)
+        for r in _f.open_findings():
+            if (r.get('key') or r.get('id')) not in prev_keys and prev_keys:
+                deltas.append(f"[findings] {r.get('line')}")
+
+    # Shopping: coarse hash of list sizes.
+    try:
+        from services import shopping as _shop
+        h = hashlib.sha256(json.dumps(
+            [(l.get('id'), l.get('item_count'))
+             for l in (_shop.lists_needing_a_trip(min_items=1) or [])],
+            sort_keys=True).encode()).hexdigest()
+        if h != storage.get_app_state('mind_shop_hash'):
+            if storage.get_app_state('mind_shop_hash'):
+                deltas.append("[supply] shopping lists changed")
+            storage.set_app_state('mind_shop_hash', h)
+    except Exception as e:
+        logger.warning(f"[mind] shopping delta failed: {e}")
+
+    return deltas
+
+
+def sentinel_sweep(now: datetime.datetime = None) -> dict:
+    now = now or datetime.datetime.now()
+    settings = storage.get_settings() or {}
+    api_key = settings.get('llm_gemini_api_key', '')
+    deltas = _gather_deltas(now)      # watermarks advance even without a key
+    if not deltas:
+        return {'status': 'no_deltas'}
+    if not api_key:
+        return {'status': 'no_key'}
+    cap = int(settings.get('mind_cap_sentinel', CAPS_DEFAULT['sentinel']))
+    if not _bump_call('sentinel', cap):
+        return {'status': 'capped'}
+    res = _pool_call('background', api_key, SENTINEL_SYSTEM,
+                     "CHANGES SINCE LAST LOOK:\n" + '\n'.join(deltas[:60]),
+                     timeout_s=60, gemma_timeout_s=180)
+    if not isinstance(res, dict) or res.get('error'):
+        logger.warning(f"[mind] sentinel LLM failed: {res}")
+        return {'status': 'error'}
+    stored = 0
+    for n in (res.get('noticings') or [])[:10]:
+        line = (n.get('line') or '').strip()
+        if line:
+            storage.add_mind_noticing({'line': line,
+                                       'source': n.get('source') or 'chat',
+                                       'urgency': n.get('urgency') or 'low',
+                                       'refs': []})
+            stored += 1
+    return {'status': 'swept', 'noticings': stored}
