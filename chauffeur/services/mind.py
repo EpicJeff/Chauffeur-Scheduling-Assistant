@@ -340,6 +340,93 @@ PROMOTER_SYSTEM = (
 )
 
 
+THINK_SYSTEM = (
+    "You are Argyle, a family home's mind. Coded watchers already cover the "
+    "mechanical things (the OPEN FINDINGS section) — never restate those. Your "
+    "job is what only whole-picture judgment can see: cross-domain patterns, "
+    "load building on one person, needs said out loud in the family channel, "
+    "collisions nobody planned for, small kindnesses worth suggesting.\n\n"
+    "You are shown your own previous insights and how the family reacted. A "
+    "dismissed insight means they heard you and said no — do not repeat it. "
+    "Curate: return the FULL DESIRED set of current insights (max {max_n}); "
+    "any active slug you omit is retired. Keep a slug stable while the "
+    "observation is the same one.\n\n"
+    "Mark sensitivity 'sensitive' for anything about a child's emotional "
+    "state, stress, health, or another member's private strain — those render "
+    "to parents only.\n\n"
+    "Return STRICT JSON: {{\"insights\": [{{\"slug\": \"kebab-case-stable\", "
+    "\"line\": \"one plain sentence\", \"detail\": \"1-2 optional sentences\", "
+    "\"domain\": \"kids|meals|cars|schedule|supply|other\", "
+    "\"sensitivity\": \"normal|sensitive\", \"category\": "
+    "\"reusable-pattern-slug\", \"confidence\": 0.0}}]}}. "
+    "An empty list is a fine answer. Never invent facts."
+)
+
+
+def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
+    now = now or datetime.datetime.now()
+    settings = storage.get_settings() or {}
+    if not settings.get('mind_enabled', False):
+        return {'status': 'disabled'}
+    api_key = settings.get('llm_gemini_api_key', '')
+    if not api_key:
+        return {'status': 'no_key'}
+    if not force and not in_wake_window(now, settings):
+        return {'status': 'asleep'}
+
+    text = snapshot(now)
+    h = snapshot_hash(text)
+    fresh_noticings = storage.get_mind_noticings(consumed=False)
+    if not force and h == storage.get_app_state('mind_last_snapshot_hash') \
+            and not fresh_noticings:
+        return {'status': 'unchanged'}
+    cap = int(settings.get('mind_cap_think', CAPS_DEFAULT['think']))
+    if not _bump_call('think', cap):
+        return {'status': 'capped'}
+
+    max_n = int(settings.get('mind_max_insights', MAX_INSIGHTS_DEFAULT))
+    res = _pool_call('heavy', api_key, THINK_SYSTEM.format(max_n=max_n), text,
+                     timeout_s=90, gemma_timeout_s=180)
+    if not isinstance(res, dict) or res.get('error'):
+        logger.warning(f"[mind] deep think failed: {res}")
+        return {'status': 'error'}
+
+    desired = [i for i in (res.get('insights') or [])
+               if (i.get('slug') or '').strip() and (i.get('line') or '').strip()]
+    desired = desired[:max_n]
+    desired_slugs = {i['slug'] for i in desired}
+
+    active = storage.get_mind_insights(state='active')
+    for row in active:
+        if row['slug'] not in desired_slugs:
+            storage.update_mind_insight(row['id'], {
+                'state': 'retired', 'outcome': 'expired',
+                'resolved_ts': time.time()})
+    retired_slugs = {r['slug'] for r in storage.get_mind_insights(state='retired')}
+    for item in desired:
+        existing = storage.get_mind_insight_by_slug(item['slug'])
+        fields = {'line': item['line'], 'detail': item.get('detail') or '',
+                  'domain': item.get('domain') or '',
+                  'sensitivity': item.get('sensitivity') or 'normal',
+                  'category': item.get('category') or 'other',
+                  'confidence': item.get('confidence')}
+        if existing and existing['state'] == 'active':
+            storage.update_mind_insight(existing['id'], fields)
+        elif item['slug'] not in retired_slugs:
+            storage.add_mind_insight({'slug': item['slug'], **fields})
+        # a retired slug is never resurrected — the family already answered
+
+    storage.consume_mind_noticings([r['id'] for r in fresh_noticings])
+    storage.set_app_state('mind_last_snapshot_hash', h)
+    storage.set_app_state('mind_last_think_ts', time.time())
+    storage.set_app_state('mind_chat_snapshot_ts', time.time())
+    storage.set_app_state('mind_think_requested', False)
+    storage.prune_mind(time.time() - 120 * 86400,
+                       time.time() - RETENTION_DAYS * 86400)
+    return {'status': 'thought',
+            'active': len(storage.get_mind_insights(state='active'))}
+
+
 def maybe_promote() -> dict:
     urgent = [r for r in storage.get_mind_noticings(consumed=False)
               if r.get('urgency') == 'high' and not r.get('promoted_checked')]
