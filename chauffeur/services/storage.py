@@ -512,6 +512,7 @@ with db_lock:
     pet_challenges_table = db.table('pet_challenges')
     music_favorites_table = db.table('music_favorites')
     music_recent_table = db.table('music_recent')
+    programs_table = db.table('programs')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -2990,6 +2991,57 @@ def append_thread_history(thread_id: str, entry: dict) -> bool:
 def delete_thread(thread_id: str):
     with db_lock:
         threads_table.remove(Query().id == thread_id)
+
+# --- Programs: an ambition with a plan attached ---------------------------
+# See docs/superpowers/specs/2026-08-28-programs-design.md. The session log is
+# append-only for the same reason a thread's history is: the number a person is
+# asked to trust must not be quietly editable.
+
+def add_program(data: dict) -> str:
+    from models.schemas import Program
+    with db_lock:
+        row = Program(**data).model_dump()
+        programs_table.insert(row)
+        return row['id']
+
+def get_program(program_id: str) -> Optional[dict]:
+    with db_lock:
+        res = programs_table.search(Query().id == program_id)
+        return dict(res[0]) if res else None
+
+def get_programs(member_id: str = None, state: str = None,
+                 include_finished: bool = False) -> List[dict]:
+    with db_lock:
+        rows = [dict(p) for p in programs_table.all()]
+    if member_id:
+        rows = [p for p in rows if p.get('member_id') == member_id]
+    if state:
+        rows = [p for p in rows if p.get('state') == state]
+    if not include_finished:
+        rows = [p for p in rows if p.get('state') not in ('done', 'dropped')]
+    rows.sort(key=lambda p: p.get('created_at') or 0)
+    return rows
+
+def update_program(program_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(programs_table.update(data, Query().id == program_id))
+
+def append_program_session(program_id: str, entry: dict) -> bool:
+    with db_lock:
+        res = programs_table.search(Query().id == program_id)
+        if not res:
+            return False
+        row = dict(res[0])
+        entry = {'ts': time.time(), 'minutes': 0, 'source': 'added',
+                 'note': '', **entry}
+        row['sessions'].append(entry)
+        programs_table.update({'sessions': row['sessions']},
+                              Query().id == program_id)
+        return True
+
+def delete_program(program_id: str):
+    with db_lock:
+        programs_table.remove(Query().id == program_id)
 
 # --- Shopping lists (meals & provisioning arc M1) ---
 # A STANDING list bound to a recurring errand by TAG, never by errand id: the

@@ -687,6 +687,52 @@ class ProtectedCommitment(BaseModel):
     active: bool = True
     created_at: float = Field(default_factory=time.time)
 
+class Program(BaseModel):
+    """An ambition made concrete: an aim, a cited path, and the week it needs.
+
+    A goal is not a block on a calendar. Nobody reserves forty minutes for
+    guitar and then sits there wondering what to do with it — they never
+    reserve it, because they have no idea what would go in it. So a program
+    carries the plan as well as the time, and it GENERATES the rest: practice
+    slots the solver defends, a thread for the kit, a real date to aim at.
+
+    The six progress rules from the design live in this shape rather than in
+    the code that renders it. There is no streak field, so no streak can be
+    drawn. A milestone has only a hit date, so nothing can mark one missed.
+    There is nowhere to put an outcome measure, which is also what keeps
+    body-composition targets structurally out of the app. A schema that cannot
+    express shame is worth more than a rule asking people not to render it.
+    """
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    member_id: str
+    title: str                                   # the aim, in their words
+    state: str = 'proposed'                      # proposed|active|paused|done|dropped
+    created_by: Optional[str] = None
+    approved_by: Optional[str] = None
+    created_at: float = Field(default_factory=time.time)
+    # Phases come from pages the app actually read; pacing is computed. A phase
+    # that cited nothing was dropped before it got here.
+    phases: List[Dict[str, Any]] = Field(default_factory=list)
+    source: Dict[str, Any] = Field(
+        default_factory=lambda: {'plan_name': '', 'url': '', 'why_this_one': '',
+                                 'facts': [], 'runners_up': [],
+                                 'hand_written': False})
+    shape: Dict[str, Any] = Field(
+        default_factory=lambda: {'sessions_per_week': 3, 'minutes': 25,
+                                 'preferred_days': []})
+    baseline: Dict[str, Any] = Field(
+        default_factory=lambda: {'start_date': None, 'target_date': None,
+                                 'target_event_id': None,
+                                 'rebaselined_at': None, 'rebaselines': 0})
+    emissions: Dict[str, Any] = Field(
+        default_factory=lambda: {'commitment_ids': [], 'thread_ids': [],
+                                 'event_ids': []})
+    # Append-only. A correction is a new entry, never an edit, so the count can
+    # be argued with but not rewritten.
+    sessions: List[Dict[str, Any]] = Field(default_factory=list)
+    paused_at: Optional[float] = None
+    finished_at: Optional[float] = None
+
 class Request(BaseModel):
     """An ask, with a state (load arc A3).
 

@@ -94,6 +94,8 @@ INDEX_SPEC = {
     # the day loop on every refresh and by commitment when a lever needs to
     # know what it already gave up.
     "protected_exceptions": [["commitment_id"], ["date"]],
+    # Programs: read by whose they are and by state on every sweep.
+    "programs": [["id"], ["member_id"], ["state"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,
