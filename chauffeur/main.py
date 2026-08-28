@@ -5178,6 +5178,102 @@ def household_load(days: int = 30):
     return {"days": days, "household": household, "assisting": assisting,
             "line": line}
 
+# --- Threads: open loops with somebody outside the family --------------------
+# The hand path onto services/threads.py — create, edit, advance, close.
+# Reads are open to any signed-in member; every write is parent/adult work,
+# same discipline as Mind's `_mind_actor` (reused directly below rather than
+# rebuilt, since the rule is identical: a child/helper/guest is refused).
+
+@app.get("/api/threads")
+def list_threads(owner: Optional[str] = None, include_closed: bool = False,
+                 request: Request = None):
+    """Grouped by state, stalls first, is a client concern — this hands back
+    the flat list `services/threads.py` and `storage.get_threads` already
+    filter by owner and closed-state."""
+    viewer_id = _acting_id(request, None)
+    storage.get_member(viewer_id) if viewer_id else None
+    return {"threads": storage.get_threads(owner=owner, include_closed=include_closed)}
+
+
+@app.post("/api/threads")
+def create_thread(body: dict = Body(default={}), request: Request = None):
+    """Open a new thread — the pest control company, the school waitlist.
+    All logic (including the opening history entry) lives in
+    `services.threads.create`."""
+    from services import threads as _threads
+    actor = _mind_actor(request, body.get('member_id'))
+    title = (body.get('title') or '').strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="A thread needs a title")
+    thread_id = _threads.create(
+        title=title,
+        owner_member_id=body.get('owner_member_id'),
+        goal=body.get('goal') or '',
+        kind=body.get('kind') or 'project',
+        contact_id=body.get('contact_id'),
+        counterparty_name=body.get('counterparty_name') or '',
+        counterparty_email=body.get('counterparty_email') or '',
+        next_action=body.get('next_action') or '',
+        next_action_at=body.get('next_action_at'),
+        created_by=actor.get('id'),
+    )
+    return {"status": "success", "id": thread_id}
+
+
+@app.patch("/api/threads/{thread_id}")
+def patch_thread(thread_id: str, body: dict = Body(default={}), request: Request = None):
+    """Direct field edits — retitling, fixing a counterparty email typo.
+    State changes go through /advance, /note and /close so they land in
+    `history`; this route is for fields that carry no movement of their own."""
+    from models.schemas import Thread
+    _mind_actor(request, body.get('member_id'))
+    clean = {k: v for k, v in (body or {}).items()
+             if k in Thread.model_fields and k not in ('id', 'created_at', 'history')}
+    ok = storage.update_thread(thread_id, clean)
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such thread")
+    return {"status": "success"}
+
+
+@app.post("/api/threads/{thread_id}/note")
+def note_thread(thread_id: str, body: dict = Body(default={}), request: Request = None):
+    """Movement that isn't a change of plan — a call made, a document
+    received. Resets the quiet clock (services.threads.note)."""
+    from services import threads as _threads
+    actor = _mind_actor(request, body.get('member_id'))
+    text = (body.get('text') or '').strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="A note needs text")
+    ok = _threads.note(thread_id, text, who=actor.get('id'), url=body.get('url'))
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such thread")
+    return {"status": "success"}
+
+
+@app.post("/api/threads/{thread_id}/advance")
+def advance_thread(thread_id: str, body: dict = Body(default={}), request: Request = None):
+    """Set the next thing that has to happen, and when (services.threads.advance)."""
+    from services import threads as _threads
+    actor = _mind_actor(request, body.get('member_id'))
+    ok = _threads.advance(thread_id, body.get('next_action') or '',
+                          next_action_at=body.get('next_action_at'),
+                          note=body.get('note'), who=actor.get('id'))
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such thread")
+    return {"status": "success"}
+
+
+@app.post("/api/threads/{thread_id}/close")
+def close_thread(thread_id: str, body: dict = Body(default={}), request: Request = None):
+    """End a thread — done when it resolved, dropped when it won't
+    (services.threads.close). Stops stalling immediately."""
+    from services import threads as _threads
+    actor = _mind_actor(request, body.get('member_id'))
+    ok = _threads.close(thread_id, state=body.get('state') or 'done', who=actor.get('id'))
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such thread")
+    return {"status": "success"}
+
 # --- Outside hands: assist contacts and the work they cover (load arc A1) ---
 # A contact is somebody outside this household who does work for it — a carpool
 # parent, the neighbour who does the dishes. They have no account, which is the

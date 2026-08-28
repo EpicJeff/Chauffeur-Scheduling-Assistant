@@ -339,6 +339,12 @@ RULES = [
     # Mind insight lane: same discipline — SIGNED_IN at the route, role
     # decided in the handler (`_mind_actor`) for dismiss/act/admin.
     (ANY, '/api/mind/*', SIGNED_IN, None),
+    # Threads: open loops with somebody outside the family. Same discipline —
+    # SIGNED_IN at the route, `_mind_actor` (reused, not rebuilt) refuses a
+    # child/helper/guest in the handler for every write; reads are open to
+    # any signed-in member, same as the findings list.
+    (ANY, '/api/threads/*', SIGNED_IN, None),
+    (ANY, '/api/threads', SIGNED_IN, None),
     (ANY, '/api/coverage/*', SIGNED_IN, 'schedule.carpool_contacts'),
     (ANY, '/api/assist-contacts/*', SIGNED_IN, 'schedule.carpool_contacts'),
     (ANY, '/api/assist-coverage/*', SIGNED_IN, None),
