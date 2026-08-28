@@ -4794,7 +4794,9 @@ def negotiation_find(body: dict = Body(default={}), request: Request = None):
     if not event_id:
         return {"status": "error", "message": "Which event?"}
     date_str = str(body.get('date') or datetime.now().date().isoformat())
-    deal = _neg.propose(date_str, event_id, budget=_neg.DEEP_BUDGET)
+    budget = int(storage.get_settings().get('negotiation_deep_budget',
+                                             _neg.DEEP_BUDGET) or _neg.DEEP_BUDGET)
+    deal = _neg.propose(date_str, event_id, budget=budget)
     if not deal:
         return {"status": "success", "deal": None,
                 "message": "Nothing I can change makes that day work."}

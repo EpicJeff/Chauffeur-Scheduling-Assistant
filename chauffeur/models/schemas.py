@@ -1372,6 +1372,19 @@ class Settings(BaseModel):
     # Days of no movement before an open thread counts as quiet (services/
     # threads.py: is_stalled). An overdue next_action_at stalls regardless.
     thread_stall_days: Optional[int] = 7
+    # --- Negotiation (the smallest change that makes a day work) ---
+    # Off means findings go back to reporting the conflict instead of
+    # searching for a deal (services/watchers.py: _negotiate_seed).
+    negotiation_enabled: Optional[bool] = True
+    # Re-solves the unattended nightly sweep may spend per seed.
+    negotiation_sweep_budget: Optional[int] = 8
+    # Re-solves an on-demand "Find a way" tap may spend per seed.
+    negotiation_deep_budget: Optional[int] = 40
+    # The smaller of the two minute steps a shift_event lever may propose
+    # (the larger step is always double this).
+    negotiation_shift_mins: Optional[int] = 15
+    # Per-replay CP-SAT time limit inside a negotiation search.
+    negotiation_solve_seconds: Optional[float] = 2.0
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

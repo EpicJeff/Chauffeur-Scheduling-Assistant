@@ -468,6 +468,13 @@ class ClaimChoreTool(BaseModel):
     chore_title: str = Field(..., description="The chore's name (fuzzy matched).")
     member_name: Optional[str] = Field(default=None, description="Who is claiming it.")
 
+class NegotiateDayTool(BaseModel):
+    """
+    Works out what would make a broken day cover — whose event could move fifteen minutes, who could take a drive, what could be skipped. Read-only: it finds the deal, it does not ask anybody.
+    """
+    day: Optional[str] = Field(None, description="The date to work on, as YYYY-MM-DD. Defaults to today.")
+    event_title: Optional[str] = Field(None, description="Narrow to one uncovered event by title.")
+
 class GetRoutineStatusTool(BaseModel):
     """
     Checks a family member's daily routine progress and streak ('did Ben finish his routine?').
@@ -893,6 +900,7 @@ TOOL_SCHEMAS = {
     "list_insights": ListInsightsTool.model_json_schema(),
     "dismiss_insight": DismissInsightTool.model_json_schema(),
     "claim_chore": ClaimChoreTool.model_json_schema(),
+    "negotiate_day": NegotiateDayTool.model_json_schema(),
     "get_routine_status": GetRoutineStatusTool.model_json_schema(),
     "post_weekly_digest": PostWeeklyDigestTool.model_json_schema(),
     "get_drive_digest": GetDriveDigestTool.model_json_schema(),
@@ -2061,6 +2069,19 @@ def handle_claim_chore(args: dict) -> dict:
     return claim_chore(args.get("chore_title", ""),
                        member_name=args.get("member_name"))
 
+def handle_negotiate_day(args: dict) -> dict:
+    # The v1 loop is admin-only, so the caller is a grown-up by construction —
+    # but negotiate_day gates on a resolved member, so give it the first parent
+    # rather than None. `ask_deal` is deliberately absent from this registry:
+    # fanning out asks needs an identity this loop cannot produce.
+    from services.agent_tools_v2 import negotiate_day
+    from services import storage
+    parents = [m for m in storage.get_all_members()
+               if m.get('role') == 'parent' and not m.get('system')]
+    return negotiate_day(day=args.get("day"),
+                         event_title=args.get("event_title"),
+                         acting_member=parents[0] if parents else None)
+
 def handle_get_kid_tasks(args: dict) -> dict:
     from services.agent_tools_v2 import get_kid_tasks
     return get_kid_tasks(args.get("member_name") or "")
@@ -2382,6 +2403,7 @@ TOOL_HANDLERS = {
     "list_insights": handle_list_insights,
     "dismiss_insight": handle_dismiss_insight,
     "claim_chore": handle_claim_chore,
+    "negotiate_day": handle_negotiate_day,
     "get_routine_status": handle_get_routine_status,
     "post_weekly_digest": handle_post_weekly_digest,
     "get_drive_digest": handle_get_drive_digest,

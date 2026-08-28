@@ -103,6 +103,10 @@ def candidates(pack: dict, seed_event_id: str) -> list:
     seed_end = _dt(seed.get('end')) or seed_start + datetime.timedelta(hours=1)
 
     refused = {r['series_key'] for r in storage.get_shift_refusals()}
+    # The smaller step is a setting (default 15, matching SHIFT_STEPS); the
+    # larger step is always double it, same shape as the constant it replaces.
+    shift_mins = int(storage.get_settings().get('negotiation_shift_mins', 15) or 15)
+    shift_steps = (-shift_mins, shift_mins, -shift_mins * 2, shift_mins * 2)
     out = []
 
     # --- shift a neighbour, or the seed itself -----------------------------
@@ -114,8 +118,8 @@ def candidates(pack: dict, seed_event_id: str) -> list:
             continue
         owner = _owner_of(ev, pack)
         start = _dt(ev.get('start'))
-        for delta in SHIFT_STEPS:
-            cost = GIVE_UP['shift_15' if abs(delta) == 15 else 'shift_30']
+        for delta in shift_steps:
+            cost = GIVE_UP['shift_15' if abs(delta) == shift_mins else 'shift_30']
             when = start + datetime.timedelta(minutes=delta)
             direction = 'later' if delta > 0 else 'earlier'
             out.append({
@@ -355,9 +359,16 @@ def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
     when = seed_start.strftime('%a %I:%M %p').replace(' 0', ' ') if seed_start else ''
     seed_title = seed.get('title') or 'That drive'
 
+    # Per-replay time limit -- a search runs many of these for one question,
+    # so it gets a shorter leash than the daily solve (solve_pack's own
+    # default). Configurable because a bigger day may need more of it.
+    time_limit_s = float(storage.get_settings().get(
+        'negotiation_solve_seconds', solve_pack.DEFAULT_TIME_LIMIT_S)
+        or solve_pack.DEFAULT_TIME_LIMIT_S)
+
     try:
         with maps.travel_cache_only():
-            base = solve_pack.replay(pack)
+            base = solve_pack.replay(pack, time_limit_s=time_limit_s)
     except ValueError as e:
         print(f"[negotiation] no usable pack for {pack.get('date')}: {e}")
         return []
@@ -381,7 +392,8 @@ def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
         spent += 1
         try:
             with maps.travel_cache_only():
-                result = solve_pack.replay(solve_pack.apply(pack, cand['mutations']))
+                result = solve_pack.replay(solve_pack.apply(pack, cand['mutations']),
+                                           time_limit_s=time_limit_s)
         except Exception as e:
             # Includes `maps.UncachedTravelPair` -- a candidate this replay
             # would have needed to buy a travel pair for is dropped exactly

@@ -6181,3 +6181,143 @@ quiet days before an open thread counts as stalled; an overdue
 Settings field is Optional and POST /api/settings accepts it) falls back to
 the default instead of crashing the sweep (v2.430.0), and the page's save
 now surfaces a refused write instead of looking saved.
+
+## Negotiation — the smallest change that makes a day work (v2.431.0–v2.431.14 — `services/negotiation.py`, `services/solve_pack.py`, `services/coverage_options.py`, `services/watchers.py`, `main.py` `/api/negotiation/*`, `templates/dashboard.html`, `templates/mind.html`)
+
+`services/coverage_options.py` softens an unassigned event with a ladder, but
+every rung still hands the problem back to a parent. Negotiation asks the
+second question: is there a small change — re-solved and kept only if it
+actually works — that makes the day cover, and who would that change cost?
+
+**Four levers, all occurrence-scoped** (`negotiation.candidates`), so none of
+them can invalidate the single-day validation below by reaching another day:
+`shift_event` (move one event by a quarter or half hour — the smaller step is
+`negotiation_shift_mins`, default 15, the larger step is always double it),
+`skip_optional` (skip an event the family already marked optional, this once),
+`swap_drive` (somebody else takes a drive that's holding the blocked driver —
+reuses `coverage_options.driver_options`' own `blocked` reasons rather than
+re-deriving them), and `lift_protected` (give up ONE occurrence of a standing
+protected commitment). `GIVE_UP` prices them `shift_15`:1, `shift_30`:2,
+`skip_optional`:2, `swap_drive`:3, `lift_protected`:5 — the design, not
+tuning: lifting protected time is priced highest on purpose, because
+protected time is the one place an adult's time is FOR something rather than
+an obstacle to route around. `candidates()` orders cheapest-first (fewest
+people touched, then lowest price) BEFORE anything is solved, because the
+budget below is a cutoff on this list — the few solves a sweep gets must be
+spent on the most promising deals, not a random sample.
+
+**Movability is learned, not declared.** A `shift_event` candidate is skipped
+outright for any series a person has already said no to
+(`storage.get_shift_refusals`, keyed by `negotiation.series_key` — the
+recurring/original event id, so "the lesson cannot move" is remembered
+against the lesson, not one Tuesday). Nothing declares a series unmovable up
+front; `decline_part` is the only thing that writes the flag, the moment a
+real ask comes back no. `GET /api/negotiation/refusals` lists what the app
+has taught itself and `DELETE /api/negotiation/refusals/{series_key}` is the
+hand path to unteach one by hand.
+
+**The solve pack, and its one fidelity property.** `matcher.solve_schedule`'s
+real arguments — `driver_events` (a driver's own calendar, carrying the
+attendance term that in practice decides assignments) and the assembled rule
+list — live nowhere after a refresh finishes; they're built once across 1300
+lines of `_refresh_schedule_logic_impl` and thrown away. `solve_pack.build`
+writes down exactly what the refresh handed the solver, so `solve_pack.replay`
+re-solves the schedule the family actually has, not one that resembles it —
+which is what makes a negotiation answer trustworthy. `solve_pack.apply`
+returns a mutated COPY (shift a time, drop a rule, add an override, drop an
+event) and mutates nothing; only a person's yes, through `accept_part`, ever
+touches the real calendar or the real rule set. Every replay runs inside
+`maps.travel_cache_only()`: none of the four levers can introduce a location
+the day's own solve did not already need, so an uncached pair (`test_negotiation_travel_cache.py`) means the fetch failed or the cache
+emptied, not a reason to buy more Matrix calls unattended.
+
+**The hard filter, and the one known gap in it.** A candidate survives
+`negotiation.search` only if the seed itself ends up assigned AND
+`broken - baseline_broken` is empty — nothing that was fine becomes broken.
+The design called this "no new unassigned event and no new
+conflict," but the conflict half cannot currently fire: `solve_pack.replay`
+calls `matcher.compute_conflicts(assignments, {}, events)` with an empty
+ghost-assignment map, and that function only ever pairs an assignment against
+a GHOST event — so both sides of `_newly_conflicted`'s comparison are always
+`{}` today, and the check is a no-op (`negotiation._newly_conflicted`'s own
+docstring flags this). This is fine in substance, not a live bug: CP-SAT
+cannot produce a double-booking on its own, and the way a bad replay actually
+shows up is an event going unassigned — which the unassigned half of the
+filter DOES catch. The clause is written correctly and would start doing
+real work the day ghost routes are ever replayed; until then, credit the
+unassigned check for the whole filter, not the sentence in the design doc.
+
+**Two-tier cost, spent on two different budgets.** `search(pack, seed_id,
+budget)` solves down the ordered candidate queue and returns only what
+worked, ranked by people disturbed first (not tradeable), then a blend of
+price, objective delta (capped and scaled down so it only breaks ties,
+`DELTA_SCALE`/`DELTA_CAP`) and 14-day fairness (`FAIRNESS_DAYS` — how many
+times this person has already given something up lately, counted from real
+recorded deals, never estimated). `budget` caps replay ATTEMPTS, not
+successes: a candidate whose replay raises still spent one of the search's
+re-solves, so a queue that fails often can't walk itself unbounded. Two
+callers, two budgets: the nightly sweep (`watchers._negotiate_seed`, reads
+`negotiation_sweep_budget`, default 8 — small, because it runs unattended and
+must never be the reason a refresh feels slow) and a person tapping **Find a
+way** on the conflicts dialog (`POST /api/negotiation/find`, reads
+`negotiation_deep_budget`, default 40 — somebody is waiting on purpose, so it
+goes further down the same queue). Every replay inside `search()` also
+carries a per-solve time limit, `negotiation_solve_seconds` (default 2,
+`solve_pack.DEFAULT_TIME_LIMIT_S`) — shorter than the daily solve's five
+seconds because a single question runs many of these, not one.
+
+**The deal, and the deliberately two-tap consent.** `propose()` reuses an
+already-open draft/asking deal for the same seed rather than re-solving —
+re-searching a seed the family is already looking at would burn budget
+re-deciding a question already on their screen. A deal is `{date,
+seed_event_id, seed_title, line, parts, cost, mutations, state}`; each part
+is `{id, member_id, lever, payload, ask_text, state, request_id, applied}`.
+States: `draft` (found, nobody asked) → `asking` (`start_asks` fanned one
+`services.requests` entry per part, kind `deal_part`) → `applied` (every part
+said yes) or `dead` (one no, a kill, or a part that stopped being possible
+between the ask and the last yes). **Nothing applies until every part has
+accepted** — `accept_part` returns `applied: false` and keeps waiting while
+anyone hasn't, and every part is pre-flighted with `_check_part` (event still
+there, commitment still there, driver still set up to drive) before ANY of
+them touch anything, so a deal that can't fully go through applies none of
+itself, exactly like an explicit decline would. Local levers apply before the
+one that reaches Google Calendar (`_EXTERNAL_LEVERS = {'shift_event'}`), so a
+real failure leaves only local, undoable state. A single `decline_part`
+kills the whole deal blamelessly (`dead_reason` keeps the human reason) and,
+for a `shift_event` part, is exactly the moment a refusal is learned (above).
+
+**Chat, both stacks, an allowlist not a blocklist.** `negotiate_day` (a read,
+same discipline as `list_threads`) and `ask_deal` (a write, same discipline
+as `close_thread`) live in `agent_tools_v2` and are dispatched by
+`agent_router` with the SAME actor resolution as the thread tools — resolved
+at dispatch, never taken from the model, because `/api/chat` is
+`WALL_OR_SERVICE` and an
+anonymous wall panel must be REFUSED outright rather than walked through a
+`role not in (...)` blocklist with `role=None`. `negotiate_day` requires only
+a resolved member (a deal names who in the family would have to give
+something up — not a sentence for an anonymous screen) and never sends
+anything, however good what it finds; `ask_deal` requires a resolved
+parent/adult, because rearranging the family's evening is a grown-up's call,
+and looks for an open draft deal by the seed event's title before calling
+`negotiation.start_asks`. The v1 admin loop (`agent_tools.py`) carries
+`negotiate_day` only — handed the household's first parent as its actor,
+since that loop resolves no real member — and deliberately has no `ask_deal`
+at all: fanning out asks needs an identity that loop cannot produce.
+
+**Hand path.** **Find a way** on the dashboard's conflicts dialog is the
+on-demand search (`POST /api/negotiation/find`); asking is a second, separate
+tap (`POST /api/negotiation/{deal_id}/ask`) — searching and asking are always
+two taps, never one, so nobody hears about a deal until a person decides it's
+worth asking. `POST /api/negotiation/{deal_id}/kill` drops a deal a person
+doesn't want asked or no longer needs. The nightly sweep runs the same
+`propose()` automatically and surfaces its line as a `negotiate` finding with
+an **Ask them** action (`watchers._deal_line`).
+
+**The five settings** (Config → The Mind page, group `negotiation`):
+`negotiation_enabled` (default on — off sends findings back to plain
+conflict-reporting, no search at all), `negotiation_sweep_budget` (default 8,
+the nightly sweep's re-solve ceiling), `negotiation_deep_budget` (default 40,
+Find a way's and `negotiate_day`'s re-solve ceiling), `negotiation_shift_mins`
+(default 15, the smaller `shift_event` step — the larger step is always
+double it), and `negotiation_solve_seconds` (default 2, the per-replay CP-SAT
+time limit inside `search()`).

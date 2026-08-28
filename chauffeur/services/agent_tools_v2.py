@@ -1547,6 +1547,72 @@ def close_thread(thread_title: str, state: str = None,
             "message": f"Closed \"{thread['title']}\" as {state}."}
 
 
+def negotiate_day(day: str = None, event_title: str = None,
+                  acting_member: dict = None) -> dict:
+    """What would make a broken day work. Read-only — it never asks anybody.
+
+    Reads need a resolved member: this names who in the family would have to
+    give something up, and that is not a sentence for an anonymous wall panel.
+    """
+    import datetime as _dt
+    from services import negotiation, storage as _st
+    if not acting_member:
+        return {'status': 'error',
+                'message': "I need to know who's asking before I can look at "
+                           "who'd have to give something up."}
+    date_str = day or _dt.date.today().isoformat()
+    cache = _st.get_cached_daily_schedule(date_str) or {}
+    sched = cache.get('schedule') or {}
+    broken = list(sched.get('true_unassigned') or [])
+    if event_title:
+        wanted = event_title.strip().lower()
+        events = {str(e.get('id')): e for e in (sched.get('events') or [])}
+        broken = [b for b in broken
+                  if wanted in (events.get(str(b), {}).get('title') or '').lower()]
+    if not broken:
+        return {'status': 'success',
+                'message': f"Nothing on {date_str} needs a deal — it all covers."}
+    budget = int(_st.get_settings().get('negotiation_deep_budget',
+                                        negotiation.DEEP_BUDGET))
+    deals = []
+    for ev_id in broken[:3]:
+        deal = negotiation.propose(date_str, str(ev_id), budget=budget)
+        if deal:
+            deals.append({'deal_id': deal['id'], 'line': deal['line'],
+                          'people': deal.get('cost', {}).get('people')})
+    if not deals:
+        return {'status': 'success',
+                'message': "I looked, and nothing I can change makes that day "
+                           "work. It needs an outside hand or a skip."}
+    lines = '\n'.join(f"• {d['line']}" for d in deals)
+    return {'status': 'success', 'deals': deals,
+            'message': f"Here's what would work:\n{lines}\n\nSay the word and "
+                       f"I'll ask them."}
+
+
+def ask_deal(event_title: str, acting_member: dict = None) -> dict:
+    """Send a found deal's asks. A person's decision, never the model's.
+
+    An ALLOWLIST, not a blocklist: /api/chat is WALL_OR_SERVICE, so an
+    unresolved caller must be refused rather than walked through a role check
+    with role None.
+    """
+    from services import negotiation, storage as _st
+    if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
+        return {'status': 'error',
+                'message': "Asking the family to rearrange their evening is a "
+                           "grown-up's call — it needs a parent or an adult."}
+    wanted = (event_title or '').strip().lower()
+    if not wanted:
+        return {'status': 'error', 'message': "Which day's deal?"}
+    for d in _st.get_deals(state='draft'):
+        if wanted in (d.get('seed_title') or '').lower():
+            return negotiation.start_asks(d['id'], acting_member.get('id'))
+    return {'status': 'error',
+            'message': f"I don't have a deal waiting for '{event_title}'. "
+                       f"Ask me to look for one first."}
+
+
 def claim_chore(chore_title: str, member_name: str = None,
                 sender_driver_id: str = None) -> Dict[str, Any]:
     from services import storage
@@ -3690,6 +3756,29 @@ def get_available_tools() -> List[Dict]:
                     "state": {"type": "string", "description": "'done' or 'dropped' — nothing else is accepted."}
                 },
                 "required": ["thread_title", "state"]
+            }
+        },
+        {
+            "name": "negotiate_day",
+            "description": "Works out what would make a broken day cover — whose event could move fifteen minutes, who could take a drive, what could be skipped ('can you make Tuesday work?', 'is there any way to cover Thursday?'). Read-only: it finds the deal, it does not ask anybody.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "day": {"type": "string", "description": "The date to work on, as YYYY-MM-DD. Defaults to today."},
+                    "event_title": {"type": "string", "description": "Narrow to one uncovered event by title, if they named one."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "ask_deal",
+            "description": "Sends the asks for a deal that negotiate_day already found ('yes, ask them', 'go ahead and ask Lorena'). Parent/adult only. Nothing changes until every person asked has said yes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_title": {"type": "string", "description": "The uncovered event the deal is about, e.g. 'Soccer'."}
+                },
+                "required": ["event_title"]
             }
         },
         {

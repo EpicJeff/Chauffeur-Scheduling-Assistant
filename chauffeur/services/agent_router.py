@@ -704,7 +704,8 @@ sending or claiming, and never pass from_member/member_name for them.
                     if res.get("message"): agent_message = res["message"]
                 elif func_name in ("list_threads", "create_thread",
                                    "update_thread_action", "add_thread_note",
-                                   "draft_thread_message", "close_thread"):
+                                   "draft_thread_message", "close_thread",
+                                   "negotiate_day", "ask_deal"):
                     from services import agent_tools_v2 as _atv2
                     # Same actor resolution as list_insights/dismiss_insight
                     # above: resolved HERE at dispatch, never taken from the
@@ -745,6 +746,13 @@ sending or claiming, and never pass from_member/member_name for them.
                                                           next_action_at=args.get("next_action_at"),
                                                           note=args.get("note"),
                                                           acting_member=actor)
+                    elif func_name == "negotiate_day":
+                        res = _atv2.negotiate_day(day=args.get("day"),
+                                                  event_title=args.get("event_title"),
+                                                  acting_member=actor)
+                    elif func_name == "ask_deal":
+                        res = _atv2.ask_deal(args.get("event_title", "") or "",
+                                             acting_member=actor)
                     else:
                         res = _atv2.add_thread_note(args.get("thread_title", "") or "",
                                                     args.get("text", "") or "",

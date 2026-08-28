@@ -49,6 +49,7 @@ GROUPS = [
     ('solver', '⚙️', 'Solver behaviour'),
     ('mind', '🧠', 'The Mind'),
     ('threads', '🧵', 'Threads'),
+    ('negotiation', '🤝', 'Negotiation'),
 ]
 
 _CONFIG = 'config'
@@ -535,6 +536,25 @@ ENTRIES: List[dict] = [
        'How many days of no movement before an open thread counts as quiet '
        'and becomes a finding (default 7). A thread with a next-action date '
        'in the past stalls immediately regardless of this.', page='threads'),
+
+    # --- Negotiation (the smallest change that makes a day work) ---
+    _e('negotiation_enabled', 'negotiation', 'Look for deals',
+       'When a day cannot be covered, work out what would fix it before saying '
+       'so. Off means findings go back to reporting the conflict.', page='mind'),
+    _e('negotiation_sweep_budget', 'negotiation', 'Background tries',
+       'How many re-solves one background sweep may spend looking for a deal '
+       '(default 8). The sweep runs unattended, so this is kept small.',
+       page='mind'),
+    _e('negotiation_deep_budget', 'negotiation', 'On-demand tries',
+       'How many re-solves a Find a way tap may spend (default 40). Somebody '
+       'is waiting on purpose, so it goes further down the same queue.',
+       page='mind'),
+    _e('negotiation_shift_mins', 'negotiation', 'How far a thing may move',
+       'The minute steps a deal may ask an event to move, smallest first '
+       '(default 15 then 30).', page='mind'),
+    _e('negotiation_solve_seconds', 'negotiation', 'Seconds per try',
+       'Time limit on each re-solve (default 2). The daily solve gets five; a '
+       'negotiation runs many in one question.', page='mind'),
 ]
 
 BY_KEY: Dict[str, dict] = {e['key']: e for e in ENTRIES}
