@@ -438,6 +438,41 @@ def _thread_stalls(now: datetime.datetime):
     return out
 
 
+def _rebaseline_line(title: str, day: str, bent: dict) -> str:
+    """The rebaseline finding's sentence, worded to match exactly what `bent`
+    says happened -- never more than that.
+
+    Five endings, not one reused for all of them: an undated target that
+    really moved says so; a dated one that already had slack needs no claim
+    of a squeeze that never happened; a dated one that needed it gets the
+    real compression named; a dated one too far behind to bend has to say
+    there was not enough time to reshape it -- not that the phases were
+    shortened, since in that branch they deliberately were not; and a
+    program where malformed baseline data left nothing moved (an event id
+    with no date, an unparsable one) offers only the day-of-week suggestion
+    that is actually on the table. Split out so a test can hand this a `bent`
+    dict directly and check the wording without re-running `maybe_rebaseline`
+    and tripping its own cooldown.
+    """
+    if bent['fits'] is False:
+        return (f"🎸 {title}: {day}s keep getting eaten, and the plan is now "
+                f"tight against the date — there isn't enough time left "
+                f"before it to reshape the phases, so they're unchanged. "
+                f"Want to try a different day?")
+    if bent['fits'] is True and bent.get('phases_changed'):
+        return (f"🎸 {title}: {day}s keep getting eaten — I've tightened the "
+                f"phases so it still lands on time. Want to try a different "
+                f"day?")
+    if bent['fits'] is True:
+        return (f"🎸 {title}: {day}s keep getting eaten — want to try a "
+                f"different day? The plan still has room to land on time as "
+                f"it stands.")
+    if bent.get('date_moved'):
+        return (f"🎸 {title}: {day}s keep getting eaten — want to try a "
+                f"different day? I've given the plan more room either way.")
+    return f"🎸 {title}: {day}s keep getting eaten — want to try a different day?"
+
+
 def _program_findings(now: datetime.datetime):
     """A program that needs a word: a session to confirm, a timeline that bent,
     or reserved time that has quietly disappeared.
@@ -482,32 +517,9 @@ def _program_findings(now: datetime.datetime):
             if bent:
                 day = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
                        'Saturday', 'Sunday')[bent['weekday']]
-                # Four honest endings, not one reused for all of them: an
-                # undated target can just move; a dated one that already had
-                # slack needs no claim of a squeeze that never happened; a
-                # dated one that needed it gets the real compression named;
-                # and a dated one too far behind to bend has to say so rather
-                # than claim room that was never made.
-                if bent['fits'] is False:
-                    line = (f"🎸 {row.get('title')}: {day}s keep getting eaten, "
-                            f"and the plan is now tight against the date — the "
-                            f"phases are as short as they can go. Want to try "
-                            f"a different day?")
-                elif bent['fits'] is True and bent.get('phases_changed'):
-                    line = (f"🎸 {row.get('title')}: {day}s keep getting eaten — "
-                            f"I've tightened the phases so it still lands on "
-                            f"time. Want to try a different day?")
-                elif bent['fits'] is True:
-                    line = (f"🎸 {row.get('title')}: {day}s keep getting eaten — "
-                            f"want to try a different day? The plan still has "
-                            f"room to land on time as it stands.")
-                else:
-                    line = (f"🎸 {row.get('title')}: {day}s keep getting eaten — "
-                            f"want to try a different day? I've given the plan "
-                            f"more room either way.")
                 out.append(Finding(
                     key=f"program_rebaseline:{row['id']}:{bent['baseline']['rebaselines']}",
-                    line=line,
+                    line=_rebaseline_line(row.get('title'), day, bent),
                     kind='program_rebaseline', severity='fyi', dm=True,
                     subject_type='program', subject_id=str(row['id'])))
         except Exception as e:

@@ -545,6 +545,7 @@ def maybe_rebaseline(program: dict, now=None) -> dict:
     original_phases = program.get('phases') or []
     phases = original_phases
     fits = None
+    date_moved = False
     update = {'baseline': baseline}
     if baseline.get('target_date') and baseline.get('target_event_id'):
         # A real event pins the date -- the phases give way instead of it.
@@ -555,14 +556,19 @@ def maybe_rebaseline(program: dict, now=None) -> dict:
         try:
             target = datetime.date.fromisoformat(baseline['target_date'])
             baseline['target_date'] = (target + datetime.timedelta(days=14)).isoformat()
+            date_moved = True
         except (TypeError, ValueError):
             pass
     storage.update_program(program['id'], update)
     # `fits` alone isn't enough to word the finding honestly: a program that
     # already had slack before the date needs `fits=True` without ever
-    # claiming credit for a squeeze that never happened.
+    # claiming credit for a squeeze that never happened. `date_moved` closes
+    # the same gap on the other branch -- malformed baseline data (an event id
+    # with no date, or a date string that won't parse) must not read as "I
+    # gave the plan more room" when nothing was ever touched.
     return {'weekday': short['weekday'], 'baseline': baseline, 'phases': phases,
-            'fits': fits, 'phases_changed': phases != original_phases}
+            'fits': fits, 'phases_changed': phases != original_phases,
+            'date_moved': date_moved}
 
 
 def orphaned_emissions(program: dict) -> list:

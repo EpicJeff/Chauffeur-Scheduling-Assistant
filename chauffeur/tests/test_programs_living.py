@@ -8,7 +8,7 @@ import time
 import uuid
 
 from harness import check
-from services import chat_actions, programs, storage
+from services import chat_actions, programs, storage, watchers
 
 
 def _reset():
@@ -142,11 +142,21 @@ def scenario_rebaseline_does_not_claim_a_squeeze_that_never_happened():
           f"nothing needed shrinking, so nothing may claim to have shrunk, got {out}")
 
 
+_WEEKDAY_NAMES = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
+                  'Saturday', 'Sunday')
+
+
 def scenario_rebaseline_admits_when_phases_cannot_fit():
     """Three days is not one more week, however hard the phases compress --
     the design's rule is that a plan which lies about fitting is worse than
     one that admits it is tight, so this must leave the phases exactly alone
-    and say so rather than fake a fit."""
+    and say so rather than fake a fit.
+
+    And the finding's own sentence must not slip back into claiming a
+    squeeze that never happened -- checked against the absence of the false
+    claim, not just the presence of the honest half, because a message test
+    that only greps for a true phrase survives a rewrite that reintroduces
+    the false one right next to it."""
     _reset()
     target = (datetime.date.today() + datetime.timedelta(days=3)).isoformat()
     original = [{'name': 'Phase 1', 'weeks': 4, 'what': 'Chords',
@@ -162,6 +172,12 @@ def scenario_rebaseline_admits_when_phases_cannot_fit():
           f"and it must not pretend to make room it doesn't have, got {out['phases']}")
     check(storage.get_program(pid)['phases'] == original,
           "the untouched phases are what actually got saved")
+    day = _WEEKDAY_NAMES[out['weekday']]
+    line = watchers._rebaseline_line(row.get('title'), day, out).lower()
+    check('tight against the date' in line, f"the honest half survives, got {line}")
+    check('as short as they can go' not in line
+          and 'shortened' not in line and 'shorter' not in line,
+          f"and it must not claim a squeeze that never happened, got {line}")
 
 
 def scenario_rebaseline_stretches_when_nothing_pins_the_date():
@@ -174,12 +190,33 @@ def scenario_rebaseline_stretches_when_nothing_pins_the_date():
     _log_on(pid, 1)
     row = storage.get_program(pid)
     out = programs.maybe_rebaseline(row)
-    check(out is not None and out['fits'] is None,
-          f"an undated target has nothing to compress against, got {out}")
+    check(out is not None and out['fits'] is None and out['date_moved'] is True,
+          f"an undated target has nothing to compress against, but the date "
+          f"really moves, got {out}")
     after = storage.get_program(pid)['baseline']
     want = (datetime.date.fromisoformat(target) + datetime.timedelta(days=14)).isoformat()
     check(after['target_date'] == want,
           f"so the date itself moves instead, got {after['target_date']}")
+
+
+def scenario_an_event_with_no_date_claims_no_room_was_made():
+    """Latent edge case: malformed baseline data (an event id with no date --
+    the schema always populates both together, so this should never happen
+    in practice) must not read as 'I gave the plan more room'. That sentence
+    is only true when a date actually moved, and the stretch path never runs
+    without a `target_date` to move -- so `date_moved` must come back False
+    and the finding must not claim otherwise."""
+    _reset()
+    pid = _mk(target_date=None, target_event_id='evt-fixed')
+    _log_on(pid, 1)
+    row = storage.get_program(pid)
+    out = programs.maybe_rebaseline(row)
+    check(out is not None and out['fits'] is None and out['date_moved'] is False,
+          f"nothing to compress against and nothing to stretch, got {out}")
+    day = _WEEKDAY_NAMES[out['weekday']]
+    line = watchers._rebaseline_line(row.get('title'), day, out).lower()
+    check('more room' not in line,
+          f"nothing moved, so nothing may claim room was made, got {line}")
 
 
 def scenario_rebaseline_does_not_chatter():
@@ -288,6 +325,7 @@ if __name__ == '__main__':
     scenario_rebaseline_does_not_claim_a_squeeze_that_never_happened()
     scenario_rebaseline_admits_when_phases_cannot_fit()
     scenario_rebaseline_stretches_when_nothing_pins_the_date()
+    scenario_an_event_with_no_date_claims_no_room_was_made()
     scenario_rebaseline_does_not_chatter()
     scenario_a_hand_deleted_slot_is_noticed_not_recreated()
     scenario_a_paused_program_asks_nothing()
