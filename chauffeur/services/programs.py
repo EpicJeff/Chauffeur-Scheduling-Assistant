@@ -193,42 +193,104 @@ def _kit_line(program: dict) -> str:
     return ''
 
 
-def _revert_attempt(program_id: str, emissions: dict) -> None:
-    """Undo what THIS attempt stamped, because a claim that is not going to
-    finish must not leave reserved time nothing owns behind it.
+def _quietly(what: str, fn, *args, **kwargs):
+    """Run one step of a revert and refuse to let it out of this function.
 
-    Deletes the commitment rows and the kit thread the attempt already
-    created, and a calendar event too in the one case there can be one: the
-    state flip is now inside the same bracket as everything else, so a
-    failure on that very last write can be reached with a real event id
-    already sitting in `emissions['event_ids']` (the calendar branch runs
-    right before it). Hands the claim back to `proposed` BEFORE clearing the
-    row's `emissions` field -- if that last, purely cosmetic write also
-    fails, the program is still retryable rather than the revert itself
-    stranding it. A revert that can strand is worse than no revert.
+    Every step of undoing a half-finished approval goes through here, and that
+    is what makes the revert total rather than merely careful. Returns None
+    when the step raised, which is how a caller tells "it failed" apart from
+    "it ran and said no".
     """
-    if emissions.get('event_ids'):
-        from services import calendar as _cal
-        settings = storage.get_settings() or {}
-        cal_id = (settings.get('calendar_ids') or ['primary'])[0]
-        for eid in emissions['event_ids']:
-            try:
-                _cal.remove_event(cal_id, eid)
-            except Exception as e:
-                print(f"[programs] could not clean up calendar event {eid}: {e}")
-    for tid in emissions.get('thread_ids') or []:
-        try:
-            storage.delete_thread(tid)
-        except Exception as e:
-            print(f"[programs] could not clean up thread {tid}: {e}")
-    for cid in emissions.get('commitment_ids') or []:
-        try:
-            storage.delete_protected_commitment(cid)
-        except Exception as e:
-            print(f"[programs] could not clean up commitment {cid}: {e}")
-    storage.claim_program(program_id, 'approving', 'proposed')
-    storage.update_program(program_id, {
-        'emissions': {'commitment_ids': [], 'thread_ids': [], 'event_ids': []}})
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:
+        print(f"[programs] revert could not {what}: {e}")
+        return None
+
+
+def _cleanup_calendar_id() -> str:
+    """Which calendar a reverted attempt's event would be sitting on.
+
+    Reading settings is not a write, but it is still a trip to the database
+    and can still fail, so it lives behind `_quietly` with everything else the
+    revert does. It is a lookup, not a safe operation.
+    """
+    settings = storage.get_settings() or {}
+    return (settings.get('calendar_ids') or ['primary'])[0]
+
+
+def _remove_calendar_event(cal_id: str, event_id: str) -> bool:
+    """Delete one event the failed attempt created. The import is in here so
+    that even a failure to import the calendar module is just another skipped
+    cleanup step rather than the thing that kills the revert."""
+    from services import calendar as _cal
+    return _cal.remove_event(cal_id, event_id)
+
+
+def _revert_attempt(program_id: str, emissions: dict) -> None:
+    """Undo what THIS attempt stamped, and hand the claim back no matter what.
+
+    Two jobs, and the second one outranks the first. The first: a claim that
+    is not going to finish must not leave reserved time nothing owns behind
+    it, so the commitment rows, the kit thread, and -- in the one case there
+    can be one -- the calendar event all go. The second: THIS FUNCTION CANNOT
+    FAIL. Every step runs through `_quietly`, and the handback to `proposed`
+    sits in a `finally`, so no step here, and nothing anybody adds here later,
+    can take the recovery down with it.
+
+    That ranking is deliberate, because the two failure modes are not equally
+    bad and must not be traded the wrong way round. A cleanup step that gives
+    up leaves one orphaned row -- a practice window in somebody's commitments
+    list that they can see and delete. A revert that raises leaves the program
+    in `approving`, and nothing anywhere transitions a program out of
+    `approving`: `approve()`'s own gate demands `proposed`, so the ambition is
+    stuck there with no button in the app that fixes it. A recovery path that
+    can itself fail is a recovery path that strands people. So the handback is
+    structural and the cleanup is best-effort, never the other way around.
+
+    (An event id can only be in `emissions` when the calendar branch succeeded
+    and the state flip immediately after it failed -- the calendar write is the
+    last thing before that flip.)
+    """
+    emissions = emissions if isinstance(emissions, dict) else {}
+    try:
+        if emissions.get('event_ids'):
+            cal_id = _quietly('read the calendar settings', _cleanup_calendar_id)
+            for eid in emissions.get('event_ids') or []:
+                if cal_id and eid:
+                    _quietly(f"remove calendar event {eid}",
+                             _remove_calendar_event, cal_id, eid)
+        for tid in emissions.get('thread_ids') or []:
+            _quietly(f"delete thread {tid}", storage.delete_thread, tid)
+        for cid in emissions.get('commitment_ids') or []:
+            _quietly(f"delete commitment {cid}",
+                     storage.delete_protected_commitment, cid)
+    except Exception as e:
+        # Unreachable while every call above is wrapped -- which is the point:
+        # this is here so a future edit that forgets the wrapper degrades to a
+        # skipped cleanup instead of quietly restoring the stranding bug.
+        print(f"[programs] revert cleanup gave up early: {e}")
+    finally:
+        # The handback is the whole reason this function exists, so it runs
+        # whatever happened above.
+        handed_back = _quietly('hand the claim back to proposed',
+                               storage.claim_program, program_id,
+                               'approving', 'proposed')
+        if handed_back is None:
+            # It RAISED -- the compare-and-set never happened at all. (A plain
+            # False is different: that means somebody else already moved this
+            # row, and overwriting their state would be worse than leaving
+            # it.) Write the state back the plain way instead: a second,
+            # independent path to the only outcome that actually matters.
+            _quietly('force the state back to proposed', storage.update_program,
+                     program_id, {'state': 'proposed'})
+        # Last and least: clearing the row's emissions is cosmetic, because the
+        # next attempt starts from a fresh empty triple regardless and never
+        # reads this. It goes after the handback so that its failing costs a
+        # stale dict, not a stranded program.
+        _quietly('clear the emissions off the row', storage.update_program,
+                 program_id, {'emissions': {'commitment_ids': [],
+                                            'thread_ids': [], 'event_ids': []}})
 
 
 def approve(program_id: str, approver_id: str = None, slots: list = None) -> dict:
@@ -354,8 +416,11 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
         # -- this attempt did not finish, so nothing it stamped gets to
         # stay: delete what was created, clear it off the row, and hand the
         # claim back so the program is exactly where `approve()` found it,
-        # not stranded. The success path below is never reached when this
-        # branch runs, so it cannot revert itself.
+        # not stranded. `_revert_attempt` cannot raise, by construction, so
+        # this handler always gets to return an error rather than letting an
+        # exception out of a function that has already taken a claim. The
+        # success path below is never reached when this branch runs, so it
+        # cannot revert itself.
         _revert_attempt(program_id, emissions)
         return {'status': 'error', 'message': str(e)}
 

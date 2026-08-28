@@ -12,6 +12,7 @@ from services import programs, storage
 def _reset():
     storage.programs_table.truncate()
     storage.protected_commitments_table.truncate()
+    storage.threads_table.truncate()
     storage.members_table.truncate()
     storage.add_member({'id': 'lily', 'name': 'Lily', 'role': 'child'})
     storage.add_member({'id': 'mom', 'name': 'Mom', 'role': 'parent'})
@@ -257,6 +258,173 @@ def scenario_a_final_flip_failure_reverts_and_cleans_up():
         _cal.remove_event = real_remove
 
 
+def scenario_a_revert_survives_the_settings_read_failing():
+    """The revert's own setup is inside the danger zone too. `_revert_attempt`
+    has to read settings to know which calendar the failed attempt's event is
+    on -- and when that read raised, it took the whole revert with it: no
+    thread deleted, no commitment deleted, and, worst of all, no handback, so
+    the program sat in `approving` where nothing can move it. This is the
+    shape of every round of this bug: one more statement inside the danger
+    zone and outside the guard. Now every step is individually skippable and
+    the handback is structural, so a dead settings table costs one orphaned
+    calendar event and nothing else."""
+    _reset()
+    pid = _mk(what='Buy a metronome and a capo before phase 2')
+    _with_target_date(pid)
+    from services import calendar as _cal
+    real_create, real_remove = _cal.create_event, _cal.remove_event
+    removed_events = []
+    _cal.create_event = lambda *a, **kw: 'fake-event-2'
+    _cal.remove_event = lambda cal_id, eid: removed_events.append(eid) or True
+
+    real_update = storage.update_program
+    real_settings = storage.get_settings
+    down = []
+
+    def flaky_update(program_id, data):
+        if data.get('state') == 'active':
+            # The database goes away at exactly the moment the revert starts.
+            down.append(1)
+            raise RuntimeError('db went away')
+        return real_update(program_id, data)
+
+    def dead_settings():
+        if down:
+            raise RuntimeError('settings table unreachable')
+        return real_settings()
+
+    storage.update_program = flaky_update
+    storage.get_settings = dead_settings
+    try:
+        res = programs.approve(pid, 'mom')
+        row = storage.get_program(pid)
+        check(res['status'] == 'error',
+              f"approve() returns an error rather than letting the revert's "
+              f"own failure escape, got {res}")
+        check(row['state'] == 'proposed',
+              f"the handback happened anyway, got {row['state']}")
+        check(row['emissions'] == {'commitment_ids': [], 'thread_ids': [], 'event_ids': []},
+              f"cleared off the row, got {row['emissions']}")
+        check(not storage.get_protected_commitments(member_id='lily'),
+              "the steps AFTER the one that failed still ran -- no orphan window")
+        check(not storage.get_threads(owner='lily'),
+              "and the kit thread went too")
+        check(removed_events == [],
+              f"honest about what the failure cost: the calendar event could "
+              f"not be cleaned up, because we never learned which calendar it "
+              f"was on, so it is orphaned, got {removed_events}")
+    finally:
+        storage.update_program = real_update
+        storage.get_settings = real_settings
+
+    try:
+        retry = programs.approve(pid, 'mom')
+        check(retry['status'] == 'success', f"a plain retry must work, got {retry}")
+        check(storage.get_program(pid)['state'] == 'active', "and it really goes through")
+    finally:
+        _cal.create_event = real_create
+        _cal.remove_event = real_remove
+
+
+def scenario_a_failing_cleanup_delete_does_not_take_the_revert_down():
+    """One cleanup step failing must cost exactly one orphaned row, not the
+    handback. Two commitments land, the third write fails, and then the
+    revert's FIRST delete refuses as well -- the rest of the cleanup still
+    runs and the program still gets back to `proposed`. Asserted honestly:
+    the row whose delete failed really is left behind. That is the trade this
+    shape makes on purpose -- an orphan is a thing somebody can see in their
+    commitments list and remove, a program stuck in `approving` is not."""
+    _reset()
+    pid = _mk()
+    real_add = storage.add_protected_commitment
+    real_delete = storage.delete_protected_commitment
+    calls, refused = [], []
+
+    def flaky_add(data):
+        calls.append(data)
+        if len(calls) == 3:
+            raise RuntimeError('disk full')
+        return real_add(data)
+
+    def stubborn_delete(cid):
+        if not refused:
+            refused.append(cid)
+            raise RuntimeError('row is locked')
+        return real_delete(cid)
+
+    storage.add_protected_commitment = flaky_add
+    storage.delete_protected_commitment = stubborn_delete
+    try:
+        res = programs.approve(pid, 'mom')
+    finally:
+        storage.add_protected_commitment = real_add
+        storage.delete_protected_commitment = real_delete
+    check(len(calls) == 3, f"the scenario must fail on the third write, got {len(calls)}")
+    check(refused, "and the revert's first delete must really have refused")
+    check(res['status'] == 'error', f"it reports the failure, got {res}")
+    row = storage.get_program(pid)
+    check(row['state'] == 'proposed',
+          f"a failed cleanup step is not allowed to strand the program, "
+          f"got {row['state']}")
+    left = storage.get_protected_commitments(member_id='lily')
+    check(len(left) == 1 and left[0]['id'] == refused[0],
+          f"exactly the one row whose delete refused is orphaned -- the other "
+          f"one was still cleaned up, got {left}")
+
+    real_delete(left[0]['id'])
+    retry = programs.approve(pid, 'mom')
+    check(retry['status'] == 'success', f"a plain retry must work, got {retry}")
+    check(storage.get_program(pid)['state'] == 'active', "and it really goes through")
+
+
+def scenario_a_revert_survives_the_handback_itself_failing():
+    """The last thing that can strand a program: the handback write itself
+    raising. `claim_program` is the only door out of `approving`, so if that
+    call is the thing that breaks, the compare-and-set never happened -- and
+    a plain `update_program` is a second, independent path to the one outcome
+    that matters. (Only when it RAISED: a False is claim_program working and
+    saying somebody else already moved the row, which must not be
+    overwritten.)"""
+    _reset()
+    pid = _mk()
+    real_add = storage.add_protected_commitment
+    real_claim = storage.claim_program
+    calls, handbacks = [], []
+
+    def flaky_add(data):
+        calls.append(data)
+        if len(calls) == 2:
+            raise RuntimeError('disk full')
+        return real_add(data)
+
+    def flaky_claim(program_id, expected, new):
+        if new == 'proposed':
+            handbacks.append(1)
+            raise RuntimeError('compare-and-set is down')
+        return real_claim(program_id, expected, new)
+
+    storage.add_protected_commitment = flaky_add
+    storage.claim_program = flaky_claim
+    try:
+        res = programs.approve(pid, 'mom')
+    finally:
+        storage.add_protected_commitment = real_add
+        storage.claim_program = real_claim
+    check(handbacks, "the handback must really have been attempted and raised")
+    check(res['status'] == 'error',
+          f"approve() still returns rather than raising out of its own "
+          f"recovery, got {res}")
+    row = storage.get_program(pid)
+    check(row['state'] == 'proposed',
+          f"the fallback write got it back to retryable anyway, got {row['state']}")
+    check(not storage.get_protected_commitments(member_id='lily'),
+          "and the cleanup before it still ran")
+
+    retry = programs.approve(pid, 'mom')
+    check(retry['status'] == 'success', f"a plain retry must work, got {retry}")
+    check(storage.get_program(pid)['state'] == 'active', "and it really goes through")
+
+
 def scenario_approving_twice_does_not_claim_twice():
     _reset()
     pid = _mk()
@@ -311,6 +479,9 @@ if __name__ == '__main__':
     scenario_a_rejected_write_returns_none_not_an_exception()
     scenario_a_local_write_failure_reverts_and_cleans_up()
     scenario_a_final_flip_failure_reverts_and_cleans_up()
+    scenario_a_revert_survives_the_settings_read_failing()
+    scenario_a_failing_cleanup_delete_does_not_take_the_revert_down()
+    scenario_a_revert_survives_the_handback_itself_failing()
     scenario_approving_twice_does_not_claim_twice()
     scenario_two_taps_claim_the_week_once()
     print("test_programs_footprint OK")
