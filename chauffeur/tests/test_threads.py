@@ -132,6 +132,46 @@ def scenario_send_without_smtp_is_an_honest_refusal():
         _m.configured = orig
 
 
+def scenario_drafting_and_abandoning_does_not_silence_a_stall():
+    _reset()
+    t = threads.create('Nanny search', owner_member_id='m1')
+    storage.update_thread(t, {'created_at': time.time() - 9 * 86400})
+    check(threads.is_stalled(storage.get_thread(t)) == 'quiet',
+          "nine days of silence is a stall")
+    orig_pool_call = threads._pool_call
+    try:
+        threads._pool_call = lambda *a, **k: {'subject': 'Checking in',
+                                              'body': 'Hi — any update?'}
+        d = threads.draft_message(t)
+        check(d['status'] == 'ok', f"got {d}")
+        check(threads.is_stalled(storage.get_thread(t)) == 'quiet',
+              "drafting and walking away accomplished nothing, so it "
+              "stays stalled")
+    finally:
+        threads._pool_call = orig_pool_call
+
+
+def scenario_actually_sending_resets_the_stall_clock():
+    _reset()
+    from services import mailer as _m
+    orig_send, orig_conf = _m.send, _m.configured
+    try:
+        _m.configured = lambda *a, **k: True
+        _m.send = lambda to, subject, body, settings=None: {'sent': True}
+        t = threads.create('Nanny search', owner_member_id='m1',
+                           counterparty_email='candidate@example.com')
+        storage.update_thread(t, {'created_at': time.time() - 9 * 86400})
+        check(threads.is_stalled(storage.get_thread(t)) == 'quiet',
+              "nine days of silence is a stall")
+        res = threads.send_drafted(t, 'Hi', 'Are you still available?',
+                                   'candidate@example.com', 'm1')
+        check(res['status'] == 'ok', f"got {res}")
+        check(threads.is_stalled(storage.get_thread(t)) is None,
+              "something real actually went out, so the clock resets")
+    finally:
+        _m.send, _m.configured = orig_send, orig_conf
+
+
 if __name__ == '__main__':
     scenario_overdue_next_action_stalls()
     scenario_silence_stalls_even_with_no_date()
@@ -142,4 +182,6 @@ if __name__ == '__main__':
     scenario_drafting_never_sends()
     scenario_sending_records_what_went_out()
     scenario_send_without_smtp_is_an_honest_refusal()
+    scenario_drafting_and_abandoning_does_not_silence_a_stall()
+    scenario_actually_sending_resets_the_stall_clock()
     print("test_threads OK")

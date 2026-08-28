@@ -29,7 +29,10 @@ history.
 Every append — `create`, `advance`, `note`, `close` — goes through
 `storage.append_thread_history`, so the quiet clock and the audit trail are
 the same write. There is no separate "last touched" field to fall out of
-sync with the log that's supposed to explain it.
+sync with the log that's supposed to explain it. The one entry kind that
+does NOT reset the clock is `drafted` (see below) — `is_stalled` skips it
+on purpose, because proposing words and abandoning them is not movement,
+it's the exact non-movement this module exists to catch.
 
 `draft_message` and `send_drafted` add two more history kinds (`drafted`,
 `sent`) and one hard rule the rest of this file doesn't need: drafting and
@@ -47,7 +50,7 @@ import datetime
 import time
 from typing import Dict, List, Optional
 
-from services import mailer, storage
+from services import storage
 
 STALL_DAYS_DEFAULT = 7
 
@@ -147,6 +150,8 @@ def send_drafted(thread_id: str, subject: str, body: str, to: str,
     not just that something did) and moves the thread to `waiting`: the
     ball is now with the other side.
     """
+    from services import mailer
+
     thread = storage.get_thread(thread_id)
     if not thread:
         return {'status': 'not_found'}
@@ -292,8 +297,13 @@ def is_stalled(thread: dict, today: datetime.date = None) -> Optional[str]:
     # thread coming into being -- so with nothing beyond it yet, the clock
     # runs from `created_at` (which stays live if that field is ever
     # corrected), not from the opening entry's frozen timestamp. Anything
-    # appended after that (advance/note/close) is real movement and wins.
-    history = thread.get('history') or []
+    # appended after that (advance/note/close/sent) is real movement and
+    # wins. A `drafted` entry is deliberately NOT real movement either: it
+    # only records that Argyle proposed words, and tapping Draft then
+    # walking away is exactly the non-movement this clock exists to catch —
+    # letting it reset the clock would let a thread go quiet again for a
+    # full stall_days on the strength of nothing having actually happened.
+    history = [h for h in (thread.get('history') or []) if h.get('kind') != 'drafted']
     if len(history) > 1:
         last_ts = history[-1].get('ts', thread.get('created_at', 0))
     else:
