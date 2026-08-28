@@ -232,6 +232,64 @@ def scenario_inbound_match_moves_waiting_back_to_open():
         _m.send, _m.configured = orig_send, orig_conf
 
 
+def scenario_research_ok_appends_answer_and_url():
+    _reset()
+    t = threads.create('Nanny search', owner_member_id='m1')
+    orig = threads._web_research
+    try:
+        threads._web_research = lambda q: {
+            'status': 'ok',
+            'answer': 'Most nanny agencies charge a 15-20% placement fee.',
+            'facts': [{'claim': 'Agencies charge 15-20%',
+                      'url': 'https://example.com/fees'}],
+            'sources': [{'title': 'Example', 'url': 'https://example.com/fees'}],
+            'dropped': 0, 'via': 'pages',
+        }
+        res = threads.research(t, 'What do nanny agencies charge?')
+        check(res['status'] == 'ok', f"got {res}")
+        h = storage.get_thread(t)['history'][-1]
+        check(h['kind'] == 'research', f"got {h}")
+        check('15-20%' in h['text'] and 'https://example.com/fees' in h['text'],
+              f"the answer AND its citation both survive in the record, got {h}")
+    finally:
+        threads._web_research = orig
+
+
+def scenario_research_disabled_appends_nothing():
+    _reset()
+    t = threads.create('Nanny search', owner_member_id='m1')
+    before = len(storage.get_thread(t)['history'])
+    orig = threads._web_research
+    try:
+        threads._web_research = lambda q: {'status': 'disabled'}
+        res = threads.research(t, 'What do nanny agencies charge?')
+        check(res['status'] == 'disabled', f"got {res}")
+        check(len(storage.get_thread(t)['history']) == before,
+              "an honest no doesn't get written as if something happened")
+    finally:
+        threads._web_research = orig
+
+
+def scenario_research_resets_the_stall_clock():
+    _reset()
+    t = threads.create('Nanny search', owner_member_id='m1')
+    storage.update_thread(t, {'created_at': time.time() - 9 * 86400})
+    check(threads.is_stalled(storage.get_thread(t)) == 'quiet',
+          "nine days of silence is a stall")
+    orig = threads._web_research
+    try:
+        threads._web_research = lambda q: {
+            'status': 'ok', 'answer': 'Answer.',
+            'facts': [{'claim': 'Answer.', 'url': 'https://example.com/a'}],
+            'sources': [{'title': 'A', 'url': 'https://example.com/a'}],
+        }
+        threads.research(t, 'A question?')
+        check(threads.is_stalled(storage.get_thread(t)) is None,
+              "finding something out is movement, so the clock resets")
+    finally:
+        threads._web_research = orig
+
+
 def scenario_a_received_reply_resets_the_stall_clock():
     _reset()
     t = threads.create('Nanny search', owner_member_id='m1',
@@ -258,6 +316,9 @@ if __name__ == '__main__':
     scenario_send_without_smtp_is_an_honest_refusal()
     scenario_drafting_and_abandoning_does_not_silence_a_stall()
     scenario_actually_sending_resets_the_stall_clock()
+    scenario_research_ok_appends_answer_and_url()
+    scenario_research_disabled_appends_nothing()
+    scenario_research_resets_the_stall_clock()
     scenario_inbound_matches_by_counterparty_address()
     scenario_inbound_from_a_stranger_matches_nothing()
     scenario_shared_counterparty_disambiguated_by_subject()

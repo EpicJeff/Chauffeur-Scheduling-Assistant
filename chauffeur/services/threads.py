@@ -180,6 +180,62 @@ def send_drafted(thread_id: str, subject: str, body: str, to: str,
     return {'status': 'ok'}
 
 
+def _web_research(question: str) -> dict:
+    """Indirection so tests stub one attribute — same shape as `_pool_call`
+    above and `services/web.py`'s own `_pool_call`."""
+    from services import web
+    return web.research(question)
+
+
+def research(thread_id: str, question: str) -> dict:
+    """Ask a practical question on this thread's behalf and — only when
+    `services.web.research` actually answered it — log the answer with its
+    source URLs written INTO the history text, not just returned to the
+    caller. A fact in a thread that outlives its citation is exactly the
+    failure `services/web.py` exists to prevent, and `web.research` already
+    drops any fact citing a page it never read; this function's only job is
+    to not throw the surviving citations away before they reach the record.
+
+    Any non-'ok' status (`disabled`, `no_key`, `capped`, `reserved`,
+    `no_results`, `error`) appends nothing and is returned as-is, so the UI
+    can say honestly why there's no answer. A `research` entry is real
+    movement — something was actually found out — so it is not on the
+    `is_stalled` skip list the way `drafted` is; it resets the quiet clock.
+    """
+    thread = storage.get_thread(thread_id)
+    if not thread:
+        return {'status': 'not_found'}
+
+    question = (question or '').strip()
+    if not question:
+        return {'status': 'error', 'reason': 'no question'}
+
+    result = _web_research(question)
+    if result.get('status') != 'ok':
+        return result
+
+    answer = (result.get('answer') or '').strip()
+    sources = result.get('sources') or []
+    urls = [s['url'] for s in sources if s.get('url')]
+    if not urls:
+        # Belt and suspenders: fall back to the facts' own URLs if a route
+        # ever returns facts without a parallel sources list.
+        urls = list(dict.fromkeys(
+            f['url'] for f in (result.get('facts') or []) if f.get('url')))
+
+    text = f'Researched: {question}\n\n{answer}'
+    if urls:
+        text += '\n\n' + '\n'.join(urls)
+
+    storage.append_thread_history(thread_id, {
+        'kind': 'research',
+        'text': text,
+        'who': 'argyle',
+    })
+    return {'status': 'ok', 'answer': answer,
+            'facts': result.get('facts') or [], 'sources': sources}
+
+
 def _stall_days() -> int:
     return storage.get_settings().get('thread_stall_days', STALL_DAYS_DEFAULT)
 

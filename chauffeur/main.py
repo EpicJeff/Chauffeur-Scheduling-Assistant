@@ -5336,6 +5336,26 @@ def send_thread_message(thread_id: str, body: dict = Body(default={}),
         raise HTTPException(status_code=404, detail="No such thread")
     return res
 
+
+@app.post("/api/threads/{thread_id}/research")
+def research_thread(thread_id: str, body: dict = Body(default={}),
+                    request: Request = None):
+    """Ask a practical question on this thread's behalf (services.threads.
+    research, which wraps services.web.research). An 'ok' answer is logged
+    with its source URLs baked into the history text — a fact that outlives
+    its citation is exactly what services/web.py exists to prevent; any
+    other status (disabled/no_key/capped/reserved/no_results/error) appends
+    nothing and is returned honestly so the page can say why."""
+    from services import threads as _threads
+    _mind_actor(request, body.get('member_id'))
+    question = (body.get('question') or '').strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="A question is needed")
+    res = _threads.research(thread_id, question)
+    if res.get('status') == 'not_found':
+        raise HTTPException(status_code=404, detail="No such thread")
+    return res
+
 # --- Outside hands: assist contacts and the work they cover (load arc A1) ---
 # A contact is somebody outside this household who does work for it — a carpool
 # parent, the neighbour who does the dishes. They have no account, which is the

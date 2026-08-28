@@ -142,6 +142,8 @@
                                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Add note</button>
                                     <button @click="openAdvance(t)"
                                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Advance</button>
+                                    <button @click="researchOpen[t.id] = !researchOpen[t.id]"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-indigo-700 text-white active:bg-indigo-800">Research</button>
                                     <button @click="openEdit(t)"
                                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Edit</button>
                                     <button @click="closeThread(t, 'done')"
@@ -214,6 +216,39 @@
                                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Save</button>
                                 </div>
 
+                                <!-- Research: ask a question, get an answer
+                                     with the pages it came from — the same
+                                     URLs the answer landed in history with
+                                     (services/web.py, services.threads.
+                                     research). A non-ok status shows the
+                                     honest reason and writes nothing. -->
+                                <div class="mt-2.5 space-y-2 bg-gray-950/60 border border-gray-800 rounded-xl p-2.5"
+                                     x-show="researchOpen[t.id]" x-cloak>
+                                    <div class="flex gap-2">
+                                        <input type="text" x-model="researchQuestion[t.id]" placeholder="What do you want to find out?"
+                                            @keydown.enter="submitResearch(t)"
+                                            class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white text-xs">
+                                        <button @click="submitResearch(t)"
+                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-indigo-600 text-white active:bg-indigo-700 shrink-0">Ask</button>
+                                    </div>
+                                    <div class="text-[11px] text-gray-500 italic" x-show="researchLoading[t.id]">
+                                        Looking that up…
+                                    </div>
+                                    <template x-if="!researchLoading[t.id] && researchResult[t.id]">
+                                        <div class="space-y-1.5">
+                                            <div class="text-xs text-gray-200" x-text="researchResult[t.id].answer"></div>
+                                            <div class="flex flex-wrap gap-x-2.5 gap-y-1"
+                                                x-show="(researchResult[t.id].sources || []).length">
+                                                <template x-for="src in researchResult[t.id].sources" :key="src.url">
+                                                    <a :href="src.url" target="_blank" rel="noopener"
+                                                       class="text-[11px] text-blue-400 underline underline-offset-2"
+                                                       x-text="src.title || src.url"></a>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+
                                 <!-- Draft & send: Argyle proposes, a person
                                      sends. The box is always editable, and
                                      Send posts exactly what's in it — never
@@ -279,6 +314,7 @@
                 advanceOpen: {}, advanceDraft: {},
                 editOpen: {}, editDraft: {},
                 draftOpen: {}, draftLoading: {}, draftText: {},
+                researchOpen: {}, researchLoading: {}, researchQuestion: {}, researchResult: {},
 
                 async load() {
                     try {
@@ -304,6 +340,7 @@
                         // (x-show) node's bindings.
                         this.threads.forEach(t => {
                             if (this.noteText[t.id] === undefined) this.noteText[t.id] = '';
+                            if (this.researchQuestion[t.id] === undefined) this.researchQuestion[t.id] = '';
                             this.advanceDraft[t.id] = {
                                 next_action: t.next_action || '',
                                 next_action_at: t.next_action_at || '',
@@ -617,6 +654,50 @@
                         this.draftOpen[t.id] = false;
                         await this.load();
                     } catch (e) { showGlobalAlert("Couldn't send that."); }
+                },
+
+                // Ask a question via POST .../research (services.threads.
+                // research -> services.web.research). An 'ok' answer is
+                // shown with clickable sources AND, by the time this
+                // returns, already logged to history with those same URLs
+                // baked into the text — that write happens server-side so
+                // the record can never drift from what's shown here. Any
+                // other status is an honest refusal: nothing is logged, and
+                // the box explains why instead of showing a fake answer.
+                async submitResearch(t) {
+                    const question = (this.researchQuestion[t.id] || '').trim();
+                    if (!question) { showGlobalAlert('What do you want to find out?'); return; }
+                    this.researchLoading[t.id] = true;
+                    this.researchResult[t.id] = null;
+                    try {
+                        const r = await fetch(this.apiBase + `api/threads/${t.id}/research`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ question })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status !== 'ok') {
+                            showGlobalAlert(this.researchStatusMessage(d));
+                            return;
+                        }
+                        this.researchResult[t.id] = { answer: d.answer, sources: d.sources || [] };
+                        this.researchQuestion[t.id] = '';
+                        await this.load();
+                    } catch (e) {
+                        showGlobalAlert("Couldn't research that just now.");
+                    } finally {
+                        this.researchLoading[t.id] = false;
+                    }
+                },
+
+                researchStatusMessage(d) {
+                    const messages = {
+                        disabled: 'Web research is turned off — enable it in Settings first.',
+                        no_key: 'No API key is set up for research yet.',
+                        capped: d.message || "This month's research questions are used up.",
+                        reserved: d.message || 'The shared search allowance is reserved for other features right now.',
+                        no_results: "Couldn't find anything on the web for that.",
+                    };
+                    return messages[d.status] || d.detail || d.message || "Couldn't research that just now.";
                 },
 
                 async saveStallDays() {
