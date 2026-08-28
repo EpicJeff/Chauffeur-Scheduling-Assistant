@@ -1318,6 +1318,141 @@ def dismiss_insight(insight_id: str, member_role: str = None) -> Dict[str, Any]:
     return {"status": "success" if ok else "error"}
 
 
+def _match_thread(thread_title: str):
+    """Fuzzy title match against open threads, same shape as `_match_task` —
+    the model knows a thread by what it's about, never by its id."""
+    from services import storage
+    q = (thread_title or '').strip().lower()
+    rows = storage.get_threads(include_closed=False)
+    if not q:
+        return None, rows
+    exact = [t for t in rows if (t.get('title') or '').lower() == q]
+    if len(exact) == 1:
+        return exact[0], rows
+    part = [t for t in rows if q in (t.get('title') or '').lower()]
+    if len(part) == 1:
+        return part[0], rows
+    return None, rows
+
+
+def list_threads(state: str = None, owner_name: str = None,
+                 include_closed: bool = False) -> Dict[str, Any]:
+    """Open loops with somebody outside the family — the pest control
+    company, the school waitlist. A read, open to anyone, same as
+    GET /api/threads; each row is annotated with the same stall reason
+    (`services.threads.is_stalled`) that page and the nightly sweep use."""
+    from services import threads as _threads
+    from services import storage as _storage
+    owner_id = None
+    if owner_name:
+        m = _find_member_fuzzy(owner_name)
+        if not m:
+            return {"status": "error",
+                    "message": f"I couldn't find '{owner_name}'. Family members: {_member_names()}."}
+        owner_id = m['id']
+    rows = _storage.get_threads(state=state, owner=owner_id, include_closed=include_closed)
+    if not rows:
+        return {"status": "success", "message": "No open threads right now."}
+    names = {m['id']: m.get('name') for m in _storage.get_all_members(include_archived=True)}
+    lines = []
+    for t in rows[:15]:
+        bits = [t.get('title') or 'Thread']
+        holder = names.get(t.get('owner_member_id') or '')
+        if holder:
+            bits.append(holder)
+        if t.get('next_action'):
+            na = t['next_action']
+            if t.get('next_action_at'):
+                na += f" by {t['next_action_at']}"
+            bits.append(na)
+        reason = _threads.is_stalled(t)
+        if reason:
+            bits.append(reason.upper())
+        lines.append(" — ".join(bits))
+    return {"status": "success", "message": "Open threads:\n" + "\n".join(lines)}
+
+
+def create_thread(title: str, goal: str = None, kind: str = None,
+                  counterparty_name: str = None, counterparty_email: str = None,
+                  next_action: str = None, next_action_at: str = None,
+                  acting_member: dict = None) -> Dict[str, Any]:
+    """Open a new thread — a promise somebody outside the family made that
+    hasn't closed yet. Parent/adult work, same discipline as dismiss_insight:
+    `acting_member` is resolved by the dispatch layer at agent_router.py,
+    never taken from the model, and — when it resolves — becomes the
+    thread's owner and its `created_by`, same as POST /api/threads does with
+    the signed-in caller."""
+    role = (acting_member or {}).get('role')
+    if role in ('child', 'helper', 'guest'):
+        return {"status": "error", "message": "Only a parent or adult can open a thread."}
+    title = (title or '').strip()
+    if not title:
+        return {"status": "error", "message": "What is the thread about?"}
+    from services import threads as _threads
+    thread_id = _threads.create(
+        title=title,
+        owner_member_id=(acting_member or {}).get('id'),
+        goal=(goal or '').strip(),
+        kind=(kind or 'project').strip().lower() or 'project',
+        counterparty_name=(counterparty_name or '').strip(),
+        counterparty_email=(counterparty_email or '').strip(),
+        next_action=(next_action or '').strip(),
+        next_action_at=next_action_at,
+        created_by=(acting_member or {}).get('id'))
+    return {"status": "success", "id": thread_id,
+            "message": f"Opened a thread: {title}."}
+
+
+def update_thread_action(thread_title: str, next_action: str,
+                         next_action_at: str = None, note: str = None,
+                         acting_member: dict = None) -> Dict[str, Any]:
+    """Set the next thing that has to happen on a thread, and when
+    (wraps `services.threads.advance`). Parent/adult work, same gate as
+    `create_thread`; `acting_member` comes from the dispatch layer."""
+    role = (acting_member or {}).get('role')
+    if role in ('child', 'helper', 'guest'):
+        return {"status": "error", "message": "Only a parent or adult can update a thread."}
+    thread, rows = _match_thread(thread_title)
+    if not thread:
+        open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
+        return {"status": "error",
+                "message": f"I couldn't pin down '{thread_title}'. Open threads: {open_titles}."}
+    from services import threads as _threads
+    ok = _threads.advance(thread['id'], (next_action or '').strip(),
+                         next_action_at=next_action_at, note=note,
+                         who=(acting_member or {}).get('id'))
+    if not ok:
+        return {"status": "error", "message": "That thread is gone."}
+    msg = f"Next on \"{thread['title']}\": {next_action}" if next_action \
+        else f"Updated \"{thread['title']}\"."
+    if next_action_at:
+        msg += f" by {next_action_at}"
+    return {"status": "success", "message": msg}
+
+
+def add_thread_note(thread_title: str, text: str, url: str = None,
+                    acting_member: dict = None) -> Dict[str, Any]:
+    """Log movement on a thread that isn't a change of plan — a call made, a
+    voicemail left (wraps `services.threads.note`). Parent/adult work, same
+    gate as `create_thread`; `acting_member` comes from the dispatch layer."""
+    role = (acting_member or {}).get('role')
+    if role in ('child', 'helper', 'guest'):
+        return {"status": "error", "message": "Only a parent or adult can add a note."}
+    text = (text or '').strip()
+    if not text:
+        return {"status": "error", "message": "What happened?"}
+    thread, rows = _match_thread(thread_title)
+    if not thread:
+        open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
+        return {"status": "error",
+                "message": f"I couldn't pin down '{thread_title}'. Open threads: {open_titles}."}
+    from services import threads as _threads
+    ok = _threads.note(thread['id'], text, who=(acting_member or {}).get('id'), url=url)
+    if not ok:
+        return {"status": "error", "message": "That thread is gone."}
+    return {"status": "success", "message": f"Noted on \"{thread['title']}\": {text}"}
+
+
 def claim_chore(chore_title: str, member_name: str = None,
                 sender_driver_id: str = None) -> Dict[str, Any]:
     from services import storage
@@ -3381,6 +3516,63 @@ def get_available_tools() -> List[Dict]:
             "parameters": {"type": "object",
                            "properties": {"insight_id": {"type": "string", "description": "The insight's id, from list_insights."}},
                            "required": ["insight_id"]}
+        },
+        {
+            "name": "list_threads",
+            "description": "Lists open loops with somebody outside the family — a vendor callback, a permit still pending ('any open threads?', 'what's outstanding with the pest guy?', 'what's Ben carrying?'). Each one shows who owns it, what's next, and whether it's stalled.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "state": {"type": "string", "description": "Filter by state: open, waiting, done, or dropped. Omit for all non-closed threads."},
+                    "owner_name": {"type": "string", "description": "Filter to one family member's threads by name."},
+                    "include_closed": {"type": "boolean", "description": "Include done/dropped threads. Default false."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "create_thread",
+            "description": "Opens a new thread for a promise somebody outside the family made that hasn't closed yet — a vendor callback, a permit application ('start a thread for the deck permit', 'the pest company is supposed to call back, track that'). Parent/adult only; the caller becomes the thread's owner.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "What the thread is about, e.g. 'Pest control' or 'Deck permit'."},
+                    "goal": {"type": "string", "description": "What resolving this thread looks like, if said."},
+                    "kind": {"type": "string", "description": "'vendor' or 'project'. Defaults to 'project'."},
+                    "counterparty_name": {"type": "string", "description": "Who's on the other end, if not an existing contact."},
+                    "counterparty_email": {"type": "string", "description": "Their email, if given."},
+                    "next_action": {"type": "string", "description": "What has to happen next, if known."},
+                    "next_action_at": {"type": "string", "description": "When the next action is due, as YYYY-MM-DD."}
+                },
+                "required": ["title"]
+            }
+        },
+        {
+            "name": "update_thread_action",
+            "description": "Sets the next thing that has to happen on an existing thread, and when ('the county called back, next we need to schedule the inspection', 'push the pest thread to next Tuesday'). Parent/adult only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "thread_title": {"type": "string", "description": "The thread's title (fuzzy matched), e.g. 'Deck permit'."},
+                    "next_action": {"type": "string", "description": "What has to happen next."},
+                    "next_action_at": {"type": "string", "description": "When it's due, as YYYY-MM-DD."},
+                    "note": {"type": "string", "description": "Anything worth logging alongside the change."}
+                },
+                "required": ["thread_title", "next_action"]
+            }
+        },
+        {
+            "name": "add_thread_note",
+            "description": "Logs movement on a thread that isn't a change of plan — a call made, a voicemail left, a document received ('log that I left the pest company a voicemail'). Parent/adult only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "thread_title": {"type": "string", "description": "The thread's title (fuzzy matched)."},
+                    "text": {"type": "string", "description": "What happened."},
+                    "url": {"type": "string", "description": "A link worth attaching, if any."}
+                },
+                "required": ["thread_title", "text"]
+            }
         },
         {
             "name": "claim_chore",

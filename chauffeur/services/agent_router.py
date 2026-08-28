@@ -702,6 +702,42 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.dismiss_insight(args.get("insight_id", ""),
                                                     member_role=role)
                     if res.get("message"): agent_message = res["message"]
+                elif func_name in ("list_threads", "create_thread",
+                                   "update_thread_action", "add_thread_note"):
+                    from services import agent_tools_v2 as _atv2
+                    # Same actor resolution as list_insights/dismiss_insight
+                    # above: resolved HERE at dispatch, never taken from the
+                    # model. Writes (create/advance/note) are parent/adult
+                    # work, gated inside the tools themselves on this actor.
+                    actor = acting_member
+                    if actor is None and driver:
+                        from services import storage as _st
+                        actor = _st.get_member_by_driver_id(driver_id)
+                    if func_name == "list_threads":
+                        res = _atv2.list_threads(state=args.get("state"),
+                                                 owner_name=args.get("owner_name"),
+                                                 include_closed=bool(args.get("include_closed")))
+                    elif func_name == "create_thread":
+                        res = _atv2.create_thread(args.get("title", "") or "",
+                                                  goal=args.get("goal"),
+                                                  kind=args.get("kind"),
+                                                  counterparty_name=args.get("counterparty_name"),
+                                                  counterparty_email=args.get("counterparty_email"),
+                                                  next_action=args.get("next_action"),
+                                                  next_action_at=args.get("next_action_at"),
+                                                  acting_member=actor)
+                    elif func_name == "update_thread_action":
+                        res = _atv2.update_thread_action(args.get("thread_title", "") or "",
+                                                          args.get("next_action", "") or "",
+                                                          next_action_at=args.get("next_action_at"),
+                                                          note=args.get("note"),
+                                                          acting_member=actor)
+                    else:
+                        res = _atv2.add_thread_note(args.get("thread_title", "") or "",
+                                                    args.get("text", "") or "",
+                                                    url=args.get("url"),
+                                                    acting_member=actor)
+                    if res.get("message"): agent_message = res["message"]
                 elif func_name == "claim_chore":
                     from services.agent_tools_v2 import claim_chore
                     res = claim_chore(args.get("chore_title", ""),
