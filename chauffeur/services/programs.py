@@ -216,6 +216,15 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
     if not use:
         return {'status': 'error', 'message': 'There is no time to claim.'}
 
+    # CLAIM before touching anything. A double-tap or two open tabs can both
+    # pass the state check above in the same instant (FastAPI runs sync
+    # handlers in a threadpool) -- whoever flips proposed -> approving owns
+    # the apply; the other is told it is already claimed and does nothing.
+    if not storage.claim_program(program_id, 'proposed', 'approving'):
+        current = storage.get_program(program_id) or {}
+        return {'status': 'error',
+                'message': f"That program is already {current.get('state')}."}
+
     emissions = {'commitment_ids': [], 'thread_ids': [], 'event_ids': []}
 
     # Local writes first: cheap, ours, and undoable by a person who can see
@@ -261,9 +270,24 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
             end_iso = (naive_start + datetime.timedelta(hours=1)).astimezone().isoformat()
             ev_id = _cal.create_event(cal_id, row.get('title') or 'Program',
                                       start_iso, end_iso)
+            # create_event catches every Google API exception itself and
+            # returns None on a real rejection (bad calendar id, quota,
+            # transient failure) rather than raising -- the try/except above
+            # only ever catches OUR pre-insert failures (a bad date string).
+            # A falsy id IS the production failure signal, same convention as
+            # chat_actions._create_event's `if not gid`, and it must never be
+            # recorded as though it were a real event id.
+            if not ev_id:
+                raise RuntimeError("the calendar didn't create the event")
             emissions['event_ids'].append(ev_id)
             baseline['target_event_id'] = ev_id
         except Exception as e:
+            # Local writes already happened and stay stamped on the row --
+            # what did NOT happen is the state flip, so the program is left
+            # exactly where `approve()` found it (`proposed`) rather than
+            # `approving` forever or, worse, `active` with a target date that
+            # silently does not exist. A person or a later call can try again.
+            storage.claim_program(program_id, 'approving', 'proposed')
             storage.update_program(program_id, {'emissions': emissions})
             return {'status': 'error',
                     'message': (f"The practice time is claimed, but the "

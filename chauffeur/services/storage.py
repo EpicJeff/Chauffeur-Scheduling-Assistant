@@ -3086,6 +3086,25 @@ def delete_program(program_id: str):
     with db_lock:
         programs_table.remove(Query().id == program_id)
 
+def claim_program(program_id: str, expected_state: str, new_state: str) -> bool:
+    """Compare-and-set on a program's state. True only for whoever got there
+    first.
+
+    Approving is not idempotent -- two taps (a double-tap, two open tabs) that
+    both pass the same stale `state != 'proposed'` check would each claim a
+    full set of practice windows, which is exactly the "claim the week twice"
+    a program's footprint exists to prevent. Read and write happen under one
+    hold of `db_lock`, the same pattern `claim_deal` uses for a deal's
+    asking -> applying transition, so the window between "still proposed" and
+    "mine now" cannot be entered twice.
+    """
+    with db_lock:
+        rows = programs_table.search(Query().id == program_id)
+        if not rows or dict(rows[0]).get('state') != expected_state:
+            return False
+        return bool(programs_table.update({'state': new_state},
+                                          Query().id == program_id))
+
 # --- Shopping lists (meals & provisioning arc M1) ---
 # A STANDING list bound to a recurring errand by TAG, never by errand id: the
 # errand regenerates each cycle, the list outlives all of them. Items are
