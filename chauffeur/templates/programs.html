@@ -145,7 +145,7 @@
                                                 <div class="text-[11px] text-gray-500 truncate" x-show="ph.milestone" x-text="ph.milestone"></div>
                                             </div>
                                             <span class="text-[10px] font-bold text-teal-400 shrink-0" x-show="ph.milestone_hit_at">🎉 done</span>
-                                            <button x-show="!ph.milestone_hit_at && (p.state === 'active' || p.state === 'paused')"
+                                            <button x-show="!ph.milestone_hit_at && (p.state === 'active' || p.state === 'paused') && canAct(p)"
                                                 @click="markMilestone(p, ph)"
                                                 class="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 shrink-0">
                                                 Mark hit
@@ -173,10 +173,13 @@
                                             <div class="text-xs text-gray-300" x-show="footprints[p.id].thread" x-text="'Kit thread: ' + footprints[p.id].thread"></div>
                                             <div class="text-xs text-gray-300" x-show="footprints[p.id].event"
                                                 x-text="footprints[p.id].event ? ('Calendar target: ' + footprints[p.id].event.title + ' on ' + fmtDate(footprints[p.id].event.date)) : ''"></div>
-                                            <button @click="approveProgram(p)"
+                                            <button @click="approveProgram(p)" x-show="canApprove()"
                                                 class="w-full text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">
                                                 Approve — claim this time
                                             </button>
+                                            <p class="text-[11px] text-gray-500 italic" x-show="!canApprove()">
+                                                A parent or adult claims the time — ask one to approve this.
+                                            </p>
                                         </div>
                                     </template>
                                 </div>
@@ -189,8 +192,11 @@
                                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700 shrink-0">Save</button>
                                 </div>
 
-                                <!-- Actions -->
-                                <div class="flex flex-wrap gap-2 mt-2.5" x-show="!sec.archived">
+                                <!-- Actions. Gated by ownership (canAct), not by hiding the whole
+                                     card -- a parent still sees every household program, they just
+                                     cannot act on somebody else's from here unless it's theirs to
+                                     act on or they're the parent standing in. -->
+                                <div class="flex flex-wrap gap-2 mt-2.5" x-show="!sec.archived && canAct(p)">
                                     <button x-show="p.state === 'active' || p.state === 'paused'"
                                         @click="sessionOpen[p.id] = !sessionOpen[p.id]"
                                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Log a session</button>
@@ -222,6 +228,17 @@
         function programsPage() {
             return {
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                // Who is looking at this page, read the same way app.html
+                // sets it at sign-in. Empty here reads as the control-center
+                // surface — no person, a trusted place — which is shown
+                // every action because that is exactly what the server does
+                // with it (`_approver_of_record` stands in the household's
+                // parent of record). A RESOLVED identity that is neither the
+                // program's owner nor a parent is the one case this hides
+                // buttons for; the server enforces the real rule regardless
+                // (`_program_permission_or_refuse`, main.py) — this is UX,
+                // not the security boundary.
+                myId: '', myToken: '',
                 programs: [],
                 members: [],
                 footprints: {},
@@ -231,7 +248,39 @@
                 draft: { title: '', for_member_id: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' },
                 sessionOpen: {}, sessionMinutes: {},
 
+                readIdentity() {
+                    try {
+                        this.myId = localStorage.getItem('chauffeur_member_id') || '';
+                        this.myToken = localStorage.getItem('chauffeur_member_token') || '';
+                    } catch (e) { this.myId = ''; this.myToken = ''; }
+                },
+
+                authHeaders() {
+                    const h = { 'Content-Type': 'application/json' };
+                    if (this.myToken) h['X-Member-Token'] = this.myToken;
+                    return h;
+                },
+
+                isMine(p) { return !!(this.myId && p.member_id === this.myId); },
+
+                iAmParent() {
+                    if (!this.myId) return false;
+                    const me = this.members.find(m => m.id === this.myId);
+                    return !!(me && me.role === 'parent');
+                },
+
+                // Own it, or stand in for it (parent, or nobody resolved at
+                // all -- the control-center reading). The one case hidden is
+                // a KNOWN identity acting on a program that is neither
+                // theirs nor one they parent.
+                canAct(p) { return !this.myId || this.isMine(p) || this.iAmParent(); },
+
+                // Approving is never an ownership matter -- even the program's
+                // own owner needs a parent/adult to claim the week.
+                canApprove() { return !this.myId || this.iAmParent(); },
+
                 async load() {
+                    this.readIdentity();
                     try {
                         const [pRes, mRes] = await Promise.all([
                             fetch(this.apiBase + 'api/programs?include_finished=true'),
@@ -328,9 +377,10 @@
                     this.proposing = true;
                     try {
                         const r = await fetch(this.apiBase + 'api/programs', {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            method: 'POST', headers: this.authHeaders(),
                             body: JSON.stringify({
                                 title, for_member_id: this.draft.for_member_id,
+                                member_id: this.myId || null,
                                 sessions_per_week: this.draft.sessions_per_week || 3,
                                 minutes: this.draft.minutes || 25,
                                 preferred_days: this.draft.preferred_days,
@@ -364,8 +414,9 @@
                     if (!ok) return;
                     try {
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/approve`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ slots: fp ? fp.slots : undefined })
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null,
+                                                   slots: fp ? fp.slots : undefined })
                         });
                         const d = await r.json().catch(() => ({}));
                         if (!r.ok || d.status === 'error') {
@@ -380,8 +431,9 @@
                     const minutes = this.sessionMinutes[p.id];
                     try {
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/session`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ minutes: minutes || null, source: 'added' })
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null,
+                                                   minutes: minutes || null, source: 'added' })
                         });
                         const d = await r.json().catch(() => ({}));
                         if (!r.ok || d.status === 'error') {
@@ -396,8 +448,9 @@
                 async markMilestone(p, ph) {
                     try {
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/milestone`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ phase_name: ph.name })
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null,
+                                                   phase_name: ph.name })
                         });
                         const d = await r.json().catch(() => ({}));
                         if (!r.ok || d.status === 'error') {
@@ -411,7 +464,8 @@
                 async pauseProgram(p) {
                     try {
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/pause`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null })
                         });
                         const d = await r.json().catch(() => ({}));
                         if (!r.ok || d.status === 'error') {
@@ -425,7 +479,8 @@
                 async resumeProgram(p) {
                     try {
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/resume`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null })
                         });
                         const d = await r.json().catch(() => ({}));
                         if (!r.ok || d.status === 'error') {
@@ -443,7 +498,8 @@
                     if (!ok) return;
                     try {
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/drop`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null })
                         });
                         const d = await r.json().catch(() => ({}));
                         if (!r.ok || d.status === 'error') {

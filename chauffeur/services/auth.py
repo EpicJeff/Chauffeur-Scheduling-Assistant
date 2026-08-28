@@ -357,9 +357,11 @@ RULES = [
     # child/helper/guest — the deal surface is parent/adult work end to end.
     (ANY, '/api/negotiation/*', SIGNED_IN, None),
     # Programs (task 5): SIGNED_IN at the route. Unlike Threads and
-    # Negotiation, most writes here are NOT further role-gated in the
-    # handler — a child proposes, logs, and pauses their own program same as
-    # a parent. Only approve (claims the week) reuses `_mind_actor` +
+    # Negotiation, role alone does not gate a write in the handler —
+    # OWNERSHIP does (`_program_permission_or_refuse`, main.py): a child
+    # acts freely on their OWN program (proposes, logs a session, marks a
+    # milestone, pauses/resumes/drops), and acting on somebody ELSE's, or
+    # approving (claims the week) at all, reuses `_mind_actor` +
     # `_approver_of_record`, exactly as Mind's approve tap does.
     (ANY, '/api/programs/*', SIGNED_IN, None),
     (ANY, '/api/programs', SIGNED_IN, None),

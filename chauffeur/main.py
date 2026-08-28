@@ -5532,16 +5532,35 @@ def research_thread(thread_id: str, body: dict = Body(default={}),
 # propose (screened, then curated), see the footprint before approving, then
 # approve, log a session, mark a milestone, pause, resume or drop.
 #
-# Unlike Threads, most of this surface is NOT parent/adult-gated: the whole
-# point is that the aim belongs to whoever is living it, so a child can
-# propose their own program, log their own sessions, mark their own
-# milestone, and pause/resume/drop without anybody grown-up in the loop.
-# `_acting_id` (not `_mind_actor`) records who did it, without refusing a
-# child/helper/guest. The one exception carved out by design is approving:
-# that CLAIMS the household's week on the calendar, which is why it alone
-# reuses `_mind_actor` + `_approver_of_record`, exactly as Mind's approve tap
-# does — the control-center surface stands in the parent of record because it
-# authenticates as a trusted place, not as a person.
+# The rule (task 5 review, v2.433.13 — the first cut shipped with NO gate at
+# all on five of these writes, which let a child drop a PARENT's approved
+# program): you may act on YOUR OWN program freely — the aim belongs to
+# whoever is living it, so a child proposes, logs their own sessions, marks
+# their own milestone, and pauses/resumes/drops their own program with
+# nobody grown-up in the loop. Acting on somebody ELSE's needs a parent or
+# adult, the exact `_mind_actor` + `_approver_of_record` pairing `approve`
+# already used (the control-center surface stands in the parent of record
+# because it authenticates as a trusted place, not as a person).
+# `_program_permission_or_refuse` below is that rule in one place so it
+# cannot drift per-endpoint.
+
+def _program_permission_or_refuse(request, body: dict, row: dict) -> None:
+    """Free rein on your own program; a parent/adult stands in otherwise.
+
+    Ownership is checked against the RAW resolved id (`_acting_id`, which
+    never refuses on role) so a child acting on their OWN program never
+    trips `_mind_actor`'s child/helper/guest refusal. Only once the caller
+    is acting on somebody else's program — or cannot be resolved to the
+    owner at all, which covers the control-center surface — does this fall
+    through to the parent/adult stand-in, identically to how `approve`
+    already resolves an approver. Raises HTTPException; returns nothing.
+    """
+    claimed = body.get('member_id')
+    actor_id = _acting_id(request, claimed)
+    if actor_id and row.get('member_id') == actor_id:
+        return
+    _approver_of_record(_mind_actor(request, claimed))
+
 
 @app.get("/api/programs")
 def list_programs_api(member_id: str = None, include_finished: bool = False):
@@ -5557,9 +5576,11 @@ def create_program(body: dict = Body(default={}), request: Request = None):
 
     The screen runs before anything else — a body-composition aim never
     reaches research and never becomes an object somebody could approve
-    later, no matter who is asking. Proposing is open to any signed-in
-    member, the child whose program this is included; only claiming the
-    week (approve) is grown-up work.
+    later, no matter who is asking. Proposing for YOURSELF is open to any
+    signed-in member, the child whose program this is included; proposing
+    in somebody ELSE's name is the same parent/adult act every other write
+    below requires once ownership doesn't hold — a program is still a
+    capability nobody granted, even sitting `proposed` until approved.
     """
     from services import programs_curate as _cur
     title = (body.get('title') or '').strip()
@@ -5567,13 +5588,17 @@ def create_program(body: dict = Body(default={}), request: Request = None):
     if not screen.get('ok'):
         return {"status": "error", "message": screen.get('message'),
                 "alternatives": screen.get('alternatives') or []}
-    actor_id = _acting_id(request, body.get('member_id'))
+    claimed = body.get('member_id')
+    actor_id = _acting_id(request, claimed)
     shape = {'sessions_per_week': int(body.get('sessions_per_week') or 3),
              'minutes': int(body.get('minutes') or 25),
              'preferred_days': list(body.get('preferred_days') or [])}
-    member_id = body.get('for_member_id') or actor_id
+    for_member_id = body.get('for_member_id')
+    member_id = for_member_id or actor_id
     if not member_id:
         return {"status": "error", "message": "Whose program is this?"}
+    if for_member_id and for_member_id != actor_id:
+        _approver_of_record(_mind_actor(request, claimed))
     member = storage.get_member(member_id) or {}
     curated = _cur.curate(title, shape, member_name=member.get('name') or '')
     pid = storage.add_program({
@@ -5611,9 +5636,13 @@ def approve_program(program_id: str, body: dict = Body(default={}),
 def log_program_session(program_id: str, body: dict = Body(default={}),
                         request: Request = None):
     """The person practising says so — a kid reporting their own guitar
-    session is the point, not a permission to route around."""
+    session is the point. Logging on somebody ELSE's program is a
+    parent/adult act, same rule as every write below."""
     from services import programs as _prog
-    _acting_id(request, body.get('member_id'))
+    row = storage.get_program(program_id)
+    if not row:
+        return {'status': 'error', 'message': 'That program is no longer here.'}
+    _program_permission_or_refuse(request, body, row)
     return _prog.log_session(program_id, minutes=body.get('minutes'),
                              source=body.get('source') or 'added',
                              note=body.get('note') or '')
@@ -5623,7 +5652,10 @@ def log_program_session(program_id: str, body: dict = Body(default={}),
 def hit_program_milestone(program_id: str, body: dict = Body(default={}),
                           request: Request = None):
     from services import programs as _prog
-    _acting_id(request, body.get('member_id'))
+    row = storage.get_program(program_id)
+    if not row:
+        return {'status': 'error', 'message': 'That program is no longer here.'}
+    _program_permission_or_refuse(request, body, row)
     return _prog.mark_milestone(program_id, body.get('phase_name') or '')
 
 
@@ -5631,7 +5663,10 @@ def hit_program_milestone(program_id: str, body: dict = Body(default={}),
 def pause_program(program_id: str, body: dict = Body(default={}),
                   request: Request = None):
     from services import programs as _prog
-    _acting_id(request, body.get('member_id'))
+    row = storage.get_program(program_id)
+    if not row:
+        return {'status': 'error', 'message': 'That program is no longer here.'}
+    _program_permission_or_refuse(request, body, row)
     return _prog.pause(program_id)
 
 
@@ -5639,7 +5674,10 @@ def pause_program(program_id: str, body: dict = Body(default={}),
 def resume_program(program_id: str, body: dict = Body(default={}),
                    request: Request = None):
     from services import programs as _prog
-    _acting_id(request, body.get('member_id'))
+    row = storage.get_program(program_id)
+    if not row:
+        return {'status': 'error', 'message': 'That program is no longer here.'}
+    _program_permission_or_refuse(request, body, row)
     return _prog.resume(program_id)
 
 
@@ -5648,10 +5686,10 @@ def drop_program(program_id: str, body: dict = Body(default={}),
                  request: Request = None):
     """Dropping is not failing. The emissions go; the record stays."""
     import time as _t
-    _acting_id(request, body.get('member_id'))
     row = storage.get_program(program_id)
     if not row:
         raise HTTPException(status_code=404, detail="No such program")
+    _program_permission_or_refuse(request, body, row)
     for cid in (row.get('emissions') or {}).get('commitment_ids') or []:
         try:
             storage.delete_protected_commitment(cid)
