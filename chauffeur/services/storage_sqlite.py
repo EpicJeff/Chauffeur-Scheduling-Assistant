@@ -90,6 +90,10 @@ INDEX_SPEC = {
     "shift_refusals": [["series_key"]],
     # Deals: read by state on every sweep, and by the part a request answers.
     "deals": [["id"], ["state"], ["seed_event_id"]],
+    # Protected exceptions: one lifted evening per commitment. Read whole by
+    # the day loop on every refresh and by commitment when a lever needs to
+    # know what it already gave up.
+    "protected_exceptions": [["commitment_id"], ["date"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

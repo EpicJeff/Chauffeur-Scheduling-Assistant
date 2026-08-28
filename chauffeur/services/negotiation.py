@@ -404,3 +404,192 @@ def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
                         'line': _line(cand, seed_title, when)}))
     scored.sort(key=lambda pair: pair[0])
     return [entry for _, entry in scored]
+
+
+# --- The deal, and the way people agree to it ----------------------------
+# Every part is agreed to by the person it costs. A schedule that works because
+# somebody was volunteered is not a schedule that works, so a partly agreed
+# deal changes nothing at all — not the calendar, not the overrides, nothing.
+
+
+def propose(date_str: str, seed_event_id: str,
+            budget: int = SWEEP_BUDGET) -> dict:
+    """The best deal for this seed, stored as a draft. Nobody is asked yet.
+
+    An open deal for the same seed is REUSED rather than re-solved: the sweep
+    runs constantly, and re-searching a seed the family is already looking at
+    would burn the budget re-deciding a question that is already on their
+    screen.
+    """
+    for existing in storage.get_deals(seed_event_id=seed_event_id):
+        if existing.get('state') in ('draft', 'asking'):
+            return existing
+    pack = storage.get_solve_pack(date_str)
+    if not pack:
+        return None
+    found = search(pack, seed_event_id, budget=budget)
+    if not found:
+        return None
+    best = found[0]
+    events = {str(e.get('id')): e for e in pack.get('events') or []}
+    seed = events.get(str(seed_event_id)) or {}
+    parts = []
+    for i, p in enumerate(best['parts']):
+        parts.append({**p, 'id': f"{seed_event_id}-{i}-{int(datetime.datetime.now().timestamp())}",
+                      'state': 'open', 'request_id': None})
+    deal_id = storage.add_deal({
+        'date': date_str, 'seed_event_id': str(seed_event_id),
+        'seed_title': seed.get('title') or '', 'line': best['line'],
+        'parts': parts, 'cost': best['cost'], 'mutations': best['mutations'],
+        'state': 'draft'})
+    return storage.get_deal(deal_id)
+
+
+def start_asks(deal_id: str, actor_member_id: str = None) -> dict:
+    """Send the asks. A person does this — never the sweep, never the model."""
+    from services import requests as _req
+    deal = storage.get_deal(deal_id)
+    if not deal:
+        return {'status': 'error', 'message': 'That deal is no longer here.'}
+    if deal.get('state') != 'draft':
+        return {'status': 'error',
+                'message': f"That one is already {deal.get('state')}."}
+    parts = []
+    for p in deal.get('parts') or []:
+        req = _req.create(from_member_id=actor_member_id or '',
+                          body=p['ask_text'], kind='deal_part',
+                          to_member_id=p['member_id'], subject_ref=p['id'],
+                          subject_label=deal.get('seed_title') or 'the schedule')
+        parts.append({**p, 'request_id': (req or {}).get('id')})
+    storage.update_deal(deal_id, {'parts': parts, 'state': 'asking'})
+    who = len({p['member_id'] for p in parts})
+    return {'status': 'success', 'deal_id': deal_id,
+            'message': f"Asked {who} {'person' if who == 1 else 'people'} — "
+                       f"nothing changes until everyone says yes."}
+
+
+def accept_part(part_id: str, member_id: str = None) -> dict:
+    deal = storage.get_deal_by_part(part_id)
+    if not deal:
+        return {'status': 'error', 'message': 'That ask is no longer here.'}
+    if deal.get('state') != 'asking':
+        return {'status': 'error',
+                'message': f"That deal is {deal.get('state')} — nothing to agree to."}
+    storage.update_deal_part(part_id, {'state': 'accepted'})
+    deal = storage.get_deal(deal['id'])
+    if any(p.get('state') != 'accepted' for p in deal.get('parts') or []):
+        waiting = [p['member_id'] for p in deal['parts']
+                   if p.get('state') != 'accepted']
+        return {'status': 'success', 'applied': False,
+                'message': f"Got it — still waiting on {len(waiting)}."}
+    for p in deal['parts']:
+        try:
+            _apply_part(p, deal)
+        except Exception as e:
+            print(f"[negotiation] applying {p.get('lever')} failed: {e}")
+            storage.update_deal(deal['id'], {
+                'state': 'dead',
+                'dead_reason': f"couldn't apply the {p.get('lever')} part: {e}"})
+            return {'status': 'error',
+                    'message': "Everyone agreed, but I couldn't make the "
+                               "change — worth a look."}
+    storage.update_deal(deal['id'], {
+        'state': 'applied',
+        'applied_at': datetime.datetime.now().timestamp()})
+    return {'status': 'success', 'applied': True, 'schedule_dirty': True,
+            'message': f"✓ {deal.get('seed_title') or 'That day'} is covered."}
+
+
+def decline_part(part_id: str, member_id: str = None, reason: str = '') -> dict:
+    """A no ends the deal — blamelessly, and with the reason kept.
+
+    A refused shift also teaches the app something permanent: that series
+    cannot move. That is the movable flag, earned rather than declared.
+    """
+    deal = storage.get_deal_by_part(part_id)
+    if not deal:
+        return {'status': 'error', 'message': 'That ask is no longer here.'}
+    part = next((p for p in deal.get('parts') or []
+                 if str(p.get('id')) == str(part_id)), None)
+    storage.update_deal_part(part_id, {'state': 'declined'})
+    if part and part.get('lever') == 'shift_event':
+        payload = part.get('payload') or {}
+        if payload.get('series_key'):
+            storage.add_shift_refusal(payload['series_key'],
+                                      payload.get('title') or '',
+                                      member_id)
+    storage.update_deal(deal['id'], {
+        'state': 'dead',
+        'dead_reason': (reason or '').strip() or 'somebody could not'})
+    return {'status': 'success', 'message': "That's fine — I'll look again."}
+
+
+def kill(deal_id: str, member_id: str = None, reason: str = '') -> dict:
+    deal = storage.get_deal(deal_id)
+    if not deal:
+        return {'status': 'error', 'message': 'That deal is no longer here.'}
+    storage.update_deal(deal_id, {'state': 'dead',
+                                  'dead_reason': (reason or '').strip() or 'dropped'})
+    return {'status': 'success', 'message': 'Dropped it.'}
+
+
+def _apply_part(part: dict, deal: dict):
+    """Make the change this part promised. Called only when EVERY part is in."""
+    from services import calendar as _cal, optional_events as _opt
+    lever, payload = part.get('lever'), part.get('payload') or {}
+    if lever == 'shift_event':
+        sched = storage.get_cached_schedule() or {}
+        ev = next((e for e in (sched.get('events') or [])
+                   if str(e.get('id')) == str(payload.get('event_id'))), None)
+        if not ev:
+            raise ValueError('that event is no longer in the schedule')
+        delta = datetime.timedelta(minutes=int(payload.get('delta_mins') or 0))
+        # `source_event_ids` entries are "calendar_id::google_event_id"
+        # (services/calendar.py's fetch groups every event this way), not a
+        # bare Google id -- patch_event needs the id AFTER the '::', or the
+        # write 404s against a calendar that has no event by that composite
+        # name. Both halves come from the SAME string so they can never
+        # point at mismatched calendars, unlike zipping calendar_ids[0]
+        # against source_event_ids[0] from two separately-ordered lists.
+        raw_src = (ev.get('source_event_ids') or [ev.get('id')])[0]
+        src_parts = str(raw_src).split('::', 1)
+        cal_id, google_id = (src_parts[0], src_parts[1]) if len(src_parts) == 2 else (None, None)
+        if not cal_id or not google_id:
+            raise ValueError('that event has no calendar to write to')
+        # `_dt` (this module's own helper) strips tzinfo -- fine for the
+        # relative-time arithmetic candidates() does, but a naive dateTime
+        # sent to Google is REJECTED outright ("Missing time zone
+        # definition"). Keep the real offset, and stamp the calendar's own
+        # IANA zone too (chat_actions._create_event does the same) so the
+        # event isn't left pinned to a fixed GMT offset in the edit UI.
+        tz = _cal.get_calendar_timezone(cal_id)
+        body = {}
+        for field in ('start', 'end'):
+            try:
+                raw = datetime.datetime.fromisoformat(str(ev.get(field)))
+            except (ValueError, TypeError):
+                raw = None
+            if raw:
+                entry = {'dateTime': (raw + delta).isoformat()}
+                if tz:
+                    entry['timeZone'] = tz
+                body[field] = entry
+        if not body or not _cal.patch_event(cal_id, google_id, body):
+            raise ValueError('the calendar refused the new time')
+    elif lever == 'lift_protected':
+        storage.add_protected_exception(payload.get('commitment_id'),
+                                        deal.get('date'))
+    elif lever == 'swap_drive':
+        storage.add_override({'event_id': str(payload.get('event_id')),
+                              'driver_id': str(payload.get('driver_id')),
+                              'created_at': datetime.datetime.now().timestamp(),
+                              'source': 'negotiation'})
+    elif lever == 'skip_optional':
+        sched = storage.get_cached_schedule() or {}
+        ev = next((e for e in (sched.get('events') or [])
+                   if str(e.get('id')) == str(payload.get('event_id'))), None)
+        if not ev:
+            raise ValueError('that event is no longer in the schedule')
+        _opt.record_decision(ev, 'skip', decided_by=part.get('member_id'))
+    else:
+        raise ValueError(f"unknown lever '{lever}'")

@@ -16945,6 +16945,29 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # Check abort before running solver
         check_abort_refresh()
 
+        # A negotiated lift gives up ONE evening (services/negotiation.py):
+        # the protected commitment stays a standing rule for every OTHER day,
+        # but this date's rule list drops it, and the pack's own index is
+        # rebuilt so it still points at the right rules after the drop.
+        lifted = {str(x['commitment_id'])
+                  for x in storage.get_protected_exceptions()
+                  if str(x.get('date')) == date_str}
+        day_rules = rules
+        if lifted:
+            drop = {protected_rule_index[c] for c in lifted
+                    if c in protected_rule_index}
+            day_rules = [r for i, r in enumerate(rules) if i not in drop]
+
+        day_protected_index = {}
+        if lifted:
+            offset = 0
+            for cid, idx in protected_rule_index.items():
+                if cid in lifted:
+                    offset += 1
+                    continue
+                day_protected_index[cid] = idx - offset
+        else:
+            day_protected_index = dict(protected_rule_index)
 
         if draft:
             assignments = {}
@@ -16971,7 +16994,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             true_unassigned = unassigned
         else:
             assignments, unassigned, lateness_warnings, car_assignments = matcher.solve_schedule(
-                daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric, cars=cars, driver_passenger_map=driver_passenger_map
+                daily_events_to_solve, drivers, day_rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric, cars=cars, driver_passenger_map=driver_passenger_map
             )
             
             unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
@@ -17009,7 +17032,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 from services import solve_pack as _pack
                 storage.save_solve_pack(date_str, _pack.build(
                     date_str,
-                    events=daily_events_to_solve, drivers=drivers, rules=rules,
+                    events=daily_events_to_solve, drivers=drivers, rules=day_rules,
                     priority_rules=priority_rules, overrides=overrides,
                     passengers=passengers, cars=cars,
                     driver_events=driver_events_map,
@@ -17018,7 +17041,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     previous_assignments=previous_assignments,
                     load_balancing=load_balancing,
                     load_balancing_metric=load_balancing_metric,
-                    protected_rule_index=protected_rule_index))
+                    protected_rule_index=day_protected_index))
             except Exception as _pe:
                 logger.warning(f"Solve pack write failed for {date_str}: {_pe}")
 

@@ -32,6 +32,7 @@ KINDS = {
     'cover':        "cover for an evening",
     'permission':   "permission",
     'other':        "something",
+    'deal_part':    "one part of a deal that makes a day work",
 }
 
 
@@ -109,6 +110,13 @@ def _perform(req: dict, decider: dict) -> str:
     what a family meant.
     """
     kind, ref = req.get('kind'), req.get('subject_ref')
+    if kind == 'deal_part' and ref:
+        # A deal applies only when EVERY part is in, so the answer goes to the
+        # deal rather than doing anything here. Saying yes to your half of a
+        # deal must not move anybody's evening on its own.
+        from services import negotiation
+        res = negotiation.accept_part(ref, decider['id'])
+        return f" {res.get('message', '')}".rstrip()
     if not ref:
         return ''
     try:
@@ -143,6 +151,12 @@ def decide(request_id: str, accept: bool, decider_id: str,
         return {"status": "error", "message": "I don't know who's answering."}
 
     suffix = _perform(req, decider) if accept else ''
+    if not accept and req.get('kind') == 'deal_part' and req.get('subject_ref'):
+        # A deal's parts are answered one at a time, but a single no ends the
+        # whole deal -- so the decline has to reach the deal, not just sit on
+        # this one request.
+        from services import negotiation
+        negotiation.decline_part(req['subject_ref'], decider_id, reason)
     storage.update_request(request_id, {
         'status': 'accepted' if accept else 'declined',
         'decided_by': decider_id, 'decided_at': time.time(),
@@ -157,9 +171,16 @@ def decide(request_id: str, accept: bool, decider_id: str,
         note = f"🙅 {who} can't{because}: “{req.get('body')}”"
     _dm(req['from_member'], note)
 
+    # A deal only actually changes the schedule once every part is in --
+    # `_perform` already refused to apply anything early -- so this asks the
+    # deal itself whether it landed rather than assuming yes on every accept,
+    # which would send the whole app off to re-solve for nothing.
+    dirty = bool(accept and req.get('subject_ref') and req.get('kind') == 'swap_drive')
+    if accept and req.get('kind') == 'deal_part' and req.get('subject_ref'):
+        deal = storage.get_deal_by_part(req['subject_ref'])
+        dirty = bool(deal and deal.get('state') == 'applied')
     return {"status": "success", "message": note.split('\n')[0],
-            "schedule_dirty": bool(accept and req.get('kind') == 'swap_drive'
-                                   and req.get('subject_ref'))}
+            "schedule_dirty": dirty}
 
 
 def cancel(request_id: str, member_id: str) -> dict:

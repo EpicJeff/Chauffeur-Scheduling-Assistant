@@ -467,6 +467,7 @@ with db_lock:
     solve_packs_table = db.table('solve_packs')
     shift_refusals_table = db.table('shift_refusals')
     deals_table = db.table('deals')
+    protected_exceptions_table = db.table('protected_exceptions')
     protected_commitments_table = db.table('protected_commitments')
     # Needs You (findings arc). A watcher finding with a LIFECYCLE: it opens
     # when the sweep sees the condition and closes when the sweep stops seeing
@@ -6461,6 +6462,28 @@ def prune_solve_packs(before_date: str) -> int:
         for r in stale:
             solve_packs_table.remove(Query().date == r['date'])
         return len(stale)
+
+
+# --- Protected exceptions: one evening given up, not a commitment deleted --
+# A negotiated lift is for ONE date. Deleting the commitment would turn a
+# favour into a permanent loss of the one thing on the calendar that is a
+# person's own.
+
+def add_protected_exception(commitment_id: str, date_str: str) -> str:
+    with db_lock:
+        row = {'commitment_id': str(commitment_id), 'date': str(date_str),
+               'created_at': time.time()}
+        protected_exceptions_table.upsert(
+            row, (Query().commitment_id == str(commitment_id))
+                 & (Query().date == str(date_str)))
+        return f"{commitment_id}:{date_str}"
+
+def get_protected_exceptions(commitment_id: str = None) -> List[dict]:
+    with db_lock:
+        rows = [dict(r) for r in protected_exceptions_table.all()]
+    if commitment_id:
+        rows = [r for r in rows if str(r.get('commitment_id')) == str(commitment_id)]
+    return rows
 
 
 # --- Shift refusals: the movable flag, learned rather than declared -------
