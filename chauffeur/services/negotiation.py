@@ -164,11 +164,14 @@ def candidates(pack: dict, seed_event_id: str) -> list:
     by_driver = _members_by_driver()
     for b in blocked:
         member = by_driver.get(str(b['id'])) or {}
-        reason = b.get('reason') or ''
-        if reason.startswith('driving '):
+        # `kind` and the id it carries come straight from `driver_options`,
+        # not from parsing its `reason` prose -- that string is free to be
+        # re-worded on its own schedule, and a lever that only worked as long
+        # as nobody touched a sentence would be an outage waiting to happen.
+        kind = b.get('kind')
+        if kind == 'driving':
             # Somebody else takes the drive that is holding this driver.
-            held = next((e for e in events.values()
-                         if (e.get('title') or '') == reason[len('driving '):]), None)
+            held = events.get(str(b.get('event_id') or ''))
             if not held:
                 continue
             for d in pack.get('drivers') or []:
@@ -190,22 +193,32 @@ def candidates(pack: dict, seed_event_id: str) -> list:
                                             f"{held.get('title') or 'that drive'}? "
                                             f"It frees {b.get('name')} for "
                                             f"{seed.get('title') or 'the other one'}.")}]})
-            continue
-        # A protected window. The most expensive thing here, on purpose.
-        for pc in storage.get_protected_commitments(member_id=member.get('id')):
-            if str(pc.get('id')) not in (pack.get('protected_rule_index') or {}):
+        elif kind == 'protected':
+            # A protected window. The most expensive thing here, on purpose.
+            if not member.get('id'):
+                # No member linked to this driver means nobody to ask -- and
+                # `get_protected_commitments(member_id=None)` reads that as
+                # "no filter" and hands back every family member's protected
+                # time, which is not this driver's to give up.
                 continue
-            out.append({
-                'mutations': [{'lever': 'lift_protected',
-                               'commitment_id': str(pc.get('id'))}],
-                'give_up': GIVE_UP['lift_protected'],
-                'parts': [{'member_id': member.get('id'), 'lever': 'lift_protected',
-                           'payload': {'commitment_id': str(pc.get('id')),
-                                       'title': pc.get('title') or 'your time'},
-                           'ask_text': (f"Could you give up "
-                                        f"{pc.get('title') or 'your time'} just this "
-                                        f"once? Nothing else covers "
-                                        f"{seed.get('title') or 'the drive'}.")}]})
+            for pc in storage.get_protected_commitments(member_id=member['id']):
+                if str(pc.get('id')) != str(b.get('commitment_id') or ''):
+                    continue
+                if str(pc.get('id')) not in (pack.get('protected_rule_index') or {}):
+                    continue
+                out.append({
+                    'mutations': [{'lever': 'lift_protected',
+                                   'commitment_id': str(pc.get('id'))}],
+                    'give_up': GIVE_UP['lift_protected'],
+                    'parts': [{'member_id': member['id'], 'lever': 'lift_protected',
+                               'payload': {'commitment_id': str(pc.get('id')),
+                                           'title': pc.get('title') or 'your time'},
+                               'ask_text': (f"Could you give up "
+                                            f"{pc.get('title') or 'your time'} just this "
+                                            f"once? Nothing else covers "
+                                            f"{seed.get('title') or 'the drive'}.")}]})
+        # Anything else is a shape `driver_options` should never produce --
+        # skip it rather than guess at what it meant.
 
     out.sort(key=lambda c: (len({p['member_id'] for p in c['parts']}),
                             c['give_up']))

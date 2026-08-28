@@ -96,8 +96,15 @@ def driver_options(ev, cache):
     """Every family driver, sorted into free and not, each with a reason.
 
     Returns (free, blocked) where free is [{id, name, span}] and blocked is
-    [{id, name, reason}]. Both are returned because tier 3 needs the blocked
-    list as much as tier 1 needs the free one.
+    [{id, name, reason, kind, ...}]. Both are returned because tier 3 needs
+    the blocked list as much as tier 1 needs the free one.
+
+    `reason` is prose for a person to read and is free to be re-worded any
+    time this file changes. `kind` ('driving' | 'protected') plus the id of
+    the thing doing the blocking (`event_id` or `commitment_id`) is there
+    for the other kind of reader: a consumer that needs to know WHAT
+    blocked a driver, not just be told about it, so it isn't left parsing a
+    sentence for a fact that a copy-edit here could quietly break.
     """
     ev_start = _parse(ev.get('start'))
     if not ev_start:
@@ -123,12 +130,14 @@ def driver_options(ev, cache):
             continue
         busy = _driver_busy(d_id, ev_start, ev_end, events, assignments)
         if busy:
-            blocked.append({'id': d_id, 'name': name,
+            blocked.append({'id': d_id, 'name': name, 'kind': 'driving',
+                            'event_id': str(busy.get('id') or ''),
                             'reason': f"driving {busy.get('title') or 'another event'}"})
             continue
         pc = _protected_window(member.get('id'), ev_start)
         if pc:
-            blocked.append({'id': d_id, 'name': name,
+            blocked.append({'id': d_id, 'name': name, 'kind': 'protected',
+                            'commitment_id': str(pc.get('id') or ''),
                             'reason': f"{pc.get('title') or 'protected time'} "
                                       f"{pc.get('time_start')}–{pc.get('time_end')}"})
             continue

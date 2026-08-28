@@ -109,6 +109,51 @@ def scenario_every_part_names_a_person():
     check(found, "the pack should have produced at least one candidate to check")
 
 
+def scenario_swap_drive_names_the_held_event_and_a_real_taker():
+    """The swap lever has to find the event actually holding a driver by ID,
+    not by matching `driver_options`' prose against a title -- a rewording of
+    that sentence must not silently stop this lever from firing."""
+    seed = _event('seed', MONDAY)
+    held = _event('held', MONDAY + datetime.timedelta(minutes=15), 'Recital', mins=30)
+    d1 = Driver(id='swap_d1', name='Priya', home_location='Home', color_code='#4f46e5')
+    d2 = Driver(id='swap_d2', name='Sam', home_location='Home', color_code='#4f46e5')
+    storage.add_driver({'id': 'swap_d1', 'name': 'Priya', 'color_code': '#4f46e5'})
+    storage.add_driver({'id': 'swap_d2', 'name': 'Sam', 'color_code': '#4f46e5'})
+    pack = _pack([seed, held], [d1, d2])
+    # Priya is already down for the Recital -- that is what is supposed to
+    # free her up for the seed once somebody else takes it.
+    pack['previous_assignments'] = {'held': 'swap_d1'}
+    swaps = [m for c in negotiation.candidates(pack, 'seed')
+             for m in c['mutations'] if m['lever'] == 'swap_drive']
+    check(swaps, f"expected a swap candidate, got none from {pack['events']}")
+    check(all(set(m.keys()) == {'lever', 'event_id', 'driver_id'} for m in swaps),
+          f"swap_drive must match solve_pack.apply's contract exactly, got {swaps}")
+    check(any(m['event_id'] == 'held' and m['driver_id'] == 'swap_d2' for m in swaps),
+          f"Sam should be offered the Recital, not asked about anything else, got {swaps}")
+
+
+def scenario_lift_protected_names_a_commitment_in_the_rule_index():
+    """The lift-protected lever only fires for a commitment the pack actually
+    knows how to remove -- one present in `protected_rule_index` -- and only
+    for the member it actually belongs to."""
+    seed = _event('seed', MONDAY)
+    d1 = Driver(id='prot_d1', name='Alicia', home_location='Home', color_code='#4f46e5')
+    storage.add_driver({'id': 'prot_d1', 'name': 'Alicia', 'color_code': '#4f46e5'})
+    alicia = next(m for m in storage.get_all_members() if m.get('driver_id') == 'prot_d1')
+    commitment_id = storage.add_protected_commitment({
+        'id': 'commit1', 'member_id': alicia['id'], 'title': 'Run club',
+        'days_of_week': [MONDAY.weekday()], 'time_start': '16:30',
+        'time_end': '18:00', 'active': True})
+    pack = _pack([seed], [d1], protected_index={commitment_id: 0})
+    lifts = [m for c in negotiation.candidates(pack, 'seed')
+             for m in c['mutations'] if m['lever'] == 'lift_protected']
+    check(lifts, f"expected a lift_protected candidate, got none from {pack['events']}")
+    check(all(set(m.keys()) == {'lever', 'commitment_id'} for m in lifts),
+          f"lift_protected must match solve_pack.apply's contract exactly, got {lifts}")
+    check(any(m['commitment_id'] == commitment_id for m in lifts),
+          f"expected Run club's own id, got {lifts}")
+
+
 if __name__ == '__main__':
     scenario_no_resolvable_owner_yields_no_ask()
     _seed_parent()
@@ -117,4 +162,6 @@ if __name__ == '__main__':
     scenario_cheap_candidates_come_first()
     scenario_a_refused_shift_is_never_proposed_again()
     scenario_every_part_names_a_person()
+    scenario_swap_drive_names_the_held_event_and_a_real_taker()
+    scenario_lift_protected_names_a_commitment_in_the_rule_index()
     print("test_negotiation_levers OK")
