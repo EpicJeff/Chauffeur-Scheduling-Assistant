@@ -490,7 +490,15 @@ def solve_schedule(
     load_balancing: bool = False,
     load_balancing_metric: str = 'occupied_time',
     cars: List[Car] = None,
-    driver_passenger_map: Dict[str, str] = None
+    driver_passenger_map: Dict[str, str] = None,
+    # Negotiation replays this function many times per question, so it needs a
+    # shorter leash than the daily solve's five seconds. Optional and defaulted
+    # to the old constant: the refresh is unchanged.
+    time_limit_s: float = 5.0,
+    # An out-param rather than a fifth return value, because four callers'
+    # worth of tuple unpacking is not worth breaking to learn one number.
+    # Filled only when a dict is passed in.
+    stats: dict = None
 ) -> Tuple[Dict[str, str], List[str], Dict[str, str], Dict[str, str]]:
     """
     Solves the driver assignment problem using OR-Tools CP-SAT solver.
@@ -1259,8 +1267,17 @@ def solve_schedule(
     
     # 5. Solve
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 5.0
+    solver.parameters.max_time_in_seconds = float(time_limit_s)
     status = solver.Solve(model)
+    if stats is not None:
+        stats['status'] = solver.StatusName(status)
+        stats['wall_time'] = solver.WallTime()
+        # ObjectiveValue is only defined for a solved model; a model that
+        # proved infeasible has no score to report and must not raise here.
+        try:
+            stats['objective'] = float(solver.ObjectiveValue())
+        except Exception:
+            stats['objective'] = 0.0
     
     assignments = {}
     unassigned = []
