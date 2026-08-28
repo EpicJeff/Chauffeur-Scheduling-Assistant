@@ -134,6 +134,77 @@ def scenario_a_child_actor_is_refused_on_write_routes():
           "a child could patch a thread")
 
 
+def scenario_unknown_thread_id_is_404_on_every_write_route():
+    """note/advance/close/patch all reach into storage by id; a stale or
+    typo'd id must come back as 404, not a silent no-op success."""
+    _reset()
+    import main
+    ghost = "no-such-thread"
+
+    check(_denied(main.note_thread, ghost,
+                 body={"text": "hi", "member_id": "mom"}, request=None) == 404,
+          "note on an unknown thread did not 404")
+    check(_denied(main.advance_thread, ghost,
+                 body={"next_action": "x", "member_id": "mom"}, request=None) == 404,
+          "advance on an unknown thread did not 404")
+    check(_denied(main.close_thread, ghost,
+                 body={"member_id": "mom"}, request=None) == 404,
+          "close on an unknown thread did not 404")
+    check(_denied(main.patch_thread, ghost,
+                 body={"title": "y", "member_id": "mom"}, request=None) == 404,
+          "patch on an unknown thread did not 404")
+
+
+def scenario_close_refuses_a_bad_state():
+    """FINDING 1: `state` is an enum (open|waiting|done|dropped) that
+    threads.is_stalled() and the Threads page grouping both trust. Close only
+    ever moves a thread to done or dropped — anything else must be refused,
+    not written."""
+    _reset()
+    import main
+    created = main.create_thread(body={"title": "Renewal", "member_id": "mom"},
+                                 request=None)
+    thread_id = created["id"]
+
+    check(_denied(main.close_thread, thread_id,
+                 body={"state": "banana", "member_id": "mom"}, request=None) == 400,
+          "close accepted a state outside {done, dropped}")
+    row = storage.get_thread(thread_id)
+    check(row["state"] == "open",
+          f"a refused close must not have written anything: {row}")
+    check(row.get("closed_at") is None,
+          f"a refused close must not have stamped closed_at: {row}")
+
+
+def scenario_patch_cannot_change_state_or_closed_at():
+    """FINDING 2: state changes must go through /advance, /note and /close so
+    they land in history — a PATCH that can set `state`/`closed_at` (or
+    `next_action`/`next_action_at`) directly bypasses that log entirely."""
+    _reset()
+    import main
+    created = main.create_thread(body={"title": "Renewal", "member_id": "mom"},
+                                 request=None)
+    thread_id = created["id"]
+    before = storage.get_thread(thread_id)
+
+    main.patch_thread(thread_id, body={"state": "done", "closed_at": 12345.0,
+                                       "next_action": "sneaky",
+                                       "next_action_at": "2026-01-01",
+                                       "member_id": "mom"}, request=None)
+    after = storage.get_thread(thread_id)
+    check(after["state"] == "open",
+          f"PATCH changed state directly, bypassing close(): {after}")
+    check(after.get("closed_at") == before.get("closed_at"),
+          f"PATCH set closed_at directly, bypassing close(): {after}")
+    check(after["next_action"] == before["next_action"],
+          f"PATCH changed next_action directly, bypassing advance(): {after}")
+    check(after["next_action_at"] == before["next_action_at"],
+          f"PATCH changed next_action_at directly, bypassing advance(): {after}")
+    check(len(after["history"]) == len(before["history"]),
+          "PATCH wrote no history entry, so the sneaky field change above "
+          "would otherwise have been silent")
+
+
 if __name__ == '__main__':
     scenario_create_returns_an_id()
     scenario_note_appends_to_history()
@@ -141,4 +212,7 @@ if __name__ == '__main__':
     scenario_advance_updates_next_action()
     scenario_listing_filters_by_owner()
     scenario_a_child_actor_is_refused_on_write_routes()
+    scenario_unknown_thread_id_is_404_on_every_write_route()
+    scenario_close_refuses_a_bad_state()
+    scenario_patch_cannot_change_state_or_closed_at()
     print("test_threads_endpoints OK")

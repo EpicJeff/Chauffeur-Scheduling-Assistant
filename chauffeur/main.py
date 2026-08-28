@@ -5190,8 +5190,6 @@ def list_threads(owner: Optional[str] = None, include_closed: bool = False,
     """Grouped by state, stalls first, is a client concern — this hands back
     the flat list `services/threads.py` and `storage.get_threads` already
     filter by owner and closed-state."""
-    viewer_id = _acting_id(request, None)
-    storage.get_member(viewer_id) if viewer_id else None
     return {"threads": storage.get_threads(owner=owner, include_closed=include_closed)}
 
 
@@ -5227,8 +5225,15 @@ def patch_thread(thread_id: str, body: dict = Body(default={}), request: Request
     `history`; this route is for fields that carry no movement of their own."""
     from models.schemas import Thread
     _mind_actor(request, body.get('member_id'))
+    # Anything that carries movement — state, closed_at, next_action(_at) —
+    # is excluded here on purpose: those only ever change through
+    # close()/advance(), which log the change. A PATCH that could set them
+    # directly would silently break the invariant that the state is always
+    # explained by the log (findings 1/2, task 5 review).
     clean = {k: v for k, v in (body or {}).items()
-             if k in Thread.model_fields and k not in ('id', 'created_at', 'history')}
+             if k in Thread.model_fields and k not in (
+                 'id', 'created_at', 'history', 'state', 'closed_at',
+                 'next_action', 'next_action_at')}
     ok = storage.update_thread(thread_id, clean)
     if not ok:
         raise HTTPException(status_code=404, detail="No such thread")
@@ -5269,7 +5274,11 @@ def close_thread(thread_id: str, body: dict = Body(default={}), request: Request
     (services.threads.close). Stops stalling immediately."""
     from services import threads as _threads
     actor = _mind_actor(request, body.get('member_id'))
-    ok = _threads.close(thread_id, state=body.get('state') or 'done', who=actor.get('id'))
+    state = body.get('state') or 'done'
+    if state not in ('done', 'dropped'):
+        raise HTTPException(status_code=400,
+                            detail="A thread can only close as done or dropped")
+    ok = _threads.close(thread_id, state=state, who=actor.get('id'))
     if not ok:
         raise HTTPException(status_code=404, detail="No such thread")
     return {"status": "success"}
