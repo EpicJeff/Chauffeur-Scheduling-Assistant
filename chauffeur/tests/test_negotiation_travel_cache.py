@@ -14,6 +14,7 @@ import datetime
 import os
 import sys
 import tempfile
+import threading
 
 os.environ.setdefault("CHAUFFEUR_DATA_DIR",
                       tempfile.mkdtemp(prefix="chauffeur_travelcache_"))
@@ -114,7 +115,66 @@ def scenario_search_runs_its_replays_cache_only():
           "the guard must not leak past search()'s replays")
 
 
+def scenario_guard_is_thread_local():
+    """`travel_cache_only()` must be scoped to the thread that opened it.
+
+    This app runs background threads of its own -- a daily refresh, a live
+    request, the sweep itself -- and a plain module-level flag would flip for
+    ALL of them the instant one activated it. A live refresh running on
+    another thread while the sweep negotiates would then start silently
+    refusing pairs it legitimately needs to buy, degrading the real schedule
+    with no visible cause. Proven two ways: the flag itself must read False on
+    a second thread while the first thread's guard is open, and a genuine
+    cache miss on that second thread must still behave normally -- prime the
+    cache, not raise -- rather than inheriting the first thread's refusal.
+    """
+    calls = []
+    real_prime, real_geocode = maps.prime_matrix_cache, maps.geocode_address
+    real_cached = storage.get_cached_travel_time
+    maps.prime_matrix_cache = lambda *a, **kw: calls.append((a, kw))
+    maps.geocode_address = lambda addr: None
+    storage.get_cached_travel_time = lambda *a, **kw: None  # always a miss
+
+    other = {}
+    main_active = threading.Event()
+    other_done = threading.Event()
+
+    def other_thread_body():
+        main_active.wait(timeout=5)
+        other['active_seen'] = maps.travel_cache_only_active()
+        try:
+            _REAL_GET_TRAVEL_TIME_MINUTES('Gamma', 'Delta')
+            other['raised'] = False
+        except maps.UncachedTravelPair:
+            other['raised'] = True
+        other_done.set()
+
+    t = threading.Thread(target=other_thread_body)
+    t.start()
+    try:
+        with maps.travel_cache_only():
+            check(maps.travel_cache_only_active(),
+                  "the guard is active on the thread that opened it")
+            main_active.set()
+            other_done.wait(timeout=5)
+    finally:
+        t.join(timeout=5)
+        maps.prime_matrix_cache, maps.geocode_address = real_prime, real_geocode
+        storage.get_cached_travel_time = real_cached
+
+    check('active_seen' in other and 'raised' in other,
+          f"the other thread must have actually run: {other}")
+    check(other['active_seen'] is False,
+          f"a second thread must never see the first thread's guard: {other}")
+    check(other['raised'] is False,
+          f"a second thread's own cache miss must proceed normally, not "
+          f"inherit a refusal from another thread: {other}")
+    check(len(calls) == 1,
+          f"the other thread's ordinary miss should still prime the cache: {calls}")
+
+
 if __name__ == '__main__':
     scenario_cache_only_blocks_a_live_fetch()
     scenario_search_runs_its_replays_cache_only()
+    scenario_guard_is_thread_local()
     print("test_negotiation_travel_cache OK")

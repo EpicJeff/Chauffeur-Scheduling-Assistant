@@ -301,6 +301,31 @@ def _line(candidate: dict, seed_title: str, when: str) -> str:
     return f"🤝 {seed_title} ({when}) works if — {asks}"
 
 
+def _newly_conflicted(base_conflicts: dict, result_conflicts: dict) -> bool:
+    """True if the replay broke something the baseline didn't already carry.
+
+    Keyed by event id, not counted: a same-count TRADE -- event A's conflict
+    resolves while a previously-clean event B, on somebody else, becomes newly
+    conflicted -- has to disqualify the candidate even though the totals never
+    move. `len(a) > len(b)` cannot see that; comparing which keys are present
+    can. Each value is a list of the OTHER events colliding with that key, so
+    where the data is there, a same-event conflict growing (two collisions
+    becoming three) also disqualifies -- not just a new key appearing.
+
+    NOTE: as of this writing `solve_pack.replay` calls `compute_conflicts`
+    with an empty ghost-assignment map (`solve_pack.py:178`), so both sides of
+    this comparison are always `{}` and this function currently never returns
+    True. That is a real gap in the wiring, not this function's -- see
+    `search()`'s docstring and the task report for why it is out of this
+    module's scope to fix here.
+    """
+    for event_id, hits in (result_conflicts or {}).items():
+        base_hits = (base_conflicts or {}).get(event_id)
+        if base_hits is None or len(hits) > len(base_hits):
+            return True
+    return False
+
+
 def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
            exclude: set = None) -> list:
     """Solve down the candidate queue and return what actually worked.
@@ -315,6 +340,11 @@ def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
     so a genuine miss means the original fetch failed or the cache emptied --
     and re-solving the same day dozens of times unattended is exactly the
     shape of the incident that guard exists to prevent. See its docstring.
+
+    `budget` caps replay ATTEMPTS, not successes -- a candidate whose replay
+    raises (an uncached travel pair, a solver timeout, anything) still spent
+    one of the sweep's re-solves, and a queue that fails often must not be
+    able to walk itself unbounded just because nothing it tried came back.
     """
     exclude = set(exclude or ())
     events = {str(e.get('id')): e for e in pack.get('events') or []}
@@ -345,6 +375,10 @@ def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
             break
         if any(part_key(p) in exclude for p in cand['parts']):
             continue
+        # Counted here, before the solve, not after a successful return: the
+        # budget is a ceiling on how many times this search is allowed to ask
+        # the solver a question, and a replay that raises still asked it.
+        spent += 1
         try:
             with maps.travel_cache_only():
                 result = solve_pack.replay(solve_pack.apply(pack, cand['mutations']))
@@ -354,7 +388,6 @@ def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
             # like any other candidate that fails to solve, not special-cased.
             print(f"[negotiation] candidate failed: {e}")
             continue
-        spent += 1
         broken = set(result['unassigned'])
         if str(seed_event_id) in broken:
             continue
@@ -362,7 +395,7 @@ def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
         # not this candidate's fault and does not disqualify it.
         if broken - baseline_broken:
             continue
-        if len(result.get('conflicts') or {}) > len(base.get('conflicts') or {}):
+        if _newly_conflicted(base.get('conflicts'), result.get('conflicts')):
             continue
         delta = baseline_objective - result['objective']
         scored.append((_rank(cand, delta),

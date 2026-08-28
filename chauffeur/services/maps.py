@@ -21,7 +21,15 @@ mapbox_routing_lock = threading.Lock()
 # primed. `travel_cache_only()` turns that ask into a hard miss instead of an
 # invitation to fetch. A depth counter, not a bool, so a replay called from
 # inside another cache-only scope cannot accidentally re-enable buying on exit.
-_cache_only_depth = 0
+#
+# THREAD-LOCAL, not a plain module global: this app runs background threads
+# (the sweep itself, plus daily-refresh and request-handling threads --
+# main.py's `threading.Thread`/`threading.Timer` callers). A bare module int
+# would flip the guard for every thread in the process the instant one sweep
+# activated it, so a live schedule refresh running concurrently on another
+# thread would start silently refusing pairs it legitimately needs to buy --
+# the schedule degrades with no visible cause. Each thread gets its own count.
+_cache_only_state = threading.local()
 
 
 class UncachedTravelPair(Exception):
@@ -30,18 +38,26 @@ class UncachedTravelPair(Exception):
     do, not to catch this and fetch anyway."""
 
 
+def _cache_only_depth() -> int:
+    # A fresh thread has never touched `_cache_only_state` -- `threading.local`
+    # attributes exist per-thread only once SET on that thread, so a plain
+    # `.depth` read on an untouched thread raises AttributeError rather than
+    # defaulting to 0. `getattr(..., 0)` is the sensible default every new
+    # thread must see: not active, never having been told otherwise.
+    return getattr(_cache_only_state, 'depth', 0)
+
+
 @contextlib.contextmanager
 def travel_cache_only():
-    global _cache_only_depth
-    _cache_only_depth += 1
+    _cache_only_state.depth = _cache_only_depth() + 1
     try:
         yield
     finally:
-        _cache_only_depth -= 1
+        _cache_only_state.depth -= 1
 
 
 def travel_cache_only_active() -> bool:
-    return _cache_only_depth > 0
+    return _cache_only_depth() > 0
 
 def get_map_option(key: str, default: any) -> any:
     settings = storage.get_settings()
