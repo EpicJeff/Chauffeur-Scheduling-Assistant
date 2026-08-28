@@ -455,8 +455,10 @@ def weekday_shortfall(program: dict, now=None) -> dict:
         began = datetime.date.fromisoformat(start) if start else None
     except (TypeError, ValueError):
         began = None
+    window_days = int(storage.get_settings().get(
+        'programs_rebaseline_days', REBASELINE_WINDOW_DAYS) or REBASELINE_WINDOW_DAYS)
     window_start = max(began or now.date(),
-                       now.date() - datetime.timedelta(days=REBASELINE_WINDOW_DAYS))
+                       now.date() - datetime.timedelta(days=window_days))
     weeks = max(1, (now.date() - window_start).days // 7)
     done = {}
     for s in sessions_between(program, window_start, now.date()):
@@ -534,7 +536,10 @@ def maybe_rebaseline(program: dict, now=None) -> dict:
         return None
     baseline = dict(program.get('baseline') or {})
     last = baseline.get('rebaselined_at')
-    if last and (now.timestamp() - float(last)) < REBASELINE_COOLDOWN_DAYS * 86400:
+    cooldown_days = int(storage.get_settings().get(
+        'programs_rebaseline_cooldown_days', REBASELINE_COOLDOWN_DAYS)
+        or REBASELINE_COOLDOWN_DAYS)
+    if last and (now.timestamp() - float(last)) < cooldown_days * 86400:
         return None
     short = weekday_shortfall(program, now)
     if not short:
@@ -610,6 +615,8 @@ def due_session_asks(now=None) -> list:
     """
     from services import family_digest
     now = now or datetime.datetime.now()
+    grace_hours = float(storage.get_settings().get(
+        'programs_ask_grace_hours', ASK_GRACE_HOURS) or ASK_GRACE_HOURS)
     out = []
     for row in storage.get_programs(state='active'):
         try:
@@ -625,7 +632,7 @@ def due_session_asks(now=None) -> list:
                     if slot_date is None:
                         continue
                     ended = _slot_end(slot_date, pc.get('time_end') or '19:25')
-                    if (now - ended).total_seconds() < ASK_GRACE_HOURS * 3600:
+                    if (now - ended).total_seconds() < grace_hours * 3600:
                         continue
                     if _already_logged(row, slot_date):
                         continue

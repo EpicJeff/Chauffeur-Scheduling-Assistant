@@ -31,6 +31,71 @@
                 failure.
             </p>
 
+            <!-- Settings: the five programs_* knobs live here, not on /config. -->
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-4 mb-6">
+                <button @click="settingsOpen = !settingsOpen"
+                    class="w-full flex items-center justify-between text-sm font-bold text-gray-200">
+                    <span>⚙ Settings</span>
+                    <span class="text-gray-500 text-xs" x-text="settingsOpen ? 'Hide' : 'Show'"></span>
+                </button>
+                <div class="mt-3 space-y-3" x-show="settingsOpen" x-cloak>
+                    <label class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Programs
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                Off means no asks, no re-baselining and no findings.
+                            </span>
+                        </span>
+                        <input type="checkbox" x-model="s.programs_enabled" @change="saveProgramSettings()"
+                            class="shrink-0">
+                    </label>
+                    <label class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Ask after (hours)
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                How long after a practice window ends before asking whether it happened.
+                            </span>
+                        </span>
+                        <input type="number" min="0" step="0.5" x-model.number="s.programs_ask_grace_hours"
+                            @change="saveProgramSettings()"
+                            class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
+                    </label>
+                    <label class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Look back (days)
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                How far back the check for a struggling program looks.
+                            </span>
+                        </span>
+                        <input type="number" min="1" x-model.number="s.programs_rebaseline_days"
+                            @change="saveProgramSettings()"
+                            class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
+                    </label>
+                    <label class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Re-baseline at most every (days)
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                The minimum gap between two timeline stretches, so a plan cannot chatter about bending.
+                            </span>
+                        </span>
+                        <input type="number" min="1" x-model.number="s.programs_rebaseline_cooldown_days"
+                            @change="saveProgramSettings()"
+                            class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
+                    </label>
+                    <label class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Pages to read
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                How many real pages a curation run reads before proposing a plan. One run per program, cached for its life.
+                            </span>
+                        </span>
+                        <input type="number" min="1" x-model.number="s.programs_research_pages"
+                            @change="saveProgramSettings()"
+                            class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
+                    </label>
+                </div>
+            </div>
+
             <!-- Create form -->
             <div class="bg-gray-800 rounded-2xl border border-gray-700 p-4 mb-6">
                 <button @click="creating = !creating"
@@ -245,6 +310,14 @@
                 creating: false,
                 proposing: false,
                 archiveOpen: false,
+                settingsOpen: false,
+                s: {
+                    programs_enabled: true,
+                    programs_ask_grace_hours: 2,
+                    programs_rebaseline_days: 21,
+                    programs_rebaseline_cooldown_days: 14,
+                    programs_research_pages: 4,
+                },
                 draft: { title: '', for_member_id: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' },
                 sessionOpen: {}, sessionMinutes: {},
 
@@ -282,13 +355,18 @@
                 async load() {
                     this.readIdentity();
                     try {
-                        const [pRes, mRes] = await Promise.all([
+                        const [pRes, mRes, sRes] = await Promise.all([
                             fetch(this.apiBase + 'api/programs?include_finished=true'),
                             fetch(this.apiBase + 'api/members'),
+                            fetch(this.apiBase + 'api/settings'),
                         ]);
                         const pd = pRes.ok ? await pRes.json() : { programs: [] };
                         this.programs = pd.programs || [];
                         this.members = mRes.ok ? await mRes.json() : [];
+                        const sd = sRes.ok ? await sRes.json() : {};
+                        Object.keys(this.s).forEach(k => {
+                            if (sd[k] !== undefined && sd[k] !== null) this.s[k] = sd[k];
+                        });
                         this.programs.forEach(p => {
                             if (this.sessionMinutes[p.id] === undefined) {
                                 this.sessionMinutes[p.id] = (p.shape || {}).minutes || 25;
@@ -299,6 +377,16 @@
                                 .map(p => this.loadFootprint(p.id))
                         );
                     } catch (e) { showGlobalAlert("Couldn't load programs."); }
+                },
+
+                async saveProgramSettings() {
+                    try {
+                        await fetch(this.apiBase + 'api/settings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.s),
+                        });
+                    } catch (e) { showGlobalAlert("Couldn't save that setting."); }
                 },
 
                 async loadFootprint(id) {

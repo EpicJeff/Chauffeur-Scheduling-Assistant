@@ -5970,17 +5970,22 @@ against *this family's own baseline*, and the meaning lives in the derivative
 40% over her own baseline for eleven days" is a finding no watcher could
 write.
 
-**Six signs**, all from data the app already keeps: **load** (per person —
-driving minutes, plus `TASK_MINUTES` per household task finished and
-`FINDING_MINUTES` per finding resolved, because noticing is work too),
+**Seven signs**, all from data the app already keeps: **load** (per person —
+driving minutes, plus `TASK_MINUTES` per household task finished,
+`FINDING_MINUTES` per finding resolved because noticing is work too, and
+(v2.429.0) `THREAD_MINUTES` per open thread its owner is still carrying, open
+or stalled),
 **margin** (free waking minutes left after the day's commitments),
 **follow-through** (routine checks and tasks landed vs let go),
 **rest** (first commitment of the day, and whether the evening was empty),
-**friction** (see below), and **togetherness** (v2.427.2 — meals eaten
+**friction** (see below), **togetherness** (v2.427.2 — meals eaten
 together from `meals.eating_plan`'s sittings, moments captured, and kids who
-rode somewhere with a parent). Car meals are counted **apart and never
-subtracted**: the family eats in the car on purpose, and dinner in a minivan
-between two practices is still dinner together.
+rode somewhere with a parent; car meals are counted **apart and never
+subtracted**, because dinner in a minivan between two practices is still
+dinner together), and **progress** (v2.433.0, per person — program sessions
+actually logged that day; see the Programs section below for why this is the
+one sign that can measure a family WINNING rather than surviving what it was
+handed).
 
 **Friction is tallied live, not inferred** (v2.427.2). `daily_stats` is
 written once at 21:00, so anything counted as it happens needs its own rail:
@@ -6395,3 +6400,185 @@ Find a way's and `negotiate_day`'s re-solve ceiling), `negotiation_shift_mins`
 (default 15, the smaller `shift_event` step — the larger step is always
 double it), and `negotiation_solve_seconds` (default 2, the per-replay CP-SAT
 time limit inside `search()`).
+
+## Programs — an ambition with a real plan attached (v2.433.0 — `services/programs.py`, `services/programs_curate.py`, `services/agent_tools_v2.py`, `services/agent_tools.py`, `services/settings_registry.py`, `templates/programs.html`, `templates/components/programs_card.html`; design in `docs/superpowers/specs/2026-08-28-programs-design.md`)
+
+Taking work off the plate is the smaller idea a family app can chase. This is
+the bigger one: an ambition fails not because nobody has forty minutes but
+because nobody knows what would go IN the forty minutes. A **program**
+(`storage.add_program`/`get_program`/`get_programs`/`update_program`) carries
+the path as well as the time — `title`, `member_id` (whose ambition this is),
+`shape` (`sessions_per_week`, `minutes`, `preferred_days`), `phases` (each
+`{name, weeks, what, milestone, milestone_hit_at, url}`), a `source` (the
+curation record — plan name, why-this-one, the cited facts, runners-up,
+`hand_written`), an append-only `sessions` log, a `baseline` (`start_date`,
+`target_date`, `target_event_id`, `rebaselined_at`, `rebaselines`), and
+`state` (`proposed` → `active` ⇄ `paused` → `done`/`dropped`).
+
+**The six progress rules are schema, not convention.**
+`storage.PROGRAM_BANNED_KEYS` — a streak/run, a gap/recency field, a miss
+count, a completion percentage, a body-composition number, or a
+cross-member comparison — cannot be written to a program document through
+ANY path (`_check_program_keys` runs recursively on `add_program`,
+`update_program` and `append_program_session`, so `update_program(pid,
+{'streak': 5})` fails loudly rather than quietly landing). `progress()`
+(`services/programs.py`) hands back only what is monotonic: `sessions`,
+`minutes`, `milestones_hit`, and `phase` (the milestone ahead) — deliberately
+NOT a total to divide `milestones_hit` by, because a count next to a total is
+a completion percentage away. A docstring saying "no streak field" is not a
+rule; a write path that refuses the key is.
+
+**Curate over generate.** `services/programs_curate.py`'s whole reason to
+exist: for nearly every ambition a family has, a good program already
+exists — Justin Guitar, Couch to 5K, a library's reading ladder — and a
+model asked to invent one instead produces something confident, tidy, and
+worse than the free one an expert spent a decade refining, indistinguishable
+from the real thing at a glance. So `curate()` runs a real research pass
+(`services.web.research`, reading `programs_research_pages` pages, default
+4 — one run per program, cached on the object for its life) and organises
+ONLY what those pages actually said into 2-4 phases; a phase's `weeks` is
+computed from `shape` (never asked of the model — a bare number out of the
+model is curriculum with no page behind it), and **any phase whose `url`
+does not exactly match one of the pages actually fetched is dropped**. If
+dropping empties the plan, the program is not silently thin —
+`source.hand_written = True` and `phases = []`, said outright rather than
+papered over with an invented curriculum.
+
+**The body-goal screen runs before anything else, everywhere the aim is
+typed.** `programs_curate.screen_aim(title)` is a deterministic keyword
+check (`BODY_TERMS` — weight, calories, BMI, "lose 15 pounds") that runs
+BEFORE research, BEFORE an object is created, no matter who is asking or how
+old they are — a safety line that depended on a model's judgement would be a
+safety line with a bad night, and for a minor a body-composition target
+should not exist at all. A refusal never moralises: it says what the house
+will not do and hands back `BEHAVIOUR_ALTERNATIVES` (move four times a week,
+cook at home five nights a week, train for a real 5K with a date and a bib)
+in one sentence. `POST /api/programs` runs the screen first;
+`propose_program` (below) returns its refusal VERBATIM, so the sentence a
+parent reads on the Programs page is the same one Argyle says in chat.
+
+**The footprint, and exactly one approval.** `footprint(program)` is
+everything approving would create, shown before the tap: `slots`
+(`propose_slots` — practice windows chosen against what the member already
+has committed, with NO CP-SAT run behind it; proposing a time is not a
+solve) and `thread` (a kit-shopping thread, only if a phase's own text
+mentions gear — `_kit_line` never invents a shopping list a plan never
+asked for). `approve()` is the one act that turns all of it real: one
+`ProtectedCommitment` per slot (individually visible, individually
+undoable), the kit thread if one applies, and — if a `target_date` was set
+with no event yet — a real calendar event. It applies local writes before
+the one write that reaches Google Calendar, stamps each emission onto the
+row as it lands, and a failure anywhere reverts EVERYTHING this attempt
+created and hands the claim back to `proposed` rather than stranding the
+program in an `approving` limbo no button in the app can get it out of
+(`_revert_attempt`). **Approving is deliberately not a chat tool, in either
+stack** — the footprint claims time in the family's week, and that stays a
+tap on a screen showing exactly what it will do; there is no
+`approve_program` anywhere in `agent_tools_v2.get_available_tools()` or
+`agent_tools.TOOL_SCHEMAS`.
+
+**The shortfall is derived, never stored.** To say "Wednesdays keep getting
+eaten" the app has to know Wednesdays were missed — and the schema
+deliberately has nowhere to record a miss (rule three above). So
+`weekday_shortfall()` computes it live from the append-only session log over
+a trailing window (`programs_rebaseline_days`, default 21), writes one
+sentence from it, and throws the number away. Nothing any surface reads can
+ever render a person as behind, because nothing durable ever says so.
+
+**Re-baselining bends the plan; it never bends a date the world fixed.**
+`maybe_rebaseline()` fires at most once per `programs_rebaseline_cooldown_days`
+(default 14, so a plan cannot chatter about bending) when `weekday_shortfall`
+finds a real gap. If the target date is pinned to a real calendar event
+(`baseline.target_event_id` is set — a June campfire is not this app's to
+reschedule), the PHASES compress toward the fixed date instead
+(`_compress_phases`, floored at one week each, already-hit milestones
+untouched). **When even the floor cannot fit before the date, it says so
+rather than faking room** — `fits: False`, the phases come back unchanged,
+and the finding reads "there isn't enough time left before it to reshape the
+phases, so they're unchanged. Want to try a different day?"
+(`watchers._rebaseline_line`) — never a claim of a squeeze that never
+happened. An
+UNDATED target instead moves itself two weeks, because nothing pins it down.
+
+**The drift notice, noticed once, never re-created.** `orphaned_emissions()`
+catches when someone deletes a claimed practice window by hand; the program
+STOPS believing that time is reserved (`forget_emissions`) and says so once
+via a `program_drift` finding — it never silently re-creates what a person
+deleted, because an app that puts back what you deleted is an app you stop
+trusting.
+
+**The ownership rule, the same everywhere it applies.** You may act on YOUR
+OWN program freely — propose it, log your own sessions, mark your own
+milestone, pause/resume/drop it, nobody grown-up required, because the
+ambition belongs to whoever is living it. Acting on somebody ELSE's needs a
+parent or adult. `main.py`'s `_program_permission_or_refuse` (writes) and
+`_program_list_scope` (reads — unconditionally, filtered request or not)
+are the one place this is enforced for the HTTP surface; `agent_tools_v2`'s
+`_program_owns_or_parent` is the same rule for chat. Approving is the one
+exception that is NEVER an ownership matter — even the program's own owner
+needs a parent/adult to claim the week, matching how `ask_deal` and
+approving a negotiation both require a grown-up regardless of whose day it
+is.
+
+**Chat tools, both stacks, an allowlist not a blocklist.** `list_programs`
+and `program_progress` are reads; `propose_program` and
+`log_program_session` are writes needing a resolved member — a program is
+somebody's personal ambition, not household-visible the way a thread is, so
+even the reads require a RESOLVED `acting_member` (`_program_reader`), same
+discipline as `_thread_reader`: `/api/chat` is `WALL_OR_SERVICE`, so an
+anonymous wall panel reaches these tools with no actor at all, and a `role
+not in (...)` blocklist would wave that `None` straight through. A
+child/helper/guest's `list_programs` defaults to their own program only; a
+parent/adult sees the household. `propose_program` runs `screen_aim` first
+and returns its refusal verbatim — the body-goal screen, in chat. The v1
+admin loop (`agent_tools.py`) carries `list_programs` ONLY, wired exactly as
+`list_insights` was (a pydantic tool class, a `TOOL_SCHEMAS` entry, a
+`handle_list_programs` delegating to v2) — that loop resolves no member and
+can produce no actor, so its call always comes back refused; it is wired for
+catalog parity, not because it can succeed.
+
+**The seventh vital sign.** `vitals.py`'s `progress` sign (per person,
+program sessions actually logged that calendar day, from `sessions_between`)
+is, in the module's own words, "the one sign that can measure a family
+WINNING rather than surviving what it was handed" — every other sign
+measures load, margin, friction; this is the first one that can go up
+because things are going well. It follows the same rules as the other six:
+Mind-input only (no wall tile, no vitals page), measured against that
+program's own past, never a target or a gauge — see the Family vitals
+section above.
+
+**The five settings** (Config → Programs, also editable on the `/programs`
+page itself — the setting is on the page that names it, per house rule):
+`programs_enabled` (default on — off means no session asks, no
+re-baselining and no findings; read by `watchers._program_findings`),
+`programs_ask_grace_hours` (default 2 — how long after a slot ends before
+`due_session_asks` asks whether it happened; quiet hours are honoured on top
+of this regardless), `programs_rebaseline_days` (default 21, how far back
+`weekday_shortfall` looks for a struggling program),
+`programs_rebaseline_cooldown_days` (default 14, the minimum gap between two
+timeline stretches in `maybe_rebaseline`), and `programs_research_pages`
+(default 4,
+how many real pages `programs_curate.curate` reads before proposing a
+plan). Every one is read where it is named, with the old module constant
+kept only as the fallback a stored `null` resolves to — a setting that
+changes nothing is a fake door, the same standard the registry audit
+enforces mechanically for every entry's hand path.
+
+**What the solver can and cannot defend — stated plainly, not implied.** A
+program's claimed practice time becomes a `ProtectedCommitment`, and
+`ProtectedCommitment` reaches the solver through exactly one field:
+`member.driver_id`. The injection loop that turns commitments into
+`unavailable` Rules (`main.py`, `_refresh_schedule_logic_impl`) reads
+`member.get('driver_id')` and `continue`s past any commitment whose member
+has none. Most kids have no `driver_id` — they cannot drive, so nothing
+ever created one — which means **the solver cannot defend a non-driver's
+reserved time.** An adult's practice window is genuinely protected: CP-SAT
+will not schedule a drive over it. A kid's practice window is real on the
+calendar, visible on the Programs page and the PWA, and socially defended by
+whatever the family does around it — but it is INVISIBLE to the optimiser,
+which will happily assign that same kid's sibling's ride through the middle
+of it if nothing else stops it. This is a real asymmetry, it was accepted
+deliberately rather than missed, and teaching the solver to reason about a
+non-driver's protected time is out of scope for this arc. Nobody reading
+this should come away believing a kid's guitar practice is protected by the
+scheduler — it is not.

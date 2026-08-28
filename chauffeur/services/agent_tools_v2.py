@@ -1547,6 +1547,220 @@ def close_thread(thread_title: str, state: str = None,
             "message": f"Closed \"{thread['title']}\" as {state}."}
 
 
+def _program_reader(acting_member: dict):
+    """ALLOWLIST, not a blocklist: a program is somebody's personal ambition
+    — reserved practice time, a session log, a curated plan — and /api/chat
+    is WALL_OR_SERVICE, so an anonymous kitchen wall panel reaches these
+    tools with NO resolved actor. A `role not in (...)` blocklist waves that
+    None straight through, same trap `_thread_reader` closes. Reads require
+    a RESOLVED member of any role."""
+    if not (acting_member or {}).get('id'):
+        return {"status": "error",
+                "message": "Programs are for signed-in family members — "
+                           "I can't show them here."}
+    return None
+
+
+def _program_writer(acting_member: dict, verb: str):
+    """A resolved member, full stop — see `_program_reader` for why this is
+    an allowlist. Which member may act on WHICH program (your own freely, a
+    parent/adult stands in otherwise, matching `main.py`'s
+    `_program_permission_or_refuse`) needs the program row in hand, so that
+    half is checked per-call by `_program_owns_or_parent` below; this only
+    closes the unresolved-caller gap."""
+    if not (acting_member or {}).get('id'):
+        return {"status": "error",
+                "message": f"Only a signed-in family member can {verb}."}
+    return None
+
+
+def _program_owns_or_parent(acting_member: dict, row: dict, verb: str):
+    """The arc's ownership rule, applied to one program: free rein on your
+    own, a parent/adult stands in for anybody else's — the chat mirror of
+    `main.py`'s `_program_permission_or_refuse`."""
+    if row.get('member_id') == acting_member.get('id'):
+        return None
+    if (acting_member.get('role') or '') in ('parent', 'adult'):
+        return None
+    return {"status": "error",
+            "message": f"Only a parent or adult can {verb} for someone else."}
+
+
+def _match_program(title: str):
+    """Fuzzy title match against live programs, same shape as `_match_thread`
+    — the model knows a program by what it's about, never by its id."""
+    from services import storage as _storage
+    q = (title or '').strip().lower()
+    rows = _storage.get_programs(include_finished=False)
+    if not q:
+        return None, rows
+    exact = [p for p in rows if (p.get('title') or '').lower() == q]
+    if len(exact) == 1:
+        return exact[0], rows
+    part = [p for p in rows if q in (p.get('title') or '').lower()]
+    if len(part) == 1:
+        return part[0], rows
+    return None, rows
+
+
+def list_programs(member_name: str = None, acting_member: dict = None) -> Dict[str, Any]:
+    """What has a real plan attached right now — the wall card's list, in
+    words ('what programs are going?', 'what is Ben working on?'). A read
+    for any RESOLVED member (see `_program_reader`); a child/helper/guest
+    sees only their own program unless a parent/adult is asking or naming
+    them, the same scope `GET /api/programs` enforces
+    (`main.py`'s `_program_list_scope`) — a program is somebody's personal
+    ambition, not household-visible the way a thread is."""
+    refusal = _program_reader(acting_member)
+    if refusal:
+        return refusal
+    from services import storage as _storage, programs as _prog
+    scope_id = None
+    if member_name:
+        m = _find_member_fuzzy(member_name)
+        if not m:
+            return {"status": "error",
+                    "message": f"I couldn't find '{member_name}'. Family members: {_member_names()}."}
+        if m['id'] != acting_member.get('id') \
+                and (acting_member.get('role') or '') not in ('parent', 'adult'):
+            return {"status": "error",
+                    "message": "Only a parent or adult can see someone else's programs."}
+        scope_id = m['id']
+    elif (acting_member.get('role') or '') in ('child', 'helper', 'guest'):
+        scope_id = acting_member.get('id')
+    rows = _storage.get_programs(member_id=scope_id, include_finished=False)
+    if not rows:
+        return {"status": "success", "message": "No programs going right now."}
+    names = {m['id']: m.get('name') for m in _storage.get_all_members(include_archived=True)}
+    lines = []
+    for p in rows[:15]:
+        prog = _prog.progress(p)
+        bits = [p.get('title') or 'Program']
+        holder = names.get(p.get('member_id') or '')
+        if holder:
+            bits.append(holder)
+        bits.append(p.get('state') or '?')
+        if prog.get('phase'):
+            bits.append(f"working on {prog['phase'].get('name')}")
+        bits.append(f"{prog['sessions']} session(s) logged")
+        lines.append(" — ".join(bits))
+    return {"status": "success", "message": "Programs:\n" + "\n".join(lines)}
+
+
+def program_progress(program_title: str, acting_member: dict = None) -> Dict[str, Any]:
+    """How one program is going — sessions logged, minutes, the phase ahead
+    (wraps `services.programs.progress`, which is deliberately monotonic: no
+    streak, no miss count, no percentage). A read for any RESOLVED member
+    (see `_program_reader`), but only on your own program or one you parent
+    (`_program_owns_or_parent`) — a program is somebody's personal ambition."""
+    refusal = _program_reader(acting_member)
+    if refusal:
+        return refusal
+    from services import programs as _prog
+    row, rows = _match_program(program_title)
+    if not row:
+        titles = ', '.join(p.get('title') or '?' for p in rows[:8]) or 'no programs yet'
+        return {"status": "error",
+                "message": f"I couldn't pin down '{program_title}'. Programs: {titles}."}
+    refusal = _program_owns_or_parent(acting_member, row, 'see progress on')
+    if refusal:
+        return refusal
+    p = _prog.progress(row)
+    bits = [f"{row.get('title')}: {p['sessions']} session(s)",
+            f"{p['minutes']} minutes"]
+    if p.get('phase'):
+        bits.append(f"working on {p['phase'].get('name')}")
+    if p['milestones_hit']:
+        bits.append(f"{p['milestones_hit']} milestone(s) hit")
+    if row.get('state') == 'paused':
+        bits.append('paused')
+    return {"status": "success", "message": " — ".join(bits)}
+
+
+def propose_program(title: str, for_member_name: str = None,
+                    sessions_per_week: int = None, minutes: int = None,
+                    acting_member: dict = None) -> Dict[str, Any]:
+    """Screen the aim, then curate a real plan for it — the chat mirror of
+    `POST /api/programs`. The body-goal screen (`programs_curate.screen_aim`)
+    runs BEFORE anything else, same as the endpoint and for the same reason:
+    a body-composition aim never reaches research and never becomes an
+    object somebody could approve later, no matter who is asking — its
+    refusal is returned verbatim, so the sentence is the same wherever the
+    aim is typed. Proposing for YOURSELF is open to any resolved member (a
+    kid proposing their own guitar program is the point); proposing in
+    somebody ELSE's name needs a parent/adult, same rule as every other
+    program write. Nothing is claimed here — approving is deliberately not a
+    chat tool at all; the program sits `proposed` until a person taps
+    approve on the Programs page after seeing the footprint."""
+    refusal = _program_writer(acting_member, 'start a program')
+    if refusal:
+        return refusal
+    from services import programs_curate as _cur
+    title = (title or '').strip()
+    if not title:
+        return {"status": "error", "message": "What's the aim?"}
+    screen = _cur.screen_aim(title)
+    if not screen.get('ok'):
+        return {"status": "error", "message": screen.get('message'),
+                "alternatives": screen.get('alternatives') or []}
+    from services import storage as _storage
+    member_id = acting_member.get('id')
+    member_name = acting_member.get('name') or ''
+    if for_member_name:
+        m = _find_member_fuzzy(for_member_name)
+        if not m:
+            return {"status": "error",
+                    "message": f"I couldn't find '{for_member_name}'. Family members: {_member_names()}."}
+        if m['id'] != acting_member.get('id') \
+                and (acting_member.get('role') or '') not in ('parent', 'adult'):
+            return {"status": "error",
+                    "message": "Only a parent or adult can start a program for someone else."}
+        member_id, member_name = m['id'], m.get('name') or ''
+    shape = {'sessions_per_week': int(sessions_per_week or 3),
+             'minutes': int(minutes or 25), 'preferred_days': []}
+    curated = _cur.curate(title, shape, member_name=member_name)
+    pid = _storage.add_program({
+        'member_id': member_id, 'title': title, 'shape': shape,
+        'phases': curated['phases'], 'source': curated['source'],
+        'baseline': {'start_date': None, 'target_date': None,
+                     'target_event_id': None, 'rebaselined_at': None,
+                     'rebaselines': 0},
+        'created_by': acting_member.get('id')})
+    source = curated.get('source') or {}
+    if source.get('hand_written'):
+        msg = (f"Proposed \"{title}\" — no cited plan turned up, so it's "
+               f"marked hand-written. Nothing's claimed yet: see the "
+               f"footprint and approve it on the Programs page.")
+    else:
+        n = len(curated.get('phases') or [])
+        plan = source.get('plan_name') or 'what was found'
+        msg = (f"Proposed \"{title}\" with a {n}-phase plan from {plan}. "
+               f"Nothing's claimed yet: see the footprint and approve it on "
+               f"the Programs page.")
+    return {"status": "success", "id": pid, "message": msg}
+
+
+def log_program_session(program_title: str, minutes: int = None,
+                        acting_member: dict = None) -> Dict[str, Any]:
+    """The person practising says so — a kid reporting their own guitar
+    session is the point (wraps `services.programs.log_session`, which only
+    ever counts up). Logging on somebody ELSE's program needs a
+    parent/adult, same rule as every other program write."""
+    refusal = _program_writer(acting_member, 'log a session')
+    if refusal:
+        return refusal
+    row, rows = _match_program(program_title)
+    if not row:
+        titles = ', '.join(p.get('title') or '?' for p in rows[:8]) or 'no programs yet'
+        return {"status": "error",
+                "message": f"I couldn't pin down '{program_title}'. Programs: {titles}."}
+    refusal = _program_owns_or_parent(acting_member, row, 'log a session')
+    if refusal:
+        return refusal
+    from services import programs as _prog
+    return _prog.log_session(row['id'], minutes=minutes, source='added')
+
+
 def negotiate_day(day: str = None, event_title: str = None,
                   acting_member: dict = None) -> dict:
     """What would make a broken day work. Read-only — it never asks anybody.
@@ -3784,6 +3998,54 @@ def get_available_tools() -> List[Dict]:
                     "state": {"type": "string", "description": "'done' or 'dropped' — nothing else is accepted."}
                 },
                 "required": ["thread_title", "state"]
+            }
+        },
+        {
+            "name": "list_programs",
+            "description": "Lists ambitions with a real plan attached — a curated curriculum, reserved practice time, a session log ('what programs are going?', 'what is Ben working on?'). Each shows who it's for, its state, the phase ahead, and sessions logged. A program is personal: without a name it defaults to the caller's own; naming someone else's is parent/adult only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "member_name": {"type": "string", "description": "See one family member's programs by name, if said."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "program_progress",
+            "description": "How one program is going — sessions logged, minutes, milestones hit, the phase ahead ('how's guitar going?', 'how many sessions has Ben logged?'). Never a streak, a miss count, or a percentage — those numbers do not exist here on purpose.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "program_title": {"type": "string", "description": "The program's title (fuzzy matched), e.g. 'Guitar'."}
+                },
+                "required": ["program_title"]
+            }
+        },
+        {
+            "name": "propose_program",
+            "description": "Proposes a new program: screens the aim, then finds a real cited plan for it ('I want to learn guitar', 'start Ben on a couch to 5k'). Refuses body-composition aims outright (weight, calories, BMI) for anyone, no exceptions. This ONLY proposes — nothing is claimed in the week. A person still has to see the footprint and approve it on the Programs page; there is no chat tool that does that. Proposing for yourself is open to anyone; naming someone else is parent/adult only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "The aim, e.g. 'learn guitar' or 'couch to 5k'."},
+                    "for_member_name": {"type": "string", "description": "Whose program this is, if not the caller's own."},
+                    "sessions_per_week": {"type": "integer", "description": "How many times a week to practise. Defaults to 3."},
+                    "minutes": {"type": "integer", "description": "Minutes per session. Defaults to 25."}
+                },
+                "required": ["title"]
+            }
+        },
+        {
+            "name": "log_program_session",
+            "description": "Logs that a practice session happened ('I practiced guitar today', 'log Ben's 5k session'). The count only ever goes up — there is no way to log a miss. Logging on your own program is open to anyone; someone else's is parent/adult only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "program_title": {"type": "string", "description": "The program's title (fuzzy matched)."},
+                    "minutes": {"type": "integer", "description": "How long it ran, if said. Defaults to the program's usual session length."}
+                },
+                "required": ["program_title"]
             }
         },
         {

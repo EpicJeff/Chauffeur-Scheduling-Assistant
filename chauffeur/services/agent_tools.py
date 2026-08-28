@@ -461,6 +461,12 @@ class DismissInsightTool(BaseModel):
     """
     insight_id: str = Field(..., description="The insight's id, from list_insights.")
 
+class ListProgramsTool(BaseModel):
+    """
+    Lists ambitions with a real plan attached — a curated curriculum, reserved practice time, a session log. Each shows who it's for, its state, the phase ahead, and sessions logged.
+    """
+    member_name: Optional[str] = Field(default=None, description="See one family member's programs by name, if said.")
+
 class ClaimChoreTool(BaseModel):
     """
     Claims an open chore for a family member ('Ben will take the dishes'). member_name is required; ask who is claiming if unknown.
@@ -899,6 +905,7 @@ TOOL_SCHEMAS = {
     "list_open_findings": ListOpenFindingsTool.model_json_schema(),
     "list_insights": ListInsightsTool.model_json_schema(),
     "dismiss_insight": DismissInsightTool.model_json_schema(),
+    "list_programs": ListProgramsTool.model_json_schema(),
     "claim_chore": ClaimChoreTool.model_json_schema(),
     "negotiate_day": NegotiateDayTool.model_json_schema(),
     "get_routine_status": GetRoutineStatusTool.model_json_schema(),
@@ -2064,6 +2071,17 @@ def handle_dismiss_insight(args: dict) -> dict:
     from services.agent_tools_v2 import dismiss_insight
     return dismiss_insight(args.get("insight_id") or "")
 
+def handle_list_programs(args: dict) -> dict:
+    # The v1 loop resolves no member and can produce no actor -- unlike
+    # list_insights, list_programs REQUIRES one (a program is somebody's
+    # personal ambition, not household-visible the way an insight's safe
+    # default is), so this always comes back refused from this loop. It is
+    # wired for parity with the catalog anyway, exactly as list_insights was
+    # -- a read tool only, never a write, since a write here would have no
+    # actor to attribute it to.
+    from services.agent_tools_v2 import list_programs
+    return list_programs(member_name=args.get("member_name"))
+
 def handle_claim_chore(args: dict) -> dict:
     from services.agent_tools_v2 import claim_chore
     return claim_chore(args.get("chore_title", ""),
@@ -2402,6 +2420,7 @@ TOOL_HANDLERS = {
     "list_open_findings": handle_list_open_findings,
     "list_insights": handle_list_insights,
     "dismiss_insight": handle_dismiss_insight,
+    "list_programs": handle_list_programs,
     "claim_chore": handle_claim_chore,
     "negotiate_day": handle_negotiate_day,
     "get_routine_status": handle_get_routine_status,

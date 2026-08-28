@@ -122,8 +122,10 @@ def curate(title: str, shape: dict, member_name: str = '') -> dict:
     question = (f"What is the best established, existing, step-by-step program "
                 f"a beginner should follow to {title}? Name the real program "
                 f"and its phases. Do not invent one.")
+    pages = int((storage.get_settings() or {}).get(
+        'programs_research_pages', PAGES) or PAGES)
     try:
-        res = web.research(question, read_pages=PAGES) or {}
+        res = web.research(question, read_pages=pages) or {}
     except Exception as e:
         print(f"[programs] research failed: {e}")
         return {'phases': [], 'source': _hand_written('research was unavailable')}

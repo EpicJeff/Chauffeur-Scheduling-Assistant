@@ -705,7 +705,9 @@ sending or claiming, and never pass from_member/member_name for them.
                 elif func_name in ("list_threads", "create_thread",
                                    "update_thread_action", "add_thread_note",
                                    "draft_thread_message", "close_thread",
-                                   "negotiate_day", "ask_deal"):
+                                   "negotiate_day", "ask_deal",
+                                   "list_programs", "program_progress",
+                                   "propose_program", "log_program_session"):
                     from services import agent_tools_v2 as _atv2
                     # Same actor resolution as list_insights/dismiss_insight
                     # above: resolved HERE at dispatch, never taken from the
@@ -718,7 +720,23 @@ sending or claiming, and never pass from_member/member_name for them.
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
-                    if func_name == "list_threads":
+                    if func_name == "list_programs":
+                        res = _atv2.list_programs(member_name=args.get("member_name"),
+                                                  acting_member=actor)
+                    elif func_name == "program_progress":
+                        res = _atv2.program_progress(args.get("program_title", "") or "",
+                                                     acting_member=actor)
+                    elif func_name == "propose_program":
+                        res = _atv2.propose_program(args.get("title", "") or "",
+                                                    for_member_name=args.get("for_member_name"),
+                                                    sessions_per_week=args.get("sessions_per_week"),
+                                                    minutes=args.get("minutes"),
+                                                    acting_member=actor)
+                    elif func_name == "log_program_session":
+                        res = _atv2.log_program_session(args.get("program_title", "") or "",
+                                                         minutes=args.get("minutes"),
+                                                         acting_member=actor)
+                    elif func_name == "list_threads":
                         res = _atv2.list_threads(state=args.get("state"),
                                                  owner_name=args.get("owner_name"),
                                                  include_closed=bool(args.get("include_closed")),

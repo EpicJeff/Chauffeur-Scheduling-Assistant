@@ -1437,6 +1437,22 @@ class Settings(BaseModel):
     negotiation_shift_mins: Optional[int] = 15
     # Per-replay CP-SAT time limit inside a negotiation search.
     negotiation_solve_seconds: Optional[float] = 2.0
+    # --- Programs (an ambition with a plan attached) ---
+    # Off means no asks, no re-baselining and no findings (services/
+    # watchers.py: _program_findings).
+    programs_enabled: Optional[bool] = True
+    # How long after a slot ends before asking whether it happened
+    # (services/programs.py: due_session_asks).
+    programs_ask_grace_hours: Optional[float] = 2.0
+    # How far back the struggling-program check looks (services/programs.py:
+    # weekday_shortfall).
+    programs_rebaseline_days: Optional[int] = 21
+    # Minimum gap between two timeline stretches (services/programs.py:
+    # maybe_rebaseline).
+    programs_rebaseline_cooldown_days: Optional[int] = 14
+    # How many real pages a curation run reads before proposing a plan
+    # (services/programs_curate.py: curate).
+    programs_research_pages: Optional[int] = 4
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

@@ -50,6 +50,7 @@ GROUPS = [
     ('mind', '🧠', 'The Mind'),
     ('threads', '🧵', 'Threads'),
     ('negotiation', '🤝', 'Negotiation'),
+    ('programs', '🎯', 'Programs'),
 ]
 
 _CONFIG = 'config'
@@ -555,6 +556,26 @@ ENTRIES: List[dict] = [
     _e('negotiation_solve_seconds', 'negotiation', 'Seconds per try',
        'Time limit on each re-solve (default 2). The daily solve gets five; a '
        'negotiation runs many in one question.', page='mind'),
+
+    # --- Programs (an ambition with a plan attached) ---
+    _e('programs_enabled', 'programs', 'Programs',
+       'Find real plans for what people want to do, claim the time, and count '
+       'what happens. Off means no asks, no re-baselining and no findings.',
+       page='programs'),
+    _e('programs_ask_grace_hours', 'programs', 'Ask after (hours)',
+       'How long after a practice window ends before asking whether it '
+       'happened (default 2). Quiet hours are always honoured on top of this.',
+       page='programs'),
+    _e('programs_rebaseline_days', 'programs', 'Look back (days)',
+       'How far back the check for a struggling program looks (default 21).',
+       page='programs'),
+    _e('programs_rebaseline_cooldown_days', 'programs', 'Re-baseline at most every (days)',
+       'The minimum gap between two timeline stretches, so a plan cannot '
+       'chatter about bending (default 14).', page='programs'),
+    _e('programs_research_pages', 'programs', 'Pages to read',
+       'How many real pages a curation run reads before proposing a plan '
+       '(default 4). One run per program, cached for its life.',
+       page='programs'),
 ]
 
 BY_KEY: Dict[str, dict] = {e['key']: e for e in ENTRIES}
