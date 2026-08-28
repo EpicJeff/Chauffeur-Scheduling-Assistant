@@ -787,6 +787,17 @@ def _run_ingest_locked() -> dict:
                                     'skipped': True})
             continue
 
+        # Thread matching is additive and independent of event extraction —
+        # a reply from a vendor can carry both a date-bound item AND be an
+        # update to an open thread, and neither should suppress the other.
+        # A match failure here must never break ingest, so it gets its own
+        # try/except rather than sharing the extraction one below.
+        try:
+            from services import threads
+            threads.match_inbound(msg['from'], msg['subject'], msg['text'])
+        except Exception as e:
+            print(f"[email_ingest] thread match failed: {e}")
+
         entry = sender_default(msg['from'], sender_defaults)
         try:
             items = extract_items(msg['subject'], msg['from'], msg['text'],

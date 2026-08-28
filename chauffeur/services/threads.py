@@ -47,6 +47,7 @@ outbound email, and it happens in a different function than the one that
 proposed the words.
 """
 import datetime
+import re
 import time
 from typing import Dict, List, Optional
 
@@ -327,6 +328,67 @@ def stalled(today: datetime.date = None) -> List[dict]:
             thread['stall_reason'] = reason
             result.append(thread)
     return result
+
+
+def _tokens(text: str) -> set:
+    return set(re.findall(r"[a-z0-9]+", (text or '').lower()))
+
+
+def match_inbound(from_addr: str, subject: str = '', body: str = '') -> Optional[str]:
+    """Does this piece of inbound mail belong to an open thread? If so,
+    record it there and say which one. If not, do nothing and say so.
+
+    Matching is `counterparty_email` first, case-insensitive — that alone
+    resolves the common case, one thread per counterparty. When more than
+    one open thread shares a counterparty (two vendors from the same
+    company, a candidate re-contacted for a second role), subject/body
+    token overlap against each thread's title breaks the tie. If nothing
+    breaks the tie — no counterparty match, or a tie among candidates with
+    no title word in common with this message — the answer is None and
+    nothing is written. Guessing wrong here is worse than not filing: a
+    reply filed on the wrong thread reads as an update nobody sent and
+    buries the one nobody logged.
+
+    A match appends a `received` history entry (which, unlike `drafted`,
+    counts as movement and resets the quiet clock — a reply arriving is
+    exactly the kind of thing `is_stalled` exists to notice) and, if the
+    thread was `waiting` on the other side, moves it back to `open`: the
+    ball just came back to us.
+    """
+    addr = (from_addr or '').strip().lower()
+    if not addr:
+        return None
+
+    candidates = [t for t in storage.get_threads(include_closed=False)
+                  if (t.get('counterparty_email') or '').strip().lower() == addr]
+    if not candidates:
+        return None
+
+    thread = candidates[0]
+    if len(candidates) > 1:
+        text_tokens = _tokens(subject) | _tokens(body)
+        best, best_score = None, 0
+        for t in candidates:
+            score = len(text_tokens & _tokens(t.get('title', '')))
+            if score > best_score:
+                best, best_score = t, score
+        if best is None:
+            return None
+        thread = best
+
+    thread_id = thread['id']
+    body_trimmed = (body or '').strip()[:500]
+    text = f'Received from {from_addr}: {subject}'.strip()
+    if body_trimmed:
+        text += f'\n\n{body_trimmed}'
+    storage.append_thread_history(thread_id, {
+        'kind': 'received',
+        'text': text,
+        'who': None,
+    })
+    if thread.get('state') == 'waiting':
+        storage.update_thread(thread_id, {'state': 'open'})
+    return thread_id
 
 
 def open_by_owner() -> Dict[str, int]:

@@ -172,6 +172,80 @@ def scenario_actually_sending_resets_the_stall_clock():
         _m.send, _m.configured = orig_send, orig_conf
 
 
+def scenario_inbound_matches_by_counterparty_address():
+    _reset()
+    t = threads.create('Pool cleaning', owner_member_id='m1',
+                       counterparty_email='service@poolco.example')
+    matched = threads.match_inbound('Service@PoolCo.example', 'Re: your visit',
+                                    'We can come Tuesday.')
+    check(matched == t, f"case-insensitive address match, got {matched}")
+    h = storage.get_thread(t)['history'][-1]
+    check(h['kind'] == 'received' and 'Tuesday' in h['text'],
+          f"the reply is logged, got {h}")
+
+
+def scenario_inbound_from_a_stranger_matches_nothing():
+    _reset()
+    threads.create('Pool cleaning', owner_member_id='m1',
+                   counterparty_email='service@poolco.example')
+    matched = threads.match_inbound('nobody@unknown.example', 'Hello',
+                                    'Random unrelated mail.')
+    check(matched is None, f"a stranger matches nothing, got {matched}")
+
+
+def scenario_shared_counterparty_disambiguated_by_subject():
+    _reset()
+    pool = threads.create('Pool opening for the season', owner_member_id='m1',
+                          counterparty_email='ops@vendor.example')
+    deck = threads.create('Deck permit renewal', owner_member_id='m1',
+                          counterparty_email='ops@vendor.example')
+    matched = threads.match_inbound('ops@vendor.example',
+                                    'Re: deck permit renewal',
+                                    'The renewal paperwork is attached.')
+    check(matched == deck, f"subject overlap picks the deck thread, got {matched}")
+    matched2 = threads.match_inbound('ops@vendor.example',
+                                     'Re: pool opening for the season',
+                                     'We can open the pool next week.')
+    check(matched2 == pool, f"subject overlap picks the pool thread, got {matched2}")
+
+
+def scenario_inbound_match_moves_waiting_back_to_open():
+    _reset()
+    from services import mailer as _m
+    orig_send, orig_conf = _m.send, _m.configured
+    try:
+        _m.configured = lambda *a, **k: True
+        _m.send = lambda to, subject, body, settings=None: {'sent': True}
+        t = threads.create('Nanny search', owner_member_id='m1',
+                           counterparty_email='candidate@example.com')
+        threads.send_drafted(t, 'Hi', 'Are you still available?',
+                             'candidate@example.com', 'm1')
+        check(storage.get_thread(t)['state'] == 'waiting',
+              "sending put the ball with them")
+        matched = threads.match_inbound('candidate@example.com',
+                                        'Re: Are you still available?',
+                                        'Yes, I am!')
+        check(matched == t, f"got {matched}")
+        check(storage.get_thread(t)['state'] == 'open',
+              "the ball is back with us")
+    finally:
+        _m.send, _m.configured = orig_send, orig_conf
+
+
+def scenario_a_received_reply_resets_the_stall_clock():
+    _reset()
+    t = threads.create('Nanny search', owner_member_id='m1',
+                       counterparty_email='candidate@example.com')
+    storage.update_thread(t, {'created_at': time.time() - 9 * 86400})
+    check(threads.is_stalled(storage.get_thread(t)) == 'quiet',
+          "nine days of silence is a stall")
+    matched = threads.match_inbound('candidate@example.com', 'Re: hello',
+                                    'Sorry for the delay, still interested.')
+    check(matched == t, f"got {matched}")
+    check(threads.is_stalled(storage.get_thread(t)) is None,
+          "a reply actually arriving is movement, so the clock resets")
+
+
 if __name__ == '__main__':
     scenario_overdue_next_action_stalls()
     scenario_silence_stalls_even_with_no_date()
@@ -184,4 +258,9 @@ if __name__ == '__main__':
     scenario_send_without_smtp_is_an_honest_refusal()
     scenario_drafting_and_abandoning_does_not_silence_a_stall()
     scenario_actually_sending_resets_the_stall_clock()
+    scenario_inbound_matches_by_counterparty_address()
+    scenario_inbound_from_a_stranger_matches_nothing()
+    scenario_shared_counterparty_disambiguated_by_subject()
+    scenario_inbound_match_moves_waiting_back_to_open()
+    scenario_a_received_reply_resets_the_stall_clock()
     print("test_threads OK")
