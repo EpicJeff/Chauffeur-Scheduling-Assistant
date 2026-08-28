@@ -4775,6 +4775,65 @@ def resolve_finding(finding_id: str, body: dict = Body(default={}),
         raise HTTPException(status_code=400, detail=res.get('message'))
     return res
 
+# --- Negotiation -----------------------------------------------------------
+# The deep search, by hand. The sweep (services/watchers.py) runs a shallow
+# one automatically on every refresh; this is the version a person asks for
+# when they are staring at a broken Tuesday and want every lever tried. Same
+# guard as the findings routes above -- parent/adult work, kiosk-hidden, same
+# `_needs_you_actor` rather than a second copy of that rule.
+
+@app.post("/api/negotiation/find")
+def negotiation_find(body: dict = Body(default={}), request: Request = None):
+    """Search only -- this never sends an ask. `services/negotiation.propose`
+    reuses an already-open deal for the same seed instead of re-solving, so a
+    second tap here does not re-spend the deep budget on a question the
+    family is already looking at."""
+    from services import negotiation as _neg
+    _needs_you_actor(request, body.get('member_id'))
+    event_id = str(body.get('event_id') or '')
+    if not event_id:
+        return {"status": "error", "message": "Which event?"}
+    date_str = str(body.get('date') or datetime.now().date().isoformat())
+    deal = _neg.propose(date_str, event_id, budget=_neg.DEEP_BUDGET)
+    if not deal:
+        return {"status": "success", "deal": None,
+                "message": "Nothing I can change makes that day work."}
+    return {"status": "success", "deal": deal}
+
+@app.post("/api/negotiation/{deal_id}/ask")
+def negotiation_ask(deal_id: str, body: dict = Body(default={}),
+                    request: Request = None):
+    """Send the asks for a deal already found. Searching and asking are
+    deliberately two taps, never one -- nobody hears about a deal until a
+    person decides it is worth asking."""
+    from services import negotiation as _neg
+    actor = _needs_you_actor(request, body.get('member_id'))
+    return _neg.start_asks(deal_id, (actor or {}).get('id'))
+
+@app.post("/api/negotiation/{deal_id}/kill")
+def negotiation_kill(deal_id: str, body: dict = Body(default={}),
+                     request: Request = None):
+    """Drop a deal a person does not want asked, or no longer needs."""
+    from services import negotiation as _neg
+    actor = _needs_you_actor(request, body.get('member_id'))
+    return _neg.kill(deal_id, (actor or {}).get('id'),
+                     reason=str(body.get('reason') or ''))
+
+@app.get("/api/negotiation/refusals")
+def negotiation_refusals(request: Request = None):
+    """What the app taught itself cannot move -- a flag the sweep will keep
+    honouring silently until a person sees it here and clears it."""
+    _needs_you_actor(request, None)
+    return {"refusals": storage.get_shift_refusals()}
+
+@app.delete("/api/negotiation/refusals/{series_key}")
+def negotiation_clear_refusal(series_key: str, request: Request = None):
+    """A flag the app taught itself must be untaught by hand."""
+    _needs_you_actor(request, None)
+    ok = storage.clear_shift_refusal(series_key)
+    return {"status": "success" if ok else "error",
+            "message": "It can move again." if ok else "Nothing to clear."}
+
 @app.get("/api/coverage/{event_id}/options")
 def coverage_options_api(event_id: str, request: Request = None):
     """The ladder for one event: who is free, who has covered it before, or the

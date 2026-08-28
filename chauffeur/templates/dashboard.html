@@ -232,6 +232,18 @@
                                 they
                                 conflict with this event. Click Swap to override the schedule.</p>
                             <div id="conflicts-list" class="space-y-3"></div>
+                            <!-- The hand path onto services/negotiation.py (negotiation
+                                 arc task 8). The watcher sweep already runs a shallow
+                                 search on this same seed automatically; this is the deep
+                                 one, for a person staring at this dialog who wants every
+                                 lever tried. Searching and asking are two taps on purpose
+                                 -- this button only ever finds a deal, never sends it. -->
+                            <button id="find-a-way-btn" type="button"
+                                    onclick="findAWay()"
+                                    class="mt-3 w-full rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500">
+                                Find a way
+                            </button>
+                            <div id="deal-result" class="mt-3 hidden text-sm text-gray-300"></div>
                         </div>
 
                         <div id="diagnostics-section" class="hidden">
@@ -1021,6 +1033,13 @@
             activeEventId = eventId;
             const ev = currentEventsMap[eventId];
             if (!ev) return;
+
+            // A deal found for the PREVIOUS event must not linger onto this one.
+            const dealResultEl = document.getElementById('deal-result');
+            if (dealResultEl) {
+                dealResultEl.classList.add('hidden');
+                dealResultEl.innerHTML = '';
+            }
 
             // Populate View Mode
             const titleEl = document.getElementById('view-title');
@@ -2170,6 +2189,58 @@
                 showGlobalAlert("Failed to force swap");
             } finally {
                 document.getElementById('schedule-container').classList.remove('opacity-50', 'pointer-events-none');
+            }
+        }
+
+        // The hand path onto services/negotiation.py (negotiation arc task 8).
+        // Searching and asking are two separate taps, on purpose: this only ever
+        // finds a deal and stores it as a draft -- nobody is asked anything until
+        // "Ask them" is tapped, same discipline as the sweep's own automatic
+        // search never sending mail unread.
+        async function findAWay() {
+            const btn = document.getElementById('find-a-way-btn');
+            const out = document.getElementById('deal-result');
+            const ev = currentEventsMap[activeEventId];
+            if (!btn || !out || !ev) return;
+            btn.disabled = true;
+            btn.textContent = 'Working on it…';
+            try {
+                const res = await fetch('api/negotiation/find', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ event_id: activeEventId, date: ev.start.split('T')[0] })
+                });
+                const data = await res.json();
+                out.classList.remove('hidden');
+                if (!data.deal) {
+                    out.textContent = data.message || 'Nothing I can change makes that day work.';
+                    return;
+                }
+                const dealId = data.deal.id;
+                out.innerHTML = `<p class="mb-2">${data.deal.line}</p>`;
+                const ask = document.createElement('button');
+                ask.type = 'button';
+                ask.className = 'rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500';
+                ask.textContent = 'Ask them';
+                ask.addEventListener('click', async () => {
+                    ask.disabled = true;
+                    try {
+                        const r = await fetch(`api/negotiation/${dealId}/ask`, { method: 'POST' });
+                        const body = await r.json();
+                        showGlobalAlert(body.message || 'Asked.');
+                        out.classList.add('hidden');
+                        out.innerHTML = '';
+                    } catch (e) {
+                        showGlobalAlert('Could not send the asks: ' + e.message);
+                        ask.disabled = false;
+                    }
+                });
+                out.appendChild(ask);
+            } catch (e) {
+                showGlobalAlert('Could not look for a deal: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Find a way';
             }
         }
 

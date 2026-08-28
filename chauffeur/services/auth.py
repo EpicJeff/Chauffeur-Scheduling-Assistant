@@ -349,6 +349,10 @@ RULES = [
     # any signed-in member, same as the findings list.
     (ANY, '/api/threads/*', SIGNED_IN, None),
     (ANY, '/api/threads', SIGNED_IN, None),
+    # Negotiation's hand path (task 8): SIGNED_IN at the route, same
+    # `_needs_you_actor` reused (not rebuilt) in every handler to refuse a
+    # child/helper/guest — the deal surface is parent/adult work end to end.
+    (ANY, '/api/negotiation/*', SIGNED_IN, None),
     (ANY, '/api/coverage/*', SIGNED_IN, 'schedule.carpool_contacts'),
     (ANY, '/api/assist-contacts/*', SIGNED_IN, 'schedule.carpool_contacts'),
     (ANY, '/api/assist-coverage/*', SIGNED_IN, None),
