@@ -6,13 +6,17 @@ against *this family's own baseline*, where the meaning lives in the
 derivative — which is why "Ellie has six activities" is a fact and "Ellie's
 load has run 40% over her own baseline for eleven days" is a finding.
 
-Five signs, all computed from data the app already keeps:
+Six signs, all computed from data the app already keeps:
 
-- load            per person: minutes of driving, plus doing (tasks, findings)
+- load            per person: driving, plus doing (tasks, findings) and
+                  carrying (each open thread, every day it stays open)
 - margin          household: free waking minutes left after commitments
 - follow_through  household: routine checks and tasks landed vs let go
 - rest            household: first commitment of the day, empty evenings
-- friction        household: rides that reached their day uncovered, cancels
+- friction        household: rides that reached their day uncovered, cancels,
+                  and the scrambles tallied live in `day_counters`
+- together        household: meals eaten together, moments caught, kids who
+                  rode somewhere with a parent
 
 A day's measures ride along inside the existing `daily_stats` row (written
 nightly by family_digest.record_daily_stats), so the pulse costs one extra
