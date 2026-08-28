@@ -115,6 +115,28 @@ def scenario_load_counts_doing_not_just_driving():
         storage.get_cached_schedule = orig
 
 
+def scenario_open_threads_are_load():
+    _reset()
+    from services import threads as _threads
+    storage.threads_table.truncate()
+    _threads.create('Pool', owner_member_id='m1')
+    _threads.create('Gutters', owner_member_id='m1')
+    d = _day(0)
+    orig = storage.get_cached_schedule
+    from services import meals as _meals
+    orig_plan = _meals.eating_plan
+    try:
+        _meals.eating_plan = lambda *a, **k: {'sittings': []}
+        storage.get_cached_schedule = lambda: _sched([])
+        row = vitals.measure_day(d)
+        check(row['load'].get('m1') == 2 * vitals.THREAD_MINUTES,
+              f"the mental load of carrying loops is load, got {row['load']}")
+    finally:
+        storage.get_cached_schedule = orig
+        _meals.eating_plan = orig_plan
+        storage.threads_table.truncate()
+
+
 # --------------------------------------------------------------------- read
 
 def scenario_thin_history_reports_levels_only():
@@ -362,6 +384,7 @@ if __name__ == '__main__':
     scenario_friction_sees_unassigned_and_canceled()
     scenario_rest_notices_an_empty_evening()
     scenario_load_counts_doing_not_just_driving()
+    scenario_open_threads_are_load()
     scenario_thin_history_reports_levels_only()
     scenario_delta_and_run_length()
     scenario_per_person_load_uses_their_own_baseline()

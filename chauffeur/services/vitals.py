@@ -39,6 +39,9 @@ WAKING_END = 22
 EVENING_FROM = 17       # an "evening" commitment starts at or after this
 TASK_MINUTES = 15       # a finished household task, as minutes of doing
 FINDING_MINUTES = 5     # noticing and resolving something is load too
+THREAD_MINUTES = 10     # per open thread per day: holding a loop costs
+                        # attention every day it stays open, the invisible
+                        # mental load the pulse was missing
 
 HOUSEHOLD_SIGNS = ('margin', 'follow_through', 'rest', 'friction', 'together')
 
@@ -151,6 +154,14 @@ def measure_day(date_str: str, sched: dict = None) -> dict:
         who = f.get('resolved_by')
         if who and ts and day0 <= float(ts) < day1:
             load[who] = load.get(who, 0) + FINDING_MINUTES
+
+    try:
+        from services import threads as _threads
+        thread_counts = _threads.open_by_owner()
+        for member_id, count in thread_counts.items():
+            load[member_id] = load.get(member_id, 0) + (count * THREAD_MINUTES)
+    except Exception as e:
+        logger.warning(f"[vitals] open threads unreadable for {date_str}: {e}")
 
     friction = {'unassigned': unassigned, 'canceled': canceled}
     try:
