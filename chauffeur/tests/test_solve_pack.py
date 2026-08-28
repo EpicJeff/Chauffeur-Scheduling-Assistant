@@ -5,6 +5,7 @@ reproduces the assignments that day actually got. If it does not, an input is
 missing and every deal built on the pack is fiction.
 """
 import datetime
+import json
 
 from harness import check
 from models.schemas import Driver, Event
@@ -69,6 +70,47 @@ def scenario_saving_a_day_twice_keeps_one_row():
           f"one row per day, got {len(rows)}")
 
 
+def scenario_a_real_trip_survives_the_json_round_trip():
+    # A trip entry is a plain dict (main.py builds it with a raw datetime for
+    # start/end and a raw set for entities, never a pydantic model), so it is
+    # the one input build() cannot just hand to _dump and trust.
+    events, drivers = _world()
+    trip = {'id': 'trip1', 'start': MONDAY, 'end': MONDAY + datetime.timedelta(hours=3),
+            'title': 'Away Game', 'location': 'Stadium',
+            'entities': {'driver_d1', 'passenger_c1'}, 'all_day': False}
+    pack = solve_pack.build(
+        '2026-09-07', events=events, drivers=drivers, rules=[],
+        priority_rules=[], overrides=[], passengers=[], cars=[],
+        driver_events={}, trip_metadata=[trip], driver_passenger_map={},
+        previous_assignments={}, load_balancing=False,
+        load_balancing_metric='occupied_time', protected_rule_index={})
+
+    check(trip['start'] == MONDAY and isinstance(trip['entities'], set),
+          "build() must not mutate the caller's trip dict")
+
+    json.dumps(pack)  # raises TypeError on a bare datetime or set
+
+    storage.save_solve_pack('2026-09-07', pack)
+    loaded = storage.get_solve_pack('2026-09-07')
+
+    captured = {}
+    real_solve = matcher.solve_schedule
+    def _spy(*args, **kwargs):
+        captured['trip_metadata'] = kwargs.get('trip_metadata')
+        return real_solve(*args, **kwargs)
+    matcher.solve_schedule = _spy
+    try:
+        solve_pack.replay(loaded)
+    finally:
+        matcher.solve_schedule = real_solve
+
+    replayed_trip = captured['trip_metadata'][0]
+    check(isinstance(replayed_trip['start'], datetime.datetime),
+          f"replay hands the solver a real datetime, got {type(replayed_trip['start'])}")
+    check(isinstance(replayed_trip['entities'], set),
+          f"and a real set, got {type(replayed_trip['entities'])}")
+
+
 def scenario_an_incomplete_pack_is_refused():
     broken = dict(_pack(*_world()))
     broken.pop('driver_events')
@@ -84,5 +126,6 @@ if __name__ == '__main__':
     scenario_replay_reproduces_the_solve()
     scenario_roundtrip_through_storage()
     scenario_saving_a_day_twice_keeps_one_row()
+    scenario_a_real_trip_survives_the_json_round_trip()
     scenario_an_incomplete_pack_is_refused()
     print("test_solve_pack OK")

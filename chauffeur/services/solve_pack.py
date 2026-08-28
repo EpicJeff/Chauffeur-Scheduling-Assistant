@@ -42,6 +42,23 @@ def _dump(obj):
     return obj
 
 
+def _dump_trip(t):
+    """A trip entry is a plain dict, not a model, so `_dump` passes it through
+    untouched -- but the pack is JSON, and `start`/`end`/`entities` are the
+    two Python types JSON cannot hold: a `datetime` and a `set`. Left alone,
+    they reach `json.dump`/`json.dumps` in the storage layer and blow up on
+    the first day that has a trip. A copy, not a mutation -- the caller's
+    dict is still theirs after this returns."""
+    t = dict(t)
+    for field in ('start', 'end'):
+        val = t.get(field)
+        if isinstance(val, datetime.datetime):
+            t[field] = val.isoformat()
+    if 'entities' in t:
+        t['entities'] = list(t['entities'])
+    return t
+
+
 def build(date_str, *, events, drivers, rules, priority_rules, overrides,
           passengers, cars, driver_events, trip_metadata, driver_passenger_map,
           previous_assignments, load_balancing, load_balancing_metric,
@@ -65,7 +82,7 @@ def build(date_str, *, events, drivers, rules, priority_rules, overrides,
         'cars': [_dump(c) for c in cars],
         'driver_events': {str(k): [_dump(e) for e in v]
                           for k, v in (driver_events or {}).items()},
-        'trip_metadata': [_dump(t) for t in (trip_metadata or [])],
+        'trip_metadata': [_dump_trip(t) for t in (trip_metadata or [])],
         'driver_passenger_map': dict(driver_passenger_map or {}),
         'previous_assignments': dict(previous_assignments or {}),
         'load_balancing': bool(load_balancing),
