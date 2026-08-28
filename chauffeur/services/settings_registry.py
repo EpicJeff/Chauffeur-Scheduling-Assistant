@@ -48,6 +48,7 @@ GROUPS = [
     ('maps', '🗺️', 'Maps & quotas'),
     ('solver', '⚙️', 'Solver behaviour'),
     ('mind', '🧠', 'The Mind'),
+    ('threads', '🧵', 'Threads'),
 ]
 
 _CONFIG = 'config'
@@ -528,6 +529,12 @@ ENTRIES: List[dict] = [
     _e('mind_direct_categories', 'mind', 'Graduated categories',
        'Insight categories approved for direct delivery (phase B). Empty until '
        'you graduate one from the Mind page.', page='mind'),
+
+    # --- Threads (open loops with people outside the family) ---
+    _e('thread_stall_days', 'threads', 'Stalls after (days)',
+       'How many days of no movement before an open thread counts as quiet '
+       'and becomes a finding (default 7). A thread with a next-action date '
+       'in the past stalls immediately regardless of this.', page='threads'),
 ]
 
 BY_KEY: Dict[str, dict] = {e['key']: e for e in ENTRIES}

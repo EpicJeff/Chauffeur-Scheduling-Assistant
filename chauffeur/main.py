@@ -1599,6 +1599,10 @@ def settings_page(request: Request):
 def mind_page(request: Request):
     return templates.TemplateResponse(request=request, name="mind.html")
 
+@app.get("/threads")
+def threads_page(request: Request):
+    return templates.TemplateResponse(request=request, name="threads.html")
+
 @app.get("/chores")
 def chores_page(request: Request):
     return _page_or_board(request, "chores", "chores.html")

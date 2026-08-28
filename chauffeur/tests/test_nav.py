@@ -160,7 +160,7 @@ def scenario_the_home_board_is_in_the_nav():
         check(slug in slugs, f"'{slug}' is missing from NAV_ITEMS")
 
 
-ADMIN_ONLY_SLUGS = ('intake', 'mind')
+ADMIN_ONLY_SLUGS = ('intake', 'mind', 'threads')
 
 
 def scenario_every_slug_is_filterable():
@@ -168,10 +168,12 @@ def scenario_every_slug_is_filterable():
     content page missing from that vocabulary cannot be filtered off a kiosk
     card or a shelf at all."""
     from services import home_board
-    # `intake` and `mind` are the exceptions, and both are deliberate:
-    # intake (v2.232.0) is mail approvals and IMAP settings, mind (v2.426.13)
-    # is dial settings plus the full sensitive insight lane — both admin
-    # surfaces, both already off DEFAULT_TABS for that reason. A shelf
+    # `intake`, `mind` and `threads` are the exceptions, and all three are
+    # deliberate: intake (v2.232.0) is mail approvals and IMAP settings, mind
+    # (v2.426.13) is dial settings plus the full sensitive insight lane,
+    # threads (v2.429.8) is vendor/project correspondence — counterparty
+    # emails and the odd employment-screening thread. All three are admin
+    # surfaces, all three already off DEFAULT_TABS for that reason. A shelf
     # vocabulary with members that are not boards is an exception to explain
     # forever; each keeps its desktop-nav link, it is simply not something a
     # wall panel can show.
@@ -223,6 +225,18 @@ def scenario_mind_stays_off_shared_screens():
     kiosk = BODY[BODY.index('if (isKiosk) {'):]
     check("'mind'" in kiosk or 'data-slug="mind"' in kiosk,
           "the kiosk no longer hides mind")
+
+
+def scenario_threads_stays_off_shared_screens():
+    """Threads carries counterparty emails and the odd employment-screening
+    loop — household administration, not something a shared wall display
+    should show unread. Same discipline as intake and mind: nav link for the
+    browser, hidden on every kiosk unless a card opts back in."""
+    check('threads' in ADMIN_ONLY_SLUGS,
+          "threads dropped out of the admin-only exception list")
+    kiosk = BODY[BODY.index('if (isKiosk) {'):]
+    check("'threads'" in kiosk or 'data-slug="threads"' in kiosk,
+          "the kiosk no longer hides threads")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

@@ -1345,6 +1345,10 @@ class Settings(BaseModel):
     # Insight categories graduated to direct delivery (phase B). Empty until
     # a category is promoted from the Mind page.
     mind_direct_categories: List[str] = Field(default_factory=list)
+    # --- Threads (open loops with people outside the family) ---
+    # Days of no movement before an open thread counts as quiet (services/
+    # threads.py: is_stalled). An overdue next_action_at stalls regardless.
+    thread_stall_days: Optional[int] = 7
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

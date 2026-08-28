@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Threads</title>
+    <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
+    {% include 'ha_theme.html' %}
+    <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
+    <style>
+        body { background-color: #111827; color: #e5e7eb; }
+        [x-cloak] { display: none !important; }
+    </style>
+    <link rel="stylesheet" href="{{ 'static/tailwind.css'|ver }}">
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <div class="flex-1 overflow-y-auto bg-gray-900/50">
+        <div x-data="threadsPage()" x-init="load()" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
+
+            <h2 class="panel-page-title">Threads</h2>
+            <p class="text-sm text-gray-500 mb-5">
+                The open loops with somebody outside the family — the pool
+                company, the pest control renewal, the after-school care
+                search. Nothing here has a start time, which is exactly why
+                it needs a room of its own: stalled ones surface first.
+            </p>
+
+            <!-- Settings: thread_stall_days lives here, not on /config. -->
+            <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3 mb-5 flex items-center justify-between gap-3">
+                <div>
+                    <div class="text-xs font-semibold text-gray-200">Stalls after (days)</div>
+                    <p class="text-[11px] text-gray-500 mt-0.5">
+                        No movement for this long on an open thread counts as
+                        quiet. A past next-action date stalls it immediately
+                        either way.
+                    </p>
+                </div>
+                <input type="number" min="1" x-model.number="s.thread_stall_days" @change="saveStallDays()"
+                    class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
+            </div>
+
+            <!-- Create form -->
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-4 mb-6">
+                <button @click="creating = !creating"
+                    class="w-full flex items-center justify-between text-sm font-bold text-gray-200">
+                    <span>+ Start a thread</span>
+                    <span class="text-gray-500 text-xs" x-text="creating ? 'Hide' : 'Show'"></span>
+                </button>
+                <div class="mt-3 space-y-2.5" x-show="creating" x-cloak>
+                    <input type="text" x-model="draft.title" placeholder="What is this (e.g. Find after-school care for Lily)"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                    <input type="text" x-model="draft.goal" placeholder="The outcome wanted, one sentence"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                    <div class="grid grid-cols-2 gap-2.5">
+                        <select x-model="draft.kind" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-white text-sm">
+                            <option value="project">Project (has an end)</option>
+                            <option value="vendor">Vendor (ongoing)</option>
+                        </select>
+                        <select x-model="draft.owner_member_id" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-white text-sm">
+                            <option value="">Who's carrying this?</option>
+                            <template x-for="m in members" :key="m.id">
+                                <option :value="m.id" x-text="m.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <select x-model="draft.contact_id" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-white text-sm">
+                        <option value="">Counterparty: type a name below instead</option>
+                        <template x-for="c in contacts" :key="c.id">
+                            <option :value="c.id" x-text="c.relation_label || c.name"></option>
+                        </template>
+                    </select>
+                    <div class="grid grid-cols-2 gap-2.5" x-show="!draft.contact_id">
+                        <input type="text" x-model="draft.counterparty_name" placeholder="Counterparty name"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                        <input type="email" x-model="draft.counterparty_email" placeholder="Their email (optional)"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2.5">
+                        <input type="text" x-model="draft.next_action" placeholder="First next action (optional)"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                        <input type="date" x-model="draft.next_action_at"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                    </div>
+                    <button @click="createThread()"
+                        class="w-full text-sm font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700">
+                        Start thread
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stalled first, then open, then waiting, then a collapsed
+                 archive — one shared card markup, looped per section. -->
+            <template x-for="sec in sections" :key="sec.key">
+                <div class="mb-6">
+                    <button x-show="sec.archived" @click="archiveOpen = !archiveOpen"
+                        class="w-full flex items-center justify-between text-xs font-black uppercase tracking-widest px-1 mb-2"
+                        :class="sec.titleClass">
+                        <span x-text="sec.label"></span>
+                        <span class="text-gray-600 normal-case font-semibold" x-text="archiveOpen ? 'Hide' : 'Show'"></span>
+                    </button>
+                    <div class="text-xs font-black uppercase tracking-widest px-1 mb-2"
+                        x-show="!sec.archived" :class="sec.titleClass">
+                        <span x-text="sec.label"></span>
+                    </div>
+                    <template x-if="!sec.archived || archiveOpen">
+                    <div>
+                    <p class="text-xs text-gray-500 italic px-1" x-show="!sec.items.length" x-text="sec.empty"></p>
+                    <div class="space-y-2">
+                        <template x-for="t in sec.items" :key="t.id">
+                            <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
+                                <div class="flex items-start justify-between gap-2">
+                                    <div class="text-sm font-bold text-gray-100" x-text="t.title"></div>
+                                    <div class="flex gap-1.5 shrink-0">
+                                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300"
+                                            x-text="t.kind"></span>
+                                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                            :class="stallReason(t) === 'overdue' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'"
+                                            x-show="stallReason(t)" x-text="stallReason(t)"></span>
+                                    </div>
+                                </div>
+                                <div class="text-xs text-gray-500 mt-0.5" x-show="t.goal" x-text="t.goal"></div>
+                                <div class="text-[11px] text-gray-500 mt-1">
+                                    <span x-text="counterpartyLabel(t)"></span>
+                                    <span class="text-gray-700"> · </span>
+                                    <span x-text="memberName(t.owner_member_id)"></span>
+                                </div>
+                                <div class="text-xs text-gray-300 mt-1.5" x-show="t.next_action">
+                                    <span class="text-gray-500">Next: </span>
+                                    <span x-text="t.next_action"></span>
+                                    <span class="text-gray-500" x-show="t.next_action_at" x-text="' by ' + fmtDate(t.next_action_at)"></span>
+                                </div>
+                                <div class="text-[11px] text-gray-600 mt-1 italic" x-show="lastHistoryLine(t)" x-text="lastHistoryLine(t)"></div>
+
+                                <div class="flex flex-wrap gap-2 mt-2" x-show="!sec.archived">
+                                    <button @click="noteOpen[t.id] = !noteOpen[t.id]"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Add note</button>
+                                    <button @click="openAdvance(t)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Advance</button>
+                                    <button @click="openEdit(t)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Edit</button>
+                                    <button @click="closeThread(t, 'done')"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Done</button>
+                                    <button @click="closeThread(t, 'dropped')"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Drop</button>
+                                </div>
+                                <div class="mt-1.5 text-[11px] text-gray-600" x-show="sec.archived">
+                                    <span x-text="t.state === 'done' ? 'Done' : 'Dropped'"></span>
+                                    <span x-show="t.closed_at" x-text="' · ' + fmtTs(t.closed_at)"></span>
+                                </div>
+
+                                <!-- Add note -->
+                                <div class="mt-2.5 flex gap-2" x-show="noteOpen[t.id]" x-cloak>
+                                    <input type="text" x-model="noteText[t.id]" placeholder="A call made, a document received…"
+                                        @keydown.enter="submitNote(t)"
+                                        class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white text-xs">
+                                    <button @click="submitNote(t)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700 shrink-0">Save</button>
+                                </div>
+
+                                <!-- Advance -->
+                                <div class="mt-2.5 space-y-2" x-show="advanceOpen[t.id]" x-cloak>
+                                    <input type="text" x-model="advanceDraft[t.id].next_action" placeholder="What has to happen next"
+                                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white text-xs">
+                                    <div class="flex gap-2">
+                                        <input type="date" x-model="advanceDraft[t.id].next_action_at"
+                                            class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white text-xs">
+                                        <input type="text" x-model="advanceDraft[t.id].note" placeholder="Note (optional)"
+                                            class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white text-xs">
+                                    </div>
+                                    <button @click="submitAdvance(t)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Save</button>
+                                </div>
+
+                                <!-- Edit -->
+                                <div class="mt-2.5 space-y-2" x-show="editOpen[t.id]" x-cloak>
+                                    <input type="text" x-model="editDraft[t.id].title" placeholder="Title"
+                                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white text-xs">
+                                    <input type="text" x-model="editDraft[t.id].goal" placeholder="Goal"
+                                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white text-xs">
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <select x-model="editDraft[t.id].kind"
+                                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-xs">
+                                            <option value="project">Project</option>
+                                            <option value="vendor">Vendor</option>
+                                        </select>
+                                        <select x-model="editDraft[t.id].owner_member_id"
+                                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-xs">
+                                            <option value="">Nobody yet</option>
+                                            <template x-for="m in members" :key="m.id">
+                                                <option :value="m.id" x-text="m.name"></option>
+                                            </template>
+                                        </select>
+                                    </div>
+                                    <select x-model="editDraft[t.id].contact_id"
+                                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-xs">
+                                        <option value="">Type a name below instead</option>
+                                        <template x-for="c in contacts" :key="c.id">
+                                            <option :value="c.id" x-text="c.relation_label || c.name"></option>
+                                        </template>
+                                    </select>
+                                    <div class="grid grid-cols-2 gap-2" x-show="!editDraft[t.id].contact_id">
+                                        <input type="text" x-model="editDraft[t.id].counterparty_name" placeholder="Counterparty name"
+                                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white text-xs">
+                                        <input type="email" x-model="editDraft[t.id].counterparty_email" placeholder="Their email"
+                                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white text-xs">
+                                    </div>
+                                    <button @click="submitEdit(t)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Save</button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    </div>
+                    </template>
+                </div>
+            </template>
+
+        </div>
+    </div>
+    {% include 'components/control_center.html' %}
+    {% include 'components/moments_hearth.html' %}
+
+    <script>
+        function threadsPage() {
+            return {
+                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                s: { thread_stall_days: 7 },
+                threads: [],
+                members: [],
+                contacts: [],
+                creating: false,
+                archiveOpen: false,
+                draft: {
+                    title: '', goal: '', kind: 'project', owner_member_id: '',
+                    contact_id: '', counterparty_name: '', counterparty_email: '',
+                    next_action: '', next_action_at: '',
+                },
+                noteOpen: {}, noteText: {},
+                advanceOpen: {}, advanceDraft: {},
+                editOpen: {}, editDraft: {},
+
+                async load() {
+                    try {
+                        const [tRes, mRes, aRes, sRes] = await Promise.all([
+                            fetch(this.apiBase + 'api/threads?include_closed=true'),
+                            fetch(this.apiBase + 'api/members'),
+                            fetch(this.apiBase + 'api/assist-contacts').catch(() => null),
+                            fetch(this.apiBase + 'api/settings'),
+                        ]);
+                        const td = tRes.ok ? await tRes.json() : { threads: [] };
+                        this.threads = td.threads || [];
+                        this.members = mRes.ok ? await mRes.json() : [];
+                        const contacts = (aRes && aRes.ok) ? await aRes.json() : [];
+                        this.contacts = Array.isArray(contacts) ? contacts : [];
+                        const sd = sRes.ok ? await sRes.json() : {};
+                        if (sd.thread_stall_days !== undefined && sd.thread_stall_days !== null) {
+                            this.s.thread_stall_days = sd.thread_stall_days;
+                        }
+                        // Pre-seed every per-card draft so the inline forms'
+                        // x-model bindings always have somewhere real to
+                        // write, even before a card's "Advance"/"Edit" is
+                        // ever opened — Alpine still evaluates a hidden
+                        // (x-show) node's bindings.
+                        this.threads.forEach(t => {
+                            if (this.noteText[t.id] === undefined) this.noteText[t.id] = '';
+                            this.advanceDraft[t.id] = {
+                                next_action: t.next_action || '',
+                                next_action_at: t.next_action_at || '',
+                                note: '',
+                            };
+                            this.editDraft[t.id] = {
+                                title: t.title, goal: t.goal || '', kind: t.kind || 'project',
+                                owner_member_id: t.owner_member_id || '',
+                                contact_id: t.contact_id || '',
+                                counterparty_name: t.counterparty_name || '',
+                                counterparty_email: t.counterparty_email || '',
+                            };
+                        });
+                    } catch (e) { showGlobalAlert("Couldn't load threads."); }
+                },
+
+                // Mirrors services/threads.py:is_stalled exactly, client-side —
+                // the GET endpoint hands back the raw rows (Task 5), so the
+                // page decides who's stalled the same way the nightly sweep
+                // will, rather than waiting on a backend field.
+                stallReason(t) {
+                    if (!t || t.state === 'done' || t.state === 'dropped') return null;
+                    const days = Math.max(1, parseInt(this.s.thread_stall_days, 10) || 7);
+                    if (t.next_action_at) {
+                        const due = new Date(t.next_action_at + 'T00:00:00');
+                        if (!isNaN(due.getTime())) {
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+                            return due.getTime() < today.getTime() ? 'overdue' : null;
+                        }
+                    }
+                    const hist = t.history || [];
+                    const lastTs = hist.length > 1
+                        ? (hist[hist.length - 1].ts || t.created_at || 0)
+                        : (t.created_at || 0);
+                    if (lastTs && (Date.now() / 1000 - lastTs) >= days * 86400) return 'quiet';
+                    return null;
+                },
+
+                get stalledList() { return this.threads.filter(t => this.stallReason(t)); },
+                get openList() { return this.threads.filter(t => t.state === 'open' && !this.stallReason(t)); },
+                get waitingList() { return this.threads.filter(t => t.state === 'waiting' && !this.stallReason(t)); },
+                get archiveList() {
+                    return this.threads.filter(t => t.state === 'done' || t.state === 'dropped')
+                        .sort((a, b) => (b.closed_at || 0) - (a.closed_at || 0));
+                },
+
+                get sections() {
+                    return [
+                        { key: 'stalled', label: '⏳ Stalled', titleClass: 'text-red-400',
+                          items: this.stalledList, empty: 'Nothing stalled right now.', archived: false },
+                        { key: 'open', label: 'Open', titleClass: 'text-gray-500',
+                          items: this.openList, empty: 'No open threads.', archived: false },
+                        { key: 'waiting', label: 'Waiting', titleClass: 'text-gray-500',
+                          items: this.waitingList, empty: 'Nothing waiting on somebody else.', archived: false },
+                        { key: 'archive', label: 'Done & dropped (' + this.archiveList.length + ')',
+                          titleClass: 'text-gray-600',
+                          items: this.archiveList, empty: 'Nothing closed yet.', archived: true },
+                    ];
+                },
+
+                memberName(id) {
+                    if (!id) return 'Nobody yet';
+                    const m = this.members.find(x => x.id === id);
+                    return m ? m.name : 'Nobody yet';
+                },
+
+                counterpartyLabel(t) {
+                    if (t.contact_id) {
+                        const c = this.contacts.find(x => x.id === t.contact_id);
+                        if (c) return c.relation_label || c.name;
+                    }
+                    return t.counterparty_name || 'No counterparty yet';
+                },
+
+                fmtWho(who) {
+                    if (!who) return 'Someone';
+                    if (who === 'argyle') return 'Argyle';
+                    return this.memberName(who) !== 'Nobody yet' ? this.memberName(who) : who;
+                },
+
+                fmtDate(ds) {
+                    if (!ds) return '';
+                    try {
+                        return new Date(ds + 'T00:00:00').toLocaleDateString(undefined,
+                            { weekday: 'short', month: 'short', day: 'numeric' });
+                    } catch (e) { return ds; }
+                },
+
+                fmtTs(ts) {
+                    if (!ts) return '';
+                    try {
+                        return new Date(ts * 1000).toLocaleString(undefined,
+                            { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+                    } catch (e) { return ''; }
+                },
+
+                lastHistoryLine(t) {
+                    const hist = t.history || [];
+                    if (!hist.length) return '';
+                    const last = hist[hist.length - 1];
+                    return `${this.fmtWho(last.who)}: ${last.text}` +
+                        (last.ts ? ` — ${this.fmtTs(last.ts)}` : '');
+                },
+
+                blankDraft() {
+                    return {
+                        title: '', goal: '', kind: 'project', owner_member_id: '',
+                        contact_id: '', counterparty_name: '', counterparty_email: '',
+                        next_action: '', next_action_at: '',
+                    };
+                },
+
+                async createThread() {
+                    const title = (this.draft.title || '').trim();
+                    if (!title) { showGlobalAlert('A thread needs a title.'); return; }
+                    const body = {
+                        title, goal: this.draft.goal || '', kind: this.draft.kind || 'project',
+                        owner_member_id: this.draft.owner_member_id || null,
+                        next_action: this.draft.next_action || '',
+                        next_action_at: this.draft.next_action_at || null,
+                    };
+                    if (this.draft.contact_id) {
+                        body.contact_id = this.draft.contact_id;
+                    } else {
+                        body.counterparty_name = this.draft.counterparty_name || '';
+                        body.counterparty_email = this.draft.counterparty_email || '';
+                    }
+                    try {
+                        const r = await fetch(this.apiBase + 'api/threads', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            showGlobalAlert(err.detail || "Couldn't start that thread.");
+                            return;
+                        }
+                        this.draft = this.blankDraft();
+                        this.creating = false;
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't start that thread."); }
+                },
+
+                async submitNote(t) {
+                    const text = (this.noteText[t.id] || '').trim();
+                    if (!text) return;
+                    try {
+                        const r = await fetch(this.apiBase + `api/threads/${t.id}/note`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ text })
+                        });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            showGlobalAlert(err.detail || "Couldn't add that note.");
+                            return;
+                        }
+                        this.noteText[t.id] = '';
+                        this.noteOpen[t.id] = false;
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't add that note."); }
+                },
+
+                openAdvance(t) {
+                    if (!this.advanceDraft[t.id]) {
+                        this.advanceDraft[t.id] = {
+                            next_action: t.next_action || '',
+                            next_action_at: t.next_action_at || '',
+                            note: '',
+                        };
+                    }
+                    this.advanceOpen[t.id] = !this.advanceOpen[t.id];
+                },
+
+                async submitAdvance(t) {
+                    const d = this.advanceDraft[t.id] || {};
+                    const next_action = (d.next_action || '').trim();
+                    if (!next_action) { showGlobalAlert('What happens next?'); return; }
+                    try {
+                        const r = await fetch(this.apiBase + `api/threads/${t.id}/advance`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                next_action, next_action_at: d.next_action_at || null,
+                                note: d.note || null,
+                            })
+                        });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            showGlobalAlert(err.detail || "Couldn't update that.");
+                            return;
+                        }
+                        this.advanceOpen[t.id] = false;
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't update that."); }
+                },
+
+                openEdit(t) {
+                    if (!this.editDraft[t.id]) {
+                        this.editDraft[t.id] = {
+                            title: t.title, goal: t.goal || '', kind: t.kind || 'project',
+                            owner_member_id: t.owner_member_id || '',
+                            contact_id: t.contact_id || '',
+                            counterparty_name: t.counterparty_name || '',
+                            counterparty_email: t.counterparty_email || '',
+                        };
+                    }
+                    this.editOpen[t.id] = !this.editOpen[t.id];
+                },
+
+                async submitEdit(t) {
+                    const d = this.editDraft[t.id] || {};
+                    const title = (d.title || '').trim();
+                    if (!title) { showGlobalAlert('A thread needs a title.'); return; }
+                    const body = {
+                        title, goal: d.goal || '', kind: d.kind || 'project',
+                        owner_member_id: d.owner_member_id || null,
+                    };
+                    if (d.contact_id) {
+                        body.contact_id = d.contact_id;
+                        body.counterparty_name = '';
+                        body.counterparty_email = '';
+                    } else {
+                        body.contact_id = null;
+                        body.counterparty_name = d.counterparty_name || '';
+                        body.counterparty_email = d.counterparty_email || '';
+                    }
+                    try {
+                        const r = await fetch(this.apiBase + `api/threads/${t.id}`, {
+                            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            showGlobalAlert(err.detail || "Couldn't save that.");
+                            return;
+                        }
+                        this.editOpen[t.id] = false;
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't save that."); }
+                },
+
+                async closeThread(t, state) {
+                    const label = state === 'done' ? 'Mark this thread done?' : 'Drop this thread?';
+                    const detail = state === 'done'
+                        ? 'It moves to the archive as resolved and stops stalling.'
+                        : "It moves to the archive as dropped and won't stall again.";
+                    const ok = await promptConfirm(label, detail,
+                        state === 'done' ? 'Mark done' : 'Drop it', 'Cancel');
+                    if (!ok) return;
+                    try {
+                        const r = await fetch(this.apiBase + `api/threads/${t.id}/close`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ state })
+                        });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            showGlobalAlert(err.detail || "Couldn't close that.");
+                            return;
+                        }
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't close that."); }
+                },
+
+                async saveStallDays() {
+                    const days = Math.max(1, parseInt(this.s.thread_stall_days, 10) || 7);
+                    this.s.thread_stall_days = days;
+                    try {
+                        await fetch(this.apiBase + 'api/settings', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ thread_stall_days: days })
+                        });
+                    } catch (e) { showGlobalAlert('Could not save that just now.'); }
+                },
+            }
+        }
+    </script>
+</body>
+</html>
