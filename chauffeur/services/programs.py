@@ -260,9 +260,19 @@ def pause(program_id: str) -> dict:
     row = storage.get_program(program_id)
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
-    if row.get('state') in ('done', 'dropped'):
+    if row.get('state') != 'active':
+        # ONLY active. `resume()` emits real reserved time, so every state
+        # this accepts becomes a route into the family's week -- and pausing a
+        # `proposed` program and then resuming it claimed practice windows
+        # with no parent, no footprint screen, and `approved_by` and
+        # `baseline.start_date` never set. Both endpoints let an owner act
+        # freely, which is right for a program somebody already approved and
+        # exactly wrong as a way in: approving is the one act this arc says is
+        # never an ownership matter. Guarded here so the pair can only ever
+        # move a program a parent has already approved.
         return {'status': 'error',
-                'message': f"That program is {row.get('state')} — there's nothing to pause."}
+                'message': f"That program is {row.get('state')} — only an "
+                           f"active program can be paused."}
     slots = emitted_slots(row)
     released = release_commitments(program_id)
     storage.update_program(program_id, {'state': 'paused',
@@ -273,10 +283,47 @@ def pause(program_id: str) -> dict:
                        'are back until you resume.'}
 
 
+def _revert_resume(program_id: str, made: list, slots: list,
+                   keep: dict) -> None:
+    """Undo a half-finished resume and leave the row where a retry works.
+
+    `_emit_commitments` persists each id the moment it lands, which is what
+    makes a crash survivable -- but only if somebody undoes the ones that DID
+    land. Unbracketed, a storage failure on the second of three slots
+    propagated out with the row still `paused`, `paused_slots` still full, and
+    one commitment created AND recorded, so the retry emitted all three again
+    and double-claimed the first evening. `approve()` has been bracketed for
+    exactly this since it was written; the write path extracted out of it has
+    to be guarded wherever it is called, not only there.
+
+    Same ranking as `_revert_attempt`: every cleanup step runs through
+    `_quietly` and the state write sits in a `finally`, because a recovery
+    path that can itself fail is a recovery path that strands people. `paused`
+    with the slots remembered and no commitments held is a genuinely
+    consistent state -- it is exactly what pause promises -- so a retry starts
+    from a clean row rather than from a half-claimed week.
+    """
+    try:
+        for cid in made or []:
+            _quietly(f"delete commitment {cid}",
+                     storage.delete_protected_commitment, cid)
+    finally:
+        _quietly('put the program back to paused', storage.update_program,
+                 program_id,
+                 {'state': 'paused', 'paused_slots': list(slots or []),
+                  'emissions': {**(keep if isinstance(keep, dict) else {}),
+                                'commitment_ids': []}})
+
+
 def resume(program_id: str) -> dict:
     """Back on — and the reservations come back with it, through the same
     write path `approve()` uses rather than a second one that could drift
-    away from it."""
+    away from it.
+
+    Only from `paused`, and `paused` is now only reachable from `active`: the
+    pair moves a program a parent already approved, and can never be a way of
+    claiming time nobody approved at all.
+    """
     row = storage.get_program(program_id)
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
@@ -285,16 +332,40 @@ def resume(program_id: str) -> dict:
                 'message': f"That program is {row.get('state')}, not paused."}
     slots = [s for s in (row.get('paused_slots') or []) if s.get('time_start')]
     if not slots:
-        # A program paused before this remembered anything, or one whose
-        # windows were deleted by hand while it slept: propose fresh ones
-        # rather than come back with no practice time at all.
+        # A row paused by the code that shipped BEFORE pause released anything
+        # still has its commitments standing and its ids recorded, and
+        # remembers no slots. Reading the windows off those live rows resumes
+        # it to what it actually had -- proposing fresh ones would place them
+        # AROUND the standing windows on purpose (that is what `propose_slots`
+        # does with a member's existing commitments) and leave six windows on
+        # different evenings.
+        slots = emitted_slots(row)
+    if not slots:
+        # Nothing remembered and nothing standing -- windows deleted by hand
+        # while it slept. Propose fresh ones rather than come back with no
+        # practice time at all.
         slots = propose_slots(row.get('member_id'), row.get('shape') or {})
+    # Whatever is still standing goes before anything new is written, so
+    # re-emitting can never double-claim an evening the row already holds.
+    release_commitments(program_id)
+    row = storage.get_program(program_id) or row
     emissions = dict(row.get('emissions') or {})
-    emissions['commitment_ids'] = list(emissions.get('commitment_ids') or [])
-    _emit_commitments(program_id, row, slots, emissions)
-    storage.update_program(program_id, {'state': 'active', 'paused_at': None,
-                                        'paused_slots': [],
-                                        'emissions': emissions})
+    emissions['commitment_ids'] = []
+    keep = dict(emissions)
+    made = []
+    try:
+        _emit_commitments(program_id, row, slots, emissions, made)
+        storage.update_program(program_id, {'state': 'active',
+                                            'paused_at': None,
+                                            'paused_slots': [],
+                                            'emissions': emissions})
+    except Exception as e:
+        _revert_resume(program_id, made, slots, keep)
+        return {'status': 'error',
+                'message': f"Couldn't claim those evenings again, so nothing "
+                           f"was kept — {row.get('title') or 'this program'} "
+                           f"is still paused and can be resumed again once "
+                           f"that's sorted out: {e}"}
     return {'status': 'success', 'schedule_dirty': True,
             'message': f"Back on. {len(slots)} practice window(s) claimed again."}
 

@@ -574,6 +574,117 @@ def scenario_a_reshaped_program_can_be_approved_again_without_a_duplicate_thread
           f"and the week is claimed again, got {row['emissions']}")
 
 
+def scenario_pausing_an_unapproved_program_cannot_claim_the_week():
+    """The regression the pause/resume fix introduced, closed.
+
+    `pause()` refused only done/dropped, so a PROPOSED program could be
+    paused -- and once `resume()` really emitted commitments, resuming it
+    claimed practice windows in the family's week with no parent, no
+    footprint screen, and `approved_by` and `baseline.start_date` never set.
+    Both endpoints let an owner act freely, which is right for a program
+    somebody already approved and exactly wrong as a way in: approving is the
+    one act this arc says is never an ownership matter.
+    """
+    _reset()
+    pid = _mk()
+    check(storage.get_program(pid)['state'] == 'proposed', 'unapproved')
+
+    res = programs.pause(pid)
+    check(res['status'] == 'error',
+          f"an unapproved program cannot be paused, got {res}")
+    check(storage.get_program(pid)['state'] == 'proposed',
+          "and its state is untouched")
+    res = programs.resume(pid)
+    check(res['status'] == 'error',
+          f"nor resumed into being active, got {res}")
+    check(storage.get_protected_commitments(member_id='lily') == [],
+          "so no evening was ever claimed without an approval")
+    row = storage.get_program(pid)
+    check(not row.get('approved_by') and row['state'] == 'proposed',
+          f"the program is exactly where it started, got {row['state']}")
+
+    # And the pair still works on the thing it is actually for.
+    check(programs.approve(pid, 'mom')['status'] == 'success', 'approved')
+    check(programs.pause(pid)['status'] == 'success', 'pauses cleanly')
+    check(programs.resume(pid)['status'] == 'success', 'resumes cleanly')
+    check(len(storage.get_protected_commitments(member_id='lily')) == 3,
+          "with the same three windows and no more")
+
+
+def scenario_a_row_paused_by_the_old_code_resumes_to_what_it_had():
+    """A program paused BEFORE this release has live commitments and
+    populated `commitment_ids` but no `paused_slots`. Falling back to
+    `propose_slots` would place fresh windows AROUND the standing ones --
+    that is what it is built to do -- and leave six windows on different
+    evenings."""
+    _reset()
+    pid = _mk()
+    check(programs.approve(pid, 'mom')['status'] == 'success', 'approved')
+    had = sorted((c['days_of_week'][0], c['time_start'], c['time_end'])
+                 for c in storage.get_protected_commitments(member_id='lily'))
+    # Exactly what the old `pause()` did: flip the state, leave everything
+    # else standing.
+    storage.update_program(pid, {'state': 'paused', 'paused_at': 1.0})
+    check(not storage.get_program(pid).get('paused_slots'),
+          'the old row remembers no slots')
+
+    res = programs.resume(pid)
+    check(res['status'] == 'success', f"got {res}")
+    now = sorted((c['days_of_week'][0], c['time_start'], c['time_end'])
+                 for c in storage.get_protected_commitments(member_id='lily'))
+    check(now == had,
+          f"it comes back to the windows it had, not twice as many: "
+          f"{had} -> {now}")
+    ids = storage.get_program(pid)['emissions']['commitment_ids']
+    live = {c['id'] for c in storage.get_protected_commitments()}
+    check(len(ids) == 3 and set(ids) <= live,
+          f"and every id it believes in is real, got {ids}")
+
+
+def scenario_a_failed_resume_keeps_nothing_and_can_be_retried():
+    """`_emit_commitments` persists each id as it lands, which is what makes
+    a crash survivable -- but only if somebody undoes the ones that did. An
+    unbracketed failure on slot two left the row paused, `paused_slots` still
+    full, and one commitment created AND recorded, so the retry emitted all
+    three again and double-claimed the first evening."""
+    _reset()
+    pid = _mk()
+    check(programs.approve(pid, 'mom')['status'] == 'success', 'approved')
+    check(programs.pause(pid)['status'] == 'success', 'paused')
+
+    real = storage.add_protected_commitment
+    calls = []
+
+    def flaky(data):
+        calls.append(data)
+        if len(calls) == 2:
+            raise RuntimeError('the commitments table went away')
+        return real(data)
+
+    storage.add_protected_commitment = flaky
+    try:
+        res = programs.resume(pid)
+    finally:
+        storage.add_protected_commitment = real
+    check(res['status'] == 'error', f"it says it failed, got {res}")
+    check('still paused' in res['message'],
+          f"and says what state that leaves, got {res['message']}")
+
+    row = storage.get_program(pid)
+    check(row['state'] == 'paused', f"the row is still paused, got {row['state']}")
+    check(row['emissions']['commitment_ids'] == [],
+          f"believing in no windows, got {row['emissions']}")
+    check(storage.get_protected_commitments(member_id='lily') == [],
+          "and the one that DID land was taken back down")
+    check(len(row.get('paused_slots') or []) == 3,
+          f"the slots are still remembered, so a retry knows them, got {row}")
+
+    res = programs.resume(pid)
+    check(res['status'] == 'success', f"and the retry works, got {res}")
+    check(len(storage.get_protected_commitments(member_id='lily')) == 3,
+          "claiming three evenings, not four")
+
+
 if __name__ == '__main__':
     scenario_slots_match_the_shape()
     scenario_the_footprint_is_visible_before_the_tap()
@@ -591,4 +702,7 @@ if __name__ == '__main__':
     scenario_the_shape_is_clamped_at_every_door()
     scenario_pause_gives_the_evenings_back_and_resume_claims_them_again()
     scenario_a_reshaped_program_can_be_approved_again_without_a_duplicate_thread()
+    scenario_pausing_an_unapproved_program_cannot_claim_the_week()
+    scenario_a_row_paused_by_the_old_code_resumes_to_what_it_had()
+    scenario_a_failed_resume_keeps_nothing_and_can_be_retried()
     print("test_programs_footprint OK")
