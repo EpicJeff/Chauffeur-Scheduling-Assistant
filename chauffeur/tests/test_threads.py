@@ -290,6 +290,58 @@ def scenario_research_resets_the_stall_clock():
         threads._web_research = orig
 
 
+def scenario_research_persists_only_urls_actually_read():
+    """On the pages route (via == 'pages'), `sources` is every search
+    result found — up to RESULTS_PER_SEARCH — while `facts` is the
+    filtered list where each claim actually cites a page that was fetched
+    and read. Two of these three sources were never opened; only the one
+    fact's URL may reach the permanent record."""
+    _reset()
+    t = threads.create('Nanny search', owner_member_id='m1')
+    orig = threads._web_research
+    try:
+        threads._web_research = lambda q: {
+            'status': 'ok', 'answer': 'Background checks run $20-60.',
+            'via': 'pages',
+            'facts': [{'claim': 'Background checks run $20-60',
+                      'url': 'https://example.com/read-page'}],
+            'sources': [
+                {'title': 'Read', 'url': 'https://example.com/read-page'},
+                {'title': 'Never fetched', 'url': 'https://example.com/unread-1'},
+                {'title': 'Also never fetched', 'url': 'https://example.com/unread-2'},
+            ],
+            'dropped': 1,
+        }
+        res = threads.research(t, 'What do background checks cost?')
+        check(res['status'] == 'ok', f"got {res}")
+        h = storage.get_thread(t)['history'][-1]
+        check('https://example.com/read-page' in h['text'],
+              f"the cited, actually-read page survives, got {h}")
+        check('https://example.com/unread-1' not in h['text']
+              and 'https://example.com/unread-2' not in h['text'],
+              f"a page nobody read must never enter the permanent record, got {h}")
+    finally:
+        threads._web_research = orig
+
+
+def scenario_research_surfaces_the_invention_rate():
+    _reset()
+    t = threads.create('Nanny search', owner_member_id='m1')
+    orig = threads._web_research
+    try:
+        threads._web_research = lambda q: {
+            'status': 'ok', 'answer': 'Answer.',
+            'facts': [{'claim': 'Answer.', 'url': 'https://example.com/a'}],
+            'sources': [{'title': 'A', 'url': 'https://example.com/a'}],
+            'dropped': 3,
+        }
+        res = threads.research(t, 'A question?')
+        check(res.get('dropped') == 3,
+              f"the invention rate is surfaced, not discarded, got {res}")
+    finally:
+        threads._web_research = orig
+
+
 def scenario_a_received_reply_resets_the_stall_clock():
     _reset()
     t = threads.create('Nanny search', owner_member_id='m1',
@@ -319,6 +371,8 @@ if __name__ == '__main__':
     scenario_research_ok_appends_answer_and_url()
     scenario_research_disabled_appends_nothing()
     scenario_research_resets_the_stall_clock()
+    scenario_research_persists_only_urls_actually_read()
+    scenario_research_surfaces_the_invention_rate()
     scenario_inbound_matches_by_counterparty_address()
     scenario_inbound_from_a_stranger_matches_nothing()
     scenario_shared_counterparty_disambiguated_by_subject()

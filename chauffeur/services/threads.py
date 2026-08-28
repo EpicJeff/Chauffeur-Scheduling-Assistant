@@ -216,12 +216,21 @@ def research(thread_id: str, question: str) -> dict:
 
     answer = (result.get('answer') or '').strip()
     sources = result.get('sources') or []
-    urls = [s['url'] for s in sources if s.get('url')]
+    facts = result.get('facts') or []
+    # Facts first, not sources: on the pages route (via == 'pages'), `facts`
+    # is the filtered list where every claim actually cites a page that was
+    # fetched and read — unreadable/unverifiable citations already dropped
+    # by web.research — while `sources` there is every search result found
+    # (up to RESULTS_PER_SEARCH), most of which were never opened. Falling
+    # back to `sources` whenever it happened to be non-empty meant a
+    # thread's permanent record could carry a URL nobody ever read, which
+    # is precisely what `services/web.py` exists to prevent. `sources` is
+    # only trusted here when there are no facts at all — the grounding
+    # route's shape, one synthetic fact standing in for an answer that has
+    # no per-claim breakdown.
+    urls = list(dict.fromkeys(f['url'] for f in facts if f.get('url')))
     if not urls:
-        # Belt and suspenders: fall back to the facts' own URLs if a route
-        # ever returns facts without a parallel sources list.
-        urls = list(dict.fromkeys(
-            f['url'] for f in (result.get('facts') or []) if f.get('url')))
+        urls = list(dict.fromkeys(s['url'] for s in sources if s.get('url')))
 
     text = f'Researched: {question}\n\n{answer}'
     if urls:
@@ -232,8 +241,8 @@ def research(thread_id: str, question: str) -> dict:
         'text': text,
         'who': 'argyle',
     })
-    return {'status': 'ok', 'answer': answer,
-            'facts': result.get('facts') or [], 'sources': sources}
+    return {'status': 'ok', 'answer': answer, 'facts': facts,
+            'sources': sources, 'dropped': result.get('dropped') or 0}
 
 
 def _stall_days() -> int:
