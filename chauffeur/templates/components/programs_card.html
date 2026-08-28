@@ -15,12 +15,23 @@
      Self-fetching, the same shape `packingCard` established
      (components/packing_card.html): the factory takes only `{t, apiBase}`
      and owns its own poll, because interactive depth means the card fetches
-     its own data rather than riding the board's payload. It calls the same
-     two endpoints the admin page already does (`GET api/programs`,
-     `GET api/members`) to turn a `member_id` into a name to put on the wall
-     — there is no server-side tile builder for this type, the same way
-     `_tile_packing` in services/home_board.py ships only mount config and
-     leaves the fetch to the client.
+     its own data rather than riding the board's payload. It calls ONE
+     endpoint, `GET api/programs/celebrations` — there is no server-side tile
+     builder for this type, the same way `_tile_packing` in
+     services/home_board.py ships only mount config and leaves the fetch to
+     the client.
+
+     It used to call `GET api/programs` and `GET api/members`, and on a wall
+     that could never work: a `?panel=true` board's fetches carry
+     `X-Device-Token`, so `identify()` returns DEVICE, and both
+     `_program_list_scope` and `_is_admin_surface` refuse a device — the card
+     said "Nothing to celebrate yet." forever. The fix is not a wider read.
+     The full program payload carries somebody's aim in their own words,
+     their curated plan, their target date and every session they logged, and
+     a wall is read by whoever is in the room. `programs.celebrations()`
+     returns the three sentences below and nothing else, with names already
+     resolved, which is why `services/auth.py` lets a panel call that one
+     route and no other.
 
      Every string here comes from `x-text`, not `x-html`: a program's title
      and a phase's milestone text are household-typed or curated-plan
@@ -45,7 +56,8 @@
                              that counts down or divides one number by
                              another, so the nearest phase by that length is
                              the honest answer to "close" rather than an
-                             invented one. -->
+                             invented one. The server picks it; the wall never
+                             sees the week counts it was picked by. -->
                         <template x-if="pgUpNext">
                             <div class="agenda-day rounded-2xl p-3 flex items-center gap-3">
                                 <span class="text-2xl shrink-0">🎯</span>
@@ -116,56 +128,21 @@
 
             async loadPrograms() {
                 try {
-                    const [pRes, mRes] = await Promise.all([
-                        fetch(`${apiBase}api/programs`),
-                        fetch(`${apiBase}api/members`),
-                    ]);
-                    const pd = pRes.ok ? await pRes.json() : { programs: [] };
-                    const members = mRes.ok ? await mRes.json() : [];
-                    const nameOf = (id) => {
-                        const m = members.find(mm => mm.id === id);
-                        return (m && m.name) || 'Somebody';
-                    };
-                    // Paused is a peer of active, not a flavour of stopped —
-                    // the wall still gets to celebrate a paused program's
-                    // last week same as a running one.
-                    const live = (pd.programs || []).filter(
-                        p => p.state === 'active' || p.state === 'paused');
-
-                    let best = null;
-                    for (const p of live) {
-                        const phase = (p.progress || {}).phase;
-                        if (!phase || !phase.milestone) continue;
-                        const weeks = typeof phase.weeks === 'number' ? phase.weeks : Infinity;
-                        if (!best || weeks < best.weeks) {
-                            best = { weeks: weeks, memberName: nameOf(p.member_id),
-                                     milestone: phase.milestone, title: p.title };
-                        }
-                    }
-
-                    const sinceTs = (Date.now() / 1000) - 7 * 24 * 3600;
-                    const practiced = [];
-                    for (const p of live) {
-                        const n = (p.sessions || []).filter(s => (s.ts || 0) >= sinceTs).length;
-                        if (n > 0) {
-                            practiced.push({ key: p.id,
-                                line: `${nameOf(p.member_id)} practised ${p.title} ${pgSpell(n)} time${n === 1 ? '' : 's'}` });
-                        }
-                    }
-
-                    const celebrated = [];
-                    for (const p of live) {
-                        for (const ph of p.phases || []) {
-                            if (ph.milestone_hit_at && ph.milestone_hit_at >= sinceTs) {
-                                celebrated.push({ key: p.id + ':' + ph.name,
-                                    line: `${nameOf(p.member_id)} reached ${ph.milestone || ph.name}` });
-                            }
-                        }
-                    }
-
-                    this.pgUpNext = best;
-                    this.pgPracticed = practiced;
-                    this.pgCelebrated = celebrated;
+                    const r = await fetch(`${apiBase}api/programs/celebrations`);
+                    if (!r.ok) return;
+                    const d = await r.json();
+                    const up = d.up_next;
+                    // The server has already decided what a hallway may know
+                    // and resolved the names; this only words it.
+                    this.pgUpNext = up ? { memberName: up.member_name,
+                                           milestone: up.milestone,
+                                           title: up.title } : null;
+                    this.pgPracticed = (d.practiced || []).map(p => ({
+                        key: p.key,
+                        line: `${p.member_name} practised ${p.title} ${pgSpell(p.sessions)} time${p.sessions === 1 ? '' : 's'}` }));
+                    this.pgCelebrated = (d.celebrated || []).map(c => ({
+                        key: c.key,
+                        line: `${c.member_name} reached ${c.milestone}` }));
                 } catch (e) {
                     // Stale beats false-empty: one poll that did not land
                     // (an add-on rebuild, an HA restart) must not wipe a

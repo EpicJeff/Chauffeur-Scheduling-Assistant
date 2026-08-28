@@ -98,13 +98,34 @@ agent goes looking, and a parent approves a program that already has a real
 plan in it.
 
 The engine is `web.research()`, with the discipline the threads arc locked:
-**citations come from `facts`** — claims tied to pages the app actually
-fetched — **never from `sources`**, which is merely everything the search
-returned. `research()` also reports `dropped`, the count of citations
-attributed to pages it never read. Here that gets teeth:
+**citations come from `facts`** — never from `sources`, which is merely
+everything the search returned. `research()` also reports `dropped`, the
+count of citations attributed to pages it never read. Here that gets teeth:
 
 > **A phase that cites nothing is dropped. If dropping empties the plan, the
 > program becomes hand-written and says so.**
+
+**As shipped, that rule is only as strong as the research route underneath
+it, and the routes are not equal.** This was written as though `facts`
+always meant "a claim tied to a page this app fetched". It does on two of
+`research()`'s three routes and not on the third, which is the default:
+
+- **Brave / SerpAPI** — the app searches, fetches each result and extracts
+  claims from what it read. `facts` really is a per-page citation trail,
+  `dropped` really counts unread attributions, and the rule holds as stated.
+- **Gemini grounding — the default, and this household's** — Google
+  searches and returns an answer plus its own source list; the app fetches
+  nothing. `research()` synthesises `facts` as one entry pairing the WHOLE
+  answer with the first resolved source, and reports `dropped: 0`. The phase
+  check can therefore only catch a model that invents a URL different from
+  the one it was handed; it cannot catch a phase that cites that source
+  while saying something the source never said.
+
+The substance of the arc survives — a grounded answer with a real search
+behind it is still curation rather than invention — but the guarantee is
+weaker on the default route than this document originally claimed, and
+overstating a safety property is worse than describing a weaker one plainly.
+Making grounding fetch its own sources is separate, unshipped work.
 
 That is what stops the named failure: an LLM will happily produce a twelve-week
 curriculum for anything, and it will look exactly as good as the real one an
@@ -202,7 +223,14 @@ and is **out of scope** for this arc.
 **Counting.** A reserved slot elapses and one question arrives for the person
 whose program it is — *"Guitar last night — did it happen?"* — one tap, deduped
 by slot, never asked twice, held to the existing quiet-hour rules so a 9pm slot
-asks in the morning. Yes appends a session (`source: 'asked'`). Silence appends
+asks in the morning. **"For the person whose program it is" is load-bearing and
+was got wrong once:** shipped as a watcher finding, the question went to the
+PARENTS (findings are DM'd to parents, `/api/findings` is parent/adult gated,
+and the confirm card was admin gated), so a parent could tap "yes, it happened"
+about a session nobody watched. It rides the owner's own surface instead — the
+PWA card, from `due_asks_for` — which is also the only reading under which
+checking the member's quiet hours ever made sense. An evening the family gave
+up through negotiation's `lift_protected` is never asked about. Yes appends a session (`source: 'asked'`). Silence appends
 nothing. An unscheduled session can be added any time (`source: 'added'`).
 
 **Blaming the week without storing a failure.** To say "Wednesdays keep getting

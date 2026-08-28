@@ -5619,7 +5619,25 @@ def list_programs_api(member_id: str = None, include_finished: bool = False,
         return {"programs": []}
     rows = storage.get_programs(member_id=scope,
                                 include_finished=include_finished)
-    return {"programs": [{**r, 'progress': _prog.progress(r)} for r in rows]}
+    out = []
+    for r in rows:
+        # The "did it happen?" question rides the OWNER's own surface rather
+        # than a DM to their parents (see `watchers._program_findings`), so
+        # the pending ask has to come back with the program the PWA already
+        # fetches. `due_asks_for` guards itself: a malformed record costs this
+        # one program its prompt, never the whole list.
+        try:
+            asks = _prog.due_asks_for(r)
+        except Exception as e:
+            print(f"[programs] due ask read failed for {r.get('id')}: {e}")
+            asks = []
+        # The most recent unanswered slot, never a backlog: one question at a
+        # time is the design's own rule, and a list of every evening somebody
+        # did not practise is a miss record wearing a prompt's clothes.
+        ask = ({'slot_date': asks[-1]['slot_date'], 'body': asks[-1]['body']}
+               if asks else None)
+        out.append({**r, 'progress': _prog.progress(r), 'due_ask': ask})
+    return {"programs": out}
 
 
 @app.post("/api/programs")
@@ -5634,7 +5652,14 @@ def create_program(body: dict = Body(default={}), request: Request = None):
     below requires once ownership doesn't hold — a program is still a
     capability nobody granted, even sitting `proposed` until approved.
     """
-    from services import programs_curate as _cur
+    from services import programs as _prog, programs_curate as _cur
+    # `programs_enabled` used to gate only the watcher sweep, so a household
+    # that had turned programs off could still propose one -- spending a real
+    # research run and claiming a week the settings said it did not want. A
+    # setting named for a feature governs the feature.
+    if not storage.get_settings().get('programs_enabled', True):
+        return {"status": "error",
+                "message": "Programs are switched off for this household."}
     title = (body.get('title') or '').strip()
     screen = _cur.screen_aim(title)
     if not screen.get('ok'):
@@ -5642,9 +5667,13 @@ def create_program(body: dict = Body(default={}), request: Request = None):
                 "alternatives": screen.get('alternatives') or []}
     claimed = body.get('member_id')
     actor_id = _acting_id(request, claimed)
-    shape = {'sessions_per_week': int(body.get('sessions_per_week') or 3),
-             'minutes': int(body.get('minutes') or 25),
-             'preferred_days': list(body.get('preferred_days') or [])}
+    # Clamped HERE, not only by `max="7"` on the number input: a shape nobody
+    # bounded hung `propose_slots` forever and wrote a '29:00' window that
+    # silently disabled protected time household-wide.
+    shape = _prog.clamp_shape({
+        'sessions_per_week': body.get('sessions_per_week'),
+        'minutes': body.get('minutes'),
+        'preferred_days': list(body.get('preferred_days') or [])})
     for_member_id = body.get('for_member_id')
     member_id = for_member_id or actor_id
     if not member_id:
@@ -5664,24 +5693,60 @@ def create_program(body: dict = Body(default={}), request: Request = None):
     return {"status": "success", "id": pid, "program": storage.get_program(pid)}
 
 
+@app.get("/api/programs/celebrations")
+def program_celebrations():
+    """What a hallway is allowed to know about the household's programs.
+
+    A deliberately narrow projection rather than a widened read: the wall card
+    fetches from a `?panel=true` board, which identifies as DEVICE, and both
+    `_program_list_scope` and `_is_admin_surface` refuse a device outright --
+    correctly, because the full program payload carries an aim in somebody's
+    own words, a curated plan and every session they logged, and a wall is
+    read by whoever is in the room. This returns three celebration sentences
+    and nothing else, which is why it is the one program route a panel may
+    call (`services/auth.py`, WALL).
+    """
+    from services import programs as _prog
+    return _prog.celebrations()
+
+
 @app.get("/api/programs/{program_id}/footprint")
-def program_footprint(program_id: str):
+def program_footprint(program_id: str, request: Request = None):
+    """The footprint was the one program read with no ownership gate at all --
+    a title, the times it would claim, the kit line and the target date, to
+    any signed-in caller holding an id. Same rule as every other read."""
     from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
         raise HTTPException(status_code=404, detail="No such program")
+    _program_permission_or_refuse(request, {}, row)
     return _prog.footprint(row)
 
 
+def _program_refresh(result: dict, background_tasks) -> dict:
+    """A program write that moved protected time has to reach the solver NOW.
+
+    `programs.approve()` has always returned `schedule_dirty` and every
+    endpoint ignored it — which is exactly why `create_commitment` force-
+    refreshes on the same event: protecting an evening that stays scheduled is
+    not protecting it, and the mirror case (freeing an evening that stays
+    blocked) leaves CP-SAT refusing to place a drive nothing is using.
+    """
+    if result and result.get('schedule_dirty') and background_tasks is not None:
+        background_tasks.add_task(trigger_background_refresh, None, None, True)
+    return result
+
+
 @app.post("/api/programs/{program_id}/approve")
-def approve_program(program_id: str, body: dict = Body(default={}),
-                    request: Request = None):
+def approve_program(program_id: str, background_tasks: BackgroundTasks = None,
+                    body: dict = Body(default={}), request: Request = None):
     """Claim the week. Parent/adult work — the control-center surface stands
     in the household's parent of record, same as the Mind's approve tap."""
     from services import programs as _prog
     actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
-    return _prog.approve(program_id, (actor or {}).get('id'),
-                         slots=body.get('slots'))
+    return _program_refresh(
+        _prog.approve(program_id, (actor or {}).get('id'),
+                      slots=body.get('slots')), background_tasks)
 
 
 @app.post("/api/programs/{program_id}/session")
@@ -5695,61 +5760,103 @@ def log_program_session(program_id: str, body: dict = Body(default={}),
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
     _program_permission_or_refuse(request, body, row)
+    # `slot_date` files an answer under the evening it was ASKED about. A 9pm
+    # slot asks in the morning, so stamping "yes, it happened" with `now`
+    # would file Thursday's practice under Friday — and the prompt for
+    # Thursday would never clear.
     return _prog.log_session(program_id, minutes=body.get('minutes'),
                              source=body.get('source') or 'added',
-                             note=body.get('note') or '')
+                             note=body.get('note') or '',
+                             slot_date=body.get('slot_date'))
 
 
 @app.post("/api/programs/{program_id}/milestone")
-def hit_program_milestone(program_id: str, body: dict = Body(default={}),
+def hit_program_milestone(program_id: str, background_tasks: BackgroundTasks = None,
+                          body: dict = Body(default={}),
                           request: Request = None):
     from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
     _program_permission_or_refuse(request, body, row)
-    return _prog.mark_milestone(program_id, body.get('phase_name') or '')
+    # Marking the LAST milestone finishes the program, which hands its
+    # evenings back — so this one can move protected time too.
+    return _program_refresh(
+        _prog.mark_milestone(program_id, body.get('phase_name') or ''),
+        background_tasks)
+
+
+@app.post("/api/programs/{program_id}/finish")
+def finish_program(program_id: str, background_tasks: BackgroundTasks = None,
+                   body: dict = Body(default={}), request: Request = None):
+    """Done, by hand. The design says done is the last milestone OR a person
+    saying so, and only the first of those was ever built — so the only exit
+    from a finished plan was a button reading "Dropped. The time is back."
+    """
+    from services import programs as _prog
+    row = storage.get_program(program_id)
+    if not row:
+        return {'status': 'error', 'message': 'That program is no longer here.'}
+    _program_permission_or_refuse(request, body, row)
+    return _program_refresh(_prog.finish(program_id), background_tasks)
+
+
+@app.post("/api/programs/{program_id}/reshape")
+def reshape_program(program_id: str, background_tasks: BackgroundTasks = None,
+                    body: dict = Body(default={}), request: Request = None):
+    """The drift finding's offer, made real: hand the program back to
+    `proposed` so the footprint can be rebuilt and approved again. Nothing is
+    silently re-created — a person still sees the whole footprint and taps."""
+    from services import programs as _prog
+    row = storage.get_program(program_id)
+    if not row:
+        return {'status': 'error', 'message': 'That program is no longer here.'}
+    _program_permission_or_refuse(request, body, row)
+    return _program_refresh(_prog.reshape(program_id), background_tasks)
 
 
 @app.post("/api/programs/{program_id}/pause")
-def pause_program(program_id: str, body: dict = Body(default={}),
-                  request: Request = None):
+def pause_program(program_id: str, background_tasks: BackgroundTasks = None,
+                  body: dict = Body(default={}), request: Request = None):
     from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
     _program_permission_or_refuse(request, body, row)
-    return _prog.pause(program_id)
+    return _program_refresh(_prog.pause(program_id), background_tasks)
 
 
 @app.post("/api/programs/{program_id}/resume")
-def resume_program(program_id: str, body: dict = Body(default={}),
-                   request: Request = None):
+def resume_program(program_id: str, background_tasks: BackgroundTasks = None,
+                   body: dict = Body(default={}), request: Request = None):
     from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
     _program_permission_or_refuse(request, body, row)
-    return _prog.resume(program_id)
+    return _program_refresh(_prog.resume(program_id), background_tasks)
 
 
 @app.post("/api/programs/{program_id}/drop")
-def drop_program(program_id: str, body: dict = Body(default={}),
-                 request: Request = None):
+def drop_program(program_id: str, background_tasks: BackgroundTasks = None,
+                 body: dict = Body(default={}), request: Request = None):
     """Dropping is not failing. The emissions go; the record stays."""
     import time as _t
+    from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
         raise HTTPException(status_code=404, detail="No such program")
     _program_permission_or_refuse(request, body, row)
-    for cid in (row.get('emissions') or {}).get('commitment_ids') or []:
-        try:
-            storage.delete_protected_commitment(cid)
-        except Exception as e:
-            print(f"[programs] could not remove commitment {cid}: {e}")
+    # The same release every other exit uses, rather than a fourth copy of the
+    # delete loop — and it clears the ids off the row, which the loop here
+    # never did, so a dropped program stopped believing in windows that were
+    # really gone only by virtue of nothing reading it again.
+    released = _prog.release_commitments(program_id)
     storage.update_program(program_id, {'state': 'dropped',
                                         'finished_at': _t.time()})
-    return {"status": "success", "message": "Dropped. The time is back."}
+    return _program_refresh(
+        {"status": "success", "schedule_dirty": bool(released),
+         "message": "Dropped. The time is back."}, background_tasks)
 
 # --- Outside hands: assist contacts and the work they cover (load arc A1) ---
 # A contact is somebody outside this household who does work for it — a carpool

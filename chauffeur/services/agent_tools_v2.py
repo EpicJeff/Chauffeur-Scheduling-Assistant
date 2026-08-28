@@ -1728,7 +1728,12 @@ def propose_program(title: str, for_member_name: str = None,
     refusal = _program_writer(acting_member, 'start a program')
     if refusal:
         return refusal
-    from services import programs_curate as _cur
+    from services import storage as _st, programs_curate as _cur
+    # `programs_enabled` governs the whole feature, not only the sweep: with
+    # it off, proposing here would still spend a real research run.
+    if not _st.get_settings().get('programs_enabled', True):
+        return {"status": "error",
+                "message": "Programs are switched off for this household."}
     title = (title or '').strip()
     if not title:
         return {"status": "error", "message": "What's the aim?"}
@@ -1745,8 +1750,13 @@ def propose_program(title: str, for_member_name: str = None,
         if refusal:
             return refusal
         member_id, member_name = m['id'], m.get('name') or ''
-    shape = {'sessions_per_week': int(sessions_per_week or 3),
-             'minutes': int(minutes or 25), 'preferred_days': []}
+    # Clamped, because this schema's bounds are a hint to a model and nothing
+    # more: asked for "twice a day" a model says 14, and an unbounded shape
+    # hung `propose_slots` forever and wrote a '29:00' window that silently
+    # disabled protected time for the whole household.
+    from services import programs as _prog
+    shape = _prog.clamp_shape({'sessions_per_week': sessions_per_week,
+                               'minutes': minutes, 'preferred_days': []})
     curated = _cur.curate(title, shape, member_name=member_name)
     pid = _storage.add_program({
         'member_id': member_id, 'title': title, 'shape': shape,
@@ -4059,8 +4069,8 @@ def get_available_tools() -> List[Dict]:
                 "properties": {
                     "title": {"type": "string", "description": "The aim, e.g. 'learn guitar' or 'couch to 5k'."},
                     "for_member_name": {"type": "string", "description": "Whose program this is, if not the caller's own."},
-                    "sessions_per_week": {"type": "integer", "description": "How many times a week to practise. Defaults to 3."},
-                    "minutes": {"type": "integer", "description": "Minutes per session. Defaults to 25."}
+                    "sessions_per_week": {"type": "integer", "minimum": 1, "maximum": 7, "description": "How many times a week to practise, 1-7. Defaults to 3."},
+                    "minutes": {"type": "integer", "minimum": 5, "maximum": 240, "description": "Minutes per session, 5-240. Defaults to 25."}
                 },
                 "required": ["title"]
             }

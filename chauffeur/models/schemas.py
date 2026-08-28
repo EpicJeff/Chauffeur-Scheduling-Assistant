@@ -731,6 +731,13 @@ class Program(BaseModel):
     # be argued with but not rewritten.
     sessions: List[Dict[str, Any]] = Field(default_factory=list)
     paused_at: Optional[float] = None
+    # The windows a pause took down, so resuming puts back exactly what was
+    # there. Pause REMOVES the reservations (a paused program that keeps CP-SAT
+    # out of three evenings a week is not paused), and re-proposing on resume
+    # would quietly move somebody's practice to a different evening than the
+    # one they paused. Not a record of anything missed: it is empty the moment
+    # the program is running again.
+    paused_slots: List[Dict[str, Any]] = Field(default_factory=list)
     finished_at: Optional[float] = None
 
 class Request(BaseModel):

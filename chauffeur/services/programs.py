@@ -13,6 +13,7 @@ is no function that returns a streak, a miss count, or a comparison between two
 people, because there is no field to build one from.
 """
 import datetime
+import math
 import time
 import uuid
 
@@ -21,6 +22,50 @@ from services import storage
 # The states a program can be in. `paused` is a peer of `active`, not a flavour
 # of failure: if the only way out of a program is to fail it, people fail it.
 LIVE_STATES = ('proposed', 'active', 'paused')
+
+# The week has seven days, so seven windows is the most a program can ever
+# claim; a session that ran four hours is a day out, not a practice slot.
+# These are the OUTER bounds, enforced here rather than only in the number
+# input on the page: a chat model asked for "twice a day" will happily say 14,
+# and a shape nobody bounded produced two real failures -- a `propose_slots`
+# loop that could never fill an eighth day and so never terminated, and a
+# `time_end` of '29:00' that a solver `Rule` cannot parse, which took protected
+# time down for the WHOLE household because every commitment is converted
+# inside one try/except. Both are shape problems, so the shape is where the
+# bound belongs.
+MAX_SESSIONS_PER_WEEK = 7
+MIN_MINUTES = 5
+MAX_MINUTES = 240
+
+
+def clamp_shape(shape: dict) -> dict:
+    """A program's shape, forced inside what a week can actually hold.
+
+    Every door into a program goes through here -- the page, the endpoint, the
+    chat tool -- because a bound that lives in only one of them is a bound
+    somebody routes around without meaning to.
+    """
+    shape = dict(shape or {})
+    try:
+        per_week = int(shape.get('sessions_per_week') or 3)
+    except (TypeError, ValueError):
+        per_week = 3
+    try:
+        minutes = int(shape.get('minutes') or 25)
+    except (TypeError, ValueError):
+        minutes = 25
+    shape['sessions_per_week'] = max(1, min(MAX_SESSIONS_PER_WEEK, per_week))
+    shape['minutes'] = max(MIN_MINUTES, min(MAX_MINUTES, minutes))
+    days = []
+    for d in (shape.get('preferred_days') or []):
+        try:
+            d = int(d)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= d <= 6 and d not in days:
+            days.append(d)
+    shape['preferred_days'] = days
+    return shape
 
 
 def progress(program: dict) -> dict:
@@ -57,8 +102,31 @@ def sessions_between(program: dict, start: datetime.date,
     return out
 
 
+def _slot_ts(slot_date) -> float:
+    """When a session answered for a named slot actually happened.
+
+    A 9pm slot asks in the morning, so "yes, it happened" is very often tapped
+    the day AFTER the evening it is about. Stamping that answer with `now`
+    would file Thursday's practice under Friday -- which quietly breaks two
+    things at once: `weekday_shortfall` would blame the wrong day, and the
+    prompt for Thursday would never clear, because nothing was ever logged on
+    Thursday. Midday is used rather than the slot's own end time because this
+    layer does not hold the commitment, and any hour inside the day derives
+    the same weekday. A date in the future clamps to now: a session cannot
+    have happened yet.
+    """
+    if not slot_date:
+        return None
+    try:
+        d = datetime.date.fromisoformat(str(slot_date))
+    except (TypeError, ValueError):
+        return None
+    stamp = datetime.datetime(d.year, d.month, d.day, 12, 0)
+    return min(stamp, datetime.datetime.now()).timestamp()
+
+
 def log_session(program_id: str, minutes: int = None, source: str = 'added',
-                note: str = '') -> dict:
+                note: str = '', slot_date: str = None) -> dict:
     """Record that it happened. `asked` came from the question after a slot;
     `added` is a person saying so themselves — practising on the bus is still
     practising."""
@@ -70,8 +138,11 @@ def log_session(program_id: str, minutes: int = None, source: str = 'added',
                 'message': f"That program is {row.get('state')}."}
     mins = int(minutes if minutes is not None
                else (row.get('shape') or {}).get('minutes') or 0)
-    storage.append_program_session(program_id, {
-        'minutes': mins, 'source': source, 'note': (note or '').strip()})
+    entry = {'minutes': mins, 'source': source, 'note': (note or '').strip()}
+    ts = _slot_ts(slot_date)
+    if ts:
+        entry['ts'] = ts
+    storage.append_program_session(program_id, entry)
     p = progress(storage.get_program(program_id))
     return {'status': 'success', 'sessions': p['sessions'],
             'message': f"{p['sessions']} sessions so far."}
@@ -93,31 +164,169 @@ def mark_milestone(program_id: str, phase_name: str) -> dict:
     if not found:
         return {'status': 'error', 'message': "I can't find that milestone."}
     storage.update_program(program_id, {'phases': phases})
+    # The last milestone IS done -- that is the design's own definition, and
+    # without this the only exit from a finished plan was a button reading
+    # "Dropped. The time is back." Reaching the end of a plan must not be
+    # indistinguishable from abandoning it, and a program nobody can finish
+    # keeps its practice windows and keeps asking "did it happen?" forever.
+    if not any(not ph.get('milestone_hit_at') for ph in phases):
+        released = release_commitments(program_id)
+        storage.update_program(program_id, {'state': 'done',
+                                            'finished_at': time.time()})
+        return {'status': 'success', 'schedule_dirty': bool(released),
+                'message': f"🎉 {row.get('title')}: {phase_name} done — "
+                           f"that's the last one. The whole program is done."}
     return {'status': 'success',
             'message': f"🎉 {row.get('title')}: {phase_name} done."}
 
 
+def finish(program_id: str) -> dict:
+    """A person says it's finished. The other half of `done`: the design says
+    done is the last milestone OR a person saying so, and only the first of
+    those was ever built.
+
+    Finishing releases the reserved time the same way dropping does, because
+    the time really is free either way — what differs is the record, and the
+    record is the whole point of having two words for it.
+    """
+    row = storage.get_program(program_id)
+    if not row:
+        return {'status': 'error', 'message': 'That program is no longer here.'}
+    if row.get('state') in ('done', 'dropped'):
+        return {'status': 'error',
+                'message': f"That program is already {row.get('state')}."}
+    released = release_commitments(program_id)
+    storage.update_program(program_id, {'state': 'done',
+                                        'finished_at': time.time()})
+    return {'status': 'success', 'schedule_dirty': bool(released),
+            'message': f"{row.get('title')} is finished. The time is back."}
+
+
+def release_commitments(program_id: str) -> int:
+    """Hand the reserved evenings back and stop believing they are ours.
+
+    Every exit from a live program goes through here -- pause, done, drop,
+    re-shape -- because reserved time that outlives the thing that reserved it
+    is worse than no reservation at all: CP-SAT keeps refusing to schedule a
+    drive in an evening nothing is using, and nobody can see why.
+    """
+    row = storage.get_program(program_id)
+    if not row:
+        return 0
+    em = dict(row.get('emissions') or {})
+    ids = list(em.get('commitment_ids') or [])
+    for cid in ids:
+        try:
+            storage.delete_protected_commitment(cid)
+        except Exception as e:
+            print(f"[programs] could not remove commitment {cid}: {e}")
+    em['commitment_ids'] = []
+    storage.update_program(program_id, {'emissions': em})
+    return len(ids)
+
+
+def emitted_slots(program: dict) -> list:
+    """The windows this program's own commitments currently occupy.
+
+    Read back off the rows rather than recomputed from `shape`: `propose_slots`
+    pads the days out and the parent can edit every one of them on the
+    approval screen, and none of that is ever written back into `shape`. So
+    the commitment rows are the only honest record of when this actually
+    happens -- which matters most on resume, where re-proposing would quietly
+    move somebody's practice to a different evening than the one they paused.
+    """
+    ids = set((program.get('emissions') or {}).get('commitment_ids') or [])
+    if not ids:
+        return []
+    out = []
+    for pc in storage.get_protected_commitments(
+            member_id=program.get('member_id'), include_inactive=True):
+        if pc.get('id') not in ids:
+            continue
+        for d in (pc.get('days_of_week') or []):
+            out.append({'day': d, 'time_start': pc.get('time_start'),
+                        'time_end': pc.get('time_end')})
+    return sorted(out, key=lambda s: (s['day'], s['time_start'] or ''))
+
+
 def pause(program_id: str) -> dict:
+    """Stop, without failing. Pause REMOVES the reservations — the spec is
+    explicit and it is the whole point: a paused program that keeps CP-SAT out
+    of three evenings a week is not paused, it is invisible.
+
+    The windows themselves are remembered on the row so that resuming puts
+    back exactly what was there rather than proposing somewhere new.
+    """
     row = storage.get_program(program_id)
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
     if row.get('state') in ('done', 'dropped'):
         return {'status': 'error',
                 'message': f"That program is {row.get('state')} — there's nothing to pause."}
+    slots = emitted_slots(row)
+    released = release_commitments(program_id)
     storage.update_program(program_id, {'state': 'paused',
-                                        'paused_at': time.time()})
-    return {'status': 'success', 'message': 'Paused. Nothing counts against it.'}
+                                        'paused_at': time.time(),
+                                        'paused_slots': slots})
+    return {'status': 'success', 'schedule_dirty': bool(released),
+            'message': 'Paused. Nothing counts against it, and the evenings '
+                       'are back until you resume.'}
 
 
 def resume(program_id: str) -> dict:
+    """Back on — and the reservations come back with it, through the same
+    write path `approve()` uses rather than a second one that could drift
+    away from it."""
     row = storage.get_program(program_id)
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
     if row.get('state') != 'paused':
         return {'status': 'error',
                 'message': f"That program is {row.get('state')}, not paused."}
-    storage.update_program(program_id, {'state': 'active', 'paused_at': None})
-    return {'status': 'success', 'message': 'Back on.'}
+    slots = [s for s in (row.get('paused_slots') or []) if s.get('time_start')]
+    if not slots:
+        # A program paused before this remembered anything, or one whose
+        # windows were deleted by hand while it slept: propose fresh ones
+        # rather than come back with no practice time at all.
+        slots = propose_slots(row.get('member_id'), row.get('shape') or {})
+    emissions = dict(row.get('emissions') or {})
+    emissions['commitment_ids'] = list(emissions.get('commitment_ids') or [])
+    _emit_commitments(program_id, row, slots, emissions)
+    storage.update_program(program_id, {'state': 'active', 'paused_at': None,
+                                        'paused_slots': [],
+                                        'emissions': emissions})
+    return {'status': 'success', 'schedule_dirty': True,
+            'message': f"Back on. {len(slots)} practice window(s) claimed again."}
+
+
+def reshape(program_id: str) -> dict:
+    """Drift's real answer: hand the program back to `proposed` so the
+    footprint can be rebuilt and approved again.
+
+    The drift finding asks "want it back, or shall I re-shape the week?" and
+    for one release that offer had nothing behind it — no action, no endpoint,
+    and `approve()` demands `state == 'proposed'`, so nothing in the app could
+    perform the sentence it had just said. An offer the app cannot honour is
+    worse than no offer: it teaches people the assistant is decorative.
+
+    This never re-creates the deleted window silently. It puts the program
+    back in front of a person with the whole footprint on one screen, which
+    is the same gate the time went through the first time.
+    """
+    row = storage.get_program(program_id)
+    if not row:
+        return {'status': 'error', 'message': 'That program is no longer here.'}
+    if row.get('state') not in ('active', 'paused'):
+        return {'status': 'error',
+                'message': f"That program is {row.get('state')} — there's "
+                           f"nothing to re-shape."}
+    released = release_commitments(program_id)
+    storage.update_program(program_id, {'state': 'proposed',
+                                        'paused_at': None, 'paused_slots': []})
+    return {'status': 'success', 'schedule_dirty': bool(released),
+            'message': f"{row.get('title')} is back to a proposal — approve "
+                       f"the footprint on the Programs page to claim the "
+                       f"week again."}
 
 
 # --- The footprint: what a program does to the week ------------------------
@@ -140,14 +349,24 @@ def propose_slots(member_id: str, shape: dict, now=None) -> list:
     already committed and picks windows that do not sit on top of it, and the
     person can move them on the approval screen anyway.
     """
-    per_week = max(1, int((shape or {}).get('sessions_per_week') or 3))
-    minutes = max(5, int((shape or {}).get('minutes') or 25))
-    days = list((shape or {}).get('preferred_days') or [])
+    shape = clamp_shape(shape)
+    per_week = shape['sessions_per_week']
+    minutes = shape['minutes']
+    days = list(shape['preferred_days'])
+    # Pad out to the number of sessions asked for. The loop stops the moment a
+    # pass adds nothing, not only when it is full: with every weekday already
+    # taken there is no candidate left, and a `while len(days) < per_week`
+    # with no such guard spins forever on any `per_week` above seven. The
+    # clamp above makes that unreachable; this break is what makes it
+    # unreachable a second, independent way, because the failure mode was a
+    # threadpool worker pinned at 100% CPU on every page load, permanently.
     while len(days) < per_week:
         for candidate in (1, 3, 5, 0, 2, 4, 6):
             if candidate not in days:
                 days.append(candidate)
                 break
+        else:
+            break
     days = sorted(days[:per_week])
 
     taken = {}
@@ -161,7 +380,12 @@ def propose_slots(member_id: str, shape: dict, now=None) -> list:
         hour, minute = default_hour, default_minute
         while _fmt_hhmm(hour, minute) in (taken.get(d) or []) and hour < 21:
             hour += 1
-        end_total = hour * 60 + minute + minutes
+        # A window has to end inside the day it started in. `time_end` is
+        # written straight into a `ProtectedCommitment` and from there into a
+        # solver `Rule`, and every commitment is converted inside ONE
+        # try/except -- so a single '29:00' does not cost one program its
+        # window, it silently disables protected time for the whole household.
+        end_total = min(hour * 60 + minute + minutes, 23 * 60 + 59)
         out.append({'day': d, 'time_start': _fmt_hhmm(hour, minute),
                     'time_end': _fmt_hhmm(end_total // 60, end_total % 60)})
     return out
@@ -227,7 +451,8 @@ def _remove_calendar_event(cal_id: str, event_id: str) -> bool:
     return _cal.remove_event(cal_id, event_id)
 
 
-def _revert_attempt(program_id: str, emissions: dict) -> None:
+def _revert_attempt(program_id: str, emissions: dict,
+                    restore: dict = None) -> None:
     """Undo what THIS attempt stamped, and hand the claim back no matter what.
 
     Two jobs, and the second one outranks the first. The first: a claim that
@@ -284,13 +509,54 @@ def _revert_attempt(program_id: str, emissions: dict) -> None:
             # independent path to the only outcome that actually matters.
             _quietly('force the state back to proposed', storage.update_program,
                      program_id, {'state': 'proposed'})
-        # Last and least: clearing the row's emissions is cosmetic, because the
-        # next attempt starts from a fresh empty triple regardless and never
-        # reads this. It goes after the handback so that its failing costs a
-        # stale dict, not a stranded program.
-        _quietly('clear the emissions off the row', storage.update_program,
-                 program_id, {'emissions': {'commitment_ids': [],
-                                            'thread_ids': [], 'event_ids': []}})
+        # Last and least: putting the row's emissions back the way this
+        # attempt found them. Usually that is the empty triple; after a
+        # re-shape it is the kit thread and target event that were ALREADY
+        # standing before this attempt and which it therefore never deleted --
+        # writing an empty triple over those would orphan them for good. It
+        # goes after the handback so that its failing costs a stale dict, not
+        # a stranded program.
+        _quietly('put the emissions back the way they were',
+                 storage.update_program, program_id,
+                 {'emissions': restore if isinstance(restore, dict) else
+                  {'commitment_ids': [], 'thread_ids': [], 'event_ids': []}})
+
+
+def _emit_commitments(program_id: str, row: dict, slots: list,
+                      emissions: dict, made: list = None) -> dict:
+    """Turn proposed windows into real reserved time, stamping each id as it
+    lands.
+
+    One commitment per slot, not merged by window -- three practice sessions a
+    week are three claimed windows, each one individually visible and
+    individually undoable in the commitments list. The row is updated after
+    EVERY insert rather than once at the end, so a crash halfway through
+    leaves a program that knows about the rows it really created instead of an
+    orphan nobody owns.
+
+    Shared by `approve()` and `resume()` on purpose: resuming re-creates the
+    emissions, and a second copy of this loop is a second place for the two to
+    drift apart.
+    """
+    for s in slots:
+        # add_protected_commitment writes the dict as given -- it does not go
+        # through the pydantic model the way the HTTP route does -- so the id
+        # has to be minted here, not left for storage to invent one.
+        cid = storage.add_protected_commitment({
+            'id': uuid.uuid4().hex,
+            'member_id': row['member_id'], 'title': row.get('title') or 'Practice',
+            'days_of_week': [s['day']], 'time_start': s['time_start'],
+            'time_end': s['time_end'], 'active': True})
+        emissions['commitment_ids'].append(cid)
+        # `made` is appended to INSIDE the loop, never sliced off afterwards:
+        # the whole point of this list is the case where the loop RAISES
+        # halfway, and a caller that computes it from the return value learns
+        # nothing at all in exactly that case -- leaving the rows this attempt
+        # really did write as orphans the revert never sees.
+        if made is not None:
+            made.append(cid)
+        storage.update_program(program_id, {'emissions': emissions})
+    return emissions
 
 
 def approve(program_id: str, approver_id: str = None, slots: list = None) -> dict:
@@ -325,7 +591,19 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
         return {'status': 'error',
                 'message': f"That program is already {current.get('state')}."}
 
-    emissions = {'commitment_ids': [], 'thread_ids': [], 'event_ids': []}
+    # A program can reach `proposed` a SECOND time, through `reshape()` after
+    # drift. Its kit thread and its target event are still standing, so the
+    # emissions start from what the row already holds rather than an empty
+    # triple -- otherwise a re-approval orphans the thread it forgot and opens
+    # a duplicate beside it. `made` tracks only what THIS attempt created,
+    # because that is the exact set a revert is allowed to delete.
+    prior = dict(row.get('emissions') or {})
+    emissions = {'commitment_ids': [],
+                 'thread_ids': list(prior.get('thread_ids') or []),
+                 'event_ids': list(prior.get('event_ids') or [])}
+    made = {'commitment_ids': [], 'thread_ids': [], 'event_ids': []}
+    restore = {'commitment_ids': [], 'thread_ids': list(emissions['thread_ids']),
+               'event_ids': list(emissions['event_ids'])}
 
     # Everything from here to the final flip is bracketed. The claim above
     # moved the point of no return earlier than a plain `state='proposed'`
@@ -334,30 +612,18 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
     # reverted, or the program is stuck un-retryable forever.
     try:
         # Local writes first: cheap, ours, and undoable by a person who can
-        # see them. One commitment per slot, not merged by window -- three
-        # practice sessions a week are three claimed windows, each one
-        # individually visible and individually undoable in the commitments
-        # list.
-        for s in use:
-            # add_protected_commitment writes the dict as given -- it does
-            # not go through the pydantic model the way the HTTP route does
-            # -- so the id has to be minted here, not left for storage to
-            # invent one.
-            cid = storage.add_protected_commitment({
-                'id': uuid.uuid4().hex,
-                'member_id': row['member_id'], 'title': row.get('title') or 'Practice',
-                'days_of_week': [s['day']], 'time_start': s['time_start'],
-                'time_end': s['time_end'], 'active': True})
-            emissions['commitment_ids'].append(cid)
-            storage.update_program(program_id, {'emissions': emissions})
+        # see them.
+        _emit_commitments(program_id, row, use, emissions,
+                          made['commitment_ids'])
 
         kit = _kit_line(row)
-        if kit:
+        if kit and not emissions['thread_ids']:
             tid = storage.add_thread({'title': kit, 'kind': 'project',
                                       'owner_member_id': row['member_id'],
                                       'goal': 'Have what the next phase needs',
                                       'created_by': approver_id})
             emissions['thread_ids'].append(tid)
+            made['thread_ids'].append(tid)
             storage.update_program(program_id, {'emissions': emissions})
 
         # The one write that reaches another system goes last.
@@ -389,6 +655,7 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
                 if not ev_id:
                     raise RuntimeError("the calendar didn't create the event")
                 emissions['event_ids'].append(ev_id)
+                made['event_ids'].append(ev_id)
                 baseline['target_event_id'] = ev_id
             except Exception as e:
                 # _revert_attempt undoes EVERYTHING this attempt stamped, the
@@ -421,7 +688,7 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
         # exception out of a function that has already taken a claim. The
         # success path below is never reached when this branch runs, so it
         # cannot revert itself.
-        _revert_attempt(program_id, emissions)
+        _revert_attempt(program_id, made, restore)
         return {'status': 'error', 'message': str(e)}
 
     return {'status': 'success', 'schedule_dirty': True,
@@ -467,14 +734,23 @@ def weekday_shortfall(program: dict, now=None) -> dict:
         except (KeyError, TypeError, ValueError):
             continue
         done[wd] = done.get(wd, 0) + 1
-    worst, gap = None, 0
-    for d in days:
-        missing = weeks - done.get(d, 0)
-        if missing > gap:
-            worst, gap = d, missing
-    if worst is None or gap < 2:
+    gaps = {d: weeks - done.get(d, 0) for d in days}
+    gap = max(gaps.values()) if gaps else 0
+    if gap < 2:
         return None
-    return {'weekday': worst, 'expected': weeks, 'done': done.get(worst, 0)}
+    # Every preferred day tying is the normal case for a program that has
+    # logged nothing at all, and a strict `>` used to hand back whichever one
+    # happened to be first in the list -- so a program with Mon/Wed/Fri and an
+    # empty log said "Mondays keep getting eaten" about three equally empty
+    # days. The whole value of that sentence is naming the RIGHT day, so when
+    # nothing distinguishes them it names none of them and says "these days".
+    worst_days = sorted(d for d, g in gaps.items() if g == gap)
+    worst = worst_days[0] if len(worst_days) == 1 else None
+    logged = len(sessions_between(program, window_start, now.date()))
+    return {'weekday': worst, 'weekdays': worst_days, 'expected': weeks,
+            'done': done.get(worst, 0) if worst is not None else 0,
+            'window_weeks': weeks, 'window_sessions': logged,
+            'per_week': max(1, int(shape.get('sessions_per_week') or 1))}
 
 
 def _compress_phases(phases: list, target_date: str, now) -> tuple:
@@ -518,6 +794,38 @@ def _compress_phases(phases: list, target_date: str, now) -> tuple:
     for i, nw in zip(remaining_idx, new_weeks):
         out[i]['weeks'] = nw
     return out, sum(new_weeks) <= weeks_available
+
+
+def _stretch_factor(short: dict) -> float:
+    """How much more room the plan needs, from what the window actually
+    delivered against what it assumed. Bounded at double: a fortnight where
+    almost nothing happened is a reason to give the plan room, not a reason to
+    turn a six-week phase into a six-month one."""
+    expected = max(1, int(short.get('window_weeks') or 1)) * \
+        max(1, int(short.get('per_week') or 1))
+    done = max(0, int(short.get('window_sessions') or 0))
+    if not done:
+        return 2.0
+    return max(1.0, min(2.0, expected / done))
+
+
+def _stretch_phases(phases: list, factor: float) -> list:
+    """Give the remaining phases more weeks — the counterpart to
+    `_compress_phases`, for the program that has no date to compress toward.
+
+    A phase whose milestone is already hit is done and is never touched. Every
+    phase still ahead gains at least one week, so a stretch always really
+    stretches: a "the timeline bent" finding that moved nothing is the same
+    fake door as an offer with no action behind it.
+    """
+    out = []
+    for p in phases:
+        p = dict(p)
+        if not p.get('milestone_hit_at'):
+            weeks = max(1, int(p.get('weeks') or 1))
+            p['weeks'] = max(weeks + 1, int(math.ceil(weeks * factor)))
+        out.append(p)
+    return out
 
 
 def maybe_rebaseline(program: dict, now=None) -> dict:
@@ -564,6 +872,23 @@ def maybe_rebaseline(program: dict, now=None) -> dict:
             date_moved = True
         except (TypeError, ValueError):
             pass
+    elif not baseline.get('target_event_id'):
+        # No target date at all -- which is the DEFAULT, both from the chat
+        # tool and from the page unless somebody types one, so this is the
+        # common program rather than an edge case.
+        #
+        # An event id with no date falls through BOTH branches deliberately:
+        # that is malformed data (the schema writes the pair together), and
+        # the event still pins a real day in the world that this app cannot
+        # read. Giving the plan more weeks against a date it cannot see is
+        # exactly the lie about fitting the compress path refuses to tell, so
+        # nothing moves and the finding says only what is on the table. For one release this branch
+        # did not exist: it bumped a counter, burned the fortnight cooldown,
+        # and still posted "want to try a different day?" while the timeline
+        # it promised to stretch was never touched. Here the phases ARE the
+        # timeline, so they are what gives.
+        phases = _stretch_phases(original_phases, _stretch_factor(short))
+        update['phases'] = phases
     storage.update_program(program['id'], update)
     # `fits` alone isn't enough to word the finding honestly: a program that
     # already had slack before the date needs `fits=True` without ever
@@ -571,9 +896,12 @@ def maybe_rebaseline(program: dict, now=None) -> dict:
     # the same gap on the other branch -- malformed baseline data (an event id
     # with no date, or a date string that won't parse) must not read as "I
     # gave the plan more room" when nothing was ever touched.
-    return {'weekday': short['weekday'], 'baseline': baseline, 'phases': phases,
+    return {'weekday': short['weekday'], 'weekdays': short.get('weekdays') or [],
+            'baseline': baseline, 'phases': phases,
             'fits': fits, 'phases_changed': phases != original_phases,
-            'date_moved': date_moved}
+            'date_moved': date_moved,
+            'stretched': phases is not original_phases and fits is None
+                         and not date_moved}
 
 
 def orphaned_emissions(program: dict) -> list:
@@ -586,7 +914,13 @@ def orphaned_emissions(program: dict) -> list:
     ids = list((program.get('emissions') or {}).get('commitment_ids') or [])
     if not ids:
         return []
-    live = {c['id'] for c in storage.get_protected_commitments()}
+    # include_inactive, because DEACTIVATING is not DELETING. The default read
+    # hides `active: False` rows, so a window somebody switched off for a
+    # fortnight looked exactly like one they had deleted -- the program fired
+    # the drift finding and then permanently forgot the id, which meant
+    # switching it back on could never re-link it. Only a row that is really
+    # gone counts as gone.
+    live = {c['id'] for c in storage.get_protected_commitments(include_inactive=True)}
     return [cid for cid in ids if cid not in live]
 
 
@@ -600,45 +934,69 @@ def forget_emissions(program_id: str, gone: list) -> None:
     storage.update_program(program_id, {'emissions': em})
 
 
-def due_session_asks(now=None) -> list:
-    """Slots that have passed and have not been asked about.
+def due_asks_for(program: dict, now=None) -> list:
+    """Slots of ONE program that have passed and have not been logged.
 
-    One question per slot, ever. Silence counts nothing — the number only means
+    One question per slot: silence counts nothing — the number only means
     sessions a person said they did. Quiet hours are honoured, so a 9pm slot
-    asks in the morning rather than at 9:25pm.
+    asks in the morning rather than at 9:25pm, and they are the PROGRAM
+    OWNER's quiet hours because this question is only ever put to the person
+    whose program it is. It rides their own surface (the PWA card), not a DM
+    to their parents: a parent tapping "yes, it happened" about a session
+    nobody watched is the one place in this arc where the app could claim more
+    than happened, and the design's promise is that it never does.
+    """
+    from services import family_digest
+    now = now or datetime.datetime.now()
+    if program.get('state') != 'active':
+        return []
+    if not storage.get_settings().get('programs_enabled', True):
+        return []
+    member = storage.get_member(program.get('member_id'))
+    if not member or family_digest.in_member_quiet_hours(member, now):
+        return []
+    grace_hours = float(storage.get_settings().get(
+        'programs_ask_grace_hours', ASK_GRACE_HOURS) or ASK_GRACE_HOURS)
+    cids = set((program.get('emissions') or {}).get('commitment_ids') or [])
+    out = []
+    for pc in storage.get_protected_commitments(member_id=program['member_id']):
+        if pc.get('id') not in cids:
+            continue
+        # An evening the family GAVE UP through negotiation's `lift_protected`
+        # is not an evening anybody failed to practise on -- it is one they
+        # agreed to spend elsewhere. Asking "did it happen?" about it is the
+        # app forgetting a deal it brokered itself.
+        lifted = {str(r.get('date')) for r in
+                  storage.get_protected_exceptions(pc.get('id'))}
+        for d in (pc.get('days_of_week') or []):
+            slot_date = _last_occurrence(d, now)
+            if slot_date is None or slot_date.isoformat() in lifted:
+                continue
+            ended = _slot_end(slot_date, pc.get('time_end') or '19:25')
+            if (now - ended).total_seconds() < grace_hours * 3600:
+                continue
+            if _already_logged(program, slot_date):
+                continue
+            out.append({'program': program, 'slot_date': slot_date.isoformat(),
+                        'body': f"{program.get('title')} on "
+                                f"{slot_date.strftime('%A')} — did it happen?"})
+    return sorted(out, key=lambda a: a['slot_date'])
+
+
+def due_session_asks(now=None) -> list:
+    """Every program's pending question, in one pass.
 
     Each program's check is wrapped on its own, the same way the drift and
-    rebaseline checks in watchers.py guard themselves per program below --
+    rebaseline checks in watchers.py guard themselves per program --
     one member's malformed record (a bad quiet-hours string, a corrupt
     commitment) must cost only that program's ask, not silence every family
     member's practice check for the whole sweep.
     """
-    from services import family_digest
     now = now or datetime.datetime.now()
-    grace_hours = float(storage.get_settings().get(
-        'programs_ask_grace_hours', ASK_GRACE_HOURS) or ASK_GRACE_HOURS)
     out = []
     for row in storage.get_programs(state='active'):
         try:
-            member = storage.get_member(row.get('member_id'))
-            if not member or family_digest.in_member_quiet_hours(member, now):
-                continue
-            cids = set((row.get('emissions') or {}).get('commitment_ids') or [])
-            for pc in storage.get_protected_commitments(member_id=row['member_id']):
-                if pc.get('id') not in cids:
-                    continue
-                for d in (pc.get('days_of_week') or []):
-                    slot_date = _last_occurrence(d, now)
-                    if slot_date is None:
-                        continue
-                    ended = _slot_end(slot_date, pc.get('time_end') or '19:25')
-                    if (now - ended).total_seconds() < grace_hours * 3600:
-                        continue
-                    if _already_logged(row, slot_date):
-                        continue
-                    out.append({'program': row, 'slot_date': slot_date.isoformat(),
-                                'body': f"{row.get('title')} on "
-                                        f"{slot_date.strftime('%A')} — did it happen?"})
+            out.extend(due_asks_for(row, now))
         except Exception as e:
             print(f"[programs] session ask check failed for {row.get('id')}: {e}")
     return out
@@ -660,3 +1018,76 @@ def _slot_end(day, hhmm: str):
 
 def _already_logged(program: dict, day) -> bool:
     return bool(sessions_between(program, day, day))
+
+
+# --- What a hallway is allowed to know --------------------------------------
+
+CELEBRATION_WINDOW_DAYS = 7
+
+
+def celebrations(now=None) -> dict:
+    """The wall's whole view of every program in the house, and nothing else.
+
+    The wall card used to fetch `GET /api/programs` — which could never work
+    from a panel (a `?panel=true` board identifies as DEVICE, and both the
+    read scope and the admin-surface reading refuse a device outright, so the
+    card said "Nothing to celebrate yet." forever), and which should not work
+    from a panel even if it did: the full program payload carries an aim in
+    somebody's own words, a curated plan, a target date and every session they
+    have logged. A wall is read by whoever is in the room.
+
+    So this is a PROJECTION, not a widened read. Three sentences: whose
+    milestone is close, what got practised this week, who just reached one.
+    Names and titles, never a total to divide, never an ordering — a family is
+    not a cohort, and the wall is the surface where treating it like one would
+    land hardest.
+    """
+    now = now or datetime.datetime.now()
+    since = now.timestamp() - CELEBRATION_WINDOW_DAYS * 86400
+    names = {m['id']: (m.get('name') or '')
+             for m in storage.get_all_members(include_archived=True)}
+    up_next, practiced, celebrated = None, [], []
+    for row in storage.get_programs():
+        # Paused is a peer of active, not a flavour of stopped: the wall still
+        # gets to celebrate a paused program's last week same as a running one.
+        if row.get('state') not in ('active', 'paused'):
+            continue
+        who = names.get(row.get('member_id')) or 'Somebody'
+        phase = progress(row)['phase']
+        if phase and phase.get('milestone'):
+            try:
+                weeks = int(phase.get('weeks'))
+            except (TypeError, ValueError):
+                weeks = None
+            # A phase's own stated length is the only honest signal of "soon"
+            # a program carries -- nothing here counts down or divides one
+            # number by another.
+            if up_next is None or (weeks is not None and
+                                   (up_next['weeks'] is None or
+                                    weeks < up_next['weeks'])):
+                up_next = {'weeks': weeks, 'member_name': who,
+                           'milestone': phase.get('milestone') or '',
+                           'title': row.get('title') or ''}
+        recent = 0
+        for s in row.get('sessions') or []:
+            try:
+                if float(s.get('ts') or 0) >= since:
+                    recent += 1
+            except (TypeError, ValueError):
+                continue
+        if recent:
+            practiced.append({'key': row['id'], 'member_name': who,
+                              'title': row.get('title') or '',
+                              'sessions': recent})
+        for ph in row.get('phases') or []:
+            try:
+                hit = float(ph.get('milestone_hit_at') or 0)
+            except (TypeError, ValueError):
+                continue
+            if hit >= since:
+                celebrated.append({'key': f"{row['id']}:{ph.get('name')}",
+                                   'member_name': who,
+                                   'milestone': ph.get('milestone')
+                                                or ph.get('name') or ''})
+    return {'up_next': up_next, 'practiced': practiced,
+            'celebrated': celebrated}

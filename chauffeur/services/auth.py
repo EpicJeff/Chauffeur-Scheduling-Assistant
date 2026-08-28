@@ -363,6 +363,15 @@ RULES = [
     # milestone, pauses/resumes/drops), and acting on somebody ELSE's, or
     # approving (claims the week) at all, reuses `_mind_actor` +
     # `_approver_of_record`, exactly as Mind's approve tap does.
+    # The ONE program route a wall panel may call, and it has to come before
+    # the wildcard below to be reachable at all. It is a celebration-only
+    # PROJECTION (`programs.celebrations`) — whose milestone is close, what got
+    # practised, who just reached one — never the program payload, which
+    # carries somebody's aim in their own words, their curated plan and every
+    # session they logged. A panel is a place in a hallway anybody walks past,
+    # so what it may read is decided by what the endpoint returns, not by
+    # widening the read it was refused.
+    ('GET', '/api/programs/celebrations', WALL, None),
     (ANY, '/api/programs/*', SIGNED_IN, None),
     (ANY, '/api/programs', SIGNED_IN, None),
     (ANY, '/api/coverage/*', SIGNED_IN, 'schedule.carpool_contacts'),

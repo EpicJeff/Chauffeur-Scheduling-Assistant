@@ -1311,6 +1311,21 @@
             const nextWindow = programNextWindow(p, commitmentsById || {});
             // Marking a milestone is a judgement only a person makes -- the
             // button exists, there is no counterpart that marks one missed.
+            // The elapsed slot nobody has answered yet, named. This is the
+            // arc's "did it happen?" question, and it arrives HERE because
+            // it belongs to the person whose program it is: it used to be a
+            // watcher finding, which is DM'd to parents and gated
+            // parent/adult on the findings list, so both parents were asked
+            // to confirm a session neither of them watched. Silence still
+            // counts nothing -- ignoring this appends no session and marks
+            // no miss, and the prompt simply rolls forward to the slot's
+            // next occurrence.
+            const askRow = p.due_ask ? `
+                <div class="mt-2 bg-blue-950/40 border border-blue-900 rounded-lg px-2.5 py-2">
+                    <div class="text-xs text-blue-100">${mfEscape(p.due_ask.body)}</div>
+                    <button onclick="askProgramSession('${p.id}', '${mfEscape(p.due_ask.slot_date)}')"
+                        class="mt-1.5 text-[11px] font-bold px-2.5 py-1 rounded-lg bg-blue-600 text-white active:bg-blue-700">Yes, it happened</button>
+                </div>` : '';
             const milestoneRow = (phase && phase.milestone) ? `
                 <div class="mt-2 flex items-center justify-between gap-2 bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5">
                     <div class="text-xs text-gray-300 truncate">${mfEscape(phase.milestone)}</div>
@@ -1324,9 +1339,10 @@
                 <div class="text-[11px] text-gray-500 mt-1.5">${mfEscape(programCountPhrase(p))}</div>
                 ${nextWindow ? `<div class="text-[11px] text-gray-500">Next practice: ${nextWindow}</div>` : ''}
                 ${milestoneRow}
+                ${askRow}
                 <div class="flex gap-2 mt-2.5">
-                    <button onclick="askProgramSession('${p.id}')"
-                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Did it happen?</button>
+                    ${p.due_ask ? '' : `<button onclick="askProgramSession('${p.id}')"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Did it happen?</button>`}
                     <button onclick="addProgramSession('${p.id}')"
                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Add a session</button>
                 </div>
@@ -1351,11 +1367,18 @@
         // program's own shape (services/programs.py's log_session), because
         // this button is agreeing the SCHEDULED session happened, not typing
         // a different number.
-        async function askProgramSession(id) {
+        async function askProgramSession(id, slotDate) {
             try {
+                const payload = { member_id: selectedMemberId, source: 'asked' };
+                // The slot this answers, so the session is filed under the
+                // evening it was asked about rather than the morning the
+                // person got round to tapping (services/programs.py's
+                // `_slot_ts`) -- otherwise Thursday's practice lands on
+                // Friday and Thursday's prompt never clears.
+                if (slotDate) payload.slot_date = slotDate;
                 const r = await fetch(`${apiBase}api/programs/${id}/session`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ member_id: selectedMemberId, source: 'asked' })
+                    body: JSON.stringify(payload)
                 });
                 const d = await r.json().catch(() => ({}));
                 if (!r.ok || d.status === 'error') { showGlobalAlert(d.detail || d.message || "Couldn't log that."); return; }

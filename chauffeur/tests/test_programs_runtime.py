@@ -174,6 +174,55 @@ def scenario_the_wall_card_celebrates_and_does_not_measure():
     check('milestone' in prose, "it shows what somebody just reached")
 
 
+def scenario_the_wall_reads_a_celebration_only_projection():
+    """The card fetched `api/programs` from a `?panel=true` board, which
+    identifies as DEVICE -- `_program_list_scope` resolves no actor and
+    `_is_admin_surface` refuses a device outright, so the wall said "Nothing
+    to celebrate yet." forever, and after the auth flip the SIGNED_IN rule
+    refuses it outright.
+
+    The fix is deliberately not a wider read: the full program payload
+    carries an aim in somebody's own words, their curated plan, their target
+    date and every session logged, and a wall is read by whoever is in the
+    room."""
+    from services import auth, programs
+    check(auth.resolve('GET', '/api/programs/celebrations') == auth.WALL,
+          "a panel may call exactly this one program route")
+    check(auth.resolve('GET', '/api/programs') == auth.SIGNED_IN,
+          "and still not the list it was refused")
+
+    storage.programs_table.truncate()
+    storage.members_table.truncate()
+    storage.add_member({'id': 'kid', 'name': 'Lily', 'role': 'child'})
+    pid = storage.add_program({
+        'member_id': 'kid', 'title': 'Guitar', 'state': 'active',
+        'baseline': {'start_date': '2026-08-01', 'target_date': '2026-06-14',
+                     'target_event_id': None, 'rebaselined_at': None,
+                     'rebaselines': 0},
+        'phases': [{'name': 'Phase 1', 'weeks': 4, 'what': 'Chords',
+                    'milestone': 'G to C', 'milestone_hit_at': None}]})
+    storage.append_program_session(pid, {'minutes': 25, 'source': 'asked'})
+    out = programs.celebrations()
+    check(out['up_next'] and out['up_next']['member_name'] == 'Lily',
+          f"whose milestone is close, by name, got {out}")
+    check(out['practiced'] and out['practiced'][0]['sessions'] == 1,
+          f"and what got practised, got {out}")
+
+    blob = str(out)
+    for leak in ('2026-06-14', 'baseline', 'source', 'sessions_per_week',
+                 'emissions', 'why_this_one'):
+        check(leak not in blob,
+              f"the hallway must not learn '{leak}', got {blob}")
+
+
+def scenario_the_wall_card_fetches_only_that_projection():
+    src = _template(os.path.join('components', 'programs_card.html'))
+    check('api/programs/celebrations' in src,
+          "the card reads the projection")
+    check('fetch(`${apiBase}api/programs`)' not in src,
+          "and never the full list it could not read anyway")
+
+
 if __name__ == '__main__':
     scenario_the_pwa_reaches_a_members_own_programs()
     scenario_the_pwa_shows_no_streak()
@@ -181,4 +230,6 @@ if __name__ == '__main__':
     scenario_the_pwa_reads_the_real_commitment_not_shape()
     scenario_the_wall_card_is_a_registered_widget()
     scenario_the_wall_card_celebrates_and_does_not_measure()
+    scenario_the_wall_reads_a_celebration_only_projection()
+    scenario_the_wall_card_fetches_only_that_projection()
     print("test_programs_runtime OK")

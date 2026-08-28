@@ -16,6 +16,7 @@ This module knows nothing about a program's lifecycle -- it hands back phases
 and a source dict; services/programs.py never imports it.
 """
 import math
+import re
 
 from services import storage, web
 
@@ -29,13 +30,30 @@ from services import storage, web
 # wedding"), and a legitimate aim containing one of these words gets caught
 # ("carry 30 lbs of gear on the hike" reads as a weight target). It errs
 # toward the second kind of miss on purpose.
-BODY_TERMS = (
+
+# Phrases long enough that a plain substring match cannot be an accident.
+BODY_PHRASES = (
     'lose weight', 'lose 5', 'lose 10', 'lose 15', 'lose 20', 'lose 25',
-    'lose 30', 'pounds', 'lbs', 'kilos', 'kg off', 'goal weight',
-    'target weight', 'body fat', 'bodyfat', 'bmi', 'calorie', 'calories',
-    'deficit', 'slim down', 'get lean', 'drop a size', 'six pack', 'abs',
-    'weigh ', 'skinny', 'thin', 'diet',
+    'lose 30', 'kg off', 'goal weight', 'target weight', 'body fat',
+    'bodyfat', 'slim down', 'get lean', 'drop a size', 'six pack',
 )
+
+# Short words that must match as WORDS. Matched as substrings, 'thin' refused
+# "learn to build things with wood" and "get everything ready for the science
+# fair", and 'abs' refused "learn abseiling" -- with the target-weights
+# sentence, which is baffling to read and worst of all to a kid, who has no
+# way to tell which of their words the app objected to. False refusals are
+# accepted on purpose in this screen; false refusals of ordinary aims are a
+# different thing, and they cost the arc the ambitions it exists to serve.
+BODY_WORDS = (
+    'pounds', 'lbs', 'kilos', 'bmi', 'calorie', 'calories', 'deficit',
+    'abs', 'skinny', 'thin', 'diet', 'diets', 'dieting', 'weigh', 'weighs',
+)
+
+_BODY_WORD_RE = re.compile(r'\b(?:' + '|'.join(BODY_WORDS) + r')\b')
+
+# The whole screen in one tuple, for anything that wants to read the list.
+BODY_TERMS = BODY_PHRASES + BODY_WORDS
 
 BEHAVIOUR_ALTERNATIVES = (
     "move four times a week",
@@ -88,7 +106,7 @@ def screen_aim(title: str) -> dict:
     low = (title or '').strip().lower()
     if not low:
         return {'ok': False, 'message': "What's the aim?", 'alternatives': []}
-    if any(term in low for term in BODY_TERMS):
+    if any(term in low for term in BODY_PHRASES) or _BODY_WORD_RE.search(low):
         return {'ok': False,
                 'message': ("I don't do target weights or calorie numbers — "
                             "not for anyone, and never for a kid. I can do the "

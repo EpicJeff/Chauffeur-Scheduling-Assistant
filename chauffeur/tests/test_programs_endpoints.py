@@ -263,6 +263,74 @@ def scenario_the_control_center_still_gets_the_household():
           f"the control-center reading must still see the household, got {titles}")
 
 
+class _Bg:
+    """Stands in for FastAPI's BackgroundTasks so a direct call can see
+    whether the endpoint really asked for a solver refresh."""
+    def __init__(self):
+        self.tasks = []
+
+    def add_task(self, fn, *a, **kw):
+        self.tasks.append(fn)
+
+
+def scenario_the_new_endpoints_exist():
+    import main
+    paths = {r.path for r in main.app.routes}
+    for p in ('/api/programs/{program_id}/finish',
+              '/api/programs/{program_id}/reshape',
+              '/api/programs/celebrations'):
+        check(p in paths, f"{p} must be reachable by hand")
+
+
+def scenario_a_child_cannot_read_a_siblings_footprint():
+    """The one program read with no ownership gate at all: a title, the times
+    it would claim, the kit line and the target date, to any signed-in caller
+    holding an id."""
+    _reset()
+    import main
+    storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
+    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+                               'state': 'proposed',
+                               'shape': {'sessions_per_week': 2, 'minutes': 25,
+                                         'preferred_days': [1, 3]}})
+    sib_token = storage.create_member_token('sib')
+    check(_denied(main.program_footprint, pid, request=Req(sib_token)) == 403,
+          "a sibling learns nothing about it, not even the times it claims")
+    kid_token = storage.create_member_token('kid')
+    fp = main.program_footprint(pid, request=Req(kid_token))
+    check('slots' in fp, f"the owner still sees their own, got {fp}")
+    fp = main.program_footprint(pid, request=None)
+    check('slots' in fp, f"and the control-center surface does, got {fp}")
+
+
+def scenario_claiming_and_releasing_time_reaches_the_solver():
+    """`programs.approve()` has always returned `schedule_dirty` and every
+    endpoint threw it away -- while `create_commitment` force-refreshes on
+    exactly this event, because protecting an evening that stays scheduled is
+    not protecting it."""
+    _reset()
+    import main
+    pid = storage.add_program({
+        'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
+        'shape': {'sessions_per_week': 2, 'minutes': 25,
+                  'preferred_days': [1, 3]}})
+    bg = _Bg()
+    res = main.approve_program(pid, background_tasks=bg,
+                               body={'member_id': 'mom'}, request=None)
+    check(res['status'] == 'success', f"got {res}")
+    check(len(bg.tasks) == 1,
+          f"approving asks the solver to learn the ban now, got {bg.tasks}")
+
+    bg2 = _Bg()
+    res = main.drop_program(pid, background_tasks=bg2,
+                            body={'member_id': 'mom'}, request=None)
+    check(res['status'] == 'success', f"got {res}")
+    check(len(bg2.tasks) == 1,
+          f"and dropping asks it to give the evening back, got {bg2.tasks}")
+    check(storage.get_program(pid)['emissions']['commitment_ids'] == [],
+          "a dropped program stops believing in windows that are really gone")
+
+
 if __name__ == '__main__':
     scenario_the_endpoints_exist()
     scenario_a_body_aim_is_refused_at_the_door()
@@ -280,4 +348,7 @@ if __name__ == '__main__':
     scenario_a_child_with_no_filter_gets_only_their_own()
     scenario_a_parent_with_no_filter_still_gets_the_household()
     scenario_the_control_center_still_gets_the_household()
+    scenario_the_new_endpoints_exist()
+    scenario_a_child_cannot_read_a_siblings_footprint()
+    scenario_claiming_and_releasing_time_reaches_the_solver()
     print("test_programs_endpoints OK")

@@ -471,6 +471,109 @@ def scenario_two_taps_claim_the_week_once():
           f"the outer call lost the race and must say so, got {res}")
 
 
+def scenario_an_impossible_shape_cannot_hang_or_write_a_bad_window():
+    """Two failures with one cause: a shape nobody bounded.
+
+    `propose_slots` padded `days` out to `sessions_per_week` and appended
+    nothing once all seven weekdays were in it, so anything above seven never
+    terminated -- and `/programs` calls the footprint endpoint for EVERY
+    proposed program, so one such row pinned a threadpool worker at 100% CPU
+    on every page load, forever. Six hundred minutes produced `time_end` of
+    '29:00', which becomes a solver `Rule` inside the single try/except that
+    wraps every protected commitment: one malformed row silently disabled
+    protected time for the whole household.
+
+    This scenario RUNS the call rather than reading it: a hang shows up as a
+    test that never returns, which is the only honest way to check.
+    """
+    _reset()
+    slots = programs.propose_slots('lily', {'sessions_per_week': 8,
+                                            'minutes': 600,
+                                            'preferred_days': []})
+    check(1 <= len(slots) <= 7,
+          f"a week has seven days and no more, got {len(slots)}")
+    for s in slots:
+        hh, mm = [int(x) for x in s['time_end'].split(':')]
+        check(0 <= hh <= 23 and 0 <= mm <= 59,
+              f"a window has to end inside the day it started in, got {s}")
+        check(s['time_start'] < s['time_end'], f"a real window, got {s}")
+
+
+def scenario_the_shape_is_clamped_at_every_door():
+    """The bound lives in services/programs.py, not only in `max="7"` on a
+    number input -- the endpoint and the chat tool both take a raw integer,
+    and a model asked for "twice a day" says 14."""
+    out = programs.clamp_shape({'sessions_per_week': 14, 'minutes': 600,
+                                'preferred_days': [1, 9, 'x', 1]})
+    check(out['sessions_per_week'] == 7, f"got {out}")
+    check(out['minutes'] == programs.MAX_MINUTES, f"got {out}")
+    check(out['preferred_days'] == [1], f"junk days are dropped, got {out}")
+    # -1, not 0: a falsy value means "not said" and takes the default, the
+    # same `or 3` reading every caller of this shape has always had.
+    low = programs.clamp_shape({'sessions_per_week': -1, 'minutes': 1})
+    check(low['sessions_per_week'] == 1 and low['minutes'] == programs.MIN_MINUTES,
+          f"and the floor holds too, got {low}")
+
+
+def scenario_pause_gives_the_evenings_back_and_resume_claims_them_again():
+    """The spec is explicit -- "Pause removes the reservations... Resuming
+    re-creates the emissions" -- and no task carried it: pause flipped a state
+    and left the commitments live, so an adult's paused program kept CP-SAT
+    out of those evenings indefinitely, and `resume()` re-created nothing
+    because nothing had been removed."""
+    _reset()
+    pid = _mk()
+    check(programs.approve(pid, 'mom')['status'] == 'success', 'approved')
+    before = [(c['days_of_week'][0], c['time_start'], c['time_end'])
+              for c in storage.get_protected_commitments(member_id='lily')]
+    check(len(before) == 3, f"three windows are claimed, got {before}")
+
+    res = programs.pause(pid)
+    check(res['status'] == 'success' and res.get('schedule_dirty'),
+          f"pausing is a schedule change, got {res}")
+    check(storage.get_protected_commitments(member_id='lily') == [],
+          "a paused program holds no evening")
+    check(storage.get_program(pid)['emissions']['commitment_ids'] == [],
+          "and stops believing it does")
+
+    res = programs.resume(pid)
+    check(res['status'] == 'success' and res.get('schedule_dirty'),
+          f"resuming is one too, got {res}")
+    after = sorted((c['days_of_week'][0], c['time_start'], c['time_end'])
+                   for c in storage.get_protected_commitments(member_id='lily'))
+    check(after == sorted(before),
+          f"the SAME evenings come back, not re-proposed ones: {before} -> {after}")
+    ids = storage.get_program(pid)['emissions']['commitment_ids']
+    live = {c['id'] for c in storage.get_protected_commitments()}
+    check(len(ids) == 3 and set(ids) <= live,
+          f"and the program can find them again, got {ids}")
+
+
+def scenario_a_reshaped_program_can_be_approved_again_without_a_duplicate_thread():
+    """`reshape()` returns a program to `proposed` so `approve()` can rebuild
+    the footprint -- which means approve now runs twice on one row. Its kit
+    thread and target event are still standing, so a second run must adopt
+    them rather than orphan one and open another beside it."""
+    _reset()
+    pid = _mk(what='buy a capo and a clip tuner')
+    check(programs.approve(pid, 'mom')['status'] == 'success', 'approved')
+    threads = list(storage.get_program(pid)['emissions']['thread_ids'])
+    check(len(threads) == 1, f"one kit thread, got {threads}")
+
+    check(programs.reshape(pid)['status'] == 'success', 're-shaped')
+    check(storage.get_program(pid)['state'] == 'proposed',
+          "the offer in the drift finding is one the app can really perform")
+    check(storage.get_protected_commitments(member_id='lily') == [],
+          "and it stops holding time it is no longer sure about")
+
+    check(programs.approve(pid, 'mom')['status'] == 'success', 're-approved')
+    row = storage.get_program(pid)
+    check(row['emissions']['thread_ids'] == threads,
+          f"the same kit thread, never a second one, got {row['emissions']}")
+    check(len(row['emissions']['commitment_ids']) == 3,
+          f"and the week is claimed again, got {row['emissions']}")
+
+
 if __name__ == '__main__':
     scenario_slots_match_the_shape()
     scenario_the_footprint_is_visible_before_the_tap()
@@ -484,4 +587,8 @@ if __name__ == '__main__':
     scenario_a_revert_survives_the_handback_itself_failing()
     scenario_approving_twice_does_not_claim_twice()
     scenario_two_taps_claim_the_week_once()
+    scenario_an_impossible_shape_cannot_hang_or_write_a_bad_window()
+    scenario_the_shape_is_clamped_at_every_door()
+    scenario_pause_gives_the_evenings_back_and_resume_claims_them_again()
+    scenario_a_reshaped_program_can_be_approved_again_without_a_duplicate_thread()
     print("test_programs_footprint OK")

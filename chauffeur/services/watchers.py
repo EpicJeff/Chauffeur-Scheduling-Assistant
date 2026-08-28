@@ -438,39 +438,61 @@ def _thread_stalls(now: datetime.datetime):
     return out
 
 
+WEEKDAY_NAMES = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
+                 'Saturday', 'Sunday')
+
+
+def _eaten_days(bent: dict) -> str:
+    """Which days to name, or an honest refusal to name one.
+
+    A program that has logged nothing has every preferred day equally empty,
+    and naming whichever happened to be first in the list is a sentence whose
+    whole value — telling somebody the day to move — is a coin flip. When the
+    gap ties, it says "These days" and lets the fix stand on its own.
+    """
+    wd = bent.get('weekday')
+    if wd is None:
+        return 'These days'
+    return f"{WEEKDAY_NAMES[wd]}s"
+
+
 def _rebaseline_line(title: str, day: str, bent: dict) -> str:
     """The rebaseline finding's sentence, worded to match exactly what `bent`
     says happened -- never more than that.
 
-    Five endings, not one reused for all of them: an undated target that
-    really moved says so; a dated one that already had slack needs no claim
-    of a squeeze that never happened; a dated one that needed it gets the
-    real compression named; a dated one too far behind to bend has to say
-    there was not enough time to reshape it -- not that the phases were
-    shortened, since in that branch they deliberately were not; and a
+    Six endings, not one reused for all of them: an undated target that
+    really moved says so; a plan with no target date at all, whose phases
+    were stretched instead, says that; a dated one that already had slack
+    needs no claim of a squeeze that never happened; a dated one that needed
+    it gets the real compression named; a dated one too far behind to bend
+    has to say there was not enough time to reshape it -- not that the phases
+    were shortened, since in that branch they deliberately were not; and a
     program where malformed baseline data left nothing moved (an event id
     with no date, an unparsable one) offers only the day-of-week suggestion
     that is actually on the table. Split out so a test can hand this a `bent`
     dict directly and check the wording without re-running `maybe_rebaseline`
     and tripping its own cooldown.
+
+    `day` arrives as the whole phrase ("Mondays", "These days") rather than a
+    bare weekday name, because on a tie there is no weekday to name.
     """
     if bent['fits'] is False:
-        return (f"🎸 {title}: {day}s keep getting eaten, and the plan is now "
+        return (f"🎸 {title}: {day} keep getting eaten, and the plan is now "
                 f"tight against the date — there isn't enough time left "
                 f"before it to reshape the phases, so they're unchanged. "
                 f"Want to try a different day?")
     if bent['fits'] is True and bent.get('phases_changed'):
-        return (f"🎸 {title}: {day}s keep getting eaten — I've tightened the "
+        return (f"🎸 {title}: {day} keep getting eaten — I've tightened the "
                 f"phases so it still lands on time. Want to try a different "
                 f"day?")
     if bent['fits'] is True:
-        return (f"🎸 {title}: {day}s keep getting eaten — want to try a "
+        return (f"🎸 {title}: {day} keep getting eaten — want to try a "
                 f"different day? The plan still has room to land on time as "
                 f"it stands.")
-    if bent.get('date_moved'):
-        return (f"🎸 {title}: {day}s keep getting eaten — want to try a "
+    if bent.get('date_moved') or bent.get('stretched'):
+        return (f"🎸 {title}: {day} keep getting eaten — want to try a "
                 f"different day? I've given the plan more room either way.")
-    return f"🎸 {title}: {day}s keep getting eaten — want to try a different day?"
+    return f"🎸 {title}: {day} keep getting eaten — want to try a different day?"
 
 
 def _program_findings(now: datetime.datetime):
@@ -486,37 +508,46 @@ def _program_findings(now: datetime.datetime):
     if not storage.get_settings().get('programs_enabled', True):
         return out
 
-    try:
-        for due in _prog.due_session_asks(now):
-            row = due['program']
-            out.append(Finding(
-                key=f"program_session:{row['id']}:{due['slot_date']}",
-                line=f"🎸 {due['body']}",
-                kind='program_session', severity='fyi', dm=True,
-                subject_type='program', subject_id=str(row['id']),
-                action={'label': 'Yes, it happened',
-                        'action_type': 'log_program_session',
-                        'payload': {'program_id': row['id']}}))
-    except Exception as e:
-        print(f"[watchers] program session asks failed: {e}")
+    # NOT here: "did it happen?". A finding is DM'd to PARENTS and `/api/
+    # findings` is parent/adult-gated, so asking it here put a kid's guitar
+    # session in front of two people who did not see it and gave them a "Yes,
+    # it happened" card to tap -- the one place in this arc where the app
+    # could claim more than happened. The question belongs to the person whose
+    # program it is, so it rides their own surface: `programs.due_asks_for`
+    # feeds the prompt on the PWA card, honouring THEIR quiet hours, which is
+    # also the only reading under which checking the member's quiet hours was
+    # ever coherent.
 
     for row in storage.get_programs(state='active'):
         try:
             gone = _prog.orphaned_emissions(row)
             if gone:
                 _prog.forget_emissions(row['id'], gone)
+                # The offer in the sentence has to be one the app can actually
+                # perform. It asked "want it back, or shall I re-shape the
+                # week?" carrying no action and with no endpoint behind it --
+                # and `forget_emissions` had just erased the ids, so even a
+                # hand-restored commitment could never re-link and the program
+                # became an active zombie that still re-baselined every
+                # fortnight. `reshape` returns it to `proposed` so the
+                # existing approve path can rebuild the footprint, which also
+                # keeps the promise that nothing is silently re-created: a
+                # person still sees the whole footprint and taps.
                 out.append(Finding(
                     key=f"program_drift:{row['id']}",
                     line=(f"📅 {row.get('title')}: that practice time isn't on "
-                          f"the calendar any more. Want it back, or shall I "
-                          f"re-shape the week?"),
+                          f"the calendar any more, so it isn't reserved. "
+                          f"Re-shape the week and I'll put the footprint back "
+                          f"up for approval."),
                     kind='program_drift', severity='decide', dm=True,
-                    subject_type='program', subject_id=str(row['id'])))
+                    subject_type='program', subject_id=str(row['id']),
+                    action={'label': 'Re-shape the week',
+                            'action_type': 'reshape_program',
+                            'payload': {'program_id': row['id']}}))
                 continue
             bent = _prog.maybe_rebaseline(row, now)
             if bent:
-                day = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
-                       'Saturday', 'Sunday')[bent['weekday']]
+                day = _eaten_days(bent)
                 out.append(Finding(
                     key=f"program_rebaseline:{row['id']}:{bent['baseline']['rebaselines']}",
                     line=_rebaseline_line(row.get('title'), day, bent),

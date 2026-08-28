@@ -176,6 +176,35 @@ def scenario_research_being_off_is_not_an_invented_plan():
         programs_curate.web.research = real
 
 
+def scenario_ordinary_aims_are_not_refused_as_body_goals():
+    """The screen accepts false refusals on purpose -- but not these. Matched
+    as bare substrings, 'thin' refused "learn to build things with wood" and
+    "get everything ready for the science fair", and 'abs' refused "learn
+    abseiling", each with the target-weights sentence. A kid reading that has
+    no way to tell which of their words the app objected to."""
+    for aim in ('learn to build things with wood',
+                'get everything ready for the science fair',
+                'learn abseiling',
+                'read a book a month',
+                'get better at things i find hard'):
+        res = programs_curate.screen_aim(aim)
+        check(res['ok'] is True,
+              f"'{aim}' is an ordinary aim and must pass, got {res}")
+
+
+def scenario_every_real_body_aim_still_refuses():
+    """The other direction, in the same round: word boundaries must not have
+    quietly opened the door the screen exists to hold shut."""
+    for aim in ('lose 15 pounds', 'hit my goal weight', 'get to 12% body fat',
+                'stay under 1800 calories', 'get skinny for summer',
+                'start a diet', 'track my bmi', 'get abs by june',
+                'drop 10 lbs', 'calorie deficit', 'slim down', 'six pack'):
+        res = programs_curate.screen_aim(aim)
+        check(res['ok'] is False, f"'{aim}' must still be refused, got {res}")
+        check(res.get('alternatives'),
+              f"and still offered the behaviour version, got {res}")
+
+
 if __name__ == '__main__':
     scenario_a_body_aim_is_refused_before_any_research()
     scenario_a_behaviour_aim_passes_the_screen()
@@ -184,4 +213,6 @@ if __name__ == '__main__':
     scenario_shaping_failure_is_hand_written_not_a_crash()
     scenario_nothing_cited_means_hand_written()
     scenario_research_being_off_is_not_an_invented_plan()
+    scenario_ordinary_aims_are_not_refused_as_body_goals()
+    scenario_every_real_body_aim_still_refuses()
     print("test_programs_curate OK")

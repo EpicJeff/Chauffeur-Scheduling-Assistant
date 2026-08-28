@@ -63,6 +63,11 @@ _WORSE_WHEN = {'margin': 'down', 'follow_through': 'down',
                'friction': 'up', 'load': 'up', 'rest': 'down',
                'together': 'down', 'progress': 'down'}
 
+# Signs that must never be phrased as a run of days. `progress` counts a
+# person's own practice sessions, and a consecutive-days count over that is a
+# streak by any other name.
+_NO_RUN = {'progress'}
+
 
 def _day_str(d):
     return d.isoformat() if hasattr(d, 'isoformat') else str(d)[:10]
@@ -301,7 +306,13 @@ def _reading(name, series, label=None):
         out['direction'] = 'down'
 
     # The run: consecutive most-recent days on the same side of baseline.
-    if out['direction']:
+    # NOT for `progress`. A run of consecutive days on a person's practice
+    # count IS a streak -- "6 days running" about a child's guitar is exactly
+    # the shame machine the programs arc promises exists nowhere, and it slid
+    # past the banned-key screen because it lives in `daily_stats`, outside
+    # the program row. Suppressed here rather than in `_phrase` so there is no
+    # number for any future surface to find and render.
+    if out['direction'] and name not in _NO_RUN:
         want_high = out['direction'] == 'up'
         run = 0
         for _, v in reversed(series):
@@ -370,7 +381,11 @@ def read(now: datetime.datetime = None, days: int = WINDOW_DAYS) -> dict:
             continue
         m = storage.get_member(member_id)
         r['member_id'] = member_id
-        r['label'] = (m or {}).get('name') or member_id
+        # Both readings ride res['people'] and `_phrase` prints only the
+        # label, so a bare name here produced two indistinguishable bullets in
+        # the Mind's snapshot -- one meaning Lily's LOAD fell (good) and one
+        # meaning her PRACTICE did (not). The sign has to say which it is.
+        r['label'] = f"{(m or {}).get('name') or member_id} — practice"
         res['people'].append(r)
 
     # Days since the last evening with nothing in it.

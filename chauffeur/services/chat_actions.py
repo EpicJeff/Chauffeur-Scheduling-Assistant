@@ -93,6 +93,10 @@ ADMIN_ACTIONS = {
     # a person saying "yes, it happened" always has -- through the same
     # services.programs.log_session a hand-typed confirmation would use.
     "log_program_session",
+    # Programs: the tap on the drift finding. A window somebody deleted by
+    # hand is never silently put back -- this returns the program to
+    # `proposed` so the whole footprint goes back in front of a person.
+    "reshape_program",
 }
 
 # Human-friendly label shown as the card's action badge.
@@ -116,6 +120,7 @@ ACTION_LABELS = {
     "skip_occurrence": "Skip this one",
     "ask_deal": "Ask them",
     "log_program_session": "Yes, it happened",
+    "reshape_program": "Re-shape the week",
 }
 
 
@@ -303,7 +308,11 @@ def _execute(action_type: str, payload: dict) -> dict:
         return _neg.start_asks(payload.get('deal_id'), payload.get('member_id'))
     if action_type == "log_program_session":
         from services import programs as _prog
-        return _prog.log_session(payload.get('program_id'), source='asked')
+        return _prog.log_session(payload.get('program_id'), source='asked',
+                                 slot_date=payload.get('slot_date'))
+    if action_type == "reshape_program":
+        from services import programs as _prog
+        return _prog.reshape(payload.get('program_id'))
     if action_type in agent_tools.TOOL_HANDLERS:
         return agent_tools.execute_tool(action_type, payload)
     return {"status": "error", "message": f"Unknown action type '{action_type}'."}

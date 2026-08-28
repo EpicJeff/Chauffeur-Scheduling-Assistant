@@ -6439,10 +6439,37 @@ from the real thing at a glance. So `curate()` runs a real research pass
 ONLY what those pages actually said into 2-4 phases; a phase's `weeks` is
 computed from `shape` (never asked of the model — a bare number out of the
 model is curriculum with no page behind it), and **any phase whose `url`
-does not exactly match one of the pages actually fetched is dropped**. If
-dropping empties the plan, the program is not silently thin —
+does not exactly match one of the URLs in `research()`'s `facts` is
+dropped**. If dropping empties the plan, the program is not silently thin —
 `source.hand_written = True` and `phases = []`, said outright rather than
 papered over with an invented curriculum.
+
+**How strong that check actually is depends on which research route ran, and
+the two are not the same.** `services/web.py`'s `research()` has three
+routes, and only two of them read pages:
+
+- **Brave / SerpAPI (routes 2 and 3)** — the app searches, FETCHES each
+  result, and extracts claims from what it read. `facts[]` is genuinely a
+  list of claims tied to pages this app pulled down, `dropped` counts the
+  citations attributed to pages it never read, and "a phase citing nothing
+  is dropped" holds in full: a phase can only survive by naming a URL that
+  was really fetched and really said something.
+- **Gemini grounding (route 1) — the DEFAULT, and this household's** —
+  Google does the searching and returns an answer with its own source list.
+  The app fetches NOTHING. `research()` synthesises `facts` as a single
+  entry: `{'claim': <the entire answer>, 'url': <first resolved source>}`,
+  with `dropped: 0`. So on this route the phase check can only catch a model
+  that invents a URL *different* from the one source it was handed; it
+  cannot catch a phase that cites that source while saying something the
+  source never said. The curriculum still comes from a grounded answer with
+  a real search behind it, which is the arc's substance — but it is NOT the
+  "every claim tied to a page this app read" guarantee the Brave/SerpAPI
+  routes give, and this document said it was.
+
+Rebuilding the grounded route so it also fetches its sources is separate,
+unshipped work. Until it lands, the honest statement is the one above:
+strong on Brave/SerpAPI, weaker on grounding, and never a guarantee that a
+curated plan is free of a model's own invention on the default route.
 
 **The body-goal screen runs before anything else, everywhere the aim is
 typed.** `programs_curate.screen_aim(title)` is a deterministic keyword
@@ -6456,6 +6483,20 @@ cook at home five nights a week, train for a real 5K with a date and a bib)
 in one sentence. `POST /api/programs` runs the screen first;
 `propose_program` (below) returns its refusal VERBATIM, so the sentence a
 parent reads on the Programs page is the same one Argyle says in chat.
+
+**The shape is clamped at every door** (`programs.clamp_shape`, v2.434.0):
+1–7 sessions a week, 5–240 minutes, and preferred days filtered to real
+weekdays — applied by `POST /api/programs`, by `propose_program` in chat and
+by `propose_slots` itself, not just by `max="7"` on a number input. Two real
+failures came out of an unbounded shape: `propose_slots` padded `days` out
+to `sessions_per_week` and appended nothing once all seven weekdays were in
+it, so anything above seven never terminated (and `/programs` calls the
+footprint endpoint for every proposed program, so one such row pinned a
+threadpool worker at 100% CPU on every page load, permanently); and 600
+minutes produced a `time_end` of `'29:00'`, which becomes a solver `Rule`
+inside the ONE try/except that wraps every protected commitment — a single
+malformed row silently disabled protected time for the whole household. A
+window is additionally capped to end inside the day it started in.
 
 **The footprint, and exactly one approval.** `footprint(program)` is
 everything approving would create, shown before the tap: `slots`
@@ -6475,7 +6516,38 @@ program in an `approving` limbo no button in the app can get it out of
 stack** — the footprint claims time in the family's week, and that stays a
 tap on a screen showing exactly what it will do; there is no
 `approve_program` anywhere in `agent_tools_v2.get_available_tools()` or
-`agent_tools.TOOL_SCHEMAS`.
+`agent_tools.TOOL_SCHEMAS`. `GET /api/programs/{id}/footprint` is scoped like
+every other program read (`_program_permission_or_refuse`, v2.434.0) — it
+was the one that took no `request` at all, handing a title, the times it
+would claim, the kit line and the target date to any signed-in caller with
+an id.
+
+**A write that moves protected time reaches the solver now.** Every program
+endpoint that claims or releases reserved evenings — approve, pause, resume,
+finish, drop, re-shape, and the milestone that finishes a program — passes
+`programs`' `schedule_dirty` into a forced background refresh
+(`main._program_refresh`, v2.434.0), the same thing `create_commitment` does
+and for the same reason: protecting an evening that stays scheduled is not
+protecting it, and the mirror case leaves CP-SAT refusing to place a drive
+in an evening nothing is using.
+
+**Pause really removes the reservations, and resume really re-creates
+them** (v2.434.0). `pause()` deletes the emitted `ProtectedCommitment` rows
+and remembers the windows on `paused_slots`; `resume()` re-emits them
+through `_emit_commitments`, the same write path `approve()` uses, so the
+SAME evenings come back rather than newly proposed ones. Before this, pause
+flipped a state and left the commitments live — an adult's paused program
+kept CP-SAT out of those evenings indefinitely, and resume re-created
+nothing because nothing had been removed.
+
+**`done` is a state a program can actually reach** (v2.434.0). Marking the
+LAST un-hit milestone finishes the program — `state: 'done'`, `finished_at`
+stamped, reserved time released — and `POST /api/programs/{id}/finish`
+(the "Finished" button on `/programs`) is the other half the design named:
+done is the last milestone OR a person saying so. Before this the only state
+write anywhere was `dropped`, so the archive's "Done" half could never
+populate, a finished program kept its weekly commitments forever, and the
+only exit read "Dropped. The time is back."
 
 **The shortfall is derived, never stored.** To say "Wednesdays keep getting
 eaten" the app has to know Wednesdays were missed — and the schema
@@ -6499,13 +6571,55 @@ phases, so they're unchanged. Want to try a different day?"
 (`watchers._rebaseline_line`) — never a claim of a squeeze that never
 happened. An
 UNDATED target instead moves itself two weeks, because nothing pins it down.
+**A program with NO target date at all — the default from chat and from the
+page unless somebody types one, so the common case — stretches its remaining
+phases instead** (`_stretch_phases`, v2.434.0): every un-hit phase gains at
+least one week, scaled by what the window actually delivered against what it
+assumed and capped at double. Before this, that branch did not exist: it
+incremented a counter, burned the fortnight cooldown, touched neither phases
+nor dates, and still posted "want to try a different day?" (An event id with
+no date is malformed data and falls through both branches deliberately —
+the event pins a real day this app cannot read, so nothing moves.)
 
-**The drift notice, noticed once, never re-created.** `orphaned_emissions()`
-catches when someone deletes a claimed practice window by hand; the program
-STOPS believing that time is reserved (`forget_emissions`) and says so once
-via a `program_drift` finding — it never silently re-creates what a person
-deleted, because an app that puts back what you deleted is an app you stop
-trusting.
+**When every preferred day is equally empty, it names none of them.**
+`weekday_shortfall` returns `weekday: None` plus the tied `weekdays` list,
+and `watchers._eaten_days` words it "These days keep getting eaten"
+(v2.434.0). The strict `>` used to hand back whichever day came first in the
+list, so a program with Mon/Wed/Fri and an empty log blamed Mondays for
+three identical days — and the entire value of that sentence is naming the
+right one.
+
+**The drift notice, noticed once, never re-created — and it carries its own
+fix.** `orphaned_emissions()` catches when someone DELETES a claimed practice
+window by hand (a DEACTIVATED one does not count, v2.434.0: the read includes
+inactive rows, because switching a window off for a fortnight is not the same
+as deleting it and used to fire the finding and forget the id for good). The
+program STOPS believing that time is reserved (`forget_emissions`) and says
+so once via a `program_drift` finding — it never silently re-creates what a
+person deleted, because an app that puts back what you deleted is an app you
+stop trusting. The finding's action is `reshape_program`
+(`chat_actions`/`POST /api/programs/{id}/reshape`/the "Re-shape the week"
+button on `/programs`), which returns the program to `proposed` so the
+existing approve path rebuilds the whole footprint in front of a person.
+Before v2.434.0 the sentence offered "want it back, or shall I re-shape the
+week?" with no action attached and no endpoint that could do either — an
+offer the app could not perform, and a program left as an active zombie that
+still re-baselined every fortnight.
+
+**The session ask goes to the person whose program it is, never to their
+parents** (v2.434.0). `programs.due_asks_for()` finds the elapsed slot nobody
+has logged, honouring the OWNER's quiet hours and skipping any evening the
+family gave up through negotiation's `lift_protected`
+(`protected_exceptions`); `GET /api/programs` carries it as `due_ask` and the
+PWA card prompts with it, answering through `POST .../session` with the
+slot's own `slot_date` so the session is filed under the evening it was
+about rather than the morning somebody got round to tapping. It is
+deliberately NOT a watcher finding any more: a finding is DM'd to PARENTS,
+`/api/findings` is parent/adult gated, and the "Yes, it happened" card was
+admin gated — so both parents were being asked whether a kid's guitar
+session happened, and either could tap yes for something nobody witnessed.
+That was the one place in this arc where the app could claim more than
+happened. Silence still counts nothing.
 
 **The ownership rule, the same everywhere it applies.** You may act on YOUR
 OWN program freely — propose it, log your own sessions, mark your own
@@ -6519,6 +6633,19 @@ exception that is NEVER an ownership matter — even the program's own owner
 needs a parent/adult to claim the week, matching how `ask_deal` and
 approving a negotiation both require a grown-up regardless of whose day it
 is.
+
+**The wall reads a celebration-only projection, not the programs list**
+(`programs.celebrations()` / `GET /api/programs/celebrations`, v2.434.0 —
+the one program route `services/auth.py` opens to `WALL`). The card fetches
+from a `?panel=true` board, whose fetches carry `X-Device-Token`, so
+`identify()` returns DEVICE and both `_program_list_scope` and
+`_is_admin_surface` refuse it — the card said "Nothing to celebrate yet."
+forever. The fix is deliberately not a wider read: the full program payload
+carries an aim in somebody's own words, a curated plan, a target date and
+every session logged, and a wall is read by whoever is in the room. The
+projection returns three things with names already resolved — whose
+milestone is close, what got practised this week, who just reached one — and
+no totals, no ordering, no dates.
 
 **Chat tools, both stacks, an allowlist not a blocklist.** `list_programs`
 and `program_progress` are reads; `propose_program` and
@@ -6545,12 +6672,26 @@ measures load, margin, friction; this is the first one that can go up
 because things are going well. It follows the same rules as the other six:
 Mind-input only (no wall tile, no vitals page), measured against that
 program's own past, never a target or a gauge — see the Family vitals
-section above.
+section above. Two v2.434.0 corrections: its reading is labelled
+"`<name>` — practice" rather than the bare name, because `load` and
+`progress` both ride `res['people']` and `_phrase` prints only the label, so
+the Mind's snapshot was getting two indistinguishable bullets — one meaning
+somebody's load fell (good) and one meaning their practice did (not). And
+`run_days` is suppressed for this sign specifically (`vitals._NO_RUN`): a
+consecutive-days count over a person's practice IS a streak, the one thing
+this arc promises exists nowhere, and it slipped past
+`storage.PROGRAM_BANNED_KEYS` because it lives in `daily_stats`, outside the
+program row. The Mind can no longer say "6 days running" about a child's
+guitar.
 
 **The five settings** (Config → Programs, also editable on the `/programs`
 page itself — the setting is on the page that names it, per house rule):
 `programs_enabled` (default on — off means no session asks, no
-re-baselining and no findings; read by `watchers._program_findings`),
+re-baselining, no findings AND no new programs: it is read by
+`watchers._program_findings`, by `programs.due_asks_for`, by
+`POST /api/programs` and by `propose_program` in chat, since a setting that
+still let a household spend a research run and claim a week was gating the
+sweep rather than the feature),
 `programs_ask_grace_hours` (default 2 — how long after a slot ends before
 `due_session_asks` asks whether it happened; quiet hours are honoured on top
 of this regardless), `programs_rebaseline_days` (default 21, how far back

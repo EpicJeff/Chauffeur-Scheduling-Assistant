@@ -172,7 +172,7 @@ def scenario_rebaseline_admits_when_phases_cannot_fit():
           f"and it must not pretend to make room it doesn't have, got {out['phases']}")
     check(storage.get_program(pid)['phases'] == original,
           "the untouched phases are what actually got saved")
-    day = _WEEKDAY_NAMES[out['weekday']]
+    day = watchers._eaten_days(out)
     line = watchers._rebaseline_line(row.get('title'), day, out).lower()
     check('tight against the date' in line, f"the honest half survives, got {line}")
     check('as short as they can go' not in line
@@ -213,7 +213,7 @@ def scenario_an_event_with_no_date_claims_no_room_was_made():
     out = programs.maybe_rebaseline(row)
     check(out is not None and out['fits'] is None and out['date_moved'] is False,
           f"nothing to compress against and nothing to stretch, got {out}")
-    day = _WEEKDAY_NAMES[out['weekday']]
+    day = watchers._eaten_days(out)
     line = watchers._rebaseline_line(row.get('title'), day, out).lower()
     check('more room' not in line,
           f"nothing moved, so nothing may claim room was made, got {line}")
@@ -318,6 +318,241 @@ def scenario_the_session_ask_tap_actually_logs_a_session():
           f"and a real session lands on the program, got {before} -> {after}")
 
 
+def _elapsed_slot(pid, member_id='lily'):
+    """A claimed practice window that ended yesterday morning, so the grace
+    period has certainly passed whatever time of day this test runs."""
+    yesterday = datetime.date.today() - datetime.timedelta(days=1)
+    cid = uuid.uuid4().hex
+    storage.add_protected_commitment({
+        'id': cid, 'member_id': member_id, 'title': 'Guitar',
+        'days_of_week': [yesterday.weekday()], 'time_start': '07:00',
+        'time_end': '07:25', 'active': True})
+    storage.update_program(pid, {'emissions': {'commitment_ids': [cid],
+                                               'thread_ids': [], 'event_ids': []}})
+    return cid, yesterday
+
+
+def scenario_the_session_ask_never_reaches_a_parent():
+    """The one place in this arc where the app could claim more than
+    happened. `program_session` was a `dm=True` finding, `run_watchers` DMs
+    PARENTS only, `/api/findings` is parent/adult gated and the "Yes, it
+    happened" card is admin gated -- so both parents were asked whether a
+    kid's guitar session happened and either could tap yes for something
+    nobody witnessed. The question belongs to the person whose program it is,
+    so it is no longer a finding at all."""
+    _reset()
+    pid = _mk()
+    _elapsed_slot(pid)
+    due = programs.due_session_asks()
+    check(any(d['program']['id'] == pid for d in due),
+          f"the slot really is unanswered, got {due}")
+    found = watchers._program_findings(datetime.datetime.now())
+    check(not [f for f in found if f.kind == 'program_session'],
+          f"and nothing asks a parent about it, got {[f.kind for f in found]}")
+    for f in found:
+        act = (f.action or {}).get('action_type')
+        check(act != 'log_program_session',
+              f"no parent-tappable card confirms a session they did not see, got {f}")
+
+
+def scenario_the_ask_rides_the_owners_own_surface():
+    """Where the question went instead: `GET /api/programs` carries the
+    pending ask, so the PWA card the owner already fetches can prompt them --
+    and answering with the slot's own date files the session under the
+    evening it was about, not the morning they got round to tapping."""
+    _reset()
+    import main
+    pid = _mk()
+    cid, slot_day = _elapsed_slot(pid)
+    res = main.list_programs_api(member_id='lily')
+    ask = res['programs'][0].get('due_ask')
+    check(ask and ask['slot_date'] == slot_day.isoformat(),
+          f"the owner's own list carries the question, got {ask}")
+    check(slot_day.strftime('%A') in ask['body'],
+          f"naming the evening it is about, got {ask}")
+
+    programs.log_session(pid, source='asked', slot_date=ask['slot_date'])
+    logged = programs.sessions_between(storage.get_program(pid), slot_day, slot_day)
+    check(len(logged) == 1,
+          f"the answer lands on THAT day, got {storage.get_program(pid)['sessions']}")
+    after = main.list_programs_api(member_id='lily')['programs'][0].get('due_ask')
+    check(after is None, f"and the prompt clears, got {after}")
+
+
+def scenario_an_evening_the_family_gave_up_is_never_asked_about():
+    """Cross-arc: negotiation's `lift_protected` records a protected
+    exception for ONE date -- an evening the family agreed to spend
+    elsewhere, not one anybody failed to practise on. Asking "did it happen?"
+    about it is the app forgetting a deal it brokered itself."""
+    _reset()
+    pid = _mk()
+    cid, slot_day = _elapsed_slot(pid)
+    storage.add_protected_exception(cid, slot_day.isoformat())
+    due = [d for d in programs.due_session_asks() if d['program']['id'] == pid]
+    check(due == [], f"a lifted evening asks nothing, got {due}")
+
+
+def scenario_a_deactivated_window_is_not_a_deleted_one():
+    """`orphaned_emissions` compared against `get_protected_commitments()`,
+    whose default hides `active: False` -- so switching a window off for a
+    fortnight looked exactly like deleting it: the drift finding fired and
+    the id was forgotten for good, which meant switching it back on could
+    never re-link."""
+    _reset()
+    pid = _mk()
+    cid, _ = _elapsed_slot(pid)
+    storage.update_protected_commitment(cid, {'active': False})
+    row = storage.get_program(pid)
+    check(programs.orphaned_emissions(row) == [],
+          "deactivating is not deleting")
+    storage.delete_protected_commitment(cid)
+    check(programs.orphaned_emissions(storage.get_program(pid)) == [cid],
+          "deleting still is")
+
+
+def scenario_the_drift_finding_carries_an_offer_the_app_can_perform():
+    """It asked "want it back, or shall I re-shape the week?" with no action
+    attached and no endpoint that could re-emit -- `approve()` demands
+    `proposed` -- while `forget_emissions` erased the ids, so even a
+    hand-restored commitment could never re-link. The program became an
+    active zombie that still re-baselined every fortnight."""
+    _reset()
+    storage.add_member({'id': 'dad', 'name': 'Dad', 'role': 'parent'})
+    pid = _mk()
+    cid, _ = _elapsed_slot(pid)
+    storage.delete_protected_commitment(cid)
+    found = [f for f in watchers._program_findings(datetime.datetime.now())
+             if f.kind == 'program_drift' and f.subject_id == pid]
+    check(len(found) == 1, f"the drift is noticed once, got {found}")
+    act = found[0].action
+    check(act and act['action_type'] == 'reshape_program',
+          f"and it carries its solution, got {act}")
+
+    prop = chat_actions.create_action_proposal(
+        act['action_type'], act['label'], act['payload'])
+    check(prop['status'] == 'success', f"a real proposable action, got {prop}")
+    res = chat_actions.act_on_proposal(prop['proposal_id'], 'approve',
+                                       storage.get_member('dad'))
+    check(res['status'] == 'success', f"the tap really executes, got {res}")
+    check(storage.get_program(pid)['state'] == 'proposed',
+          "and the program can be approved again, which is the offer it made")
+    check(storage.get_protected_commitments(member_id='lily') == [],
+          "nothing was silently re-created -- a person still taps the footprint")
+
+
+def scenario_the_last_milestone_finishes_the_program():
+    """Nothing anywhere set a program `done`: `mark_milestone` stamped a hit
+    date and stopped, and the archive's "Done" half could never populate. A
+    finished program kept its weekly commitments and kept asking forever, and
+    the only exit read "Dropped. The time is back."""
+    _reset()
+    pid = _mk(phases=[{'name': 'Phase 1', 'weeks': 4, 'what': 'Chords',
+                       'milestone': 'G to C', 'milestone_hit_at': None},
+                      {'name': 'Phase 2', 'weeks': 4, 'what': 'Songs',
+                       'milestone': 'A whole song', 'milestone_hit_at': None}])
+    _elapsed_slot(pid)
+    programs.mark_milestone(pid, 'Phase 1')
+    check(storage.get_program(pid)['state'] == 'active',
+          "one of two is not the end")
+    res = programs.mark_milestone(pid, 'Phase 2')
+    check(res['status'] == 'success' and res.get('schedule_dirty'),
+          f"the last one finishes it, got {res}")
+    row = storage.get_program(pid)
+    check(row['state'] == 'done' and row.get('finished_at'),
+          f"reaching the end is not the same as abandoning it, got {row['state']}")
+    check(storage.get_protected_commitments(member_id='lily') == [],
+          "and the practice time really goes back")
+    check(programs.due_session_asks() == [],
+          "a finished program stops asking whether it happened")
+
+
+def scenario_a_person_can_say_it_is_finished():
+    """The other half of done -- the design says done is the last milestone
+    OR a person saying so, and only the first was ever built."""
+    _reset()
+    pid = _mk()
+    _elapsed_slot(pid)
+    res = programs.finish(pid)
+    check(res['status'] == 'success', f"got {res}")
+    row = storage.get_program(pid)
+    check(row['state'] == 'done' and row.get('finished_at'), f"got {row['state']}")
+    check(storage.get_protected_commitments(member_id='lily') == [],
+          "the evenings go back, same as dropping -- what differs is the record")
+
+
+def scenario_an_undated_program_really_stretches():
+    """The common program has no `target_date` -- it is the default from the
+    chat tool and from the page unless somebody types one. Re-baselining
+    incremented a counter, burned the fortnight cooldown, touched neither
+    phases nor dates, and still posted "want to try a different day?"""
+    _reset()
+    pid = _mk(target_date=None, target_event_id=None)
+    _log_on(pid, 1)
+    row = storage.get_program(pid)
+    before = [p['weeks'] for p in row['phases']]
+    out = programs.maybe_rebaseline(row)
+    check(out is not None, f"it still fires, got {out}")
+    after = [p['weeks'] for p in storage.get_program(pid)['phases']]
+    check(all(a > b for a, b in zip(after, before)),
+          f"and the timeline actually stretches, {before} -> {after}")
+    check(out.get('stretched') is True, f"and says so honestly, got {out}")
+    line = watchers._rebaseline_line('Guitar', watchers._eaten_days(out), out)
+    check('more room' in line, f"which the sentence may then claim, got {line}")
+
+
+def scenario_a_tied_shortfall_names_no_single_day():
+    """With nothing logged, every preferred day is equally empty and the
+    strict `>` always named the first -- so a program with Mon/Wed/Fri and an
+    empty log said "Mondays keep getting eaten" about three identical days.
+    The whole value of that sentence is naming the right one."""
+    _reset()
+    pid = storage.add_program({
+        'member_id': 'lily', 'title': 'Guitar', 'state': 'active',
+        'shape': {'sessions_per_week': 3, 'minutes': 25,
+                  'preferred_days': [0, 2, 4]},
+        'baseline': {'start_date': (datetime.date.today()
+                                    - datetime.timedelta(days=21)).isoformat(),
+                     'target_date': None, 'target_event_id': None,
+                     'rebaselined_at': None, 'rebaselines': 0},
+        'phases': [{'name': 'Phase 1', 'weeks': 4, 'what': 'Chords',
+                    'milestone': 'G to C', 'milestone_hit_at': None}]})
+    short = programs.weekday_shortfall(storage.get_program(pid))
+    check(short and short['weekday'] is None,
+          f"a tie names nobody, got {short}")
+    check(short['weekdays'] == [0, 2, 4], f"got {short}")
+    out = programs.maybe_rebaseline(storage.get_program(pid))
+    line = watchers._rebaseline_line('Guitar', watchers._eaten_days(out), out)
+    check(line.startswith('🎸 Guitar: These days keep getting eaten'),
+          f"it says 'these days' rather than guessing, got {line}")
+    for name in _WEEKDAY_NAMES:
+        check(name not in line, f"and names no weekday at all, got {line}")
+
+
+def scenario_programs_off_means_off():
+    """`programs_enabled` gated only the sweep, so with it off a household
+    could still propose a program, spend a research run and claim the week.
+    A setting named for a feature governs the feature."""
+    _reset()
+    import main
+    # tests/harness.py stubs `get_settings` outright, so the switch is flipped
+    # by swapping that stub rather than by writing a row nothing reads.
+    real = storage.get_settings
+    storage.get_settings = lambda: {'calendar_ids': ['primary'],
+                                    'programs_enabled': False}
+    try:
+        res = main.create_program(body={'member_id': 'lily', 'title': 'learn guitar',
+                                        'for_member_id': 'lily'}, request=None)
+        check(res.get('status') == 'error', f"proposing is refused, got {res}")
+        check(storage.get_programs(include_finished=True) == [],
+              "and nothing was created")
+        pid = _mk()
+        _elapsed_slot(pid)
+        check(programs.due_asks_for(storage.get_program(pid)) == [],
+              "and no question is asked either")
+    finally:
+        storage.get_settings = real
+
+
 if __name__ == '__main__':
     scenario_the_shortfall_is_derived_and_never_stored()
     scenario_rebaseline_never_moves_a_date_the_world_fixed()
@@ -331,4 +566,14 @@ if __name__ == '__main__':
     scenario_a_paused_program_asks_nothing()
     scenario_one_bad_program_does_not_silence_the_rest()
     scenario_the_session_ask_tap_actually_logs_a_session()
+    scenario_the_session_ask_never_reaches_a_parent()
+    scenario_the_ask_rides_the_owners_own_surface()
+    scenario_an_evening_the_family_gave_up_is_never_asked_about()
+    scenario_a_deactivated_window_is_not_a_deleted_one()
+    scenario_the_drift_finding_carries_an_offer_the_app_can_perform()
+    scenario_the_last_milestone_finishes_the_program()
+    scenario_a_person_can_say_it_is_finished()
+    scenario_an_undated_program_really_stretches()
+    scenario_a_tied_shortfall_names_no_single_day()
+    scenario_programs_off_means_off()
     print("test_programs_living OK")
