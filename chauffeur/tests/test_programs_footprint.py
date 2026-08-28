@@ -17,12 +17,12 @@ def _reset():
     storage.add_member({'id': 'mom', 'name': 'Mom', 'role': 'parent'})
 
 
-def _mk():
+def _mk(what='Three chords'):
     return storage.add_program({
         'member_id': 'lily', 'title': 'Play campfire songs by summer',
         'shape': {'sessions_per_week': 3, 'minutes': 25,
                   'preferred_days': [1, 3, 5]},
-        'phases': [{'name': 'Phase 1', 'weeks': 4, 'what': 'Three chords',
+        'phases': [{'name': 'Phase 1', 'weeks': 4, 'what': what,
                     'milestone': 'G to C', 'milestone_hit_at': None}]})
 
 
@@ -91,8 +91,12 @@ def scenario_a_pre_insert_failure_says_what_already_happened():
         check(res['status'] == 'error', f"it reports the failure, got {res}")
         check(row['state'] == 'proposed',
               f"reverted, not stranded and not silently active, got {row['state']}")
-        check('already happened' in (res.get('message') or '').lower(),
-              f"and says so rather than pretending nothing happened, got {res}")
+        msg = (res.get('message') or '').lower()
+        check('nothing was kept' in msg or 'unclaimed' in msg,
+              f"the message has to describe what is NOW true -- the revert "
+              f"already undid it, got {res}")
+        check('is claimed' not in msg,
+              f"must not claim something the revert already undid, got {res}")
         check(not row['emissions']['commitment_ids'],
               f"the revert cleaned up what it claimed, got {row['emissions']}")
         check(not storage.get_protected_commitments(member_id='lily'),
@@ -124,6 +128,12 @@ def scenario_a_rejected_write_returns_none_not_an_exception():
               f"reverted, not stranded and not silently active, got {row['state']}")
         check(None not in row['emissions']['event_ids'],
               f"a null id must never be recorded as a real one, got {row['emissions']}")
+        msg = (res.get('message') or '').lower()
+        check('nothing was kept' in msg or 'unclaimed' in msg,
+              f"the message has to describe what is NOW true -- the revert "
+              f"already undid it, got {res}")
+        check('is claimed' not in msg,
+              f"must not claim something the revert already undid, got {res}")
         check(not row['emissions']['commitment_ids'],
               f"the revert cleaned up what it claimed, got {row['emissions']}")
         check(not storage.get_protected_commitments(member_id='lily'),
@@ -171,6 +181,80 @@ def scenario_a_local_write_failure_reverts_and_cleans_up():
     retry = programs.approve(pid, 'mom')
     check(retry['status'] == 'success', f"a plain retry must work, got {retry}")
     check(storage.get_program(pid)['state'] == 'active', "and it really goes through")
+
+
+def scenario_a_final_flip_failure_reverts_and_cleans_up():
+    """The narrowest window of all: local writes, the kit thread, and even
+    the calendar all finish -- and then the very LAST write, the state flip
+    itself, is what raises. Before this round's fix the bracket stopped one
+    statement short of that write, which reintroduced exactly the stranding
+    bug this whole round exists to close.
+
+    Also the one case `_revert_attempt` can ever be asked to clean up a real
+    calendar event: the calendar branch is the last thing before the flip,
+    so a flip failure is the only way a real event id reaches the revert
+    path. And the phase text here mentions gear on purpose, so a kit thread
+    gets created too -- proving the thread-deletion branch actually runs
+    rather than just trusting it by reading the code."""
+    _reset()
+    pid = _mk(what='Buy a metronome and a capo before phase 2')
+    _with_target_date(pid)
+    from services import calendar as _cal
+    real_create, real_remove = _cal.create_event, _cal.remove_event
+    removed_events = []
+    _cal.create_event = lambda *a, **kw: 'fake-event-1'
+    _cal.remove_event = lambda cal_id, eid: removed_events.append(eid) or True
+
+    real_update = storage.update_program
+
+    def flaky_update(program_id, data):
+        if data.get('state') == 'active':
+            raise RuntimeError('db went away')
+        return real_update(program_id, data)
+
+    real_delete_thread = storage.delete_thread
+    deleted_threads = []
+
+    def tracked_delete_thread(tid):
+        deleted_threads.append(tid)
+        return real_delete_thread(tid)
+
+    storage.update_program = flaky_update
+    storage.delete_thread = tracked_delete_thread
+    try:
+        res = programs.approve(pid, 'mom')
+        row = storage.get_program(pid)
+        check(res['status'] == 'error', f"it reports the failure, got {res}")
+        check(row['state'] == 'proposed',
+              f"not stranded in approving, not silently active, got {row['state']}")
+        check(row['emissions'] == {'commitment_ids': [], 'thread_ids': [], 'event_ids': []},
+              f"cleared off the row, got {row['emissions']}")
+        check(not storage.get_protected_commitments(member_id='lily'),
+              "no orphan commitment left from the attempt that didn't finish")
+        check(deleted_threads,
+              "the kit thread this attempt created gets cleaned up too, "
+              "not just assumed to")
+        check(not storage.get_threads(owner='lily'),
+              "and it is really gone, not just attempted")
+        check(removed_events == ['fake-event-1'],
+              f"the calendar event this attempt created also gets cleaned "
+              f"up -- the only write here that reaches another system, and "
+              f"the one thing a plain delete can't undo if left alone, "
+              f"got {removed_events}")
+    finally:
+        storage.update_program = real_update
+        storage.delete_thread = real_delete_thread
+
+    # The retry still needs the calendar stubbed -- baseline.target_date is
+    # unchanged (that write never landed), so the calendar branch fires
+    # again.
+    try:
+        retry = programs.approve(pid, 'mom')
+        check(retry['status'] == 'success', f"a plain retry must work, got {retry}")
+        check(storage.get_program(pid)['state'] == 'active', "and it really goes through")
+    finally:
+        _cal.create_event = real_create
+        _cal.remove_event = real_remove
 
 
 def scenario_approving_twice_does_not_claim_twice():
@@ -226,6 +310,7 @@ if __name__ == '__main__':
     scenario_a_pre_insert_failure_says_what_already_happened()
     scenario_a_rejected_write_returns_none_not_an_exception()
     scenario_a_local_write_failure_reverts_and_cleans_up()
+    scenario_a_final_flip_failure_reverts_and_cleans_up()
     scenario_approving_twice_does_not_claim_twice()
     scenario_two_taps_claim_the_week_once()
     print("test_programs_footprint OK")

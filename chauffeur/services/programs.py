@@ -198,15 +198,24 @@ def _revert_attempt(program_id: str, emissions: dict) -> None:
     finish must not leave reserved time nothing owns behind it.
 
     Deletes the commitment rows and the kit thread the attempt already
-    created (both are ours to remove), clears them off the row so a later
-    read does not point at ids that no longer exist, then hands the claim
-    back to `proposed` -- exactly where `approve()` found the program -- so
-    it is retryable rather than stranded in `approving` forever. There is
-    never a calendar event id to clean up here: the calendar write is always
-    the last thing an attempt does before its success return, so if one made
-    it into `emissions['event_ids']` the attempt already succeeded and this
-    function was never called.
+    created, and a calendar event too in the one case there can be one: the
+    state flip is now inside the same bracket as everything else, so a
+    failure on that very last write can be reached with a real event id
+    already sitting in `emissions['event_ids']` (the calendar branch runs
+    right before it). Hands the claim back to `proposed` BEFORE clearing the
+    row's `emissions` field -- if that last, purely cosmetic write also
+    fails, the program is still retryable rather than the revert itself
+    stranding it. A revert that can strand is worse than no revert.
     """
+    if emissions.get('event_ids'):
+        from services import calendar as _cal
+        settings = storage.get_settings() or {}
+        cal_id = (settings.get('calendar_ids') or ['primary'])[0]
+        for eid in emissions['event_ids']:
+            try:
+                _cal.remove_event(cal_id, eid)
+            except Exception as e:
+                print(f"[programs] could not clean up calendar event {eid}: {e}")
     for tid in emissions.get('thread_ids') or []:
         try:
             storage.delete_thread(tid)
@@ -217,9 +226,9 @@ def _revert_attempt(program_id: str, emissions: dict) -> None:
             storage.delete_protected_commitment(cid)
         except Exception as e:
             print(f"[programs] could not clean up commitment {cid}: {e}")
+    storage.claim_program(program_id, 'approving', 'proposed')
     storage.update_program(program_id, {
         'emissions': {'commitment_ids': [], 'thread_ids': [], 'event_ids': []}})
-    storage.claim_program(program_id, 'approving', 'proposed')
 
 
 def approve(program_id: str, approver_id: str = None, slots: list = None) -> dict:
@@ -320,24 +329,36 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
                 emissions['event_ids'].append(ev_id)
                 baseline['target_event_id'] = ev_id
             except Exception as e:
+                # _revert_attempt undoes EVERYTHING this attempt stamped, the
+                # commitments included -- so by the time whoever called
+                # approve() reads this message, the practice time is not
+                # claimed anymore. Say that, not the opposite.
                 raise RuntimeError(
-                    "The practice time is claimed, but the calendar refused "
-                    "the target date — that part already happened, this "
-                    f"one didn't: {e}") from e
+                    "The calendar refused the target date, so nothing was "
+                    f"kept -- {row.get('title') or 'this program'} is back "
+                    f"to unclaimed and can be approved again once that's "
+                    f"sorted out: {e}") from e
+
+        # The state flip has to be inside this same bracket: it is a write
+        # like any other (update_program's own key screen can raise), and
+        # anything after the claim that isn't guarded reintroduces the exact
+        # stranding bug this bracket exists to close.
+        baseline['start_date'] = baseline.get('start_date') or \
+            datetime.date.today().isoformat()
+        storage.update_program(program_id, {
+            'state': 'active', 'approved_by': approver_id,
+            'emissions': emissions, 'baseline': baseline})
     except Exception as e:
-        # Whatever failed -- a local write that raised, or the calendar
-        # branch re-raising its own message above -- this attempt did not
-        # finish, so nothing it stamped gets to stay: delete what was
-        # created, clear it off the row, and hand the claim back so the
-        # program is exactly where `approve()` found it, not stranded.
+        # Whatever failed -- a local write, the kit thread, the calendar
+        # branch re-raising its own message above, or the state flip itself
+        # -- this attempt did not finish, so nothing it stamped gets to
+        # stay: delete what was created, clear it off the row, and hand the
+        # claim back so the program is exactly where `approve()` found it,
+        # not stranded. The success path below is never reached when this
+        # branch runs, so it cannot revert itself.
         _revert_attempt(program_id, emissions)
         return {'status': 'error', 'message': str(e)}
 
-    baseline['start_date'] = baseline.get('start_date') or \
-        datetime.date.today().isoformat()
-    storage.update_program(program_id, {
-        'state': 'active', 'approved_by': approver_id,
-        'emissions': emissions, 'baseline': baseline})
     return {'status': 'success', 'schedule_dirty': True,
             'message': f"{row.get('title')} is on. "
                        f"{len(emissions['commitment_ids'])} practice window(s) claimed."}
