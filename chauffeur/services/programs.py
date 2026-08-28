@@ -193,6 +193,35 @@ def _kit_line(program: dict) -> str:
     return ''
 
 
+def _revert_attempt(program_id: str, emissions: dict) -> None:
+    """Undo what THIS attempt stamped, because a claim that is not going to
+    finish must not leave reserved time nothing owns behind it.
+
+    Deletes the commitment rows and the kit thread the attempt already
+    created (both are ours to remove), clears them off the row so a later
+    read does not point at ids that no longer exist, then hands the claim
+    back to `proposed` -- exactly where `approve()` found the program -- so
+    it is retryable rather than stranded in `approving` forever. There is
+    never a calendar event id to clean up here: the calendar write is always
+    the last thing an attempt does before its success return, so if one made
+    it into `emissions['event_ids']` the attempt already succeeded and this
+    function was never called.
+    """
+    for tid in emissions.get('thread_ids') or []:
+        try:
+            storage.delete_thread(tid)
+        except Exception as e:
+            print(f"[programs] could not clean up thread {tid}: {e}")
+    for cid in emissions.get('commitment_ids') or []:
+        try:
+            storage.delete_protected_commitment(cid)
+        except Exception as e:
+            print(f"[programs] could not clean up commitment {cid}: {e}")
+    storage.update_program(program_id, {
+        'emissions': {'commitment_ids': [], 'thread_ids': [], 'event_ids': []}})
+    storage.claim_program(program_id, 'approving', 'proposed')
+
+
 def approve(program_id: str, approver_id: str = None, slots: list = None) -> dict:
     """Claim the week. One act, everything the footprint showed.
 
@@ -227,72 +256,82 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
 
     emissions = {'commitment_ids': [], 'thread_ids': [], 'event_ids': []}
 
-    # Local writes first: cheap, ours, and undoable by a person who can see
-    # them. One commitment per slot, not merged by window -- three practice
-    # sessions a week are three claimed windows, each one individually
-    # visible and individually undoable in the commitments list.
-    for s in use:
-        # add_protected_commitment writes the dict as given -- it does not go
-        # through the pydantic model the way the HTTP route does -- so the id
-        # has to be minted here, not left for storage to invent one.
-        cid = storage.add_protected_commitment({
-            'id': uuid.uuid4().hex,
-            'member_id': row['member_id'], 'title': row.get('title') or 'Practice',
-            'days_of_week': [s['day']], 'time_start': s['time_start'],
-            'time_end': s['time_end'], 'active': True})
-        emissions['commitment_ids'].append(cid)
-        storage.update_program(program_id, {'emissions': emissions})
-
-    kit = _kit_line(row)
-    if kit:
-        tid = storage.add_thread({'title': kit, 'kind': 'project',
-                                  'owner_member_id': row['member_id'],
-                                  'goal': 'Have what the next phase needs',
-                                  'created_by': approver_id})
-        emissions['thread_ids'].append(tid)
-        storage.update_program(program_id, {'emissions': emissions})
-
-    # The one write that reaches another system goes last.
-    baseline = dict(row.get('baseline') or {})
-    if baseline.get('target_date') and not baseline.get('target_event_id'):
-        try:
-            settings = storage.get_settings() or {}
-            cal_id = (settings.get('calendar_ids') or ['primary'])[0]
-            # calendar.create_event sends {'dateTime': start} with no
-            # timeZone attached, and Google rejects a naive dateTime outright
-            # ("Missing time zone definition") -- the same trap
-            # chat_actions._create_event documents and normalizes at the
-            # caller. Stamp the server's local offset on here rather than
-            # teaching create_event a new parameter for one caller.
-            naive_start = datetime.datetime.fromisoformat(
-                f"{baseline['target_date']}T09:00:00")
-            start_iso = naive_start.astimezone().isoformat()
-            end_iso = (naive_start + datetime.timedelta(hours=1)).astimezone().isoformat()
-            ev_id = _cal.create_event(cal_id, row.get('title') or 'Program',
-                                      start_iso, end_iso)
-            # create_event catches every Google API exception itself and
-            # returns None on a real rejection (bad calendar id, quota,
-            # transient failure) rather than raising -- the try/except above
-            # only ever catches OUR pre-insert failures (a bad date string).
-            # A falsy id IS the production failure signal, same convention as
-            # chat_actions._create_event's `if not gid`, and it must never be
-            # recorded as though it were a real event id.
-            if not ev_id:
-                raise RuntimeError("the calendar didn't create the event")
-            emissions['event_ids'].append(ev_id)
-            baseline['target_event_id'] = ev_id
-        except Exception as e:
-            # Local writes already happened and stay stamped on the row --
-            # what did NOT happen is the state flip, so the program is left
-            # exactly where `approve()` found it (`proposed`) rather than
-            # `approving` forever or, worse, `active` with a target date that
-            # silently does not exist. A person or a later call can try again.
-            storage.claim_program(program_id, 'approving', 'proposed')
+    # Everything from here to the final flip is bracketed. The claim above
+    # moved the point of no return earlier than a plain `state='proposed'`
+    # row, and nothing else transitions a program OUT of `approving` -- so
+    # any exception in here, not just the calendar's, has to be caught and
+    # reverted, or the program is stuck un-retryable forever.
+    try:
+        # Local writes first: cheap, ours, and undoable by a person who can
+        # see them. One commitment per slot, not merged by window -- three
+        # practice sessions a week are three claimed windows, each one
+        # individually visible and individually undoable in the commitments
+        # list.
+        for s in use:
+            # add_protected_commitment writes the dict as given -- it does
+            # not go through the pydantic model the way the HTTP route does
+            # -- so the id has to be minted here, not left for storage to
+            # invent one.
+            cid = storage.add_protected_commitment({
+                'id': uuid.uuid4().hex,
+                'member_id': row['member_id'], 'title': row.get('title') or 'Practice',
+                'days_of_week': [s['day']], 'time_start': s['time_start'],
+                'time_end': s['time_end'], 'active': True})
+            emissions['commitment_ids'].append(cid)
             storage.update_program(program_id, {'emissions': emissions})
-            return {'status': 'error',
-                    'message': (f"The practice time is claimed, but the "
-                                f"calendar refused the target date — that part "
-                                f"already happened, this one didn't: {e}")}
+
+        kit = _kit_line(row)
+        if kit:
+            tid = storage.add_thread({'title': kit, 'kind': 'project',
+                                      'owner_member_id': row['member_id'],
+                                      'goal': 'Have what the next phase needs',
+                                      'created_by': approver_id})
+            emissions['thread_ids'].append(tid)
+            storage.update_program(program_id, {'emissions': emissions})
+
+        # The one write that reaches another system goes last.
+        baseline = dict(row.get('baseline') or {})
+        if baseline.get('target_date') and not baseline.get('target_event_id'):
+            try:
+                settings = storage.get_settings() or {}
+                cal_id = (settings.get('calendar_ids') or ['primary'])[0]
+                # calendar.create_event sends {'dateTime': start} with no
+                # timeZone attached, and Google rejects a naive dateTime
+                # outright ("Missing time zone definition") -- the same trap
+                # chat_actions._create_event documents and normalizes at the
+                # caller. Stamp the server's local offset on here rather
+                # than teaching create_event a new parameter for one caller.
+                naive_start = datetime.datetime.fromisoformat(
+                    f"{baseline['target_date']}T09:00:00")
+                start_iso = naive_start.astimezone().isoformat()
+                end_iso = (naive_start + datetime.timedelta(hours=1)).astimezone().isoformat()
+                ev_id = _cal.create_event(cal_id, row.get('title') or 'Program',
+                                          start_iso, end_iso)
+                # create_event catches every Google API exception itself and
+                # returns None on a real rejection (bad calendar id, quota,
+                # transient failure) rather than raising -- the try/except
+                # above only ever catches OUR pre-insert failures (a bad
+                # date string). A falsy id IS the production failure signal,
+                # same convention as chat_actions._create_event's
+                # `if not gid`, and it must never be recorded as though it
+                # were a real event id.
+                if not ev_id:
+                    raise RuntimeError("the calendar didn't create the event")
+                emissions['event_ids'].append(ev_id)
+                baseline['target_event_id'] = ev_id
+            except Exception as e:
+                raise RuntimeError(
+                    "The practice time is claimed, but the calendar refused "
+                    "the target date — that part already happened, this "
+                    f"one didn't: {e}") from e
+    except Exception as e:
+        # Whatever failed -- a local write that raised, or the calendar
+        # branch re-raising its own message above -- this attempt did not
+        # finish, so nothing it stamped gets to stay: delete what was
+        # created, clear it off the row, and hand the claim back so the
+        # program is exactly where `approve()` found it, not stranded.
+        _revert_attempt(program_id, emissions)
+        return {'status': 'error', 'message': str(e)}
 
     baseline['start_date'] = baseline.get('start_date') or \
         datetime.date.today().isoformat()

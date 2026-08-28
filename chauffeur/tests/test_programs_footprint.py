@@ -75,7 +75,9 @@ def scenario_a_pre_insert_failure_says_what_already_happened():
     ever reaching Google (a bad date string, e.g.) -- the try/except exists
     for exactly this. The calendar is the one write that reaches another
     system, so it goes last, and when it refuses the program must not imply
-    nothing happened, and must not be left claimed."""
+    nothing happened -- but the practice time it claimed on the way there
+    is also not real anymore, so the revert has to clean that up rather
+    than leave it as an orphan reservation nothing owns."""
     _reset()
     pid = _mk()
     _with_target_date(pid)
@@ -87,11 +89,14 @@ def scenario_a_pre_insert_failure_says_what_already_happened():
         res = programs.approve(pid, 'mom')
         row = storage.get_program(pid)
         check(res['status'] == 'error', f"it reports the failure, got {res}")
-        check(row['state'] != 'active',
-              f"it must not silently succeed, got state {row['state']}")
-        check('already' in (res.get('message') or '').lower()
-              or row['emissions']['commitment_ids'],
-              f"and does not pretend nothing happened, got {res}")
+        check(row['state'] == 'proposed',
+              f"reverted, not stranded and not silently active, got {row['state']}")
+        check('already happened' in (res.get('message') or '').lower(),
+              f"and says so rather than pretending nothing happened, got {res}")
+        check(not row['emissions']['commitment_ids'],
+              f"the revert cleaned up what it claimed, got {row['emissions']}")
+        check(not storage.get_protected_commitments(member_id='lily'),
+              "and left no orphan reservation behind either")
     finally:
         _cal.create_event = real
 
@@ -115,14 +120,57 @@ def scenario_a_rejected_write_returns_none_not_an_exception():
         row = storage.get_program(pid)
         check(res['status'] == 'error',
               f"a None from the calendar must not read as success, got {res}")
-        check(row['state'] != 'active',
-              f"it must not silently succeed, got state {row['state']}")
+        check(row['state'] == 'proposed',
+              f"reverted, not stranded and not silently active, got {row['state']}")
         check(None not in row['emissions']['event_ids'],
               f"a null id must never be recorded as a real one, got {row['emissions']}")
-        check(row['emissions']['commitment_ids'],
-              f"the practice time really was already claimed, got {row['emissions']}")
+        check(not row['emissions']['commitment_ids'],
+              f"the revert cleaned up what it claimed, got {row['emissions']}")
+        check(not storage.get_protected_commitments(member_id='lily'),
+              "and left no orphan reservation behind either")
     finally:
         _cal.create_event = real
+
+
+def scenario_a_local_write_failure_reverts_and_cleans_up():
+    """Before the claim, an exception mid-approval just left the row at
+    `proposed` for free. After the claim, nothing but the calendar branch
+    reverted -- so a raise from add_protected_commitment or add_thread
+    propagated straight out of approve() and stranded the program in
+    `approving` forever, un-retryable, with whatever it had already created
+    left behind as an orphan. This proves the whole post-claim body is now
+    bracketed: the SECOND commitment fails, after the first one really was
+    written, and both the row and the already-written first commitment get
+    cleaned up -- then a plain retry, once the fault is gone, succeeds."""
+    _reset()
+    pid = _mk()
+    real_add = storage.add_protected_commitment
+    calls = []
+
+    def flaky(data):
+        calls.append(data)
+        if len(calls) == 2:
+            raise RuntimeError('disk full')
+        return real_add(data)
+
+    storage.add_protected_commitment = flaky
+    try:
+        res = programs.approve(pid, 'mom')
+    finally:
+        storage.add_protected_commitment = real_add
+    check(len(calls) == 2, f"the scenario must fail on the second write, got {len(calls)}")
+    check(res['status'] == 'error', f"it reports the failure, got {res}")
+    row = storage.get_program(pid)
+    check(row['state'] == 'proposed',
+          f"not stranded in approving, not silently active, got {row['state']}")
+    check(row['emissions'] == {'commitment_ids': [], 'thread_ids': [], 'event_ids': []},
+          f"cleared off the row, got {row['emissions']}")
+    check(not storage.get_protected_commitments(member_id='lily'),
+          "the first write that DID succeed before the second failed is not an orphan")
+
+    retry = programs.approve(pid, 'mom')
+    check(retry['status'] == 'success', f"a plain retry must work, got {retry}")
+    check(storage.get_program(pid)['state'] == 'active', "and it really goes through")
 
 
 def scenario_approving_twice_does_not_claim_twice():
@@ -177,6 +225,7 @@ if __name__ == '__main__':
     scenario_approval_claims_the_time()
     scenario_a_pre_insert_failure_says_what_already_happened()
     scenario_a_rejected_write_returns_none_not_an_exception()
+    scenario_a_local_write_failure_reverts_and_cleans_up()
     scenario_approving_twice_does_not_claim_twice()
     scenario_two_taps_claim_the_week_once()
     print("test_programs_footprint OK")
