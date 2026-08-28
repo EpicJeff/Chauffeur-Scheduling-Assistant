@@ -15848,6 +15848,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # Protected commitments (load arc A6): a standing piece of somebody's own
     # life — the run club, therapy, choir — as recurring unavailable windows.
     # The one place an adult's time is FOR something rather than an obstacle.
+    #
+    # The index is for negotiation: `Rule` carries no provenance, so this is
+    # the only place that knows which rule came from which commitment, and
+    # without it the lift-a-protected-window lever cannot name what it lifts.
+    protected_rule_index = {}
     try:
         from services import stages as _stg  # noqa: F401  (import guard parity)
         for pc in storage.get_protected_commitments():
@@ -15855,6 +15860,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             drv = member.get('driver_id')
             if not drv or not pc.get('days_of_week'):
                 continue
+            protected_rule_index[str(pc.get('id'))] = len(rules)
             rules.append(Rule(driver_id=drv, constraint_type='unavailable',
                               days_of_week=list(pc['days_of_week']),
                               time_start=pc.get('time_start'),
@@ -16993,7 +16999,29 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "true_unassigned": true_unassigned,
             "conflicts": conflicts
         }
-        
+
+        # Negotiation's solve pack: what this day's solve was actually given.
+        # Written here because this is the only point where every input is in
+        # hand at once. Never fatal — a family whose pack write fails still
+        # gets their schedule; they just get no deals until the next refresh.
+        if not draft:
+            try:
+                from services import solve_pack as _pack
+                storage.save_solve_pack(date_str, _pack.build(
+                    date_str,
+                    events=daily_events_to_solve, drivers=drivers, rules=rules,
+                    priority_rules=priority_rules, overrides=overrides,
+                    passengers=passengers, cars=cars,
+                    driver_events=driver_events_map,
+                    trip_metadata=trip_metadata,
+                    driver_passenger_map=driver_passenger_map,
+                    previous_assignments=previous_assignments,
+                    load_balancing=load_balancing,
+                    load_balancing_metric=load_balancing_metric,
+                    protected_rule_index=protected_rule_index))
+            except Exception as _pe:
+                logger.warning(f"Solve pack write failed for {date_str}: {_pe}")
+
         # Update previous_assignments for the next day's solve!
         previous_assignments.update(assignments)
 
@@ -17090,6 +17118,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
     # Final compile just in case, ensuring solving_dates is completely cleared for this run
     schedule_coordinator.clear_solving_dates()
+    try:
+        storage.prune_solve_packs(datetime.date.today().isoformat())
+    except Exception as _ppe:
+        logger.warning(f"Solve pack prune failed: {_ppe}")
     final_data = compile_and_save_combined()
 
     return final_data
