@@ -1,8 +1,23 @@
-"""The refresh really writes a pack, and the pack really replays.
+"""A pack built the way the refresh builds one really replays.
 
-A source-reading test proves nothing here: the refresh swallows exceptions
-per-day, so a pack write that raises would leave the schedule looking fine and
-the negotiator permanently empty. This RUNS the write path.
+This does NOT run the refresh's own call to `solve_pack.build` -- it calls
+`build`/`save_solve_pack`/`replay` directly with hand-authored arguments that
+only mirror the call site's keyword names. A mistyped variable at the real
+call site would raise, be swallowed by that call's by-design try/except (a
+family's schedule must never break because a pack failed to write), and leave
+zero packs behind with nothing but a warning in the log -- and this test would
+still pass, because it never touches that code path at all.
+
+What this guards instead: `build`'s signature and the prune helper. If a
+later change renames or reorders a `build` keyword, or changes what
+`prune_solve_packs` expects, it breaks here first -- which is exactly the
+kind of drift the refresh's swallowed exception would otherwise hide from
+every other test in the suite. The refresh's actual wiring -- that the
+keyword names it passes match `build`'s signature, and that every variable
+it references is genuinely in scope at the call site -- was verified by hand
+against the source (see the task report); confirming it end to end still
+means a real refresh on a real device, because that is the only place the
+swallowed exception's silence would actually show up.
 """
 import datetime
 
