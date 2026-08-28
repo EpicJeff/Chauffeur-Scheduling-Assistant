@@ -1586,12 +1586,50 @@ def _program_owns_or_parent(acting_member: dict, row: dict, verb: str):
             "message": f"Only a parent or adult can {verb} for someone else."}
 
 
-def _match_program(title: str):
-    """Fuzzy title match against live programs, same shape as `_match_thread`
-    — the model knows a program by what it's about, never by its id."""
+def _program_scope_id(acting_member: dict):
+    """None (the household) for a parent/adult, otherwise the caller's own
+    id — the same partition `list_programs` shows. Pulled out so
+    `_match_program` can scope BEFORE it matches: a program is somebody's
+    personal ambition, not household-visible the way a thread is, and that
+    has to hold for the not-found hint too, not just the happy path."""
+    if (acting_member.get('role') or '') in ('child', 'helper', 'guest'):
+        return acting_member.get('id')
+    return None
+
+
+def _resolve_named_member_or_refuse(acting_member: dict, name: str, verb_phrase: str):
+    """Fuzzy-resolve `name` to a member, refusing unless it's the caller's
+    own identity or the caller is a parent/adult. Returns `(member, None)`
+    or `(None, refusal_dict)` — shared by `list_programs` and
+    `propose_program`, which both hit exactly this rule."""
+    m = _find_member_fuzzy(name)
+    if not m:
+        return None, {"status": "error",
+                      "message": f"I couldn't find '{name}'. Family members: {_member_names()}."}
+    if m['id'] != acting_member.get('id') \
+            and (acting_member.get('role') or '') not in ('parent', 'adult'):
+        return None, {"status": "error",
+                      "message": f"Only a parent or adult can {verb_phrase}."}
+    return m, None
+
+
+def _match_program(title: str, acting_member: dict):
+    """Fuzzy title match against the programs THIS CALLER may see, same
+    shape as `_match_thread` — the model knows a program by what it's
+    about, never by its id.
+
+    Scoped with `_program_scope_id` BEFORE the match runs, so the returned
+    `rows` — which both callers turn straight into the not-found hint — can
+    never contain a program outside what `list_programs` would already show
+    this caller. Scoping only the happy path and leaving the failure
+    message built from every household program was the actual bug: a
+    child's typo would get a sibling's program title read back to them,
+    exactly the household-visibility this arc's reads are scoped to avoid.
+    """
     from services import storage as _storage
     q = (title or '').strip().lower()
-    rows = _storage.get_programs(include_finished=False)
+    rows = _storage.get_programs(member_id=_program_scope_id(acting_member),
+                                 include_finished=False)
     if not q:
         return None, rows
     exact = [p for p in rows if (p.get('title') or '').lower() == q]
@@ -1615,19 +1653,14 @@ def list_programs(member_name: str = None, acting_member: dict = None) -> Dict[s
     if refusal:
         return refusal
     from services import storage as _storage, programs as _prog
-    scope_id = None
     if member_name:
-        m = _find_member_fuzzy(member_name)
-        if not m:
-            return {"status": "error",
-                    "message": f"I couldn't find '{member_name}'. Family members: {_member_names()}."}
-        if m['id'] != acting_member.get('id') \
-                and (acting_member.get('role') or '') not in ('parent', 'adult'):
-            return {"status": "error",
-                    "message": "Only a parent or adult can see someone else's programs."}
+        m, refusal = _resolve_named_member_or_refuse(
+            acting_member, member_name, "see someone else's programs")
+        if refusal:
+            return refusal
         scope_id = m['id']
-    elif (acting_member.get('role') or '') in ('child', 'helper', 'guest'):
-        scope_id = acting_member.get('id')
+    else:
+        scope_id = _program_scope_id(acting_member)
     rows = _storage.get_programs(member_id=scope_id, include_finished=False)
     if not rows:
         return {"status": "success", "message": "No programs going right now."}
@@ -1657,7 +1690,7 @@ def program_progress(program_title: str, acting_member: dict = None) -> Dict[str
     if refusal:
         return refusal
     from services import programs as _prog
-    row, rows = _match_program(program_title)
+    row, rows = _match_program(program_title, acting_member)
     if not row:
         titles = ', '.join(p.get('title') or '?' for p in rows[:8]) or 'no programs yet'
         return {"status": "error",
@@ -1707,14 +1740,10 @@ def propose_program(title: str, for_member_name: str = None,
     member_id = acting_member.get('id')
     member_name = acting_member.get('name') or ''
     if for_member_name:
-        m = _find_member_fuzzy(for_member_name)
-        if not m:
-            return {"status": "error",
-                    "message": f"I couldn't find '{for_member_name}'. Family members: {_member_names()}."}
-        if m['id'] != acting_member.get('id') \
-                and (acting_member.get('role') or '') not in ('parent', 'adult'):
-            return {"status": "error",
-                    "message": "Only a parent or adult can start a program for someone else."}
+        m, refusal = _resolve_named_member_or_refuse(
+            acting_member, for_member_name, 'start a program for someone else')
+        if refusal:
+            return refusal
         member_id, member_name = m['id'], m.get('name') or ''
     shape = {'sessions_per_week': int(sessions_per_week or 3),
              'minutes': int(minutes or 25), 'preferred_days': []}
@@ -1749,7 +1778,7 @@ def log_program_session(program_title: str, minutes: int = None,
     refusal = _program_writer(acting_member, 'log a session')
     if refusal:
         return refusal
-    row, rows = _match_program(program_title)
+    row, rows = _match_program(program_title, acting_member)
     if not row:
         titles = ', '.join(p.get('title') or '?' for p in rows[:8]) or 'no programs yet'
         return {"status": "error",

@@ -67,7 +67,7 @@
                                 How far back the check for a struggling program looks.
                             </span>
                         </span>
-                        <input type="number" min="1" x-model.number="s.programs_rebaseline_days"
+                        <input type="number" min="1" step="1" x-model.number="s.programs_rebaseline_days"
                             @change="saveProgramSettings()"
                             class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
                     </label>
@@ -78,7 +78,7 @@
                                 The minimum gap between two timeline stretches, so a plan cannot chatter about bending.
                             </span>
                         </span>
-                        <input type="number" min="1" x-model.number="s.programs_rebaseline_cooldown_days"
+                        <input type="number" min="1" step="1" x-model.number="s.programs_rebaseline_cooldown_days"
                             @change="saveProgramSettings()"
                             class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
                     </label>
@@ -89,7 +89,7 @@
                                 How many real pages a curation run reads before proposing a plan. One run per program, cached for its life.
                             </span>
                         </span>
-                        <input type="number" min="1" x-model.number="s.programs_research_pages"
+                        <input type="number" min="1" step="1" x-model.number="s.programs_research_pages"
                             @change="saveProgramSettings()"
                             class="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-center shrink-0">
                     </label>
