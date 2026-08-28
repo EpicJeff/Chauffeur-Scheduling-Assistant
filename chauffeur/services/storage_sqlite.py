@@ -86,6 +86,8 @@ INDEX_SPEC = {
     # Solve packs: written once per day per refresh, read by date when
     # somebody asks the negotiator a question. Date is the only lookup.
     "solve_packs": [["date"]],
+    # Shift refusals: read whole on every negotiation, written once per no.
+    "shift_refusals": [["series_key"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

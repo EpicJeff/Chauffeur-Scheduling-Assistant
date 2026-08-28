@@ -465,6 +465,7 @@ with db_lock:
     threads_table = db.table('threads')
     requests_table = db.table('requests')
     solve_packs_table = db.table('solve_packs')
+    shift_refusals_table = db.table('shift_refusals')
     protected_commitments_table = db.table('protected_commitments')
     # Needs You (findings arc). A watcher finding with a LIFECYCLE: it opens
     # when the sweep sees the condition and closes when the sweep stops seeing
@@ -6459,6 +6460,30 @@ def prune_solve_packs(before_date: str) -> int:
         for r in stale:
             solve_packs_table.remove(Query().date == r['date'])
         return len(stale)
+
+
+# --- Shift refusals: the movable flag, learned rather than declared -------
+# The app cannot know that moving a calendar record moves the actual practice,
+# and guessing wrong produces a deal that makes the family look ridiculous to a
+# coach. So the ask is the gate -- and a no is remembered, per series, so the
+# same question is not asked twice.
+
+def add_shift_refusal(series_key: str, title: str = '', member_id: str = None):
+    with db_lock:
+        shift_refusals_table.upsert(
+            {'series_key': str(series_key), 'title': title or '',
+             'refused_by': member_id or '', 'refused_at': time.time()},
+            Query().series_key == str(series_key))
+
+def get_shift_refusals() -> List[dict]:
+    with db_lock:
+        return [dict(r) for r in shift_refusals_table.all()]
+
+def clear_shift_refusal(series_key: str) -> bool:
+    """A flag the app taught itself must be untaught by hand."""
+    with db_lock:
+        return bool(shift_refusals_table.remove(
+            Query().series_key == str(series_key)))
 
 
 # Settings CRUD
