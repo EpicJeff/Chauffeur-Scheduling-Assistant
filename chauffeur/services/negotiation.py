@@ -406,6 +406,40 @@ def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
     return [entry for _, entry in scored]
 
 
+# --- The day's rules, with any lift for THAT date already taken out --------
+# `main.py`'s per-day loop needs this every refresh; pulled out as a pure
+# function (rules + index + today's exceptions in, filtered pair out) so the
+# index math -- the exact thing that makes the pack's rules and its
+# rule-index agree with each other -- is provable without going through
+# `_refresh_schedule_logic_impl`.
+
+def day_rules_for(date_str: str, rules: list, protected_rule_index: dict):
+    """This date's rule list and rule-index, with every commitment lifted for
+    THIS date dropped. The standing rule stays in `rules` for every other day
+    -- only the copy handed to this date's solve (and this date's pack) is
+    missing it.
+    """
+    lifted = {str(x['commitment_id'])
+              for x in storage.get_protected_exceptions()
+              if str(x.get('date')) == date_str}
+    if not lifted:
+        return list(rules), dict(protected_rule_index)
+    drop = {protected_rule_index[c] for c in lifted if c in protected_rule_index}
+    day_rules = [r for i, r in enumerate(rules) if i not in drop]
+    # Every surviving commitment's index shifts down by however many DROPPED
+    # rules sat before it -- walked in `rules` order (dict insertion order,
+    # since each commitment's index was assigned by `len(rules)` at the point
+    # it was appended, so earlier commitments were inserted first).
+    day_protected_index = {}
+    offset = 0
+    for cid, idx in protected_rule_index.items():
+        if cid in lifted:
+            offset += 1
+            continue
+        day_protected_index[cid] = idx - offset
+    return day_rules, day_protected_index
+
+
 # --- The deal, and the way people agree to it ----------------------------
 # Every part is agreed to by the person it costs. A schedule that works because
 # somebody was volunteered is not a schedule that works, so a partly agreed
@@ -468,6 +502,17 @@ def start_asks(deal_id: str, actor_member_id: str = None) -> dict:
                        f"nothing changes until everyone says yes."}
 
 
+# A calendar write is the one part-application step that reaches another
+# system and can fail for reasons nothing here can predict in advance. Every
+# other lever only ever touches this app's own storage, so it is cheap,
+# local, and about as close to certain-to-succeed as a write gets. Applying
+# those first and the calendar write last means a real failure leaves at
+# most local state -- state a person can see in the app and undo by hand --
+# rather than a half-moved calendar sitting behind a deal that failed before
+# it got there.
+_EXTERNAL_LEVERS = {'shift_event'}
+
+
 def accept_part(part_id: str, member_id: str = None) -> dict:
     deal = storage.get_deal_by_part(part_id)
     if not deal:
@@ -482,17 +527,51 @@ def accept_part(part_id: str, member_id: str = None) -> dict:
                    if p.get('state') != 'accepted']
         return {'status': 'success', 'applied': False,
                 'message': f"Got it — still waiting on {len(waiting)}."}
-    for p in deal['parts']:
+
+    parts = deal.get('parts') or []
+
+    # Pre-flight EVERY part before applying ANY of them. Most of the ways a
+    # part can fail -- the event got cancelled since the deal was proposed,
+    # a commitment was deleted, a driver no longer exists -- are visible
+    # without touching anything, and catching them here means the deal that
+    # cannot fully go through applies nothing at all, exactly like a decline
+    # would have.
+    for p in parts:
+        reason = _check_part(p)
+        if reason:
+            storage.update_deal(deal['id'], {
+                'state': 'dead',
+                'dead_reason': f"couldn't apply the {p.get('lever')} part: {reason}"})
+            return {'status': 'error',
+                    'message': f"Everyone agreed, but {reason} — nothing was changed."}
+
+    # Local levers first, the calendar write last (see _EXTERNAL_LEVERS).
+    ordered = sorted(parts, key=lambda p: p.get('lever') in _EXTERNAL_LEVERS)
+    done = []
+    for p in ordered:
         try:
             _apply_part(p, deal)
         except Exception as e:
             print(f"[negotiation] applying {p.get('lever')} failed: {e}")
+            # The record has to say exactly how far this got: a part already
+            # marked applied here really did happen and was not rolled back
+            # -- there is no undo for a calendar write already sent -- so the
+            # deal's own data has to be the thing that lets a person work out
+            # what to fix by hand.
+            already = ', '.join(done)
             storage.update_deal(deal['id'], {
                 'state': 'dead',
-                'dead_reason': f"couldn't apply the {p.get('lever')} part: {e}"})
-            return {'status': 'error',
-                    'message': "Everyone agreed, but I couldn't make the "
-                               "change — worth a look."}
+                'dead_reason': (f"{already + ' already went through; then ' if already else ''}"
+                                f"the {p.get('lever')} part failed: {e}")})
+            message = ("Everyone agreed, and part of it already happened, "
+                       "but I couldn't finish — worth a look."
+                       if done else
+                       "Everyone agreed, but I couldn't make the change — "
+                       "worth a look.")
+            return {'status': 'error', 'message': message}
+        storage.update_deal_part(p['id'], {'applied': True})
+        done.append(p.get('lever'))
+
     storage.update_deal(deal['id'], {
         'state': 'applied',
         'applied_at': datetime.datetime.now().timestamp()})
@@ -533,47 +612,112 @@ def kill(deal_id: str, member_id: str = None, reason: str = '') -> dict:
     return {'status': 'success', 'message': 'Dropped it.'}
 
 
+def _cached_event(event_id) -> dict:
+    sched = storage.get_cached_schedule() or {}
+    return next((e for e in (sched.get('events') or [])
+                 if str(e.get('id')) == str(event_id)), None)
+
+
+def _calendar_address(ev: dict):
+    """(calendar_id, bare google event id) this event actually writes to, or
+    (None, None) if it isn't addressable.
+
+    `source_event_ids` entries are "calendar_id::google_event_id"
+    (services/calendar.py's fetch groups every event this way), not a bare
+    Google id -- patch_event needs the id AFTER the '::', or the write 404s
+    against a calendar that has no event by that composite name. Both halves
+    come from the SAME string so they can never point at mismatched
+    calendars, unlike zipping calendar_ids[0] against source_event_ids[0]
+    from two separately-ordered lists.
+    """
+    raw_src = (ev.get('source_event_ids') or [ev.get('id')])[0]
+    parts = str(raw_src).split('::', 1)
+    if len(parts) == 2 and parts[0] and parts[1]:
+        return parts[0], parts[1]
+    return None, None
+
+
+def _shift_body(ev: dict, delta_mins, tz: str = None):
+    """The patch body that moves this event by delta_mins, or None if either
+    endpoint can't be read.
+
+    BOTH endpoints are required, not just whichever parses: a body with only
+    `start` would move the start of a real calendar event and silently
+    garble its duration, which is worse than refusing the write outright.
+
+    `_dt` (this module's own helper, used by candidates()/search()) strips
+    tzinfo -- fine for the relative-time arithmetic those do, but a naive
+    dateTime sent to Google is REJECTED outright ("Missing time zone
+    definition"). This keeps the real offset, and stamps the calendar's own
+    IANA zone too (chat_actions._create_event does the same) so the event
+    isn't left pinned to a fixed GMT offset in the edit UI.
+    """
+    delta = datetime.timedelta(minutes=int(delta_mins or 0))
+    body = {}
+    for field in ('start', 'end'):
+        try:
+            raw = datetime.datetime.fromisoformat(str(ev.get(field)))
+        except (ValueError, TypeError):
+            return None
+        entry = {'dateTime': (raw + delta).isoformat()}
+        if tz:
+            entry['timeZone'] = tz
+        body[field] = entry
+    return body
+
+
+def _check_part(part: dict) -> str:
+    """Would this part's side effect actually be possible right now, without
+    changing anything? '' when yes, else a reason a person would recognise.
+
+    Called on EVERY part before ANY of them apply (see accept_part): the
+    time between a deal being proposed and its last yes is real time, and an
+    event can be cancelled, a commitment deleted, or a driver removed in
+    between. Catching that here is what keeps a deal that cannot fully go
+    through from applying part of itself anyway.
+    """
+    lever, payload = part.get('lever'), part.get('payload') or {}
+    if lever == 'shift_event':
+        ev = _cached_event(payload.get('event_id'))
+        if not ev:
+            return 'that event is no longer in the schedule'
+        cal_id, google_id = _calendar_address(ev)
+        if not cal_id or not google_id:
+            return 'that event has no calendar to write to'
+        if _shift_body(ev, payload.get('delta_mins')) is None:
+            return "that event's time could not be read"
+    elif lever == 'lift_protected':
+        cid = str(payload.get('commitment_id') or '')
+        if not any(str(pc.get('id')) == cid
+                   for pc in storage.get_protected_commitments()):
+            return 'that commitment is no longer here'
+    elif lever == 'swap_drive':
+        drv = str(payload.get('driver_id') or '')
+        if not any(str(m.get('driver_id')) == drv
+                   for m in storage.get_all_members()):
+            return 'that driver is no longer set up to drive'
+    elif lever == 'skip_optional':
+        if not _cached_event(payload.get('event_id')):
+            return 'that event is no longer in the schedule'
+    else:
+        return f"'{lever}' isn't a lever this app knows"
+    return ''
+
+
 def _apply_part(part: dict, deal: dict):
-    """Make the change this part promised. Called only when EVERY part is in."""
+    """Make the change this part promised. Called only after every part in
+    the deal has passed `_check_part`."""
     from services import calendar as _cal, optional_events as _opt
     lever, payload = part.get('lever'), part.get('payload') or {}
     if lever == 'shift_event':
-        sched = storage.get_cached_schedule() or {}
-        ev = next((e for e in (sched.get('events') or [])
-                   if str(e.get('id')) == str(payload.get('event_id'))), None)
+        ev = _cached_event(payload.get('event_id'))
         if not ev:
             raise ValueError('that event is no longer in the schedule')
-        delta = datetime.timedelta(minutes=int(payload.get('delta_mins') or 0))
-        # `source_event_ids` entries are "calendar_id::google_event_id"
-        # (services/calendar.py's fetch groups every event this way), not a
-        # bare Google id -- patch_event needs the id AFTER the '::', or the
-        # write 404s against a calendar that has no event by that composite
-        # name. Both halves come from the SAME string so they can never
-        # point at mismatched calendars, unlike zipping calendar_ids[0]
-        # against source_event_ids[0] from two separately-ordered lists.
-        raw_src = (ev.get('source_event_ids') or [ev.get('id')])[0]
-        src_parts = str(raw_src).split('::', 1)
-        cal_id, google_id = (src_parts[0], src_parts[1]) if len(src_parts) == 2 else (None, None)
+        cal_id, google_id = _calendar_address(ev)
         if not cal_id or not google_id:
             raise ValueError('that event has no calendar to write to')
-        # `_dt` (this module's own helper) strips tzinfo -- fine for the
-        # relative-time arithmetic candidates() does, but a naive dateTime
-        # sent to Google is REJECTED outright ("Missing time zone
-        # definition"). Keep the real offset, and stamp the calendar's own
-        # IANA zone too (chat_actions._create_event does the same) so the
-        # event isn't left pinned to a fixed GMT offset in the edit UI.
         tz = _cal.get_calendar_timezone(cal_id)
-        body = {}
-        for field in ('start', 'end'):
-            try:
-                raw = datetime.datetime.fromisoformat(str(ev.get(field)))
-            except (ValueError, TypeError):
-                raw = None
-            if raw:
-                entry = {'dateTime': (raw + delta).isoformat()}
-                if tz:
-                    entry['timeZone'] = tz
-                body[field] = entry
+        body = _shift_body(ev, payload.get('delta_mins'), tz)
         if not body or not _cal.patch_event(cal_id, google_id, body):
             raise ValueError('the calendar refused the new time')
     elif lever == 'lift_protected':
@@ -585,9 +729,7 @@ def _apply_part(part: dict, deal: dict):
                               'created_at': datetime.datetime.now().timestamp(),
                               'source': 'negotiation'})
     elif lever == 'skip_optional':
-        sched = storage.get_cached_schedule() or {}
-        ev = next((e for e in (sched.get('events') or [])
-                   if str(e.get('id')) == str(payload.get('event_id'))), None)
+        ev = _cached_event(payload.get('event_id'))
         if not ev:
             raise ValueError('that event is no longer in the schedule')
         _opt.record_decision(ev, 'skip', decided_by=part.get('member_id'))

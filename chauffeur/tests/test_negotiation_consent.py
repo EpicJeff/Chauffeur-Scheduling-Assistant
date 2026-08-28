@@ -16,15 +16,26 @@ def _reset():
     # scenario one's leftover deal instead of its own.
     storage.deals_table.truncate()
     storage.shift_refusals_table.truncate()
+    storage.protected_exceptions_table.truncate()
+    storage.protected_commitments_table.truncate()
 
 
 def _deal(parts_states=('open', 'open')):
-    parts = []
+    # Real events in the cache, not just references in the deal's payload --
+    # `accept_part` pre-flights every part (checks the target still exists)
+    # before applying any of them, and a skip_optional part whose event
+    # cannot be found would fail pre-flight before the scenario below ever
+    # reaches its monkeypatched `_apply_part`.
+    parts, events = [], []
     for i, st in enumerate(parts_states):
         parts.append({'id': f'p{i}', 'member_id': f'm{i}',
                       'lever': 'skip_optional',
                       'payload': {'event_id': f'e{i}', 'title': 'Extra practice'},
                       'ask_text': 'Skip it?', 'state': st, 'request_id': None})
+        events.append({'id': f'e{i}', 'title': 'Extra practice',
+                       'start': f'{TODAY}T16:00:00-05:00',
+                       'calendar_ids': ['cal1'], 'source_event_ids': [f'cal1::g{i}']})
+    storage.set_cached_schedule({'events': events})
     return storage.add_deal({'date': TODAY, 'seed_event_id': 'seed',
                              'seed_title': 'Soccer', 'line': 'a deal',
                              'parts': parts, 'state': 'asking'})
@@ -130,6 +141,161 @@ def scenario_shift_writes_the_real_calendar_id_with_a_zone():
         storage.set_cached_schedule({})
 
 
+def scenario_a_failed_part_does_not_hide_what_already_happened():
+    """A two-part deal: the local part (skip_optional) applies first and for
+    real; the calendar part (shift_event) applies last and is made to fail,
+    simulating the one kind of failure pre-flight cannot see coming -- the
+    external write itself refusing for a reason nothing here can predict.
+
+    The guarantee this implementation actually provides is RECORDING, not
+    rollback: there is no undo for a calendar write already sent, so a local
+    write that happened before it is not undone either -- it is left as it
+    is, and the deal's own data says so. This does NOT claim atomicity; it
+    claims honesty about what already happened.
+    """
+    _reset()
+    from services import calendar as gcal, optional_events as opt
+    real_patch, real_tz = gcal.patch_event, gcal.get_calendar_timezone
+    gcal.patch_event = lambda cal_id, event_id, body: False
+    gcal.get_calendar_timezone = lambda cal_id: 'America/Chicago'
+    skip_ev = {'id': 'eA', 'title': 'Extra practice',
+               'start': f'{TODAY}T15:00:00-05:00',
+               'calendar_ids': ['cal1'], 'source_event_ids': ['cal1::gA']}
+    shift_ev = {'id': 'eB', 'title': 'Piano',
+                'start': f'{TODAY}T16:00:00-05:00',
+                'end': f'{TODAY}T16:30:00-05:00',
+                'calendar_ids': ['cal1'], 'source_event_ids': ['cal1::gB']}
+    storage.set_cached_schedule({'events': [skip_ev, shift_ev]})
+    did = storage.add_deal({
+        'date': TODAY, 'seed_event_id': 'seed', 'seed_title': 'Soccer',
+        'parts': [
+            {'id': 'pA', 'member_id': 'm0', 'lever': 'skip_optional',
+             'payload': {'event_id': 'eA', 'title': 'Extra practice'},
+             'ask_text': 'Skip it?', 'state': 'open', 'request_id': None},
+            {'id': 'pB', 'member_id': 'm1', 'lever': 'shift_event',
+             'payload': {'event_id': 'eB', 'series_key': 'series-b',
+                         'title': 'Piano', 'delta_mins': 15},
+             'ask_text': 'Move it?', 'state': 'open', 'request_id': None}],
+        'state': 'asking'})
+    try:
+        negotiation.accept_part('pA', 'm0')
+        res = negotiation.accept_part('pB', 'm1')
+        check(res['status'] == 'error', f"the calendar refusing ends the deal, got {res}")
+        check('already happened' in res['message'],
+              f"the failure must not claim nothing changed when something did, got {res['message']}")
+        row = storage.get_deal(did)
+        check(row['state'] == 'dead', f"the deal still dies loudly, got {row['state']}")
+        check('skip_optional' in (row.get('dead_reason') or ''),
+              f"the record names what already went through, got {row.get('dead_reason')}")
+        parts_by_id = {p['id']: p for p in row['parts']}
+        check(parts_by_id['pA'].get('applied') is True,
+              f"the completed part is stamped as having happened, got {parts_by_id['pA']}")
+        check(not parts_by_id['pB'].get('applied'),
+              f"the failed part is not, got {parts_by_id['pB']}")
+        decision = opt.decision_for(skip_ev)
+        check(decision == 'skip',
+              f"and it really did happen -- there is no rollback for the local "
+              f"write either, got {decision}")
+    finally:
+        gcal.patch_event, gcal.get_calendar_timezone = real_patch, real_tz
+        storage.set_cached_schedule({})
+
+
+def scenario_a_partial_calendar_body_is_refused():
+    """`shift_event` requires BOTH endpoints before it will write anything --
+    a body with only `start` would move a real event's start and silently
+    garble its duration, which is worse than refusing outright."""
+    from services import calendar as gcal
+    calls = []
+    real_patch, real_tz = gcal.patch_event, gcal.get_calendar_timezone
+    gcal.patch_event = lambda cal_id, event_id, body: calls.append(body) or True
+    # Also stubbed even though a fully-refused body should never reach this
+    # call: `_apply_part`'s real network call must not run just because a
+    # test forgot to stub it (this test caught itself doing exactly that --
+    # see the fix report).
+    gcal.get_calendar_timezone = lambda cal_id: 'America/Chicago'
+    storage.set_cached_schedule({'events': [{
+        'id': 'cal1::gid2', 'calendar_ids': ['cal1'],
+        'source_event_ids': ['cal1::gid2'],
+        'start': f'{TODAY}T16:00:00-05:00', 'end': 'not-a-time'}]})
+    try:
+        part = {'id': 'py', 'member_id': 'm0', 'lever': 'shift_event',
+                'payload': {'event_id': 'cal1::gid2', 'delta_mins': 15}}
+        check(negotiation._check_part(part) != '',
+              "pre-flight refuses a part whose event has only one readable endpoint")
+        raised = False
+        try:
+            negotiation._apply_part(part, {'date': TODAY})
+        except ValueError:
+            raised = True
+        check(raised, "and applying it directly raises rather than writing half a body")
+        check(calls == [], f"the calendar is never called with a partial body, got {calls}")
+    finally:
+        gcal.patch_event, gcal.get_calendar_timezone = real_patch, real_tz
+        storage.set_cached_schedule({})
+
+
+def scenario_a_lift_is_dropped_only_for_its_own_date():
+    _reset()
+    rules = ['r0', 'r1', 'r2']
+    index = {'c0': 0, 'c1': 1, 'c2': 2}
+    storage.add_protected_exception('c1', TODAY)
+
+    day_rules, day_index = negotiation.day_rules_for(TODAY, rules, index)
+    check(day_rules == ['r0', 'r2'], f"the lifted rule is dropped, got {day_rules}")
+    check('c1' not in day_index,
+          f"and its commitment has no rule left to point at, got {day_index}")
+
+    other_day = datetime.date(2026, 9, 8).isoformat()
+    other_rules, other_index = negotiation.day_rules_for(other_day, rules, index)
+    check(other_rules == rules,
+          f"a different date keeps the standing rule, got {other_rules}")
+    check(other_index == index, f"and its index untouched, got {other_index}")
+
+
+def scenario_the_index_still_points_at_the_right_rule_after_a_lift():
+    _reset()
+    rules = ['keep-c0', 'drop-c1', 'keep-c2', 'keep-c3']
+    index = {'c0': 0, 'c1': 1, 'c2': 2, 'c3': 3}
+    storage.add_protected_exception('c1', TODAY)
+
+    day_rules, day_index = negotiation.day_rules_for(TODAY, rules, index)
+    for cid, original in (('c0', 'keep-c0'), ('c2', 'keep-c2'), ('c3', 'keep-c3')):
+        check(day_rules[day_index[cid]] == original,
+              f"{cid}'s index finds its OWN rule in the filtered list, "
+              f"got rules={day_rules} index={day_index}")
+    check('c1' not in day_index, "the lifted commitment has no rule left")
+
+
+def scenario_accepting_a_lift_writes_an_exception_not_a_deletion():
+    _reset()
+    from models.schemas import ProtectedCommitment
+    commitment = ProtectedCommitment(member_id='m0', title='Thursday run',
+                                     days_of_week=[3]).model_dump()
+    storage.add_protected_commitment(commitment)
+    did = storage.add_deal({
+        'date': TODAY, 'seed_event_id': 'seed', 'seed_title': 'Soccer',
+        'parts': [{'id': 'pl', 'member_id': 'm0', 'lever': 'lift_protected',
+                   'payload': {'commitment_id': commitment['id'],
+                               'title': 'Thursday run'},
+                   'ask_text': 'Give up your run this once?',
+                   'state': 'open', 'request_id': None}],
+        'state': 'asking'})
+
+    res = negotiation.accept_part('pl', 'm0')
+    check(res.get('applied') is True,
+          f"a single-part deal applies on its own yes, got {res}")
+    check(storage.get_deal(did)['state'] == 'applied', "the deal says so")
+
+    exceptions = storage.get_protected_exceptions(commitment['id'])
+    check(any(x['date'] == TODAY for x in exceptions),
+          f"one evening is given up, got {exceptions}")
+    still_there = storage.get_protected_commitments()
+    check(any(c['id'] == commitment['id'] and c['title'] == 'Thursday run'
+              for c in still_there),
+          f"the commitment itself is never touched, got {still_there}")
+
+
 if __name__ == '__main__':
     scenario_one_yes_applies_nothing()
     scenario_the_last_yes_applies_the_whole_deal()
@@ -137,4 +303,9 @@ if __name__ == '__main__':
     scenario_a_refused_shift_is_remembered_against_the_series()
     scenario_a_person_can_kill_a_deal_by_hand()
     scenario_shift_writes_the_real_calendar_id_with_a_zone()
+    scenario_a_failed_part_does_not_hide_what_already_happened()
+    scenario_a_partial_calendar_body_is_refused()
+    scenario_a_lift_is_dropped_only_for_its_own_date()
+    scenario_the_index_still_points_at_the_right_rule_after_a_lift()
+    scenario_accepting_a_lift_writes_an_exception_not_a_deletion()
     print("test_negotiation_consent OK")

@@ -16948,26 +16948,12 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # A negotiated lift gives up ONE evening (services/negotiation.py):
         # the protected commitment stays a standing rule for every OTHER day,
         # but this date's rule list drops it, and the pack's own index is
-        # rebuilt so it still points at the right rules after the drop.
-        lifted = {str(x['commitment_id'])
-                  for x in storage.get_protected_exceptions()
-                  if str(x.get('date')) == date_str}
-        day_rules = rules
-        if lifted:
-            drop = {protected_rule_index[c] for c in lifted
-                    if c in protected_rule_index}
-            day_rules = [r for i, r in enumerate(rules) if i not in drop]
-
-        day_protected_index = {}
-        if lifted:
-            offset = 0
-            for cid, idx in protected_rule_index.items():
-                if cid in lifted:
-                    offset += 1
-                    continue
-                day_protected_index[cid] = idx - offset
-        else:
-            day_protected_index = dict(protected_rule_index)
+        # rebuilt so it still points at the right rules after the drop. Pure
+        # function, tested on its own in tests/test_negotiation_consent.py --
+        # this loop is a thin wrapper around it.
+        from services import negotiation as _neg
+        day_rules, day_protected_index = _neg.day_rules_for(
+            date_str, rules, protected_rule_index)
 
         if draft:
             assignments = {}
