@@ -60,6 +60,48 @@ def _days_ago(ts: float, now_ts: float) -> int:
     return max(1, int((now_ts - ts) // 86400))
 
 
+# How many seeds one sweep may negotiate. The search costs real solver time,
+# and a sweep that negotiated every uncovered event on a bad day would spend
+# minutes deciding things nobody has read yet. One seed per sweep, most urgent
+# first, and an open deal is reused rather than re-searched.
+NEGOTIATE_PER_SWEEP = 1
+
+
+def _deal_line(event_id: str):
+    """(line, action) for an open deal on this event, or (None, None).
+
+    Read-only: it reports a deal that already exists. Finding one is
+    `_negotiate_seed`'s job, and it happens at most once per sweep.
+    """
+    for d in storage.get_deals(seed_event_id=str(event_id)):
+        if d.get('state') not in ('draft', 'asking'):
+            continue
+        if d.get('state') == 'asking':
+            waiting = [p for p in d.get('parts') or []
+                       if p.get('state') != 'accepted']
+            said_yes = len(d.get('parts') or []) - len(waiting)
+            return (f"🤝 {d.get('seed_title') or 'That drive'}: "
+                    f"{said_yes} of {len(d.get('parts') or [])} said yes, "
+                    f"waiting on the rest.", None)
+        return (d.get('line'), {'label': 'Ask them', 'action_type': 'ask_deal',
+                                'payload': {'deal_id': d['id']}})
+    return (None, None)
+
+
+def _negotiate_seed(event_id: str, date_str: str):
+    """Try to find a deal for one uncovered event. Never fatal, never chatty."""
+    from services import negotiation
+    if not storage.get_settings().get('negotiation_enabled', True):
+        return
+    try:
+        negotiation.propose(date_str, str(event_id),
+                            budget=int(storage.get_settings().get(
+                                'negotiation_sweep_budget',
+                                negotiation.SWEEP_BUDGET)))
+    except Exception as e:
+        print(f"[watchers] negotiation failed for {event_id}: {e}")
+
+
 def _unassigned_findings(now: datetime.datetime):
     """Events in the next WATCH_WINDOW_DAYS the solver left unassigned.
 
@@ -68,6 +110,13 @@ def _unassigned_findings(now: datetime.datetime):
     this before, or an honest can't-cover with the reasons named
     (services/coverage_options.py). A siren with no answer attached was the
     complaint that produced all of this.
+
+    Before the ladder, though: is there a deal? Negotiation is checked (and,
+    budget allowing, searched) first — the Mind is supposed to arrive with the
+    answer, not with the problem. `negotiated` is scoped to this one call, not
+    per-event, because it is the sweep's cap: this function runs once per
+    sweep, so counting here caps the whole sweep at NEGOTIATE_PER_SWEEP seeds
+    no matter how many uncovered events it finds.
     """
     cache = storage.get_cached_schedule() or {}
     events = {str(e.get('id')): e for e in cache.get('events', [])}
@@ -78,6 +127,7 @@ def _unassigned_findings(now: datetime.datetime):
     covered = set((cache.get('assist_assignments') or {}).keys())
     horizon = now + datetime.timedelta(days=WATCH_WINDOW_DAYS)
     out = []
+    negotiated = 0
     for ev_id in cache.get('unassigned', []) or []:
         ev = events.get(str(ev_id))
         if not ev or ev.get('trip_suppressed') or ev.get('event_type') == 'errand':
@@ -113,6 +163,19 @@ def _unassigned_findings(now: datetime.datetime):
                 due_at=start.timestamp()))
             continue
         key = f"unassigned:{ev_id}:{start.date().isoformat()}"
+        # Before the siren: is there a deal? The Mind is supposed to arrive
+        # with the answer, not with the problem.
+        deal_line, deal_action = _deal_line(ev_id)
+        if not deal_line and negotiated < NEGOTIATE_PER_SWEEP:
+            negotiated += 1
+            _negotiate_seed(ev_id, start.date().isoformat())
+            deal_line, deal_action = _deal_line(ev_id)
+        if deal_line:
+            out.append(Finding(key=key, line=deal_line, kind='unassigned',
+                               severity='approve',
+                               subject_type='event', subject_id=ev_id,
+                               due_at=start.timestamp(), action=deal_action))
+            continue
         try:
             rung = _coverage.ladder(ev, cache, now)
         except Exception as e:

@@ -86,6 +86,9 @@ ADMIN_ACTIONS = {
     # fake door this arc removed.
     "ask_outside_hand",
     "skip_occurrence",
+    # Negotiation: the tap that turns a found deal into real asks. The search
+    # is free and automatic; the ASKING is a person's decision, always.
+    "ask_deal",
 }
 
 # Human-friendly label shown as the card's action badge.
@@ -107,6 +110,7 @@ ACTION_LABELS = {
     "add_invited_occasion": "Track a present",
     "ask_outside_hand": "Ask for cover",
     "skip_occurrence": "Skip this one",
+    "ask_deal": "Ask them",
 }
 
 
@@ -289,6 +293,9 @@ def _execute(action_type: str, payload: dict) -> dict:
                               payload.get('contact_name'))
     if action_type == "skip_occurrence":
         return _skip_occurrence(payload)
+    if action_type == "ask_deal":
+        from services import negotiation as _neg
+        return _neg.start_asks(payload.get('deal_id'), payload.get('member_id'))
     if action_type in agent_tools.TOOL_HANDLERS:
         return agent_tools.execute_tool(action_type, payload)
     return {"status": "error", "message": f"Unknown action type '{action_type}'."}
