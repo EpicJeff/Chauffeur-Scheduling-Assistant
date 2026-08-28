@@ -205,6 +205,51 @@ def scenario_patch_cannot_change_state_or_closed_at():
           "would otherwise have been silent")
 
 
+def scenario_a_closed_thread_takes_no_more_movement():
+    """The page hides note/advance/send/research on a done/dropped thread;
+    the API must agree with a 400, not quietly append history to a closed
+    record — and /send in particular used to flip a closed thread back to
+    `waiting` on success. Reopening isn't a thing: a loop that comes back
+    is a new thread."""
+    _reset()
+    import main
+    from services import mailer as _m
+    created = main.create_thread(body={"title": "Old dresser", "member_id": "mom"},
+                                 request=None)
+    thread_id = created["id"]
+    main.close_thread(thread_id, body={"state": "done", "member_id": "mom"},
+                      request=None)
+    before = storage.get_thread(thread_id)
+
+    check(_denied(main.note_thread, thread_id,
+                 body={"text": "hi", "member_id": "mom"}, request=None) == 400,
+          "note on a closed thread did not 400")
+    check(_denied(main.advance_thread, thread_id,
+                 body={"next_action": "x", "member_id": "mom"}, request=None) == 400,
+          "advance on a closed thread did not 400")
+    check(_denied(main.research_thread, thread_id,
+                 body={"question": "what now?", "member_id": "mom"},
+                 request=None) == 400,
+          "research on a closed thread did not 400")
+
+    orig_send, orig_conf = _m.send, _m.configured
+    try:
+        _m.configured = lambda *a, **k: True
+        _m.send = lambda *a, **k: {'sent': True}
+        check(_denied(main.send_thread_message, thread_id,
+                     body={"subject": "s", "body": "b", "to": "a@b.example",
+                           "member_id": "mom"}, request=None) == 400,
+              "send on a closed thread did not 400")
+    finally:
+        _m.send, _m.configured = orig_send, orig_conf
+
+    after = storage.get_thread(thread_id)
+    check(after["state"] == "done",
+          f"a refused send must not flip a closed thread back to waiting: {after['state']}")
+    check(len(after["history"]) == len(before["history"]),
+          "and none of the refusals appended history")
+
+
 def scenario_listing_carries_stall_reason():
     """The Threads page used to re-derive 'overdue'/'quiet' in JS, a second
     copy of services.threads.is_stalled with nothing enforcing parity. The
@@ -241,5 +286,6 @@ if __name__ == '__main__':
     scenario_unknown_thread_id_is_404_on_every_write_route()
     scenario_close_refuses_a_bad_state()
     scenario_patch_cannot_change_state_or_closed_at()
+    scenario_a_closed_thread_takes_no_more_movement()
     scenario_listing_carries_stall_reason()
     print("test_threads_endpoints OK")

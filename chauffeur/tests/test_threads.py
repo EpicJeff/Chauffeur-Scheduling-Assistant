@@ -342,6 +342,73 @@ def scenario_research_surfaces_the_invention_rate():
         threads._web_research = orig
 
 
+def scenario_garbage_next_action_at_never_lands_in_storage():
+    """One non-string next_action_at (a model emitting 20260901 as a number
+    through the agent tools) would make storage.get_threads' sort key raise
+    TypeError forever — the page 500s, stalled() raises, and the nightly
+    collect_findings() dies for EVERY finding kind. So create() and advance()
+    must refuse to store anything fromisoformat can't parse."""
+    _reset()
+    good = threads.create('Pest control', owner_member_id='m1',
+                          next_action='Call back', next_action_at='2026-09-01')
+    as_number = threads.create('Deck permit', owner_member_id='m1',
+                               next_action='File it', next_action_at=20260901)
+    as_junk = threads.create('Gutters', owner_member_id='m1',
+                             next_action='Quote', next_action_at='next tuesday')
+    check(storage.get_thread(good)['next_action_at'] == '2026-09-01',
+          "a real date survives")
+    # On Pythons whose fromisoformat reads the compact form, 20260901
+    # normalizes to '2026-09-01' (the intent survives as a SAFE string);
+    # on older ones it drops to None. Either way it is never the raw int.
+    stored_number = storage.get_thread(as_number)['next_action_at']
+    check(stored_number in (None, '2026-09-01'),
+          f"a numeric date lands as a normalized string or not at all, got {stored_number!r}")
+    check(storage.get_thread(as_junk)['next_action_at'] is None,
+          f"an unparseable date cannot land, got {storage.get_thread(as_junk)['next_action_at']!r}")
+
+    threads.advance(good, 'Call back', next_action_at={'date': '2026-09-02'})
+    check(storage.get_thread(good)['next_action_at'] is None,
+          "advance sanitizes too — garbage clears rather than lands")
+
+    rows = storage.get_threads()          # the sort that one bad row killed
+    check(len(rows) == 3, f"get_threads still sorts every row, got {len(rows)}")
+    check(threads.stalled() is not None, "and the sweep still runs")
+
+
+def scenario_null_stall_days_setting_still_sweeps():
+    """The Settings field is Optional and POST /api/settings accepts null, so
+    thread_stall_days can be PRESENT with value None — .get()'s default never
+    fires, and the comparison in is_stalled would TypeError, killing
+    GET /api/threads and the sweep."""
+    _reset()
+    storage.get_settings = lambda: {'thread_stall_days': None}
+    t = threads.create('Gutters', owner_member_id='m1')
+    storage.update_thread(t, {'created_at': time.time() - 9 * 86400})
+    check(threads.is_stalled(storage.get_thread(t)) == 'quiet',
+          "a null setting falls back to the default instead of crashing")
+    check(len(threads.stalled()) == 1, "and the sweep still runs")
+
+
+def scenario_a_true_tie_declines_to_file():
+    """Two candidate threads whose titles overlap the message equally well:
+    nothing actually broke the tie, so nothing is filed — keeping whichever
+    came first in iteration order is exactly the wrong-guess the docstring
+    forbids."""
+    _reset()
+    a = threads.create('Pool permit', owner_member_id='m1',
+                       counterparty_email='ops@vendor.example')
+    b = threads.create('Deck permit', owner_member_id='m1',
+                       counterparty_email='ops@vendor.example')
+    before_a = len(storage.get_thread(a)['history'])
+    before_b = len(storage.get_thread(b)['history'])
+    matched = threads.match_inbound('ops@vendor.example', 'Re: permit question',
+                                    'Quick question about the permit.')
+    check(matched is None, f"a tied score declines, got {matched}")
+    check(len(storage.get_thread(a)['history']) == before_a
+          and len(storage.get_thread(b)['history']) == before_b,
+          "and nothing was written to either thread")
+
+
 def scenario_a_received_reply_resets_the_stall_clock():
     _reset()
     t = threads.create('Nanny search', owner_member_id='m1',
@@ -377,5 +444,8 @@ if __name__ == '__main__':
     scenario_inbound_from_a_stranger_matches_nothing()
     scenario_shared_counterparty_disambiguated_by_subject()
     scenario_inbound_match_moves_waiting_back_to_open()
+    scenario_garbage_next_action_at_never_lands_in_storage()
+    scenario_null_stall_days_setting_still_sweeps()
+    scenario_a_true_tie_declines_to_file()
     scenario_a_received_reply_resets_the_stall_clock()
     print("test_threads OK")

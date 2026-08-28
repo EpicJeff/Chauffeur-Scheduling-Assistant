@@ -1335,12 +1335,44 @@ def _match_thread(thread_title: str):
     return None, rows
 
 
+def _thread_reader(acting_member: dict):
+    """ALLOWLIST, not a blocklist: a thread names a counterparty and what
+    the family is chasing with them, and /threads is deliberately hidden
+    from kiosks so that data stays off shared screens. /api/chat is
+    WALL_OR_SERVICE, so an anonymous kitchen wall panel reaches these tools
+    with NO resolved actor — a `role not in (...)` blocklist waves that
+    None straight through. Reads require a RESOLVED member of any role;
+    writes (`_thread_writer`) require a resolved parent/adult, the same
+    discipline as main.py's `_mind_actor`."""
+    if not (acting_member or {}).get('id'):
+        return {"status": "error",
+                "message": "Threads are for signed-in family members — "
+                           "I can't show them here."}
+    return None
+
+
+def _thread_writer(acting_member: dict, verb: str):
+    """Parent/adult, resolved — see `_thread_reader` for why this is an
+    allowlist. An unresolved actor (wall panel, anonymous chat) and a
+    resolved child/helper/guest are refused the same way."""
+    if not (acting_member or {}).get('id') \
+            or (acting_member or {}).get('role') not in ('parent', 'adult'):
+        return {"status": "error",
+                "message": f"Only a signed-in parent or adult can {verb}."}
+    return None
+
+
 def list_threads(state: str = None, owner_name: str = None,
-                 include_closed: bool = False) -> Dict[str, Any]:
+                 include_closed: bool = False,
+                 acting_member: dict = None) -> Dict[str, Any]:
     """Open loops with somebody outside the family — the pest control
-    company, the school waitlist. A read, open to anyone, same as
-    GET /api/threads; each row is annotated with the same stall reason
+    company, the school waitlist. A read for any RESOLVED member (an
+    anonymous wall panel is refused — see `_thread_reader`), same rows as
+    GET /api/threads; each is annotated with the same stall reason
     (`services.threads.is_stalled`) that page and the nightly sweep use."""
+    refusal = _thread_reader(acting_member)
+    if refusal:
+        return refusal
     from services import threads as _threads
     from services import storage as _storage
     owner_id = None
@@ -1382,9 +1414,9 @@ def create_thread(title: str, goal: str = None, kind: str = None,
     never taken from the model, and — when it resolves — becomes the
     thread's owner and its `created_by`, same as POST /api/threads does with
     the signed-in caller."""
-    role = (acting_member or {}).get('role')
-    if role in ('child', 'helper', 'guest'):
-        return {"status": "error", "message": "Only a parent or adult can open a thread."}
+    refusal = _thread_writer(acting_member, 'open a thread')
+    if refusal:
+        return refusal
     title = (title or '').strip()
     if not title:
         return {"status": "error", "message": "What is the thread about?"}
@@ -1409,9 +1441,9 @@ def update_thread_action(thread_title: str, next_action: str,
     """Set the next thing that has to happen on a thread, and when
     (wraps `services.threads.advance`). Parent/adult work, same gate as
     `create_thread`; `acting_member` comes from the dispatch layer."""
-    role = (acting_member or {}).get('role')
-    if role in ('child', 'helper', 'guest'):
-        return {"status": "error", "message": "Only a parent or adult can update a thread."}
+    refusal = _thread_writer(acting_member, 'update a thread')
+    if refusal:
+        return refusal
     thread, rows = _match_thread(thread_title)
     if not thread:
         open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
@@ -1435,9 +1467,9 @@ def add_thread_note(thread_title: str, text: str, url: str = None,
     """Log movement on a thread that isn't a change of plan — a call made, a
     voicemail left (wraps `services.threads.note`). Parent/adult work, same
     gate as `create_thread`; `acting_member` comes from the dispatch layer."""
-    role = (acting_member or {}).get('role')
-    if role in ('child', 'helper', 'guest'):
-        return {"status": "error", "message": "Only a parent or adult can add a note."}
+    refusal = _thread_writer(acting_member, 'add a note')
+    if refusal:
+        return refusal
     text = (text or '').strip()
     if not text:
         return {"status": "error", "message": "What happened?"}
@@ -1451,6 +1483,68 @@ def add_thread_note(thread_title: str, text: str, url: str = None,
     if not ok:
         return {"status": "error", "message": "That thread is gone."}
     return {"status": "success", "message": f"Noted on \"{thread['title']}\": {text}"}
+
+
+def draft_thread_message(thread_title: str, intent: str = None,
+                         acting_member: dict = None) -> Dict[str, Any]:
+    """Ask Argyle to propose a subject/body for a thread and STOP THERE
+    (wraps `services.threads.draft_message`, which never imports
+    `services.mailer` — it cannot send even by accident, and neither can
+    this wrapper: there is no send tool in this catalog at all). The draft
+    is returned as words for a person to carry to the Threads page, edit,
+    and send with their own tap — the "never sends unread" boundary lives
+    in that separation. Parent/adult work, same gate as the other writes."""
+    refusal = _thread_writer(acting_member, 'draft a message')
+    if refusal:
+        return refusal
+    thread, rows = _match_thread(thread_title)
+    if not thread:
+        open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
+        return {"status": "error",
+                "message": f"I couldn't pin down '{thread_title}'. Open threads: {open_titles}."}
+    from services import threads as _threads
+    res = _threads.draft_message(thread['id'], intent=(intent or '').strip())
+    if res.get('status') != 'ok':
+        reason = res.get('reason') or "the model didn't come back with a draft"
+        return {"status": "error",
+                "message": f"Couldn't draft that just now — {reason}."}
+    to = res.get('to') or ''
+    to_line = f"\nTo: {to}" if to else ''
+    return {"status": "success", "subject": res['subject'], "body": res['body'],
+            "to": to,
+            "message": (f"Here's a draft for \"{thread['title']}\" — nothing has "
+                        f"been sent, and I can't send it: a person reviews and "
+                        f"sends it from the Threads page.{to_line}\n"
+                        f"Subject: {res['subject']}\n\n{res['body']}")}
+
+
+def close_thread(thread_title: str, state: str = None,
+                 acting_member: dict = None) -> Dict[str, Any]:
+    """End a thread — `done` when it resolved, `dropped` when it didn't and
+    won't (wraps `services.threads.close`). The state must be said, and only
+    those two are accepted — anything else is refused, the same enum
+    POST /api/threads/{id}/close holds. Parent/adult work, same gate as
+    `create_thread`; `acting_member` comes from the dispatch layer."""
+    refusal = _thread_writer(acting_member, 'close a thread')
+    if refusal:
+        return refusal
+    state = (state or '').strip().lower()
+    if state not in ('done', 'dropped'):
+        return {"status": "error",
+                "message": "A thread can only close as done or dropped — "
+                           "which is it?"}
+    thread, rows = _match_thread(thread_title)
+    if not thread:
+        open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
+        return {"status": "error",
+                "message": f"I couldn't pin down '{thread_title}'. Open threads: {open_titles}."}
+    from services import threads as _threads
+    ok = _threads.close(thread['id'], state=state,
+                        who=(acting_member or {}).get('id'))
+    if not ok:
+        return {"status": "error", "message": "That thread is gone."}
+    return {"status": "success",
+            "message": f"Closed \"{thread['title']}\" as {state}."}
 
 
 def claim_chore(chore_title: str, member_name: str = None,
@@ -3572,6 +3666,30 @@ def get_available_tools() -> List[Dict]:
                     "url": {"type": "string", "description": "A link worth attaching, if any."}
                 },
                 "required": ["thread_title", "text"]
+            }
+        },
+        {
+            "name": "draft_thread_message",
+            "description": "Asks Argyle to propose the words for an email on a thread ('draft a follow-up to the pest company') and returns the draft as text. It NEVER sends anything and there is no tool that can — a person reviews, edits and sends the draft from the Threads page, so never promise the message will go out. Parent/adult only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "thread_title": {"type": "string", "description": "The thread's title (fuzzy matched)."},
+                    "intent": {"type": "string", "description": "What the message should do, if said — e.g. 'ask when they can come back'."}
+                },
+                "required": ["thread_title"]
+            }
+        },
+        {
+            "name": "close_thread",
+            "description": "Ends a thread ('the pest thing is sorted, close it', 'drop the dresser thread — nobody wants it'). state must be 'done' (it resolved) or 'dropped' (it won't); ask which if unclear. Parent/adult only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "thread_title": {"type": "string", "description": "The thread's title (fuzzy matched)."},
+                    "state": {"type": "string", "description": "'done' or 'dropped' — nothing else is accepted."}
+                },
+                "required": ["thread_title", "state"]
             }
         },
         {

@@ -703,12 +703,16 @@ sending or claiming, and never pass from_member/member_name for them.
                                                     member_role=role)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name in ("list_threads", "create_thread",
-                                   "update_thread_action", "add_thread_note"):
+                                   "update_thread_action", "add_thread_note",
+                                   "draft_thread_message", "close_thread"):
                     from services import agent_tools_v2 as _atv2
                     # Same actor resolution as list_insights/dismiss_insight
                     # above: resolved HERE at dispatch, never taken from the
-                    # model. Writes (create/advance/note) are parent/adult
-                    # work, gated inside the tools themselves on this actor.
+                    # model. The tools gate on this actor as an ALLOWLIST —
+                    # reads need a resolved member, writes a resolved
+                    # parent/adult — so an anonymous wall panel (/api/chat is
+                    # WALL_OR_SERVICE, actor stays None) is refused instead
+                    # of walking through a role blocklist with role None.
                     actor = acting_member
                     if actor is None and driver:
                         from services import storage as _st
@@ -716,7 +720,16 @@ sending or claiming, and never pass from_member/member_name for them.
                     if func_name == "list_threads":
                         res = _atv2.list_threads(state=args.get("state"),
                                                  owner_name=args.get("owner_name"),
-                                                 include_closed=bool(args.get("include_closed")))
+                                                 include_closed=bool(args.get("include_closed")),
+                                                 acting_member=actor)
+                    elif func_name == "draft_thread_message":
+                        res = _atv2.draft_thread_message(args.get("thread_title", "") or "",
+                                                         intent=args.get("intent"),
+                                                         acting_member=actor)
+                    elif func_name == "close_thread":
+                        res = _atv2.close_thread(args.get("thread_title", "") or "",
+                                                 state=args.get("state"),
+                                                 acting_member=actor)
                     elif func_name == "create_thread":
                         res = _atv2.create_thread(args.get("title", "") or "",
                                                   goal=args.get("goal"),

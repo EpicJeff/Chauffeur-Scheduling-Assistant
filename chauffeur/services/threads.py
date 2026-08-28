@@ -246,7 +246,30 @@ def research(thread_id: str, question: str) -> dict:
 
 
 def _stall_days() -> int:
-    return storage.get_settings().get('thread_stall_days', STALL_DAYS_DEFAULT)
+    # `or STALL_DAYS_DEFAULT`, not a plain default: the Settings model keeps
+    # this field Optional and POST /api/settings accepts an explicit null, so
+    # the key can be PRESENT with the value None — .get()'s default never
+    # fires, and a None here would TypeError in is_stalled's comparison and
+    # take down GET /api/threads and the nightly sweep with it.
+    return (storage.get_settings() or {}).get(
+        'thread_stall_days', STALL_DAYS_DEFAULT) or STALL_DAYS_DEFAULT
+
+
+def _clean_next_action_at(value) -> Optional[str]:
+    """A `next_action_at` that isn't a real YYYY-MM-DD string becomes None
+    before it can reach storage. This field feeds `storage.get_threads`'s
+    sort key (compared against other strings) and `is_stalled`'s date parse;
+    one non-string row — a model emitting `20260901` as a number through the
+    agent tools, which pass their JSON straight in — would make that sort
+    raise TypeError forever: the Threads page 500s, `stalled()` raises, and
+    the nightly `watchers.collect_findings()` dies for EVERY finding kind.
+    Coerce, parse, or drop — a garbage date is no date."""
+    if value is None:
+        return None
+    try:
+        return datetime.date.fromisoformat(str(value).strip()).isoformat()
+    except (TypeError, ValueError):
+        return None
 
 
 def create(title: str, owner_member_id: str = None, goal: str = '',
@@ -271,7 +294,7 @@ def create(title: str, owner_member_id: str = None, goal: str = '',
         'counterparty_name': counterparty_name,
         'counterparty_email': counterparty_email,
         'next_action': next_action,
-        'next_action_at': next_action_at,
+        'next_action_at': _clean_next_action_at(next_action_at),
         'created_by': created_by,
     })
     storage.append_thread_history(thread_id, {
@@ -290,6 +313,7 @@ def advance(thread_id: str, next_action: str, next_action_at: str = None,
     what happens next. Logging it (rather than just updating the fields)
     is what keeps the quiet clock honest.
     """
+    next_action_at = _clean_next_action_at(next_action_at)
     ok = storage.update_thread(thread_id, {
         'next_action': next_action,
         'next_action_at': next_action_at,
@@ -432,12 +456,18 @@ def match_inbound(from_addr: str, subject: str = '', body: str = '') -> Optional
     thread = candidates[0]
     if len(candidates) > 1:
         text_tokens = _tokens(subject) | _tokens(body)
-        best, best_score = None, 0
+        best, best_score, best_count = None, 0, 0
         for t in candidates:
             score = len(text_tokens & _tokens(t.get('title', '')))
             if score > best_score:
-                best, best_score = t, score
-        if best is None:
+                best, best_score, best_count = t, score, 1
+            elif score and score == best_score:
+                best_count += 1
+        # A shared top score is a tie, and a tie declines: two threads that
+        # overlap this message equally well means nothing actually broke it,
+        # and filing on whichever came first in iteration order is exactly
+        # the wrong-guess this function's contract forbids.
+        if best is None or best_count > 1:
             return None
         thread = best
 

@@ -5150,6 +5150,10 @@
             // Stalls first — the same ordering the full threads page uses.
             const sorted = [...houseThreads].sort((a, b) =>
                 (a.stall_reason ? 0 : 1) - (b.stall_reason ? 0 : 1));
+            // POST /api/threads/{id}/note is parent/adult-only server-side
+            // (_mind_actor); rendering the form for a child owner just hands
+            // them a 403 alert on tap. Same gate the Mind lane uses.
+            const canNote = ['parent', 'adult'].includes(currentMemberRole());
             const rows = sorted.map(t => `
                 <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4">
                     <div class="flex items-start justify-between gap-2">
@@ -5160,11 +5164,11 @@
                     ${t.next_action ? `<div class="text-sm text-gray-400 mt-1">
                         <span class="text-gray-500">Next: </span>${mfEscape(t.next_action)}${t.next_action_at
                             ? ` <span class="text-gray-500">by ${mfEscape(houseThreadDate(t.next_action_at))}</span>` : ''}</div>` : ''}
-                    <form onsubmit="houseAddThreadNote(event, '${t.id}')" class="flex gap-2 mt-2.5">
+                    ${canNote ? `<form onsubmit="houseAddThreadNote(event, '${t.id}')" class="flex gap-2 mt-2.5">
                         <input type="text" id="house-thread-note-${t.id}" placeholder="A call made, a document received…" autocomplete="off"
                             class="flex-1 bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-[13px] text-gray-100 placeholder-gray-600">
                         <button type="submit" class="px-3 rounded-xl bg-gray-800 border border-gray-700 text-gray-300 text-xs font-bold active:bg-gray-700 shrink-0">Add note</button>
-                    </form>
+                    </form>` : ''}
                 </div>`).join('');
             wrap.innerHTML = `
                 <div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">🧵 Threads</div>

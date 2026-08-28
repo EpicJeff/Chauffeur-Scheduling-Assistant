@@ -704,10 +704,14 @@
                     const days = Math.max(1, parseInt(this.s.thread_stall_days, 10) || 7);
                     this.s.thread_stall_days = days;
                     try {
-                        await fetch(this.apiBase + 'api/settings', {
+                        const r = await fetch(this.apiBase + 'api/settings', {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ thread_stall_days: days })
                         });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            showGlobalAlert(err.detail || 'Could not save that just now.');
+                        }
                     } catch (e) { showGlobalAlert('Could not save that just now.'); }
                 },
             }

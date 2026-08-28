@@ -6027,7 +6027,7 @@ than recorded as zero — a family that was never measured did not do nothing,
 and inventing that would poison the very baseline the backfill exists to
 establish. Without it the pulse would say nothing useful for two months.
 
-## Threads — the household's open loops (v2.429.0–v2.429.18 — `services/threads.py`, `services/watchers.py`, `services/vitals.py`, `templates/threads.html`; design in `docs/superpowers/specs/2026-08-27-threads-design.md`)
+## Threads — the household's open loops (v2.429.0–v2.430.0 — `services/threads.py`, `services/watchers.py`, `services/vitals.py`, `templates/threads.html`; design in `docs/superpowers/specs/2026-08-27-threads-design.md`)
 
 The pest control company that said they'd call back. The deck permit still
 waiting on the county. The after-school-care search nobody has closed out.
@@ -6103,17 +6103,24 @@ never compares the two), refuses honestly with `not_configured` when
 entry (with the body, so the log is of what went out) and moves the thread
 to `waiting`. `/threads` wraps this as **Draft email** → an editable
 subject/body/to box → Send/Redraft/Cancel, all parent/adult gated
-(`/api/threads/{id}/draft`, `/api/threads/{id}/send`); there is no agent
-tool that drafts or sends — a person's tap on Send is the only path from a
-proposed subject/body to an outbound email, on the page, never from chat.
+(`/api/threads/{id}/draft`, `/api/threads/{id}/send`). Chat can DRAFT
+(`draft_thread_message`, v2.430.0 — returns the words and says outright
+that nothing has been sent) but there is no send tool and never will be:
+`agent_tools_v2` never imports `services.mailer` (a test pins this), so a
+person's tap on Send on the page is the only path from a proposed
+subject/body to an outbound email. A done/dropped thread refuses further
+movement with 400 on `/note`, `/advance`, `/send` and `/research`
+(v2.430.0) — `/send` used to quietly flip a closed thread back to
+`waiting`; reopening isn't a thing, a loop that comes back is a new thread.
 
 **Correspondence, inbound.** `match_inbound` (called from
 `email_ingest`'s pipeline) asks whether a piece of arriving mail belongs to
 an open thread: `counterparty_email` first, case-insensitive; when more than
 one open thread shares a counterparty, subject/body token overlap against
 each thread's title breaks the tie. **If nothing breaks the tie — no
-counterparty match, or a tie with no title word in common — the mail is left
-alone.** Guessing wrong is worse than not filing: a reply misfiled onto the
+counterparty match, no title word in common, or two candidates overlapping
+the message equally well (a shared top score declines, v2.430.0) — the mail
+is left alone.** Guessing wrong is worse than not filing: a reply misfiled onto the
 wrong thread reads as an update nobody sent, and buries the update nobody
 logged. A real match appends a `received` entry (movement — it resets the
 quiet clock) and, if the thread was `waiting`, moves it back to `open` — the
@@ -6138,16 +6145,31 @@ lists: `GET /api/threads?owner=<signed-in member>` returns that member's own
 open threads pre-annotated with `stall_reason` by the server (the shell
 never recomputes stall math — one place decides it, the page and the sweep
 both just read the field); one tap adds a note
-(`POST /api/threads/{id}/note`, parent/adult only server-side); closing and
+(`POST /api/threads/{id}/note`, parent/adult only server-side, and the note
+form only renders for parent/adult roles — a child owner sees their threads
+read-only rather than a 403 on tap, v2.430.0); closing and
 advancing stay on the full page. The anchor row gains a 🧵 badge = count of
-stalled threads. **Agent tools** (v2 Gemma router, `agent_tools_v2.py`):
-`list_threads` (open to anyone, same stall annotation as the page),
-`create_thread`, `update_thread_action` (wraps `advance`), and
-`add_thread_note` — all four parent/adult gated, `acting_member` resolved
-by the dispatch layer, never taken from the model. Drafting, sending and
-research have deliberately **no** agent-tool surface; they exist only on
-the page, which is how "never sends unread" stays true regardless of what
-reaches the chat loop. The **Mind's snapshot** carries an OPEN THREADS
+stalled threads. **Agent tools** (v2 Gemma router, `agent_tools_v2.py`,
+six as of v2.430.0): `list_threads` (any RESOLVED member, same stall
+annotation as the page), `create_thread`, `update_thread_action` (wraps
+`advance`), `add_thread_note`, `draft_thread_message` (returns the draft,
+cannot send — see above), and `close_thread` (done|dropped only, the state
+must be said). All gates are **ALLOWLISTS** on the dispatch-resolved
+`acting_member` (never taken from the model): reads require a resolved
+member, writes a resolved parent/adult — because `/api/chat` is
+WALL_OR_SERVICE, an anonymous wall panel reaches these tools with no actor
+at all, and the old `role in ('child','helper','guest')` blocklist waved
+role-None straight through, putting counterparty data on exactly the
+shared screens `/threads` is hidden from. Sending and research still have
+deliberately **no** agent-tool surface. `next_action_at` is sanitized in
+`threads.create()`/`advance()` (v2.430.0): anything
+`datetime.date.fromisoformat` can't read — a model emitting a number, a
+loose phrase — stores as None instead of poisoning `storage.get_threads`'
+string sort, which one bad row would kill for the page, the sweep AND the
+whole nightly findings run. `vitals.measure_day` counts thread load only
+when the measured day IS today (v2.430.0), so `vitals.backfill` can no
+longer stamp today's open-thread count onto up to 56 past days of
+baseline. The **Mind's snapshot** carries an OPEN THREADS
 section (stalled threads first, tagged `[overdue]`/`[quiet]`, then the rest
 of what's open) — the Mind may notice a stall or propose opening a thread
 for outward-facing work it spots with no home yet, but is told never to
@@ -6155,4 +6177,7 @@ invent one that isn't plainly there.
 
 **Setting.** `thread_stall_days` (Config → Threads, default 7) — how many
 quiet days before an open thread counts as stalled; an overdue
-`next_action_at` stalls immediately regardless of this.
+`next_action_at` stalls immediately regardless of this. A stored null (the
+Settings field is Optional and POST /api/settings accepts it) falls back to
+the default instead of crashing the sweep (v2.430.0), and the page's save
+now surfaces a refused write instead of looking saved.

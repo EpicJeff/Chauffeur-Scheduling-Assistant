@@ -159,13 +159,23 @@ def measure_day(date_str: str, sched: dict = None) -> dict:
         if who and ts and day0 <= float(ts) < day1:
             load[who] = load.get(who, 0) + FINDING_MINUTES
 
-    try:
-        from services import threads as _threads
-        thread_counts = _threads.open_by_owner()
-        for member_id, count in thread_counts.items():
-            load[member_id] = load.get(member_id, 0) + (count * THREAD_MINUTES)
-    except Exception as e:
-        logger.warning(f"[vitals] open threads unreadable for {date_str}: {e}")
+    # Threads only when the measured day IS today: open_by_owner() is a
+    # snapshot of what's open right now, and folding it into a PAST day —
+    # backfill() calls this for up to WINDOW_DAYS of history — would invent
+    # thread load for days when those threads did not exist, poisoning the
+    # very baseline the backfill is meant to establish. Same reason the
+    # backfill already pops follow_through, and the same today-only guard
+    # _together applies to moments. The nightly caller
+    # (family_digest.record_daily_stats) measures today, so the real row
+    # always carries the real count.
+    if date_str == datetime.date.today().isoformat():
+        try:
+            from services import threads as _threads
+            thread_counts = _threads.open_by_owner()
+            for member_id, count in thread_counts.items():
+                load[member_id] = load.get(member_id, 0) + (count * THREAD_MINUTES)
+        except Exception as e:
+            logger.warning(f"[vitals] open threads unreadable for {date_str}: {e}")
 
     friction = {'unassigned': unassigned, 'canceled': canceled}
     try:

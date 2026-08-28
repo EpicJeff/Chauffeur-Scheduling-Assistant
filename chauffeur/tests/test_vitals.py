@@ -137,6 +137,47 @@ def scenario_open_threads_are_load():
         storage.threads_table.truncate()
 
 
+def scenario_backfilled_past_days_carry_no_thread_load():
+    """backfill() rebuilds up to 56 PAST days through measure_day, but
+    open_by_owner() is a snapshot of what is open right now — folding it
+    into a past day invents thread load for days when those threads did not
+    exist, poisoning the baseline the backfill exists to establish (the same
+    reason backfill already pops follow_through). Threads count only when
+    the measured day is today."""
+    _reset()
+    from services import threads as _threads, calendar as _cal, meals as _meals
+    storage.threads_table.truncate()
+    _threads.create('Pool', owner_member_id='m1')
+    orig_settings = storage.get_settings
+    orig_fetch = _cal.fetch_upcoming_events
+    orig_plan = _meals.eating_plan
+    orig_sched = storage.get_cached_schedule
+    try:
+        storage.get_settings = lambda: {'calendar_ids': ['cal1']}
+        _cal.fetch_upcoming_events = lambda *a, **k: []
+        _meals.eating_plan = lambda *a, **k: {'sittings': []}
+        res = vitals.backfill(days=3)
+        check(res['status'] == 'ok' and res['days'] == 3, f"got {res}")
+        for i in range(1, 4):
+            row = storage.get_daily_stats([_day(-i)])[0]
+            v = row.get('vitals') or {}
+            check(v.get('backfilled') is True, f"day -{i} is marked, got {v}")
+            check(not (v.get('load') or {}).get('m1'),
+                  f"a backfilled past day must not carry today's thread "
+                  f"load, got {v.get('load')}")
+        # Today still counts the carrying — the guard is about PAST days.
+        storage.get_cached_schedule = lambda: _sched([])
+        measured = vitals.measure_day(_day(0))
+        check(measured['load'].get('m1') == vitals.THREAD_MINUTES,
+              f"today's measure still counts the open thread, got {measured['load']}")
+    finally:
+        storage.get_settings = orig_settings
+        _cal.fetch_upcoming_events = orig_fetch
+        _meals.eating_plan = orig_plan
+        storage.get_cached_schedule = orig_sched
+        storage.threads_table.truncate()
+
+
 # --------------------------------------------------------------------- read
 
 def scenario_thin_history_reports_levels_only():
@@ -385,6 +426,7 @@ if __name__ == '__main__':
     scenario_rest_notices_an_empty_evening()
     scenario_load_counts_doing_not_just_driving()
     scenario_open_threads_are_load()
+    scenario_backfilled_past_days_carry_no_thread_load()
     scenario_thin_history_reports_levels_only()
     scenario_delta_and_run_length()
     scenario_per_person_load_uses_their_own_baseline()

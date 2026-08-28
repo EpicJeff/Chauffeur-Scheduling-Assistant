@@ -5256,6 +5256,22 @@ def patch_thread(thread_id: str, body: dict = Body(default={}), request: Request
     return {"status": "success"}
 
 
+def _live_thread_or_refuse(thread_id: str) -> dict:
+    """A done/dropped thread takes no more movement: the page hides the
+    buttons, and the API must agree rather than let a direct call append
+    history to a closed record — or, worst, let /send flip a closed thread
+    back to `waiting`. Reopening isn't a thing; a loop that comes back is a
+    new thread."""
+    row = storage.get_thread(thread_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such thread")
+    if row.get('state') in ('done', 'dropped'):
+        raise HTTPException(status_code=400,
+                            detail="That thread is closed — open a new one "
+                                   "if it has come back to life")
+    return row
+
+
 @app.post("/api/threads/{thread_id}/note")
 def note_thread(thread_id: str, body: dict = Body(default={}), request: Request = None):
     """Movement that isn't a change of plan — a call made, a document
@@ -5265,6 +5281,7 @@ def note_thread(thread_id: str, body: dict = Body(default={}), request: Request 
     text = (body.get('text') or '').strip()
     if not text:
         raise HTTPException(status_code=400, detail="A note needs text")
+    _live_thread_or_refuse(thread_id)
     ok = _threads.note(thread_id, text, who=actor.get('id'), url=body.get('url'))
     if not ok:
         raise HTTPException(status_code=404, detail="No such thread")
@@ -5276,6 +5293,7 @@ def advance_thread(thread_id: str, body: dict = Body(default={}), request: Reque
     """Set the next thing that has to happen, and when (services.threads.advance)."""
     from services import threads as _threads
     actor = _mind_actor(request, body.get('member_id'))
+    _live_thread_or_refuse(thread_id)
     ok = _threads.advance(thread_id, body.get('next_action') or '',
                           next_action_at=body.get('next_action_at'),
                           note=body.get('note'), who=actor.get('id'))
@@ -5327,6 +5345,9 @@ def send_thread_message(thread_id: str, body: dict = Body(default={}),
     Send is the only path that reaches this one."""
     from services import threads as _threads
     actor = _mind_actor(request, body.get('member_id'))
+    # A closed thread must never be mailed back to life: send_drafted flips
+    # the thread to `waiting` on success, which would silently reopen it.
+    _live_thread_or_refuse(thread_id)
     subject = body.get('subject') or ''
     msg_body = body.get('body') or ''
     to = body.get('to') or ''
@@ -5351,6 +5372,7 @@ def research_thread(thread_id: str, body: dict = Body(default={}),
     question = (body.get('question') or '').strip()
     if not question:
         raise HTTPException(status_code=400, detail="A question is needed")
+    _live_thread_or_refuse(thread_id)
     res = _threads.research(thread_id, question)
     if res.get('status') == 'not_found':
         raise HTTPException(status_code=404, detail="No such thread")
