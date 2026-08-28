@@ -6026,3 +6026,27 @@ schedule-derived signs from real calendar history via
 than recorded as zero — a family that was never measured did not do nothing,
 and inventing that would poison the very baseline the backfill exists to
 establish. Without it the pulse would say nothing useful for two months.
+
+## The House tab carries the loops too (v2.429.10)
+
+Threads (open loops with somebody outside the family — see `threads.html` for
+the full create/advance/close page) had no phone hand path: they only lived
+on the standalone `/threads` panel. The PWA House tab (`#chores-container`)
+now grows a third section beside chores and lists.
+
+- **Same vanilla-render idiom as chores/lists** (`fetchHouseThreads`/
+  `renderHouseThreads` in app.html): `GET /api/threads?owner=<signed-in
+  member>&include_closed=false` returns that member's own open threads,
+  already annotated with `stall_reason` ('overdue' | 'quiet' | None) by the
+  server — the shell never recomputes stall state, same rule as the full
+  page. Stalled threads sort first.
+- **One tap adds a note** — an inline text input + button per card (the same
+  idiom as the lists section's add box), posting to
+  `POST /api/threads/{id}/note`. Closing and advancing stay on the full
+  `/threads` page; this card is read + note only.
+- The anchor row (🧹 Chores / 🛒 Lists) gains a 🧵 Threads jump button,
+  badge = count of stalled threads, following the existing "row only draws
+  with two or more places to jump" rule.
+- Note-adding is parent/adult only server-side (403 otherwise); the PWA does
+  not hide the input for other roles; a failed attempt just shows the
+  server's error via `showGlobalAlert`.
