@@ -5562,9 +5562,38 @@ def _program_permission_or_refuse(request, body: dict, row: dict) -> None:
     _approver_of_record(_mind_actor(request, claimed))
 
 
+def _program_list_permission_or_refuse(request, member_id: str) -> None:
+    """The read side of the same rule: your own program list freely,
+    another member's only as a parent/adult (or the control-center's own
+    stand-in — `_mind_actor` alone, no `_approver_of_record`, because a
+    read names nobody as having approved anything).
+
+    Deliberately NOT reached when `member_id` is empty — a household-wide
+    list carries no more than the wall's own programs card already shows
+    in aggregate (whose milestone is close, what got practised, by name),
+    and refusing an unfiltered request would break both that card and the
+    admin page's own "everyone" view. This only guards the moment a caller
+    narrows the request to one specific person, which is the moment a
+    kid with dev tools could otherwise read a sibling's list wholesale —
+    `GET /api/programs?member_id=<sibling>` had no check at all before this.
+
+    Unlike `_program_permission_or_refuse`, the actor is never resolved
+    from `member_id` itself (there is no separate claimed-actor field on a
+    GET) — only a real token, or nothing at all, which is the same
+    precedent `GET /api/mind/insights` already sets for a read.
+    """
+    actor_id = _acting_id(request, None)
+    if actor_id and actor_id == member_id:
+        return
+    _mind_actor(request, None)
+
+
 @app.get("/api/programs")
-def list_programs_api(member_id: str = None, include_finished: bool = False):
+def list_programs_api(member_id: str = None, include_finished: bool = False,
+                      request: Request = None):
     from services import programs as _prog
+    if member_id:
+        _program_list_permission_or_refuse(request, member_id)
     rows = storage.get_programs(member_id=member_id,
                                 include_finished=include_finished)
     return {"programs": [{**r, 'progress': _prog.progress(r)} for r in rows]}

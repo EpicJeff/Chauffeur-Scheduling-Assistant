@@ -1214,6 +1214,36 @@
             } catch (e) { return []; }
         }
 
+        // The real claimed practice times, keyed by commitment id, so a
+        // program's `emissions.commitment_ids` can be resolved to what
+        // `services/programs.py`'s `approve()` actually wrote — not
+        // recomputed client-side. `shape.preferred_days` looked like the
+        // same information and is not: `propose_slots` pads the days out
+        // to `sessions_per_week` whenever fewer preferred days were picked
+        // than sessions requested, and `approve()` never writes the padded
+        // set back into `shape` — so a household taking the defaults (3 a
+        // week, no preferred days) has a real Tue/Thu/Sat commitment and an
+        // empty `shape.preferred_days`. The commitment rows are the only
+        // honest source for "when does this actually happen".
+        async function fetchMyCommitments() {
+            if (!selectedMemberId) return [];
+            try {
+                const r = await fetch(`${apiBase}api/commitments?member_id=${selectedMemberId}`);
+                return r.ok ? (await r.json() || []) : [];
+            } catch (e) { return []; }
+        }
+
+        // "7:00 PM" from a stored "19:00" -- the commitment's own wall-clock
+        // string, never re-derived through a Date/timezone conversion.
+        function programFmtHHMM(hhmm) {
+            const m = /^(\d{1,2}):(\d{2})/.exec(hhmm || '');
+            if (!m) return '';
+            let h = parseInt(m[1], 10);
+            const ap = h >= 12 ? 'PM' : 'AM';
+            h = h % 12; if (h === 0) h = 12;
+            return `${h}:${m[2]} ${ap}`;
+        }
+
         // "31 sessions since August" -- a total that only grows, never a
         // ratio against a target (there is no total in `progress` to divide
         // by, on purpose -- services/programs.py).
@@ -1230,33 +1260,55 @@
             return `${sessions} session${sessions === 1 ? '' : 's'}${since}`;
         }
 
-        // The next real date a claimed practice day falls on. Built from
-        // `shape.preferred_days` alone -- those are exactly the days
-        // `services/programs.py`'s `propose_slots` turned into the claimed
-        // commitments, so the DAY is a true fact even though the clock time
-        // it landed on (picked to dodge a conflict) is not available here to
-        // state as fact.
-        function programNextWindow(p) {
-            const days = ((p.shape || {}).preferred_days || []);
-            if (!days.length) return '';
-            const today = new Date();
+        // The next real practice window: day AND time, read off the
+        // program's own claimed commitments (`emissions.commitment_ids`,
+        // resolved against `commitmentsById` — see `fetchMyCommitments`
+        // above for why `shape.preferred_days` cannot be trusted for this).
+        // A program with no matching commitment yet — still `proposed`, or
+        // one whose emissions never landed — shows nothing rather than a
+        // guessed day: this surface's whole job is saying when the next
+        // session is, so a wrong answer is worse than a blank one.
+        function programNextWindow(p, commitmentsById) {
+            const ids = ((p.emissions || {}).commitment_ids || []);
+            const mine = ids.map(id => commitmentsById[id])
+                .filter(c => c && c.active !== false
+                    && (c.days_of_week || []).length);
+            if (!mine.length) return '';
+            const now = new Date();
             for (let add = 0; add < 8; add++) {
-                const d = new Date(today);
+                const d = new Date(now);
                 d.setDate(d.getDate() + add);
-                // Date.getDay() is Sun=0..Sat=6; the shape's own convention
-                // (programs.html's dayLabel) is Mon=0..Sun=6.
+                // Date.getDay() is Sun=0..Sat=6; the commitment's own
+                // convention (programs.html's dayLabel) is Mon=0..Sun=6.
                 const programDay = (d.getDay() + 6) % 7;
-                if (days.includes(programDay)) {
-                    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-                }
+                const todays = mine.filter(c => (c.days_of_week || []).includes(programDay))
+                    // A window today that has already ended is not the
+                    // NEXT one — check the next matching day instead of
+                    // claiming a slot already passed.
+                    .filter(c => {
+                        if (add !== 0 || !c.time_end) return true;
+                        const mm = /^(\d{1,2}):(\d{2})/.exec(c.time_end);
+                        if (!mm) return true;
+                        const end = new Date(d);
+                        end.setHours(parseInt(mm[1], 10), parseInt(mm[2], 10), 0, 0);
+                        return end > now;
+                    })
+                    .sort((a, b) => (a.time_start || '').localeCompare(b.time_start || ''));
+                if (!todays.length) continue;
+                const c = todays[0];
+                const label = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+                const time = c.time_start
+                    ? programFmtHHMM(c.time_start) + (c.time_end ? '–' + programFmtHHMM(c.time_end) : '')
+                    : '';
+                return time ? `${label}, ${time}` : label;
             }
             return '';
         }
 
-        function renderProgramCard(p) {
+        function renderProgramCard(p, commitmentsById) {
             const phase = (p.progress || {}).phase;
             const what = phase ? mfEscape(phase.what || '') : '';
-            const nextWindow = programNextWindow(p);
+            const nextWindow = programNextWindow(p, commitmentsById || {});
             // Marking a milestone is a judgement only a person makes -- the
             // button exists, there is no counterpart that marks one missed.
             const milestoneRow = (phase && phase.milestone) ? `
@@ -1283,14 +1335,14 @@
 
         // Rule 1: a household that never set one up sees nothing -- no
         // reserved blank space under chrome for a feature nobody proposed.
-        function renderProgramsSection(programs) {
+        function renderProgramsSection(programs, commitmentsById) {
             if (!programs || !programs.length) return '';
             return `
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-1">
                 <div class="flex items-center justify-between mb-1">
                     <span class="text-xs font-black uppercase tracking-widest text-gray-500">My Program${programs.length === 1 ? '' : 's'}</span>
                 </div>
-                ${programs.map(renderProgramCard).join('')}
+                ${programs.map(p => renderProgramCard(p, commitmentsById)).join('')}
             </div>`;
         }
 
@@ -1705,9 +1757,19 @@
                 // My program, today only -- like the kid stats below, this
                 // is not date-scoped (a program has no "today"), so it is
                 // fetched once and left off every other day this view
-                // browses to.
-                const myProgramsHtml = requestedOffset === 0
-                    ? renderProgramsSection(await fetchMyPrograms()) : '';
+                // browses to. Commitments are only fetched when there is at
+                // least one program to ask "when" about -- a household that
+                // never proposed one costs this view nothing extra.
+                let myProgramsHtml = '';
+                if (requestedOffset === 0) {
+                    const myPrograms = await fetchMyPrograms();
+                    if (myPrograms.length) {
+                        const myCommitments = await fetchMyCommitments();
+                        const commitmentsById = {};
+                        for (const c of myCommitments) commitmentsById[c.id] = c;
+                        myProgramsHtml = renderProgramsSection(myPrograms, commitmentsById);
+                    }
+                }
                 const isKid = currentMemberRole() === 'child';
                 let routineHtml, kidTopHtml = '';
                 if (isKid) {

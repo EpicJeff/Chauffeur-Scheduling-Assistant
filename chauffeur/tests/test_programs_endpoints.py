@@ -6,6 +6,18 @@ from fastapi import HTTPException
 from services import storage
 
 
+class Req:
+    """A minimal stand-in for a real request, carrying only what
+    `_acting_id`/`_auth.acting_member` read: a bearer token on the header.
+    Same shape as `test_calendar_scope.py`'s own `Req` — a direct-call test
+    has no live HTTP layer to mint a real one, and this is the only thing
+    that can distinguish "a specific real actor" from `request=None`'s
+    trusted-place reading."""
+    def __init__(self, token=None):
+        self.headers = {'x-member-token': token} if token else {}
+        self.query_params = {}
+
+
 def _denied(fn, *a, **kw):
     try:
         fn(*a, **kw)
@@ -160,6 +172,57 @@ def scenario_a_child_cannot_propose_for_somebody_else():
           "and nothing was created")
 
 
+# --- GET /api/programs?member_id=... is a read, not exempt (task 6/7 review
+# fix): a child with dev tools calling ?member_id=<sibling> got the sibling's
+# programs back with no check at all -- every write beside it already gated
+# on ownership, and the read did not. `_program_list_permission_or_refuse`
+# closes it the same way, reached only when a filter narrows the request to
+# one specific person; the unfiltered household-wide list (the wall card,
+# the admin page) is untouched.
+
+def scenario_a_child_cannot_list_a_siblings_programs():
+    _reset()
+    import main
+    storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
+    storage.add_program({'member_id': 'sib', 'title': 'Reading ladder',
+                         'state': 'active'})
+    kid_token = storage.create_member_token('kid')
+    check(_denied(main.list_programs_api, member_id='sib',
+                  request=Req(kid_token)) == 403,
+          "a child reading a SIBLING's program list must be refused")
+
+
+def scenario_a_child_can_list_their_own_programs_by_token():
+    _reset()
+    import main
+    storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
+    kid_token = storage.create_member_token('kid')
+    res = main.list_programs_api(member_id='kid', request=Req(kid_token))
+    check([p['title'] for p in res['programs']] == ['Guitar'],
+          f"a child reading their OWN list must go through, got {res}")
+
+
+def scenario_a_parent_can_list_a_childs_programs():
+    _reset()
+    import main
+    storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
+    mom_token = storage.create_member_token('mom')
+    res = main.list_programs_api(member_id='kid', request=Req(mom_token))
+    check([p['title'] for p in res['programs']] == ['Guitar'],
+          f"a parent reading a child's list must go through, got {res}")
+
+
+def scenario_the_household_wide_list_is_never_gated():
+    """No member_id filter -- the wall card's and the admin page's own
+    shape -- carries on with no check at all, from a token-less caller."""
+    _reset()
+    import main
+    storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
+    res = main.list_programs_api(request=Req())
+    check([p['title'] for p in res['programs']] == ['Guitar'],
+          f"an unfiltered request must never be refused, got {res}")
+
+
 if __name__ == '__main__':
     scenario_the_endpoints_exist()
     scenario_a_body_aim_is_refused_at_the_door()
@@ -171,4 +234,8 @@ if __name__ == '__main__':
     scenario_the_control_center_surface_acts_via_parent_of_record()
     scenario_a_child_proposes_for_themselves()
     scenario_a_child_cannot_propose_for_somebody_else()
+    scenario_a_child_cannot_list_a_siblings_programs()
+    scenario_a_child_can_list_their_own_programs_by_token()
+    scenario_a_parent_can_list_a_childs_programs()
+    scenario_the_household_wide_list_is_never_gated()
     print("test_programs_endpoints OK")
