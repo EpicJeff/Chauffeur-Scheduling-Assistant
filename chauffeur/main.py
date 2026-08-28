@@ -5562,39 +5562,62 @@ def _program_permission_or_refuse(request, body: dict, row: dict) -> None:
     _approver_of_record(_mind_actor(request, claimed))
 
 
-def _program_list_permission_or_refuse(request, member_id: str) -> None:
-    """The read side of the same rule: your own program list freely,
-    another member's only as a parent/adult (or the control-center's own
-    stand-in — `_mind_actor` alone, no `_approver_of_record`, because a
-    read names nobody as having approved anything).
+# Sentinel for "this caller sees nothing" -- distinct from `None`, which
+# `storage.get_programs(member_id=None, ...)` already means "everyone".
+_NOBODY = object()
 
-    Deliberately NOT reached when `member_id` is empty — a household-wide
-    list carries no more than the wall's own programs card already shows
-    in aggregate (whose milestone is close, what got practised, by name),
-    and refusing an unfiltered request would break both that card and the
-    admin page's own "everyone" view. This only guards the moment a caller
-    narrows the request to one specific person, which is the moment a
-    kid with dev tools could otherwise read a sibling's list wholesale —
-    `GET /api/programs?member_id=<sibling>` had no check at all before this.
 
-    Unlike `_program_permission_or_refuse`, the actor is never resolved
-    from `member_id` itself (there is no separate claimed-actor field on a
-    GET) — only a real token, or nothing at all, which is the same
-    precedent `GET /api/mind/insights` already sets for a read.
+def _program_list_scope(request, member_id: Optional[str]):
+    """Who is asking decides what GET /api/programs returns, whether or not
+    they PASSED a filter — the previous round's check only fired when a
+    filter was present, which left the unfiltered path wide open: a kid
+    did not need a sibling's id, just four fewer characters in the query
+    string, and got every member's programs back. This is the read side
+    of the same rule every write on this object already enforces,
+    applied unconditionally.
+
+    - A parent, an adult, or the control-center's own stand-in (no
+      resolved actor at all, on the surfaces `_is_admin_surface` grants —
+      the same reading `_mind_actor` already relies on for a write) gets
+      the household: the requested `member_id` if one was explicit, or
+      `None` (everyone) if nothing was asked for. This is what keeps
+      `programs.html` — which fetches unfiltered — seeing the household.
+    - Anyone else — a resolved child, helper or guest — gets only their
+      OWN list, whether they asked for nothing (narrowed quietly, so the
+      PWA never has to special-case its own fetch) or asked for
+      themselves by name. Asking for somebody ELSE's by name is refused
+      outright (`_mind_actor` raises), exactly as the last round closed
+      for the filtered path.
+    - A caller this app cannot resolve to anybody, and who is not one of
+      the admin-surface exceptions above, gets `_NOBODY`. Failing closed
+      is the only direction that keeps this a filter and not a door.
     """
+    if member_id:
+        actor_id = _acting_id(request, None)
+        if actor_id and actor_id == member_id:
+            return member_id
+        _mind_actor(request, None)   # raises unless parent/adult/stand-in
+        return member_id
+
     actor_id = _acting_id(request, None)
-    if actor_id and actor_id == member_id:
-        return
-    _mind_actor(request, None)
+    actor = storage.get_member(actor_id) if actor_id else None
+    if actor:
+        if actor.get('role') in ('child', 'helper', 'guest'):
+            return actor_id
+        return None
+    if _is_admin_surface(request):
+        return None
+    return _NOBODY
 
 
 @app.get("/api/programs")
 def list_programs_api(member_id: str = None, include_finished: bool = False,
                       request: Request = None):
     from services import programs as _prog
-    if member_id:
-        _program_list_permission_or_refuse(request, member_id)
-    rows = storage.get_programs(member_id=member_id,
+    scope = _program_list_scope(request, member_id)
+    if scope is _NOBODY:
+        return {"programs": []}
+    rows = storage.get_programs(member_id=scope,
                                 include_finished=include_finished)
     return {"programs": [{**r, 'progress': _prog.progress(r)} for r in rows]}
 

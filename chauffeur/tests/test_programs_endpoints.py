@@ -172,13 +172,14 @@ def scenario_a_child_cannot_propose_for_somebody_else():
           "and nothing was created")
 
 
-# --- GET /api/programs?member_id=... is a read, not exempt (task 6/7 review
-# fix): a child with dev tools calling ?member_id=<sibling> got the sibling's
-# programs back with no check at all -- every write beside it already gated
-# on ownership, and the read did not. `_program_list_permission_or_refuse`
-# closes it the same way, reached only when a filter narrows the request to
-# one specific person; the unfiltered household-wide list (the wall card,
-# the admin page) is untouched.
+# --- GET /api/programs is a read, not exempt (task 6/7 review, two rounds).
+# Round one only gated the request when a member_id FILTER was present, which
+# left a strictly easier hole open: dropping the filter entirely returned
+# every member's programs to anybody, token or no token. `_program_list_scope`
+# now decides the effective filter on EVERY call, whether or not one was
+# asked for: a parent, an adult or the control-center stand-in gets the
+# household either way; anyone else is narrowed to their own id even when
+# they asked for nothing, and refused outright if they name somebody else.
 
 def scenario_a_child_cannot_list_a_siblings_programs():
     _reset()
@@ -212,15 +213,54 @@ def scenario_a_parent_can_list_a_childs_programs():
           f"a parent reading a child's list must go through, got {res}")
 
 
-def scenario_the_household_wide_list_is_never_gated():
-    """No member_id filter -- the wall card's and the admin page's own
-    shape -- carries on with no check at all, from a token-less caller."""
+def scenario_a_child_with_no_filter_gets_only_their_own():
+    """Dropping the filter is not a way out -- easier to reach than the
+    sibling-by-name hole the first round closed, so it has to close the
+    same way: narrowed, not refused, so the PWA's own unfiltered-by-role
+    call keeps working with no special case."""
     _reset()
     import main
+    storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
     storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
+    storage.add_program({'member_id': 'sib', 'title': 'Reading ladder',
+                         'state': 'active'})
+    kid_token = storage.create_member_token('kid')
+    res = main.list_programs_api(request=Req(kid_token))
+    titles = [p['title'] for p in res['programs']]
+    check(titles == ['Guitar'],
+          f"a child with no filter must be narrowed to their own, not the "
+          f"household, got {titles}")
+
+
+def scenario_a_parent_with_no_filter_still_gets_the_household():
+    _reset()
+    import main
+    storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
+    storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
+    storage.add_program({'member_id': 'sib', 'title': 'Reading ladder',
+                         'state': 'active'})
+    mom_token = storage.create_member_token('mom')
+    res = main.list_programs_api(request=Req(mom_token))
+    titles = sorted(p['title'] for p in res['programs'])
+    check(titles == ['Guitar', 'Reading ladder'],
+          f"a parent with no filter must still see the household, got {titles}")
+
+
+def scenario_the_control_center_still_gets_the_household():
+    """No token, no claim -- the same trusted-place reading `_mind_actor`
+    already grants the writes (and `programs.html`'s own unfiltered fetch
+    relies on for the admin page). The child-narrowing above must not have
+    turned this into a refusal too."""
+    _reset()
+    import main
+    storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
+    storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
+    storage.add_program({'member_id': 'sib', 'title': 'Reading ladder',
+                         'state': 'active'})
     res = main.list_programs_api(request=Req())
-    check([p['title'] for p in res['programs']] == ['Guitar'],
-          f"an unfiltered request must never be refused, got {res}")
+    titles = sorted(p['title'] for p in res['programs'])
+    check(titles == ['Guitar', 'Reading ladder'],
+          f"the control-center reading must still see the household, got {titles}")
 
 
 if __name__ == '__main__':
@@ -237,5 +277,7 @@ if __name__ == '__main__':
     scenario_a_child_cannot_list_a_siblings_programs()
     scenario_a_child_can_list_their_own_programs_by_token()
     scenario_a_parent_can_list_a_childs_programs()
-    scenario_the_household_wide_list_is_never_gated()
+    scenario_a_child_with_no_filter_gets_only_their_own()
+    scenario_a_parent_with_no_filter_still_gets_the_household()
+    scenario_the_control_center_still_gets_the_household()
     print("test_programs_endpoints OK")
