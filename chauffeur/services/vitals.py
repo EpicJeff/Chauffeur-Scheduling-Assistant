@@ -6,7 +6,7 @@ against *this family's own baseline*, where the meaning lives in the
 derivative — which is why "Ellie has six activities" is a fact and "Ellie's
 load has run 40% over her own baseline for eleven days" is a finding.
 
-Six signs, all computed from data the app already keeps:
+Seven signs, all computed from data the app already keeps:
 
 - load            per person: driving, plus doing (tasks, findings) and
                   carrying (each open thread, every day it stays open)
@@ -17,6 +17,9 @@ Six signs, all computed from data the app already keeps:
                   and the scrambles tallied live in `day_counters`
 - together        household: meals eaten together, moments caught, kids who
                   rode somewhere with a parent
+- progress        per person: program sessions actually logged that day —
+                  the one sign that can measure a family WINNING rather than
+                  surviving what it was handed
 
 A day's measures ride along inside the existing `daily_stats` row (written
 nightly by family_digest.record_daily_stats), so the pulse costs one extra
@@ -58,7 +61,7 @@ _FRICTION_KEYS = ('unassigned', 'canceled') + FRICTION_COUNTERS
 # Which direction is bad news, so the Mind can be told plainly.
 _WORSE_WHEN = {'margin': 'down', 'follow_through': 'down',
                'friction': 'up', 'load': 'up', 'rest': 'down',
-               'together': 'down'}
+               'together': 'down', 'progress': 'down'}
 
 
 def _day_str(d):
@@ -190,6 +193,25 @@ def measure_day(date_str: str, sched: dict = None) -> dict:
     except Exception as e:
         logger.warning(f"[vitals] day counters unreadable for {date_str}: {e}")
 
+    # Programs: sessions actually done today, per person. The one sign that can
+    # measure a family WINNING rather than surviving -- and the reason it is
+    # safe to have at all is that it is Mind-input only and read against the
+    # family's own baseline, never rendered as a gauge or a target. A session
+    # carries its own timestamp, so this answers for date_str itself (a real
+    # date filter on sessions_between) rather than for today, which is what
+    # makes it safe to call from the historical backfill below.
+    progress = {}
+    try:
+        from services import programs as _prog
+        day = datetime.date.fromisoformat(date_str)
+        for row in storage.get_programs(include_finished=True):
+            n = len(_prog.sessions_between(row, day, day))
+            if n:
+                mid = row.get('member_id')
+                progress[mid] = progress.get(mid, 0) + n
+    except Exception as e:
+        logger.warning(f"[vitals] programs unreadable for {date_str}: {e}")
+
     waking = (WAKING_END - WAKING_START) * 60
     return {
         'load': load,
@@ -199,6 +221,7 @@ def measure_day(date_str: str, sched: dict = None) -> dict:
                  'empty_evening': not evening},
         'friction': friction,
         'together': _together(date_str, sched, kid_rides),
+        'progress': progress,
     }
 
 
@@ -330,6 +353,19 @@ def read(now: datetime.datetime = None, days: int = WINDOW_DAYS) -> dict:
     for member_id in sorted(who):
         series = _series(rows, lambda v, k=member_id: (v.get('load') or {}).get(k, 0))
         r = _reading('load', series, 'load')
+        if not r:
+            continue
+        m = storage.get_member(member_id)
+        r['member_id'] = member_id
+        r['label'] = (m or {}).get('name') or member_id
+        res['people'].append(r)
+
+    who_p = set()
+    for r in rows:
+        who_p.update((r.get('vitals') or {}).get('progress') or {})
+    for member_id in sorted(who_p):
+        series = _series(rows, lambda v, k=member_id: (v.get('progress') or {}).get(k, 0))
+        r = _reading('progress', series, 'progress')
         if not r:
             continue
         m = storage.get_member(member_id)
