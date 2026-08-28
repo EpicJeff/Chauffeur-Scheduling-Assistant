@@ -194,6 +194,25 @@ def snapshot(now: datetime.datetime = None) -> str:
         from services import vitals as _v
         return _v.snapshot_section(now)
 
+    def _threads():
+        from services import threads as _th
+        rows = _th.stalled(today=now.date()) or []
+        # Open-but-not-stalled threads still matter (a stalled one is the
+        # loudest signal, not the only one worth showing).
+        stalled_ids = {r['id'] for r in rows}
+        rows = rows + [t for t in storage.get_threads(include_closed=False)
+                       if t['id'] not in stalled_ids]
+        lines = []
+        for t in rows[:40]:
+            owner = storage.get_member(t.get('owner_member_id') or '') or {}
+            reason = t.get('stall_reason')
+            tag = f" [{reason}]" if reason else ''
+            next_action = t.get('next_action') or 'no next action set'
+            lines.append(f"- {t.get('title') or '?'} (owner: "
+                         f"{owner.get('name') or 'unassigned'}) — {next_action}"
+                         f"{tag}")
+        return '\n'.join(lines)
+
     section('FAMILY VITALS (against this family\'s own baseline — never '
             'another family, never another person)', _vitals)
     section('CALENDAR NEXT 7 DAYS', _calendar)
@@ -201,6 +220,7 @@ def snapshot(now: datetime.datetime = None) -> str:
     section('FAMILY CHANNEL (spoken in the living room)', _family_chat)
     section('SHOPPING LISTS', _shopping)
     section('CARS', _cars)
+    section('OPEN THREADS (open loops with people outside the family)', _threads)
     section('FRESH NOTICINGS', _noticings)
     section('YOUR OWN INSIGHTS AND HOW THE FAMILY REACTED', _own_insights)
     return '\n\n'.join(parts)
@@ -220,7 +240,7 @@ _TS_NOISE = re.compile(r'\b\d{1,2}:\d{2}\b')
 # it is read — hashing those would make the skip never fire. Chat still
 # triggers thinks, but through noticings, which deep_think checks separately.
 _HASH_SECTIONS = ('CALENDAR NEXT 7 DAYS', 'OPEN FINDINGS', 'SHOPPING LISTS',
-                  'CARS', 'FAMILY VITALS')
+                  'CARS', 'FAMILY VITALS', 'OPEN THREADS')
 
 
 def snapshot_hash(text: str) -> str:
@@ -505,6 +525,12 @@ THINK_SYSTEM = (
     "NEXT 7 DAYS only — an event before today is history, not missing and "
     "not cancelled; never claim something is absent this week from a memory "
     "older than the calendar you can see.\n\n"
+    "THREADS: the OPEN THREADS section lists the household's open loops with "
+    "people outside the family — a vendor, a school, a contractor, waiting "
+    "on a reply or a next step. A thread marked [overdue] or [quiet] has "
+    "stalled and is worth noticing. You may also propose starting a thread "
+    "when you spot real outside-facing work with no home yet — but never "
+    "invent one that isn't plainly there.\n\n"
     "You are shown your own previous insights and how the family reacted. A "
     "dismissed insight means they heard you and said no — do not repeat it. "
     "Curate: return the FULL DESIRED set of current insights (max {max_n}); "

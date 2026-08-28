@@ -90,6 +90,21 @@ def scenario_wake_window():
     check(not mind.in_wake_window(datetime.datetime(2026, 8, 27, 3, 0), s), "3am sleeps")
 
 
+def scenario_open_threads_reach_snapshot():
+    from services import threads as th
+    storage.threads_table.truncate()
+    thread_id = th.create('Deck permit with the county', owner_member_id='mom',
+                          next_action='wait for inspector', created_by='mom')
+    # Force it stalled ('quiet'): back-date created_at past the stall window.
+    storage.update_thread(thread_id, {
+        'created_at': time.time() - (th.STALL_DAYS_DEFAULT + 1) * 86400})
+    text = mind.snapshot(datetime.datetime.now())
+    check('## OPEN THREADS' in text, "the threads section appears in the snapshot")
+    check('Deck permit with the county' in text,
+          "a thread's title reaches the snapshot text")
+    check('[quiet]' in text, "a stalled thread carries its stall reason")
+
+
 if __name__ == '__main__':
     scenario_family_channel_in_dms_out()
     scenario_dms_and_gifts_structurally_absent()
@@ -97,4 +112,5 @@ if __name__ == '__main__':
     scenario_visibility_gate()
     scenario_ghost_coverage_reads_as_covered()
     scenario_wake_window()
+    scenario_open_threads_reach_snapshot()
     print("test_mind_snapshot OK")
