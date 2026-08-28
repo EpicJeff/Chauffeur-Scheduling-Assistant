@@ -51,21 +51,56 @@ def scenario_progress_only_counts_up():
     p = programs.progress(storage.get_program(pid))
     check(p['sessions'] == 4 and p['minutes'] == 100, f"got {p}")
     check(p['milestones_hit'] == 0, "no milestone claimed yet")
+    check(set(p) == {'sessions', 'minutes', 'milestones_hit', 'phase'},
+          f"exactly the declared interface, no total to divide by, got {sorted(p)}")
 
 
 def scenario_no_streak_can_be_derived():
     """The central rule. A streak needs a current-run or a last-gap; if the
     object cannot hold one, no surface can ever render one."""
     _reset()
-    row = storage.get_program(_mk())
+    pid = _mk()
+    storage.append_program_session(pid, {'minutes': 25, 'source': 'asked'})
+    row = storage.get_program(pid)
     banned = ('streak', 'current_run', 'run_length', 'last_session_gap',
               'days_since', 'missed', 'missed_count', 'target_weight',
               'calories', 'rank', 'vs_member')
-    flat = set(row) | set(row.get('shape') or {}) | set(row.get('baseline') or {})
+    flat = (set(row) | set(row.get('shape') or {}) | set(row.get('baseline') or {})
+            | set(row.get('source') or {}) | set(row.get('emissions') or {}))
     for phase in row.get('phases') or []:
         flat |= set(phase)
+    for session in row.get('sessions') or []:
+        flat |= set(session)
     for bad in banned:
         check(bad not in flat, f"the schema must not be able to hold '{bad}'")
+
+
+def scenario_banned_keys_are_refused_not_ignored():
+    """Finding 1: a screen on every write path, not just the one the model
+    validates -- update_program bypasses the model entirely, and phases/
+    source/shape/baseline/emissions/session entries are all Dict[str, Any],
+    so pydantic waves their content through unchecked."""
+    _reset()
+    pid = _mk()
+
+    def _raises(fn):
+        try:
+            fn()
+            return False
+        except ValueError:
+            return True
+
+    check(_raises(lambda: storage.update_program(pid, {'streak': 5})),
+          "a top-level banned key on update_program must raise")
+    check(_raises(lambda: _mk(phases=[{'name': 'Phase 1', 'streak': 3}])),
+          "a banned key inside a phase must raise at creation")
+    check(_raises(lambda: storage.append_program_session(
+              pid, {'minutes': 10, 'missed_count': 2})),
+          "a banned key on a session entry must raise on append")
+    # and none of it stuck
+    row = storage.get_program(pid)
+    check('streak' not in row, "the rejected update must not have landed")
+    check(len(row['sessions']) == 0, "the rejected session must not have landed")
 
 
 def scenario_a_milestone_can_only_be_hit():
@@ -92,6 +127,7 @@ if __name__ == '__main__':
     scenario_sessions_are_append_only()
     scenario_progress_only_counts_up()
     scenario_no_streak_can_be_derived()
+    scenario_banned_keys_are_refused_not_ignored()
     scenario_a_milestone_can_only_be_hit()
     scenario_listing_hides_what_is_over()
     print("test_programs_storage OK")

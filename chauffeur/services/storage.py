@@ -2996,9 +2996,50 @@ def delete_thread(thread_id: str):
 # See docs/superpowers/specs/2026-08-28-programs-design.md. The session log is
 # append-only for the same reason a thread's history is: the number a person is
 # asked to trust must not be quietly editable.
+#
+# The six progress rules are supposed to be enforced by what the schema CANNOT
+# express, not by convention -- but every nested container on Program is
+# Dict[str, Any]/List[Dict[str, Any]], so pydantic validates the shape and
+# waves any *content* through, and update_program() bypasses the model
+# entirely. Without a screen on every write path, "no streak field" is just a
+# docstring: `update_program(pid, {'streak': 5})` would succeed today. This
+# checks recursively, on every path a program's document can change through,
+# and refuses rather than silently drops -- a caller that reaches for a banned
+# key should see it fail, not wonder why it didn't stick.
+PROGRAM_BANNED_KEYS = {
+    # streak / run
+    'streak', 'streaks', 'current_streak', 'current_run', 'run_length',
+    'longest_streak', 'best_streak',
+    # gap / recency
+    'last_session_gap', 'last_session_at', 'days_since', 'days_since_last',
+    # miss
+    'missed', 'missed_count', 'miss_count', 'misses',
+    # completion / outcome measure
+    'completion_pct', 'completion_percent', 'completion_percentage',
+    'percent_complete', 'progress_pct', 'progress_percent',
+    # body composition
+    'target_weight', 'weight_target', 'calories', 'calorie_target',
+    'body_fat', 'body_fat_pct', 'bmi',
+    # cross-member comparison
+    'rank', 'ranking', 'percentile', 'vs_member', 'comparison', 'leaderboard',
+}
+
+def _check_program_keys(value, path: str = ''):
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k in PROGRAM_BANNED_KEYS:
+                where = f" at '{path}'" if path else ''
+                raise ValueError(
+                    f"a program cannot hold '{k}'{where} -- see the six "
+                    "progress rules in docs/superpowers/specs/2026-08-28-programs-design.md")
+            _check_program_keys(v, f"{path}.{k}" if path else k)
+    elif isinstance(value, list):
+        for i, item in enumerate(value):
+            _check_program_keys(item, f"{path}[{i}]")
 
 def add_program(data: dict) -> str:
     from models.schemas import Program
+    _check_program_keys(data)
     with db_lock:
         row = Program(**data).model_dump()
         programs_table.insert(row)
@@ -3023,10 +3064,12 @@ def get_programs(member_id: str = None, state: str = None,
     return rows
 
 def update_program(program_id: str, data: dict) -> bool:
+    _check_program_keys(data)
     with db_lock:
         return bool(programs_table.update(data, Query().id == program_id))
 
 def append_program_session(program_id: str, entry: dict) -> bool:
+    _check_program_keys(entry)
     with db_lock:
         res = programs_table.search(Query().id == program_id)
         if not res:

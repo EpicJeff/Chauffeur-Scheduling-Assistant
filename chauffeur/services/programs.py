@@ -23,7 +23,14 @@ LIVE_STATES = ('proposed', 'active', 'paused')
 
 
 def progress(program: dict) -> dict:
-    """What this program has done. Every number is monotonic."""
+    """What this program has done. Every number is monotonic.
+
+    Deliberately NOT returned: a total to divide `milestones_hit` by. A count
+    next to a total is a completion percentage away, and a completion
+    percentage is one of the six banned things — so the total stays out of
+    this dict even though `len(phases)` is trivial to compute, and `phase`
+    (the milestone ahead) is what a caller actually needs to show.
+    """
     sessions = program.get('sessions') or []
     phases = program.get('phases') or []
     hit = [p for p in phases if p.get('milestone_hit_at')]
@@ -31,7 +38,6 @@ def progress(program: dict) -> dict:
     return {'sessions': len(sessions),
             'minutes': sum(int(s.get('minutes') or 0) for s in sessions),
             'milestones_hit': len(hit),
-            'milestones_total': len(phases),
             'phase': current}
 
 
@@ -79,7 +85,7 @@ def mark_milestone(program_id: str, phase_name: str) -> dict:
         return {'status': 'error', 'message': 'That program is no longer here.'}
     phases, found = [], False
     for ph in row.get('phases') or []:
-        if ph.get('name') == phase_name and not ph.get('milestone_hit_at'):
+        if not found and ph.get('name') == phase_name and not ph.get('milestone_hit_at'):
             ph = {**ph, 'milestone_hit_at': time.time()}
             found = True
         phases.append(ph)
@@ -94,6 +100,9 @@ def pause(program_id: str) -> dict:
     row = storage.get_program(program_id)
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
+    if row.get('state') in ('done', 'dropped'):
+        return {'status': 'error',
+                'message': f"That program is {row.get('state')} — there's nothing to pause."}
     storage.update_program(program_id, {'state': 'paused',
                                         'paused_at': time.time()})
     return {'status': 'success', 'message': 'Paused. Nothing counts against it.'}
@@ -103,5 +112,8 @@ def resume(program_id: str) -> dict:
     row = storage.get_program(program_id)
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
+    if row.get('state') != 'paused':
+        return {'status': 'error',
+                'message': f"That program is {row.get('state')}, not paused."}
     storage.update_program(program_id, {'state': 'active', 'paused_at': None})
     return {'status': 'success', 'message': 'Back on.'}
