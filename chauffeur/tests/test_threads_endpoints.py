@@ -276,6 +276,49 @@ def scenario_listing_carries_stall_reason():
           f"a brand-new thread carried a truthy stall_reason: {rows[fresh['id']]}")
 
 
+def scenario_the_admin_page_can_work_without_a_member_identity():
+    """The control-center screens carry NO member token and NO claim — they
+    authenticate as a trusted place, not as a person. Refusing an unresolved
+    actor locked a parent out of the Threads page with 'Only a parent or adult
+    can handle these' (v2.430.0). A trusted admin surface must get through; an
+    enrolled wall panel in a hallway must not."""
+    _reset()
+    import main
+    from services import auth as _auth
+
+    orig = _auth.identify
+    try:
+        _auth.identify = lambda h, q: {'tier': _auth.SERVICE, 'member': None}
+        res = main.create_thread(body={"title": "Fix the dishwasher not drying",
+                                       "owner_member_id": "jeff"}, request=None)
+        check(res.get("id"), f"the admin page can open a thread, got {res}")
+        tid = res["id"]
+        check(main.note_thread(tid, body={"text": "called the repair place"},
+                               request=None).get("status") == "success",
+              "and add a note")
+        check(main.advance_thread(tid, body={"next_action": "Order the part",
+                                             "next_action_at": None},
+                                  request=None).get("status") == "success",
+              "and advance it")
+        row = storage.get_thread(tid)
+        check(row["created_by"] is None,
+              f"an admin write is recorded with no author, got {row['created_by']}")
+
+        # A wall panel is a place too, but a place in a hallway anyone passes.
+        _auth.identify = lambda h, q: {'tier': _auth.DEVICE, 'device': {},
+                                           'member': None}
+        check(_denied(main.create_thread, body={"title": "From the kiosk"},
+                      request=None) == 403,
+              "an enrolled panel must still be refused")
+
+        _auth.identify = lambda h, q: {'tier': None, 'member': None}
+        check(_denied(main.create_thread, body={"title": "From nowhere"},
+                      request=None) == 403,
+              "and so must an unauthenticated caller")
+    finally:
+        _auth.identify = orig
+
+
 if __name__ == '__main__':
     scenario_create_returns_an_id()
     scenario_note_appends_to_history()
@@ -288,4 +331,5 @@ if __name__ == '__main__':
     scenario_patch_cannot_change_state_or_closed_at()
     scenario_a_closed_thread_takes_no_more_movement()
     scenario_listing_carries_stall_reason()
+    scenario_the_admin_page_can_work_without_a_member_identity()
     print("test_threads_endpoints OK")

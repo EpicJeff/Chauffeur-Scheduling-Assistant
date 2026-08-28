@@ -4830,15 +4830,55 @@ def mind_insights(request: Request = None):
     return {"insights": _mind.visible_insights(viewer)}
 
 
+def _is_admin_surface(request) -> bool:
+    """True when the caller is an admin surface rather than a person.
+
+    The control-center pages carry NO member identity — there is no member
+    token and no claim, because those screens authenticate as a trusted PLACE
+    (local origin, or the HA component's service token), never as a signed-in
+    person. `principal_of` calls that SERVICE.
+
+    This is deliberately NOT the DEVICE tier: an enrolled wall panel is also
+    a place, but it is a place in a hallway that anybody walks past, which is
+    exactly why /threads is kept off the kiosk shelf. A panel stays refused.
+    """
+    from services import auth as _auth
+    try:
+        p = _auth.identify(getattr(request, 'headers', {}) or {},
+                               getattr(request, 'query_params', {}) or {})
+    except Exception:
+        return False
+    return p.get('tier') == _auth.SERVICE
+
+
 def _mind_actor(request, claimed):
-    """Dismiss/act/admin are parent/adult work, same discipline as
-    `_needs_you_actor`."""
+    """Dismiss/act/admin are parent/adult work.
+
+    Returns the resolved member, or None on an admin surface that has no
+    person to resolve. Callers must therefore treat the return as optional —
+    an admin action is recorded with no author, the same way every other
+    control-center write already is.
+
+    Why not simply refuse an unresolved caller (which is what this did until
+    v2.430.1): that reading assumed every caller can resolve to a member, which
+    is true of the PWA and family chat and false of the admin pages, so it
+    locked a parent out of the Threads and Mind screens with the message
+    'Only a parent or adult can handle these'. The protection that mattered —
+    an anonymous kiosk writing, or an unattributed proposal approval reaching
+    the scheduling core — is kept by refusing the DEVICE tier here and by the
+    agent tools' own allowlist, which still demands a resolved parent/adult.
+    """
     actor_id = _acting_id(request, claimed)
     actor = storage.get_member(actor_id) if actor_id else None
-    if not actor or actor.get('role') in ('child', 'helper', 'guest'):
-        raise HTTPException(status_code=403,
-                            detail="Only a parent or adult can handle these")
-    return actor
+    if actor:
+        if actor.get('role') in ('child', 'helper', 'guest'):
+            raise HTTPException(status_code=403,
+                                detail="Only a parent or adult can handle these")
+        return actor
+    if _is_admin_surface(request):
+        return None
+    raise HTTPException(status_code=403,
+                        detail="Only a parent or adult can handle these")
 
 
 @app.post("/api/mind/insights/{insight_id}/dismiss")
@@ -4911,7 +4951,9 @@ def mind_admin(request: Request = None):
     renders to parents alone (spec §sensitivity)."""
     from services import mind as _mind
     actor = _mind_actor(request, None)
-    if actor.get('role') != 'parent':
+    # actor is None on the admin surface itself, which IS the parent-only
+    # screen — the gate below is for a signed-in adult who is not a parent.
+    if actor and actor.get('role') != 'parent':
         raise HTTPException(status_code=403,
                             detail="Only a parent can open the Mind's admin view")
     return {"insights": storage.get_mind_insights(state='active'),
@@ -5229,7 +5271,7 @@ def create_thread(body: dict = Body(default={}), request: Request = None):
         counterparty_email=body.get('counterparty_email') or '',
         next_action=body.get('next_action') or '',
         next_action_at=body.get('next_action_at'),
-        created_by=actor.get('id'),
+        created_by=(actor or {}).get('id'),
     )
     return {"status": "success", "id": thread_id}
 
@@ -5282,7 +5324,7 @@ def note_thread(thread_id: str, body: dict = Body(default={}), request: Request 
     if not text:
         raise HTTPException(status_code=400, detail="A note needs text")
     _live_thread_or_refuse(thread_id)
-    ok = _threads.note(thread_id, text, who=actor.get('id'), url=body.get('url'))
+    ok = _threads.note(thread_id, text, who=(actor or {}).get('id'), url=body.get('url'))
     if not ok:
         raise HTTPException(status_code=404, detail="No such thread")
     return {"status": "success"}
@@ -5296,7 +5338,7 @@ def advance_thread(thread_id: str, body: dict = Body(default={}), request: Reque
     _live_thread_or_refuse(thread_id)
     ok = _threads.advance(thread_id, body.get('next_action') or '',
                           next_action_at=body.get('next_action_at'),
-                          note=body.get('note'), who=actor.get('id'))
+                          note=body.get('note'), who=(actor or {}).get('id'))
     if not ok:
         raise HTTPException(status_code=404, detail="No such thread")
     return {"status": "success"}
@@ -5312,7 +5354,7 @@ def close_thread(thread_id: str, body: dict = Body(default={}), request: Request
     if state not in ('done', 'dropped'):
         raise HTTPException(status_code=400,
                             detail="A thread can only close as done or dropped")
-    ok = _threads.close(thread_id, state=state, who=actor.get('id'))
+    ok = _threads.close(thread_id, state=state, who=(actor or {}).get('id'))
     if not ok:
         raise HTTPException(status_code=404, detail="No such thread")
     return {"status": "success"}
@@ -5352,7 +5394,7 @@ def send_thread_message(thread_id: str, body: dict = Body(default={}),
     msg_body = body.get('body') or ''
     to = body.get('to') or ''
     res = _threads.send_drafted(thread_id, subject, msg_body, to,
-                                who=actor.get('id'))
+                                who=(actor or {}).get('id'))
     if res.get('status') == 'not_found':
         raise HTTPException(status_code=404, detail="No such thread")
     return res
