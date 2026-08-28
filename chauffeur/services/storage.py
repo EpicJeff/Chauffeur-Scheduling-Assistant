@@ -6544,6 +6544,42 @@ def update_deal(deal_id: str, data: dict) -> bool:
     with db_lock:
         return bool(deals_table.update(data, Query().id == deal_id))
 
+def claim_deal(deal_id: str, expected_state: str, new_state: str) -> bool:
+    """Compare-and-set on a deal's state. True only for whoever got there first.
+
+    Applying a deal is not idempotent -- an event shifted twice is 30 minutes
+    from where anybody agreed -- and the last two people can answer in the
+    same second, since FastAPI runs sync handlers in a threadpool. Read and
+    write happen under one hold of `db_lock`, which every other deal write in
+    this module also takes, so the window between "still asking" and "mine
+    now" cannot be entered twice.
+    """
+    with db_lock:
+        rows = deals_table.search(Query().id == deal_id)
+        if not rows or dict(rows[0]).get('state') != expected_state:
+            return False
+        return bool(deals_table.update({'state': new_state},
+                                       Query().id == deal_id))
+
+def prune_deals(before_ts: float) -> int:
+    """Deals older than the fairness window answer no question anybody asks.
+
+    Nothing reads a settled deal after that: fairness counts 14 days back, the
+    runner-up exclusion the same, and the finding surfaces only open ones. The
+    table is otherwise append-only and every `get_deals()` call deserialises
+    all of it, so pruning is what keeps a tap cheap a year from now. Open
+    deals (`draft`/`asking`/`applying`) are never pruned however old, because
+    somebody may still be about to answer one.
+    """
+    with db_lock:
+        rows = [dict(r) for r in deals_table.all()]
+        stale = [r for r in rows
+                 if (r.get('created_at') or 0) < before_ts
+                 and r.get('state') not in ('draft', 'asking', 'applying')]
+        for r in stale:
+            deals_table.remove(Query().id == r['id'])
+        return len(stale)
+
 def get_deal_by_part(part_id: str) -> Optional[dict]:
     with db_lock:
         for row in deals_table.all():

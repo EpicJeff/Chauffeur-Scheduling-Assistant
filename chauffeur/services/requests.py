@@ -199,6 +199,18 @@ def sweep(now_ts: float = None) -> int:
     quietly evaporates is the failure this object exists to prevent."""
     expired = storage.expire_stale_requests(now_ts)
     for r in expired:
+        # A deal_part that ran out of time has to reach the DEAL, not just
+        # this row. Without it the parts stay open, the deal stays `asking`
+        # forever, and everything downstream reads that as a live negotiation:
+        # `negotiation.propose` keeps handing the stranded deal back instead
+        # of searching, and the uncovered event keeps showing an untappable
+        # "waiting on the rest" line where the coverage ladder should be.
+        if r.get('kind') == 'deal_part' and r.get('subject_ref'):
+            try:
+                from services import negotiation
+                negotiation.expire_part(r['subject_ref'])
+            except Exception as e:
+                print(f"[requests] expiring deal part {r['subject_ref']} failed: {e}")
         asker = _name(r.get('from_member'))
         _dm(r['from_member'],
             f"⌛ Nobody got back to you about “{r.get('body')}” — worth asking "

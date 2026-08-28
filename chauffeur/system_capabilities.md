@@ -6182,7 +6182,7 @@ Settings field is Optional and POST /api/settings accepts it) falls back to
 the default instead of crashing the sweep (v2.430.0), and the page's save
 now surfaces a refused write instead of looking saved.
 
-## Negotiation — the smallest change that makes a day work (v2.431.0–v2.431.14 — `services/negotiation.py`, `services/solve_pack.py`, `services/coverage_options.py`, `services/watchers.py`, `main.py` `/api/negotiation/*`, `templates/dashboard.html`, `templates/mind.html`)
+## Negotiation — the smallest change that makes a day work (v2.431.0–v2.432.0 — `services/negotiation.py`, `services/solve_pack.py`, `services/coverage_options.py`, `services/watchers.py`, `main.py` `/api/negotiation/*`, `templates/dashboard.html`, `templates/mind.html`)
 
 `services/coverage_options.py` softens an unassigned event with a ladder, but
 every rung still hands the problem back to a parent. Negotiation asks the
@@ -6231,21 +6231,26 @@ touches the real calendar or the real rule set. Every replay runs inside
 the day's own solve did not already need, so an uncached pair (`test_negotiation_travel_cache.py`) means the fetch failed or the cache
 emptied, not a reason to buy more Matrix calls unattended.
 
-**The hard filter, and the one known gap in it.** A candidate survives
-`negotiation.search` only if the seed itself ends up assigned AND
+**The hard filter, and why it is only about unassigned events.** A candidate
+survives `negotiation.search` only if the seed itself ends up assigned AND
 `broken - baseline_broken` is empty — nothing that was fine becomes broken.
-The design called this "no new unassigned event and no new
-conflict," but the conflict half cannot currently fire: `solve_pack.replay`
-calls `matcher.compute_conflicts(assignments, {}, events)` with an empty
-ghost-assignment map, and that function only ever pairs an assignment against
-a GHOST event — so both sides of `_newly_conflicted`'s comparison are always
-`{}` today, and the check is a no-op (`negotiation._newly_conflicted`'s own
-docstring flags this). This is fine in substance, not a live bug: CP-SAT
-cannot produce a double-booking on its own, and the way a bad replay actually
-shows up is an event going unassigned — which the unassigned half of the
-filter DOES catch. The clause is written correctly and would start doing
-real work the day ghost routes are ever replayed; until then, credit the
-unassigned check for the whole filter, not the sentence in the design doc.
+That is the whole filter, on purpose. There is no conflict check:
+`matcher.compute_conflicts` pairs an assignment against a GHOST route, a
+replay does not solve ghost routes, and running them for every candidate
+would roughly double the cost of the arc's hot path to re-check something
+this already catches — CP-SAT will not double-book a real driver, so the way
+a mutation breaks a solve is by leaving an event uncovered. (An earlier
+version carried a `_newly_conflicted` comparison that could never fire; it
+was removed rather than wired up, and the design doc says so too.)
+
+**The baseline must have solved.** `matcher.solve_schedule` reports a timeout
+by calling EVERY event unassigned, so a timed-out baseline would set
+`baseline_broken` to the whole day, after which `broken - baseline_broken` is
+empty for every candidate and the filter waves everything through with no
+validation behind it — on exactly the big day negotiation exists for.
+`search()` bails when `base['status']` is not OPTIMAL or FEASIBLE, before
+spending a single candidate replay: the arc's own "a drifted replay answers a
+different question" principle, applied to a timed-out one.
 
 **Two-tier cost, spent on two different budgets.** `search(pack, seed_id,
 budget)` solves down the ordered candidate queue and returns only what
@@ -6270,21 +6275,67 @@ seconds because a single question runs many of these, not one.
 already-open draft/asking deal for the same seed rather than re-solving —
 re-searching a seed the family is already looking at would burn budget
 re-deciding a question already on their screen. A deal is `{date,
-seed_event_id, seed_title, line, parts, cost, mutations, state}`; each part
-is `{id, member_id, lever, payload, ask_text, state, request_id, applied}`.
-States: `draft` (found, nobody asked) → `asking` (`start_asks` fanned one
-`services.requests` entry per part, kind `deal_part`) → `applied` (every part
-said yes) or `dead` (one no, a kill, or a part that stopped being possible
-between the ask and the last yes). **Nothing applies until every part has
-accepted** — `accept_part` returns `applied: false` and keeps waiting while
-anyone hasn't, and every part is pre-flighted with `_check_part` (event still
-there, commitment still there, driver still set up to drive) before ANY of
-them touch anything, so a deal that can't fully go through applies none of
-itself, exactly like an explicit decline would. Local levers apply before the
-one that reaches Google Calendar (`_EXTERNAL_LEVERS = {'shift_event'}`), so a
-real failure leaves only local, undoable state. A single `decline_part`
-kills the whole deal blamelessly (`dead_reason` keeps the human reason) and,
-for a `shift_event` part, is exactly the moment a refusal is learned (above).
+seed_event_id, seed_title, line, parts, cost, mutations, refused_parts,
+state}`; each part is `{id, member_id, lever, payload, ask_text, state,
+request_id, applied}`. States: `draft` (found, nobody asked) → `asking`
+(`start_asks` fanned one `services.requests` entry per part, kind
+`deal_part`) → `applying` (transient, see below) → `applied` (every part said
+yes), or `dead` (one no, a kill, or a part that stopped being possible
+between the ask and the last yes) or `expired` (nobody answered in time).
+**Nothing applies until every part has accepted** — `accept_part` returns
+`applied: false` and keeps waiting while anyone hasn't, and every part is
+pre-flighted with `_check_part` (event still there, commitment still there,
+driver still set up to drive, and for a shift the event still at the time the
+ask quoted) before ANY of them touch anything, so a deal that can't fully go
+through applies none of itself, exactly like an explicit decline would. Local
+levers apply before the one that reaches Google Calendar (`_EXTERNAL_LEVERS =
+{'shift_event'}`), so a real failure leaves only local, undoable state. A
+single `decline_part` kills the whole deal blamelessly (`dead_reason` keeps
+the human reason) and, for a `shift_event` part, is exactly the moment a
+refusal is learned (above).
+
+**A deal applies exactly once.** The last yes claims the deal with
+`storage.claim_deal(id, 'asking', 'applying')` — a compare-and-set under the
+storage lock — before it touches anything. Two people can answer the last two
+parts in the same second (FastAPI runs sync handlers in a threadpool), and
+everything between "all parts accepted" and `state='applied'` includes a
+Google Calendar round trip; without the claim both could walk through it and
+an event shifted 15 minutes twice ends up 30 minutes from where anybody
+agreed. Whoever wins the claim owns the apply; the loser is told it is going
+through and does nothing.
+
+**A shift is applied at the time it was ASKED, not as a delta.** The part
+carries `from_start`, `target_start` and `target_end` — the absolute clock
+time the ask quoted ("could Piano move to 5:15?") and the start it was
+computed from. `_apply_part` writes the target; `_check_part` refuses the
+whole deal if the cached event has left `from_start`, because a person who
+agreed to 5:15 must never be given 5:45 by an event that moved in between.
+And `candidates()` never offers a shift for an event with no addressable
+`calendar_id::google_event_id`: discovering that in pre-flight, after
+everybody has agreed, spends a family's goodwill on a change that was never
+possible.
+
+**Nothing is left stranded, and nothing is searched forever.** When a
+`deal_part` request hits its 20h TTL, `requests.sweep` calls
+`negotiation.expire_part`, which moves the deal to `expired` and closes its
+still-open sibling asks. Before that the deal sat in `asking` forever:
+`propose()` handed the stranded deal back instead of searching,
+`watchers._deal_line` printed "N of M said yes, waiting on the rest" with
+nothing to tap, and the coverage ladder never returned for that event. A
+`dead` deal closes its siblings the same way (`_close_open_requests`), and
+`decline_part` records the refused `part_key` on the deal so the next
+`propose()` for that seed passes it to `search()` as `exclude` and offers the
+RUNNER-UP — without which only `shift_event` was protected and the other
+three levers re-asked the person who just declined. A seed the search finds
+nothing for is remembered against the pack that produced it
+(`negotiation._remember_no_deal`, app_state `negotiation_no_deal`) and is not
+re-searched until the refresh writes a new pack — the sweep runs every 30
+minutes across a 14-day window, so a genuinely broken day was otherwise
+costing a baseline plus the sweep budget 48 times a day, forever, for the
+same answer. Settled deals are pruned beside the solve packs
+(`storage.prune_deals`, `negotiation.MEMORY_DAYS`), and `search()` builds
+everybody's fairness counts in ONE pass (`negotiation.fairness_counts`)
+instead of scanning the whole deals table per person per candidate.
 
 **Chat, both stacks, an allowlist not a blocklist.** `negotiate_day` (a read,
 same discipline as `list_threads`) and `ask_deal` (a write, same discipline
@@ -6297,21 +6348,44 @@ anonymous wall panel must be REFUSED outright rather than walked through a
 a resolved member (a deal names who in the family would have to give
 something up — not a sentence for an anonymous screen) and never sends
 anything, however good what it finds; `ask_deal` requires a resolved
-parent/adult, because rearranging the family's evening is a grown-up's call,
-and looks for an open draft deal by the seed event's title before calling
-`negotiation.start_asks`. The v1 admin loop (`agent_tools.py`) carries
+parent/adult, because rearranging the family's evening is a grown-up's call.
+Both parse a fuzzy day (`_parse_fuzzy_date`) — a model says "Tuesday", and
+handed straight to the day cache that misses and `negotiate_day` answers
+"nothing on Tuesday needs a deal — it all covers", a false all-clear on the
+exact question it exists to answer. `negotiate_day` seeds at most three
+events and DIVIDES the deep budget across them, so one chat turn costs one
+deep search however broken the day is (undivided it was up to 120 replays
+inside a 120 s Assist budget). `ask_deal` matches a draft deal on the title
+AND a resolved date, and refuses — naming the days — when more than one
+matches, because a weekly practice has drafts on two evenings often enough
+and asking the wrong Tuesday is worse than a question. The v1 admin loop
+(`agent_tools.py`) carries
 `negotiate_day` only — handed the household's first parent as its actor,
 since that loop resolves no real member — and deliberately has no `ask_deal`
 at all: fanning out asks needs an identity that loop cannot produce.
 
-**Hand path.** **Find a way** on the dashboard's conflicts dialog is the
-on-demand search (`POST /api/negotiation/find`); asking is a second, separate
-tap (`POST /api/negotiation/{deal_id}/ask`) — searching and asking are always
-two taps, never one, so nobody hears about a deal until a person decides it's
-worth asking. `POST /api/negotiation/{deal_id}/kill` drops a deal a person
-doesn't want asked or no longer needs. The nightly sweep runs the same
-`propose()` automatically and surfaces its line as a `negotiate` finding with
-an **Ask them** action (`watchers._deal_line`).
+**Hand path.** **Find a way** lives in the event dialog's **Diagnostics**
+tab, beside `#view-unassigned-reason` — the block the refresh actually
+populates for an unassigned event — and is shown only when that event has
+solver diagnostics and no driver, never on kiosk or read-only. (It used to
+sit inside `#conflicts-section`, which is un-hidden from `conflictsMap`, and
+that map is keyed purely by ASSIGNED event id: the button was unreachable on
+the uncovered event it exists for, and on an assigned event it seeded a
+search for a day that already covers.) It is the on-demand search (`POST
+/api/negotiation/find`); asking is a second, separate tap (`POST
+/api/negotiation/{deal_id}/ask`) — searching and asking are always two taps,
+never one, so nobody hears about a deal until a person decides it's worth
+asking. The deal's line goes into the page as `textContent`, never
+`innerHTML`: it is built from calendar event titles, and a subscribed
+third-party calendar is untrusted input. `POST /api/negotiation/{deal_id}/kill`
+drops a deal a person doesn't want asked or no longer needs. The nightly
+sweep runs the same `propose()` automatically and surfaces its line as a
+`negotiate` finding with an **Ask them** action (`watchers._deal_line`) —
+and `chat_actions.act_on_proposal` merges the approver's member id into the
+card's payload before executing, so the asks that card sends come FROM the
+parent who tapped (without it they were "🙋 Someone is asking…" and the DM
+carrying the answer back went to an empty member id). That same merge fixes
+`skip_occurrence`, which reads the same key.
 
 **The five settings** (Config → The Mind page, group `negotiation`):
 `negotiation_enabled` (default on — off sends findings back to plain

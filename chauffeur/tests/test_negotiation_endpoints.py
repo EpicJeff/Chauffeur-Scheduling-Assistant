@@ -113,8 +113,82 @@ def scenario_a_child_actor_is_refused_on_every_route():
           "a child could drop a deal")
 
 
+def _dashboard():
+    import os
+    return open(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'templates', 'dashboard.html'), encoding='utf-8').read()
+
+
+def _div_block(html, marker):
+    """(start, end) of the <div> that opens at `marker`, by counting depth.
+
+    Enough of a parser to answer the only structural question here: is this
+    element INSIDE that one? The dashboard's dialog is plain nested divs.
+    """
+    import re
+    start = html.index(marker)
+    depth, pos = 0, start
+    for m in re.finditer(r'<div\b|</div>', html[start:]):
+        depth += 1 if m.group() == '<div' else -1
+        pos = start + m.end()
+        if depth == 0:
+            return start, pos
+    raise AssertionError(f"unbalanced divs after {marker!r}")
+
+
+def scenario_find_a_way_is_reachable_on_an_uncovered_event():
+    """Not just "the button exists" — WHERE it exists, which is the whole bug.
+
+    It used to sit inside `#conflicts-section`, un-hidden only when
+    `conflictsMap[eventId]` is non-empty. That map comes from
+    `matcher.compute_conflicts`, which pairs an ASSIGNED event against ghost
+    routes and therefore only ever keys by assigned event id — so the
+    uncovered event this button exists for never had an entry, and the
+    assigned events that did got a deal search for a day that already covers.
+    """
+    dash = _dashboard()
+    check('id="find-a-way-btn"' in dash and 'findAWay()' in dash,
+          "the button has to exist at all")
+    conflicts_start, conflicts_end = _div_block(dash, '<div id="conflicts-section"')
+    btn = dash.index('id="find-a-way-btn"')
+    check(not (conflicts_start < btn < conflicts_end),
+          "Find a way must NOT live inside the conflicts block — that block is "
+          "keyed by assigned event id and never opens for an uncovered event")
+    # It lives in the diagnostics tab, beside the block that IS populated for
+    # an unassigned event.
+    diag_start, diag_end = _div_block(dash, '<div id="tab-content-diagnostics"')
+    check(diag_start < btn < diag_end,
+          "and it must live in the diagnostics tab with the unassigned reason")
+    check(diag_start < dash.index('id="view-unassigned-reason"') < diag_end,
+          "which is where the per-event diagnostics are rendered")
+    # And the thing that un-hides it is the unassigned condition, not conflicts.
+    toggle = dash[dash.index("getElementById('find-a-way-section')"):][:600]
+    check('currentData.diagnostics' in toggle and 'assignmentsMap' in toggle,
+          f"visibility must key off the uncovered-event condition, got {toggle[:200]}")
+    check('conflictsMap' not in toggle,
+          "and never off the conflicts map again")
+    # The tap really reaches the endpoint this file exercises above.
+    body = dash[dash.index('async function findAWay()'):][:900]
+    check("'api/negotiation/find'" in body,
+          "and the tap posts to the search endpoint")
+
+
+def scenario_the_deal_line_is_never_injected_as_html():
+    """`deal.line` is built from calendar event titles, and a subscribed
+    third-party calendar is somebody else's text inside this app's page."""
+    dash = _dashboard()
+    body = dash[dash.index('async function findAWay()'):][:1800]
+    check('${data.deal.line}' not in body,
+          "an event title must never be interpolated into innerHTML")
+    check('textContent = data.deal.line' in body,
+          "it goes in as text")
+
+
 if __name__ == '__main__':
     scenario_the_endpoints_exist()
+    scenario_find_a_way_is_reachable_on_an_uncovered_event()
+    scenario_the_deal_line_is_never_injected_as_html()
     scenario_find_with_no_pack_is_honest()
     scenario_find_with_no_event_id_is_honest_too()
     scenario_killing_a_missing_deal_is_an_error_not_a_crash()

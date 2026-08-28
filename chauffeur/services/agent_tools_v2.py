@@ -1554,13 +1554,16 @@ def negotiate_day(day: str = None, event_title: str = None,
     Reads need a resolved member: this names who in the family would have to
     give something up, and that is not a sentence for an anonymous wall panel.
     """
-    import datetime as _dt
     from services import negotiation, storage as _st
     if not acting_member:
         return {'status': 'error',
                 'message': "I need to know who's asking before I can look at "
                            "who'd have to give something up."}
-    date_str = day or _dt.date.today().isoformat()
+    # The model says "Tuesday" or "tomorrow", not an ISO date. Handed straight
+    # to the day cache that misses, and a miss here reads as "nothing on
+    # Tuesday needs a deal — it all covers": a confident all-clear on the exact
+    # question this tool exists to answer.
+    date_str = _parse_fuzzy_date(day).isoformat()
     cache = _st.get_cached_daily_schedule(date_str) or {}
     sched = cache.get('schedule') or {}
     broken = list(sched.get('true_unassigned') or [])
@@ -1572,10 +1575,15 @@ def negotiate_day(day: str = None, event_title: str = None,
     if not broken:
         return {'status': 'success',
                 'message': f"Nothing on {date_str} needs a deal — it all covers."}
-    budget = int(_st.get_settings().get('negotiation_deep_budget',
-                                        negotiation.DEEP_BUDGET))
+    seeds = broken[:3]
+    # The deep budget is for ONE question a person is waiting on. Spent per
+    # seed it becomes three of them -- up to 120 CP-SAT replays inside a 120 s
+    # Assist budget, from a single chat turn. Divided, the turn costs what one
+    # deep search costs however many uncovered events the day has.
+    budget = max(1, int(_st.get_settings().get(
+        'negotiation_deep_budget', negotiation.DEEP_BUDGET)) // len(seeds))
     deals = []
-    for ev_id in broken[:3]:
+    for ev_id in seeds:
         deal = negotiation.propose(date_str, str(ev_id), budget=budget)
         if deal:
             deals.append({'deal_id': deal['id'], 'line': deal['line'],
@@ -1590,12 +1598,18 @@ def negotiate_day(day: str = None, event_title: str = None,
                        f"I'll ask them."}
 
 
-def ask_deal(event_title: str, acting_member: dict = None) -> dict:
+def ask_deal(event_title: str, day: str = None, acting_member: dict = None) -> dict:
     """Send a found deal's asks. A person's decision, never the model's.
 
     An ALLOWLIST, not a blocklist: /api/chat is WALL_OR_SERVICE, so an
     unresolved caller must be refused rather than walked through a role check
     with role None.
+
+    Matched on the title AND the day. A title alone is not an identifier: a
+    weekly practice has a draft deal on two different evenings often enough,
+    and "ask them about Soccer" fanning asks at the wrong Tuesday is worse
+    than a question. Two candidates and no day given means asking WHICH,
+    never guessing.
     """
     from services import negotiation, storage as _st
     if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
@@ -1605,12 +1619,26 @@ def ask_deal(event_title: str, acting_member: dict = None) -> dict:
     wanted = (event_title or '').strip().lower()
     if not wanted:
         return {'status': 'error', 'message': "Which day's deal?"}
-    for d in _st.get_deals(state='draft'):
-        if wanted in (d.get('seed_title') or '').lower():
-            return negotiation.start_asks(d['id'], acting_member.get('id'))
-    return {'status': 'error',
-            'message': f"I don't have a deal waiting for '{event_title}'. "
-                       f"Ask me to look for one first."}
+    matches = [d for d in _st.get_deals(state='draft')
+               if wanted in (d.get('seed_title') or '').lower()]
+    if day:
+        date_str = _parse_fuzzy_date(day).isoformat()
+        matches = [d for d in matches if str(d.get('date')) == date_str]
+        if not matches:
+            return {'status': 'error',
+                    'message': f"I don't have a deal waiting for "
+                               f"'{event_title}' on {date_str}."}
+    if not matches:
+        return {'status': 'error',
+                'message': f"I don't have a deal waiting for '{event_title}'. "
+                           f"Ask me to look for one first."}
+    if len(matches) > 1:
+        named = ', '.join(sorted({f"{d.get('seed_title') or 'that'} on "
+                                  f"{d.get('date')}" for d in matches}))
+        return {'status': 'error',
+                'message': f"I have more than one deal matching "
+                           f"'{event_title}' — {named}. Which one did you mean?"}
+    return negotiation.start_asks(matches[0]['id'], acting_member.get('id'))
 
 
 def claim_chore(chore_title: str, member_name: str = None,
@@ -3764,7 +3792,7 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "day": {"type": "string", "description": "The date to work on, as YYYY-MM-DD. Defaults to today."},
+                    "day": {"type": "string", "description": "The day to work on — 'Tuesday', 'tomorrow', or YYYY-MM-DD. Defaults to today."},
                     "event_title": {"type": "string", "description": "Narrow to one uncovered event by title, if they named one."}
                 },
                 "required": []
@@ -3776,7 +3804,8 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "event_title": {"type": "string", "description": "The uncovered event the deal is about, e.g. 'Soccer'."}
+                    "event_title": {"type": "string", "description": "The uncovered event the deal is about, e.g. 'Soccer'."},
+                    "day": {"type": "string", "description": "Which day's deal, if the same event has one on more than one day ('Tuesday', 'tomorrow', or YYYY-MM-DD)."}
                 },
                 "required": ["event_title"]
             }

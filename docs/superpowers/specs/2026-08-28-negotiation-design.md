@@ -30,7 +30,7 @@ the person it costs.
 ```
 Deal   { id, date, seed_event_id, seed_reason, parts[], cost{}, state, created_at }
 Part   { id, deal_id, member_id, lever, payload, ask_text, state }
-state  draft | asking | accepted | applied | dead | expired
+state  draft | asking | applying | applied | dead | expired
 lever  shift_event | lift_protected | swap_drive | skip_optional
 ```
 
@@ -123,8 +123,24 @@ the 8 most promising deals, and the on-demand path simply goes deeper down
 the same queue.
 
 A candidate survives only if the re-solve leaves the seed covered **and
-creates no new unassigned event and no new conflict anywhere else in that
-day**. Fixing the 5:00 by breaking the 7:15 is not a deal.
+creates no new unassigned event anywhere else in that day**. Fixing the 5:00
+by breaking the 7:15 is not a deal.
+
+An earlier draft of this section also asked for "no new conflict". That is
+dropped, deliberately. `matcher.compute_conflicts` pairs an assignment
+against a **ghost route**, and a replay does not solve ghost routes — running
+them for every candidate would roughly double the cost of the arc's hot path.
+It would also be checking something the unassigned comparison already covers:
+CP-SAT will not double-book a real driver, so the only way a mutation can
+break a solve is by leaving an event uncovered, and that is exactly what
+`broken - baseline_broken` measures. A documented no-op in a hot path is
+worse than an honest smaller check.
+
+The baseline replay itself must have solved. `matcher.solve_schedule` reports
+a timeout by calling every event unassigned, and taken at face value that
+makes the comparison vacuous — every candidate "breaks nothing" — on exactly
+the big day negotiation is for. A baseline that came back anything but
+OPTIMAL or FEASIBLE ends the search, the same way a drifted pack does.
 
 Validation is the seed day, and that is enough *because every lever is
 occurrence-scoped*: one event moved, one occurrence of a commitment lifted,
@@ -183,9 +199,23 @@ routing.
    delegates `deal_part` to `negotiation.accept_part`; the last yes applies
    the whole deal and marks the schedule dirty.
 5. One decline kills the deal and the runner-up is offered — the next
-   candidate down the queue that does not contain the refused part.
+   candidate down the queue that does not contain the refused part. The
+   refusal is recorded on the dead deal (`refused_parts`), and the next
+   `propose()` for that seed passes the union of recent dead/expired
+   refusals to `search()` as `exclude`. Without that carry-over only
+   `shift_event` — which learns a series-level refusal of its own — would be
+   protected, and the other three levers would re-propose the identical deal
+   on the next sweep to the person who just said no.
 6. Expiry rides the request TTL (20h) and the event itself. A deal whose
-   event has passed dies quietly.
+   event has passed dies quietly. When a `deal_part` request expires,
+   `requests.sweep` tells the deal (`negotiation.expire_part`) and the deal
+   becomes `expired` — a stranded `asking` deal would keep `propose()` from
+   searching and keep the coverage ladder off that event forever. A deal that
+   dies or expires closes its own still-open sibling asks rather than leaving
+   them to their TTL.
+7. A deal applies **once**. The last yes claims the deal with an atomic
+   `asking` → `applying` compare-and-set before it touches anything; a second
+   yes arriving in the same moment loses the claim and does nothing.
 
 **Application, only on full acceptance:**
 
@@ -217,9 +247,12 @@ Parents and adults only, kiosk-hidden: a deal names who is giving up what.
 
 Nothing here is agent-only.
 
-- **Find a way** on an uncovered event — in the override dialog, where
-  `explain_assignment_conflicts` already answers the deeper question — and
-  on the finding card. Runs the deep search on demand.
+- **Find a way** on an uncovered event — in the override dialog, in the
+  Diagnostics tab beside the "why couldn't this be assigned" block, which is
+  the part of that dialog that is actually populated for an unassigned event
+  — and on the finding card. Runs the deep search on demand. (It must NOT
+  live in the conflicts block: that block is keyed by assigned event id, so
+  it never opens for the uncovered event the button exists for.)
 - Deal state is readable without asking Argyle: the finding line plus the
   Requests surface.
 - **Kill this deal** and **clear a learned "can't move"** are both taps. A

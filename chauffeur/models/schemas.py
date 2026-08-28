@@ -803,9 +803,15 @@ class Deal(BaseModel):
     parts: List[Dict[str, Any]] = Field(default_factory=list)
     cost: Dict[str, Any] = Field(default_factory=dict)
     mutations: List[Dict[str, Any]] = Field(default_factory=list)
+    # What a person has already refused here, as `negotiation.part_key`
+    # strings. A dead deal's refusals are what let the next search offer the
+    # RUNNER-UP rather than re-proposing the same thing to the same person.
+    refused_parts: List[str] = Field(default_factory=list)
     # draft: found, nobody asked yet. asking: requests are out.
-    # accepted: every part said yes. applied: the change was made.
-    # dead: somebody declined or a person killed it. expired: too late.
+    # applying: every part said yes and one thread has claimed the apply --
+    # transient, and the compare-and-set that stops a deal applying twice.
+    # applied: the change was made. dead: somebody declined, a person killed
+    # it, or a part stopped being possible. expired: nobody answered in time.
     state: str = 'draft'
     created_at: float = Field(default_factory=time.time)
     applied_at: Optional[float] = None

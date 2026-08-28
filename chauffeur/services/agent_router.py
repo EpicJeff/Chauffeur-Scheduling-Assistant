@@ -752,6 +752,7 @@ sending or claiming, and never pass from_member/member_name for them.
                                                   acting_member=actor)
                     elif func_name == "ask_deal":
                         res = _atv2.ask_deal(args.get("event_title", "") or "",
+                                             day=args.get("day"),
                                              acting_member=actor)
                     else:
                         res = _atv2.add_thread_note(args.get("thread_title", "") or "",

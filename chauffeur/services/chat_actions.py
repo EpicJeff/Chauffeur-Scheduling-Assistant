@@ -392,7 +392,19 @@ def act_on_proposal(proposal_id: str, act: str, approver_member: Optional[dict])
     if prop.get("requires_admin") and not _is_admin(approver_member):
         return {"status": "error", "message": "Only a parent can approve this.",
                 "card": build_card(proposal_id, a_type, summary, "proposed")}
-    res = _execute(a_type, prop.get("payload") or {})
+    # WHO tapped travels with the payload. A card's payload is written by
+    # whatever produced the proposal (the watcher sweep, most often) and
+    # cannot know who would eventually approve it -- but the handlers behind
+    # `ask_deal` and `skip_occurrence` both need a real person: asks created
+    # with an empty `from_member` are addressed to the family from "Someone",
+    # and the DM carrying the answer back goes to an empty member id, so the
+    # parent who tapped never hears it. The approver is only ever added, never
+    # allowed to overwrite a member the payload named on purpose.
+    payload = dict(prop.get("payload") or {})
+    approver_id = (approver_member or {}).get("id")
+    if approver_id and not payload.get("member_id"):
+        payload["member_id"] = approver_id
+    res = _execute(a_type, payload)
     if res.get("status") == "error":
         return {"status": "error", "message": res.get("message") or "That action failed.",
                 "card": build_card(proposal_id, a_type, summary, "proposed")}

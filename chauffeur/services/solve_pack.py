@@ -175,9 +175,15 @@ def replay(pack: dict, time_limit_s: float = DEFAULT_TIME_LIMIT_S) -> dict:
         cars=[Car(**c) for c in pack['cars']],
         driver_passenger_map=dict(pack['driver_passenger_map']),
         time_limit_s=time_limit_s, stats=stats)
-    conflicts = matcher.compute_conflicts(assignments, {}, events)
+    # No `conflicts` and no `true_unassigned` here, deliberately. Both would
+    # be lies of a different kind: `compute_conflicts` pairs assignments
+    # against GHOST routes, which a replay does not solve, so it could only
+    # ever return `{}` -- a documented no-op in the negotiator's hot path. And
+    # `true_unassigned` means something specific everywhere else in this app
+    # (`unassigned` MINUS what a ghost route covers, main.py's refresh), so
+    # publishing a copy of `unassigned` under that name would put two meanings
+    # on one key. A caller that wants either must solve ghost routes itself.
     return {'assignments': assignments, 'unassigned': list(unassigned),
-            'true_unassigned': list(unassigned), 'conflicts': conflicts,
             'lateness_warnings': lateness, 'car_assignments': cars_out,
             'objective': float(stats.get('objective') or 0.0),
             'status': stats.get('status') or 'UNKNOWN'}

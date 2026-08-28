@@ -72,6 +72,11 @@ def _deal_line(event_id: str):
 
     Read-only: it reports a deal that already exists. Finding one is
     `_negotiate_seed`'s job, and it happens at most once per sweep.
+
+    Only a LIVE deal speaks. `dead` and `expired` both mean this event is
+    uncovered with nothing pending, and both have to fall through to the
+    coverage ladder — a settled deal holding the line would leave the event
+    showing a status about a negotiation that ended.
     """
     for d in storage.get_deals(seed_event_id=str(event_id)):
         if d.get('state') not in ('draft', 'asking'):

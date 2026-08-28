@@ -30,9 +30,6 @@ from services import coverage_options, maps, solve_pack, storage
 # about the seed, and proposing it reads as the app rummaging.
 WINDOW_MINS = 90
 
-# Ordered cheapest-first: a quarter hour is a smaller thing to ask than half.
-SHIFT_STEPS = (-15, 15, -30, 30)
-
 GIVE_UP = {'shift_15': 1, 'shift_30': 2, 'skip_optional': 2,
            'swap_drive': 3, 'lift_protected': 5}
 
@@ -42,6 +39,36 @@ def _dt(raw):
         return datetime.datetime.fromisoformat(str(raw)).replace(tzinfo=None)
     except (ValueError, TypeError):
         return None
+
+
+def _aware_dt(raw):
+    """The same parse as `_dt`, but keeping whatever offset was written down.
+
+    `_dt` strips tzinfo, which is right for the relative arithmetic candidate
+    generation does and wrong for anything that has to survive as an ABSOLUTE
+    time -- the target a person actually agreed to, and the comparison that
+    proves the event is still where the ask said it was.
+    """
+    try:
+        return datetime.datetime.fromisoformat(str(raw))
+    except (ValueError, TypeError):
+        return None
+
+
+def _same_moment(a, b) -> bool:
+    """Is this the same start time, written two ways?
+
+    A pack event and a cached event are two dumps of the same record and
+    normally carry byte-identical strings, but a naive/aware mismatch would
+    make a plain `==` say 'moved' about an event that never moved. Compare
+    instants when both sides know their offset, wall times when they do not.
+    """
+    da, db = _aware_dt(a), _aware_dt(b)
+    if da is None or db is None:
+        return str(a) == str(b)
+    if (da.tzinfo is None) != (db.tzinfo is None):
+        return da.replace(tzinfo=None) == db.replace(tzinfo=None)
+    return da == db
 
 
 def _fmt(t):
@@ -86,12 +113,20 @@ def _in_window(ev: dict, seed_start, seed_end) -> bool:
     return start < hi and end > lo
 
 
-def candidates(pack: dict, seed_event_id: str) -> list:
+def candidates(pack: dict, seed_event_id: str, assignments: dict = None) -> list:
     """Every change worth trying for this seed, cheapest first.
 
     Ordering happens HERE, before anything is solved, because the budget is a
     cutoff on this list: the sweep's few solves must be spent on the most
     promising deals, not on a random sample of them.
+
+    `assignments` is THIS day's result -- who the solver actually put on what
+    -- and `search()` passes the baseline replay's own map. It is not
+    optional in spirit: `previous_assignments` is the stickiness INPUT (the
+    last refresh's map plus this run's earlier days), so on a first refresh,
+    after a cache clear, or for a newly added event it is empty or stale and
+    the `swap_drive` lever finds nobody to free. Falling back to it here is a
+    last resort for a caller with nothing better, not the intended path.
     """
     events = {str(e.get('id')): e for e in pack.get('events') or []}
     seed = events.get(str(seed_event_id))
@@ -103,8 +138,8 @@ def candidates(pack: dict, seed_event_id: str) -> list:
     seed_end = _dt(seed.get('end')) or seed_start + datetime.timedelta(hours=1)
 
     refused = {r['series_key'] for r in storage.get_shift_refusals()}
-    # The smaller step is a setting (default 15, matching SHIFT_STEPS); the
-    # larger step is always double it, same shape as the constant it replaces.
+    # The smaller step is a setting (default 15); the larger step is always
+    # double it, so a family that wants coarser moves gets both from one dial.
     shift_mins = int(storage.get_settings().get('negotiation_shift_mins', 15) or 15)
     shift_steps = (-shift_mins, shift_mins, -shift_mins * 2, shift_mins * 2)
     out = []
@@ -116,22 +151,41 @@ def candidates(pack: dict, seed_event_id: str) -> list:
             continue
         if series_key(ev) in refused:
             continue
+        # An event this app cannot write to cannot be moved, however well the
+        # re-solve goes. Discovering that only in `_check_part` -- AFTER every
+        # person in the deal has agreed -- spends a family's goodwill on a
+        # change that was never possible, so the queue never carries one.
+        cal_id, google_id = _calendar_address(ev)
+        raw_start, raw_end = _aware_dt(ev.get('start')), _aware_dt(ev.get('end'))
+        if not cal_id or not google_id or not raw_start or not raw_end:
+            continue
         owner = _owner_of(ev, pack)
         start = _dt(ev.get('start'))
         for delta in shift_steps:
             cost = GIVE_UP['shift_15' if abs(delta) == shift_mins else 'shift_30']
             when = start + datetime.timedelta(minutes=delta)
             direction = 'later' if delta > 0 else 'earlier'
+            step = datetime.timedelta(minutes=delta)
             out.append({
                 'mutations': [{'lever': 'shift_event',
                                'event_id': str(ev.get('id')),
                                'delta_mins': delta}],
                 'give_up': cost,
+                # The ask quotes an ABSOLUTE time ("to 5:15"), so that is what
+                # gets written down and later applied. `delta_mins` alone is a
+                # promise about a starting point that may not still be there:
+                # if the event moves between the ask and the last yes, adding
+                # the delta again lands somewhere nobody agreed to. `from_start`
+                # is the starting point the ask assumed, and `_check_part`
+                # refuses the whole deal if the event has left it.
                 'parts': [{'member_id': owner, 'lever': 'shift_event',
                            'payload': {'event_id': str(ev.get('id')),
                                        'series_key': series_key(ev),
                                        'title': ev.get('title') or 'that',
-                                       'delta_mins': delta},
+                                       'delta_mins': delta,
+                                       'from_start': raw_start.isoformat(),
+                                       'target_start': (raw_start + step).isoformat(),
+                                       'target_end': (raw_end + step).isoformat()},
                            'ask_text': (f"Could {ev.get('title') or 'that'} move "
                                         f"{abs(delta)} minutes {direction}, to "
                                         f"{_fmt(when)}? It would cover "
@@ -158,8 +212,14 @@ def candidates(pack: dict, seed_event_id: str) -> list:
                                     f"{seed.get('title') or 'the other drive'}.")}]})
 
     # --- the reasons the ladder already found: swaps and protected windows --
+    # THIS day's assignments, not the stickiness input. `driver_options` reads
+    # this map to say who is busy and on what, and the whole `swap_drive`
+    # lever hangs off that answer -- handed `previous_assignments` it reasons
+    # about a day that is one refresh old, or (first refresh, cleared cache,
+    # new event) about no day at all.
     cache = {'events': list(events.values()),
-             'assignments': dict(pack.get('previous_assignments') or {})}
+             'assignments': dict(assignments if assignments is not None
+                                 else (pack.get('previous_assignments') or {}))}
     try:
         _free, blocked = coverage_options.driver_options(seed, cache)
     except Exception as e:
@@ -260,41 +320,56 @@ def part_key(part: dict) -> str:
     return f"{part.get('member_id')}:{part.get('lever')}:{subject}"
 
 
-def _fairness(member_id: str) -> int:
+def fairness_counts() -> dict:
+    """Everybody's recent give-ups, from ONE pass over the deals table.
+
+    `storage.get_deals` deserialises the whole table, and scoring asks about
+    fairness twice per surviving candidate, once per person -- a hundred-odd
+    whole-table scans for one tap if each question is answered on its own. One
+    scan, one dict, handed down through `search()`.
+    """
+    since = datetime.datetime.now().timestamp() - FAIRNESS_DAYS * 86400
+    counts = {}
+    for d in storage.get_deals(since_ts=since):
+        for p in d.get('parts') or []:
+            mid = str(p.get('member_id'))
+            counts[mid] = counts.get(mid, 0) + 1
+    return counts
+
+
+def _fairness(member_id: str, counts: dict = None) -> int:
     """How many times this person has been asked to give something up lately.
 
     Counted from recorded deals, so it is a real count. Nothing here is
     estimated — a made-up fairness number would be worse than none.
     """
-    since = datetime.datetime.now().timestamp() - FAIRNESS_DAYS * 86400
-    n = 0
-    for d in storage.get_deals(since_ts=since):
-        for p in d.get('parts') or []:
-            if str(p.get('member_id')) == str(member_id):
-                n += 1
-    return n
+    if counts is None:
+        counts = fairness_counts()
+    return counts.get(str(member_id), 0)
 
 
-def _score(candidate: dict, objective_delta: float):
+def _score(candidate: dict, objective_delta: float, counts: dict = None):
     """The one place people/fairness/delta/total get computed. `_rank` and
     `_cost` both call this rather than each doing their own arithmetic --
     two implementations of the same decision is how a sort order and the
     numbers shown for it quietly drift apart."""
+    if counts is None:
+        counts = fairness_counts()
     people = sorted({p['member_id'] for p in candidate['parts']})
-    fairness = sum(_fairness(m) for m in people)
+    fairness = sum(_fairness(m, counts) for m in people)
     delta = min(max(objective_delta, 0.0) / DELTA_SCALE, DELTA_CAP)
     total = candidate['give_up'] + delta + fairness
     return len(people), fairness, delta, total
 
 
-def _rank(candidate: dict, objective_delta: float):
+def _rank(candidate: dict, objective_delta: float, counts: dict = None):
     """The sort key. People disturbed comes first and is not tradeable."""
-    people_n, _fairness_n, _delta, total = _score(candidate, objective_delta)
+    people_n, _fairness_n, _delta, total = _score(candidate, objective_delta, counts)
     return (people_n, total)
 
 
-def _cost(candidate: dict, objective_delta: float) -> dict:
-    people_n, fairness, delta, total = _score(candidate, objective_delta)
+def _cost(candidate: dict, objective_delta: float, counts: dict = None) -> dict:
+    people_n, fairness, delta, total = _score(candidate, objective_delta, counts)
     return {'people': people_n, 'give_up': candidate['give_up'],
             'delta': round(delta, 3), 'fairness': fairness,
             'total': round(total, 3)}
@@ -305,31 +380,6 @@ def _line(candidate: dict, seed_title: str, when: str) -> str:
     return f"🤝 {seed_title} ({when}) works if — {asks}"
 
 
-def _newly_conflicted(base_conflicts: dict, result_conflicts: dict) -> bool:
-    """True if the replay broke something the baseline didn't already carry.
-
-    Keyed by event id, not counted: a same-count TRADE -- event A's conflict
-    resolves while a previously-clean event B, on somebody else, becomes newly
-    conflicted -- has to disqualify the candidate even though the totals never
-    move. `len(a) > len(b)` cannot see that; comparing which keys are present
-    can. Each value is a list of the OTHER events colliding with that key, so
-    where the data is there, a same-event conflict growing (two collisions
-    becoming three) also disqualifies -- not just a new key appearing.
-
-    NOTE: as of this writing `solve_pack.replay` calls `compute_conflicts`
-    with an empty ghost-assignment map (`solve_pack.py:178`), so both sides of
-    this comparison are always `{}` and this function currently never returns
-    True. That is a real gap in the wiring, not this function's -- see
-    `search()`'s docstring and the task report for why it is out of this
-    module's scope to fix here.
-    """
-    for event_id, hits in (result_conflicts or {}).items():
-        base_hits = (base_conflicts or {}).get(event_id)
-        if base_hits is None or len(hits) > len(base_hits):
-            return True
-    return False
-
-
 def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
            exclude: set = None) -> list:
     """Solve down the candidate queue and return what actually worked.
@@ -338,6 +388,16 @@ def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
     the day was broken to do it. Validation is this one day, which is sound
     only because every lever is occurrence-scoped: none of them reaches another
     day's pack. If a series-level lever is ever added, this must widen with it.
+
+    "Nothing else was broken" means, precisely, that no event which solved in
+    the baseline goes unassigned in the replay. There is deliberately no
+    separate conflict check: CP-SAT will not double-book a real driver, so the
+    only way a mutation can break a solve is by leaving an event uncovered --
+    which is exactly what this compares. (An earlier draft carried a conflict
+    comparison as well. `matcher.compute_conflicts` pairs assignments against
+    GHOST routes, and replaying ghost routes for every candidate would roughly
+    double the cost of this hot path to re-check something the unassigned
+    comparison already catches, so it was dropped rather than wired up.)
 
     Every replay here runs inside `maps.travel_cache_only()`: none of the four
     levers can introduce a location the day's own solve did not already need,
@@ -376,12 +436,25 @@ def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
         print(f"[negotiation] baseline needs a travel pair the cache does "
               f"not have ({e}) -- refusing to buy it")
         return []
+    # A baseline that did not actually solve answers a different question, and
+    # `solve_schedule` reports a timeout by calling EVERY event unassigned.
+    # Taken at face value that makes `baseline_broken` the whole day, after
+    # which `broken - baseline_broken` is empty for every candidate and the
+    # "nothing new breaks" check silently waves everything through -- on a big
+    # day, which is exactly the day negotiation exists for. Same principle as
+    # the drifted-pack refusal above: an answer to a different question is
+    # worse than no answer.
+    if base['status'] not in ('OPTIMAL', 'FEASIBLE'):
+        print(f"[negotiation] baseline replay for {pack.get('date')} came back "
+              f"{base['status']} -- refusing to validate candidates against it")
+        return []
     baseline_broken = set(base['unassigned'])
     baseline_objective = base['objective']
+    counts = fairness_counts()
 
     scored = []
     spent = 0
-    for cand in candidates(pack, seed_event_id):
+    for cand in candidates(pack, seed_event_id, assignments=base['assignments']):
         if spent >= budget:
             break
         if any(part_key(p) in exclude for p in cand['parts']):
@@ -407,12 +480,10 @@ def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
         # not this candidate's fault and does not disqualify it.
         if broken - baseline_broken:
             continue
-        if _newly_conflicted(base.get('conflicts'), result.get('conflicts')):
-            continue
         delta = baseline_objective - result['objective']
-        scored.append((_rank(cand, delta),
+        scored.append((_rank(cand, delta, counts),
                        {'mutations': cand['mutations'], 'parts': cand['parts'],
-                        'cost': _cost(cand, delta),
+                        'cost': _cost(cand, delta, counts),
                         'line': _line(cand, seed_title, when)}))
     scored.sort(key=lambda pair: pair[0])
     return [entry for _, entry in scored]
@@ -458,6 +529,62 @@ def day_rules_for(date_str: str, rules: list, protected_rule_index: dict):
 # deal changes nothing at all — not the calendar, not the overrides, nothing.
 
 
+# How long a refused part keeps excluding itself, and how long a "nothing
+# works" answer stays believed. Both are memory about one occurrence, and the
+# occurrence itself is days away at most.
+MEMORY_DAYS = 14
+
+# Where the "I already looked and there was nothing" memo lives. Keyed by seed
+# AND by the pack's identity, so the answer is only reused while the world it
+# was computed from is still the world.
+_NO_DEAL_KEY = 'negotiation_no_deal'
+
+
+def _refused_part_keys(seed_event_id: str) -> set:
+    """Everything a person has already said no to for this seed.
+
+    Rule 5 of the design: one decline kills the deal and the RUNNER-UP is
+    offered — the next candidate down the queue that does not contain the
+    refused part. The runner-up arrives on the next `propose()`, so the
+    refusal has to be carried across it. Without this, three of the four
+    levers (only `shift_event` writes a series refusal) would re-propose the
+    identical deal on the next sweep and re-ask the person who just declined.
+    """
+    since = datetime.datetime.now().timestamp() - MEMORY_DAYS * 86400
+    out = set()
+    for d in storage.get_deals(seed_event_id=seed_event_id, since_ts=since):
+        if d.get('state') in ('dead', 'expired'):
+            out.update(str(k) for k in (d.get('refused_parts') or []))
+    return out
+
+
+def _no_deal_memo() -> dict:
+    memo = storage.get_app_state(_NO_DEAL_KEY) or {}
+    return memo if isinstance(memo, dict) else {}
+
+
+def _remember_no_deal(seed_event_id: str, pack: dict):
+    """A hopeless seed is remembered against the pack that made it hopeless.
+
+    The sweep runs every half hour for the whole 14-day watch window, and a
+    genuinely broken day is the COMMON case for an uncovered event — so
+    without this, one such event costs a baseline plus up to eight replays,
+    forty-eight times a day, forever, always reaching the same answer. The
+    memo clears itself the moment the refresh writes a new pack, because
+    that is the only thing that can change the answer.
+    """
+    now = datetime.datetime.now().timestamp()
+    memo = {k: v for k, v in _no_deal_memo().items()
+            if isinstance(v, dict) and (v.get('at') or 0) > now - MEMORY_DAYS * 86400}
+    memo[str(seed_event_id)] = {'pack': pack.get('written_at'), 'at': now}
+    storage.set_app_state(_NO_DEAL_KEY, memo)
+
+
+def _already_hopeless(seed_event_id: str, pack: dict) -> bool:
+    entry = _no_deal_memo().get(str(seed_event_id))
+    return bool(entry and entry.get('pack') == pack.get('written_at'))
+
+
 def propose(date_str: str, seed_event_id: str,
             budget: int = SWEEP_BUDGET) -> dict:
     """The best deal for this seed, stored as a draft. Nobody is asked yet.
@@ -465,7 +592,9 @@ def propose(date_str: str, seed_event_id: str,
     An open deal for the same seed is REUSED rather than re-solved: the sweep
     runs constantly, and re-searching a seed the family is already looking at
     would burn the budget re-deciding a question that is already on their
-    screen.
+    screen. A `dead` or `expired` deal is NOT reused — the whole point of one
+    is that this seed needs looking at again — but what it was refused for is
+    carried forward as an exclusion.
     """
     for existing in storage.get_deals(seed_event_id=seed_event_id):
         if existing.get('state') in ('draft', 'asking'):
@@ -473,8 +602,12 @@ def propose(date_str: str, seed_event_id: str,
     pack = storage.get_solve_pack(date_str)
     if not pack:
         return None
-    found = search(pack, seed_event_id, budget=budget)
+    if _already_hopeless(seed_event_id, pack):
+        return None
+    found = search(pack, seed_event_id, budget=budget,
+                   exclude=_refused_part_keys(seed_event_id))
     if not found:
+        _remember_no_deal(seed_event_id, pack)
         return None
     best = found[0]
     events = {str(e.get('id')): e for e in pack.get('events') or []}
@@ -525,6 +658,28 @@ def start_asks(deal_id: str, actor_member_id: str = None) -> dict:
 _EXTERNAL_LEVERS = {'shift_event'}
 
 
+def _close_open_requests(deal: dict, status: str) -> int:
+    """A deal that is over takes its unanswered asks with it.
+
+    Nothing can come of answering half of a dead deal, and an ask that
+    outlives its reason is exactly the thing `services/requests.py` exists to
+    prevent — so the siblings are closed here rather than left to grind
+    through their own 20h TTL and then DM two people about a deal that ended
+    yesterday.
+    """
+    n = 0
+    for p in deal.get('parts') or []:
+        rid = p.get('request_id')
+        if not rid:
+            continue
+        req = storage.get_request(rid)
+        if not req or req.get('status') != 'open':
+            continue
+        storage.update_request(rid, {'status': status})
+        n += 1
+    return n
+
+
 def accept_part(part_id: str, member_id: str = None) -> dict:
     deal = storage.get_deal_by_part(part_id)
     if not deal:
@@ -539,6 +694,18 @@ def accept_part(part_id: str, member_id: str = None) -> dict:
                    if p.get('state') != 'accepted']
         return {'status': 'success', 'applied': False,
                 'message': f"Got it — still waiting on {len(waiting)}."}
+
+    # CLAIM the deal before touching anything. Two people can answer the last
+    # two parts in the same second (FastAPI runs sync handlers in a
+    # threadpool), and everything between "all parts accepted" and
+    # `state='applied'` — a Google Calendar round trip included — is a window
+    # both of them could walk through, applying the deal twice: an event
+    # shifted 15 minutes twice is an event 30 minutes from where anybody
+    # agreed. Whoever flips `asking` → `applying` owns the apply; the other is
+    # told it is already going through and does nothing.
+    if not storage.claim_deal(deal['id'], 'asking', 'applying'):
+        return {'status': 'success', 'applied': False,
+                'message': "Got it — that was the last one; it's going through now."}
 
     parts = deal.get('parts') or []
 
@@ -609,9 +776,19 @@ def decline_part(part_id: str, member_id: str = None, reason: str = '') -> dict:
             storage.add_shift_refusal(payload['series_key'],
                                       payload.get('title') or '',
                                       member_id)
+    # What was refused rides on the deal, so the NEXT search for this seed can
+    # skip it and offer the runner-up instead of re-asking the person who just
+    # said no. A shift also teaches the series-level flag above, but the other
+    # three levers have nowhere else to record a no.
+    refused = list(deal.get('refused_parts') or [])
+    if part:
+        key = part_key(part)
+        if key not in refused:
+            refused.append(key)
     storage.update_deal(deal['id'], {
-        'state': 'dead',
+        'state': 'dead', 'refused_parts': refused,
         'dead_reason': (reason or '').strip() or 'somebody could not'})
+    _close_open_requests(storage.get_deal(deal['id']) or deal, 'cancelled')
     return {'status': 'success', 'message': "That's fine — I'll look again."}
 
 
@@ -621,7 +798,34 @@ def kill(deal_id: str, member_id: str = None, reason: str = '') -> dict:
         return {'status': 'error', 'message': 'That deal is no longer here.'}
     storage.update_deal(deal_id, {'state': 'dead',
                                   'dead_reason': (reason or '').strip() or 'dropped'})
+    _close_open_requests(deal, 'cancelled')
     return {'status': 'success', 'message': 'Dropped it.'}
+
+
+def expire_part(part_id: str) -> dict:
+    """Nobody answered in time, so the deal is over.
+
+    `services/requests.py` expires an unanswered ask after its TTL and tells
+    both parties — but the deal itself heard nothing, so before this existed a
+    deal sat in `asking` forever: `propose()` kept handing that stranded deal
+    back instead of searching, `watchers._deal_line` kept printing "N of M
+    said yes, waiting on the rest" with nothing to tap, and the coverage
+    ladder — somebody is free / an outside hand covered this / here is why
+    nobody can — never came back for that event. An expired deal is a dead
+    deal in every way that matters; the separate state is only so a person
+    reading the record can tell "nobody answered" from "somebody said no".
+    """
+    deal = storage.get_deal_by_part(part_id)
+    if not deal:
+        return {'status': 'error', 'message': 'That ask is no longer here.'}
+    if deal.get('state') not in ('draft', 'asking'):
+        return {'status': 'success', 'message': f"Already {deal.get('state')}."}
+    storage.update_deal(deal['id'], {
+        'state': 'expired',
+        'dead_reason': 'nobody answered in time'})
+    _close_open_requests(storage.get_deal(deal['id']) or deal, 'expired')
+    return {'status': 'success', 'deal_id': deal['id'],
+            'message': 'That deal ran out of time.'}
 
 
 def _cached_event(event_id) -> dict:
@@ -649,9 +853,16 @@ def _calendar_address(ev: dict):
     return None, None
 
 
-def _shift_body(ev: dict, delta_mins, tz: str = None):
-    """The patch body that moves this event by delta_mins, or None if either
-    endpoint can't be read.
+def _shift_body(ev: dict, payload: dict, tz: str = None):
+    """The patch body that moves this event where the ask said, or None if
+    either endpoint can't be read.
+
+    The times come from the payload when the payload has them: the ask quoted
+    an absolute clock time ("could Piano move to 5:15?") and that is what the
+    person agreed to. Re-deriving it by adding `delta_mins` to whatever the
+    event's start happens to be at apply time would honour the arithmetic and
+    break the promise. `delta_mins` remains the fallback for deals written
+    before the target was recorded.
 
     BOTH endpoints are required, not just whichever parses: a body with only
     `start` would move the start of a real calendar event and silently
@@ -664,14 +875,21 @@ def _shift_body(ev: dict, delta_mins, tz: str = None):
     IANA zone too (chat_actions._create_event does the same) so the event
     isn't left pinned to a fixed GMT offset in the edit UI.
     """
-    delta = datetime.timedelta(minutes=int(delta_mins or 0))
+    payload = payload or {}
+    delta = datetime.timedelta(minutes=int(payload.get('delta_mins') or 0))
     body = {}
     for field in ('start', 'end'):
-        try:
-            raw = datetime.datetime.fromisoformat(str(ev.get(field)))
-        except (ValueError, TypeError):
+        target = _aware_dt(payload.get(f'target_{field}'))
+        if target is None:
+            raw = _aware_dt(ev.get(field))
+            if raw is None:
+                return None
+            target = raw + delta
+        # An event whose own endpoints cannot be read has nothing to patch
+        # against, target or no target.
+        if _aware_dt(ev.get(field)) is None:
             return None
-        entry = {'dateTime': (raw + delta).isoformat()}
+        entry = {'dateTime': target.isoformat()}
         if tz:
             entry['timeZone'] = tz
         body[field] = entry
@@ -696,8 +914,15 @@ def _check_part(part: dict) -> str:
         cal_id, google_id = _calendar_address(ev)
         if not cal_id or not google_id:
             return 'that event has no calendar to write to'
-        if _shift_body(ev, payload.get('delta_mins')) is None:
+        if _shift_body(ev, payload) is None:
             return "that event's time could not be read"
+        # The ask named a time ("to 5:15") computed from where the event was
+        # when it was asked. If it has moved since, that sentence is no longer
+        # true about anything and the agreement was to a different change --
+        # so the deal dies rather than writing a time nobody said yes to.
+        if payload.get('from_start') and not _same_moment(ev.get('start'),
+                                                          payload['from_start']):
+            return 'that event has already moved since everyone was asked'
     elif lever == 'lift_protected':
         cid = str(payload.get('commitment_id') or '')
         if not any(str(pc.get('id')) == cid
@@ -729,7 +954,7 @@ def _apply_part(part: dict, deal: dict):
         if not cal_id or not google_id:
             raise ValueError('that event has no calendar to write to')
         tz = _cal.get_calendar_timezone(cal_id)
-        body = _shift_body(ev, payload.get('delta_mins'), tz)
+        body = _shift_body(ev, payload, tz)
         if not body or not _cal.patch_event(cal_id, google_id, body):
             raise ValueError('the calendar refused the new time')
     elif lever == 'lift_protected':

@@ -232,18 +232,6 @@
                                 they
                                 conflict with this event. Click Swap to override the schedule.</p>
                             <div id="conflicts-list" class="space-y-3"></div>
-                            <!-- The hand path onto services/negotiation.py (negotiation
-                                 arc task 8). The watcher sweep already runs a shallow
-                                 search on this same seed automatically; this is the deep
-                                 one, for a person staring at this dialog who wants every
-                                 lever tried. Searching and asking are two taps on purpose
-                                 -- this button only ever finds a deal, never sends it. -->
-                            <button id="find-a-way-btn" type="button"
-                                    onclick="findAWay()"
-                                    class="mt-3 w-full rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500">
-                                Find a way
-                            </button>
-                            <div id="deal-result" class="mt-3 hidden text-sm text-gray-300"></div>
                         </div>
 
                         <div id="diagnostics-section" class="hidden">
@@ -260,6 +248,29 @@
                         </div>
 
                         <div id="view-unassigned-reason"></div>
+
+                        <!-- The hand path onto services/negotiation.py. It lives
+                             HERE, beside the "why couldn't this be assigned"
+                             block, because THIS is the block that gets filled in
+                             for an uncovered event. It used to sit inside
+                             #conflicts-section, which is un-hidden only when
+                             conflictsMap has an entry for the event -- and that
+                             map is keyed purely by ASSIGNED event id
+                             (matcher.compute_conflicts pairs an assignment
+                             against ghost routes), so the uncovered event this
+                             button exists for never had it, and the assigned
+                             events that did got a search for a day that already
+                             covers. Searching and asking stay two taps on
+                             purpose -- this button only ever finds a deal,
+                             never sends it. -->
+                        <div id="find-a-way-section" class="hidden mt-4">
+                            <button id="find-a-way-btn" type="button"
+                                    onclick="findAWay()"
+                                    class="w-full rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500">
+                                Find a way
+                            </button>
+                            <div id="deal-result" class="mt-3 hidden text-sm text-gray-300"></div>
+                        </div>
                     </div>
 
                     <div class="mt-8 flex justify-end space-x-4">
@@ -1333,6 +1344,21 @@
                 document.getElementById('view-unassigned-reason').innerHTML = '';
             }
 
+            // "Find a way" belongs to an event NOBODY is driving. `diagnostics`
+            // is written per unassigned event by the refresh, so its presence
+            // is the same condition the block above uses -- and an event that
+            // already has a driver gets no button, because searching for the
+            // smallest change that covers a covered event is a question with
+            // no meaning. Kiosk and read-only never see it: a deal names who
+            // in the family is giving something up.
+            const findAWaySection = document.getElementById('find-a-way-section');
+            if (findAWaySection) {
+                const uncovered = !!(currentData.diagnostics && currentData.diagnostics[eventId])
+                    && !assignmentsMap[eventId];
+                findAWaySection.classList.toggle('hidden',
+                    !uncovered || isKiosk || isReadOnly);
+            }
+
             // Matched Rules
             const rulesSection = document.getElementById('matched-rules-list');
             const mRules = currentData.matched_rules && currentData.matched_rules[eventId] ? currentData.matched_rules[eventId] : [];
@@ -2217,7 +2243,15 @@
                     return;
                 }
                 const dealId = data.deal.id;
-                out.innerHTML = `<p class="mb-2">${data.deal.line}</p>`;
+                // `line` is built from calendar event titles, and a subscribed
+                // third-party calendar is somebody else's text in this app's
+                // page. textContent, not innerHTML -- the conflicts renderer
+                // above escapes for the same reason.
+                out.innerHTML = '';
+                const lineEl = document.createElement('p');
+                lineEl.className = 'mb-2';
+                lineEl.textContent = data.deal.line;
+                out.appendChild(lineEl);
                 const ask = document.createElement('button');
                 ask.type = 'button';
                 ask.className = 'rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500';

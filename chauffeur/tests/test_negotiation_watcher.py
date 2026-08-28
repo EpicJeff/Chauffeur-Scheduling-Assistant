@@ -125,8 +125,41 @@ def scenario_asking_state_offers_nothing_to_tap():
     check(f.action is None, f"and no action rides along, got {f.action}")
 
 
+def scenario_the_card_attributes_the_asks_to_whoever_tapped():
+    """The sweep's action card carries only `deal_id` — it cannot know who
+    will eventually approve it. Without the approver merged in at the tap,
+    `start_asks` created requests with an empty `from_member`: the family was
+    asked "🙋 Someone is asking about Soccer…", and the DM carrying the answer
+    back went to an empty member id, so the parent who tapped never learned
+    it. The `/api/negotiation/{id}/ask` route always did this correctly; only
+    the card path — which the design calls "the deal's face" — did not."""
+    storage.add_member({'id': 'card_mom', 'name': 'Mona', 'role': 'parent'})
+    storage.add_member({'id': 'card_dad', 'name': 'Dan', 'role': 'parent'})
+    did = storage.add_deal({
+        'date': datetime.date.today().isoformat(), 'seed_event_id': 'card-ev',
+        'seed_title': 'Soccer', 'line': '🤝 works if',
+        'parts': [{'id': 'card-p0', 'member_id': 'card_dad',
+                   'lever': 'skip_optional',
+                   'payload': {'event_id': 'e9', 'title': 'Extra'},
+                   'ask_text': 'Skip it?', 'state': 'open', 'request_id': None}],
+        'state': 'draft'})
+    res = chat_actions.create_action_proposal(
+        'ask_deal', 'Ask them', {'deal_id': did},
+        created_by_member_id='card_mom')
+    check(res.get('status') == 'success', f"the card has to exist: {res}")
+    out = chat_actions.act_on_proposal(res['proposal_id'], 'approve',
+                                       {'id': 'card_mom', 'role': 'parent'})
+    check(out.get('status') == 'success', f"the tap has to work: {out}")
+    part = storage.get_deal(did)['parts'][0]
+    req = storage.get_request(part['request_id'])
+    check(req and req.get('from_member') == 'card_mom',
+          f"the ask has to come FROM the parent who tapped, got "
+          f"{(req or {}).get('from_member')!r}")
+
+
 if __name__ == '__main__':
     scenario_a_deal_replaces_the_siren()
+    scenario_the_card_attributes_the_asks_to_whoever_tapped()
     scenario_no_deal_means_no_line()
     scenario_ask_deal_is_a_proposable_action()
     scenario_asking_needs_a_real_deal()

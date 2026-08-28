@@ -17190,6 +17190,12 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     schedule_coordinator.clear_solving_dates()
     try:
         storage.prune_solve_packs(datetime.date.today().isoformat())
+        # Settled deals go with them. `get_deals()` deserialises the whole
+        # table and scoring one search asks it repeatedly, so an append-only
+        # deals table is a tap that gets slower every week for no reason:
+        # nothing reads a settled deal past the fairness window.
+        from services import negotiation as _neg_prune
+        storage.prune_deals(time.time() - _neg_prune.MEMORY_DAYS * 86400)
     except Exception as _ppe:
         logger.warning(f"Solve pack prune failed: {_ppe}")
     final_data = compile_and_save_combined()

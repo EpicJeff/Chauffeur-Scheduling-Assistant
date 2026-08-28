@@ -472,7 +472,7 @@ class NegotiateDayTool(BaseModel):
     """
     Works out what would make a broken day cover — whose event could move fifteen minutes, who could take a drive, what could be skipped. Read-only: it finds the deal, it does not ask anybody.
     """
-    day: Optional[str] = Field(None, description="The date to work on, as YYYY-MM-DD. Defaults to today.")
+    day: Optional[str] = Field(None, description="The day to work on — 'Tuesday', 'tomorrow', or YYYY-MM-DD. Defaults to today.")
     event_title: Optional[str] = Field(None, description="Narrow to one uncovered event by title.")
 
 class GetRoutineStatusTool(BaseModel):
