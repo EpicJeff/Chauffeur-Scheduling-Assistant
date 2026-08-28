@@ -319,6 +319,43 @@ def scenario_the_admin_page_can_work_without_a_member_identity():
         _auth.identify = orig
 
 
+def scenario_ha_ingress_is_the_admin_surface():
+    """The real add-on path, and the one the first fix got wrong.
+
+    Supervisor sets X-Forwarded-For when it proxies ingress, so
+    auth.arrived_via_tunnel reports TRUE for genuine ingress traffic, the
+    local-origin grace never applies, and auth.identify returns no tier at
+    all. Checking only the SERVICE tier therefore still 403'd a parent on the
+    add-on. auth.arrived_via_ingress exists precisely because of this trap.
+
+    These are the headers supervisor actually sends — no stubs, so the test
+    fails if that discrimination ever regresses.
+    """
+    _reset()
+    import main
+
+    class _Req:
+        def __init__(self, headers):
+            self.headers = headers
+            self.query_params = {}
+
+    ingress = {'x-ingress-path': '/api/hassio_ingress/abc123',
+               'x-forwarded-for': '172.30.32.1',
+               'x-hass-user-id': 'u1', 'x-remote-user-name': 'Jeff'}
+    res = main.create_thread(body={"title": "Fix the dishwasher not drying",
+                                   "owner_member_id": "jeff"},
+                             request=_Req(ingress))
+    check(res.get("id"), f"a parent on the add-on can open a thread, got {res}")
+
+    # The same headers forged from outside, through the cloudflared tunnel.
+    forged = dict(ingress)
+    forged['cf-connecting-ip'] = '9.9.9.9'
+    forged['cf-ray'] = 'abc'
+    check(_denied(main.create_thread, body={"title": "From the internet"},
+                  request=_Req(forged)) == 403,
+          "ingress headers forged from the public internet must not get in")
+
+
 if __name__ == '__main__':
     scenario_create_returns_an_id()
     scenario_note_appends_to_history()
@@ -332,4 +369,5 @@ if __name__ == '__main__':
     scenario_a_closed_thread_takes_no_more_movement()
     scenario_listing_carries_stall_reason()
     scenario_the_admin_page_can_work_without_a_member_identity()
+    scenario_ha_ingress_is_the_admin_surface()
     print("test_threads_endpoints OK")

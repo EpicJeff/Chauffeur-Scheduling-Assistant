@@ -4841,11 +4841,23 @@ def _is_admin_surface(request) -> bool:
     This is deliberately NOT the DEVICE tier: an enrolled wall panel is also
     a place, but it is a place in a hallway that anybody walks past, which is
     exactly why /threads is kept off the kiosk shelf. A panel stays refused.
+
+    HA ingress has to be checked SEPARATELY from `identify`, and this is the
+    second time this trap has bitten (the first-run bootstrap hit it too):
+    supervisor sets `X-Forwarded-For` when it proxies ingress, so
+    `arrived_via_tunnel` reports true for perfectly genuine ingress traffic,
+    the local-origin grace never applies, and `identify` comes back with no
+    tier at all. `arrived_via_ingress` exists because of exactly that, and it
+    is the stronger claim anyway: supervisor does not serve ingress to an
+    anonymous browser, so arriving through it means HA already authenticated
+    the person.
     """
     from services import auth as _auth
+    headers = getattr(request, 'headers', {}) or {}
     try:
-        p = _auth.identify(getattr(request, 'headers', {}) or {},
-                               getattr(request, 'query_params', {}) or {})
+        if _auth.ingress_is_admin(headers):
+            return True
+        p = _auth.identify(headers, getattr(request, 'query_params', {}) or {})
     except Exception:
         return False
     return p.get('tier') == _auth.SERVICE
