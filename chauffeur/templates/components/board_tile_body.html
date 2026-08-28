@@ -4,6 +4,7 @@
 {% import 'components/routine_lanes.html' as routine_lanes %}
 {% import 'components/kid_digest_lanes.html' as kid_digest_lanes %}
 {% import 'components/packing_card.html' as packing %}
+{% import 'components/programs_card.html' as programs_card %}
 <!-- ── What a tile of a given type DRAWS, and nothing else.
 
      Pulled out of the board's tile loop so that a card inside a group tile can
@@ -468,6 +469,17 @@
                     <template x-if="t.type === 'packing'">
                         <div x-data="packingCard(t, apiBase)" x-init="startPacking()">
                             {{ packing.rows() }}
+                        </div>
+                    </template>
+
+                    <!-- ── The programs card: whose milestone is close, what
+                         got practised this week, who just reached one.
+                         Self-fetching, the same shape as packing above —
+                         see components/programs_card.html for the whole
+                         story of why it never shows a total or an order. -->
+                    <template x-if="t.type === 'programs'">
+                        <div x-data="programsCard(t, apiBase)" x-init="startPrograms()">
+                            {{ programs_card.rows() }}
                         </div>
                     </template>
 

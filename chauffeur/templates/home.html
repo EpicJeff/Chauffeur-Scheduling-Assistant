@@ -1503,6 +1503,8 @@
     <!-- The family packing card: self-fetching (rule 2), so this include
          carries its own script the same way the lanes cards do. -->
     {% include 'components/packing_card.html' %}
+    <!-- The programs card: also self-fetching (rule 2), same reason. -->
+    {% include 'components/programs_card.html' %}
     {% include 'components/avatar_editor.html' %}
     {% include 'components/pet_editor.html' %}
     {% include 'components/pet_battle.html' %}
@@ -2006,6 +2008,7 @@
                     // from there and named on the page.
                     lists: 'lists', chores: 'chores', routines: 'routines',
                     occasions: 'occasions', errands: 'errands', trips: 'trips',
+                    programs: 'programs',
                     map: 'map', moments: 'moments', intake: 'intake',
                     weather: 'calendar', kids: 'routines',
                     // The gallery cards summarise the same page their glance

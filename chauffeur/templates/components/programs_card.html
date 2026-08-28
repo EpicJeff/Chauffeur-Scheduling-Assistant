@@ -1,0 +1,182 @@
+<!-- ── The wall's programs card: what the household should be glad about,
+     and nothing else.
+
+     Task 6 (app.html) is the person's own surface, with the levers to act on
+     it. This is the family's shared one, and it does a narrower job on
+     purpose: a wall is read by whoever is in the room, not just the person
+     the program belongs to, so it shows only what is safe to say in front of
+     everybody — a milestone somebody is closing in on, what got practised
+     this week, and a milestone somebody just reached. No totals to divide by
+     (services/programs.py's `progress()` deliberately never returns one), no
+     ordering people by how much they did, and nothing that reads as one
+     person short of another. A family is not a cohort, and the wall is the
+     surface where treating it like one would land hardest.
+
+     Self-fetching, the same shape `packingCard` established
+     (components/packing_card.html): the factory takes only `{t, apiBase}`
+     and owns its own poll, because interactive depth means the card fetches
+     its own data rather than riding the board's payload. It calls the same
+     two endpoints the admin page already does (`GET api/programs`,
+     `GET api/members`) to turn a `member_id` into a name to put on the wall
+     — there is no server-side tile builder for this type, the same way
+     `_tile_packing` in services/home_board.py ships only mount config and
+     leaves the fetch to the client.
+
+     Every string here comes from `x-text`, not `x-html`: a program's title
+     and a phase's milestone text are household-typed or curated-plan
+     content, not markup this card has any reason to trust, and `x-text`
+     writes to `textContent` so there is nothing to escape by hand. -->
+
+{% macro rows() %}
+                    <template x-if="pgLoaded">
+                    <div class="space-y-2">
+                        <!-- Rule 1's usual shape: nothing to say yet is an
+                             honest sentence, not a blank box under the
+                             tile's own chrome. -->
+                        <template x-if="!pgHasAnything">
+                            <div class="text-gray-500 bg-gray-800 rounded-xl p-6 text-sm italic">
+                                Nothing to celebrate yet.
+                            </div>
+                        </template>
+
+                        <!-- Whose milestone is close. The phase's own stated
+                             length (`weeks`) is the only real signal of
+                             "soon" a program carries — there is nothing here
+                             that counts down or divides one number by
+                             another, so the nearest phase by that length is
+                             the honest answer to "close" rather than an
+                             invented one. -->
+                        <template x-if="pgUpNext">
+                            <div class="agenda-day rounded-2xl p-3 flex items-center gap-3">
+                                <span class="text-2xl shrink-0">🎯</span>
+                                <div class="min-w-0">
+                                    <div class="text-[10px] font-bold uppercase tracking-wide text-gray-500">Coming up</div>
+                                    <div class="text-sm font-bold text-white truncate" x-text="pgUpNext.memberName + ': ' + pgUpNext.milestone"></div>
+                                    <div class="text-[11px] text-gray-400 truncate" x-text="pgUpNext.title"></div>
+                                </div>
+                            </div>
+                        </template>
+
+                        <!-- What got practised this week — names, not a
+                             fraction of anything. -->
+                        <template x-if="pgPracticed.length">
+                            <div class="agenda-day rounded-2xl p-3 space-y-1.5">
+                                <div class="text-[10px] font-bold uppercase tracking-wide text-gray-500">This week</div>
+                                <template x-for="p in pgPracticed" :key="p.key">
+                                    <div class="text-sm font-semibold text-gray-200" x-text="p.line"></div>
+                                </template>
+                            </div>
+                        </template>
+
+                        <!-- A milestone reached in the last week — the one
+                             thing this card actually marks, and it marks it
+                             by name, never by how it compares to anybody
+                             else's. -->
+                        <template x-if="pgCelebrated.length">
+                            <div class="agenda-day rounded-2xl p-3 space-y-1.5" style="border-left: 4px solid #2dd4bf">
+                                <div class="text-[10px] font-bold uppercase tracking-wide text-teal-300">🎉 Just reached</div>
+                                <template x-for="c in pgCelebrated" :key="c.key">
+                                    <div class="text-sm font-bold text-teal-200" x-text="c.line"></div>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                    </template>
+{% endmacro %}
+
+<script>
+    // Same cadence packing_card.html polls on — programs change slowly, but
+    // a shared default is one fewer thing to reason about.
+    const PROGRAMS_CARD_POLL_MS = 30000;
+
+    // 1..10 spelled out ("three times"), the way a person would say it
+    // rather than print it. Above ten this falls back to the numeral, which
+    // is still a plain count of what happened, on its own, comparing to
+    // nothing else — so it stays inside what this card is allowed to show.
+    const PROGRAMS_CARD_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five',
+        'six', 'seven', 'eight', 'nine', 'ten'];
+    function pgSpell(n) {
+        return PROGRAMS_CARD_WORDS[n] !== undefined ? PROGRAMS_CARD_WORDS[n] : String(n);
+    }
+
+    function programsCard(t, apiBase) {
+        return {
+            // False until the first fetch resolves — the card draws nothing
+            // at all until then, so "Nothing to celebrate yet." never
+            // flashes ahead of real data (packing_card's own `pkLoaded`
+            // reasoning).
+            pgLoaded: false,
+            pgUpNext: null,
+            pgPracticed: [],
+            pgCelebrated: [],
+
+            get pgHasAnything() {
+                return !!(this.pgUpNext || this.pgPracticed.length || this.pgCelebrated.length);
+            },
+
+            async loadPrograms() {
+                try {
+                    const [pRes, mRes] = await Promise.all([
+                        fetch(`${apiBase}api/programs`),
+                        fetch(`${apiBase}api/members`),
+                    ]);
+                    const pd = pRes.ok ? await pRes.json() : { programs: [] };
+                    const members = mRes.ok ? await mRes.json() : [];
+                    const nameOf = (id) => {
+                        const m = members.find(mm => mm.id === id);
+                        return (m && m.name) || 'Somebody';
+                    };
+                    // Paused is a peer of active, not a flavour of stopped —
+                    // the wall still gets to celebrate a paused program's
+                    // last week same as a running one.
+                    const live = (pd.programs || []).filter(
+                        p => p.state === 'active' || p.state === 'paused');
+
+                    let best = null;
+                    for (const p of live) {
+                        const phase = (p.progress || {}).phase;
+                        if (!phase || !phase.milestone) continue;
+                        const weeks = typeof phase.weeks === 'number' ? phase.weeks : Infinity;
+                        if (!best || weeks < best.weeks) {
+                            best = { weeks: weeks, memberName: nameOf(p.member_id),
+                                     milestone: phase.milestone, title: p.title };
+                        }
+                    }
+
+                    const sinceTs = (Date.now() / 1000) - 7 * 24 * 3600;
+                    const practiced = [];
+                    for (const p of live) {
+                        const n = (p.sessions || []).filter(s => (s.ts || 0) >= sinceTs).length;
+                        if (n > 0) {
+                            practiced.push({ key: p.id,
+                                line: `${nameOf(p.member_id)} practised ${p.title} ${pgSpell(n)} time${n === 1 ? '' : 's'}` });
+                        }
+                    }
+
+                    const celebrated = [];
+                    for (const p of live) {
+                        for (const ph of p.phases || []) {
+                            if (ph.milestone_hit_at && ph.milestone_hit_at >= sinceTs) {
+                                celebrated.push({ key: p.id + ':' + ph.name,
+                                    line: `${nameOf(p.member_id)} reached ${ph.milestone || ph.name}` });
+                            }
+                        }
+                    }
+
+                    this.pgUpNext = best;
+                    this.pgPracticed = practiced;
+                    this.pgCelebrated = celebrated;
+                } catch (e) {
+                    // Stale beats false-empty: one poll that did not land
+                    // (an add-on rebuild, an HA restart) must not wipe a
+                    // real celebration off the wall.
+                }
+                finally { this.pgLoaded = true; }
+            },
+            startPrograms() {
+                this.loadPrograms();
+                setInterval(() => this.loadPrograms(), PROGRAMS_CARD_POLL_MS);
+            },
+        };
+    }
+</script>

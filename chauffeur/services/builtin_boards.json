@@ -85,6 +85,11 @@
     "config": {}
    },
    {
+    "id": "programs",
+    "type": "programs",
+    "config": {}
+   },
+   {
     "id": "shopping_staples",
     "type": "shopping_staples",
     "config": {
@@ -146,6 +151,11 @@
    "occasions": {
     "cols": 14,
     "rows": 24
+   },
+   "programs": {
+    "cols": 14,
+    "rows": 24,
+    "auto": true
    },
    "trips": {
     "cols": 14,

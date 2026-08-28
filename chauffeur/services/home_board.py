@@ -451,6 +451,16 @@ WIDGETS = [
          _opt('days', 'Days', 'int', 1, min=1, max=7,
               help='How many days ahead to show. One day is just today.'),
      ]},
+    # Self-fetching like packing above — no options, because there is
+    # nothing to configure: it shows the whole household, always, and the
+    # card itself decides what is safe to say to a room (no total, no
+    # order by amount). See components/programs_card.html for the reasons.
+    {'key': 'programs', 'icon': '🎯', 'label': 'Programs',
+     'heading': 'Programs',
+     'blurb': "Whose milestone is close, what got practised this week, "
+              "who just reached one. Celebration only — never a total, "
+              "never an order.",
+     'options': []},
     {'key': 'routines', 'icon': '🔁', 'label': 'Routines',
      'heading': 'Streaks',
      'blurb': "Who has kept their routine going, and for how long.",
@@ -1937,6 +1947,29 @@ def _tile_packing(now, config=None, **_):
                 'days': _cfg_int(config, 'days', 1, 1, 7)}
     except Exception as e:
         print(f"[home_board] packing card failed: {e}")
+        return None
+
+
+def _tile_programs(now, config=None, **_):
+    """The wall's programs card: self-fetching, like packing above -- this
+    is only the mount. `components/programs_card.html` calls `api/programs`
+    and `api/members` itself and decides on its own what is safe to
+    celebrate in front of the whole room.
+
+    Unlike packing, this IS an unconfigured feature until a household
+    proposes a program — rule 1 holds here the ordinary way: a blank
+    install gets no tile rather than a card whose own "Nothing to
+    celebrate yet." is the first thing it ever says. The one cheap check
+    this can make without the fetch the card itself owns is whether any
+    program exists at all, across every state — a paused or even a
+    dropped one still means programs are a thing this household uses.
+    """
+    try:
+        if not storage.get_programs(include_finished=True):
+            return None
+        return {'mounted': True}
+    except Exception as e:
+        print(f"[home_board] programs card failed: {e}")
         return None
 
 
@@ -3810,7 +3843,7 @@ _BUILDERS: dict = {
     'meals_week': _tile_meals_week, 'shopping_staples': _tile_shopping_staples,
     'shopping_list': _tile_shopping_list,
     'chores_lanes': _tile_chores_lanes, 'chores_rewards': _tile_chores_goals,
-    'packing': _tile_packing,
+    'packing': _tile_packing, 'programs': _tile_programs,
     'routines': _tile_routines, 'routines_lanes': _tile_routines_lanes,
     'avatar_editor': _tile_avatar_editor, 'pets': _tile_pets,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,

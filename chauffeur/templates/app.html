@@ -1189,6 +1189,164 @@
             </div>`;
         }
 
+        // Programs arc, task 6: "My program" -- begin
+        // The inversion the whole programs arc is for: not what the family
+        // needs from a kid, but their own thing taken seriously. Own
+        // programs only -- the fetch is always scoped to the signed-in
+        // member (MyDay never shows anybody else's day, `setView` ignores
+        // `focusMemberId` for this view), so there is no ownership check to
+        // add here the way programs.html needs one: ownership already holds
+        // by construction.
+        //
+        // Nothing counted consecutively anywhere in this section, on
+        // purpose (the arc's own rule): the count below only ever grows,
+        // and there is no miss, no percentage of a target to show next to it.
+        async function fetchMyPrograms() {
+            if (!selectedMemberId) return [];
+            try {
+                const r = await fetch(`${apiBase}api/programs?member_id=${selectedMemberId}`);
+                if (!r.ok) return [];
+                const d = await r.json();
+                // Proposed programs have no claimed time yet -- nothing to
+                // log a session against, so they wait for the admin page's
+                // approval flow rather than cluttering a kid's own day.
+                return (d.programs || []).filter(p => p.state === 'active' || p.state === 'paused');
+            } catch (e) { return []; }
+        }
+
+        // "31 sessions since August" -- a total that only grows, never a
+        // ratio against a target (there is no total in `progress` to divide
+        // by, on purpose -- services/programs.py).
+        function programCountPhrase(p) {
+            const sessions = (p.progress && p.progress.sessions) || 0;
+            let since = '';
+            const start = (p.baseline || {}).start_date;
+            if (start) {
+                try {
+                    since = ' since ' + new Date(start + 'T00:00:00')
+                        .toLocaleDateString(undefined, { month: 'long' });
+                } catch (e) { /* leave it off rather than show a bad date */ }
+            }
+            return `${sessions} session${sessions === 1 ? '' : 's'}${since}`;
+        }
+
+        // The next real date a claimed practice day falls on. Built from
+        // `shape.preferred_days` alone -- those are exactly the days
+        // `services/programs.py`'s `propose_slots` turned into the claimed
+        // commitments, so the DAY is a true fact even though the clock time
+        // it landed on (picked to dodge a conflict) is not available here to
+        // state as fact.
+        function programNextWindow(p) {
+            const days = ((p.shape || {}).preferred_days || []);
+            if (!days.length) return '';
+            const today = new Date();
+            for (let add = 0; add < 8; add++) {
+                const d = new Date(today);
+                d.setDate(d.getDate() + add);
+                // Date.getDay() is Sun=0..Sat=6; the shape's own convention
+                // (programs.html's dayLabel) is Mon=0..Sun=6.
+                const programDay = (d.getDay() + 6) % 7;
+                if (days.includes(programDay)) {
+                    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+                }
+            }
+            return '';
+        }
+
+        function renderProgramCard(p) {
+            const phase = (p.progress || {}).phase;
+            const what = phase ? mfEscape(phase.what || '') : '';
+            const nextWindow = programNextWindow(p);
+            // Marking a milestone is a judgement only a person makes -- the
+            // button exists, there is no counterpart that marks one missed.
+            const milestoneRow = (phase && phase.milestone) ? `
+                <div class="mt-2 flex items-center justify-between gap-2 bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5">
+                    <div class="text-xs text-gray-300 truncate">${mfEscape(phase.milestone)}</div>
+                    <button onclick="markProgramMilestone('${p.id}', '${mfEscape(phase.name || '').replace(/'/g, "\\'")}')"
+                        class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 shrink-0">Mark hit</button>
+                </div>` : '';
+            return `
+            <div class="bg-gray-950/40 border border-gray-800 rounded-xl p-3 mb-2 last:mb-0">
+                <div class="text-sm font-bold text-gray-100">${mfEscape(p.title || '')}</div>
+                ${what ? `<div class="text-xs text-gray-400 mt-1">${what}</div>` : ''}
+                <div class="text-[11px] text-gray-500 mt-1.5">${mfEscape(programCountPhrase(p))}</div>
+                ${nextWindow ? `<div class="text-[11px] text-gray-500">Next practice: ${nextWindow}</div>` : ''}
+                ${milestoneRow}
+                <div class="flex gap-2 mt-2.5">
+                    <button onclick="askProgramSession('${p.id}')"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Did it happen?</button>
+                    <button onclick="addProgramSession('${p.id}')"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Add a session</button>
+                </div>
+            </div>`;
+        }
+
+        // Rule 1: a household that never set one up sees nothing -- no
+        // reserved blank space under chrome for a feature nobody proposed.
+        function renderProgramsSection(programs) {
+            if (!programs || !programs.length) return '';
+            return `
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-1">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs font-black uppercase tracking-widest text-gray-500">My Program${programs.length === 1 ? '' : 's'}</span>
+                </div>
+                ${programs.map(renderProgramCard).join('')}
+            </div>`;
+        }
+
+        // "Did it happen?" answers the question a slot's own end asks --
+        // `source: 'asked'`, minutes left for the server to default from the
+        // program's own shape (services/programs.py's log_session), because
+        // this button is agreeing the SCHEDULED session happened, not typing
+        // a different number.
+        async function askProgramSession(id) {
+            try {
+                const r = await fetch(`${apiBase}api/programs/${id}/session`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: selectedMemberId, source: 'asked' })
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok || d.status === 'error') { showGlobalAlert(d.detail || d.message || "Couldn't log that."); return; }
+                showGlobalAlert(d.message || 'Logged.');
+                if (currentView === 'myday') renderMyDay();
+            } catch (e) { showGlobalAlert("Couldn't log that just now."); }
+        }
+
+        // Practice nobody scheduled still counts -- `source: 'added'`, with
+        // the minutes a person actually did.
+        async function addProgramSession(id) {
+            const raw = await promptInput('How many minutes?',
+                'Practice nobody scheduled still counts.',
+                { placeholder: 'minutes', okText: 'Log it' });
+            if (raw === null) return;
+            const minutes = parseInt(raw, 10);
+            if (!minutes || minutes <= 0) { showGlobalAlert('How many minutes?'); return; }
+            try {
+                const r = await fetch(`${apiBase}api/programs/${id}/session`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: selectedMemberId, minutes, source: 'added' })
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok || d.status === 'error') { showGlobalAlert(d.detail || d.message || "Couldn't log that."); return; }
+                showGlobalAlert(d.message || 'Logged.');
+                if (currentView === 'myday') renderMyDay();
+            } catch (e) { showGlobalAlert("Couldn't log that just now."); }
+        }
+
+        async function markProgramMilestone(id, phaseName) {
+            try {
+                const r = await fetch(`${apiBase}api/programs/${id}/milestone`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: selectedMemberId, phase_name: phaseName })
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok || d.status === 'error') { showGlobalAlert(d.detail || d.message || "Couldn't mark that."); return; }
+                showGlobalAlert(d.message || 'Marked!');
+                if (currentView === 'myday') renderMyDay();
+            } catch (e) { showGlobalAlert("Couldn't mark that."); }
+        }
+        // Programs arc, task 6: "My program" -- end
+
         async function completeKidTask(taskId, done) {
             try {
                 const res = await fetch(`${apiBase}api/kid-tasks/${taskId}/complete`, {
@@ -1544,6 +1702,12 @@
                 const data = await res.json();
                 const routineData = routineRes.ok ? await routineRes.json() : null;
                 if (routineData && requestedOffset === 0) maybeCelebrateStatus('routine', routineData.status);
+                // My program, today only -- like the kid stats below, this
+                // is not date-scoped (a program has no "today"), so it is
+                // fetched once and left off every other day this view
+                // browses to.
+                const myProgramsHtml = requestedOffset === 0
+                    ? renderProgramsSection(await fetchMyPrograms()) : '';
                 const isKid = currentMemberRole() === 'child';
                 let routineHtml, kidTopHtml = '';
                 if (isKid) {
@@ -1595,10 +1759,10 @@
                         🙋 Ask for something…
                     </button>` : '';
                 const requestsHtml = renderRequests() + askHtml;
-                wrap.innerHTML = statusHtml + requestsHtml + kidTopHtml + launchHtml + routineHtml + dueSoonHtml + (data.rides.length
+                wrap.innerHTML = statusHtml + requestsHtml + kidTopHtml + launchHtml + routineHtml + myProgramsHtml + dueSoonHtml + (data.rides.length
                     ? data.rides.map(renderMyDayCard).join('')
                     : '<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4 mt-2">' +
-                      ((routineHtml || dueSoonHtml) ? 'No rides today 🎉' : 'Nothing scheduled 🎉') + '</div>');
+                      ((routineHtml || dueSoonHtml || myProgramsHtml) ? 'No rides today 🎉' : 'Nothing scheduled 🎉') + '</div>');
                 if (mydaySlideDir !== 0) {
                     // Slide the new day in from the direction of travel.
                     wrap.style.transition = 'none';
