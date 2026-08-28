@@ -87,6 +87,66 @@ def scenario_a_phase_that_cites_nothing_is_dropped():
         programs_curate._pool_call = real_pool
 
 
+def scenario_pacing_is_computed_not_dictated():
+    """weeks is arithmetic over what the family can actually do, not a
+    number the model gets to pick -- the design's central pacing rule. The
+    model's own 'weeks' field, if it sends one, is ignored entirely."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    programs_curate.web.research = _fake_research([
+        {'claim': 'Grade 1 module 1 covers three open chords',
+         'url': 'https://justinguitar.example/grade1'}])
+    programs_curate._pool_call = _fake_pool({
+        'phases': [{'name': 'Grade 1', 'weeks': 999,
+                    'what': 'Three open chords, switching cleanly',
+                    'milestone': 'Play G-C-D without looking',
+                    'url': 'https://justinguitar.example/grade1'}]})
+    try:
+        fast = programs_curate.curate(
+            'play campfire songs', {'sessions_per_week': 6, 'minutes': 25})
+        slow = programs_curate.curate(
+            'play campfire songs', {'sessions_per_week': 2, 'minutes': 25})
+        check(fast['phases'][0]['weeks'] != 999,
+              f"the model's own weeks field must be ignored, got {fast['phases']}")
+        check(fast['phases'][0]['weeks'] < slow['phases'][0]['weeks'],
+              f"more sessions a week must mean fewer weeks for the same "
+              f"material, got fast={fast['phases'][0]['weeks']} "
+              f"slow={slow['phases'][0]['weeks']}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
+def scenario_shaping_failure_is_hand_written_not_a_crash():
+    """The fourth path to hand_written: research succeeded and read real
+    pages, but the phase-shaping call itself failed -- raised, or came back
+    with an error payload. The program still comes back honest, not broken."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    programs_curate.web.research = _fake_research([
+        {'claim': 'Grade 1 module 1 covers three open chords',
+         'url': 'https://justinguitar.example/grade1'}])
+
+    def _raises(tier, api_key, system, prompt, **kw):
+        raise RuntimeError('pool exhausted')
+
+    def _errors(tier, api_key, system, prompt, **kw):
+        return {'error': 'no models available', 'transient': False}
+
+    try:
+        for broken in (_raises, _errors):
+            programs_curate._pool_call = broken
+            out = programs_curate.curate(
+                'play campfire songs', {'sessions_per_week': 3, 'minutes': 25})
+            check(out['phases'] == [],
+                  f"no phases when shaping failed ({broken.__name__}), got {out}")
+            check(out['source']['hand_written'] is True,
+                  f"shaping failure must be hand_written, not a crash, got {out}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
 def scenario_nothing_cited_means_hand_written():
     """Research came back with no facts at all — no page was read. The honest
     answer is to say so, not to fill the gap with fluent guesswork."""
@@ -120,6 +180,8 @@ if __name__ == '__main__':
     scenario_a_body_aim_is_refused_before_any_research()
     scenario_a_behaviour_aim_passes_the_screen()
     scenario_a_phase_that_cites_nothing_is_dropped()
+    scenario_pacing_is_computed_not_dictated()
+    scenario_shaping_failure_is_hand_written_not_a_crash()
     scenario_nothing_cited_means_hand_written()
     scenario_research_being_off_is_not_an_invented_plan()
     print("test_programs_curate OK")

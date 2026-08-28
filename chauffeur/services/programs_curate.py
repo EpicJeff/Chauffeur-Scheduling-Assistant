@@ -15,6 +15,8 @@ which is exactly why the check cannot be left to a reader's judgement.
 This module knows nothing about a program's lifecycle -- it hands back phases
 and a source dict; services/programs.py never imports it.
 """
+import math
+
 from services import storage, web
 
 # The screen runs BEFORE any model sees the aim. Deterministic on purpose: a
@@ -45,20 +47,33 @@ BEHAVIOUR_ALTERNATIVES = (
 # object for its life -- a background sweep must never spend research calls.
 PAGES = 4
 
-# Structuring already-read material into phases is a rare, quality-critical
-# call (one per program, not a sweep), so it uses the same 'heavy' chain
-# services/web.py's own extraction step does: flash first, gemma last resort.
-TIER = 'heavy'
+# Structuring at most four already-extracted, one-line claims into 2-4 phases
+# is not the "rare quality-critical generation" services/model_pools.py
+# reserves 'heavy' for -- the part that actually has to be right (citation
+# matching, below) is deterministic code that does not care how good the
+# model is. A person is waiting on this to come back, which is what
+# 'interactive' is for: lite first, gemma as fallback, and the scarce
+# flash-quota 'heavy' pool stays free for the genuinely hard generation
+# services/web.py's own extraction step uses it for.
+TIER = 'interactive'
+
+# A phase's WEEK COUNT is computed, never asked for -- a week count out of
+# the model would be curriculum with no page behind it, exactly the thing
+# `url` is checked for but a bare number can't be. SESSIONS_PER_PHASE is the
+# house standard: at the default three sessions a week it reproduces the
+# design's own worked example (12 sessions -> a four-week phase); a family
+# that can only manage two a week gets six-week phases for the same
+# material instead of quietly falling behind a plan that assumed three.
+SESSIONS_PER_PHASE = 12
 
 PHASE_SYSTEM = (
     "You are organising material for a household's program, not writing one. "
     "You are given exactly what was read from real pages for this aim -- "
-    "organise ONLY that material into 2-4 phases, paced to the sessions the "
-    "family actually has. Do not add a step that is not supported by the "
-    "material below. Every phase's url MUST be copied EXACTLY from one of "
-    "the urls provided. If the material does not support a real phased plan, "
-    "reply with an empty phases list.\n\n"
-    'Return STRICT JSON: {"phases": [{"name": "", "weeks": 0, "what": "", '
+    "organise ONLY that material into 2-4 phases. Do not add a step that is "
+    "not supported by the material below. Every phase's url MUST be copied "
+    "EXACTLY from one of the urls provided. If the material does not support "
+    "a real phased plan, reply with an empty phases list.\n\n"
+    'Return STRICT JSON: {"phases": [{"name": "", "what": "", '
     '"milestone": "", "url": ""}]}'
 )
 
@@ -135,7 +150,7 @@ def curate(title: str, shape: dict, member_name: str = '') -> dict:
                        'url': facts[0]['url'],
                        'why_this_one': (res.get('answer') or '').strip()[:400],
                        'facts': facts,
-                       'runners_up': _runners_up(res),
+                       'runners_up': _runners_up(facts),
                        'hand_written': False}}
 
 
@@ -146,11 +161,13 @@ def _plan_name(answer: str, facts: list) -> str:
     return first[:80] if first else ''
 
 
-def _runners_up(res: dict) -> list:
+def _runners_up(facts: list) -> list:
     """The other candidates, so the choice reads as a choice rather than an
-    oracle. Built only from pages that were read."""
+    oracle. Takes the already-filtered `facts` list -- not the raw research
+    result -- so this and the citation set `curate()` actually used can never
+    describe two different things."""
     seen, out = set(), []
-    for f in (res.get('facts') or [])[1:]:
+    for f in facts[1:]:
         url = f.get('url')
         if not url or url in seen:
             continue
@@ -158,6 +175,13 @@ def _runners_up(res: dict) -> list:
         out.append({'name': (f.get('claim') or '')[:60], 'url': url,
                     'why_not': 'second choice for this aim'})
     return out[:3]
+
+
+def _phase_weeks(per_week: int) -> int:
+    """How many weeks a phase takes. Computed, not asked for -- see the
+    SESSIONS_PER_PHASE comment above."""
+    safe = per_week if isinstance(per_week, int) and per_week > 0 else 1
+    return max(1, math.ceil(SESSIONS_PER_PHASE / safe))
 
 
 def _phases_from(title: str, facts: list, per_week: int, minutes: int,
@@ -184,6 +208,7 @@ def _phases_from(title: str, facts: list, per_week: int, minutes: int,
     if not isinstance(data, dict) or data.get('error'):
         return []
 
+    weeks = _phase_weeks(per_week)
     out = []
     for ph in (data.get('phases') or [])[:4]:
         if not isinstance(ph, dict):
@@ -193,10 +218,8 @@ def _phases_from(title: str, facts: list, per_week: int, minutes: int,
             # A plausible phase with no page behind it does not get to be a
             # phase. This is the whole rule.
             continue
-        try:
-            weeks = max(1, int(ph.get('weeks') or 4))
-        except (TypeError, ValueError):
-            weeks = 4
+        # Note: any 'weeks' the model sent is ignored. Pacing is arithmetic
+        # over `shape`, computed once above -- never a number out of the model.
         out.append({'name': (ph.get('name') or f"Phase {len(out) + 1}")[:60],
                     'weeks': weeks,
                     'what': (ph.get('what') or '').strip()[:400],
