@@ -4954,6 +4954,35 @@ def _mind_actor(request, claimed):
                         detail="Only a parent or adult can handle these")
 
 
+def _approver_of_record(actor):
+    """Who to record as having approved, when the surface has no person.
+
+    `_mind_actor` returns None on the control-center pages by design (v2.430.1):
+    they authenticate as a trusted place, and an admin write is recorded with
+    no author. That is fine for dismiss and clear, which only retire a row.
+    Approving a PROPOSAL is different — `chat_actions.act_on_proposal` refuses
+    anything `_is_admin` rejects, and it rejects None, so the Mind page's own
+    Approve button answered 'Only a parent can approve this' on a screen that
+    is already parent-only.
+
+    An approval also has to name somebody downstream: the approver's id is what
+    stops an `ask_deal` going out from 'Someone' with the reply DM'd to an empty
+    member. So instead of waiving the check, stand in the household's parent of
+    record — exactly the nomination the dashboard's approvals banner already
+    makes client-side in `_resolveProposalActor`. A real claim always wins; this
+    is only for the surface that carries none.
+    """
+    if actor:
+        return actor
+    parents = [m for m in storage.get_all_members()
+               if m.get('role') == 'parent' and not m.get('system')]
+    if not parents:
+        raise HTTPException(
+            status_code=400,
+            detail="There is no parent on record to approve this as.")
+    return parents[0]
+
+
 @app.post("/api/mind/insights/{insight_id}/dismiss")
 def mind_dismiss(insight_id: str, body: dict = Body(default={}),
                  request: Request = None):
@@ -4981,7 +5010,8 @@ def mind_act(insight_id: str, body: dict = Body(default={}),
     prop = row.get('proposal_json')
     if prop and prop.get('proposal_id'):
         from services import chat_actions as _ca
-        result = _ca.act_on_proposal(prop['proposal_id'], 'approve', actor)
+        result = _ca.act_on_proposal(prop['proposal_id'], 'approve',
+                                     _approver_of_record(actor))
         if result.get('status') != 'success':
             raise HTTPException(status_code=400, detail=result.get('message'))
     storage.update_mind_insight(insight_id, {
