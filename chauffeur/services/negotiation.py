@@ -24,7 +24,7 @@ is the one place an adult's time is FOR something rather than an obstacle.
 """
 import datetime
 
-from services import coverage_options, solve_pack, storage
+from services import coverage_options, maps, solve_pack, storage
 
 # Either side of the seed. A change further away than this is not plausibly
 # about the seed, and proposing it reads as the app rummaging.
@@ -228,3 +228,146 @@ def candidates(pack: dict, seed_event_id: str) -> list:
     # returns ''. An ask with no addressee is not an ask, so it never reaches
     # the queue: better a shorter list than a deal the app cannot deliver.
     return [c for c in out if all(p.get('member_id') for p in c['parts'])]
+
+
+# ── The search: solve the queue, keep what actually works ───────────────────
+
+# How many re-solves a question is allowed. The sweep runs unattended and must
+# never be the reason a schedule refresh feels slow; the on-demand path has a
+# person waiting on purpose and can afford to go further down the same queue.
+SWEEP_BUDGET = 8
+DEEP_BUDGET = 40
+
+# How far back fairness looks. Long enough that "you did it last time" is
+# still true, short enough that a month-old favour stops counting.
+FAIRNESS_DAYS = 14
+
+# The objective is in the millions (a base assignment reward of 1,000,000 and
+# an attendance term of 50,000,000), and it is identical across candidates for
+# the same event, so what is left after subtraction is routing and priority
+# degradation. Scaled down and capped hard: it breaks ties, it never decides.
+DELTA_SCALE = 1000.0
+DELTA_CAP = 4.0
+
+
+def part_key(part: dict) -> str:
+    payload = part.get('payload') or {}
+    subject = (payload.get('event_id') or payload.get('commitment_id') or '')
+    return f"{part.get('member_id')}:{part.get('lever')}:{subject}"
+
+
+def _fairness(member_id: str) -> int:
+    """How many times this person has been asked to give something up lately.
+
+    Counted from recorded deals, so it is a real count. Nothing here is
+    estimated — a made-up fairness number would be worse than none.
+    """
+    since = datetime.datetime.now().timestamp() - FAIRNESS_DAYS * 86400
+    n = 0
+    for d in storage.get_deals(since_ts=since):
+        for p in d.get('parts') or []:
+            if str(p.get('member_id')) == str(member_id):
+                n += 1
+    return n
+
+
+def _score(candidate: dict, objective_delta: float):
+    """The one place people/fairness/delta/total get computed. `_rank` and
+    `_cost` both call this rather than each doing their own arithmetic --
+    two implementations of the same decision is how a sort order and the
+    numbers shown for it quietly drift apart."""
+    people = sorted({p['member_id'] for p in candidate['parts']})
+    fairness = sum(_fairness(m) for m in people)
+    delta = min(max(objective_delta, 0.0) / DELTA_SCALE, DELTA_CAP)
+    total = candidate['give_up'] + delta + fairness
+    return len(people), fairness, delta, total
+
+
+def _rank(candidate: dict, objective_delta: float):
+    """The sort key. People disturbed comes first and is not tradeable."""
+    people_n, _fairness_n, _delta, total = _score(candidate, objective_delta)
+    return (people_n, total)
+
+
+def _cost(candidate: dict, objective_delta: float) -> dict:
+    people_n, fairness, delta, total = _score(candidate, objective_delta)
+    return {'people': people_n, 'give_up': candidate['give_up'],
+            'delta': round(delta, 3), 'fairness': fairness,
+            'total': round(total, 3)}
+
+
+def _line(candidate: dict, seed_title: str, when: str) -> str:
+    asks = '; '.join(p['ask_text'] for p in candidate['parts'])
+    return f"🤝 {seed_title} ({when}) works if — {asks}"
+
+
+def search(pack: dict, seed_event_id: str, budget: int = SWEEP_BUDGET,
+           exclude: set = None) -> list:
+    """Solve down the candidate queue and return what actually worked.
+
+    A candidate survives only if the seed ends up covered AND nothing else on
+    the day was broken to do it. Validation is this one day, which is sound
+    only because every lever is occurrence-scoped: none of them reaches another
+    day's pack. If a series-level lever is ever added, this must widen with it.
+
+    Every replay here runs inside `maps.travel_cache_only()`: none of the four
+    levers can introduce a location the day's own solve did not already need,
+    so a genuine miss means the original fetch failed or the cache emptied --
+    and re-solving the same day dozens of times unattended is exactly the
+    shape of the incident that guard exists to prevent. See its docstring.
+    """
+    exclude = set(exclude or ())
+    events = {str(e.get('id')): e for e in pack.get('events') or []}
+    seed = events.get(str(seed_event_id))
+    if not seed:
+        return []
+    seed_start = _dt(seed.get('start'))
+    when = seed_start.strftime('%a %I:%M %p').replace(' 0', ' ') if seed_start else ''
+    seed_title = seed.get('title') or 'That drive'
+
+    try:
+        with maps.travel_cache_only():
+            base = solve_pack.replay(pack)
+    except ValueError as e:
+        print(f"[negotiation] no usable pack for {pack.get('date')}: {e}")
+        return []
+    except maps.UncachedTravelPair as e:
+        print(f"[negotiation] baseline needs a travel pair the cache does "
+              f"not have ({e}) -- refusing to buy it")
+        return []
+    baseline_broken = set(base['unassigned'])
+    baseline_objective = base['objective']
+
+    scored = []
+    spent = 0
+    for cand in candidates(pack, seed_event_id):
+        if spent >= budget:
+            break
+        if any(part_key(p) in exclude for p in cand['parts']):
+            continue
+        try:
+            with maps.travel_cache_only():
+                result = solve_pack.replay(solve_pack.apply(pack, cand['mutations']))
+        except Exception as e:
+            # Includes `maps.UncachedTravelPair` -- a candidate this replay
+            # would have needed to buy a travel pair for is dropped exactly
+            # like any other candidate that fails to solve, not special-cased.
+            print(f"[negotiation] candidate failed: {e}")
+            continue
+        spent += 1
+        broken = set(result['unassigned'])
+        if str(seed_event_id) in broken:
+            continue
+        # Nothing new may break. Something already broken that STAYS broken is
+        # not this candidate's fault and does not disqualify it.
+        if broken - baseline_broken:
+            continue
+        if len(result.get('conflicts') or {}) > len(base.get('conflicts') or {}):
+            continue
+        delta = baseline_objective - result['objective']
+        scored.append((_rank(cand, delta),
+                       {'mutations': cand['mutations'], 'parts': cand['parts'],
+                        'cost': _cost(cand, delta),
+                        'line': _line(cand, seed_title, when)}))
+    scored.sort(key=lambda pair: pair[0])
+    return [entry for _, entry in scored]

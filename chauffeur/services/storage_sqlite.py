@@ -88,6 +88,8 @@ INDEX_SPEC = {
     "solve_packs": [["date"]],
     # Shift refusals: read whole on every negotiation, written once per no.
     "shift_refusals": [["series_key"]],
+    # Deals: read by state on every sweep, and by the part a request answers.
+    "deals": [["id"], ["state"], ["seed_event_id"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

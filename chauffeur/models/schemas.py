@@ -788,6 +788,29 @@ class Thread(BaseModel):
     created_at: float = Field(default_factory=time.time)
     closed_at: Optional[float] = None
 
+class Deal(BaseModel):
+    """A set of parts that together make a broken day work.
+
+    A part is one person giving up one concrete thing. The deal applies only
+    when every part has been agreed to by the person it costs — a schedule that
+    works because somebody was volunteered is not a schedule that works.
+    """
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    date: str                                # YYYY-MM-DD, the day it fixes
+    seed_event_id: str                       # what was uncovered
+    seed_title: str = ""
+    line: str = ""                           # the sentence a parent reads
+    parts: List[Dict[str, Any]] = Field(default_factory=list)
+    cost: Dict[str, Any] = Field(default_factory=dict)
+    mutations: List[Dict[str, Any]] = Field(default_factory=list)
+    # draft: found, nobody asked yet. asking: requests are out.
+    # accepted: every part said yes. applied: the change was made.
+    # dead: somebody declined or a person killed it. expired: too late.
+    state: str = 'draft'
+    created_at: float = Field(default_factory=time.time)
+    applied_at: Optional[float] = None
+    dead_reason: Optional[str] = None
+
 class AssistContact(BaseModel):
     """Someone outside the household who does work for it (load arc A1).
 

@@ -466,6 +466,7 @@ with db_lock:
     requests_table = db.table('requests')
     solve_packs_table = db.table('solve_packs')
     shift_refusals_table = db.table('shift_refusals')
+    deals_table = db.table('deals')
     protected_commitments_table = db.table('protected_commitments')
     # Needs You (findings arc). A watcher finding with a LIFECYCLE: it opens
     # when the sweep sees the condition and closes when the sweep stops seeing
@@ -6484,6 +6485,58 @@ def clear_shift_refusal(series_key: str) -> bool:
     with db_lock:
         return bool(shift_refusals_table.remove(
             Query().series_key == str(series_key)))
+
+
+# --- Deals: a set of parts, each one a person giving something up --------
+# Parts live inside the deal row rather than in a table of their own: a part
+# has no life outside its deal, and the thing every caller actually wants is
+# "the deal this part belongs to".
+
+def add_deal(data: dict) -> str:
+    from models.schemas import Deal
+    with db_lock:
+        row = Deal(**data).model_dump()
+        deals_table.insert(row)
+        return row['id']
+
+def get_deal(deal_id: str) -> Optional[dict]:
+    with db_lock:
+        res = deals_table.search(Query().id == deal_id)
+        return dict(res[0]) if res else None
+
+def get_deals(state: str = None, since_ts: float = None,
+              seed_event_id: str = None) -> List[dict]:
+    with db_lock:
+        rows = [dict(d) for d in deals_table.all()]
+    if state:
+        rows = [d for d in rows if d.get('state') == state]
+    if since_ts is not None:
+        rows = [d for d in rows if (d.get('created_at') or 0) >= since_ts]
+    if seed_event_id:
+        rows = [d for d in rows if str(d.get('seed_event_id')) == str(seed_event_id)]
+    rows.sort(key=lambda d: d.get('created_at') or 0, reverse=True)
+    return rows
+
+def update_deal(deal_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(deals_table.update(data, Query().id == deal_id))
+
+def get_deal_by_part(part_id: str) -> Optional[dict]:
+    with db_lock:
+        for row in deals_table.all():
+            for p in (row.get('parts') or []):
+                if str(p.get('id')) == str(part_id):
+                    return dict(row)
+    return None
+
+def update_deal_part(part_id: str, data: dict) -> bool:
+    row = get_deal_by_part(part_id)
+    if not row:
+        return False
+    parts = []
+    for p in row.get('parts') or []:
+        parts.append({**p, **data} if str(p.get('id')) == str(part_id) else p)
+    return update_deal(row['id'], {'parts': parts})
 
 
 # Settings CRUD

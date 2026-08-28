@@ -1,3 +1,4 @@
+import contextlib
 import os
 from typing import Optional
 
@@ -9,6 +10,38 @@ geocode_lock = threading.Lock()
 api_rate_lock = threading.Lock()
 mapbox_geocode_lock = threading.Lock()
 mapbox_routing_lock = threading.Lock()
+
+
+# --- Cache-only travel lookups ----------------------------------------------
+# A background sweep must never be able to buy a Matrix/Directions element on
+# its own initiative -- that is exactly how this app burned ~118,000 Matrix
+# elements against a 100,000/month allowance in June 2026. `services.negotiation`
+# re-solves the same day many times unattended, and a shifted time or a swapped
+# driver can ask `get_travel_time_minutes` for a pair the daily refresh never
+# primed. `travel_cache_only()` turns that ask into a hard miss instead of an
+# invitation to fetch. A depth counter, not a bool, so a replay called from
+# inside another cache-only scope cannot accidentally re-enable buying on exit.
+_cache_only_depth = 0
+
+
+class UncachedTravelPair(Exception):
+    """A travel-time pair was needed, under `travel_cache_only()`, that the
+    cache does not have. The caller's job is to drop whatever it was trying to
+    do, not to catch this and fetch anyway."""
+
+
+@contextlib.contextmanager
+def travel_cache_only():
+    global _cache_only_depth
+    _cache_only_depth += 1
+    try:
+        yield
+    finally:
+        _cache_only_depth -= 1
+
+
+def travel_cache_only_active() -> bool:
+    return _cache_only_depth > 0
 
 def get_map_option(key: str, default: any) -> any:
     settings = storage.get_settings()
@@ -129,34 +162,41 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
         return (0, 0) if return_traffic else 0
         
     # Check if they geocode to the same coordinates (e.g. same building, different gym/room)
-    coords_origin = geocode_address(origin)
-    coords_dest = geocode_address(destination)
+    # -- skipped under travel_cache_only(): geocoding is its own live lookup,
+    # and this floor is a realism nicety, not something a dropped candidate
+    # needs. See travel_cache_only()'s docstring for why nothing here may fetch.
     min_time_mins = 0
-    if coords_origin and coords_dest:
-        if coords_origin == coords_dest:
-            return (0, 0) if return_traffic else 0
-        import math
-        lat1, lon1 = coords_origin
-        lat2, lon2 = coords_dest
-        R = 6371
-        dlat = math.radians(lat2 - lat1)
-        dlon = math.radians(lon2 - lon1)
-        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-        dist_km = R * c
-        # Assume max speed of 120 km/h (2 km/min) -> min time = dist_km / 2
-        min_time_mins = int(dist_km / 2.0)
-    
+    if not travel_cache_only_active():
+        coords_origin = geocode_address(origin)
+        coords_dest = geocode_address(destination)
+        if coords_origin and coords_dest:
+            if coords_origin == coords_dest:
+                return (0, 0) if return_traffic else 0
+            import math
+            lat1, lon1 = coords_origin
+            lat2, lon2 = coords_dest
+            R = 6371
+            dlat = math.radians(lat2 - lat1)
+            dlon = math.radians(lon2 - lon1)
+            a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+            dist_km = R * c
+            # Assume max speed of 120 km/h (2 km/min) -> min time = dist_km / 2
+            min_time_mins = int(dist_km / 2.0)
+
     MOCK_TIME = 15
     cache_duration = get_cache_duration()
-    
+
     # 1. Check cache first
     cached = storage.get_cached_travel_time(origin.lower(), destination.lower(), max_age_mins=cache_duration, ignore_age=not return_traffic)
     if cached is not None:
         if cached == -1:
             return (900, 0) if return_traffic else 900
         return (max(cached, min_time_mins), 0) if return_traffic else max(cached, min_time_mins)
-        
+
+    if travel_cache_only_active():
+        raise UncachedTravelPair(f"{origin} -> {destination}")
+
     # 2. If not in cache, fallback to priming the cache for just this pair
     prime_matrix_cache([origin, destination], ignore_age=not return_traffic)
     
