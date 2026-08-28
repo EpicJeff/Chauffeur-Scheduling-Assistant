@@ -160,7 +160,7 @@ def scenario_the_home_board_is_in_the_nav():
         check(slug in slugs, f"'{slug}' is missing from NAV_ITEMS")
 
 
-ADMIN_ONLY_SLUGS = ('intake', 'mind', 'threads')
+ADMIN_ONLY_SLUGS = ('intake', 'mind', 'threads', 'programs')
 
 
 def scenario_every_slug_is_filterable():
@@ -168,15 +168,16 @@ def scenario_every_slug_is_filterable():
     content page missing from that vocabulary cannot be filtered off a kiosk
     card or a shelf at all."""
     from services import home_board
-    # `intake`, `mind` and `threads` are the exceptions, and all three are
-    # deliberate: intake (v2.232.0) is mail approvals and IMAP settings, mind
-    # (v2.426.13) is dial settings plus the full sensitive insight lane,
-    # threads (v2.429.8) is vendor/project correspondence — counterparty
-    # emails and the odd employment-screening thread. All three are admin
-    # surfaces, all three already off DEFAULT_TABS for that reason. A shelf
-    # vocabulary with members that are not boards is an exception to explain
-    # forever; each keeps its desktop-nav link, it is simply not something a
-    # wall panel can show.
+    # `intake`, `mind`, `threads` and `programs` are the exceptions, and all
+    # four are deliberate: intake (v2.232.0) is mail approvals and IMAP
+    # settings, mind (v2.426.13) is dial settings plus the full sensitive
+    # insight lane, threads (v2.429.8) is vendor/project correspondence —
+    # counterparty emails and the odd employment-screening thread — and
+    # programs (task 5) is proposing and approving a family member's program.
+    # All four are admin surfaces, all four already off DEFAULT_TABS for that
+    # reason. A shelf vocabulary with members that are not boards is an
+    # exception to explain forever; each keeps its desktop-nav link, it is
+    # simply not something a wall panel can show.
     for it in _items():
         if it['slug'] in ADMIN_ONLY_SLUGS:
             check(it['slug'] not in home_board.NAV_SLUGS,
@@ -237,6 +238,18 @@ def scenario_threads_stays_off_shared_screens():
     kiosk = BODY[BODY.index('if (isKiosk) {'):]
     check("'threads'" in kiosk or 'data-slug="threads"' in kiosk,
           "the kiosk no longer hides threads")
+
+
+def scenario_programs_stays_off_shared_screens():
+    """Programs (task 5) is proposing and approving a family member's
+    program — household administration, same discipline as intake, mind and
+    threads: nav link for the browser, hidden on every kiosk unless a card
+    opts back in."""
+    check('programs' in ADMIN_ONLY_SLUGS,
+          "programs dropped out of the admin-only exception list")
+    kiosk = BODY[BODY.index('if (isKiosk) {'):]
+    check("'programs'" in kiosk or 'data-slug="programs"' in kiosk,
+          "the kiosk no longer hides programs")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

@@ -204,6 +204,9 @@ RULES = [
     # data behind it gated at /api/threads/* above (SIGNED_IN to read, the
     # handler's `_mind_actor` refusing a child/helper/guest write).
     (ANY, '/threads', ANYONE, None),
+    # Programs: same admin-page shape as Threads/Mind — a shell anyone can
+    # load, the data behind it gated at /api/programs* above.
+    (ANY, '/programs', ANYONE, None),
 
     # FastAPI's generated docs. Found UNCLASSIFIED by the S1 test, which is
     # the first thing it caught and on its own worth the file: `/docs` is a
@@ -353,6 +356,13 @@ RULES = [
     # `_needs_you_actor` reused (not rebuilt) in every handler to refuse a
     # child/helper/guest — the deal surface is parent/adult work end to end.
     (ANY, '/api/negotiation/*', SIGNED_IN, None),
+    # Programs (task 5): SIGNED_IN at the route. Unlike Threads and
+    # Negotiation, most writes here are NOT further role-gated in the
+    # handler — a child proposes, logs, and pauses their own program same as
+    # a parent. Only approve (claims the week) reuses `_mind_actor` +
+    # `_approver_of_record`, exactly as Mind's approve tap does.
+    (ANY, '/api/programs/*', SIGNED_IN, None),
+    (ANY, '/api/programs', SIGNED_IN, None),
     (ANY, '/api/coverage/*', SIGNED_IN, 'schedule.carpool_contacts'),
     (ANY, '/api/assist-contacts/*', SIGNED_IN, 'schedule.carpool_contacts'),
     (ANY, '/api/assist-coverage/*', SIGNED_IN, None),

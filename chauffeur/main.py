@@ -1603,6 +1603,10 @@ def mind_page(request: Request):
 def threads_page(request: Request):
     return templates.TemplateResponse(request=request, name="threads.html")
 
+@app.get("/programs")
+def programs_page(request: Request):
+    return templates.TemplateResponse(request=request, name="programs.html")
+
 @app.get("/chores")
 def chores_page(request: Request):
     return _page_or_board(request, "chores", "chores.html")
@@ -5522,6 +5526,140 @@ def research_thread(thread_id: str, body: dict = Body(default={}),
     if res.get('status') == 'not_found':
         raise HTTPException(status_code=404, detail="No such thread")
     return res
+
+# --- Programs: an ambition with a real plan attached (programs arc, task 5) --
+# The admin surface for services/programs.py and services/programs_curate.py:
+# propose (screened, then curated), see the footprint before approving, then
+# approve, log a session, mark a milestone, pause, resume or drop.
+#
+# Unlike Threads, most of this surface is NOT parent/adult-gated: the whole
+# point is that the aim belongs to whoever is living it, so a child can
+# propose their own program, log their own sessions, mark their own
+# milestone, and pause/resume/drop without anybody grown-up in the loop.
+# `_acting_id` (not `_mind_actor`) records who did it, without refusing a
+# child/helper/guest. The one exception carved out by design is approving:
+# that CLAIMS the household's week on the calendar, which is why it alone
+# reuses `_mind_actor` + `_approver_of_record`, exactly as Mind's approve tap
+# does — the control-center surface stands in the parent of record because it
+# authenticates as a trusted place, not as a person.
+
+@app.get("/api/programs")
+def list_programs_api(member_id: str = None, include_finished: bool = False):
+    from services import programs as _prog
+    rows = storage.get_programs(member_id=member_id,
+                                include_finished=include_finished)
+    return {"programs": [{**r, 'progress': _prog.progress(r)} for r in rows]}
+
+
+@app.post("/api/programs")
+def create_program(body: dict = Body(default={}), request: Request = None):
+    """Propose a program: screen the aim, then curate a real plan for it.
+
+    The screen runs before anything else — a body-composition aim never
+    reaches research and never becomes an object somebody could approve
+    later, no matter who is asking. Proposing is open to any signed-in
+    member, the child whose program this is included; only claiming the
+    week (approve) is grown-up work.
+    """
+    from services import programs_curate as _cur
+    title = (body.get('title') or '').strip()
+    screen = _cur.screen_aim(title)
+    if not screen.get('ok'):
+        return {"status": "error", "message": screen.get('message'),
+                "alternatives": screen.get('alternatives') or []}
+    actor_id = _acting_id(request, body.get('member_id'))
+    shape = {'sessions_per_week': int(body.get('sessions_per_week') or 3),
+             'minutes': int(body.get('minutes') or 25),
+             'preferred_days': list(body.get('preferred_days') or [])}
+    member_id = body.get('for_member_id') or actor_id
+    if not member_id:
+        return {"status": "error", "message": "Whose program is this?"}
+    member = storage.get_member(member_id) or {}
+    curated = _cur.curate(title, shape, member_name=member.get('name') or '')
+    pid = storage.add_program({
+        'member_id': member_id, 'title': title, 'shape': shape,
+        'phases': curated['phases'], 'source': curated['source'],
+        'baseline': {'start_date': None,
+                     'target_date': body.get('target_date'),
+                     'target_event_id': None, 'rebaselined_at': None,
+                     'rebaselines': 0},
+        'created_by': actor_id})
+    return {"status": "success", "id": pid, "program": storage.get_program(pid)}
+
+
+@app.get("/api/programs/{program_id}/footprint")
+def program_footprint(program_id: str):
+    from services import programs as _prog
+    row = storage.get_program(program_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such program")
+    return _prog.footprint(row)
+
+
+@app.post("/api/programs/{program_id}/approve")
+def approve_program(program_id: str, body: dict = Body(default={}),
+                    request: Request = None):
+    """Claim the week. Parent/adult work — the control-center surface stands
+    in the household's parent of record, same as the Mind's approve tap."""
+    from services import programs as _prog
+    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    return _prog.approve(program_id, (actor or {}).get('id'),
+                         slots=body.get('slots'))
+
+
+@app.post("/api/programs/{program_id}/session")
+def log_program_session(program_id: str, body: dict = Body(default={}),
+                        request: Request = None):
+    """The person practising says so — a kid reporting their own guitar
+    session is the point, not a permission to route around."""
+    from services import programs as _prog
+    _acting_id(request, body.get('member_id'))
+    return _prog.log_session(program_id, minutes=body.get('minutes'),
+                             source=body.get('source') or 'added',
+                             note=body.get('note') or '')
+
+
+@app.post("/api/programs/{program_id}/milestone")
+def hit_program_milestone(program_id: str, body: dict = Body(default={}),
+                          request: Request = None):
+    from services import programs as _prog
+    _acting_id(request, body.get('member_id'))
+    return _prog.mark_milestone(program_id, body.get('phase_name') or '')
+
+
+@app.post("/api/programs/{program_id}/pause")
+def pause_program(program_id: str, body: dict = Body(default={}),
+                  request: Request = None):
+    from services import programs as _prog
+    _acting_id(request, body.get('member_id'))
+    return _prog.pause(program_id)
+
+
+@app.post("/api/programs/{program_id}/resume")
+def resume_program(program_id: str, body: dict = Body(default={}),
+                   request: Request = None):
+    from services import programs as _prog
+    _acting_id(request, body.get('member_id'))
+    return _prog.resume(program_id)
+
+
+@app.post("/api/programs/{program_id}/drop")
+def drop_program(program_id: str, body: dict = Body(default={}),
+                 request: Request = None):
+    """Dropping is not failing. The emissions go; the record stays."""
+    import time as _t
+    _acting_id(request, body.get('member_id'))
+    row = storage.get_program(program_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such program")
+    for cid in (row.get('emissions') or {}).get('commitment_ids') or []:
+        try:
+            storage.delete_protected_commitment(cid)
+        except Exception as e:
+            print(f"[programs] could not remove commitment {cid}: {e}")
+    storage.update_program(program_id, {'state': 'dropped',
+                                        'finished_at': _t.time()})
+    return {"status": "success", "message": "Dropped. The time is back."}
 
 # --- Outside hands: assist contacts and the work they cover (load arc A1) ---
 # A contact is somebody outside this household who does work for it — a carpool
