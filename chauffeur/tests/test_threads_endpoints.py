@@ -205,6 +205,32 @@ def scenario_patch_cannot_change_state_or_closed_at():
           "would otherwise have been silent")
 
 
+def scenario_listing_carries_stall_reason():
+    """The Threads page used to re-derive 'overdue'/'quiet' in JS, a second
+    copy of services.threads.is_stalled with nothing enforcing parity. The
+    fix is for GET /api/threads to be the single source of truth: every row
+    carries `stall_reason` (same key services.threads.stalled() already
+    uses for the nightly sweep), computed server-side, so the page can just
+    read it."""
+    _reset()
+    import main
+    overdue = main.create_thread(body={"title": "Overdue renewal", "member_id": "mom"},
+                                 request=None)
+    main.advance_thread(overdue["id"], body={"next_action": "Call back",
+                                             "next_action_at": "2020-01-01",
+                                             "member_id": "mom"}, request=None)
+    fresh = main.create_thread(body={"title": "Brand new thread",
+                                     "member_id": "mom"}, request=None)
+
+    res = main.list_threads(owner=None, include_closed=False, request=None)
+    rows = {t["id"]: t for t in res["threads"]}
+
+    check(rows[overdue["id"]].get("stall_reason") == "overdue",
+          f"an overdue thread did not carry stall_reason='overdue': {rows[overdue['id']]}")
+    check(not rows[fresh["id"]].get("stall_reason"),
+          f"a brand-new thread carried a truthy stall_reason: {rows[fresh['id']]}")
+
+
 if __name__ == '__main__':
     scenario_create_returns_an_id()
     scenario_note_appends_to_history()
@@ -215,4 +241,5 @@ if __name__ == '__main__':
     scenario_unknown_thread_id_is_404_on_every_write_route()
     scenario_close_refuses_a_bad_state()
     scenario_patch_cannot_change_state_or_closed_at()
+    scenario_listing_carries_stall_reason()
     print("test_threads_endpoints OK")

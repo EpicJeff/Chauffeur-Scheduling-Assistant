@@ -283,28 +283,13 @@
                     } catch (e) { showGlobalAlert("Couldn't load threads."); }
                 },
 
-                // Mirrors services/threads.py:is_stalled exactly, client-side —
-                // the GET endpoint hands back the raw rows (Task 5), so the
-                // page decides who's stalled the same way the nightly sweep
-                // will, rather than waiting on a backend field.
-                stallReason(t) {
-                    if (!t || t.state === 'done' || t.state === 'dropped') return null;
-                    const days = Math.max(1, parseInt(this.s.thread_stall_days, 10) || 7);
-                    if (t.next_action_at) {
-                        const due = new Date(t.next_action_at + 'T00:00:00');
-                        if (!isNaN(due.getTime())) {
-                            const today = new Date();
-                            today.setHours(0, 0, 0, 0);
-                            return due.getTime() < today.getTime() ? 'overdue' : null;
-                        }
-                    }
-                    const hist = t.history || [];
-                    const lastTs = hist.length > 1
-                        ? (hist[hist.length - 1].ts || t.created_at || 0)
-                        : (t.created_at || 0);
-                    if (lastTs && (Date.now() / 1000 - lastTs) >= days * 86400) return 'quiet';
-                    return null;
-                },
+                // `stall_reason` ('overdue' | 'quiet' | null) comes straight
+                // off the row from GET /api/threads (main.py:list_threads),
+                // which computes it via services.threads.is_stalled — the
+                // same function the nightly sweep uses. This page used to
+                // carry its own JS port of that logic; now there is exactly
+                // one place that decides whether a thread has stalled.
+                stallReason(t) { return (t && t.stall_reason) || null; },
 
                 get stalledList() { return this.threads.filter(t => this.stallReason(t)); },
                 get openList() { return this.threads.filter(t => t.state === 'open' && !this.stallReason(t)); },

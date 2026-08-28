@@ -5193,8 +5193,20 @@ def list_threads(owner: Optional[str] = None, include_closed: bool = False,
                  request: Request = None):
     """Grouped by state, stalls first, is a client concern — this hands back
     the flat list `services/threads.py` and `storage.get_threads` already
-    filter by owner and closed-state."""
-    return {"threads": storage.get_threads(owner=owner, include_closed=include_closed)}
+    filter by owner and closed-state.
+
+    Each row is additionally annotated with `stall_reason` ('overdue' |
+    'quiet' | None) via `services.threads.is_stalled` — the SAME key
+    `services.threads.stalled()` already attaches for the nightly sweep, so
+    there is exactly one place ('overdue' vs 'quiet', the quiet-clock math)
+    that decides whether a thread has stalled. The Threads page used to port
+    that logic into JS; nothing enforced the two staying in sync, so this
+    is additive-only on the response and the page reads the field instead."""
+    from services import threads as _threads
+    rows = storage.get_threads(owner=owner, include_closed=include_closed)
+    for row in rows:
+        row['stall_reason'] = _threads.is_stalled(row)
+    return {"threads": rows}
 
 
 @app.post("/api/threads")
