@@ -171,8 +171,16 @@ def _unassigned_findings(now: datetime.datetime):
             _negotiate_seed(ev_id, start.date().isoformat())
             deal_line, deal_action = _deal_line(ev_id)
         if deal_line:
+            # A draft deal carries one real tap ('approve' — go work it,
+            # matching the coverage ladder's own tiers). An asking deal has
+            # already sent its requests; there is nothing left to press until
+            # the rest answer, same as the ladder's tier-0 'waiting' rung
+            # (coverage_options.py) — 'fyi', no action, so the finding-list
+            # grouping downstream (agent_tools_v2.list_open_findings, which
+            # reads severity, not action) never labels it a tap that isn't
+            # there.
             out.append(Finding(key=key, line=deal_line, kind='unassigned',
-                               severity='approve',
+                               severity='approve' if deal_action else 'fyi',
                                subject_type='event', subject_id=ev_id,
                                due_at=start.timestamp(), action=deal_action))
             continue
