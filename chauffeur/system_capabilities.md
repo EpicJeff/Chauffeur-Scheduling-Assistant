@@ -6027,54 +6027,132 @@ than recorded as zero — a family that was never measured did not do nothing,
 and inventing that would poison the very baseline the backfill exists to
 establish. Without it the pulse would say nothing useful for two months.
 
-## The House tab carries the loops too (v2.429.10)
+## Threads — the household's open loops (v2.429.0–v2.429.18 — `services/threads.py`, `services/watchers.py`, `services/vitals.py`, `templates/threads.html`; design in `docs/superpowers/specs/2026-08-27-threads-design.md`)
 
-Threads (open loops with somebody outside the family — see `threads.html` for
-the full create/advance/close page) had no phone hand path: they only lived
-on the standalone `/threads` panel. The PWA House tab (`#chores-container`)
-now grows a third section beside chores and lists.
+The pest control company that said they'd call back. The deck permit still
+waiting on the county. The after-school-care search nobody has closed out.
+None of that has a start time, so nothing else in this app would ever notice
+it went quiet — Chauffeur schedules the twenty-minute visit and does nothing
+about the eleven days of chasing that got it booked. A **thread** is the
+record of that chasing: `title`, `goal` (the outcome wanted, one sentence),
+a `counterparty` (an assist contact id, or just a loose name — most threads
+start before you know who you're dealing with), an `owner_member_id` (who's
+carrying it), a `next_action` + `next_action_at` (the one thing that has to
+happen next), a `kind` (`vendor` — recurring, never reaches done — or
+`project` — has an end), and an append-only `history` of notes, sent mail,
+received mail, research and state changes. Four states: `open`, `waiting`
+(on them), `done`, `dropped`. Every append (`create`, `advance`, `note`,
+`close`, a send, a received reply, a research hit) goes through
+`storage.append_thread_history`, so the audit trail and the stall clock
+below read the same log — there is no separate "last touched" field to fall
+out of sync with it.
 
-- **Same vanilla-render idiom as chores/lists** (`fetchHouseThreads`/
-  `renderHouseThreads` in app.html): `GET /api/threads?owner=<signed-in
-  member>&include_closed=false` returns that member's own open threads,
-  already annotated with `stall_reason` ('overdue' | 'quiet' | None) by the
-  server — the shell never recomputes stall state, same rule as the full
-  page. Stalled threads sort first.
-- **One tap adds a note** — an inline text input + button per card (the same
-  idiom as the lists section's add box), posting to
-  `POST /api/threads/{id}/note`. Closing and advancing stay on the full
-  `/threads` page; this card is read + note only.
-- The anchor row (🧹 Chores / 🛒 Lists) gains a 🧵 Threads jump button,
-  badge = count of stalled threads, following the existing "row only draws
-  with two or more places to jump" rule.
-- Note-adding is parent/adult only server-side (403 otherwise); the PWA does
-  not hide the input for other roles; a failed attempt just shows the
-  server's error via `showGlobalAlert`.
+**Two ways a thread stalls, and only two** (`threads.is_stalled`):
+`overdue` — there's a `next_action_at` and it's in the past, full stop, a
+future date is never stalled whatever the history says — and `quiet` —
+nothing has been appended to `history` for `thread_stall_days` (Config →
+Threads, default 7) while the thread is `open`. The quiet clock is measured
+from the last history entry *beyond the opening one* `create()` writes (that
+entry marks the thread coming into being, not movement, so with nothing
+after it the clock instead runs from `created_at`), which is why the SAME
+history rule also excludes one specific kind: **`drafted`** entries never
+reset the clock. Asking Argyle for a draft and then walking away is not
+movement — it's the exact non-movement this module exists to catch — so a
+thread that's been quiet for a week stays quiet-stalled even after a draft
+was proposed inside that week; only a `sent`, `received`, `note`,
+`advance` or `research` entry counts as something having actually happened.
+A `waiting` thread with a future `next_action_at` is doing exactly what it
+should (sitting on somebody else's move) and is never stalled; a closed
+thread never stalls no matter how overdue its last next-action was —
+the signal exists to make somebody look at something still open, not to
+relitigate history.
 
-## Threads: Argyle drafts the email, a person sends it (v2.429.12)
+**The finding rail.** A nightly sweep (`watchers._thread_stalls`, kind
+`thread_stall`, registered in `watchers.SCANNED_KINDS` so `findings.reconcile`
+auto-closes a stall the moment a later sweep no longer finds it — the thread
+moved, or closed) turns every live stall into a finding. The watcher-signal
+policy is enforced in the line itself: `"{title} has stalled — next: {next
+action}"`, or, when there's no next action on file, `"no next action
+set — decide one"` — a bare "this went quiet" never ships, because the
+missing decision IS the next action. Severity stays `fyi`/no-DM for a fresh
+stall; only once an overdue next-action has sat unmet for more than 7 days
+does it become a `decide` finding that pages a parent — the normal shape of
+a slow-moving thread is watched, not paged.
 
-The full `/threads` page's card grows a **Draft email** button. Two
-endpoints, two functions, two separate acts — this is the rule the feature
-exists to enforce, and nothing about the implementation lets a refactor
-merge them:
+**Load contribution** (`vitals.measure_day`, `THREAD_MINUTES = 10`): every
+open thread costs its owner 10 minutes of `load` per day it stays open,
+stalled or not — carrying a loop is work whether or not it's overdue, and
+this is the whole reason threads shipped before anything fancier: mental
+load is "who is holding the open loops," and until this it was
+unmeasurable. `open_by_owner()` (member id → open-thread count) is the one
+function that feeds it; its shape is a contract other callers rely on too.
 
-- `POST /api/threads/{id}/draft` → `services.threads.draft_message` builds a
-  context string from the thread (title, goal, counterparty, next action,
-  last 5 history entries) and asks the model, via the module's own
-  `_pool_call('interactive', ...)` indirection, for `{subject, body}` in the
-  family's voice. It writes nothing but an optional `drafted` history entry
-  and never touches `state`. **It never imports `services.mailer`** — the
-  boundary isn't a check at runtime, it's that the function has no way to
-  reach the sending code at all.
-- The page shows the draft in an **editable** subject/body/to box — every
-  word changeable before anything goes — with Send, Redraft and Cancel.
-- `POST /api/threads/{id}/send` → `services.threads.send_drafted` takes
-  whatever is in that box at the moment of the tap (possibly edited,
-  possibly untouched; it has no memory of the draft and never compares the
-  two), refuses honestly with `not_configured` when `mailer.configured()`
-  is false, otherwise calls `mailer.send` and — only on `sent: True` —
-  appends a `sent` history entry containing the actual body and moves the
-  thread to `waiting` (the ball is now with the other side).
-- Both endpoints are parent/adult gated via the existing `_mind_actor`
-  pattern; no new auth.py entry was needed, `/api/threads/*` already covers
-  them.
+**Correspondence, outbound — the agent never sends mail unread.**
+`draft_message` and `send_drafted` are different functions calling different
+things, on purpose, so a convenience refactor can never quietly merge
+"write this" and "send this" into one call: `draft_message` talks to the
+model (via the module's own `_pool_call` indirection) and returns
+`{subject, body}`; it writes only an optional `drafted` history entry, never
+touches `state`, and **cannot reach `services.mailer` even by accident,
+because it never imports it.** `send_drafted` talks to `services.mailer` and
+cannot reach the model, for the same reason — no import, not a runtime
+check. It sends exactly what's in the caller's box at the moment of the tap
+(possibly edited, possibly not; it has no memory of what was drafted and
+never compares the two), refuses honestly with `not_configured` when
+`mailer.configured()` is false, and only on an actual send appends a `sent`
+entry (with the body, so the log is of what went out) and moves the thread
+to `waiting`. `/threads` wraps this as **Draft email** → an editable
+subject/body/to box → Send/Redraft/Cancel, all parent/adult gated
+(`/api/threads/{id}/draft`, `/api/threads/{id}/send`); there is no agent
+tool that drafts or sends — a person's tap on Send is the only path from a
+proposed subject/body to an outbound email, on the page, never from chat.
+
+**Correspondence, inbound.** `match_inbound` (called from
+`email_ingest`'s pipeline) asks whether a piece of arriving mail belongs to
+an open thread: `counterparty_email` first, case-insensitive; when more than
+one open thread shares a counterparty, subject/body token overlap against
+each thread's title breaks the tie. **If nothing breaks the tie — no
+counterparty match, or a tie with no title word in common — the mail is left
+alone.** Guessing wrong is worse than not filing: a reply misfiled onto the
+wrong thread reads as an update nobody sent, and buries the update nobody
+logged. A real match appends a `received` entry (movement — it resets the
+quiet clock) and, if the thread was `waiting`, moves it back to `open` — the
+ball just came back to us.
+
+**Research.** `research(thread_id, question)` wraps `services.web.research`
+and — only on an `'ok'` status — logs the answer with its source URLs
+written into the history TEXT, not just returned to the caller, so a fact
+in a thread always carries the page it came from. It prefers `facts`
+(claims `web.research` verified against a page it actually fetched and
+read) over `sources` (every search result found, most never opened);
+`sources` is only trusted when there are no facts at all. Any non-`'ok'`
+status appends nothing, so the record never claims to know something it
+doesn't. The `dropped` count (facts invented and discarded before they
+reached here) rides back to the caller rather than being silently absorbed.
+
+**Surfaces.** The `/threads` page is the hand path: create, edit, advance,
+close, draft/send, research — grouped Stalled → Open → Waiting → a
+collapsed Done/Dropped, stalls always first. The **PWA House tab**
+(`#chores-container`, v2.429.10) grows a third section beside chores and
+lists: `GET /api/threads?owner=<signed-in member>` returns that member's own
+open threads pre-annotated with `stall_reason` by the server (the shell
+never recomputes stall math — one place decides it, the page and the sweep
+both just read the field); one tap adds a note
+(`POST /api/threads/{id}/note`, parent/adult only server-side); closing and
+advancing stay on the full page. The anchor row gains a 🧵 badge = count of
+stalled threads. **Agent tools** (v2 Gemma router, `agent_tools_v2.py`):
+`list_threads` (open to anyone, same stall annotation as the page),
+`create_thread`, `update_thread_action` (wraps `advance`), and
+`add_thread_note` — all four parent/adult gated, `acting_member` resolved
+by the dispatch layer, never taken from the model. Drafting, sending and
+research have deliberately **no** agent-tool surface; they exist only on
+the page, which is how "never sends unread" stays true regardless of what
+reaches the chat loop. The **Mind's snapshot** carries an OPEN THREADS
+section (stalled threads first, tagged `[overdue]`/`[quiet]`, then the rest
+of what's open) — the Mind may notice a stall or propose opening a thread
+for outward-facing work it spots with no home yet, but is told never to
+invent one that isn't plainly there.
+
+**Setting.** `thread_stall_days` (Config → Threads, default 7) — how many
+quiet days before an open thread counts as stalled; an overdue
+`next_action_at` stalls immediately regardless of this.
