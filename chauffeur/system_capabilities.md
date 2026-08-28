@@ -6050,3 +6050,31 @@ now grows a third section beside chores and lists.
 - Note-adding is parent/adult only server-side (403 otherwise); the PWA does
   not hide the input for other roles; a failed attempt just shows the
   server's error via `showGlobalAlert`.
+
+## Threads: Argyle drafts the email, a person sends it (v2.429.12)
+
+The full `/threads` page's card grows a **Draft email** button. Two
+endpoints, two functions, two separate acts — this is the rule the feature
+exists to enforce, and nothing about the implementation lets a refactor
+merge them:
+
+- `POST /api/threads/{id}/draft` → `services.threads.draft_message` builds a
+  context string from the thread (title, goal, counterparty, next action,
+  last 5 history entries) and asks the model, via the module's own
+  `_pool_call('interactive', ...)` indirection, for `{subject, body}` in the
+  family's voice. It writes nothing but an optional `drafted` history entry
+  and never touches `state`. **It never imports `services.mailer`** — the
+  boundary isn't a check at runtime, it's that the function has no way to
+  reach the sending code at all.
+- The page shows the draft in an **editable** subject/body/to box — every
+  word changeable before anything goes — with Send, Redraft and Cancel.
+- `POST /api/threads/{id}/send` → `services.threads.send_drafted` takes
+  whatever is in that box at the moment of the tap (possibly edited,
+  possibly untouched; it has no memory of the draft and never compares the
+  two), refuses honestly with `not_configured` when `mailer.configured()`
+  is false, otherwise calls `mailer.send` and — only on `sent: True` —
+  appends a `sent` history entry containing the actual body and moves the
+  thread to `waiting` (the ball is now with the other side).
+- Both endpoints are parent/adult gated via the existing `_mind_actor`
+  pattern; no new auth.py entry was needed, `/api/threads/*` already covers
+  them.

@@ -78,6 +78,60 @@ def scenario_a_stalled_thread_becomes_a_finding():
           "registered, or reconcile will never close it")
 
 
+def scenario_drafting_never_sends():
+    _reset()
+    sent = []
+    from services import mailer as _m
+    orig = _m.send
+    threads._pool_call = lambda *a, **k: {'subject': 'Following up',
+                                          'body': 'Hi — checking in.'}
+    try:
+        _m.send = lambda *a, **k: sent.append(a) or {'sent': True}
+        t = threads.create('Pool', owner_member_id='m1',
+                           counterparty_email='pool@example.com')
+        d = threads.draft_message(t)
+        check(d['status'] == 'ok' and d['subject'] == 'Following up', f"got {d}")
+        check(not sent, "DRAFTING MUST NEVER SEND")
+        check(not any(h.get('kind') == 'sent'
+                      for h in storage.get_thread(t)['history']),
+              "and must not claim it did")
+    finally:
+        _m.send = orig
+
+
+def scenario_sending_records_what_went_out():
+    _reset()
+    from services import mailer as _m
+    orig_send, orig_conf = _m.send, _m.configured
+    try:
+        _m.configured = lambda *a, **k: True
+        _m.send = lambda to, subject, body, settings=None: {'sent': True}
+        t = threads.create('Pool', owner_member_id='m1',
+                           counterparty_email='pool@example.com')
+        res = threads.send_drafted(t, 'Hi', 'Body text', 'pool@example.com', 'm1')
+        check(res['status'] == 'ok', f"got {res}")
+        h = storage.get_thread(t)['history'][-1]
+        check(h['kind'] == 'sent' and 'Body text' in h['text'],
+              f"the thread remembers what was actually said, got {h}")
+        check(storage.get_thread(t)['state'] == 'waiting',
+              "and that the ball is now with them")
+    finally:
+        _m.send, _m.configured = orig_send, orig_conf
+
+
+def scenario_send_without_smtp_is_an_honest_refusal():
+    _reset()
+    from services import mailer as _m
+    orig = _m.configured
+    try:
+        _m.configured = lambda *a, **k: False
+        t = threads.create('Pool', owner_member_id='m1')
+        res = threads.send_drafted(t, 'Hi', 'B', 'a@b.example', 'm1')
+        check(res['status'] == 'not_configured', f"got {res}")
+    finally:
+        _m.configured = orig
+
+
 if __name__ == '__main__':
     scenario_overdue_next_action_stalls()
     scenario_silence_stalls_even_with_no_date()
@@ -85,4 +139,7 @@ if __name__ == '__main__':
     scenario_closed_threads_never_stall()
     scenario_open_by_owner_counts_the_carrying()
     scenario_a_stalled_thread_becomes_a_finding()
+    scenario_drafting_never_sends()
+    scenario_sending_records_what_went_out()
+    scenario_send_without_smtp_is_an_honest_refusal()
     print("test_threads OK")

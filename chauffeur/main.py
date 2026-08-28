@@ -5299,6 +5299,43 @@ def close_thread(thread_id: str, body: dict = Body(default={}), request: Request
         raise HTTPException(status_code=404, detail="No such thread")
     return {"status": "success"}
 
+
+@app.post("/api/threads/{thread_id}/draft")
+def draft_thread_message(thread_id: str, body: dict = Body(default={}),
+                         request: Request = None):
+    """Ask Argyle for a subject/body proposal (services.threads.draft_message).
+    Writes nothing that could be mistaken for outbound mail — this route
+    cannot send anything, by construction: draft_message never imports
+    services.mailer. See send_thread_message below for the only route
+    that can."""
+    from services import threads as _threads
+    _mind_actor(request, body.get('member_id'))
+    res = _threads.draft_message(thread_id, intent=body.get('intent') or '')
+    if res.get('status') == 'not_found':
+        raise HTTPException(status_code=404, detail="No such thread")
+    return res
+
+
+@app.post("/api/threads/{thread_id}/send")
+def send_thread_message(thread_id: str, body: dict = Body(default={}),
+                        request: Request = None):
+    """Send exactly what is in the client's editable box — possibly edited,
+    possibly untouched, but never what a prior /draft call proposed
+    (services.threads.send_drafted takes the text fresh from this request,
+    not from anything stored). Two endpoints, two functions, on purpose:
+    an agent can write words here only through /draft; a person's tap on
+    Send is the only path that reaches this one."""
+    from services import threads as _threads
+    actor = _mind_actor(request, body.get('member_id'))
+    subject = body.get('subject') or ''
+    msg_body = body.get('body') or ''
+    to = body.get('to') or ''
+    res = _threads.send_drafted(thread_id, subject, msg_body, to,
+                                who=actor.get('id'))
+    if res.get('status') == 'not_found':
+        raise HTTPException(status_code=404, detail="No such thread")
+    return res
+
 # --- Outside hands: assist contacts and the work they cover (load arc A1) ---
 # A contact is somebody outside this household who does work for it — a carpool
 # parent, the neighbour who does the dishes. They have no account, which is the

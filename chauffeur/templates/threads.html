@@ -136,6 +136,8 @@
                                 <div class="text-[11px] text-gray-600 mt-1 italic" x-show="lastHistoryLine(t)" x-text="lastHistoryLine(t)"></div>
 
                                 <div class="flex flex-wrap gap-2 mt-2" x-show="!sec.archived">
+                                    <button @click="requestDraft(t)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-purple-700 text-white active:bg-purple-800">Draft email</button>
                                     <button @click="noteOpen[t.id] = !noteOpen[t.id]"
                                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Add note</button>
                                     <button @click="openAdvance(t)"
@@ -211,6 +213,40 @@
                                     <button @click="submitEdit(t)"
                                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Save</button>
                                 </div>
+
+                                <!-- Draft & send: Argyle proposes, a person
+                                     sends. The box is always editable, and
+                                     Send posts exactly what's in it — never
+                                     what the draft call returned a moment
+                                     ago (see threads.html sendDraft below,
+                                     and services/threads.send_drafted). -->
+                                <div class="mt-2.5 space-y-2 bg-gray-950/60 border border-gray-800 rounded-xl p-2.5"
+                                     x-show="draftOpen[t.id]" x-cloak>
+                                    <div class="text-[11px] text-gray-500 italic" x-show="draftLoading[t.id]">
+                                        Argyle is drafting…
+                                    </div>
+                                    <template x-if="!draftLoading[t.id] && draftText[t.id]">
+                                        <div class="space-y-2">
+                                            <div class="text-[10px] font-bold uppercase tracking-wide text-purple-300">
+                                                Review before it goes — every word here is yours to change
+                                            </div>
+                                            <input type="email" x-model="draftText[t.id].to" placeholder="Send to"
+                                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white text-xs">
+                                            <input type="text" x-model="draftText[t.id].subject" placeholder="Subject"
+                                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white text-xs">
+                                            <textarea x-model="draftText[t.id].body" rows="6" placeholder="Body"
+                                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-white text-xs"></textarea>
+                                            <div class="flex flex-wrap gap-2">
+                                                <button @click="sendDraft(t)"
+                                                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Send</button>
+                                                <button @click="requestDraft(t)"
+                                                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Redraft</button>
+                                                <button @click="draftOpen[t.id] = false"
+                                                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Cancel</button>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
                             </div>
                         </template>
                     </div>
@@ -242,6 +278,7 @@
                 noteOpen: {}, noteText: {},
                 advanceOpen: {}, advanceDraft: {},
                 editOpen: {}, editDraft: {},
+                draftOpen: {}, draftLoading: {}, draftText: {},
 
                 async load() {
                     try {
@@ -513,6 +550,73 @@
                         }
                         await this.load();
                     } catch (e) { showGlobalAlert("Couldn't close that."); }
+                },
+
+                // Argyle proposes a subject/body via POST .../draft (an LLM
+                // call, services.threads.draft_message); nothing here can
+                // send. The box that opens is fully editable, and sendDraft
+                // below posts whatever is in it at the moment of the tap —
+                // possibly rewritten, possibly untouched — to a SEPARATE
+                // endpoint (.../send, services.threads.send_drafted). Two
+                // requests, two functions, so no refactor of this page can
+                // quietly wire "draft" straight into "send".
+                async requestDraft(t) {
+                    this.draftOpen[t.id] = true;
+                    this.draftLoading[t.id] = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/threads/${t.id}/draft`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({})
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status !== 'ok') {
+                            showGlobalAlert(d.detail || "Argyle couldn't draft that just now.");
+                            this.draftOpen[t.id] = false;
+                            return;
+                        }
+                        this.draftText[t.id] = {
+                            subject: d.subject || '',
+                            body: d.body || '',
+                            to: d.to || t.counterparty_email || '',
+                        };
+                    } catch (e) {
+                        showGlobalAlert("Argyle couldn't draft that just now.");
+                        this.draftOpen[t.id] = false;
+                    } finally {
+                        this.draftLoading[t.id] = false;
+                    }
+                },
+
+                async sendDraft(t) {
+                    const d = this.draftText[t.id] || {};
+                    const to = (d.to || '').trim();
+                    const subject = (d.subject || '').trim();
+                    const body = (d.body || '').trim();
+                    if (!to || !body) {
+                        showGlobalAlert('Needs a recipient and a body before it can go.');
+                        return;
+                    }
+                    const ok = await promptConfirm('Send this email?',
+                        `To ${to} — this actually goes out, as written above.`,
+                        'Send', 'Cancel');
+                    if (!ok) return;
+                    try {
+                        const r = await fetch(this.apiBase + `api/threads/${t.id}/send`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ to, subject, body })
+                        });
+                        const res = await r.json().catch(() => ({}));
+                        if (!r.ok || res.status !== 'ok') {
+                            if (res.status === 'not_configured') {
+                                showGlobalAlert('No mail sender is set up yet — add one in Settings before sending.');
+                            } else {
+                                showGlobalAlert(res.detail || res.reason || "Couldn't send that.");
+                            }
+                            return;
+                        }
+                        this.draftOpen[t.id] = false;
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't send that."); }
                 },
 
                 async saveStallDays() {
