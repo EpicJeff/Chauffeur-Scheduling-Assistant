@@ -475,13 +475,59 @@ def weekday_shortfall(program: dict, now=None) -> dict:
     return {'weekday': worst, 'expected': weeks, 'done': done.get(worst, 0)}
 
 
+def _compress_phases(phases: list, target_date: str, now) -> tuple:
+    """Shrink the remaining phases so the plan still lands on a fixed date,
+    rather than moving the date — the counterpart to stretching an undated
+    target.
+
+    A phase whose milestone is already hit is done: it consumed its time
+    already and is never touched. Everything still ahead compresses toward
+    the date, floored at one week each, because a phase with zero weeks in
+    it is not a phase, it is a phase that got deleted while pretending not
+    to be. If even the floor does not fit before the date, this refuses to
+    fake it — the phases come back exactly as they were, and the second
+    return value says plainly that it does not fit, so the caller can say so
+    too rather than claim room that was never made.
+    """
+    try:
+        target = datetime.date.fromisoformat(target_date)
+    except (TypeError, ValueError):
+        return phases, None
+    weeks_available = max(0, (target - now.date()).days // 7)
+    remaining_idx = [i for i, p in enumerate(phases) if not p.get('milestone_hit_at')]
+    if not remaining_idx:
+        return phases, True          # nothing left to compress -- it fits by default
+    if len(remaining_idx) > weeks_available:
+        return phases, False         # not even one week each fits -- admit it
+    current = [max(1, int(p.get('weeks') or 1)) for p in
+               (phases[i] for i in remaining_idx)]
+    if sum(current) <= weeks_available:
+        return phases, True          # already fits -- nothing needs shrinking
+    scale = weeks_available / sum(current)
+    new_weeks = [max(1, int(w * scale)) for w in current]
+    # Floor-and-scale can still overshoot by a week or two of rounding; trim
+    # the largest phase down (never below one week) until it truly fits.
+    while sum(new_weeks) > weeks_available:
+        idx = max(range(len(new_weeks)), key=lambda i: new_weeks[i])
+        if new_weeks[idx] <= 1:
+            break
+        new_weeks[idx] -= 1
+    out = [dict(p) for p in phases]
+    for i, nw in zip(remaining_idx, new_weeks):
+        out[i]['weeks'] = nw
+    return out, sum(new_weeks) <= weeks_available
+
+
 def maybe_rebaseline(program: dict, now=None) -> dict:
     """Stretch the timeline when life delivered fewer sessions than the plan
     assumed. A plan that can only be fallen behind is a plan designed to be
     abandoned — so the plan bends, and says so.
 
     What it never moves is a date the world fixed. A June campfire is not the
-    app's to reschedule; the phases compress instead.
+    app's to reschedule; the phases compress instead — and when they cannot
+    compress far enough to still fit, `fits` comes back False so the caller
+    can say the plan is tight rather than pretend room was made where none
+    was.
     """
     now = now or datetime.datetime.now()
     if program.get('state') != 'active':
@@ -495,15 +541,28 @@ def maybe_rebaseline(program: dict, now=None) -> dict:
         return None
     baseline['rebaselines'] = int(baseline.get('rebaselines') or 0) + 1
     baseline['rebaselined_at'] = now.timestamp()
-    # The target event stays exactly where it is; only an undated target moves.
-    if baseline.get('target_date') and not baseline.get('target_event_id'):
+
+    original_phases = program.get('phases') or []
+    phases = original_phases
+    fits = None
+    update = {'baseline': baseline}
+    if baseline.get('target_date') and baseline.get('target_event_id'):
+        # A real event pins the date -- the phases give way instead of it.
+        phases, fits = _compress_phases(original_phases, baseline['target_date'], now)
+        update['phases'] = phases
+    elif baseline.get('target_date'):
+        # No event pins this one down: an undated target is the app's to move.
         try:
             target = datetime.date.fromisoformat(baseline['target_date'])
             baseline['target_date'] = (target + datetime.timedelta(days=14)).isoformat()
         except (TypeError, ValueError):
             pass
-    storage.update_program(program['id'], {'baseline': baseline})
-    return {'weekday': short['weekday'], 'baseline': baseline}
+    storage.update_program(program['id'], update)
+    # `fits` alone isn't enough to word the finding honestly: a program that
+    # already had slack before the date needs `fits=True` without ever
+    # claiming credit for a squeeze that never happened.
+    return {'weekday': short['weekday'], 'baseline': baseline, 'phases': phases,
+            'fits': fits, 'phases_changed': phases != original_phases}
 
 
 def orphaned_emissions(program: dict) -> list:
@@ -536,30 +595,39 @@ def due_session_asks(now=None) -> list:
     One question per slot, ever. Silence counts nothing — the number only means
     sessions a person said they did. Quiet hours are honoured, so a 9pm slot
     asks in the morning rather than at 9:25pm.
+
+    Each program's check is wrapped on its own, the same way the drift and
+    rebaseline checks in watchers.py guard themselves per program below --
+    one member's malformed record (a bad quiet-hours string, a corrupt
+    commitment) must cost only that program's ask, not silence every family
+    member's practice check for the whole sweep.
     """
     from services import family_digest
     now = now or datetime.datetime.now()
     out = []
     for row in storage.get_programs(state='active'):
-        member = storage.get_member(row.get('member_id'))
-        if not member or family_digest.in_member_quiet_hours(member, now):
-            continue
-        cids = set((row.get('emissions') or {}).get('commitment_ids') or [])
-        for pc in storage.get_protected_commitments(member_id=row['member_id']):
-            if pc.get('id') not in cids:
+        try:
+            member = storage.get_member(row.get('member_id'))
+            if not member or family_digest.in_member_quiet_hours(member, now):
                 continue
-            for d in (pc.get('days_of_week') or []):
-                slot_date = _last_occurrence(d, now)
-                if slot_date is None:
+            cids = set((row.get('emissions') or {}).get('commitment_ids') or [])
+            for pc in storage.get_protected_commitments(member_id=row['member_id']):
+                if pc.get('id') not in cids:
                     continue
-                ended = _slot_end(slot_date, pc.get('time_end') or '19:25')
-                if (now - ended).total_seconds() < ASK_GRACE_HOURS * 3600:
-                    continue
-                if _already_logged(row, slot_date):
-                    continue
-                out.append({'program': row, 'slot_date': slot_date.isoformat(),
-                            'body': f"{row.get('title')} on "
-                                    f"{slot_date.strftime('%A')} — did it happen?"})
+                for d in (pc.get('days_of_week') or []):
+                    slot_date = _last_occurrence(d, now)
+                    if slot_date is None:
+                        continue
+                    ended = _slot_end(slot_date, pc.get('time_end') or '19:25')
+                    if (now - ended).total_seconds() < ASK_GRACE_HOURS * 3600:
+                        continue
+                    if _already_logged(row, slot_date):
+                        continue
+                    out.append({'program': row, 'slot_date': slot_date.isoformat(),
+                                'body': f"{row.get('title')} on "
+                                        f"{slot_date.strftime('%A')} — did it happen?"})
+        except Exception as e:
+            print(f"[programs] session ask check failed for {row.get('id')}: {e}")
     return out
 
 

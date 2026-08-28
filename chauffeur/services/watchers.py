@@ -482,11 +482,32 @@ def _program_findings(now: datetime.datetime):
             if bent:
                 day = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
                        'Saturday', 'Sunday')[bent['weekday']]
+                # Four honest endings, not one reused for all of them: an
+                # undated target can just move; a dated one that already had
+                # slack needs no claim of a squeeze that never happened; a
+                # dated one that needed it gets the real compression named;
+                # and a dated one too far behind to bend has to say so rather
+                # than claim room that was never made.
+                if bent['fits'] is False:
+                    line = (f"🎸 {row.get('title')}: {day}s keep getting eaten, "
+                            f"and the plan is now tight against the date — the "
+                            f"phases are as short as they can go. Want to try "
+                            f"a different day?")
+                elif bent['fits'] is True and bent.get('phases_changed'):
+                    line = (f"🎸 {row.get('title')}: {day}s keep getting eaten — "
+                            f"I've tightened the phases so it still lands on "
+                            f"time. Want to try a different day?")
+                elif bent['fits'] is True:
+                    line = (f"🎸 {row.get('title')}: {day}s keep getting eaten — "
+                            f"want to try a different day? The plan still has "
+                            f"room to land on time as it stands.")
+                else:
+                    line = (f"🎸 {row.get('title')}: {day}s keep getting eaten — "
+                            f"want to try a different day? I've given the plan "
+                            f"more room either way.")
                 out.append(Finding(
                     key=f"program_rebaseline:{row['id']}:{bent['baseline']['rebaselines']}",
-                    line=(f"🎸 {row.get('title')}: {day}s keep getting eaten — "
-                          f"want to try a different day? I've given the plan "
-                          f"more room either way."),
+                    line=line,
                     kind='program_rebaseline', severity='fyi', dm=True,
                     subject_type='program', subject_id=str(row['id'])))
         except Exception as e:
