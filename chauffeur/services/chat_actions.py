@@ -89,6 +89,10 @@ ADMIN_ACTIONS = {
     # Negotiation: the tap that turns a found deal into real asks. The search
     # is free and automatic; the ASKING is a person's decision, always.
     "ask_deal",
+    # Programs: the tap on the session-ask finding. It logs a session the way
+    # a person saying "yes, it happened" always has -- through the same
+    # services.programs.log_session a hand-typed confirmation would use.
+    "log_program_session",
 }
 
 # Human-friendly label shown as the card's action badge.
@@ -111,6 +115,7 @@ ACTION_LABELS = {
     "ask_outside_hand": "Ask for cover",
     "skip_occurrence": "Skip this one",
     "ask_deal": "Ask them",
+    "log_program_session": "Yes, it happened",
 }
 
 
@@ -296,6 +301,9 @@ def _execute(action_type: str, payload: dict) -> dict:
     if action_type == "ask_deal":
         from services import negotiation as _neg
         return _neg.start_asks(payload.get('deal_id'), payload.get('member_id'))
+    if action_type == "log_program_session":
+        from services import programs as _prog
+        return _prog.log_session(payload.get('program_id'), source='asked')
     if action_type in agent_tools.TOOL_HANDLERS:
         return agent_tools.execute_tool(action_type, payload)
     return {"status": "error", "message": f"Unknown action type '{action_type}'."}

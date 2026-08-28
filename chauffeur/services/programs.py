@@ -427,3 +427,155 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
     return {'status': 'success', 'schedule_dirty': True,
             'message': f"{row.get('title')} is on. "
                        f"{len(emissions['commitment_ids'])} practice window(s) claimed."}
+
+
+# --- Living with a program -------------------------------------------------
+
+REBASELINE_WINDOW_DAYS = 21     # how far back "is this working?" looks
+REBASELINE_COOLDOWN_DAYS = 14   # so it cannot chatter
+ASK_GRACE_HOURS = 2             # after the slot ends, before asking
+
+
+def weekday_shortfall(program: dict, now=None) -> dict:
+    """Which weekday keeps getting eaten — computed, never stored.
+
+    To say 'Wednesdays keep getting eaten' you have to know Wednesdays were
+    missed, and the schema deliberately has nowhere to record a miss. So the
+    miss is derived here, used to write one sentence, and thrown away. The wins
+    are durable; the shortfall is a momentary calculation, which is why nothing
+    any surface reads can ever render a person as behind.
+    """
+    now = now or datetime.datetime.now()
+    shape = program.get('shape') or {}
+    days = list(shape.get('preferred_days') or [])
+    if not days:
+        return None
+    start = (program.get('baseline') or {}).get('start_date')
+    try:
+        began = datetime.date.fromisoformat(start) if start else None
+    except (TypeError, ValueError):
+        began = None
+    window_start = max(began or now.date(),
+                       now.date() - datetime.timedelta(days=REBASELINE_WINDOW_DAYS))
+    weeks = max(1, (now.date() - window_start).days // 7)
+    done = {}
+    for s in sessions_between(program, window_start, now.date()):
+        try:
+            wd = datetime.datetime.fromtimestamp(float(s['ts'])).weekday()
+        except (KeyError, TypeError, ValueError):
+            continue
+        done[wd] = done.get(wd, 0) + 1
+    worst, gap = None, 0
+    for d in days:
+        missing = weeks - done.get(d, 0)
+        if missing > gap:
+            worst, gap = d, missing
+    if worst is None or gap < 2:
+        return None
+    return {'weekday': worst, 'expected': weeks, 'done': done.get(worst, 0)}
+
+
+def maybe_rebaseline(program: dict, now=None) -> dict:
+    """Stretch the timeline when life delivered fewer sessions than the plan
+    assumed. A plan that can only be fallen behind is a plan designed to be
+    abandoned — so the plan bends, and says so.
+
+    What it never moves is a date the world fixed. A June campfire is not the
+    app's to reschedule; the phases compress instead.
+    """
+    now = now or datetime.datetime.now()
+    if program.get('state') != 'active':
+        return None
+    baseline = dict(program.get('baseline') or {})
+    last = baseline.get('rebaselined_at')
+    if last and (now.timestamp() - float(last)) < REBASELINE_COOLDOWN_DAYS * 86400:
+        return None
+    short = weekday_shortfall(program, now)
+    if not short:
+        return None
+    baseline['rebaselines'] = int(baseline.get('rebaselines') or 0) + 1
+    baseline['rebaselined_at'] = now.timestamp()
+    # The target event stays exactly where it is; only an undated target moves.
+    if baseline.get('target_date') and not baseline.get('target_event_id'):
+        try:
+            target = datetime.date.fromisoformat(baseline['target_date'])
+            baseline['target_date'] = (target + datetime.timedelta(days=14)).isoformat()
+        except (TypeError, ValueError):
+            pass
+    storage.update_program(program['id'], {'baseline': baseline})
+    return {'weekday': short['weekday'], 'baseline': baseline}
+
+
+def orphaned_emissions(program: dict) -> list:
+    """Emission ids the program believes in that are no longer there.
+
+    Someone deleted a practice window by hand. The program stops believing the
+    time is reserved and says so once — it never silently re-creates it,
+    because an app that puts back what you deleted is an app you stop trusting.
+    """
+    ids = list((program.get('emissions') or {}).get('commitment_ids') or [])
+    if not ids:
+        return []
+    live = {c['id'] for c in storage.get_protected_commitments()}
+    return [cid for cid in ids if cid not in live]
+
+
+def forget_emissions(program_id: str, gone: list) -> None:
+    row = storage.get_program(program_id)
+    if not row:
+        return
+    em = dict(row.get('emissions') or {})
+    em['commitment_ids'] = [c for c in (em.get('commitment_ids') or [])
+                            if c not in set(gone)]
+    storage.update_program(program_id, {'emissions': em})
+
+
+def due_session_asks(now=None) -> list:
+    """Slots that have passed and have not been asked about.
+
+    One question per slot, ever. Silence counts nothing — the number only means
+    sessions a person said they did. Quiet hours are honoured, so a 9pm slot
+    asks in the morning rather than at 9:25pm.
+    """
+    from services import family_digest
+    now = now or datetime.datetime.now()
+    out = []
+    for row in storage.get_programs(state='active'):
+        member = storage.get_member(row.get('member_id'))
+        if not member or family_digest.in_member_quiet_hours(member, now):
+            continue
+        cids = set((row.get('emissions') or {}).get('commitment_ids') or [])
+        for pc in storage.get_protected_commitments(member_id=row['member_id']):
+            if pc.get('id') not in cids:
+                continue
+            for d in (pc.get('days_of_week') or []):
+                slot_date = _last_occurrence(d, now)
+                if slot_date is None:
+                    continue
+                ended = _slot_end(slot_date, pc.get('time_end') or '19:25')
+                if (now - ended).total_seconds() < ASK_GRACE_HOURS * 3600:
+                    continue
+                if _already_logged(row, slot_date):
+                    continue
+                out.append({'program': row, 'slot_date': slot_date.isoformat(),
+                            'body': f"{row.get('title')} on "
+                                    f"{slot_date.strftime('%A')} — did it happen?"})
+    return out
+
+
+def _last_occurrence(weekday: int, now):
+    delta = (now.weekday() - weekday) % 7
+    d = now.date() - datetime.timedelta(days=delta)
+    return d if d <= now.date() else None
+
+
+def _slot_end(day, hhmm: str):
+    try:
+        h, m = [int(x) for x in str(hhmm).split(':')[:2]]
+    except (ValueError, TypeError):
+        h, m = 19, 25
+    return datetime.datetime(day.year, day.month, day.day, h, m)
+
+
+def _already_logged(program: dict, day) -> bool:
+    return bool(sessions_between(program, day, day))

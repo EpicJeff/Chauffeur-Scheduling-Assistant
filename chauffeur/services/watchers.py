@@ -392,7 +392,8 @@ def _occasion_findings(now: datetime.datetime):
 SCANNED_KINDS = ('unassigned', 'optional_skip', 'proposal', 'chore_verify',
                  'redemption', 'errand_pastdue', 'supply_deadline',
                  'occasion_gap', 'household_task', 'stage', 'care_gap',
-                 'commitment', 'chore_unclaimed', 'thread_stall')
+                 'commitment', 'chore_unclaimed', 'thread_stall',
+                 'program_session', 'program_rebaseline', 'program_drift')
 
 
 def _thread_stalls(now: datetime.datetime):
@@ -437,6 +438,62 @@ def _thread_stalls(now: datetime.datetime):
     return out
 
 
+def _program_findings(now: datetime.datetime):
+    """A program that needs a word: a session to confirm, a timeline that bent,
+    or reserved time that has quietly disappeared.
+
+    Every line here blames the WEEK, never the person — that is the design's
+    rule and it is the difference between a finding with a fix attached and a
+    reprimand with a number attached.
+    """
+    from services import programs as _prog
+    out = []
+    if not storage.get_settings().get('programs_enabled', True):
+        return out
+
+    try:
+        for due in _prog.due_session_asks(now):
+            row = due['program']
+            out.append(Finding(
+                key=f"program_session:{row['id']}:{due['slot_date']}",
+                line=f"🎸 {due['body']}",
+                kind='program_session', severity='fyi', dm=True,
+                subject_type='program', subject_id=str(row['id']),
+                action={'label': 'Yes, it happened',
+                        'action_type': 'log_program_session',
+                        'payload': {'program_id': row['id']}}))
+    except Exception as e:
+        print(f"[watchers] program session asks failed: {e}")
+
+    for row in storage.get_programs(state='active'):
+        try:
+            gone = _prog.orphaned_emissions(row)
+            if gone:
+                _prog.forget_emissions(row['id'], gone)
+                out.append(Finding(
+                    key=f"program_drift:{row['id']}",
+                    line=(f"📅 {row.get('title')}: that practice time isn't on "
+                          f"the calendar any more. Want it back, or shall I "
+                          f"re-shape the week?"),
+                    kind='program_drift', severity='decide', dm=True,
+                    subject_type='program', subject_id=str(row['id'])))
+                continue
+            bent = _prog.maybe_rebaseline(row, now)
+            if bent:
+                day = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
+                       'Saturday', 'Sunday')[bent['weekday']]
+                out.append(Finding(
+                    key=f"program_rebaseline:{row['id']}:{bent['baseline']['rebaselines']}",
+                    line=(f"🎸 {row.get('title')}: {day}s keep getting eaten — "
+                          f"want to try a different day? I've given the plan "
+                          f"more room either way."),
+                    kind='program_rebaseline', severity='fyi', dm=True,
+                    subject_type='program', subject_id=str(row['id'])))
+        except Exception as e:
+            print(f"[watchers] program check failed for {row.get('id')}: {e}")
+    return out
+
+
 def collect_findings(now: datetime.datetime = None):
     """All watcher findings as `Finding` tuples — unfiltered, un-deduped."""
     now = now or datetime.datetime.now()
@@ -455,6 +512,7 @@ def collect_findings(now: datetime.datetime = None):
     findings += _care_gap_findings(now)
     findings += _commitment_findings(now)
     findings += _thread_stalls(now)
+    findings += _program_findings(now)
     return findings, unclaimed
 
 
