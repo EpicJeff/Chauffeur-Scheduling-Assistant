@@ -316,7 +316,49 @@ def _occasion_findings(now: datetime.datetime):
 SCANNED_KINDS = ('unassigned', 'optional_skip', 'proposal', 'chore_verify',
                  'redemption', 'errand_pastdue', 'supply_deadline',
                  'occasion_gap', 'household_task', 'stage', 'care_gap',
-                 'commitment', 'chore_unclaimed')
+                 'commitment', 'chore_unclaimed', 'thread_stall')
+
+
+def _thread_stalls(now: datetime.datetime):
+    """A thread (services/threads.py) that stalled — a promise to a vendor or
+    a project that stopped moving and nothing else in the app would ever
+    notice.
+
+    The signal policy still applies: a quiet thread, or one whose next-action
+    date only just passed, is watched but not paged — that's the normal shape
+    of a slow-moving thread, not an emergency. It becomes a `decide` DM only
+    once the missed promise has sat more than a week, because that is the
+    point where "I'll get to it" has stopped being true.
+
+    Every line carries the thread's title AND its next action (never a bare
+    "this went quiet") — a thread with no next action set still gets an
+    actionable line, because the missing decision IS the next action.
+    """
+    from services import threads as _threads
+    today = now.date()
+    out = []
+    for t in _threads.stalled(today=today):
+        thread_id = t.get('id')
+        title = t.get('title') or 'Thread'
+        next_action = t.get('next_action') or ''
+        what = f"next: {next_action}" if next_action \
+            else "no next action set — decide one"
+        severity, dm = 'fyi', False
+        if t.get('stall_reason') == 'overdue':
+            overdue_days = 0
+            try:
+                due_date = datetime.date.fromisoformat(t.get('next_action_at'))
+                overdue_days = (today - due_date).days
+            except (TypeError, ValueError):
+                pass
+            if overdue_days > 7:
+                severity, dm = 'decide', True
+        out.append(Finding(
+            key=f"thread_stall:{thread_id}",
+            line=f"🧵 {title} has stalled — {what}",
+            kind='thread_stall', severity=severity, dm=dm,
+            subject_type='thread', subject_id=str(thread_id)))
+    return out
 
 
 def collect_findings(now: datetime.datetime = None):
@@ -336,6 +378,7 @@ def collect_findings(now: datetime.datetime = None):
     findings += _stage_findings(now)
     findings += _care_gap_findings(now)
     findings += _commitment_findings(now)
+    findings += _thread_stalls(now)
     return findings, unclaimed
 
 

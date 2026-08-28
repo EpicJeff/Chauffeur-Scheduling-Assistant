@@ -63,10 +63,26 @@ def scenario_open_by_owner_counts_the_carrying():
     check(d == {'m1': 2, 'm2': 1}, f"who is holding what, got {d}")
 
 
+def scenario_a_stalled_thread_becomes_a_finding():
+    _reset()
+    from services import watchers
+    t = threads.create('Pest control', owner_member_id='m1',
+                       next_action='Call them back', next_action_at=_day(-3))
+    found = [f for f in watchers.collect_findings()[0] if f.kind == 'thread_stall']
+    check(len(found) == 1, f"the stall is a finding, got {found}")
+    f = found[0]
+    check('Pest control' in f.line and 'Call them back' in f.line,
+          f"and it arrives with what to do next, got {f.line!r}")
+    check(f.subject_id == t and f.subject_type == 'thread', f"got {f}")
+    check('thread_stall' in watchers.SCANNED_KINDS,
+          "registered, or reconcile will never close it")
+
+
 if __name__ == '__main__':
     scenario_overdue_next_action_stalls()
     scenario_silence_stalls_even_with_no_date()
     scenario_a_note_resets_the_quiet_clock()
     scenario_closed_threads_never_stall()
     scenario_open_by_owner_counts_the_carrying()
+    scenario_a_stalled_thread_becomes_a_finding()
     print("test_threads OK")
