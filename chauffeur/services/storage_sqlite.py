@@ -83,6 +83,9 @@ INDEX_SPEC = {
     "findings": [["id"], ["identity"], ["state"]],
     # Coverage asks: the nudge sweep reads by state, the answer path by id.
     "coverage_asks": [["id"], ["state"], ["event_id"]],
+    # Solve packs: written once per day per refresh, read by date when
+    # somebody asks the negotiator a question. Date is the only lookup.
+    "solve_packs": [["date"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

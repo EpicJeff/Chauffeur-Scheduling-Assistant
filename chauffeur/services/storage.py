@@ -464,6 +464,7 @@ with db_lock:
     household_tasks_table = db.table('household_tasks')
     threads_table = db.table('threads')
     requests_table = db.table('requests')
+    solve_packs_table = db.table('solve_packs')
     protected_commitments_table = db.table('protected_commitments')
     # Needs You (findings arc). A watcher finding with a LIFECYCLE: it opens
     # when the sweep sees the condition and closes when the sweep stops seeing
@@ -6430,6 +6431,34 @@ def save_cached_daily_schedule(date_str: str, schedule_data: dict, events_hash: 
         
         # Invalidate any custom range caches that might have relied on old daily data
         custom_schedules_table.truncate()
+
+
+# --- Solve packs: what the solver was actually given, per day -------------
+# Negotiation (docs/superpowers/specs/2026-08-28-negotiation-design.md) replays
+# a day to ask what would happen if one thing changed. Rebuilding the solver's
+# world from storage would drift -- driver_events is built during the calendar
+# fetch and the rule list is assembled inside the refresh -- and a drifted
+# replay answers a different question than the schedule did. So the refresh
+# writes down what it handed the solver, and the negotiator replays that.
+
+def save_solve_pack(date_str: str, pack: dict):
+    with db_lock:
+        solve_packs_table.upsert({**pack, 'date': date_str},
+                                 Query().date == date_str)
+
+def get_solve_pack(date_str: str) -> Optional[dict]:
+    with db_lock:
+        res = solve_packs_table.search(Query().date == date_str)
+        return dict(res[0]) if res else None
+
+def prune_solve_packs(before_date: str) -> int:
+    """Yesterday's pack answers no question anybody will ask."""
+    with db_lock:
+        rows = [dict(r) for r in solve_packs_table.all()]
+        stale = [r for r in rows if (r.get('date') or '') < before_date]
+        for r in stale:
+            solve_packs_table.remove(Query().date == r['date'])
+        return len(stale)
 
 
 # Settings CRUD
