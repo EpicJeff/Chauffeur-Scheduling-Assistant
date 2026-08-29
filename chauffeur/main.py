@@ -5693,10 +5693,16 @@ def create_program(body: dict = Body(default={}), request: Request = None):
     return {"status": "success", "id": pid, "program": storage.get_program(pid)}
 
 
-@app.patch("/api/programs/{program_id}")
-def patch_program(program_id: str, body: dict = Body(default={}),
-                  request: Request = None):
+@app.post("/api/programs/{program_id}/edit")
+def edit_program(program_id: str, body: dict = Body(default={}),
+                 request: Request = None):
     """Change a proposal before it claims anything.
+
+    A POST verb on the program rather than a PATCH on the collection item,
+    because every other thing a program can be told to do is one
+    (`approve`, `pause`, `resume`, `reshape`, `finish`, `drop`) and the odd
+    one out is a variable the day something between a phone and the add-on
+    declines it.
 
     A proposal used to be frozen the moment it was made: no title fix, no
     change of shape, no second look. The only exits were approving it or
@@ -5756,8 +5762,18 @@ def patch_program(program_id: str, body: dict = Body(default={}),
             return {"status": "error",
                     "message": "Programs are switched off for this household."}
         member = storage.get_member(row.get('member_id')) or {}
-        curated = _cur.curate(updates.get('title') or row.get('title'), shape,
-                              member_name=member.get('name') or '')
+        # `curate()` handles its own expected failures and hands back a tier;
+        # anything it does NOT expect would otherwise leave FastAPI to answer
+        # with a plain-text 500, which the page cannot parse into words --
+        # every such failure reached the family as "Couldn't look again just
+        # now", the least useful sentence in the app.
+        try:
+            curated = _cur.curate(updates.get('title') or row.get('title'),
+                                  shape, member_name=member.get('name') or '')
+        except Exception as e:
+            print(f"[programs] curate failed for {program_id}: {e!r}")
+            return {"status": "error",
+                    "message": f"Looking for a plan failed: {e}"}
         # A second look that finds nothing must not COST the family the plan
         # they already had — research can be down, capped or simply unlucky,
         # and overwriting a cited plan with an empty one would make "Look

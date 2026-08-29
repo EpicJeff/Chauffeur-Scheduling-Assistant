@@ -714,16 +714,28 @@
                                             "Couldn't look again just now.");
                 },
 
+                // Every failure here says what actually happened. An
+                // unparseable body (a proxy's HTML, a plain-text 500) used to
+                // collapse into the same one-line "couldn't just now" as a
+                // dropped connection, which is the sentence that makes a bug
+                // unreportable: nobody can tell you what broke because the
+                // screen never knew either.
                 async patchProgram(p, body, failure) {
                     this.proposing = true;
                     try {
-                        const r = await fetch(this.apiBase + `api/programs/${p.id}`, {
-                            method: 'PATCH', headers: this.authHeaders(),
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/edit`, {
+                            method: 'POST', headers: this.authHeaders(),
                             body: JSON.stringify({ member_id: this.myId || null, ...body })
                         });
-                        const d = await r.json().catch(() => ({}));
+                        const raw = await r.text().catch(() => '');
+                        let d = {};
+                        try { d = JSON.parse(raw) || {}; } catch (e) { d = {}; }
                         if (!r.ok || d.status === 'error') {
-                            let msg = (d.detail || d.message || failure);
+                            let msg = (d.detail || d.message);
+                            if (!msg) {
+                                const body = (raw || '').trim().slice(0, 160);
+                                msg = `${failure} (HTTP ${r.status}${body ? ': ' + body : ''})`;
+                            }
                             if (d.alternatives && d.alternatives.length) {
                                 msg += ' Try instead: ' + d.alternatives.join('; ') + '.';
                             }
@@ -733,7 +745,7 @@
                         await this.load();
                         return true;
                     } catch (e) {
-                        showGlobalAlert(failure);
+                        showGlobalAlert(`${failure} (${e && e.message ? e.message : 'the request never completed'})`);
                         return false;
                     } finally {
                         this.proposing = false;

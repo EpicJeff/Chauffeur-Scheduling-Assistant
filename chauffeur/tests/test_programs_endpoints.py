@@ -278,7 +278,7 @@ def scenario_the_new_endpoints_exist():
     paths = {r.path for r in main.app.routes}
     for p in ('/api/programs/{program_id}/finish',
               '/api/programs/{program_id}/reshape',
-              '/api/programs/{program_id}',
+              '/api/programs/{program_id}/edit',
               '/api/programs/celebrations'):
         check(p in paths, f"{p} must be reachable by hand")
 
@@ -309,7 +309,7 @@ def scenario_a_proposal_can_be_re_shaped_without_spending_research():
     _cur.curate = lambda *a, **kw: called.append(1) or {'phases': [],
                                                         'source': {}}
     try:
-        res = main.patch_program(pid, body={'member_id': 'mom',
+        res = main.edit_program(pid, body={'member_id': 'mom',
                                             'sessions_per_week': 2},
                                  request=None)
     finally:
@@ -338,7 +338,7 @@ def scenario_changing_the_aim_looks_for_a_new_plan():
     _stub_curate([{'name': 'New', 'weeks': 4, 'what': 'new material',
                    'milestone': '', 'milestone_hit_at': None}])
     try:
-        res = main.patch_program(pid, body={'member_id': 'mom',
+        res = main.edit_program(pid, body={'member_id': 'mom',
                                             'title': 'Learn the ukulele'},
                                  request=None)
     finally:
@@ -365,7 +365,7 @@ def scenario_looking_again_re_runs_research_on_the_same_aim():
     _stub_curate([{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords',
                    'milestone': 'G-C-D', 'milestone_hit_at': None}])
     try:
-        res = main.patch_program(pid, body={'member_id': 'mom',
+        res = main.edit_program(pid, body={'member_id': 'mom',
                                             'recurate': True}, request=None)
     finally:
         _cur.curate = real_curate
@@ -394,7 +394,7 @@ def scenario_looking_again_never_costs_the_plan_already_found():
         'phases': [], 'source': {'origin': 'none', 'reason': 'capped',
                                  'hand_written': True}}
     try:
-        res = main.patch_program(pid, body={'member_id': 'mom',
+        res = main.edit_program(pid, body={'member_id': 'mom',
                                             'recurate': True}, request=None)
     finally:
         _cur.curate = real_curate
@@ -414,7 +414,7 @@ def scenario_a_body_aim_is_refused_on_an_edit_too():
     import main
     pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
                                'state': 'proposed'})
-    res = main.patch_program(pid, body={'member_id': 'mom',
+    res = main.edit_program(pid, body={'member_id': 'mom',
                                         'title': 'lose 15 pounds'},
                              request=None)
     check(res.get('status') == 'error', f"got {res}")
@@ -429,7 +429,7 @@ def scenario_only_a_proposal_is_editable():
     import main
     pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
                                'state': 'active'})
-    res = main.patch_program(pid, body={'member_id': 'mom', 'minutes': 45},
+    res = main.edit_program(pid, body={'member_id': 'mom', 'minutes': 45},
                              request=None)
     check(res.get('status') == 'error', f"an active program is not editable: {res}")
     check(storage.get_program(pid).get('shape', {}).get('minutes') != 45,
@@ -443,7 +443,7 @@ def scenario_a_child_cannot_edit_a_siblings_proposal():
     pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
                                'state': 'proposed'})
     token = storage.create_member_token('sib')
-    check(_denied(main.patch_program, pid, body={}, request=Req(token)) == 403,
+    check(_denied(main.edit_program, pid, body={}, request=Req(token)) == 403,
           "editing somebody else's proposal needs a parent/adult")
 
 

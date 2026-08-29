@@ -6544,11 +6544,13 @@ in one sentence. `POST /api/programs` runs the screen first;
 parent reads on the Programs page is the same one Argyle says in chat.
 
 **A proposal can be edited, re-researched or dismissed** (v2.435.0,
-`PATCH /api/programs/{id}`). Every action on the Programs page was gated on
+`POST /api/programs/{id}/edit` — a POST verb on the program like every
+sibling, because the odd method out is a variable the day something between a
+phone and the add-on declines it). Every action on the Programs page was gated on
 `active|paused`, so a `proposed` program had exactly one move — approve the
 footprint — and a typo, a bad guess at how many evenings a week were
 realistic, or a research outage was permanent: the only way out was proposing
-again, which spends another research run. `patch_program` accepts `title`,
+again, which spends another research run. `edit_program` accepts `title`,
 the three shape fields, `target_date` and `recurate`, and refuses anything
 that is not `proposed` (once time is claimed, changing the plan under it would
 move windows nobody re-approved — the way back is `reshape`, which frees the
