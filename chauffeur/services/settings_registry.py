@@ -572,6 +572,11 @@ ENTRIES: List[dict] = [
     _e('programs_rebaseline_cooldown_days', 'programs', 'Re-baseline at most every (days)',
        'The minimum gap between two timeline stretches, so a plan cannot '
        'chatter about bending (default 14).', page='programs'),
+    _e('programs_generate_enabled', 'programs', 'Make a plan when none is found',
+       'When research turns up no published program for an aim, let the app '
+       'write one and label it as made by the app (default on). Off means '
+       'those programs claim practice time and carry no plan at all.',
+       page='programs'),
     _e('programs_research_pages', 'programs', 'Pages to read',
        'How many real pages a curation run reads before proposing a plan '
        '(default 4). One run per program, cached for its life.',

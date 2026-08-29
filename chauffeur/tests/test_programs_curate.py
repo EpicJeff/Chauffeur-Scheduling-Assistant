@@ -1,19 +1,35 @@
-"""Finding a real plan, and refusing to invent one.
+"""Finding a real plan, refusing to invent one where inventing would hurt,
+and never dressing an outage up as a finding.
 
 An LLM will happily produce a twelve-week curriculum for anything, and it will
-look exactly as good as the real one an expert spent a decade refining. These
-scenarios are what stops that.
+look exactly as good as the real one an expert spent a decade refining. The
+answer to that is not silence -- a family with no plan at all is not safer,
+just emptier -- it is LABELLING plus two hard limits that survive the move
+from curating to generating: pacing stays arithmetic, and a made-up plan never
+prescribes a load or a dose. These scenarios are what hold that line.
 """
 from harness import check
 from services import programs_curate
 
 
 def _fake_research(facts, answer='', dropped=0):
+    """The pages route: only what this app fetched itself is citable, and
+    `sources` is everything the search returned, which is not."""
     return lambda q, read_pages=None: {
-        'status': 'ok', 'answer': answer, 'facts': facts,
+        'status': 'ok', 'answer': answer, 'facts': facts, 'via': 'pages',
         'sources': [{'title': 'Everything the search returned',
                      'url': 'https://example.invalid/never-read'}],
         'dropped': dropped}
+
+
+def _fake_grounded(sources, answer='Justin Guitar is the standard beginner course.'):
+    """The grounding route -- the default provider's -- where the whole answer
+    arrives pinned to one source and every source behind it is a page the
+    answer was actually built from."""
+    return lambda q, read_pages=None: {
+        'status': 'ok', 'answer': answer, 'via': 'grounding',
+        'facts': [{'claim': answer, 'url': sources[0]['url']}],
+        'sources': list(sources), 'dropped': 0}
 
 
 def _fake_pool(payload):
@@ -24,6 +40,24 @@ def _fake_pool(payload):
     def f(tier, api_key, system, prompt, **kw):
         return payload
     return f
+
+
+def _split_pool(shaping, generating, seen=None):
+    """Two different calls go through one seam. Which one this is, is decided
+    by the system prompt, so a scenario can assert that GENERATION happened
+    rather than merely that something came back."""
+    def f(tier, api_key, system, prompt, **kw):
+        made = system is programs_curate.GENERATE_SYSTEM
+        if seen is not None:
+            seen.append('generate' if made else 'shape')
+        return generating if made else shaping
+    return f
+
+
+def _settings(**over):
+    base = {'programs_research_pages': 4, 'llm_gemini_api_key': 'k'}
+    base.update(over)
+    return lambda: base
 
 
 def scenario_a_body_aim_is_refused_before_any_research():
@@ -82,6 +116,106 @@ def scenario_a_phase_that_cites_nothing_is_dropped():
               "and the plan carries the page it came from")
         check(out['source']['hand_written'] is False,
               "a cited plan is not hand-written")
+        check(out['source']['origin'] == programs_curate.ORIGIN_CITED,
+              f"and its tier is 'cited', got {out['source']}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
+def scenario_a_phase_may_cite_by_number():
+    """The citation the model is ASKED for is an index, not a copied URL.
+
+    Copying a long resolved URL exactly was the old requirement, and a single
+    character of drift threw away an entire real plan -- which is most of why
+    plans were arriving with no phases at all. An index cannot drift, and an
+    index that names nothing is still dropped."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    programs_curate.web.research = _fake_research([
+        {'claim': 'Week 1 alternates 60 seconds running and 90 walking',
+         'url': 'https://c25k.example/week1'},
+        {'claim': 'Week 5 ends with a 20 minute continuous run',
+         'url': 'https://c25k.example/week5'}])
+    programs_curate._pool_call = _fake_pool({
+        'phases': [
+            {'name': 'Weeks 1-4', 'what': 'Run-walk intervals', 'cite': 1,
+             'milestone': 'Eight minutes of running in a session'},
+            {'name': 'Week 5', 'what': 'First continuous run', 'cite': '2',
+             'milestone': 'Twenty unbroken minutes'},
+            {'name': 'Nowhere', 'what': 'Cites an item that does not exist',
+             'cite': 9, 'milestone': 'n/a'},
+        ]})
+    try:
+        out = programs_curate.curate('run a 5K',
+                                     {'sessions_per_week': 3, 'minutes': 30})
+        names = [ph['name'] for ph in out['phases']]
+        check(names == ['Weeks 1-4', 'Week 5'],
+              f"index citations count and a dangling index does not, got {names}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
+def scenario_grounding_route_can_cite_every_page_behind_the_answer():
+    """On the default route the whole answer used to be pinned to sources[0]
+    and every other source thrown away, which left one URL to cite, one shot
+    at citing it, and a runners-up list that was structurally always empty."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    programs_curate.web.research = _fake_grounded([
+        {'title': 'Justin Guitar beginner course', 'url': 'https://jg.example/'},
+        {'title': 'Andy Guitar starter', 'url': 'https://andy.example/'},
+        {'title': 'Fender Play', 'url': 'https://fender.example/'}])
+    programs_curate._pool_call = _fake_pool({
+        'plan_name': 'Justin Guitar',
+        'why_this_one': 'It is free, sequenced, and made for total beginners.',
+        'phases': [{'name': 'Grade 1', 'what': 'Open chords', 'cite': 1,
+                    'milestone': 'G-C-D without looking'},
+                   {'name': 'Grade 2', 'what': 'Barre chords', 'cite': 2,
+                    'milestone': 'F for a whole song'}],
+        'runners_up': [{'cite': 3, 'why_not': 'Costs a subscription.'}]})
+    try:
+        out = programs_curate.curate('learn guitar',
+                                     {'sessions_per_week': 3, 'minutes': 25})
+        src = out['source']
+        check(len(out['phases']) == 2,
+              f"both cited phases survive, got {out['phases']}")
+        check(src['plan_name'] == 'Justin Guitar',
+              f"a plan name found in the material is kept, got {src}")
+        check(len(src['runners_up']) >= 1,
+              f"the other candidates must reach the card, got {src['runners_up']}")
+        check(any(r['why_not'] == 'Costs a subscription.'
+                  for r in src['runners_up']),
+              f"with the model's own reason, not a canned one, got {src['runners_up']}")
+        check(src['why_this_one'].startswith('It is free'),
+              f"and the argument for the pick is carried, got {src['why_this_one']}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
+def scenario_a_plan_name_not_in_the_material_is_not_shown():
+    """The model naming the program it organised beats taking the answer's
+    first sentence -- but only while the name cannot be invented. "Following
+    <a plausible thing>" over a link that never said it is the exact failure
+    this module exists to prevent."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    programs_curate.web.research = _fake_grounded(
+        [{'title': 'A county library reading ladder', 'url': 'https://lib.example/'}],
+        answer='The county library publishes a graded reading ladder.')
+    programs_curate._pool_call = _fake_pool({
+        'plan_name': 'The Oxford Reading Programme',
+        'phases': [{'name': 'Ladder 1', 'what': 'Short chapter books',
+                    'cite': 1, 'milestone': 'One book finished'}]})
+    try:
+        out = programs_curate.curate('read a book a month',
+                                     {'sessions_per_week': 3, 'minutes': 20})
+        check(out['source']['plan_name'] == '',
+              f"an unverifiable plan name must not reach the card, got "
+              f"{out['source']['plan_name']!r}")
+        check(out['phases'], "the cited phases still stand")
     finally:
         programs_curate.web.research = real_research
         programs_curate._pool_call = real_pool
@@ -117,10 +251,168 @@ def scenario_pacing_is_computed_not_dictated():
         programs_curate._pool_call = real_pool
 
 
-def scenario_shaping_failure_is_hand_written_not_a_crash():
-    """The fourth path to hand_written: research succeeded and read real
-    pages, but the phase-shaping call itself failed -- raised, or came back
-    with an error payload. The program still comes back honest, not broken."""
+def scenario_nothing_found_becomes_a_labelled_plan_not_a_bare_week():
+    """Research ran and the web had nothing to cite. The old answer was an
+    empty plan and a calendar reservation labelled "written by hand", which
+    named something nobody had done. Now a plan is made and SAYS it was made:
+    no plan name, no source link, and a tier a screen can render honestly."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    seen = []
+    programs_curate.web.research = _fake_research([], answer='Just practise a lot!')
+    programs_curate._pool_call = _split_pool(
+        {'phases': []},
+        {'why_this_one': 'Nothing published covers this, so it builds up in steps.',
+         'phases': [
+             {'name': 'Get the motion', 'what': 'Practise the throw slowly',
+              'milestone': 'Ten clean throws in a row'},
+             {'name': 'Join it up', 'what': 'Run the whole sequence',
+              'milestone': 'The sequence, start to finish'}]},
+        seen)
+    try:
+        out = programs_curate.curate(
+            'learn to juggle scarves', {'sessions_per_week': 2, 'minutes': 20})
+        src = out['source']
+        check('generate' in seen, f"generation must actually run, got {seen}")
+        check(len(out['phases']) == 2,
+              f"the family gets a plan to follow, got {out['phases']}")
+        check(src['origin'] == programs_curate.ORIGIN_GENERATED,
+              f"labelled as the app's own, got {src}")
+        check(src['plan_name'] == '' and src['url'] == '',
+              f"a made plan never names a program or links a source, got {src}")
+        check(src['hand_written'] is True,
+              "and it is still not a cited plan, for readers that only know "
+              "the old field")
+        check(all(ph['weeks'] == programs_curate.phase_weeks(2)
+                  for ph in out['phases']),
+              f"pacing stays arithmetic in the generated tier too, got "
+              f"{out['phases']}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
+def scenario_an_outage_is_never_papered_over_with_a_made_plan():
+    """"The research call did not run" is a retry, not a gap in the world's
+    curricula. Generating here would dress an outage up as a finding, and the
+    family would never know there was anything to try again."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    seen = []
+    programs_curate._pool_call = _split_pool({'phases': []}, {'phases': []}, seen)
+    try:
+        for status, reason in (('disabled', 'disabled'), ('no_key', 'no_key'),
+                               ('capped', 'capped')):
+            programs_curate.web.research = (
+                lambda *a, _s=status, **kw: {'status': _s})
+            out = programs_curate.curate('learn guitar',
+                                         {'sessions_per_week': 3, 'minutes': 25})
+            src = out['source']
+            check(out['phases'] == [], f"no phases for {status}, got {out}")
+            check(src['origin'] == programs_curate.ORIGIN_NONE,
+                  f"{status} is the 'none' tier, got {src}")
+            check(src['reason'] == reason,
+                  f"and says which outage it was, got {src}")
+            check(src['why_this_one'] == programs_curate.REASON_TEXT[reason],
+                  f"in words a person can read, got {src['why_this_one']!r}")
+        check(seen == [], f"and no model call may fire at all, got {seen}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
+def scenario_generation_is_refused_where_a_wrong_step_injures():
+    """Curating these is untouched -- an expert's swim progression is exactly
+    what this module wants to find. What is refused is the app WRITING one,
+    in the domains where a plausible wrong number is an injury rather than a
+    wasted month."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    seen = []
+    programs_curate.web.research = _fake_research([], answer='')
+    programs_curate._pool_call = _split_pool({'phases': []},
+                                             {'phases': [{'name': 'x',
+                                                          'what': 'y'}]}, seen)
+    try:
+        for aim in ('swim a mile', 'learn to deadlift', 'train for a marathon',
+                    'start intermittent fasting'):
+            check(programs_curate.generation_allowed(aim) is False,
+                  f"'{aim}' must not get a made-up plan")
+            out = programs_curate.curate(aim, {'sessions_per_week': 3,
+                                               'minutes': 30})
+            check(out['source']['reason'] == 'generation_refused',
+                  f"'{aim}' says why it has no plan, got {out['source']}")
+            check(out['phases'] == [], f"and carries no phases, got {out}")
+        check('generate' not in seen,
+              f"and no generation call may fire for these, got {seen}")
+        for aim in ('learn guitar', 'read a book a month', 'learn to juggle'):
+            check(programs_curate.generation_allowed(aim) is True,
+                  f"'{aim}' is an ordinary aim and may have a made plan")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
+def scenario_a_made_plan_that_prescribes_a_load_is_dropped():
+    """The one rule that survives from curating into generating, alongside
+    pacing: a made-up plan describes the practice, never the numbers an
+    expert earns the right to set. A phase carrying one is dropped exactly
+    like an uncited phase, and if that empties the plan the family is told."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    programs_curate.web.research = _fake_research([], answer='')
+    programs_curate._pool_call = _split_pool(
+        {'phases': []},
+        {'phases': [
+            {'name': 'Build up', 'what': 'Work up to 3 sets of 12 reps',
+             'milestone': 'Add 10 lbs'},
+            {'name': 'Also this', 'what': 'Take 500 mg before each session',
+             'milestone': 'n/a'}]})
+    try:
+        out = programs_curate.curate('get stronger at push-ups',
+                                     {'sessions_per_week': 3, 'minutes': 20})
+        check(out['phases'] == [],
+              f"every load-prescribing phase is dropped, got {out['phases']}")
+        check(out['source']['reason'] == 'load_prescribed',
+              f"and the reason says so rather than 'nothing came back', got "
+              f"{out['source']}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
+def scenario_a_household_can_switch_made_plans_off():
+    """Generating is a default, not a mandate. Off means the old behaviour
+    exactly: practice time, no plan, and a sentence saying which it is."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    seen = []
+    programs_curate.web.research = _fake_research([], answer='')
+    programs_curate.storage.get_settings = _settings(
+        programs_generate_enabled=False)
+    programs_curate._pool_call = _split_pool({'phases': []},
+                                             {'phases': [{'name': 'x',
+                                                          'what': 'y'}]}, seen)
+    try:
+        out = programs_curate.curate('learn to juggle',
+                                     {'sessions_per_week': 2, 'minutes': 20})
+        check(out['phases'] == [], f"no plan when it is switched off, got {out}")
+        check(out['source']['reason'] == 'generation_off',
+              f"and it says that is why, got {out['source']}")
+        check('generate' not in seen,
+              f"and nothing was generated behind the setting, got {seen}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+
+
+def scenario_shaping_failure_is_not_a_crash():
+    """Research succeeded and read real pages, but the phase-shaping call
+    itself failed -- raised, or came back with an error payload. With the
+    generation call failing the same way, the program still comes back
+    honest and whole rather than broken."""
     real_research = programs_curate.web.research
     real_pool = programs_curate._pool_call
     programs_curate.web.research = _fake_research([
@@ -139,29 +431,14 @@ def scenario_shaping_failure_is_hand_written_not_a_crash():
             out = programs_curate.curate(
                 'play campfire songs', {'sessions_per_week': 3, 'minutes': 25})
             check(out['phases'] == [],
-                  f"no phases when shaping failed ({broken.__name__}), got {out}")
+                  f"no phases when every call failed ({broken.__name__}), got {out}")
             check(out['source']['hand_written'] is True,
-                  f"shaping failure must be hand_written, not a crash, got {out}")
+                  f"a total failure is not a cited plan, got {out}")
+            check(out['source']['reason'] == 'generation_failed',
+                  f"and says what failed, got {out['source']}")
     finally:
         programs_curate.web.research = real_research
         programs_curate._pool_call = real_pool
-
-
-def scenario_nothing_cited_means_hand_written():
-    """Research came back with no facts at all — no page was read. The honest
-    answer is to say so, not to fill the gap with fluent guesswork."""
-    real = programs_curate.web.research
-    programs_curate.web.research = _fake_research([], answer='Just practise a lot!')
-    try:
-        out = programs_curate.curate(
-            'learn to juggle chainsaws', {'sessions_per_week': 2, 'minutes': 20})
-        check(out['source']['hand_written'] is True,
-              f"with nothing read, the program is hand-written, got {out['source']}")
-        check(out['source']['facts'] == [], "and carries no citations")
-        check(out['source']['plan_name'] == '',
-              "and does not name a plan it did not find")
-    finally:
-        programs_curate.web.research = real
 
 
 def scenario_research_being_off_is_not_an_invented_plan():
@@ -171,7 +448,9 @@ def scenario_research_being_off_is_not_an_invented_plan():
         out = programs_curate.curate('learn guitar', {'sessions_per_week': 3,
                                                       'minutes': 25})
         check(out['source']['hand_written'] is True,
-              "no research means hand-written, never a confident guess")
+              "no research means no cited plan, never a confident guess")
+        check(out['source']['origin'] == programs_curate.ORIGIN_NONE,
+              f"and no made plan either, got {out['source']}")
     finally:
         programs_curate.web.research = real
 
@@ -209,9 +488,16 @@ if __name__ == '__main__':
     scenario_a_body_aim_is_refused_before_any_research()
     scenario_a_behaviour_aim_passes_the_screen()
     scenario_a_phase_that_cites_nothing_is_dropped()
+    scenario_a_phase_may_cite_by_number()
+    scenario_grounding_route_can_cite_every_page_behind_the_answer()
+    scenario_a_plan_name_not_in_the_material_is_not_shown()
     scenario_pacing_is_computed_not_dictated()
-    scenario_shaping_failure_is_hand_written_not_a_crash()
-    scenario_nothing_cited_means_hand_written()
+    scenario_nothing_found_becomes_a_labelled_plan_not_a_bare_week()
+    scenario_an_outage_is_never_papered_over_with_a_made_plan()
+    scenario_generation_is_refused_where_a_wrong_step_injures()
+    scenario_a_made_plan_that_prescribes_a_load_is_dropped()
+    scenario_a_household_can_switch_made_plans_off()
+    scenario_shaping_failure_is_not_a_crash()
     scenario_research_being_off_is_not_an_invented_plan()
     scenario_ordinary_aims_are_not_refused_as_body_goals()
     scenario_every_real_body_aim_still_refuses()

@@ -713,9 +713,16 @@ class Program(BaseModel):
     # Phases come from pages the app actually read; pacing is computed. A phase
     # that cited nothing was dropped before it got here.
     phases: List[Dict[str, Any]] = Field(default_factory=list)
+    # `origin` is the tier: 'cited' (a real published plan, with its pages),
+    # 'generated' (none was found, so the app wrote one and says so) or 'none'
+    # (research could not run — time only). `reason` names WHY it is not
+    # cited, which used to exist only inside the curator and never reach a
+    # screen. `hand_written` is kept as origin != 'cited' so rows and readers
+    # written before the tiers existed still mean what they meant.
     source: Dict[str, Any] = Field(
         default_factory=lambda: {'plan_name': '', 'url': '', 'why_this_one': '',
-                                 'facts': [], 'runners_up': [],
+                                 'facts': [], 'runners_up': [], 'answer': '',
+                                 'origin': 'none', 'reason': '',
                                  'hand_written': False})
     shape: Dict[str, Any] = Field(
         default_factory=lambda: {'sessions_per_week': 3, 'minutes': 25,
@@ -1460,6 +1467,10 @@ class Settings(BaseModel):
     # How many real pages a curation run reads before proposing a plan
     # (services/programs_curate.py: curate).
     programs_research_pages: Optional[int] = 4
+    # When research finds no published program for an aim, may the app write
+    # one and label it as its own (services/programs_curate.py: _fallback)?
+    # Off means those programs claim time and carry no plan at all.
+    programs_generate_enabled: Optional[bool] = True
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

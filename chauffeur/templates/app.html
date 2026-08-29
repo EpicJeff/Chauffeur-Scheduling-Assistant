@@ -1332,9 +1332,20 @@
                     <button onclick="markProgramMilestone('${p.id}', '${mfEscape(phase.name || '').replace(/'/g, "\\'")}')"
                         class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 shrink-0">Mark hit</button>
                 </div>` : '';
+            // Where the plan came from, wherever the plan's own words are
+            // shown. This card renders `phase.what` -- the actual steps --
+            // and a plan the app wrote itself has to say so on the surface a
+            // kid reads, not only on the parent's Programs page. A cited plan
+            // needs no chip here: the citation lives on that page, and this
+            // card has never claimed a source.
+            const madeChip = ((p.source || {}).origin === 'generated') ? `
+                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 shrink-0">Made by the app</span>` : '';
             return `
             <div class="bg-gray-950/40 border border-gray-800 rounded-xl p-3 mb-2 last:mb-0">
-                <div class="text-sm font-bold text-gray-100">${mfEscape(p.title || '')}</div>
+                <div class="flex items-start justify-between gap-2">
+                    <div class="text-sm font-bold text-gray-100">${mfEscape(p.title || '')}</div>
+                    ${madeChip}
+                </div>
                 ${what ? `<div class="text-xs text-gray-400 mt-1">${what}</div>` : ''}
                 <div class="text-[11px] text-gray-500 mt-1.5">${mfEscape(programCountPhrase(p))}</div>
                 ${nextWindow ? `<div class="text-[11px] text-gray-500">Next practice: ${nextWindow}</div>` : ''}

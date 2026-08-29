@@ -5693,6 +5693,101 @@ def create_program(body: dict = Body(default={}), request: Request = None):
     return {"status": "success", "id": pid, "program": storage.get_program(pid)}
 
 
+@app.patch("/api/programs/{program_id}")
+def patch_program(program_id: str, body: dict = Body(default={}),
+                  request: Request = None):
+    """Change a proposal before it claims anything.
+
+    A proposal used to be frozen the moment it was made: no title fix, no
+    change of shape, no second look. The only exits were approving it or
+    leaving it on the page forever, which meant a typo, a bad guess at how
+    many evenings a week were realistic, or a research outage all cost a
+    fresh proposal — and a fresh proposal spends another research run.
+
+    Only a PROPOSAL is editable, and that is the point rather than a
+    limitation: once time is claimed, changing the plan under it would move
+    windows nobody re-approved. An active program's route back here is
+    `reshape`, which frees the time first.
+
+    A research run is spent only when the aim itself changed, or when the
+    caller explicitly asks to look again — editing "three evenings" to "two"
+    re-paces the phases already found with the same arithmetic that produced
+    them, and reads nothing.
+    """
+    from services import programs as _prog, programs_curate as _cur
+    row = storage.get_program(program_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such program")
+    _program_permission_or_refuse(request, body, row)
+    if row.get('state') != 'proposed':
+        return {"status": "error",
+                "message": ("Only a proposal can be edited. Re-shape the week "
+                            "to bring this one back to a proposal first.")}
+
+    updates = {}
+    title = (body.get('title') or '').strip()
+    retitled = bool(title) and title != (row.get('title') or '')
+    if retitled:
+        screen = _cur.screen_aim(title)
+        if not screen.get('ok'):
+            return {"status": "error", "message": screen.get('message'),
+                    "alternatives": screen.get('alternatives') or []}
+        updates['title'] = title
+
+    old_shape = row.get('shape') or {}
+    shape = _prog.clamp_shape({
+        'sessions_per_week': body.get('sessions_per_week',
+                                      old_shape.get('sessions_per_week')),
+        'minutes': body.get('minutes', old_shape.get('minutes')),
+        'preferred_days': list(body.get('preferred_days')
+                               if body.get('preferred_days') is not None
+                               else (old_shape.get('preferred_days') or []))})
+    if shape != old_shape:
+        updates['shape'] = shape
+
+    if 'target_date' in body:
+        baseline = dict(row.get('baseline') or {})
+        baseline['target_date'] = body.get('target_date') or None
+        updates['baseline'] = baseline
+
+    kept = False
+    if retitled or body.get('recurate'):
+        if not storage.get_settings().get('programs_enabled', True):
+            return {"status": "error",
+                    "message": "Programs are switched off for this household."}
+        member = storage.get_member(row.get('member_id')) or {}
+        curated = _cur.curate(updates.get('title') or row.get('title'), shape,
+                              member_name=member.get('name') or '')
+        # A second look that finds nothing must not COST the family the plan
+        # they already had — research can be down, capped or simply unlucky,
+        # and overwriting a cited plan with an empty one would make "Look
+        # again" a button that can only lose. A retitle is the exception:
+        # that plan was found for a question nobody is asking any more.
+        if retitled or curated['phases'] or not (row.get('phases') or []):
+            updates['phases'] = curated['phases']
+            updates['source'] = curated['source']
+        else:
+            kept = True
+    elif 'shape' in updates and row.get('phases'):
+        # Pacing is arithmetic over the shape, so a shape edit re-paces what
+        # was already found. Nothing is re-read and no model is asked: the
+        # material did not change, only how much of it fits in a week.
+        weeks = _cur.phase_weeks(shape.get('sessions_per_week') or 3)
+        updates['phases'] = [{**ph, 'weeks': weeks} for ph in row['phases']]
+
+    if kept:
+        message = "Looked again and found nothing new — the plan you had stands."
+    elif retitled or body.get('recurate'):
+        message = "Looked again."
+    else:
+        message = "Updated."
+    if not updates:
+        return {"status": "success", "program": row, "message": message}
+    storage.update_program(program_id, updates)
+    return {"status": "success", "program": storage.get_program(program_id),
+            "message": message}
+
+
 @app.get("/api/programs/celebrations")
 def program_celebrations():
     """What a hallway is allowed to know about the household's programs.
@@ -5851,12 +5946,17 @@ def drop_program(program_id: str, background_tasks: BackgroundTasks = None,
     # delete loop — and it clears the ids off the row, which the loop here
     # never did, so a dropped program stopped believing in windows that were
     # really gone only by virtue of nothing reading it again.
+    was_proposed = row.get('state') == 'proposed'
     released = _prog.release_commitments(program_id)
     storage.update_program(program_id, {'state': 'dropped',
                                         'finished_at': _t.time()})
+    # A proposal never claimed anything, so "the time is back" would be a
+    # small lie about the one thing this page is careful about.
+    message = ("Dismissed. Nothing had been claimed." if was_proposed
+               else "Dropped. The time is back.")
     return _program_refresh(
         {"status": "success", "schedule_dirty": bool(released),
-         "message": "Dropped. The time is back."}, background_tasks)
+         "message": message}, background_tasks)
 
 # --- Outside hands: assist contacts and the work they cover (load arc A1) ---
 # A contact is somebody outside this household who does work for it — a carpool

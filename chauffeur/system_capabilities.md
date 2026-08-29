@@ -6411,7 +6411,8 @@ the path as well as the time — `title`, `member_id` (whose ambition this is),
 `shape` (`sessions_per_week`, `minutes`, `preferred_days`), `phases` (each
 `{name, weeks, what, milestone, milestone_hit_at, url}`), a `source` (the
 curation record — plan name, why-this-one, the cited facts, runners-up,
-`hand_written`), an append-only `sessions` log, a `baseline` (`start_date`,
+`origin`/`reason`, and `hand_written` kept as `origin != 'cited'` for rows
+and readers written before the tiers), an append-only `sessions` log, a `baseline` (`start_date`,
 `target_date`, `target_event_id`, `rebaselined_at`, `rebaselines`), and
 `state` (`proposed` → `active` ⇄ `paused` → `done`/`dropped`).
 
@@ -6438,11 +6439,53 @@ from the real thing at a glance. So `curate()` runs a real research pass
 4 — one run per program, cached on the object for its life) and organises
 ONLY what those pages actually said into 2-4 phases; a phase's `weeks` is
 computed from `shape` (never asked of the model — a bare number out of the
-model is curriculum with no page behind it), and **any phase whose `url`
-does not exactly match one of the URLs in `research()`'s `facts` is
-dropped**. If dropping empties the plan, the program is not silently thin —
-`source.hand_written = True` and `phases = []`, said outright rather than
-papered over with an invented curriculum.
+model is curriculum with no page behind it), and **any phase that does not
+cite one of the material items it was handed is dropped**.
+
+**A phase cites by NUMBER, not by copied URL** (v2.435.0). The model is given
+the material as `[1] … <url>` and answers with `cite: 1`; `_cited_url` maps
+the index back, and still accepts an exact URL when one is sent. The old form
+made the model retype a long resolved grounding URL exactly, and one character
+of drift threw away an entire real plan — which was most of why plans were
+arriving with no phases at all. An index cannot drift; an index naming nothing
+is still dropped.
+
+**Three outcomes, and the family is told which one they got** (v2.435.0).
+Dropping every phase used to end the story: `hand_written = True`, `phases =
+[]`, and a card reading "written by hand", which named something nobody had
+done and conflated four different situations — research switched off, the
+allowance spent, the web genuinely having nothing, and the model failing to
+copy a URL. `source.origin` now carries the tier:
+
+- **`cited`** — a real published plan, with `plan_name`, `url`, the facts and
+  the runners-up behind it.
+- **`generated`** — no published program fit, so the app wrote one and says
+  so: no plan name, no source link, an amber "Made by the app" chip on the
+  card and the same words from Argyle in chat. Grounded on the research
+  answer where there was one, so it is research-informed rather than
+  blank-page.
+- **`none`** — no plan at all: practice time and a sentence naming the reason
+  (`source.reason` + `REASON_TEXT`).
+
+**Generating is labelled, screened and bounded — it is not the old rule
+reversed.** The original objection was that an invented curriculum is
+indistinguishable from a real one *at a glance*, which is an argument about
+labelling and is answered by labelling. What labelling does not answer is a
+wrong number where wrong numbers injure, so: (1) an OUTAGE never generates —
+`disabled`/`no_key`/`capped` go straight to `none`, because "the research
+call did not run" is a retry, not a gap in the world's curricula, and a
+generated plan there would hide the thing worth retrying; (2)
+`generation_allowed()` is a second deterministic screen on top of the
+body-goal one, refusing to WRITE (never to curate) plans for barbell loading,
+swimming and diving, marathon and triathlon distances, fasting, doses and
+supplements; (3) a generated phase carrying a load or dose number (`_LOAD_RE`
+— lbs, kg, mg, ml, reps, sets, %, RM) is dropped exactly like an uncited
+phase, and if that empties the plan the tier falls to `none` with
+`reason = 'load_prescribed'`; (4) pacing stays arithmetic in every tier —
+making the content up is allowed and labelled, making the PACING up would
+silently overrule what the family said they can manage. The household switch
+is `programs_generate_enabled` (default on); off restores the old behaviour
+exactly.
 
 **How strong that check actually is depends on which research route ran, and
 the two are not the same.** `services/web.py`'s `research()` has three
@@ -6466,10 +6509,26 @@ routes, and only two of them read pages:
   "every claim tied to a page this app read" guarantee the Brave/SerpAPI
   routes give, and this document said it was.
 
+  **What the curator citably reads on this route changed in v2.435.0.**
+  `programs_curate._material()` branches on `res['via']`: on `pages` only the
+  fetched facts are citable (unchanged, `sources` there is merely what the
+  search returned and is never a citation); on `grounding` EVERY resolved
+  source is citable, because every one of them is a page the grounded answer
+  was built from. Reading only `sources[0]` — which is all `facts` carried —
+  left one URL to cite and one shot at citing it, and it made
+  `runners_up`, computed from `facts[1:]`, structurally always empty on the
+  route nearly every household uses. A plan name the model returns is kept
+  only when `_plan_name_ok` finds it in the material actually read, so the
+  card can never say "Following <a plausible thing>" over a page that never
+  named it.
+
 Rebuilding the grounded route so it also fetches its sources is separate,
 unshipped work. Until it lands, the honest statement is the one above:
 strong on Brave/SerpAPI, weaker on grounding, and never a guarantee that a
-curated plan is free of a model's own invention on the default route.
+curated plan is free of a model's own invention on the default route — which
+is exactly why a grounding citation only ever means "one of the pages behind
+this answer", and why the tier label, not the citation, is what the family is
+asked to trust.
 
 **The body-goal screen runs before anything else, everywhere the aim is
 typed.** `programs_curate.screen_aim(title)` is a deterministic keyword
@@ -6483,6 +6542,35 @@ cook at home five nights a week, train for a real 5K with a date and a bib)
 in one sentence. `POST /api/programs` runs the screen first;
 `propose_program` (below) returns its refusal VERBATIM, so the sentence a
 parent reads on the Programs page is the same one Argyle says in chat.
+
+**A proposal can be edited, re-researched or dismissed** (v2.435.0,
+`PATCH /api/programs/{id}`). Every action on the Programs page was gated on
+`active|paused`, so a `proposed` program had exactly one move — approve the
+footprint — and a typo, a bad guess at how many evenings a week were
+realistic, or a research outage was permanent: the only way out was proposing
+again, which spends another research run. `patch_program` accepts `title`,
+the three shape fields, `target_date` and `recurate`, and refuses anything
+that is not `proposed` (once time is claimed, changing the plan under it would
+move windows nobody re-approved — the way back is `reshape`, which frees the
+time first). A research run is spent only when the AIM changed or `recurate`
+was asked for; a shape edit re-paces the phases already found with
+`programs_curate.phase_weeks`, reading nothing and asking no model.
+`screen_aim` runs on the edited title too, so a body-composition aim cannot be
+reached by renaming. A second look that comes back empty does NOT overwrite a
+plan that was already found — research can be down, capped or simply unlucky,
+and a Look again that can only lose is worse than no button; a retitle is the
+exception, because that plan was found for a question nobody is asking any
+more. Dismissing reuses the existing drop path, whose message
+is now state-aware — a proposal never claimed anything, so it says "Nothing
+had been claimed" rather than "the time is back".
+
+**`why_this_one` and `runners_up` reach a screen** (v2.435.0). Both were
+computed and stored from the day the arc shipped and neither was ever
+rendered anywhere, which left every plan reading as an oracle's pick rather
+than a choice somebody could argue with. The card carries a "Why this one"
+toggle opening onto the argument and an "Also considered" list of the other
+candidates with the model's own reason for passing on each (the canned
+"second choice for this aim" is now only the fallback when it gives none).
 
 **The shape is clamped at every door** (`programs.clamp_shape`, v2.434.0):
 1–7 sessions a week, 5–240 minutes, and preferred days filtered to real
@@ -6684,7 +6772,7 @@ this arc promises exists nowhere, and it slipped past
 program row. The Mind can no longer say "6 days running" about a child's
 guitar.
 
-**The five settings** (Config → Programs, also editable on the `/programs`
+**The six settings** (Config → Programs, also editable on the `/programs`
 page itself — the setting is on the page that names it, per house rule):
 `programs_enabled` (default on — off means no session asks, no
 re-baselining, no findings AND no new programs: it is read by
@@ -6700,7 +6788,10 @@ of this regardless), `programs_rebaseline_days` (default 21, how far back
 timeline stretches in `maybe_rebaseline`), and `programs_research_pages`
 (default 4,
 how many real pages `programs_curate.curate` reads before proposing a
-plan). Every one is read where it is named, with the old module constant
+plan), and `programs_generate_enabled` (default on — when research finds no
+published program, may the app write one and label it as its own; off means
+those programs claim practice time and carry no plan at all, which is the
+pre-v2.435.0 behaviour). Every one is read where it is named, with the old module constant
 kept only as the fallback a stored `null` resolves to — a setting that
 changes nothing is a fake door, the same standard the registry audit
 enforces mechanically for every entry's hand path.

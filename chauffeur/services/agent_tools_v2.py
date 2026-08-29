@@ -1766,16 +1766,25 @@ def propose_program(title: str, for_member_name: str = None,
                      'rebaselines': 0},
         'created_by': acting_member.get('id')})
     source = curated.get('source') or {}
-    if source.get('hand_written'):
-        msg = (f"Proposed \"{title}\" — no cited plan turned up, so it's "
-               f"marked hand-written. Nothing's claimed yet: see the "
-               f"footprint and approve it on the Programs page.")
-    else:
-        n = len(curated.get('phases') or [])
+    n = len(curated.get('phases') or [])
+    tail = ("Nothing's claimed yet: see the footprint and approve it on the "
+            "Programs page.")
+    # The three tiers, said out loud. Saying "hand-written" for all of them
+    # was wrong twice over: nothing had been written, and a research outage
+    # read exactly like the web having nothing on the aim.
+    origin = source.get('origin') or (
+        'none' if source.get('hand_written') else 'cited')
+    if origin == 'cited':
         plan = source.get('plan_name') or 'what was found'
-        msg = (f"Proposed \"{title}\" with a {n}-phase plan from {plan}. "
-               f"Nothing's claimed yet: see the footprint and approve it on "
-               f"the Programs page.")
+        msg = f"Proposed \"{title}\" with a {n}-phase plan from {plan}. {tail}"
+    elif origin == 'generated':
+        msg = (f"Proposed \"{title}\". No published program fit it, so I "
+               f"made a {n}-phase plan and it's labelled as mine rather than "
+               f"anyone's real curriculum. {tail}")
+    else:
+        why = source.get('why_this_one') or 'no plan could be found'
+        msg = (f"Proposed \"{title}\" with practice time but no plan — "
+               f"{why}. {tail}")
     return {"status": "success", "id": pid, "message": msg}
 
 

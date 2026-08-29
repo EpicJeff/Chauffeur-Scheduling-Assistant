@@ -278,8 +278,191 @@ def scenario_the_new_endpoints_exist():
     paths = {r.path for r in main.app.routes}
     for p in ('/api/programs/{program_id}/finish',
               '/api/programs/{program_id}/reshape',
+              '/api/programs/{program_id}',
               '/api/programs/celebrations'):
         check(p in paths, f"{p} must be reachable by hand")
+
+
+def _stub_curate(phases, source=None):
+    from services import programs_curate as _cur
+    src = source or {'plan_name': 'Found Plan', 'url': 'https://x.example/',
+                     'why_this_one': 'it fits', 'facts': [], 'runners_up': [],
+                     'origin': 'cited', 'reason': '', 'hand_written': False}
+    _cur.curate = lambda *a, **kw: {'phases': list(phases), 'source': src}
+    return _cur
+
+
+def scenario_a_proposal_can_be_re_shaped_without_spending_research():
+    """Changing how many evenings a week are realistic re-paces the phases
+    already found. It reads nothing: the material did not change, only how
+    much of it fits in a week -- and a research run is a real, capped cost."""
+    _reset()
+    import main
+    from services import programs_curate as _cur
+    pid = storage.add_program({
+        'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
+        'shape': {'sessions_per_week': 3, 'minutes': 25, 'preferred_days': []},
+        'phases': [{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords',
+                    'milestone': 'G-C-D', 'milestone_hit_at': None}]})
+    called = []
+    real_curate = _cur.curate
+    _cur.curate = lambda *a, **kw: called.append(1) or {'phases': [],
+                                                        'source': {}}
+    try:
+        res = main.patch_program(pid, body={'member_id': 'mom',
+                                            'sessions_per_week': 2},
+                                 request=None)
+    finally:
+        _cur.curate = real_curate
+    check(res.get('status') == 'success', f"got {res}")
+    check(called == [], "a shape edit must not spend a research run")
+    row = storage.get_program(pid)
+    check(row['shape']['sessions_per_week'] == 2, f"the shape moved: {row['shape']}")
+    check(row['phases'][0]['weeks'] == _cur.phase_weeks(2),
+          f"and the phases were re-paced by the same arithmetic, got "
+          f"{row['phases']}")
+    check(row['phases'][0]['name'] == 'Grade 1',
+          "the material itself is untouched")
+
+
+def scenario_changing_the_aim_looks_for_a_new_plan():
+    _reset()
+    import main
+    from services import programs_curate as _cur
+    pid = storage.add_program({
+        'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
+        'shape': {'sessions_per_week': 3, 'minutes': 25, 'preferred_days': []},
+        'phases': [{'name': 'Old', 'weeks': 4, 'what': 'old material',
+                    'milestone': '', 'milestone_hit_at': None}]})
+    real_curate = _cur.curate
+    _stub_curate([{'name': 'New', 'weeks': 4, 'what': 'new material',
+                   'milestone': '', 'milestone_hit_at': None}])
+    try:
+        res = main.patch_program(pid, body={'member_id': 'mom',
+                                            'title': 'Learn the ukulele'},
+                                 request=None)
+    finally:
+        _cur.curate = real_curate
+    check(res.get('status') == 'success', f"got {res}")
+    row = storage.get_program(pid)
+    check(row['title'] == 'Learn the ukulele', f"the aim moved: {row['title']}")
+    check(row['phases'][0]['name'] == 'New',
+          f"a plan found for the OLD aim must not survive it, got {row['phases']}")
+
+
+def scenario_looking_again_re_runs_research_on_the_same_aim():
+    """The hand path out of the 'none' tier: research was off, capped or down
+    when this was proposed, and nothing on the card could ever try again."""
+    _reset()
+    import main
+    from services import programs_curate as _cur
+    pid = storage.add_program({
+        'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
+        'shape': {'sessions_per_week': 3, 'minutes': 25, 'preferred_days': []},
+        'phases': [], 'source': {'origin': 'none', 'reason': 'capped',
+                                 'hand_written': True}})
+    real_curate = _cur.curate
+    _stub_curate([{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords',
+                   'milestone': 'G-C-D', 'milestone_hit_at': None}])
+    try:
+        res = main.patch_program(pid, body={'member_id': 'mom',
+                                            'recurate': True}, request=None)
+    finally:
+        _cur.curate = real_curate
+    check(res.get('status') == 'success', f"got {res}")
+    row = storage.get_program(pid)
+    check(row['phases'], f"the second look replaced the empty plan, got {row}")
+    check(row['source']['origin'] == 'cited', f"and its tier moved, got {row['source']}")
+
+
+def scenario_looking_again_never_costs_the_plan_already_found():
+    """Research can be down, capped or simply unlucky. Overwriting a cited
+    plan with an empty one would make Look again a button that can only
+    lose."""
+    _reset()
+    import main
+    from services import programs_curate as _cur
+    had = [{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords',
+            'milestone': 'G-C-D', 'milestone_hit_at': None}]
+    pid = storage.add_program({
+        'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
+        'phases': list(had),
+        'source': {'plan_name': 'Justin Guitar', 'url': 'https://jg.example/',
+                   'origin': 'cited', 'reason': '', 'hand_written': False}})
+    real_curate = _cur.curate
+    _cur.curate = lambda *a, **kw: {
+        'phases': [], 'source': {'origin': 'none', 'reason': 'capped',
+                                 'hand_written': True}}
+    try:
+        res = main.patch_program(pid, body={'member_id': 'mom',
+                                            'recurate': True}, request=None)
+    finally:
+        _cur.curate = real_curate
+    check(res.get('status') == 'success', f"got {res}")
+    row = storage.get_program(pid)
+    check(row['phases'] == had, f"the plan they had must stand, got {row['phases']}")
+    check(row['source']['plan_name'] == 'Justin Guitar',
+          f"and so must where it came from, got {row['source']}")
+    check('stands' in res.get('message', ''),
+          f"and the message says nothing new was found, got {res.get('message')!r}")
+
+
+def scenario_a_body_aim_is_refused_on_an_edit_too():
+    """The screen runs on every door into a title, not just the first one --
+    an aim that could not be proposed must not be reachable by renaming."""
+    _reset()
+    import main
+    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+                               'state': 'proposed'})
+    res = main.patch_program(pid, body={'member_id': 'mom',
+                                        'title': 'lose 15 pounds'},
+                             request=None)
+    check(res.get('status') == 'error', f"got {res}")
+    check(res.get('alternatives'), "and the behaviour version is offered")
+    check(storage.get_program(pid)['title'] == 'Guitar', "and nothing moved")
+
+
+def scenario_only_a_proposal_is_editable():
+    """Once time is claimed, changing the plan under it would move windows
+    nobody re-approved. `reshape` is the way back, and it frees the time."""
+    _reset()
+    import main
+    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+                               'state': 'active'})
+    res = main.patch_program(pid, body={'member_id': 'mom', 'minutes': 45},
+                             request=None)
+    check(res.get('status') == 'error', f"an active program is not editable: {res}")
+    check(storage.get_program(pid).get('shape', {}).get('minutes') != 45,
+          "and nothing moved")
+
+
+def scenario_a_child_cannot_edit_a_siblings_proposal():
+    _reset()
+    import main
+    storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
+    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+                               'state': 'proposed'})
+    token = storage.create_member_token('sib')
+    check(_denied(main.patch_program, pid, body={}, request=Req(token)) == 403,
+          "editing somebody else's proposal needs a parent/adult")
+
+
+def scenario_dismissing_a_proposal_is_reachable_and_honest():
+    """A proposal used to have exactly one exit -- approve -- so a typo or a
+    bad guess sat on the page forever. Dropping one never had time to give
+    back, and saying it did would be a small lie about the one thing this
+    page is careful about."""
+    _reset()
+    import main
+    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+                               'state': 'proposed'})
+    res = main.drop_program(pid, background_tasks=None,
+                            body={'member_id': 'mom'}, request=None)
+    check(res.get('status') == 'success', f"got {res}")
+    check('claimed' in res.get('message', ''),
+          f"the words must match the facts, got {res.get('message')!r}")
+    check(storage.get_program(pid)['state'] == 'dropped',
+          "and the proposal is gone from the live list")
 
 
 def scenario_a_child_cannot_read_a_siblings_footprint():
@@ -349,6 +532,14 @@ if __name__ == '__main__':
     scenario_a_parent_with_no_filter_still_gets_the_household()
     scenario_the_control_center_still_gets_the_household()
     scenario_the_new_endpoints_exist()
+    scenario_a_proposal_can_be_re_shaped_without_spending_research()
+    scenario_changing_the_aim_looks_for_a_new_plan()
+    scenario_looking_again_re_runs_research_on_the_same_aim()
+    scenario_looking_again_never_costs_the_plan_already_found()
+    scenario_a_body_aim_is_refused_on_an_edit_too()
+    scenario_only_a_proposal_is_editable()
+    scenario_a_child_cannot_edit_a_siblings_proposal()
+    scenario_dismissing_a_proposal_is_reachable_and_honest()
     scenario_a_child_cannot_read_a_siblings_footprint()
     scenario_claiming_and_releasing_time_reaches_the_solver()
     print("test_programs_endpoints OK")

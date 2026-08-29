@@ -51,6 +51,18 @@
                     </label>
                     <label class="flex items-center justify-between gap-3">
                         <span class="text-xs text-gray-300">
+                            Make a plan when none is found
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                When research turns up no published program for an aim, the app
+                                writes one and labels it as its own. Off means those programs
+                                claim practice time and carry no plan at all.
+                            </span>
+                        </span>
+                        <input type="checkbox" x-model="s.programs_generate_enabled"
+                            @change="saveProgramSettings()" class="shrink-0">
+                    </label>
+                    <label class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
                             Ask after (hours)
                             <span class="block text-[11px] text-gray-500 mt-0.5">
                                 How long after a practice window ends before asking whether it happened.
@@ -183,16 +195,61 @@
                                 </div>
                                 <div class="text-[11px] text-gray-500 mt-1" x-text="memberName(p.member_id)"></div>
 
-                                <!-- Where the plan came from -->
-                                <div class="text-xs mt-1.5">
-                                    <template x-if="p.source && p.source.hand_written">
-                                        <span class="text-gray-500 italic">Written by hand — no curriculum was found for this one.</span>
-                                    </template>
-                                    <template x-if="p.source && !p.source.hand_written && p.source.plan_name">
-                                        <span class="text-gray-400">Following
+                                <!-- Where the plan came from. Three tiers, each said plainly:
+                                     a real published program, a plan the app wrote itself, or
+                                     no plan at all. One label for all three read as "written by
+                                     hand", which was a misnomer -- nothing had written anything
+                                     -- and it hid the difference between the web having nothing
+                                     and the research call simply not running. -->
+                                <div class="text-xs mt-1.5 space-y-1">
+                                    <template x-if="tier(p) === 'cited' && p.source.plan_name">
+                                        <div class="text-gray-400">Following
                                             <a :href="p.source.url" target="_blank" rel="noopener"
                                                class="text-blue-400 underline underline-offset-2" x-text="p.source.plan_name"></a>
-                                        </span>
+                                        </div>
+                                    </template>
+                                    <template x-if="tier(p) === 'cited' && !p.source.plan_name">
+                                        <div class="text-gray-400">Built from
+                                            <a :href="p.source.url" target="_blank" rel="noopener"
+                                               class="text-blue-400 underline underline-offset-2">pages the app read</a>
+                                        </div>
+                                    </template>
+                                    <template x-if="tier(p) === 'generated'">
+                                        <div class="flex items-start gap-1.5 flex-wrap">
+                                            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 shrink-0">Made by the app</span>
+                                            <span class="text-gray-500 italic">No published program fit this aim, so this plan is the app's own — not anyone's real curriculum.</span>
+                                        </div>
+                                    </template>
+                                    <template x-if="tier(p) === 'none'">
+                                        <div class="text-gray-500 italic">
+                                            Practice time only — <span x-text="p.source.why_this_one || 'no plan was found'"></span>.
+                                        </div>
+                                    </template>
+
+                                    <!-- Why this one, and what it beat. Both fields were
+                                         computed and stored from the day the arc shipped and
+                                         neither ever reached a screen, which left every plan
+                                         reading as an oracle's pick rather than a choice
+                                         somebody could argue with. -->
+                                    <template x-if="whyText(p)">
+                                        <div>
+                                            <button @click="whyOpen[p.id] = !whyOpen[p.id]"
+                                                class="text-[11px] font-semibold text-gray-500 underline underline-offset-2"
+                                                x-text="whyOpen[p.id] ? 'Hide why' : 'Why this one'"></button>
+                                            <div x-show="whyOpen[p.id]" x-cloak class="mt-1 space-y-1.5">
+                                                <div class="text-[11px] text-gray-400" x-text="whyText(p)"></div>
+                                                <div x-show="(p.source.runners_up || []).length">
+                                                    <div class="text-[10px] font-black uppercase tracking-widest text-gray-600 mb-1">Also considered</div>
+                                                    <template x-for="r in (p.source.runners_up || [])" :key="r.url">
+                                                        <div class="text-[11px] text-gray-500">
+                                                            <a :href="r.url" target="_blank" rel="noopener"
+                                                               class="text-blue-400 underline underline-offset-2" x-text="r.name"></a>
+                                                            <span x-text="r.why_not ? ' — ' + r.why_not : ''"></span>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </template>
                                 </div>
 
@@ -254,6 +311,71 @@
                                         </div>
                                     </template>
                                 </div>
+
+                                <!-- What a proposal can do other than be approved. Until
+                                     this row existed the only two moves were approving the
+                                     footprint or leaving the card on the page forever: every
+                                     action below was gated on active|paused, so a typo, a bad
+                                     guess at the week, or a research outage was permanent. -->
+                                <div class="flex flex-wrap gap-2 mt-2.5" x-show="p.state === 'proposed' && canAct(p)">
+                                    <button @click="startEdit(p)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700"
+                                        x-text="editOpen[p.id] ? 'Close' : 'Edit'"></button>
+                                    <button @click="lookAgain(p)" :disabled="proposing"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Look again</button>
+                                    <button @click="dismissProgram(p)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Dismiss</button>
+                                </div>
+
+                                <!-- Editing a proposal. Editable precisely because nothing has
+                                     been claimed yet; an approved program's way back here is
+                                     Re-shape the week, which frees the time first. -->
+                                <template x-if="p.state === 'proposed' && editOpen[p.id] && edits[p.id]">
+                                    <div class="mt-2.5 bg-gray-950/60 border border-gray-800 rounded-xl p-2.5 space-y-2.5">
+                                        <input type="text" x-model="edits[p.id].title" placeholder="The aim"
+                                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                                        <div class="grid grid-cols-2 gap-2.5">
+                                            <label class="text-xs text-gray-400 flex items-center gap-2">
+                                                Sessions / week
+                                                <input type="number" min="1" max="7" x-model.number="edits[p.id].sessions_per_week"
+                                                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
+                                            </label>
+                                            <label class="text-xs text-gray-400 flex items-center gap-2">
+                                                Minutes
+                                                <input type="number" min="5" max="240" x-model.number="edits[p.id].minutes"
+                                                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
+                                            </label>
+                                        </div>
+                                        <div>
+                                            <div class="text-[11px] text-gray-500 mb-1">Preferred days (optional)</div>
+                                            <div class="flex flex-wrap gap-1.5">
+                                                <template x-for="d in 7" :key="d">
+                                                    <button type="button" @click="toggleEditDay(p, d - 1)"
+                                                        class="text-xs font-bold px-2.5 py-1 rounded-lg border"
+                                                        :class="(edits[p.id].preferred_days || []).includes(d - 1)
+                                                            ? 'bg-blue-600 border-blue-600 text-white'
+                                                            : 'bg-gray-900 border-gray-700 text-gray-400'"
+                                                        x-text="dayLabel(d - 1)"></button>
+                                                </template>
+                                            </div>
+                                        </div>
+                                        <label class="text-xs text-gray-400 flex items-center gap-2">
+                                            Target date (optional)
+                                            <input type="date" x-model="edits[p.id].target_date"
+                                                class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
+                                        </label>
+                                        <p class="text-[11px] text-gray-500 italic">
+                                            Changing the aim looks for a new plan and spends a research run.
+                                            Changing the week re-paces the phases already found and reads nothing.
+                                        </p>
+                                        <div class="flex gap-2">
+                                            <button @click="saveEdit(p)" :disabled="proposing"
+                                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:opacity-50">Save</button>
+                                            <button @click="editOpen[p.id] = false"
+                                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Cancel</button>
+                                        </div>
+                                    </div>
+                                </template>
 
                                 <!-- Log a session -->
                                 <div class="mt-2.5 flex gap-2" x-show="(p.state === 'active' || p.state === 'paused') && sessionOpen[p.id]" x-cloak>
@@ -338,9 +460,11 @@
                     programs_rebaseline_days: 21,
                     programs_rebaseline_cooldown_days: 14,
                     programs_research_pages: 4,
+                    programs_generate_enabled: true,
                 },
                 draft: { title: '', for_member_id: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' },
                 sessionOpen: {}, sessionMinutes: {},
+                whyOpen: {}, editOpen: {}, edits: {},
 
                 readIdentity() {
                     try {
@@ -446,6 +570,23 @@
                     }[state] || 'bg-gray-700 text-gray-300';
                 },
 
+                // Which of the three tiers this program's plan came from.
+                // `origin` is authoritative; the fallback reads rows written
+                // before the tiers existed, where the only signal was a bool.
+                tier(p) {
+                    const src = p.source || {};
+                    if (src.origin) return src.origin;
+                    return src.hand_written ? 'none' : 'cited';
+                },
+
+                // The argument for the plan, when there is one to make. The
+                // 'none' tier already says its reason on the face of the card,
+                // so it gets no toggle to open onto a repeat of itself.
+                whyText(p) {
+                    if (this.tier(p) === 'none') return '';
+                    return ((p.source || {}).why_this_one || '').trim();
+                },
+
                 memberName(id) {
                     const m = this.members.find(x => x.id === id);
                     return m ? m.name : 'Nobody yet';
@@ -513,6 +654,112 @@
                     } finally {
                         this.proposing = false;
                     }
+                },
+
+                startEdit(p) {
+                    if (this.editOpen[p.id]) { this.editOpen[p.id] = false; return; }
+                    const shape = p.shape || {};
+                    this.edits[p.id] = {
+                        title: p.title || '',
+                        sessions_per_week: shape.sessions_per_week || 3,
+                        minutes: shape.minutes || 25,
+                        preferred_days: [...(shape.preferred_days || [])],
+                        target_date: (p.baseline || {}).target_date || '',
+                    };
+                    this.editOpen[p.id] = true;
+                },
+
+                toggleEditDay(p, d) {
+                    const e = this.edits[p.id];
+                    if (!e) return;
+                    const i = e.preferred_days.indexOf(d);
+                    if (i === -1) e.preferred_days.push(d);
+                    else e.preferred_days.splice(i, 1);
+                },
+
+                async saveEdit(p) {
+                    const e = this.edits[p.id];
+                    if (!e) return;
+                    const title = (e.title || '').trim();
+                    if (!title) { showGlobalAlert('What is the aim?'); return; }
+                    // The aim changing means the plan that was found was found
+                    // for a different question, so it is re-run -- and that
+                    // spends a real research call, which the family is told
+                    // before it happens rather than after.
+                    if (title !== (p.title || '')) {
+                        const ok = await promptConfirm('Change the aim?',
+                            'The plan is looked up again for the new aim, which spends one research run. The old plan is replaced.',
+                            'Look again', 'Cancel');
+                        if (!ok) return;
+                    }
+                    await this.patchProgram(p, {
+                        title,
+                        sessions_per_week: e.sessions_per_week,
+                        minutes: e.minutes,
+                        preferred_days: e.preferred_days,
+                        target_date: e.target_date || null,
+                    }, "Couldn't save that change.");
+                    this.editOpen[p.id] = false;
+                },
+
+                // The hand path out of the 'none' tier: research was off, or
+                // capped, or simply down when this was proposed, and nothing
+                // else on the card could ever try again.
+                async lookAgain(p) {
+                    const ok = await promptConfirm('Look for a plan again?',
+                        'This spends one research run. Anything found replaces the plan on this proposal; if nothing new turns up, the plan you have stays. The practice time is untouched.',
+                        'Look again', 'Cancel');
+                    if (!ok) return;
+                    await this.patchProgram(p, { recurate: true },
+                                            "Couldn't look again just now.");
+                },
+
+                async patchProgram(p, body, failure) {
+                    this.proposing = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}`, {
+                            method: 'PATCH', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null, ...body })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            let msg = (d.detail || d.message || failure);
+                            if (d.alternatives && d.alternatives.length) {
+                                msg += ' Try instead: ' + d.alternatives.join('; ') + '.';
+                            }
+                            showGlobalAlert(msg);
+                            return false;
+                        }
+                        await this.load();
+                        return true;
+                    } catch (e) {
+                        showGlobalAlert(failure);
+                        return false;
+                    } finally {
+                        this.proposing = false;
+                    }
+                },
+
+                // Dropping a proposal is the same verb the server already had
+                // and the page never offered. The words differ from Drop
+                // because the facts differ: nothing was ever claimed.
+                async dismissProgram(p) {
+                    const ok = await promptConfirm('Dismiss this proposal?',
+                        'Nothing has been claimed, so nothing comes back. It moves to the archive and the record stays.',
+                        'Dismiss it', 'Cancel');
+                    if (!ok) return;
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/drop`, {
+                            method: 'POST', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null })
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't dismiss that.");
+                            return;
+                        }
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't dismiss that."); }
                 },
 
                 async approveProgram(p) {
