@@ -378,6 +378,15 @@ RULES = [
     # disclosure `celebrations` above already makes, plus the time; it carries
     # no session log, no counts and no commitments that did not come from a
     # program.
+    #
+    # It also carries WHAT the session is -- the phase, the steps, which
+    # session of a rotation, and the lesson (a link for a cited plan, the
+    # app's own words for one it wrote). That is a widening in degree and not
+    # in kind: the calendar has drawn a practice window's steps in its event
+    # description since the window became an event, and the same reasoning
+    # holds -- a plan is not a record. What stays out is anything that counts:
+    # no totals, no ordering, nothing that reads as one person short of
+    # another.
     ('GET', '/api/practice-windows', WALL, None),
     (ANY, '/api/programs/*', SIGNED_IN, None),
     (ANY, '/api/programs', SIGNED_IN, None),

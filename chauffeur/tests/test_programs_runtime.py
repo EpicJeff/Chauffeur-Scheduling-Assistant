@@ -135,9 +135,15 @@ def scenario_the_pwa_reads_the_real_commitment_not_shape():
         served.stop()
 
     check(not handle.errors, f"the page threw: {handle.errors[:3]}")
-    check('Next practice' in text,
+    # The card used to render one "Next practice: <when>" line and now lists
+    # the sessions ahead, each openable -- a time with no answer to "which
+    # session is that" was the whole complaint. The assertion follows the
+    # rendering; what it is actually pinning is unchanged, and is the reason
+    # this test exists: the row is built from the LIVE commitment, which an
+    # empty `shape.preferred_days` could never have supplied.
+    check('Today, 11:00 PM' in text,
           "a program with an empty shape.preferred_days but a real "
-          "commitment must still show a next-practice line -- "
+          "commitment must still show the sessions ahead, dated -- "
           f"body had: {text[:2000]!r}")
     check('11:00 PM' in text,
           "the time shown must come from the real commitment (23:00), "

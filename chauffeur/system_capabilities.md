@@ -6916,6 +6916,54 @@ see. `renderRoutineSection`, `renderDueSoonSection` and `renderStatusBanner`
 are also My Day-only; those may well be deliberate, and none of them was
 touched here.
 
+**Delivery: a session you can open, follow and finish** (v2.438.0 —
+`openSessionSheet`, `#today-container`, the practice rows on the wall card).
+The plan was good and unreachable. Four changes close that.
+
+**The drives tab is called My Day.** It carries the family's status, the asks
+waiting on you, tonight's practice and your programs on top of the drive list,
+so "My Drives" understated it. Both role-tabs use the same word now; the two
+views and renderers stay separate underneath.
+
+**The rest of the My Day-only blocks reach a driver.** `renderRequests` runs
+for everyone by its own comment — *"both directions, for everyone"* — and drew
+on the passenger tab only, so an adult taking a drive from their partner asked
+a question the partner could not see. `renderStatusBanner` names its own
+victim: *"how a kid (or the co-parent) sees what today is"*, and the co-parent
+is usually driving. `renderDueSoonSection` is the kid task list and comes back
+empty for an adult; it is mounted anyway because it renders to nothing and
+lights up on its own the day adults get tasks. Routines stay on the child's
+tab — a driver having no routine lane is not a hole.
+
+**A session opens.** `openSessionSheet` is the tap target the arc never had:
+the date and hour, which session of the rotation it is, the phase, the lesson
+(a link for a cited plan, the app's own words for one it wrote), the steps,
+the progression rule, the milestone, and **Done** — which logs against the
+evening it was about (`slot_date`), not the moment it was tapped. It opens
+from the practice-now block, from the sessions-ahead rows on the program card,
+and from the family tab's practice card, which was the one row in that view
+that opened nothing. The windows are parked in a keyed registry at render
+time, because the surfaces that draw one hold it in different shapes.
+
+**The program card leads with what is next, not with everything.** It printed
+every session of the rotation in full — right while it was the only surface
+there was, wrong now that a session opens — and said "Next practice: Tue, Sep
+1, 21:00", a time with no answer to *which* session that is. It now shows the
+next session's own label and steps, then **Coming up**: the week's windows,
+each dated, labelled with its session and its lesson, and each a tap target.
+`buildPracticeParts` fetches a week rather than a day for it.
+
+**The wall card answers "is anything on tonight".** The Programs tile was
+wrapped in an `<a href="/programs">`, and that page is the household's admin
+screen where every read is gated on a signed-in member — a panel
+authenticates as a place and resolves to nobody, so the tap opened a screen
+that could only ever be empty. `programs` joins `PAGELESS`, and the card gains
+a **Practice today** section: the hour, whose it is, which session, which
+lesson, from `GET /api/practice-windows` (WALL tier, and the auth table's
+rationale is updated to say what that route now carries). Logged windows drop
+off; no counts, no ordering, nothing that reads as one person short of
+another.
+
 **A practice window is visible, announced, and carries the session**
 (v2.435.5 — `programs.practice_windows`, `GET /api/practice-windows`). What
 shipped before this was an arrangement one person had to remember: approving a

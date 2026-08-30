@@ -2008,7 +2008,6 @@
                     // from there and named on the page.
                     lists: 'lists', chores: 'chores', routines: 'routines',
                     occasions: 'occasions', errands: 'errands', trips: 'trips',
-                    programs: 'programs',
                     map: 'map', moments: 'moments', intake: 'intake',
                     weather: 'calendar', kids: 'routines',
                     // The gallery cards summarise the same page their glance
@@ -5251,6 +5250,14 @@
                 // The errands cards join them for the same reason the lanes
                 // did: they hold tick-boxes and buttons, and an <a> may only
                 // contain those while it has no href.
+                // `programs` is here because its page is not a door a wall
+                // can walk through: /programs is the household's admin screen
+                // and every read on it is gated on a signed-in member, while
+                // a panel authenticates as a PLACE and resolves to nobody
+                // (`_program_list_scope` returns _NOBODY, `_is_admin_surface`
+                // refuses a panel by name). So the tap opened a page that
+                // could only ever show an empty list -- an affordance with
+                // nothing behind it. The card is the whole feature on a wall.
                 // `music` is on this list for the opposite reason to the rest:
                 // not that its page would be hostile to a wall, but that its
                 // page IS this board (/music renders it in a browser too), so
@@ -5269,6 +5276,7 @@
                            'task_list', 'errand_list',
                            'shopping_staples', 'shopping_list',
                            'routines_lanes', 'avatar_editor', 'pets',
+                           'programs',
                            'mind'],
                 // Takes the TILE, not its type: interactivity is decided per
                 // instance. A card whose own content answers the tap — an

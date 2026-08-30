@@ -46,7 +46,32 @@
                              tile's own chrome. -->
                         <template x-if="!pgHasAnything">
                             <div class="text-gray-500 bg-gray-800 rounded-xl p-6 text-sm italic">
-                                Nothing to celebrate yet.
+                                No practice today, and nothing to celebrate yet.
+                            </div>
+                        </template>
+
+                        <!-- Practice today: the hour, whose it is, and which
+                             session of it. This is the half a wall was
+                             missing -- the celebrations below say what a
+                             household should be glad about, and none of them
+                             answers "is anything on tonight". Every string is
+                             one the calendar card beside it already draws. -->
+                        <template x-if="pgToday.length">
+                            <div class="agenda-day rounded-2xl p-3 flex flex-col gap-2">
+                                <div class="text-[10px] font-bold uppercase tracking-wide text-gray-500">Practice today</div>
+                                <template x-for="w in pgToday" :key="w.key">
+                                    <div class="agenda-event rounded-lg px-2.5 py-1.5 flex items-center gap-2">
+                                        <span class="text-[11px] font-semibold text-gray-400 shrink-0" x-text="w.when"></span>
+                                        <div class="min-w-0 flex-1">
+                                            <div class="text-sm font-bold text-white truncate"
+                                                x-text="w.who + ': ' + w.title"></div>
+                                            <div class="text-[11px] text-gray-400 truncate" x-show="w.lesson" x-text="w.lesson"></div>
+                                        </div>
+                                        <span x-show="w.label"
+                                            class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 shrink-0"
+                                            x-text="w.label"></span>
+                                    </div>
+                                </template>
                             </div>
                         </template>
 
@@ -121,9 +146,42 @@
             pgUpNext: null,
             pgPracticed: [],
             pgCelebrated: [],
+            // Today's windows, from the one other route a panel may call.
+            pgToday: [],
 
             get pgHasAnything() {
-                return !!(this.pgUpNext || this.pgPracticed.length || this.pgCelebrated.length);
+                return !!(this.pgUpNext || this.pgToday.length
+                          || this.pgPracticed.length || this.pgCelebrated.length);
+            },
+
+            // WHEN practice is, and WHICH session it is. `GET
+            // api/practice-windows` is WALL tier for exactly this reason --
+            // it carries a title, a name and an hour, which the celebrations
+            // above already disclose, plus the time. What it must not do here
+            // is turn into a record: no counts, no who-did-and-who-did-not.
+            // A window already logged simply drops off, the same way a past
+            // ride does.
+            async loadPracticeToday() {
+                try {
+                    const d = new Date();
+                    const pad = n => String(n).padStart(2, '0');
+                    const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+                    const r = await fetch(`${apiBase}api/practice-windows?start_date=${day}&end_date=${day}`);
+                    if (!r.ok) return;
+                    const body = await r.json();
+                    this.pgToday = (body.windows || [])
+                        .filter(w => !w.logged)
+                        .map(w => ({
+                            key: `${w.program_id}|${w.date}|${w.time_start}`,
+                            who: w.member_name || '',
+                            when: (w.time_start || '').slice(0, 5),
+                            title: w.title || 'Practice',
+                            label: w.session_label || '',
+                            lesson: w.unit_title || '',
+                        }));
+                } catch (e) {
+                    // Stale beats false-empty, same as the celebrations poll.
+                }
             },
 
             async loadPrograms() {
@@ -150,9 +208,12 @@
                 }
                 finally { this.pgLoaded = true; }
             },
+            async loadCard() {
+                await Promise.all([this.loadPrograms(), this.loadPracticeToday()]);
+            },
             startPrograms() {
-                this.loadPrograms();
-                setInterval(() => this.loadPrograms(), PROGRAMS_CARD_POLL_MS);
+                this.loadCard();
+                setInterval(() => this.loadCard(), PROGRAMS_CARD_POLL_MS);
             },
         };
     }

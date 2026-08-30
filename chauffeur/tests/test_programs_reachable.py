@@ -60,8 +60,8 @@ def scenario_the_program_surfaces_have_a_driver_side_mount():
     """The rule, stated as the thing that was false: the blocks must be
     reachable from something other than the passenger tab."""
     src = _app()
-    check('id="practice-container"' in src,
-          "the drives view needs somewhere to draw practice")
+    check('id="today-container"' in src,
+          "the drives view needs somewhere to draw today")
     for fn in ('buildPracticeParts', 'refreshPracticeSection',
                'applyPracticeVisibility', 'refreshTodaySurfaces'):
         check(re.search(r'(?:async )?function ' + fn + r'\s*\(', src),
@@ -69,7 +69,7 @@ def scenario_the_program_surfaces_have_a_driver_side_mount():
     refresh = _body(src, 'refreshPracticeSection')
     check('buildPracticeParts(' in refresh,
           "the drives mount must build the same blocks My Day builds")
-    check('practice-content' in refresh,
+    check('today-content' in refresh,
           "and write them somewhere the drives view shows")
 
 
@@ -148,11 +148,73 @@ def scenario_every_inline_script_still_parses():
                   f"{name} block {i} does not parse:\n{res.stderr[:400]}")
 
 
+def scenario_the_drives_day_carries_what_my_day_carries():
+    """The other blocks with the same hole. `renderRequests` runs for
+    everyone by its own comment -- "both directions, for everyone" -- and
+    drew on the passenger tab only, so an adult taking a drive from their
+    partner asked a question the partner could not see. The status banner
+    names its own victim: "how a kid (or the co-parent) sees what today is",
+    and the co-parent is usually the one driving.
+
+    Routines stay out on purpose: they are a child's, and a driver having no
+    routine lane is not a hole.
+    """
+    src = _app()
+    build = _body(src, 'buildPracticeParts')
+    for call, why in (
+            ('renderRequests(', "the asks have to reach a driver"),
+            ('renderStatusBanner(', "and so does what today is"),
+            ('renderDueSoonSection(', "and the deadline list, empty or not")):
+        check(call in build, f"{call}) missing: {why}")
+    check('renderRoutineSection(' not in build,
+          "routines are a child's and stay on the child's tab")
+    stack = _body(src, 'practiceStackHtml')
+    for part in ('status', 'requests', 'now', 'programs', 'dueSoon'):
+        check(part in stack, f"the drives stack must draw {part}")
+
+
+def scenario_a_session_can_be_opened_and_finished():
+    """The tap target the arc never had, and the one action that matters."""
+    src = _app()
+    check(re.search(r'function openSessionSheet\s*\(', src),
+          "a session has to be openable")
+    sheet = _body(src, 'openSessionSheet')
+    for bit, why in (
+            ('unit_title', 'which lesson it is'),
+            ('unit_url', 'the link for a cited plan'),
+            ('unit_body', "the words for one the app wrote"),
+            ('session_label', 'which session of the rotation'),
+            ('askProgramSession(', 'and a way to say it happened')):
+        check(bit in sheet, f"the sheet must carry {why}")
+    check('w.date' in sheet,
+          "logging files under the evening it was about, not the tap")
+    # Every surface that draws a window has to be able to open one.
+    fam = _body(src, 'renderFamilyCard')
+    check('openSessionSheet(' in fam,
+          "the family tab's practice card was the one row that opened nothing")
+    card = _body(src, 'renderProgramCard')
+    check('openSessionSheet(' in card,
+          "and the program card lists the sessions ahead as tap targets")
+
+
+def scenario_the_tab_is_named_for_what_it_holds():
+    """It stopped being only the drives the moment it carried the family's
+    status, the asks, and tonight's practice."""
+    src = _app()
+    drives = re.search(r'id="tab-drives".*?</button>', src, re.S)
+    check(drives, "the drives tab must exist")
+    check('>My Day<' in drives.group(0),
+          "the drives tab is My Day for somebody who drives")
+
+
 if __name__ == '__main__':
     os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp())
     scenario_the_program_surfaces_have_a_driver_side_mount()
     scenario_my_day_and_the_drives_view_share_one_builder()
     scenario_a_due_session_is_drawn_without_being_asked_for()
     scenario_logging_a_session_redraws_whichever_surface_it_was_tapped_on()
+    scenario_the_drives_day_carries_what_my_day_carries()
+    scenario_a_session_can_be_opened_and_finished()
+    scenario_the_tab_is_named_for_what_it_holds()
     scenario_every_inline_script_still_parses()
     print("test_programs_reachable OK")
