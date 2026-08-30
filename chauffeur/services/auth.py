@@ -372,6 +372,13 @@ RULES = [
     # so what it may read is decided by what the endpoint returns, not by
     # widening the read it was refused.
     ('GET', '/api/programs/celebrations', WALL, None),
+    # WHEN the household's practice windows are, for the surfaces that draw a
+    # day -- the wall's calendar card included, which is why this is WALL and
+    # not SIGNED_IN. It carries a title, a name and an hour, which is the same
+    # disclosure `celebrations` above already makes, plus the time; it carries
+    # no session log, no counts and no commitments that did not come from a
+    # program.
+    ('GET', '/api/practice-windows', WALL, None),
     (ANY, '/api/programs/*', SIGNED_IN, None),
     (ANY, '/api/programs', SIGNED_IN, None),
     (ANY, '/api/coverage/*', SIGNED_IN, 'schedule.carpool_contacts'),

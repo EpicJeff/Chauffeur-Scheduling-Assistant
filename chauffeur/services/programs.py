@@ -526,6 +526,126 @@ def propose_slots(member_id: str, shape: dict, now=None) -> list:
     return out
 
 
+# --- Where a practice window is actually VISIBLE ---------------------------
+# A program claimed the week and then nothing showed it. The window became a
+# `ProtectedCommitment`, which the solver honours through `member.driver_id`
+# and which no shared surface has ever drawn -- commitments are private by
+# design ("somebody's own life is nobody else's business", the erosion finding
+# in services/watchers.py). The effect on a family is that an approved program
+# is an invisible arrangement one person has to remember, and everybody else
+# books over it in good faith because there is nothing there to see.
+#
+# So programs get their own dated feed, and only programs. A practice window
+# is already household knowledge -- the Programs page lists every member's,
+# and the wall card names whose milestone is close -- so putting the TIME
+# beside the thing everyone can already see discloses nothing new. Commitments
+# that did not come from a program stay exactly as private as they were.
+#
+# These are not calendar events and must never become them: an event needs a
+# driver, and a recurring practice event would arrive in the solver as work to
+# assign rather than time to protect.
+
+PUSH_STATE_KEY = 'programs_practice_pushed'
+PUSH_WINDOW_SECONDS = 15 * 60      # how late a start-of-window push may fire
+PUSH_KEEP_DAYS = 3
+
+
+def practice_windows(start: datetime.date, end: datetime.date,
+                     member_id: str = None) -> list:
+    """Every practice window between two dates, as dated occurrences.
+
+    One row per day a program's claimed window lands on, carrying what the
+    session IS (the current phase and its steps) rather than only when it is
+    -- a time with no content is the thing that made this feature invisible
+    twice over.
+    """
+    members = {m['id']: m for m in storage.get_all_members(include_archived=True)}
+    live = {c['id']: c for c in storage.get_protected_commitments(member_id=member_id)
+            if c.get('active')}
+    out = []
+    for row in storage.get_programs(member_id=member_id):
+        if row.get('state') != 'active':
+            # Paused and proposed programs hold no time: pause releases the
+            # commitments outright, and a proposal has never claimed any.
+            continue
+        phase = progress(row).get('phase') or {}
+        member = members.get(row.get('member_id')) or {}
+        for cid in (row.get('emissions') or {}).get('commitment_ids') or []:
+            pc = live.get(cid)
+            if not pc:
+                continue
+            days = set(pc.get('days_of_week') or [])
+            day = start
+            while day <= end:
+                if day.weekday() in days:
+                    out.append({
+                        'program_id': row['id'],
+                        'commitment_id': cid,
+                        'member_id': row.get('member_id'),
+                        'member_name': member.get('name') or '',
+                        'title': row.get('title') or 'Practice',
+                        'date': day.isoformat(),
+                        'time_start': pc.get('time_start'),
+                        'time_end': pc.get('time_end'),
+                        'phase_name': phase.get('name') or '',
+                        'steps': list(phase.get('steps') or []),
+                        'milestone': phase.get('milestone') or '',
+                        'logged': _already_logged(row, day),
+                    })
+                day += datetime.timedelta(days=1)
+    out.sort(key=lambda w: (w['date'], w['time_start'] or '', w['title']))
+    return out
+
+
+def due_practice_pushes(now=None) -> list:
+    """Windows that have just started and have not been announced yet.
+
+    The "did it happen?" ask has always existed and always arrived AFTERWARDS,
+    which is a strange thing to be the only cue: it asks about a session
+    nothing ever told anybody to start. This is the other half, and it carries
+    the steps, because "practice now" without what to practise is the same
+    empty gesture in a different costume.
+
+    Marked in `app_state` rather than in the program row: what got announced
+    is app bookkeeping, and a program document is the one place in this app
+    that must not accumulate fields about how somebody is doing.
+    """
+    now = now or datetime.datetime.now()
+    today = now.date()
+    fired = set(storage.get_app_state(PUSH_STATE_KEY) or [])
+    out = []
+    for w in practice_windows(today, today):
+        if w['logged']:
+            continue
+        try:
+            sh, sm = [int(x) for x in (w['time_start'] or '').split(':')[:2]]
+        except (ValueError, TypeError):
+            continue
+        start_at = datetime.datetime.combine(today, datetime.time(sh, sm))
+        late = (now - start_at).total_seconds()
+        if not 0 <= late <= PUSH_WINDOW_SECONDS:
+            continue
+        key = f"{w['program_id']}|{w['date']}|{w['time_start']}"
+        if key in fired:
+            continue
+        out.append({**w, 'push_key': key})
+    return out
+
+
+def mark_practice_pushed(keys) -> None:
+    """Remember what was announced, and forget it again within days -- this
+    list exists to stop a duplicate push across a restart, not to become a
+    record of somebody's practice."""
+    keys = [k for k in (keys or []) if k]
+    if not keys:
+        return
+    cutoff = (datetime.date.today()
+              - datetime.timedelta(days=PUSH_KEEP_DAYS)).isoformat()
+    kept = [k for k in (storage.get_app_state(PUSH_STATE_KEY) or [])
+            if isinstance(k, str) and k.split('|')[1:2] and k.split('|')[1] >= cutoff]
+    storage.set_app_state(PUSH_STATE_KEY, sorted(set(kept) | set(keys)))
+
+
 def footprint(program: dict) -> dict:
     """Everything approval would create, for the screen that asks."""
     shape = program.get('shape') or {}

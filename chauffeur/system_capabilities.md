@@ -6630,6 +6630,49 @@ asking). The PWA card carries the same two words. The progress line says
 `working towards:` rather than `next:`, which read as the next thing to DO
 over a sentence describing an outcome.
 
+**A practice window is visible, announced, and carries the session**
+(v2.435.5 — `programs.practice_windows`, `GET /api/practice-windows`). What
+shipped before this was an arrangement one person had to remember: approving a
+program wrote one `ProtectedCommitment` per weekly slot, CP-SAT honoured it
+through `member.driver_id`, and NO shared surface drew it — commitments are
+private by design (`watchers._commitment_findings`: "somebody's own life is
+nobody else's business: these stay in the DM"). So an approved program was an
+hour reserved in the solver that nobody could see, which everybody else booked
+over in good faith, and the only cue it ever produced arrived AFTERWARDS: the
+"did it happen?" ask, about a session nothing had told anybody to start.
+
+`practice_windows(start, end, member_id=None)` expands live program-emitted
+commitments into dated occurrences carrying the hour, whose it is, the current
+phase and **its steps** — a time with no content is what made this invisible
+twice over. Only `active` programs hold time (pause releases the commitments
+outright, a proposal never claimed any), the LIVE commitment is read rather
+than the id the program remembers (a window deleted by hand stops drawing at
+once), and commitments that did NOT come from a program are untouched and stay
+exactly as private as they were.
+
+Four surfaces, at the user's direction: the **PWA family day** (its own teal
+card beside the events, built where errands already join the day — practice is
+never turned into a calendar event, because an event needs a driver and a
+recurring practice event would reach the solver as work to assign rather than
+time to protect); the **wall calendar card** (shaped into the agenda's event
+form only to be drawn, through the one shared `agendaEventRow` builder, with a
+`🎯 <name>` badge and no tap target because there is no event behind it); a
+**now block** on the PWA home from 30 minutes before the window until it ends,
+carrying the steps and a Log a session button; and a **push at the start**,
+fired from the 30-second notification loop, whose body is the steps. The push
+is marked in `app_state` (`programs_practice_pushed`, pruned after 3 days) so a
+restart inside the window cannot double-announce — deliberately NOT on the
+program row, which is the one document in this app that must not accumulate
+fields about how somebody is doing. Push reaches drivers only, since
+subscriptions are keyed by `driver_id`; everyone else gets the three on-screen
+surfaces.
+
+The household sees the hour. That is the point rather than a leak: the
+Programs page already lists every member's programs and the wall card already
+names whose milestone is close, so this adds the TIME beside a thing everyone
+could already see, which is the only version of it that stops the double
+booking it exists to prevent.
+
 **A family can name their own practice windows** (v2.435.2). `propose_slots`
 has said in its own docstring since the arc shipped that "the person can move
 them on the approval screen anyway", and the approval screen offered no such

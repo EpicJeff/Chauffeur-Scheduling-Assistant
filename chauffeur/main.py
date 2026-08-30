@@ -166,6 +166,31 @@ async def push_notification_loop():
             except Exception as te:
                 print(f"Day-of traffic sweep error: {te}")
 
+            # A practice window that just started, announced with the steps
+            # in it. The only cue this arc ever had arrived AFTERWARDS -- the
+            # "did it happen?" ask -- which is a strange thing to be the only
+            # one: it asked about a session nothing had told anybody to
+            # start. Cheap when idle (two storage reads), and self-marking so
+            # a restart inside the window cannot double-announce.
+            try:
+                from services import programs as _prog_push
+                due = await asyncio.to_thread(_prog_push.due_practice_pushes)
+                sent = []
+                for w in due:
+                    member = storage.get_member(w.get('member_id')) or {}
+                    drv = member.get('driver_id')
+                    body = ' · '.join(w.get('steps') or []) or w.get('milestone') or ''
+                    if drv:
+                        send_push(drv, subs,
+                                  f"{w['title']} — {w['time_start']}",
+                                  body or 'Practice time.', f"practice_{w['push_key']}",
+                                  actions=[])
+                    sent.append(w['push_key'])
+                if sent:
+                    await asyncio.to_thread(_prog_push.mark_practice_pushed, sent)
+            except Exception as pe:
+                print(f"Practice window push error: {pe}")
+
             for notif in pending_notifications:
                 if notif.get("fired"): continue
 
@@ -5809,6 +5834,37 @@ def edit_program(program_id: str, body: dict = Body(default={}),
     storage.update_program(program_id, updates)
     return {"status": "success", "program": storage.get_program(program_id),
             "message": message}
+
+
+@app.get("/api/practice-windows")
+def practice_windows_api(start_date: str = None, end_date: str = None,
+                         member_id: str = None):
+    """When the household's practice windows actually are, and what is in them.
+
+    A household read on purpose, and the one place a program's claimed TIME
+    becomes visible to anybody but its owner. The disclosure is already made
+    elsewhere -- the Programs page lists every member's programs and the wall
+    card names whose milestone is close -- so what this adds is the hour
+    beside the thing everyone can already see, which is the only way somebody
+    else stops booking over it in good faith.
+
+    Protected commitments that did NOT come from a program are untouched by
+    this and stay as private as they have always been.
+    """
+    import datetime as _dt
+    from services import programs as _prog
+    try:
+        start = (_dt.date.fromisoformat(start_date) if start_date
+                 else _dt.date.today())
+        end = (_dt.date.fromisoformat(end_date) if end_date
+               else start + _dt.timedelta(days=13))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates go YYYY-MM-DD")
+    if end < start:
+        start, end = end, start
+    if (end - start).days > 60:
+        end = start + _dt.timedelta(days=60)
+    return {"windows": _prog.practice_windows(start, end, member_id=member_id)}
 
 
 @app.get("/api/programs/celebrations")

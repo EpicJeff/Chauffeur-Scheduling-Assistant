@@ -1443,6 +1443,69 @@
                 if (currentView === 'myday') renderMyDay();
             } catch (e) { showGlobalAlert("Couldn't mark that."); }
         }
+        // Where a practice window is VISIBLE. An approved program claimed the
+        // week and then nothing drew it: the window became a protected
+        // commitment, which the solver honours and no shared surface has ever
+        // shown, so an approved program was an arrangement one person had to
+        // remember while everybody else booked over it in good faith.
+        let practiceWindows = [];
+
+        async function fetchPracticeWindows(startStr, endStr) {
+            try {
+                const qs = startStr ? `?start_date=${startStr}&end_date=${endStr || startStr}` : '';
+                const r = await fetch(`${apiBase}api/practice-windows${qs}`);
+                if (!r.ok) return [];
+                const d = await r.json();
+                return d.windows || [];
+            } catch (e) { return []; }
+        }
+
+        function practiceWindowsOn(dateStr) {
+            return practiceWindows.filter(w => w.date === dateStr);
+        }
+
+        // The window happening NOW, or close enough that starting it is the
+        // next thing you would do. This is the "when is it time" half; the
+        // steps under it are the "what do I do" half, and neither existed.
+        const PRACTICE_LEAD_MINUTES = 30;
+
+        function practiceNow(now) {
+            now = now || new Date();
+            const pad = n => String(n).padStart(2, '0');
+            const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+            const mins = now.getHours() * 60 + now.getMinutes();
+            const at = hhmm => {
+                const [h, m] = String(hhmm || '').split(':').map(Number);
+                return (h || 0) * 60 + (m || 0);
+            };
+            return practiceWindowsOn(dateStr)
+                .filter(w => !w.logged && w.member_id === selectedMemberId)
+                .filter(w => mins >= at(w.time_start) - PRACTICE_LEAD_MINUTES
+                             && mins <= at(w.time_end))
+                .sort((a, b) => at(a.time_start) - at(b.time_start))[0] || null;
+        }
+
+        function renderPracticeNow(w) {
+            if (!w) return '';
+            const steps = (w.steps || []).slice(0, 8);
+            const list = steps.length ? `
+                <ul class="mt-2 space-y-1">
+                    ${steps.map(st => `<li class="text-xs text-gray-200 flex gap-1.5">
+                        <span class="text-gray-500 shrink-0">·</span><span>${mfEscape(st)}</span></li>`).join('')}
+                </ul>` : `<div class="text-xs text-gray-400 mt-1.5">${mfEscape(w.milestone || 'Practice time.')}</div>`;
+            return `
+            <div class="mb-3 rounded-xl border border-teal-500/40 bg-teal-900/20 px-4 py-3">
+                <div class="flex items-center justify-between gap-2">
+                    <div class="text-teal-200 font-bold leading-tight truncate">🎯 ${mfEscape(w.title)}</div>
+                    <div class="text-[11px] font-bold text-teal-300 shrink-0">${mfEscape(w.time_start)}–${mfEscape(w.time_end)}</div>
+                </div>
+                ${w.phase_name ? `<div class="text-[11px] text-teal-400/80 font-semibold mt-0.5">${mfEscape(w.phase_name)}</div>` : ''}
+                ${list}
+                <button onclick="addProgramSession('${w.program_id}')"
+                    class="mt-2.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Log a session</button>
+            </div>`;
+        }
+
         // Programs arc, task 6: "My program" -- end
 
         async function completeKidTask(taskId, done) {
@@ -1806,6 +1869,14 @@
                 // browses to. Commitments are only fetched when there is at
                 // least one program to ask "when" about -- a household that
                 // never proposed one costs this view nothing extra.
+                let practiceNowHtml = '';
+                if (requestedOffset === 0) {
+                    const pad = n => String(n).padStart(2, '0');
+                    const t = new Date();
+                    const todayStr = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+                    practiceWindows = await fetchPracticeWindows(todayStr, todayStr);
+                    practiceNowHtml = renderPracticeNow(practiceNow(t));
+                }
                 let myProgramsHtml = '';
                 if (requestedOffset === 0) {
                     const myPrograms = await fetchMyPrograms();
@@ -1867,10 +1938,10 @@
                         🙋 Ask for something…
                     </button>` : '';
                 const requestsHtml = renderRequests() + askHtml;
-                wrap.innerHTML = statusHtml + requestsHtml + kidTopHtml + launchHtml + routineHtml + myProgramsHtml + dueSoonHtml + (data.rides.length
+                wrap.innerHTML = statusHtml + requestsHtml + kidTopHtml + launchHtml + practiceNowHtml + routineHtml + myProgramsHtml + dueSoonHtml + (data.rides.length
                     ? data.rides.map(renderMyDayCard).join('')
                     : '<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4 mt-2">' +
-                      ((routineHtml || dueSoonHtml || myProgramsHtml) ? 'No rides today 🎉' : 'Nothing scheduled 🎉') + '</div>');
+                      ((routineHtml || dueSoonHtml || myProgramsHtml || practiceNowHtml) ? 'No rides today 🎉' : 'Nothing scheduled 🎉') + '</div>');
                 if (mydaySlideDir !== 0) {
                     // Slide the new day in from the direction of travel.
                     wrap.style.transition = 'none';
@@ -7949,6 +8020,25 @@
                 });
             });
 
+            // Practice windows sit in the family day for one reason: an hour
+            // nobody can see is an hour everybody books over. They are NOT
+            // calendar events and must never become them -- an event needs a
+            // driver, and a recurring practice event would reach the solver
+            // as work to assign rather than time to protect -- so they arrive
+            // as their own item, drawn as their own card.
+            (practiceWindows || []).forEach(w => {
+                push(new Date(`${w.date}T${w.time_start}:00`), {
+                    id: `practice-${w.program_id}-${w.date}-${w.time_start}`,
+                    title: w.title, isTrip: false,
+                    start: `${w.date}T${w.time_start}:00`,
+                    end: `${w.date}T${w.time_end}:00`,
+                    allDay: false, location: '',
+                    calendarIds: [], legs: [], driverIds: new Set(),
+                    isUnassigned: false, suppressed: false, isErrand: false,
+                    isPractice: true, practice: w
+                });
+            });
+
             return byDate;
         }
 
@@ -8000,6 +8090,27 @@
 
         function renderFamilyCard(card) {
             const now = new Date();
+
+            if (card.isPractice) {
+                const w = card.practice || {};
+                const past = new Date(card.end) < now;
+                const steps = (w.steps || []).slice(0, 4);
+                return `
+                    <div class="mb-3 rounded-xl border border-teal-500/30 bg-teal-900/10 px-4 py-3 ${past ? 'opacity-50' : ''}">
+                        <div class="flex items-center gap-3">
+                            <span class="text-xl shrink-0">🎯</span>
+                            <div class="flex-1 min-w-0">
+                                <div class="text-teal-100 font-bold leading-tight truncate">${mfEscape(w.title || card.title)}</div>
+                                <div class="text-xs text-teal-400/90 font-bold uppercase tracking-wider">
+                                    ${mfEscape(w.member_name || '')} · practice · ${mfEscape(w.time_start)}–${mfEscape(w.time_end)}
+                                </div>
+                            </div>
+                            ${w.logged ? '<span class="text-[10px] font-bold text-teal-300 shrink-0">✓ logged</span>' : ''}
+                        </div>
+                        ${steps.length ? `<ul class="mt-2 ml-8 space-y-0.5">${steps.map(st =>
+                            `<li class="text-[11px] text-gray-300 flex gap-1.5"><span class="text-gray-600 shrink-0">·</span><span>${mfEscape(st)}</span></li>`).join('')}</ul>` : ''}
+                    </div>`;
+            }
 
             if (card.isTrip) {
                 return `
@@ -8693,6 +8804,20 @@
                             scheduleData[k] = data[k];
                         }
                     });
+
+                    // The family view draws whatever days it paged in, so the
+                    // windows have to cover the same span rather than only
+                    // today, which is all the home block needs.
+                    try {
+                        const paged = await fetchPracticeWindows(startStr, endStr);
+                        const seen = new Set(practiceWindows.map(w =>
+                            `${w.program_id}|${w.date}|${w.time_start}`));
+                        paged.forEach(w => {
+                            if (!seen.has(`${w.program_id}|${w.date}|${w.time_start}`)) {
+                                practiceWindows.push(w);
+                            }
+                        });
+                    } catch (e) { /* a day without practice drawn is not a broken day */ }
 
                     buildTimeline();
 
