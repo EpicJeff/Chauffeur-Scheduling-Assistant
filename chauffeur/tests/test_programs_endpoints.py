@@ -700,6 +700,57 @@ def scenario_editing_the_starting_point_spends_no_research():
           'can already read music', "and it is stored")
 
 
+def scenario_a_program_says_whether_its_owner_can_reach_it():
+    """A three-year-old's program is a real program whose owner will never
+    open the app. Every surface that draws "your own" programs leaves that
+    plan reachable by nobody, so the list says which programs are like that
+    -- from `stages.CAPABILITIES['own_account']`, which a parent can override
+    per child, so nothing here guesses at a birthday.
+    """
+    _reset()
+    import datetime
+    import main
+    from services import stages
+    tot = datetime.date.today()
+    storage.update_member('kid', {'birthdate':
+                                  tot.replace(year=tot.year - 3).isoformat()})
+    storage.add_program({'member_id': 'kid', 'title': 'Learn to swim',
+                         'state': 'active'})
+    storage.add_program({'member_id': 'mom', 'title': 'Guitar',
+                         'state': 'active'})
+    rows = main.list_programs_api(request=None)['programs']
+    by_title = {r['title']: r for r in rows}
+    check(by_title['Learn to swim']['owner_self_serves'] is False,
+          f"a three-year-old cannot reach their own program, got {by_title}")
+    check(by_title['Learn to swim']['member_name'] == 'Lily',
+          "and the row names whose it is, so a card can say")
+    check(by_title['Guitar']['owner_self_serves'] is True,
+          "an adult reaches their own")
+    # The stage bundle is a bundle, not a verdict: pinning the capability
+    # changes the answer without touching the birthday.
+    storage.update_member('kid', {'capability_overrides': {'own_account': True}})
+    rows = main.list_programs_api(request=None)['programs']
+    again = {r['title']: r for r in rows}['Learn to swim']
+    check(again['owner_self_serves'] is True,
+          f"a per-child override decides, got {again}")
+    check(stages.capabilities(storage.get_member('kid'))['own_account'] is True,
+          "and it is the same switch the rest of the app reads")
+
+
+def scenario_a_parent_can_log_a_small_childs_session():
+    """The server has always allowed this -- ownership OR parent/adult. It is
+    the only way a session ever gets logged for somebody who cannot tap."""
+    _reset()
+    import main
+    pid = storage.add_program({'member_id': 'kid', 'title': 'Learn to swim',
+                               'state': 'active'})
+    res = main.log_program_session(pid, body={'member_id': 'mom',
+                                              'source': 'asked'}, request=None)
+    check(res.get('status') == 'success', f"a parent may log it, got {res}")
+    check(len(storage.get_program(pid)['sessions']) == 1,
+          "and it counted once")
+
+
 if __name__ == '__main__':
     scenario_the_endpoints_exist()
     scenario_a_body_aim_is_refused_at_the_door()
@@ -735,4 +786,6 @@ if __name__ == '__main__':
     scenario_a_starting_point_is_taken_by_hand_and_used()
     scenario_a_body_target_in_the_starting_point_is_refused_too()
     scenario_editing_the_starting_point_spends_no_research()
+    scenario_a_program_says_whether_its_owner_can_reach_it()
+    scenario_a_parent_can_log_a_small_childs_session()
     print("test_programs_endpoints OK")

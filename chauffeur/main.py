@@ -5643,12 +5643,13 @@ def _program_list_scope(request, member_id: Optional[str]):
 @app.get("/api/programs")
 def list_programs_api(member_id: str = None, include_finished: bool = False,
                       request: Request = None):
-    from services import programs as _prog
+    from services import programs as _prog, stages as _stages
     scope = _program_list_scope(request, member_id)
     if scope is _NOBODY:
         return {"programs": []}
     rows = storage.get_programs(member_id=scope,
                                 include_finished=include_finished)
+    members = {x['id']: x for x in storage.get_all_members(include_archived=True)}
     out = []
     for r in rows:
         # The "did it happen?" question rides the OWNER's own surface rather
@@ -5673,9 +5674,19 @@ def list_programs_api(member_id: str = None, include_finished: bool = False,
         prog = _prog.progress(r)
         phase = prog.get('phase') or {}
         unit = _prog.unit_for(r, phase) or {}
+        # Whether the person this program belongs to can reach it themselves.
+        # A three-year-old's guitar program is a real program and its owner
+        # will never open this app -- `stages.CAPABILITIES` already says so in
+        # `own_account`, which a parent can override per child, so nothing
+        # here has to guess at a birthday. A surface that only ever draws
+        # "your own" programs leaves that child's plan reachable by nobody.
+        owner = members.get(r.get('member_id')) or {}
+        caps = _stages.capabilities(owner)
         out.append({**r, 'progress': prog, 'due_ask': ask,
                     'current_phase': phase.get('name') or '',
-                    'current_unit': unit.get('n') or 0})
+                    'current_unit': unit.get('n') or 0,
+                    'member_name': owner.get('name') or '',
+                    'owner_self_serves': bool(caps.get('own_account', True))})
     return {"programs": out}
 
 

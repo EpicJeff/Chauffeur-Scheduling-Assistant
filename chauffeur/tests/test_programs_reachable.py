@@ -273,6 +273,25 @@ def scenario_last_nights_session_is_not_the_next_one():
           "a day that turned over invalidates a fetch made for the old one")
 
 
+def scenario_a_child_who_cannot_tap_still_has_a_surface():
+    """The person a program belongs to is not always the person who can
+    operate the app. A parent's day has to carry a small child's program, and
+    the session sheet has to let them finish it -- the server always allowed
+    that and only the button disagreed."""
+    src = _app()
+    fetch = _body(src, 'fetchMyPrograms')
+    check('owner_self_serves' in fetch,
+          "a parent's day must include programs their owner cannot reach")
+    check("['parent', 'adult'].includes(currentMemberRole())" in fetch,
+          "and only a grown-up's day does")
+    sheet = _body(src, 'openSessionSheet')
+    check('grown' in sheet and 'mine || grown' in sheet,
+          "the Done button must not be owner-only")
+    card = _body(src, 'renderProgramCard')
+    check('member_name' in card,
+          "a card that can be somebody else's has to say whose")
+
+
 if __name__ == '__main__':
     os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp())
     scenario_the_program_surfaces_have_a_driver_side_mount()
@@ -285,5 +304,6 @@ if __name__ == '__main__':
     scenario_the_day_is_one_page_with_a_jump_row()
     scenario_a_rebuilt_pane_gets_its_sections_back()
     scenario_last_nights_session_is_not_the_next_one()
+    scenario_a_child_who_cannot_tap_still_has_a_surface()
     scenario_every_inline_script_still_parses()
     print("test_programs_reachable OK")

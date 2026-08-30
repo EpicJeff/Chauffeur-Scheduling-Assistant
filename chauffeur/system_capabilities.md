@@ -6999,6 +6999,27 @@ ENDED is behind you whatever the log says; chasing an unanswered one is the
 still ahead, and `reanchorIfDayChanged` clears `practiceBuiltAt` so an app left
 open overnight stops offering a fetch whose range started on the old day.
 
+**A program whose owner cannot open the app** (v2.440.0 —
+`owner_self_serves`, the sheet's Done). A three-year-old's program is a real
+program, and every PWA surface drew "your own", so his plan was reachable by
+nobody: the Programs page had it, and nothing a parent uses day to day did.
+
+`stages.CAPABILITIES` already carries the right word for this. `own_account`
+is False for sprout and explorer and True from navigator up, and it is a
+per-child override rather than a birthday, so a parent can move it without
+arguing with a number. `GET /api/programs` now returns `owner_self_serves`
+and `member_name` on every row; a parent's or adult's day fetches the
+household and keeps their own programs plus any whose owner cannot reach one.
+Everyone else asks for their own and the server narrows it anyway. The card
+names whose program it is whenever that is not the viewer.
+
+And **the session sheet lets a grown-up finish it**. The server has always
+allowed this — `_program_permission_or_refuse` is ownership OR parent/adult —
+and only the button disagreed, so a small child's session was viewable and
+unfinishable. `Done` becomes `Done — <name>` on somebody else's. A sibling
+still gets no button: for them the server really would refuse, and offering a
+tap that 403s is worse than offering none.
+
 **A practice window is visible, announced, and carries the session**
 (v2.435.5 — `programs.practice_windows`, `GET /api/practice-windows`). What
 shipped before this was an arrangement one person had to remember: approving a
