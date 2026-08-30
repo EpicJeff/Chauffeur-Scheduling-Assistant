@@ -6408,7 +6408,8 @@ the bigger one: an ambition fails not because nobody has forty minutes but
 because nobody knows what would go IN the forty minutes. A **program**
 (`storage.add_program`/`get_program`/`get_programs`/`update_program`) carries
 the path as well as the time — `title`, `member_id` (whose ambition this is),
-`shape` (`sessions_per_week`, `minutes`, `preferred_days`), `phases` (each
+`shape` (`sessions_per_week`, `minutes`, `preferred_days`, and `slots` — the
+week said exactly, when somebody picked their own windows), `phases` (each
 `{name, weeks, what, milestone, milestone_hit_at, url}`), a `source` (the
 curation record — plan name, why-this-one, the cited facts, runners-up,
 `origin`/`reason`, and `hand_written` kept as `origin != 'cited'` for rows
@@ -6573,6 +6574,37 @@ than a choice somebody could argue with. The card carries a "Why this one"
 toggle opening onto the argument and an "Also considered" list of the other
 candidates with the model's own reason for passing on each (the canned
 "second choice for this aim" is now only the fallback when it gives none).
+
+**A family can name their own practice windows** (v2.435.2). `propose_slots`
+has said in its own docstring since the arc shipped that "the person can move
+them on the approval screen anyway", and the approval screen offered no such
+thing: preferred DAYS was the closest anyone could get to naming a time, and
+the hour came from `DEFAULT_SLOT_START` bumped forward past whatever was
+already committed. `shape['slots']` now carries `[{day, time_start,
+time_end}]` when somebody has picked, edited on the footprint panel itself
+("Not these times?") — the windows are chosen where the windows are shown.
+`propose_slots` yields to a chosen list outright rather than second-guessing
+it, and an EMPTY list is a real instruction — hand the choice back and the app
+proposes again from the preferred days. The count and the list cannot
+disagree: `clamp_shape` sets `sessions_per_week = len(slots)`, because four
+chosen windows IS four sessions a week and pacing is arithmetic over that
+number. `time_end` is always computed from `minutes` and never accepted, so
+changing how long a session runs re-ends every chosen window, and every shape
+field carries forward across an edit that does not name it (building the shape
+from three named fields silently discarded the fourth).
+
+**The hole that had to be closed first** (`programs.sanitize_slots`,
+v2.435.2). `approve()` took a `slots` list from the REQUEST BODY and handed it
+straight to `_emit_commitments`, which writes `time_start`/`time_end` into a
+`ProtectedCommitment` and from there into a solver `Rule` — and every
+commitment is converted inside ONE try/except, so a single `'29:00'` does not
+cost one program its window, it silently disables protected time for the whole
+household. That is the same failure `clamp_shape` was written for in v2.434.0,
+and the slot list walked around it; it only ever stayed shut because the one
+page posting there echoed back what the server had just proposed. Every slot
+list now goes through `sanitize_slots` — day 0–6, `HH:MM` parsed and
+normalised, end computed not accepted, duplicates dropped, capped at
+`MAX_SESSIONS_PER_WEEK` — on both doors, the shape and `approve()`.
 
 **The shape is clamped at every door** (`programs.clamp_shape`, v2.434.0):
 1–7 sessions a week, 5–240 minutes, and preferred days filtered to real

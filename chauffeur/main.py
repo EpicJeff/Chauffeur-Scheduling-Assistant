@@ -5741,13 +5741,20 @@ def edit_program(program_id: str, body: dict = Body(default={}),
         updates['title'] = title
 
     old_shape = row.get('shape') or {}
+    # Every field carries forward unless this call names it — an edit of the
+    # minutes must not silently discard the windows somebody chose by hand,
+    # which is what building the shape from three fields did.
     shape = _prog.clamp_shape({
         'sessions_per_week': body.get('sessions_per_week',
                                       old_shape.get('sessions_per_week')),
         'minutes': body.get('minutes', old_shape.get('minutes')),
         'preferred_days': list(body.get('preferred_days')
                                if body.get('preferred_days') is not None
-                               else (old_shape.get('preferred_days') or []))})
+                               else (old_shape.get('preferred_days') or [])),
+        # An explicit empty list is a real instruction — "stop using my times,
+        # propose them again" — so it is distinguished from not saying.
+        'slots': (body.get('slots') if body.get('slots') is not None
+                  else (old_shape.get('slots') or []))})
     if shape != old_shape:
         updates['shape'] = shape
 

@@ -293,11 +293,50 @@
                                     </template>
                                     <template x-if="footprints[p.id]">
                                         <div class="space-y-1.5">
-                                            <div class="text-xs text-gray-300" x-show="(footprints[p.id].slots || []).length">
+                                            <!-- The proposed windows, and the way to disagree with
+                                                 them. `propose_slots` has always said "the person can
+                                                 move them on the approval screen anyway" in its own
+                                                 docstring; until this row existed the screen offered
+                                                 no such thing, and preferred DAYS was the closest a
+                                                 family could get to naming a time. -->
+                                            <div class="text-xs text-gray-300" x-show="(footprints[p.id].slots || []).length && !slotOpen[p.id]">
                                                 <template x-for="s in footprints[p.id].slots" :key="s.day + s.time_start">
                                                     <div><span x-text="dayLabel(s.day)"></span> <span x-text="s.time_start + '–' + s.time_end"></span></div>
                                                 </template>
                                             </div>
+                                            <button x-show="!slotOpen[p.id] && canAct(p)" @click="startSlotEdit(p)"
+                                                class="text-[11px] font-semibold text-gray-500 underline underline-offset-2">Not these times?</button>
+
+                                            <template x-if="slotOpen[p.id] && slotDraft[p.id]">
+                                                <div class="space-y-1.5">
+                                                    <template x-for="(s, i) in slotDraft[p.id]" :key="i">
+                                                        <div class="flex items-center gap-1.5">
+                                                            <select x-model.number="s.day"
+                                                                class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-xs">
+                                                                <template x-for="d in 7" :key="d">
+                                                                    <option :value="d - 1" x-text="dayLabel(d - 1)"></option>
+                                                                </template>
+                                                            </select>
+                                                            <input type="time" x-model="s.time_start"
+                                                                class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-xs">
+                                                            <button @click="slotDraft[p.id].splice(i, 1)"
+                                                                class="text-xs font-bold px-2 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 shrink-0">Remove</button>
+                                                        </div>
+                                                    </template>
+                                                    <div class="flex flex-wrap gap-2">
+                                                        <button x-show="slotDraft[p.id].length < 7" @click="addSlot(p)"
+                                                            class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Add a window</button>
+                                                        <button @click="saveSlots(p)" :disabled="proposing"
+                                                            class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:opacity-50">Save these times</button>
+                                                        <button @click="slotOpen[p.id] = false"
+                                                            class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Cancel</button>
+                                                    </div>
+                                                    <p class="text-[11px] text-gray-500 italic">
+                                                        Each window runs <span x-text="(p.shape || {}).minutes || 25"></span> minutes from the time you set — change that under Edit.
+                                                        Remove them all and the app goes back to proposing times for you.
+                                                    </p>
+                                                </div>
+                                            </template>
                                             <div class="text-xs text-gray-300" x-show="footprints[p.id].thread" x-text="'Kit thread: ' + footprints[p.id].thread"></div>
                                             <div class="text-xs text-gray-300" x-show="footprints[p.id].event"
                                                 x-text="footprints[p.id].event ? ('Calendar target: ' + footprints[p.id].event.title + ' on ' + fmtDate(footprints[p.id].event.date)) : ''"></div>
@@ -465,6 +504,7 @@
                 draft: { title: '', for_member_id: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' },
                 sessionOpen: {}, sessionMinutes: {},
                 whyOpen: {}, editOpen: {}, edits: {},
+                slotOpen: {}, slotDraft: {},
 
                 readIdentity() {
                     try {
@@ -653,6 +693,41 @@
                         showGlobalAlert("Couldn't propose that just now.");
                     } finally {
                         this.proposing = false;
+                    }
+                },
+
+                // Picking your own practice windows. The draft is seeded from
+                // whatever is on screen -- the chosen ones if there are any,
+                // the proposal if there are not -- so "not these times" starts
+                // from the times you are objecting to rather than a blank.
+                startSlotEdit(p) {
+                    const fp = this.footprints[p.id] || {};
+                    const src = ((p.shape || {}).slots || []).length
+                        ? p.shape.slots : (fp.slots || []);
+                    this.slotDraft[p.id] = src.map(s => ({ day: s.day,
+                                                           time_start: s.time_start }));
+                    if (!this.slotDraft[p.id].length) this.addSlot(p);
+                    this.slotOpen[p.id] = true;
+                },
+
+                addSlot(p) {
+                    const draft = this.slotDraft[p.id] || (this.slotDraft[p.id] = []);
+                    const used = draft.map(s => s.day);
+                    const day = [1, 3, 5, 0, 2, 4, 6].find(d => !used.includes(d));
+                    draft.push({ day: day === undefined ? 1 : day, time_start: '19:00' });
+                },
+
+                async saveSlots(p) {
+                    const draft = (this.slotDraft[p.id] || [])
+                        .filter(s => s.time_start)
+                        .map(s => ({ day: Number(s.day), time_start: s.time_start }));
+                    // An empty list is not a mistake to block: it is how a
+                    // family hands the choice back to the app.
+                    const ok = await this.patchProgram(p, { slots: draft },
+                                                       "Couldn't save those times.");
+                    if (ok) {
+                        this.slotOpen[p.id] = false;
+                        await this.loadFootprint(p.id);
                     }
                 },
 

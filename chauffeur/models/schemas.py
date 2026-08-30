@@ -724,9 +724,12 @@ class Program(BaseModel):
                                  'facts': [], 'runners_up': [], 'answer': '',
                                  'origin': 'none', 'reason': '',
                                  'hand_written': False})
+    # `slots` is the week said exactly -- [{day, time_start, time_end}] --
+    # when a person picked their own windows instead of taking the proposal.
+    # Empty means "you choose", which is where every program starts.
     shape: Dict[str, Any] = Field(
         default_factory=lambda: {'sessions_per_week': 3, 'minutes': 25,
-                                 'preferred_days': []})
+                                 'preferred_days': [], 'slots': []})
     baseline: Dict[str, Any] = Field(
         default_factory=lambda: {'start_date': None, 'target_date': None,
                                  'target_event_id': None,

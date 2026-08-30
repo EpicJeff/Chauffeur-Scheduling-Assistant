@@ -407,6 +407,106 @@ def scenario_looking_again_never_costs_the_plan_already_found():
           f"and the message says nothing new was found, got {res.get('message')!r}")
 
 
+def scenario_a_family_can_choose_their_own_practice_windows():
+    """`propose_slots` has always said in its own docstring that "the person
+    can move them on the approval screen anyway". Until this landed the screen
+    offered no such thing: preferred DAYS was as close as a family could get
+    to naming a time, and the hour came from a module constant."""
+    _reset()
+    import main
+    from services import programs as _prog
+    pid = storage.add_program({
+        'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
+        'shape': {'sessions_per_week': 3, 'minutes': 30, 'preferred_days': []}})
+    res = main.edit_program(pid, body={
+        'member_id': 'mom',
+        'slots': [{'day': 2, 'time_start': '07:15'},
+                  {'day': 5, 'time_start': '16:00'}]}, request=None)
+    check(res.get('status') == 'success', f"got {res}")
+    row = storage.get_program(pid)
+    check([s['time_start'] for s in row['shape']['slots']] == ['07:15', '16:00'],
+          f"the chosen times are what is stored, got {row['shape']['slots']}")
+    check(row['shape']['slots'][0]['time_end'] == '07:45',
+          f"the end is computed from minutes, never accepted, got "
+          f"{row['shape']['slots'][0]}")
+    check(row['shape']['sessions_per_week'] == 2,
+          f"two windows IS twice a week -- the two must never disagree, got "
+          f"{row['shape']}")
+    proposed = _prog.propose_slots('kid', row['shape'])
+    check([s['day'] for s in proposed] == [2, 5],
+          f"and proposing yields to the choice rather than second-guessing "
+          f"it, got {proposed}")
+    fp = main.program_footprint(pid, request=None)
+    check([s['time_start'] for s in fp['slots']] == ['07:15', '16:00'],
+          f"the approval screen shows what will really be claimed, got {fp}")
+
+
+def scenario_handing_the_choice_back_resumes_proposing():
+    _reset()
+    import main
+    from services import programs as _prog
+    pid = storage.add_program({
+        'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
+        'shape': {'sessions_per_week': 2, 'minutes': 25, 'preferred_days': [1],
+                  'slots': [{'day': 6, 'time_start': '08:00',
+                             'time_end': '08:25'}]}})
+    res = main.edit_program(pid, body={'member_id': 'mom', 'slots': []},
+                            request=None)
+    check(res.get('status') == 'success', f"got {res}")
+    row = storage.get_program(pid)
+    check(row['shape']['slots'] == [],
+          f"an explicit empty list is an instruction, not a no-op, got {row['shape']}")
+    check([s['day'] for s in _prog.propose_slots('kid', row['shape'])],
+          "and the app proposes again from the preferred days")
+
+
+def scenario_an_edit_of_the_minutes_keeps_the_chosen_windows():
+    """Building the shape from three named fields quietly dropped the fourth,
+    so changing how long a session runs threw away every time somebody had
+    picked by hand."""
+    _reset()
+    import main
+    pid = storage.add_program({
+        'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
+        'shape': {'sessions_per_week': 1, 'minutes': 25, 'preferred_days': [],
+                  'slots': [{'day': 3, 'time_start': '17:30',
+                             'time_end': '17:55'}]}})
+    main.edit_program(pid, body={'member_id': 'mom', 'minutes': 60},
+                      request=None)
+    row = storage.get_program(pid)
+    check(len(row['shape']['slots']) == 1,
+          f"the chosen window survives an unrelated edit, got {row['shape']}")
+    check(row['shape']['slots'][0]['time_end'] == '18:30',
+          f"and its end follows the new length, got {row['shape']['slots'][0]}")
+
+
+def scenario_a_slot_list_from_a_request_cannot_reach_the_solver_unchecked():
+    """The hole picking your own times would have opened. `approve()` took
+    `slots` from the request body and handed them straight to
+    `_emit_commitments`, which writes `time_end` into a `ProtectedCommitment`
+    and from there into a solver `Rule` -- and every commitment is converted
+    inside ONE try/except, so a single '29:00' silently disables protected
+    time for the whole household."""
+    _reset()
+    import main
+    from services import programs as _prog
+    pid = storage.add_program({
+        'member_id': 'mom', 'title': 'Guitar', 'state': 'proposed',
+        'shape': {'sessions_per_week': 1, 'minutes': 25, 'preferred_days': []}})
+    res = _prog.approve(pid, approver_id='mom', slots=[
+        {'day': 2, 'time_start': '19:00', 'time_end': '29:00'},
+        {'day': 99, 'time_start': '19:00'},
+        {'day': 4, 'time_start': 'whenever'},
+    ])
+    check(res.get('status') == 'success', f"got {res}")
+    windows = [(c['days_of_week'], c['time_start'], c['time_end'])
+               for c in storage.get_protected_commitments(member_id='mom')]
+    check(len(windows) == 1, f"only the real window survives, got {windows}")
+    check(windows[0][2] == '19:25',
+          f"and its end is the app's arithmetic, not the caller's claim, got "
+          f"{windows[0]}")
+
+
 def scenario_a_body_aim_is_refused_on_an_edit_too():
     """The screen runs on every door into a title, not just the first one --
     an aim that could not be proposed must not be reachable by renaming."""
@@ -536,6 +636,10 @@ if __name__ == '__main__':
     scenario_changing_the_aim_looks_for_a_new_plan()
     scenario_looking_again_re_runs_research_on_the_same_aim()
     scenario_looking_again_never_costs_the_plan_already_found()
+    scenario_a_family_can_choose_their_own_practice_windows()
+    scenario_handing_the_choice_back_resumes_proposing()
+    scenario_an_edit_of_the_minutes_keeps_the_chosen_windows()
+    scenario_a_slot_list_from_a_request_cannot_reach_the_solver_unchecked()
     scenario_a_body_aim_is_refused_on_an_edit_too()
     scenario_only_a_proposal_is_editable()
     scenario_a_child_cannot_edit_a_siblings_proposal()

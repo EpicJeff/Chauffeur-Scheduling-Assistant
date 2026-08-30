@@ -14,6 +14,7 @@ people, because there is no field to build one from.
 """
 import datetime
 import math
+import re
 import time
 import uuid
 
@@ -36,6 +37,54 @@ LIVE_STATES = ('proposed', 'active', 'paused')
 MAX_SESSIONS_PER_WEEK = 7
 MIN_MINUTES = 5
 MAX_MINUTES = 240
+
+
+_HHMM_RE = re.compile(r'^(\d{1,2}):([0-5]\d)$')
+
+
+def sanitize_slots(slots, minutes: int) -> list:
+    """Practice windows a person chose, forced into shapes the solver can eat.
+
+    This is the check that has to exist before anybody is allowed to pick
+    their own times, and it did not: `approve()` took a `slots` list from the
+    request and handed it STRAIGHT to `_emit_commitments`, which writes
+    `time_start`/`time_end` into a `ProtectedCommitment` and from there into a
+    solver `Rule`. Every commitment is converted inside ONE try/except, so a
+    single '29:00' does not cost one program its window -- it silently
+    disables protected time for the whole household. The clamp on
+    `sessions_per_week` and `minutes` was written for exactly that failure and
+    then the slot list walked around it.
+
+    A window is a DAY and a START. The end is computed from `minutes`, never
+    accepted, so the two can never disagree and a window can never be
+    stretched by a client that just says so.
+    """
+    minutes = max(MIN_MINUTES, min(MAX_MINUTES, int(minutes or 25)))
+    out, seen = [], set()
+    for raw in (slots or []):
+        if not isinstance(raw, dict):
+            continue
+        try:
+            day = int(raw.get('day'))
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= day <= 6:
+            continue
+        m = _HHMM_RE.match(str(raw.get('time_start') or '').strip())
+        if not m:
+            continue
+        hour, minute = int(m.group(1)), int(m.group(2))
+        if hour > 23:
+            continue
+        key = (day, hour, minute)
+        if key in seen:
+            continue
+        seen.add(key)
+        end_total = min(hour * 60 + minute + minutes, 23 * 60 + 59)
+        out.append({'day': day, 'time_start': _fmt_hhmm(hour, minute),
+                    'time_end': _fmt_hhmm(end_total // 60, end_total % 60)})
+    out.sort(key=lambda s: (s['day'], s['time_start']))
+    return out[:MAX_SESSIONS_PER_WEEK]
 
 
 def clamp_shape(shape: dict) -> dict:
@@ -65,6 +114,15 @@ def clamp_shape(shape: dict) -> dict:
         if 0 <= d <= 6 and d not in days:
             days.append(d)
     shape['preferred_days'] = days
+    # Chosen windows, when a person has picked them rather than taking what
+    # was proposed. They live on the SHAPE because that is what they are --
+    # the same statement as "three evenings a week", said exactly. Which also
+    # means the two cannot be allowed to disagree: a week with four chosen
+    # windows IS four sessions a week, and pacing is arithmetic over that
+    # number, so it follows the list rather than sitting beside it lying.
+    shape['slots'] = sanitize_slots(shape.get('slots'), shape['minutes'])
+    if shape['slots']:
+        shape['sessions_per_week'] = len(shape['slots'])
     return shape
 
 
@@ -417,10 +475,16 @@ def propose_slots(member_id: str, shape: dict, now=None) -> list:
     """Practice windows, proposed from the week's existing shape.
 
     No CP-SAT run: proposing a practice time is not a solve. This reads what is
-    already committed and picks windows that do not sit on top of it, and the
-    person can move them on the approval screen anyway.
+    already committed and picks windows that do not sit on top of it.
+
+    A chosen `shape['slots']` wins outright and is not second-guessed: the
+    whole point of picking Tuesday at seven is that the app stops picking. An
+    empty list is how a family hands the choice back -- proposing resumes from
+    the preferred days, exactly as it did before anybody touched anything.
     """
     shape = clamp_shape(shape)
+    if shape.get('slots'):
+        return [dict(s) for s in shape['slots']]
     per_week = shape['sessions_per_week']
     minutes = shape['minutes']
     days = list(shape['preferred_days'])
@@ -649,7 +713,13 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
         return {'status': 'error',
                 'message': "I can't tell whose program this is."}
 
-    use = slots or propose_slots(row.get('member_id'), row.get('shape') or {})
+    # Whatever the caller sent goes through the same sanitation the shape
+    # does. This is a request body reaching a solver rule; trusting it was a
+    # hole that only stayed shut because the one page that posts here happened
+    # to echo back what the server had just proposed.
+    shape = row.get('shape') or {}
+    use = (sanitize_slots(slots, shape.get('minutes') or 25)
+           or propose_slots(row.get('member_id'), shape))
     if not use:
         return {'status': 'error', 'message': 'There is no time to claim.'}
 
