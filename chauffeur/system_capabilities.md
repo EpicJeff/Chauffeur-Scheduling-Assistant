@@ -6964,6 +6964,41 @@ rationale is updated to say what that route now carries). Logged windows drop
 off; no counts, no ordering, nothing that reads as one person short of
 another.
 
+**The day is one page with a jump row** (v2.439.0 — `#screen-anchors`,
+`paneSectionsHtml`, `paintPaneSections`). Intake, "Argyle noticed" and the
+practice block were three stacked boxes above the day panes, each with a fixed
+slice of the screen (`max-h-[45%]`, `[35%]`, `[60%]`) and its own scrollbar.
+So a day arrived pre-divided: intake in one letterbox, Argyle in a second, the
+agenda in whatever was left — which on a busy day was nothing, and the events
+the Family tab exists for sat below the fold of a box nobody thinks to scroll.
+
+The House tab had already solved this shape, and the kid My Day before it: one
+long page, with a row of buttons at the top that jumps you down it. Every
+section now lives INSIDE the day pane and scrolls with it; `#screen-anchors` is
+the only thing pinned, and it follows `renderHouseAnchors`' rule exactly — one
+section is not a story, so the row draws only at two or more. On the drives
+view that is **Today** and **Drives**; on Family, **Intake**, **Argyle** and
+**Events**.
+
+Only TODAY's pane carries them: intake, what Argyle noticed and tonight's
+practice are all about now, and repeating them on every pane of the week is
+noise. Panes are rebuilt wholesale, which throws away every node the section
+renderers wrote into, so `paintPaneSections()` runs after every build —
+`renderProposals` binds handlers to real nodes and could never have been
+replayed from a cached string. Each section owns its own emptiness now that
+nothing hides it from outside: `renderMind` draws nothing rather than a heading
+over a blank space.
+
+**Last night's session is not the next one** (`upcomingWindows`). "Coming up"
+filtered on `!w.logged` alone, which is a different question — a session nobody
+ever answered stays unlogged forever, so last night's nine o'clock sat at the
+top of the list as the next thing to do and stayed there. A window that has
+ENDED is behind you whatever the log says; chasing an unanswered one is the
+"did it happen?" ask's job and it has its own row. `sessionDateLabel` also says
+"Yesterday" rather than a bare weekday name, which read exactly like a day
+still ahead, and `reanchorIfDayChanged` clears `practiceBuiltAt` so an app left
+open overnight stops offering a fetch whose range started on the old day.
+
 **A practice window is visible, announced, and carries the session**
 (v2.435.5 — `programs.practice_windows`, `GET /api/practice-windows`). What
 shipped before this was an arrangement one person had to remember: approving a

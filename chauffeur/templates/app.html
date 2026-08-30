@@ -284,35 +284,13 @@
             {% include 'components/music_widget.html' %}
         </div>
 
-        <!-- Proposed events from email intake (parents, Family view only) -->
-        <div id="proposals-container" class="shrink-0 overflow-y-auto max-h-[45%] border-b border-gray-800 bg-gray-950"
-            style="display: none">
-            <div id="proposals-content" class="p-3 space-y-2"></div>
-        </div>
-
-        <!-- Argyle noticed (the Mind, phase C): observations Argyle surfaced
-             for whoever is signed in, identity-filtered server-side. Anyone
-             can see one; only a parent/adult can clear or Dismiss it
-             (server enforces regardless — the buttons just don't invite a
-             tap that would 403). Family view only, collapses away when
-             there is nothing to show. -->
-        <div id="mind-container" class="shrink-0 overflow-y-auto max-h-[35%] border-b border-gray-800 bg-gray-950"
-            style="display: none">
-            <div id="mind-content" class="p-3 space-y-2"></div>
-        </div>
+        <!-- The jump row, the House tab's shape. Every section now lives
+             INSIDE the day pane below and scrolls with it as one page; this
+             row is the only thing pinned above, and it earns its pixels only
+             when there is more than one place to go. -->
+        <div id="screen-anchors" class="px-4 pt-3 shrink-0" style="display: none"></div>
 
         <!-- Schedule Container (Swipeable) -->
-        <!-- Today, for somebody who drives. Above the day panes rather than
-             inside one, because all of it is about TODAY and the panes swipe
-             through a week -- the same reason the launch banner sits where it
-             does. Everything here was previously mounted inside renderMyDay
-             and only there, which made it invisible to every driver in the
-             house. My Day mounts the identical blocks itself. -->
-        <div id="today-container" class="shrink-0 overflow-y-auto max-h-[60%] border-b border-gray-800 bg-gray-950"
-            style="display: none">
-            <div id="today-content" class="p-3"></div>
-        </div>
-
         <div id="days-container"
             class="flex-1 flex overflow-x-auto snap-x-mandatory no-scrollbar relative">
             <!-- Day panes injected here -->
@@ -845,18 +823,14 @@
                 document.getElementById('btn-next-day').disabled = false;
             }
             updateAgentFab();
-            // Always shown for parents on Family view — with no pending
-            // proposals it collapses to the one-row 📸 capture strip.
-            const showProposals = currentView === 'family' && currentMemberRole() === 'parent';
-            document.getElementById('proposals-container').style.display = showProposals ? 'block' : 'none';
-            // Argyle noticed (the Mind, phase C): everyone can see one, so
-            // this only depends on there being something to show — not on
-            // role, unlike the proposals intake above.
-            const showMind = currentView === 'family' && mindInsights.length > 0;
-            document.getElementById('mind-container').style.display = showMind ? 'block' : 'none';
-            // Your practice, on the tab a driver actually has.
-            applyPracticeVisibility();
-            if (currentView === 'drives') refreshPracticeSection(false);
+            // Intake, Argyle and your practice are no longer boxes with a
+            // slice of the screen each -- they are sections inside today's
+            // pane, so WHICH of them exists is decided when the pane is built
+            // and there is nothing to show or hide from out here. A view
+            // switch rebuilds the panes; this paints what they contain.
+            const anchors = document.getElementById('screen-anchors');
+            if (anchors && !isTimeline) anchors.style.display = 'none';
+            if (isTimeline) paintPaneSections();
             document.getElementById('messages-container').style.display = isMessages ? 'flex' : 'none';
             document.getElementById('map-container').style.display = isMap ? 'flex' : 'none';
             document.getElementById('myday-container').style.display = isMyDay ? 'flex' : 'none';
@@ -1339,9 +1313,7 @@
             // only surface there was; now that a session opens, the card's
             // job is "what am I doing next" and the rotation in full is a
             // reference view -- which is what the Programs page is for.
-            const nextUp = (practiceWindows || [])
-                .filter(w => w.program_id === p.id && !w.logged)
-                .sort((a, b) => (a.date + a.time_start).localeCompare(b.date + b.time_start))[0];
+            const nextUp = upcomingWindows(p.id)[0];
             const rotation = ((phase && phase.rotation) || []).filter(sess => (sess.steps || []).length);
             const shown = (nextUp && (nextUp.steps || []).length)
                 ? { label: nextUp.session_label || '', steps: nextUp.steps }
@@ -1374,10 +1346,7 @@
             // "Next practice: Tue, Sep 1, 21:00" and stop -- a time with no
             // answer to "which session is that", which is the whole question
             // once a phase deals more than one.
-            const mineAhead = (practiceWindows || [])
-                .filter(w => w.program_id === p.id && !w.logged)
-                .sort((a, b) => (a.date + a.time_start).localeCompare(b.date + b.time_start))
-                .slice(0, 4);
+            const mineAhead = upcomingWindows(p.id).slice(0, 4);
             const aheadLabel = mineAhead.length ? `
                 <div class="text-[10px] font-bold uppercase tracking-wide text-gray-500 mt-2.5">Coming up</div>` : '';
             const aheadRows = mineAhead.length ? aheadLabel + `
@@ -1605,9 +1574,35 @@
             const d = new Date(`${w.date}T12:00:00`);
             const today = new Date(); today.setHours(12, 0, 0, 0);
             const days = Math.round((d - today) / 86400000);
+            // A bare weekday name for a day already gone reads exactly like
+            // one still ahead -- "Friday" is next Friday to anybody looking
+            // at it on Saturday. Past days say so.
             const when = days === 0 ? 'Today' : days === 1 ? 'Tomorrow'
+                : days === -1 ? 'Yesterday'
+                : days < 0 ? d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
                 : d.toLocaleDateString(undefined, { weekday: 'long' });
             return `${when}, ${programFmtHHMM(w.time_start)}`;
+        }
+
+        // The windows still ahead of right now, for one program.
+        //
+        // "Coming up" filtered on `!w.logged` alone, which is not the same
+        // question: a session nobody ever answered stays unlogged forever, so
+        // last night's nine o'clock sat at the top of the list as the next
+        // thing to do, and it will do that until somebody taps something. A
+        // window that has ENDED is behind you whatever the log says -- the
+        // "did it happen?" ask is what chases an unanswered one, and it has
+        // its own row on this card.
+        function upcomingWindows(programId) {
+            const now = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+            const nowHM = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+            return (practiceWindows || [])
+                .filter(w => w.program_id === programId && !w.logged)
+                .filter(w => w.date > today
+                          || (w.date === today && (w.time_end || '') >= nowHM))
+                .sort((a, b) => (a.date + a.time_start).localeCompare(b.date + b.time_start));
         }
 
         // The tap target this arc never had. Everything needed to actually do
@@ -1772,12 +1767,89 @@
                  + (p.programs || '') + (p.dueSoon || '');
         }
 
+        function todayStr() {
+            const pad = n => String(n).padStart(2, '0');
+            const d = new Date();
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+        }
+
+        // The sections that ride above the day's own list. Empty shells: the
+        // renderer that owns each one fills it by id once the pane is in the
+        // DOM (`paintPaneSections`), because `renderProposals` builds real
+        // nodes with handlers bound on them and cannot be replayed from a
+        // cached string. The WRAPPERS are unconditional for the view they
+        // belong to -- deciding on content here would mean an insight that
+        // arrives after the build has nowhere to land.
+        function paneSectionsHtml() {
+            const family = currentView === 'family';
+            const parts = [];
+            if (family && currentMemberRole() === 'parent') {
+                parts.push('<div id="proposals-container" style="scroll-margin-top:8px" class="mb-3">'
+                         + '<div id="proposals-content" class="space-y-2"></div></div>');
+            }
+            if (family) {
+                parts.push('<div id="mind-container" style="scroll-margin-top:8px" class="mb-3">'
+                         + '<div id="mind-content" class="space-y-2"></div></div>');
+            }
+            if (!family) {
+                parts.push('<div id="today-container" style="scroll-margin-top:8px" class="mb-3">'
+                         + '<div id="today-content"></div></div>');
+            }
+            return parts.join('');
+        }
+
+        function paneJump(id) {
+            const el = document.getElementById(id);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        // Same row and the same rule as the House tab's: one section is not a
+        // story, so it draws only when there are at least two places to jump
+        // between. Counts come from the same arrays the sections render from.
+        function renderScheduleAnchors() {
+            const wrap = document.getElementById('screen-anchors');
+            if (!wrap) return;
+            const family = currentView === 'family';
+            const onTimeline = family || currentView === 'drives';
+            const btn = (emoji, label, count, target) => `
+                <button onclick="paneJump('${target}')"
+                    class="flex-1 flex flex-col items-center gap-1 py-2.5 rounded-2xl bg-gray-900 border border-gray-800 active:bg-gray-800">
+                    <span class="relative text-2xl leading-none">${emoji}${count ? `
+                        <span class="absolute -top-1.5 -right-4 min-w-[20px] h-[20px] px-1 rounded-full bg-amber-500 text-black text-[11px] font-bold flex items-center justify-center">${count > 99 ? '99+' : count}</span>` : ''}</span>
+                    <span class="text-xs font-bold tracking-wide text-gray-300">${label}</span>
+                </button>`;
+            const has = id => !!document.getElementById(id);
+            const parts = [];
+            if (onTimeline && has('today-container')) {
+                parts.push(btn('🎯', 'Today', 0, 'today-container'));
+            }
+            if (onTimeline && has('proposals-container')) {
+                parts.push(btn('📥', 'Intake', (proposalsData || []).length, 'proposals-container'));
+            }
+            if (onTimeline && mindInsights.length && has('mind-container')) {
+                parts.push(btn('✨', 'Argyle', mindInsights.length, 'mind-container'));
+            }
+            if (onTimeline && has(family ? 'pane-events' : 'pane-drives')) {
+                parts.push(btn(family ? '📅' : '🚗', family ? 'Events' : 'Drives', 0,
+                               family ? 'pane-events' : 'pane-drives'));
+            }
+            wrap.innerHTML = parts.length > 1 ? `<div class="flex gap-2">${parts.join('')}</div>` : '';
+            wrap.style.display = parts.length > 1 ? 'block' : 'none';
+        }
+
+        function paintPaneSections() {
+            if (document.getElementById('proposals-content')) renderProposals();
+            if (document.getElementById('mind-content')) renderMind();
+            if (document.getElementById('today-content')) refreshPracticeSection(false);
+            renderScheduleAnchors();
+        }
+
         function applyPracticeVisibility() {
             const box = document.getElementById('today-container');
             if (!box) return;
             const body = document.getElementById('today-content');
-            const has = !!(body && body.innerHTML.trim());
-            box.style.display = (currentView === 'drives' && has) ? 'block' : 'none';
+            box.style.display = (body && body.innerHTML.trim()) ? 'block' : 'none';
+            renderScheduleAnchors();
         }
 
         // `force` is for the heartbeat and the foreground return; a plain view
@@ -2765,8 +2837,16 @@
 
         function renderMind() {
             const wrap = document.getElementById('mind-content');
-            if (!wrap) return;
+            if (!wrap) { renderScheduleAnchors(); return; }
             const canHandle = ['parent', 'adult'].includes(currentMemberRole());
+            // Rule 1: nothing noticed is nothing drawn, not a heading over a
+            // blank space. `applyViewVisibility` used to hide the whole box
+            // for this; a section inside a page owns its own emptiness.
+            if (!mindInsights.length) {
+                wrap.innerHTML = '';
+                renderScheduleAnchors();
+                return;
+            }
             wrap.innerHTML = '<div class="text-xs font-black uppercase tracking-widest text-violet-400 px-1">✨ Argyle noticed</div>'
                 + mindInsights.map(ins => `
                 <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
@@ -3015,7 +3095,7 @@
 
         function renderProposals() {
             const wrap = document.getElementById('proposals-content');
-            if (!wrap) return;
+            if (!wrap) { renderScheduleAnchors(); return; }
             wrap.innerHTML = '';
             // Header row doubles as the vision-capture entry (intake phase 3):
             // snap the backpack flyer / share the screenshot.
@@ -8681,16 +8761,24 @@
                 const pane = document.createElement('div');
                 pane.className = "min-w-full w-full h-full snap-center overflow-y-auto px-4 py-6";
                 pane.id = `pane-${index}`;
+                // Today's pane carries the day's other sections above its own
+                // list, so the whole thing is one scroll instead of three
+                // boxes fighting over the screen. Only TODAY's: intake, what
+                // Argyle noticed and tonight's practice are all about now,
+                // and repeating them on every pane of the week is noise.
+                const sections = (dateStr === todayStr()) ? paneSectionsHtml() : '';
 
                 if (familyByDate) {
-                    pane.innerHTML = renderFamilyDay(familyByDate[dateStr]);
+                    pane.innerHTML = sections
+                        + '<div id="pane-events" style="scroll-margin-top:8px">'
+                        + renderFamilyDay(familyByDate[dateStr]) + '</div>';
                     frag.appendChild(pane);
                     return;
                 }
 
                 if (evs.length === 0) {
-                    pane.innerHTML = `
-                        <div class="flex flex-col items-center justify-center h-full opacity-50 text-center">
+                    pane.innerHTML = sections + `
+                        <div class="flex flex-col items-center justify-center ${sections ? 'py-10' : 'h-full'} opacity-50 text-center">
                             <div class="text-6xl mb-4">☕</div>
                             <h3 class="text-xl font-bold mb-2">No Drives Scheduled</h3>
                             <p class="text-gray-400">Enjoy your free time!</p>
@@ -8700,7 +8788,7 @@
                     return;
                 }
 
-                let html = '<div class="flex flex-col relative before:absolute before:left-[19px] before:top-4 before:bottom-4 before:w-1 before:bg-gray-800 before:z-0">';
+                let html = sections + '<div id="pane-drives" style="scroll-margin-top:8px" class="flex flex-col relative before:absolute before:left-[19px] before:top-4 before:bottom-4 before:w-1 before:bg-gray-800 before:z-0">';
 
                 const driverConfig = driversData.find(d => d.id === dId) || {};
                 const globalHome = scheduleData.home_location || '';
@@ -8928,6 +9016,10 @@
                 frag.appendChild(pane);
             });
             container.appendChild(frag);
+            // The panes were just replaced, taking every node the section
+            // renderers wrote into with them. All of them repaint from data
+            // already in hand -- this is a repaint, never a refetch.
+            paintPaneSections();
 
             // The horizontal position is tracked by INDEX (activeDateIndex),
             // never by raw pixels: an iOS PWA relaunch restores stale element
@@ -9224,8 +9316,13 @@
             mydayOffset = 0;
             const container = document.getElementById('days-container');
             if (container) container.scrollLeft = 0; // immediate visual reset; buildTimeline positions by activeDateIndex
+            // Everything built for yesterday is about yesterday. Without
+            // this the practice block kept a fetch whose range STARTED on the
+            // old day, so an app left open overnight woke up offering last
+            // night's session as the next one.
+            practiceBuiltAt = 0;
             if (scheduleData && selectedDriverId) buildTimeline();
-            if (currentView === 'myday') renderMyDay();
+            refreshTodaySurfaces();
         }
 
         // Phones sleep constantly: refresh silently when the app comes back

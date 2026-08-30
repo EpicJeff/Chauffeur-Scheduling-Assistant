@@ -207,6 +207,72 @@ def scenario_the_tab_is_named_for_what_it_holds():
           "the drives tab is My Day for somebody who drives")
 
 
+def scenario_the_day_is_one_page_with_a_jump_row():
+    """Three stacked boxes, each with a fixed slice of the screen and its own
+    scrollbar, meant the day arrived pre-divided: intake in one letterbox,
+    Argyle in a second, the agenda in whatever was left -- which on a busy day
+    was nothing, and the events the tab exists for sat below the fold of a box
+    nobody thinks to scroll. The House tab had already solved this shape.
+    """
+    src = _app()
+    check('id="screen-anchors"' in src, "the jump row needs a home")
+    for gone in ('max-h-[45%] border-b border-gray-800 bg-gray-950',
+                 'max-h-[35%] border-b border-gray-800 bg-gray-950',
+                 'max-h-[60%] border-b border-gray-800 bg-gray-950'):
+        check(gone not in src,
+              f"no section may keep a fixed slice of the screen: {gone}")
+    sections = _body(src, 'paneSectionsHtml')
+    for wrapper in ('proposals-container', 'mind-container', 'today-container'):
+        check(wrapper in sections,
+              f"{wrapper} is a section inside the pane now")
+    anchors = _body(src, 'renderScheduleAnchors')
+    check("parts.length > 1" in anchors,
+          "one section is not a story -- the row draws at two or more, the "
+          "same rule renderHouseAnchors uses")
+    for target in ('today-container', 'proposals-container', 'mind-container',
+                   'pane-events', 'pane-drives'):
+        check(target in anchors, f"{target} must be reachable from the row")
+
+
+def scenario_a_rebuilt_pane_gets_its_sections_back():
+    """Panes are replaced wholesale, which throws away every node the section
+    renderers wrote into. `renderProposals` builds real nodes with handlers
+    bound on them, so a cached HTML string could not be replayed -- the
+    renderers have to run again."""
+    src = _app()
+    build = _body(src, 'buildTimeline')
+    check('paintPaneSections()' in build,
+          "rebuilding the panes must repaint what they contain")
+    paint = _body(src, 'paintPaneSections')
+    for fn in ('renderProposals()', 'renderMind()', 'refreshPracticeSection(',
+               'renderScheduleAnchors()'):
+        check(fn in paint, f"{fn} must run after a rebuild")
+
+
+def scenario_last_nights_session_is_not_the_next_one():
+    """"Coming up" filtered on `!w.logged` alone, which is a different
+    question: a session nobody ever answered stays unlogged forever, so last
+    night's nine o'clock sat at the top of the list as the next thing to do
+    and stayed there. A window that has ENDED is behind you whatever the log
+    says -- chasing an unanswered one is the "did it happen?" ask's job, and
+    it has its own row."""
+    src = _app()
+    check(re.search(r'function upcomingWindows\s*\(', src),
+          "one helper decides what is still ahead")
+    up = _body(src, 'upcomingWindows')
+    check('time_end' in up,
+          "a window that has already ended is not coming up")
+    card = _body(src, 'renderProgramCard')
+    check('upcomingWindows(' in card and 'w.date + w.time_start' not in card,
+          "the card must ask the helper rather than re-filtering on logged")
+    label = _body(src, 'sessionDateLabel')
+    check('Yesterday' in label,
+          "and a day already gone must not read as a weekday still to come")
+    anchor = _body(src, 'reanchorIfDayChanged')
+    check('practiceBuiltAt = 0' in anchor,
+          "a day that turned over invalidates a fetch made for the old one")
+
+
 if __name__ == '__main__':
     os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp())
     scenario_the_program_surfaces_have_a_driver_side_mount()
@@ -216,5 +282,8 @@ if __name__ == '__main__':
     scenario_the_drives_day_carries_what_my_day_carries()
     scenario_a_session_can_be_opened_and_finished()
     scenario_the_tab_is_named_for_what_it_holds()
+    scenario_the_day_is_one_page_with_a_jump_row()
+    scenario_a_rebuilt_pane_gets_its_sections_back()
+    scenario_last_nights_session_is_not_the_next_one()
     scenario_every_inline_script_still_parses()
     print("test_programs_reachable OK")
