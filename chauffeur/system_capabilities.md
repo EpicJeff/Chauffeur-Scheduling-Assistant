@@ -6575,6 +6575,33 @@ toggle opening onto the argument and an "Also considered" list of the other
 candidates with the model's own reason for passing on each (the canned
 "second choice for this aim" is now only the fallback when it gives none).
 
+**A phase carries the session itself** (v2.435.4). `phases[].steps` — the
+named exercises, drills, pieces or chapters, in order, capped at 8 of 140
+characters. The gap it closes: `what` is a paragraph ABOUT a phase and
+`milestone` is how you know it ended, and NEITHER of them is the workout, so a
+generated strength program read as "move smoothly through all basic bodyweight
+patterns with complete control" three times and named not one exercise. Both
+prompts now ask for steps (curated ones are taken from the material like
+everything else); a GENERATED phase with no steps is dropped, which is what
+makes "be concrete" a rule rather than a request, and `reason = 'no_content'`
+says so when it empties the plan.
+
+**Counting is not prescribing** (v2.435.4). The first cut of the generation
+screen refused every number and every barbell lift, and both were drawn around
+the wrong thing. "Three sets of eight" is not a prescription — it is what a
+workout IS — and a plan forbidden from saying it comes back unfollowable,
+which is its own kind of useless. What is refused now is EXTERNAL LOAD and
+INTAKE: pounds, kilos and stone on a bar, milligrams, millilitres and IU of
+anything, and percentages of a one-rep max. Sets, reps, rounds and minutes are
+allowed. The AIM-level refusal list lost the lifts (`barbell`, `deadlift`,
+`squat`, `powerlifting`, `bench press`) and keeps only the aims where the
+ACTIVITY is the hazard and no amount of vagueness helps — water (swim, dive,
+scuba, open water, breath hold), a fall (free solo, lead climb), anything
+medical or ingested, endurance distances where an invented volume ramp IS the
+injury (marathon, triathlon, century ride), and an aim that is explicitly about
+a max. Naming the squat was never the hazard; the number was, and the number is
+blocked structurally in a regex no model can talk its way past.
+
 **A plan is written in the language the family asked in** (v2.435.3,
 `programs_curate._looks_foreign`). A real generated plan came back with its
 first two phases in English and its third in Vietnamese -- an interactive-tier

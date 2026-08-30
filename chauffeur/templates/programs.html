@@ -277,7 +277,19 @@
                                                 <div class="font-semibold" :class="ph.milestone_hit_at ? 'text-teal-300' : 'text-gray-300'"
                                                     x-text="ph.name + (ph.weeks ? ' · ' + ph.weeks + 'w' : '')"></div>
                                                 <div class="text-[11px] text-gray-400 mt-0.5" x-show="ph.what" x-text="ph.what"></div>
-                                                <div class="text-[11px] text-gray-500 mt-0.5" x-show="ph.milestone">
+                                                <!-- The phase's actual content. `what` is a paragraph
+                                                     ABOUT the phase and `milestone` is how you know it
+                                                     ended; neither is the session, and for a while
+                                                     nothing here was. -->
+                                                <ul class="mt-1 space-y-0.5" x-show="(ph.steps || []).length">
+                                                    <template x-for="st in (ph.steps || [])" :key="st">
+                                                        <li class="text-[11px] text-gray-300 flex gap-1.5">
+                                                            <span class="text-gray-600 shrink-0">·</span>
+                                                            <span x-text="st"></span>
+                                                        </li>
+                                                    </template>
+                                                </ul>
+                                                <div class="text-[11px] text-gray-500 mt-1" x-show="ph.milestone">
                                                     <span class="text-gray-600">Done when:</span>
                                                     <span x-text="ph.milestone"></span>
                                                 </div>

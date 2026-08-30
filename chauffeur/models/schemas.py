@@ -710,8 +710,12 @@ class Program(BaseModel):
     created_by: Optional[str] = None
     approved_by: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
-    # Phases come from pages the app actually read; pacing is computed. A phase
-    # that cited nothing was dropped before it got here.
+    # Phases come from pages the app actually read (or, in the generated tier,
+    # are labelled as the app's own); pacing is computed. A phase that cited
+    # nothing was dropped before it got here. `steps` is the phase's actual
+    # content -- the named exercises, drills or material, in order -- which
+    # `what` (a paragraph about the phase) and `milestone` (how you know it
+    # ended) between them never were.
     phases: List[Dict[str, Any]] = Field(default_factory=list)
     # `origin` is the tier: 'cited' (a real published plan, with its pages),
     # 'generated' (none was found, so the app wrote one and says so) or 'none'

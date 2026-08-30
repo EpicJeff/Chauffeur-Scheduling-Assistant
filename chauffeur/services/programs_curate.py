@@ -83,18 +83,29 @@ BEHAVIOUR_ALTERNATIVES = (
 # --- The generation screen ------------------------------------------------
 # A SECOND screen, and only for the generated tier. Curating these aims is
 # fine and stays fine: if an expert published a swim progression, following it
-# is exactly what this module is for. What is refused is the app inventing one,
-# because these are the domains where a plausible wrong number is an injury
-# rather than a wasted month. This list is deliberately short -- every entry
-# should survive the question "would a wrong step here hurt somebody?".
+# is exactly what this module is for. What is refused is the app inventing one.
+#
+# The first cut of this list refused every barbell lift, and that was drawing
+# the line around the wrong thing. What makes an invented strength plan
+# dangerous is a NUMBER nobody earned the right to set -- load somebody up to
+# 185 lbs because an app said so -- and that is blocked structurally below, in
+# a regex a model cannot talk its way past. Naming the squat as an exercise is
+# not the hazard; squats are what strength training IS. Refusing the word cost
+# the family the only thing they wanted from the plan and bought no safety
+# that the numbers rule was not already buying.
+#
+# What survives is the set where the ACTIVITY is the hazard and no amount of
+# vagueness helps: water (you drown), a fall (you fall), anything medical or
+# ingested, and endurance distances, where a made-up volume ramp is the injury
+# itself rather than a number attached to one. Every entry should survive the
+# question "would a wrong step here hurt somebody even with no numbers in it?".
 GENERATION_PHRASES = (
-    'bench press', 'one rep max', 'one-rep max', 'free solo', 'lead climb',
+    'one rep max', 'one-rep max', 'free solo', 'lead climb',
     'half marathon', 'century ride', 'open water', 'breath hold',
     'intermittent fasting', 'water fast',
 )
 GENERATION_WORDS = (
-    'barbell', 'deadlift', 'deadlifts', 'squat', 'squats', 'powerlifting',
-    'powerlift', '1rm', 'swim', 'swimming', 'dive', 'diving', 'freedive',
+    '1rm', 'swim', 'swimming', 'dive', 'diving', 'freedive',
     'scuba', 'marathon', 'ultramarathon', 'triathlon', 'fasting', 'keto',
     'macros', 'supplement', 'supplements', 'creatine', 'medication', 'dose',
     'dosage', 'insulin',
@@ -132,19 +143,59 @@ def _looks_foreign(text: str, aim: str) -> bool:
     return hits >= FOREIGN_MIN and hits / len(text) > FOREIGN_RATIO
 
 
+# How many concrete items one phase may name, and how long each may be. A
+# session is startable from these alone -- that is the whole test.
+MAX_STEPS = 8
+STEP_CHARS = 140
+
+
 def _phase_text(ph: dict) -> str:
     return ' '.join(str(ph.get(k) or '')
-                    for k in ('name', 'what', 'milestone')).strip()
+                    for k in ('name', 'what', 'milestone')
+                    ).strip() + ' ' + ' '.join(ph.get('steps') or [])
 
 
-# A generated phase may say "practise for twenty minutes". It may not say how
-# much to lift, how far to push, or how much to take -- those are the numbers
-# an expert earns the right to set. A phase carrying one is dropped, exactly
-# like a phase carrying no citation, and if that empties the plan the family
-# gets time-only with the reason said out loud.
+def _clean_steps(raw, aim: str) -> list:
+    """The actual exercises, drills or material of a phase.
+
+    The missing layer, and the reason a generated strength program read as
+    three sentences of nothing: `what` is one paragraph about a phase and
+    `milestone` is how you know it ended, and NEITHER of them is the workout.
+    A person opening this wants to know what to do on Tuesday.
+
+    Held to the same two rules as everything else here: no external load or
+    dose, and the household's own language.
+    """
+    out = []
+    for item in (raw or []):
+        text = str(item or '').strip()[:STEP_CHARS]
+        if not text or _LOAD_RE.search(text) or _looks_foreign(text, aim):
+            continue
+        out.append(text)
+        if len(out) >= MAX_STEPS:
+            break
+    return out
+
+
+# The line between structure and prescription, and the first cut of it was in
+# the wrong place. Refusing every number meant refusing "three sets of eight",
+# which is not a prescription -- it is what a workout IS -- and a plan forbidden
+# from saying it comes back as the mush that prompted this rule's rewrite:
+# "move smoothly through all basic bodyweight patterns with complete control".
+# Unfollowable, and unfollowable is its own kind of useless.
+#
+# So counting is allowed: sets, reps, rounds, minutes, times a session. What
+# stays refused is EXTERNAL LOAD and INTAKE -- pounds and kilos on a bar,
+# milligrams and millilitres of anything, a percentage of a one-rep max. Those
+# are the numbers where a confident wrong answer hurts somebody, and no model
+# gets to pick them here. A phase or step carrying one is dropped, exactly like
+# a phase carrying no citation, and if that empties the plan the family gets
+# time-only with the reason said out loud.
 _LOAD_RE = re.compile(
-    r'\b\d+\s*(?:%|lb|lbs|pound|pounds|kg|kgs|kilo|kilos|mg|mcg|ml|'
-    r'rep|reps|set|sets|rm)\b', re.I)
+    r'\b\d+\s*(?:lb|lbs|pound|pounds|kg|kgs|kilo|kilos|stone|'
+    r'mg|mcg|ml|iu)\b'
+    r'|\b\d+\s*%\s*(?:of\s*)?(?:1\s*rm|one[- ]rep)'
+    r'|\b\d+\s*rm\b', re.I)
 
 # How many pages a curation run reads. One run per program, cached on the
 # object for its life -- a background sweep must never spend research calls.
@@ -196,6 +247,8 @@ REASON_TEXT = {
     'generation_refused': ('this aim needs a real coach or a real course, '
                            'not a plan the app made up'),
     'generation_failed': 'nothing usable came back',
+    'no_content': ('the plan that came back never said what to actually do, '
+                   'so it was dropped'),
     'load_prescribed': ('the plan that came back prescribed loads or doses, '
                         'which the app will not hand out'),
 }
@@ -214,21 +267,33 @@ PHASE_SYSTEM = (
     "holding the number of the material item it came from. Also name the "
     "program you organised, say in one sentence why it suits this family, "
     "and list the other candidates you did NOT pick with a real reason for "
-    "each. Write EVERY field in the same language the aim is written in, and "
-    "do not change language part-way through. If the material does not "
-    "support a real phased plan, reply with an empty phases list.\n\n"
+    "each. `steps` is what the material actually says to DO in that phase -- "
+    "the named exercises, drills, lessons or chapters, in order, so somebody "
+    "could start a session from them alone. Take them from the material; do "
+    "not invent them. Write EVERY field in the same language the aim is "
+    "written in, and do not change language part-way through. If the "
+    "material does not support a real phased plan, reply with an empty "
+    "phases list.\n\n"
     'Return STRICT JSON: {"plan_name": "", "why_this_one": "", '
-    '"phases": [{"name": "", "what": "", "milestone": "", "cite": 1}], '
+    '"phases": [{"name": "", "what": "", "steps": ["", ""], '
+    '"milestone": "", "cite": 1}], '
     '"runners_up": [{"cite": 2, "why_not": ""}]}'
 )
 
 GENERATE_SYSTEM = (
-    "No published program was found for this aim, so you are making a "
-    "practice plan for one household and it will be labelled as made by an "
-    "app. Say what to practise, in plain words, in 2-4 phases that build on "
-    "each other.\n\n"
-    "Rules. Never prescribe weights, loads, reps, sets, distances to push "
-    "to, doses or supplements -- describe the practice, not the numbers. "
+    "No published program was found for this aim, so you are making a real, "
+    "followable practice plan for one household, and it will be labelled as "
+    "made by an app. 2-4 phases that build on each other.\n\n"
+    "BE CONCRETE. `steps` is the actual content of a session -- name the "
+    "exercises, drills, pieces, or material, in the order they are done, so "
+    "somebody could start on Tuesday from the steps alone. A plan that says "
+    "'move through basic patterns with control' and names nothing is a "
+    "failure, not a safe answer.\n\n"
+    "You MAY say how much to repeat something: sets, reps, rounds, minutes, "
+    "times per session. You may NOT put a number on external load or intake "
+    "-- no pounds or kilos on a bar, no percentages of a one-rep max, no "
+    "milligrams, doses or supplements. Say 'a weight you could lift a few "
+    "more times' instead of naming one.\n\n"
     "Never name a real published program, and never claim a source: you have "
     "none. Do not give week counts; the app computes pacing. Say plainly "
     "what a person should be able to do at the end of each phase. Write "
@@ -236,7 +301,8 @@ GENERATE_SYSTEM = (
     "change language part-way through. If you cannot do this responsibly for "
     "this aim, reply with an empty phases list.\n\n"
     'Return STRICT JSON: {"why_this_one": "<one sentence on the approach>", '
-    '"phases": [{"name": "", "what": "", "milestone": ""}]}'
+    '"phases": [{"name": "", "what": "", '
+    '"steps": ["<one concrete thing to do>", ""], "milestone": ""}]}'
 )
 
 
@@ -529,6 +595,7 @@ def _phases_from(title: str, items: list, per_week: int, minutes: int,
         out.append({'name': (ph.get('name') or f"Phase {len(out) + 1}")[:60],
                     'weeks': weeks,
                     'what': (ph.get('what') or '').strip()[:400],
+                    'steps': _clean_steps(ph.get('steps'), title),
                     'milestone': (ph.get('milestone') or '').strip()[:120],
                     'milestone_hit_at': None})
     if not out:
@@ -631,17 +698,26 @@ def _generated_phases(title: str, per_week: int, api_key: str,
             data = again
 
     weeks = _phase_weeks(per_week)
-    out, dropped, foreign = [], 0, 0
+    out, dropped, foreign, empty = [], 0, 0, 0
     for ph in (data.get('phases') or [])[:4]:
         if not isinstance(ph, dict):
             continue
         clean = {'name': (ph.get('name') or f"Phase {len(out) + 1}")[:60],
                  'what': (ph.get('what') or '').strip()[:400],
+                 'steps': _clean_steps(ph.get('steps'), title),
                  'milestone': (ph.get('milestone') or '').strip()[:120]}
         if not clean['what']:
             continue
         if _prescribes_load(clean):
             dropped += 1
+            continue
+        if not clean['steps']:
+            # The rule that makes "be concrete" real rather than requested. A
+            # generated phase with nothing to DO in it is the failure that
+            # started this: three sentences about moving smoothly through
+            # basic patterns, and no way to begin. Checked AFTER the load rule
+            # so a phase that broke both is reported by the one that matters.
+            empty += 1
             continue
         if _looks_foreign(_phase_text(clean), title):
             foreign += 1
@@ -650,8 +726,9 @@ def _generated_phases(title: str, per_week: int, api_key: str,
         clean['milestone_hit_at'] = None
         out.append(clean)
     if not out:
-        return {'phases': [], 'why_this_one': '',
-                'reason': 'load_prescribed' if dropped else 'generation_failed'}
+        reason = ('load_prescribed' if dropped else
+                  'no_content' if empty else 'generation_failed')
+        return {'phases': [], 'why_this_one': '', 'reason': reason}
     why = (data.get('why_this_one') or '').strip()[:400]
     return {'phases': out,
             'why_this_one': why or ('No published program fit this aim, '

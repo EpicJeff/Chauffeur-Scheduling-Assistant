@@ -265,8 +265,11 @@ def scenario_nothing_found_becomes_a_labelled_plan_not_a_bare_week():
         {'why_this_one': 'Nothing published covers this, so it builds up in steps.',
          'phases': [
              {'name': 'Get the motion', 'what': 'Practise the throw slowly',
+              'steps': ['One scarf, hand to hand, 20 throws',
+                        'Two scarves, one throw each, 10 rounds'],
               'milestone': 'Ten clean throws in a row'},
              {'name': 'Join it up', 'what': 'Run the whole sequence',
+              'steps': ['Three scarves, cascade, 5 rounds'],
               'milestone': 'The sequence, start to finish'}]},
         seen)
     try:
@@ -330,11 +333,11 @@ def scenario_generation_is_refused_where_a_wrong_step_injures():
     real_pool = programs_curate._pool_call
     seen = []
     programs_curate.web.research = _fake_research([], answer='')
-    programs_curate._pool_call = _split_pool({'phases': []},
-                                             {'phases': [{'name': 'x',
-                                                          'what': 'y'}]}, seen)
+    programs_curate._pool_call = _split_pool(
+        {'phases': []},
+        {'phases': [{'name': 'x', 'what': 'y', 'steps': ['z']}]}, seen)
     try:
-        for aim in ('swim a mile', 'learn to deadlift', 'train for a marathon',
+        for aim in ('swim a mile', 'scuba diving', 'train for a marathon',
                     'start intermittent fasting'):
             check(programs_curate.generation_allowed(aim) is False,
                   f"'{aim}' must not get a made-up plan")
@@ -364,14 +367,18 @@ def scenario_a_plan_that_changes_language_is_repaired_then_dropped():
     programs_curate.web.research = _fake_research([], answer='')
     drifted = {'phases': [
         {'name': 'Phase One', 'what': 'Learn the basic movements slowly',
+         'steps': ['8 bodyweight squats, slowly'],
          'milestone': 'You can move through them with control'},
         {'name': 'Phase Three',
          'what': 'Bạn nên có khả năng thực hiện trọn vẹn các bài tập phức hợp',
+         'steps': ['Bạn nên tập luyện đều đặn mỗi tuần một lần'],
          'milestone': 'với nhịp độ ổn định và kiểm soát hoàn toàn'}]}
     clean = {'phases': [
         {'name': 'Phase One', 'what': 'Learn the basic movements slowly',
+         'steps': ['8 bodyweight squats, slowly'],
          'milestone': 'You can move through them with control'},
         {'name': 'Phase Two', 'what': 'Put the movements into sequences',
+         'steps': ['3 rounds of squat, push-up, row'],
          'milestone': 'You can hold a sequence without losing form'}]}
 
     calls = []
@@ -449,32 +456,102 @@ def scenario_a_cited_phase_is_held_to_the_same_language_rule():
         programs_curate._pool_call = real_pool
 
 
-def scenario_a_made_plan_that_prescribes_a_load_is_dropped():
-    """The one rule that survives from curating into generating, alongside
-    pacing: a made-up plan describes the practice, never the numbers an
-    expert earns the right to set. A phase carrying one is dropped exactly
-    like an uncited phase, and if that empties the plan the family is told."""
+def scenario_a_made_plan_that_prescribes_load_or_a_dose_is_dropped():
+    """Counting is not prescribing. "Three sets of eight" is what a workout
+    IS, and a plan forbidden from saying it comes back as the mush this rule
+    was rewritten over -- "move smoothly through all basic bodyweight
+    patterns with complete control", which nobody can follow. What stays
+    refused is EXTERNAL LOAD and INTAKE: pounds on a bar, a percentage of a
+    max, milligrams of anything."""
     real_research = programs_curate.web.research
     real_pool = programs_curate._pool_call
     programs_curate.web.research = _fake_research([], answer='')
     programs_curate._pool_call = _split_pool(
         {'phases': []},
         {'phases': [
-            {'name': 'Build up', 'what': 'Work up to 3 sets of 12 reps',
-             'milestone': 'Add 10 lbs'},
-            {'name': 'Also this', 'what': 'Take 500 mg before each session',
+            {'name': 'Build up', 'what': 'Three rounds of the circuit',
+             'steps': ['3 sets of 8 goblet squats',
+                       'Work up to 185 lbs on the bar',
+                       '5 rounds of 30 seconds hanging',
+                       'Take 500 mg of creatine before each session'],
+             'milestone': 'The circuit start to finish'},
+            {'name': 'Also this', 'what': 'Add 20 kg to every lift',
              'milestone': 'n/a'}]})
     try:
         out = programs_curate.curate('get stronger at push-ups',
                                      {'sessions_per_week': 3, 'minutes': 20})
-        check(out['phases'] == [],
-              f"every load-prescribing phase is dropped, got {out['phases']}")
-        check(out['source']['reason'] == 'load_prescribed',
-              f"and the reason says so rather than 'nothing came back', got "
-              f"{out['source']}")
+        check(len(out['phases']) == 1,
+              f"the phase prescribing kilos is dropped whole, got {out['phases']}")
+        steps = out['phases'][0]['steps']
+        check(steps == ['3 sets of 8 goblet squats',
+                        '5 rounds of 30 seconds hanging'],
+              f"sets and rounds stay, pounds and milligrams go, got {steps}")
     finally:
         programs_curate.web.research = real_research
         programs_curate._pool_call = real_pool
+
+
+def scenario_a_plan_with_nothing_but_load_prescriptions_says_so():
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    programs_curate.web.research = _fake_research([], answer='')
+    programs_curate._pool_call = _split_pool(
+        {'phases': []},
+        {'phases': [{'name': 'Build up', 'what': 'Work up to 185 lbs',
+                     'milestone': 'Add 10 lbs a week'}]})
+    try:
+        out = programs_curate.curate('get stronger at push-ups',
+                                     {'sessions_per_week': 3, 'minutes': 20})
+        check(out['phases'] == [], f"nothing survives, got {out['phases']}")
+        check(out['source']['reason'] == 'load_prescribed',
+              f"and the reason says which rule emptied it, got {out['source']}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
+def scenario_a_phase_carries_the_session_itself():
+    """The gap that made a generated strength program worthless: `what` is a
+    paragraph ABOUT the phase and `milestone` is how you know it ended, and
+    neither of them is the workout. A person opening this wants to know what
+    to do on Tuesday."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    programs_curate.web.research = _fake_research([
+        {'claim': 'Grade 1 covers three open chords',
+         'url': 'https://justinguitar.example/grade1'}])
+    programs_curate._pool_call = _fake_pool({
+        'phases': [{'name': 'Grade 1', 'cite': 1, 'what': 'Open chords',
+                    'steps': ['One minute changes: G to C',
+                              'Play through Knockin on Heavens Door',
+                              '  ', ''],
+                    'milestone': 'G-C-D without looking'}]})
+    try:
+        out = programs_curate.curate('learn guitar',
+                                     {'sessions_per_week': 3, 'minutes': 25})
+        steps = out['phases'][0]['steps']
+        check(steps == ['One minute changes: G to C',
+                        'Play through Knockin on Heavens Door'],
+              f"a cited phase carries its own content, blanks dropped, got {steps}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
+def scenario_the_generation_screen_refuses_the_activity_not_the_word():
+    """The first cut refused every barbell lift, which drew the line around
+    the wrong thing: the hazard is a number nobody earned the right to set,
+    and that is blocked structurally. Naming the squat is not the hazard --
+    squats are what strength training IS, and refusing the word cost the
+    family the only thing they wanted from the plan."""
+    for aim in ('learn to deadlift', 'strength training', 'get better at squats',
+                'bench press with my son'):
+        check(programs_curate.generation_allowed(aim) is True,
+              f"'{aim}' is ordinary movement and may have a made plan")
+    for aim in ('swim a mile', 'train for a marathon', 'start intermittent fasting',
+                'free solo a route', 'hit a 300 lb one rep max'):
+        check(programs_curate.generation_allowed(aim) is False,
+              f"'{aim}' is a hazard no vagueness fixes and must not")
 
 
 def scenario_a_household_can_switch_made_plans_off():
@@ -487,9 +564,9 @@ def scenario_a_household_can_switch_made_plans_off():
     programs_curate.web.research = _fake_research([], answer='')
     programs_curate.storage.get_settings = _settings(
         programs_generate_enabled=False)
-    programs_curate._pool_call = _split_pool({'phases': []},
-                                             {'phases': [{'name': 'x',
-                                                          'what': 'y'}]}, seen)
+    programs_curate._pool_call = _split_pool(
+        {'phases': []},
+        {'phases': [{'name': 'x', 'what': 'y', 'steps': ['z']}]}, seen)
     try:
         out = programs_curate.curate('learn to juggle',
                                      {'sessions_per_week': 2, 'minutes': 20})
@@ -594,7 +671,10 @@ if __name__ == '__main__':
     scenario_a_plan_that_changes_language_is_repaired_then_dropped()
     scenario_the_language_check_never_fires_on_the_household_own_words()
     scenario_a_cited_phase_is_held_to_the_same_language_rule()
-    scenario_a_made_plan_that_prescribes_a_load_is_dropped()
+    scenario_a_made_plan_that_prescribes_load_or_a_dose_is_dropped()
+    scenario_a_plan_with_nothing_but_load_prescriptions_says_so()
+    scenario_a_phase_carries_the_session_itself()
+    scenario_the_generation_screen_refuses_the_activity_not_the_word()
     scenario_a_household_can_switch_made_plans_off()
     scenario_shaping_failure_is_not_a_crash()
     scenario_research_being_off_is_not_an_invented_plan()

@@ -1308,6 +1308,14 @@
         function renderProgramCard(p, commitmentsById) {
             const phase = (p.progress || {}).phase;
             const what = phase ? mfEscape(phase.what || '') : '';
+            // What this phase actually asks of you, on the surface the person
+            // practising reads. A paragraph about the phase is not a session.
+            const steps = ((phase && phase.steps) || []).slice(0, 8);
+            const stepList = steps.length ? `
+                <ul class="mt-1.5 space-y-0.5">
+                    ${steps.map(st => `<li class="text-[11px] text-gray-300 flex gap-1.5">
+                        <span class="text-gray-600 shrink-0">·</span><span>${mfEscape(st)}</span></li>`).join('')}
+                </ul>` : '';
             const nextWindow = programNextWindow(p, commitmentsById || {});
             // Marking a milestone is a judgement only a person makes -- the
             // button exists, there is no counterpart that marks one missed.
@@ -1350,6 +1358,7 @@
                     ${madeChip}
                 </div>
                 ${what ? `<div class="text-xs text-gray-400 mt-1">${what}</div>` : ''}
+                ${stepList}
                 <div class="text-[11px] text-gray-500 mt-1.5">${mfEscape(programCountPhrase(p))}</div>
                 ${nextWindow ? `<div class="text-[11px] text-gray-500">Next practice: ${nextWindow}</div>` : ''}
                 ${milestoneRow}
