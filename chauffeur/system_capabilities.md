@@ -6874,6 +6874,48 @@ formula rather than by walking days, because a phase that began in March and a
 window being drawn in August is five months of loop for one integer, run once
 per window on every calendar read.
 
+**The whole PWA surface was hung on a door half the house does not have**
+(v2.437.1 — `#practice-container`, `buildPracticeParts`,
+`refreshTodaySurfaces`). Every part of the arc a person actually touches —
+tonight's session, the steps, the lesson, **Log a session**, and the "did it
+happen?" ask — was mounted inside `renderMyDay` and nowhere else. My Day is a
+PASSENGER tab: `applyRoleTabs` sets it to `display: none` for anyone who
+drives, and the hidden-view list drops `myday` outright for them. So a driver
+with a program had no surface at all, and the ask that was deliberately moved
+off a watcher DM onto "the owner's own PWA card" landed on a card its owner
+could not open. Programs were never a kid feature — a parent proposing one for
+themselves is the arc's first-class case.
+
+One builder, two mounts. `buildPracticeParts()` returns the two halves
+separately (My Day interleaves them around the routine sections; merging them
+would silently reorder a kid's day), My Day calls it inline, and the drives
+view draws them into `#practice-container` — the slot above the day panes that
+`#proposals-container` and `#mind-container` already use, because "tonight's
+session" is about today and the panes swipe through a week.
+
+**And nothing redrew when a window became due.** The five-minute heartbeat
+called `fetchSchedule`, which repaints the day panes and never touched either
+block; the foreground handler did the same. An app left open on the right tab
+at 6pm still showed 6pm at 9pm, and a phone that slept through the start of a
+window woke to the state it slept in. `refreshTodaySurfaces()` now runs on
+both, and `afterProgramWrite()` repaints whichever surface a log was tapped on
+rather than naming the passenger tab.
+
+`tests/test_programs_reachable.py` holds the line: the blocks must have a
+mount that is not `renderMyDay`, both mounts must share one builder, the
+heartbeat and the foreground handler must redraw, and every inline script in
+`app.html` and `programs.html` must parse under `node --check`. It asserts
+PLACEMENT rather than behaviour and says so — the bug was never that a piece
+was broken, it was that a working feature hung on the wrong door.
+
+**Still My Day-only, and worth a look:** `renderRequests` has exactly the same
+shape — `fetchRequests` runs for everyone and its own comment says "both
+directions, for everyone", but the only render is inside `renderMyDay`, so an
+adult taking a drive from their partner asks a question the partner cannot
+see. `renderRoutineSection`, `renderDueSoonSection` and `renderStatusBanner`
+are also My Day-only; those may well be deliberate, and none of them was
+touched here.
+
 **A practice window is visible, announced, and carries the session**
 (v2.435.5 — `programs.practice_windows`, `GET /api/practice-windows`). What
 shipped before this was an arrangement one person had to remember: approving a

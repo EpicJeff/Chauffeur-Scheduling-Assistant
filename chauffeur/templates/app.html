@@ -302,6 +302,16 @@
         </div>
 
         <!-- Schedule Container (Swipeable) -->
+        <!-- Your practice today (Programs arc). Above the day panes rather
+             than inside one, because "tonight's session" is about today and
+             the panes swipe through a week -- the same reason the launch
+             banner sits where it does. Drives view only: My Day mounts the
+             identical blocks itself. -->
+        <div id="practice-container" class="shrink-0 overflow-y-auto max-h-[45%] border-b border-gray-800 bg-gray-950"
+            style="display: none">
+            <div id="practice-content" class="p-3"></div>
+        </div>
+
         <div id="days-container"
             class="flex-1 flex overflow-x-auto snap-x-mandatory no-scrollbar relative">
             <!-- Day panes injected here -->
@@ -838,6 +848,9 @@
             // role, unlike the proposals intake above.
             const showMind = currentView === 'family' && mindInsights.length > 0;
             document.getElementById('mind-container').style.display = showMind ? 'block' : 'none';
+            // Your practice, on the tab a driver actually has.
+            applyPracticeVisibility();
+            if (currentView === 'drives') refreshPracticeSection(false);
             document.getElementById('messages-container').style.display = isMessages ? 'flex' : 'none';
             document.getElementById('map-container').style.display = isMap ? 'flex' : 'none';
             document.getElementById('myday-container').style.display = isMyDay ? 'flex' : 'none';
@@ -1434,7 +1447,7 @@
                 const d = await r.json().catch(() => ({}));
                 if (!r.ok || d.status === 'error') { showGlobalAlert(d.detail || d.message || "Couldn't log that."); return; }
                 showGlobalAlert(d.message || 'Logged.');
-                if (currentView === 'myday') renderMyDay();
+                afterProgramWrite();
             } catch (e) { showGlobalAlert("Couldn't log that just now."); }
         }
 
@@ -1455,7 +1468,7 @@
                 const d = await r.json().catch(() => ({}));
                 if (!r.ok || d.status === 'error') { showGlobalAlert(d.detail || d.message || "Couldn't log that."); return; }
                 showGlobalAlert(d.message || 'Logged.');
-                if (currentView === 'myday') renderMyDay();
+                afterProgramWrite();
             } catch (e) { showGlobalAlert("Couldn't log that just now."); }
         }
 
@@ -1468,7 +1481,7 @@
                 const d = await r.json().catch(() => ({}));
                 if (!r.ok || d.status === 'error') { showGlobalAlert(d.detail || d.message || "Couldn't mark that."); return; }
                 showGlobalAlert(d.message || 'Marked!');
-                if (currentView === 'myday') renderMyDay();
+                afterProgramWrite();
             } catch (e) { showGlobalAlert("Couldn't mark that."); }
         }
         // Where a practice window is VISIBLE. An approved program claimed the
@@ -1560,6 +1573,92 @@
                 <button onclick="addProgramSession('${w.program_id}')"
                     class="mt-2.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Log a session</button>
             </div>`;
+        }
+
+        // Both halves of the programs surface, built once.
+        //
+        // They were mounted inside `renderMyDay` and NOWHERE else, and My Day
+        // is a passenger tab -- `applyRoleTabs` hides it outright for anyone
+        // who drives. So a driver with a program had no surface at all: not
+        // tonight's session, not the steps, not "Log a session", and not the
+        // "did it happen?" ask, which was deliberately moved off a watcher DM
+        // and onto "the owner's own PWA card" -- a card its owner could not
+        // reach. Programs were never a kid feature; a parent proposing one
+        // for themselves is the arc's first-class case.
+        //
+        // Returned as two parts rather than one blob because My Day
+        // interleaves them around the routine sections and the drives view
+        // stacks them; merging here would silently reorder a kid's day.
+        let practiceParts = { now: '', programs: '' };
+        let practiceBuiltAt = 0;
+
+        async function buildPracticeParts() {
+            const out = { now: '', programs: '' };
+            if (!selectedMemberId) return (practiceParts = out);
+            try {
+                const pad = n => String(n).padStart(2, '0');
+                const t = new Date();
+                const todayStr = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+                practiceWindows = await fetchPracticeWindows(todayStr, todayStr);
+                out.now = renderPracticeNow(practiceNow(t));
+                const myPrograms = await fetchMyPrograms();
+                if (myPrograms.length) {
+                    const myCommitments = await fetchMyCommitments();
+                    const commitmentsById = {};
+                    for (const c of myCommitments) commitmentsById[c.id] = c;
+                    out.programs = renderProgramsSection(myPrograms, commitmentsById);
+                }
+            } catch (e) {
+                // A failed fetch costs this block and never the view around it.
+            }
+            practiceBuiltAt = Date.now();
+            return (practiceParts = out);
+        }
+
+        function applyPracticeVisibility() {
+            const box = document.getElementById('practice-container');
+            if (!box) return;
+            const body = document.getElementById('practice-content');
+            const has = !!(body && body.innerHTML.trim());
+            box.style.display = (currentView === 'drives' && has) ? 'block' : 'none';
+        }
+
+        // `force` is for the heartbeat and the foreground return; a plain view
+        // switch reuses anything built in the last half-minute rather than
+        // spending three fetches every time somebody taps between tabs.
+        const PRACTICE_STALE_MS = 30000;
+
+        async function refreshPracticeSection(force) {
+            const body = document.getElementById('practice-content');
+            if (!body) return;
+            if (!force && Date.now() - practiceBuiltAt < PRACTICE_STALE_MS) {
+                body.innerHTML = (practiceParts.now || '') + (practiceParts.programs || '');
+                applyPracticeVisibility();
+                return;
+            }
+            const parts = await buildPracticeParts();
+            body.innerHTML = (parts.now || '') + (parts.programs || '');
+            applyPracticeVisibility();
+        }
+
+        // Logging a session moves the ladder and clears the ask, so the
+        // surface it was tapped on has to redraw -- whichever of the two
+        // that is. `force`, because the write just invalidated the cache.
+        function afterProgramWrite() {
+            if (currentView === 'myday') { renderMyDay(); return; }
+            refreshPracticeSection(true);
+        }
+
+        // The heartbeat this whole surface was missing. A session becomes due
+        // at 8:30 and nothing redrew: the five-minute timer calls
+        // `fetchSchedule`, which repaints the day panes and never touched
+        // either of these, and neither did coming back to the foreground. An
+        // app left open on the right tab simply showed the state it had when
+        // you put the phone down.
+        function refreshTodaySurfaces() {
+            if (!selectedMemberId) return;
+            if (currentView === 'myday') { renderMyDay(); return; }
+            if (currentView === 'drives') refreshPracticeSection(true);
         }
 
         // Programs arc, task 6: "My program" -- end
@@ -1925,23 +2024,11 @@
                 // browses to. Commitments are only fetched when there is at
                 // least one program to ask "when" about -- a household that
                 // never proposed one costs this view nothing extra.
-                let practiceNowHtml = '';
+                let practiceNowHtml = '', myProgramsHtml = '';
                 if (requestedOffset === 0) {
-                    const pad = n => String(n).padStart(2, '0');
-                    const t = new Date();
-                    const todayStr = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
-                    practiceWindows = await fetchPracticeWindows(todayStr, todayStr);
-                    practiceNowHtml = renderPracticeNow(practiceNow(t));
-                }
-                let myProgramsHtml = '';
-                if (requestedOffset === 0) {
-                    const myPrograms = await fetchMyPrograms();
-                    if (myPrograms.length) {
-                        const myCommitments = await fetchMyCommitments();
-                        const commitmentsById = {};
-                        for (const c of myCommitments) commitmentsById[c.id] = c;
-                        myProgramsHtml = renderProgramsSection(myPrograms, commitmentsById);
-                    }
+                    const parts = await buildPracticeParts();
+                    practiceNowHtml = parts.now;
+                    myProgramsHtml = parts.programs;
                 }
                 const isKid = currentMemberRole() === 'child';
                 let routineHtml, kidTopHtml = '';
@@ -8978,11 +9065,16 @@
         setInterval(() => {
             if (document.hidden) return;
             reanchorIfDayChanged();
+            refreshTodaySurfaces();
             if (selectedDriverId) fetchSchedule(false, true);
         }, 300000);
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) return;
             reanchorIfDayChanged();
+            // A phone that was asleep through the start of a window comes
+            // back to the state it went to sleep in unless something says
+            // otherwise. This is that something.
+            refreshTodaySurfaces();
             if (selectedDriverId) {
                 fetchSchedule(false, true);
                 fetchNotifications();
