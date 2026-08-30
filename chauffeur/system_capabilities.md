@@ -6692,6 +6692,22 @@ practice takes the one road now, which is what earns it the pill. In the
 details dialog, "Not assigned" becomes `<Name>'s practice · <phase> — nobody
 drives to this`, and the location line reads "Wherever they practise."
 
+**An event with no calendar must not take a render down** (v2.435.8,
+`schedule_timeline.calMetasFor`). A real wall panel threw `Cannot read
+properties of undefined (reading 'backgroundColor')` out of `renderSchedule`:
+four places in the timeline read `calMetas[0].backgroundColor`, and two of
+them built `calMetas` by mapping `ev.calendar_ids` straight, so an EMPTY
+calendar list produced an empty array and `[0]` was undefined. Nothing in this
+app had an empty one until practice windows became events — a program's window
+belongs to a person, and a person need not have a calendar. The other two
+sites had already been patched separately at some earlier point, which is
+exactly how a bug survives: as four copies of one expression with two of them
+fixed. There is one `calMetasFor(ev, metadata, fallback)` now, it can never
+return an empty list, and a practice window names its owner there because it
+is the last place that knows. `tests/test_calmetas.py` EXECUTES it under node
+rather than reading it — every syntax check in the suite passed while the page
+threw.
+
 Two things stay outside the feed because they are not a day's drawing: a **now
 block** on the PWA home from 30 minutes before the window until it ends,
 carrying the steps and a Log a session button, and a **push at the start**

@@ -127,6 +127,34 @@
             }
         }
 
+        // An event's calendars, resolved, and NEVER empty.
+        //
+        // Four places here read `calMetas[0].backgroundColor`, and two of them
+        // did it after mapping `ev.calendar_ids` straight — so an event with
+        // an EMPTY calendar list took the whole schedule render down with
+        // "Cannot read properties of undefined (reading 'backgroundColor')".
+        // Nothing in this app had an empty one until practice windows became
+        // events (v2.435.6): a program's window belongs to a person, and a
+        // person need not have a calendar. The other two sites had already
+        // been patched one at a time, which is how a bug survives — as four
+        // copies with two of them fixed.
+        function calMetasFor(ev, metadata, fallback) {
+            const ids = (ev && ev.calendar_ids) || [];
+            const out = ids.map(c => (metadata && metadata[c])
+                ? metadata[c]
+                : { backgroundColor: '#3B82F6', summary: 'Calendar' });
+            if (out.length) return out;
+            // Nothing to look up: the caller's own answer, or a neutral one.
+            // A practice window says whose hour it is here, because that is
+            // the only place left that knows.
+            const prac = ev && ev.practice;
+            if (prac) {
+                return [{ backgroundColor: prac.color || '#14b8a6',
+                          summary: prac.member_name || 'Practice' }];
+            }
+            return [fallback || { backgroundColor: '#3B82F6', summary: 'Calendar' }];
+        }
+
         function renderSchedule(data, options = {}) {
             lastScheduleRenderOptions = options;
             if (!data) data = {};
@@ -323,8 +351,8 @@
                     inboxCount.textContent = triageEvents.length;
                     inboxContainer.classList.remove('hidden');
                     inboxList.innerHTML = triageEvents.map(ev => {
-                        const calMetas = (ev.calendar_ids || []).map(c => calendar_metadata && calendar_metadata[c] ? calendar_metadata[c] : { backgroundColor: '#3B82F6', summary: 'Calendar' });
-                        const evColor = calMetas.length > 0 ? calMetas[0].backgroundColor : '#3B82F6';
+                        const calMetas = calMetasFor(ev, calendar_metadata);
+                        const evColor = calMetas[0].backgroundColor;
 
                         const seriesBadge = ev.is_series_grouped && ev.series_count > 1 ? `<span class="bg-indigo-900/50 text-indigo-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded ml-2 border border-indigo-700/50 shrink-0">Series (${ev.series_count})</span>` : '';
 
@@ -792,7 +820,7 @@
                                 group.event_ids.forEach(eid => {
                                     const ev = currentEventsMap[eid];
                                     if (ev) {
-                                        const calMetas = ev.calendar_ids.map(c => data.calendar_metadata && data.calendar_metadata[c] ? data.calendar_metadata[c] : { backgroundColor: '#3B82F6', summary: 'Calendar' });
+                                        const calMetas = calMetasFor(ev, data.calendar_metadata);
                                         const evColor = calMetas[0].backgroundColor;
                                         const summaries = calMetas.map(m => m.summary).join(' + ');
 
@@ -987,10 +1015,12 @@
                             widthStyle = `calc(${colWidth} - 2px)`;
                         }
 
-                        const safeCalendarIds = ev.calendar_ids || [];
+                        const safeCalendarIds = (ev.calendar_ids || []);
                         const isErrand = ev.event_type === 'errand';
                         const errandIcon = `<svg class="w-3 h-3 inline-block mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>`;
-                        const calMetas = safeCalendarIds.length > 0 ? safeCalendarIds.map(c => calendar_metadata && calendar_metadata[c] ? calendar_metadata[c] : { backgroundColor: '#3B82F6', summary: 'Calendar' }) : [{ backgroundColor: '#F59E0B', summary: isErrand ? errandIcon + ev.title : 'System' }];
+                        const calMetas = calMetasFor(ev, calendar_metadata,
+                            { backgroundColor: '#F59E0B',
+                              summary: isErrand ? errandIcon + ev.title : 'System' });
                         const evColor = calMetas[0].backgroundColor;
                         const colorDots = isErrand ? '' : calMetas.map(m => `<div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20" style="background-color: ${m.backgroundColor};"></div>`).join('');
                         const summaries = calMetas.map(m => m.summary).join(' + ');
@@ -1469,7 +1499,7 @@
 
                         let colEventsHtml = '';
                         colsObj[c_id].forEach((ev) => {
-                            const calMetas = ev.calendar_ids.map(c => calendar_metadata && calendar_metadata[c] ? calendar_metadata[c] : { backgroundColor: '#3B82F6', summary: 'Calendar' });
+                            const calMetas = calMetasFor(ev, calendar_metadata);
                             const evColor = calMetas[0].backgroundColor;
                             const summaries = calMetas.map(m => m.summary).join(' + ');
 
