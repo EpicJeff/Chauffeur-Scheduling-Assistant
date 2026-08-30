@@ -37,7 +37,7 @@ and a source dict; services/programs.py never imports it.
 import math
 import re
 
-from services import storage, web
+from services import stages, storage, web
 
 # The screen runs BEFORE any model sees the aim. Deterministic on purpose: a
 # safety line that depends on a model's judgement is a safety line with a bad
@@ -148,11 +148,46 @@ def _looks_foreign(text: str, aim: str) -> bool:
 MAX_STEPS = 8
 STEP_CHARS = 140
 
+# How a person makes THIS session harder than the last one, inside a phase.
+# The missing half of pacing: phases escalate across months and a milestone
+# says when one ended, but between those two there was nothing telling anybody
+# that Tuesday should be a notch beyond last Tuesday. Every plan a person can
+# find elsewhere carries this and ours did not, in any domain -- one more
+# page, a faster tempo, one less prompt from a parent, one more rep.
+#
+# It is a SENTENCE and not a number on purpose, and it goes through the same
+# load screen as everything else: "add a rep before you add weight" is a rule
+# a person can follow; "add five pounds" is a number nobody here earned the
+# right to set.
+PROGRESSION_CHARS = 200
+
+# Sessions inside a phase that are not all the same session. Optional, and it
+# has to stay optional: plenty of aims really are the same thing repeated
+# (twenty minutes of reading, a walk), and a rotation invented for those is
+# variety theatre. Where it is real -- technique night against repertoire
+# night, new material against review, push against pull -- one flat list of
+# steps repeated twelve times was never what the plan said.
+#
+# Two is the floor because a rotation of one is a list of steps with a hat on.
+MIN_ROTATION = 2
+MAX_ROTATION = 4
+LABEL_CHARS = 40
+
 
 def _phase_text(ph: dict) -> str:
-    return ' '.join(str(ph.get(k) or '')
-                    for k in ('name', 'what', 'milestone')
-                    ).strip() + ' ' + ' '.join(ph.get('steps') or [])
+    """Every word of a phase a family will actually read.
+
+    Every field added to a phase has to arrive here too, or the language
+    check quietly stops covering the parts of the plan that are newest.
+    """
+    words = [str(ph.get(k) or '')
+             for k in ('name', 'what', 'milestone', 'progression')]
+    words += list(ph.get('steps') or [])
+    for sess in (ph.get('rotation') or []):
+        if isinstance(sess, dict):
+            words.append(str(sess.get('label') or ''))
+            words += list(sess.get('steps') or [])
+    return ' '.join(w for w in words if w).strip()
 
 
 def _clean_steps(raw, aim: str) -> list:
@@ -168,13 +203,52 @@ def _clean_steps(raw, aim: str) -> list:
     """
     out = []
     for item in (raw or []):
-        text = str(item or '').strip()[:STEP_CHARS]
-        if not text or _LOAD_RE.search(text) or _looks_foreign(text, aim):
+        text = _clean_line(item, aim, STEP_CHARS)
+        if not text:
             continue
         out.append(text)
         if len(out) >= MAX_STEPS:
             break
     return out
+
+
+def _clean_line(raw, aim: str, cap: int) -> str:
+    """One line of plan content, held to the two rules that apply to all of
+    it: no external load or dose, and the household's own language.
+
+    Extracted so a field added later cannot quietly arrive unscreened. Every
+    string a family reads off a plan goes through here or through
+    `_clean_steps`, which is this function in a loop.
+    """
+    text = str(raw or '').strip()[:cap]
+    if not text or _LOAD_RE.search(text) or _looks_foreign(text, aim):
+        return ''
+    return text
+
+
+def _clean_rotation(raw, aim: str) -> list:
+    """Labelled sessions inside a phase, or nothing at all.
+
+    Held to a higher bar than the fields beside it, because a half-built
+    rotation is worse than none: a Tuesday that says "Session B" and lists
+    nothing is a dead end, and a rotation of one is a lie about the week. So
+    an entry with no surviving steps is dropped, and if fewer than
+    MIN_ROTATION entries survive the whole rotation is dropped and the phase
+    falls back to its flat steps -- which every surface already draws.
+    """
+    out = []
+    for n, item in enumerate(raw or []):
+        if not isinstance(item, dict):
+            continue
+        steps = _clean_steps(item.get('steps'), aim)
+        if not steps:
+            continue
+        label = _clean_line(item.get('label'), aim, LABEL_CHARS) \
+            or f"Session {len(out) + 1}"
+        out.append({'label': label, 'steps': steps})
+        if len(out) >= MAX_ROTATION:
+            break
+    return out if len(out) >= MIN_ROTATION else []
 
 
 # The line between structure and prescription, and the first cut of it was in
@@ -270,12 +344,25 @@ PHASE_SYSTEM = (
     "each. `steps` is what the material actually says to DO in that phase -- "
     "the named exercises, drills, lessons or chapters, in order, so somebody "
     "could start a session from them alone. Take them from the material; do "
-    "not invent them. Write EVERY field in the same language the aim is "
+    "not invent them, and keep them inside the session length given below.\n\n"
+    "`progression` is how somebody makes one session harder than the last "
+    "one INSIDE this phase, in this activity's own terms -- one more page, a "
+    "faster tempo, one more repetition, one less reminder from a parent. "
+    "Take it from the material. Leave it empty if the material does not say; "
+    "do not invent a rule.\n\n"
+    "`rotation` is for a phase whose sessions are NOT all the same session. "
+    "If the material lays out different sessions that alternate, give 2-4 of "
+    "them, each with a short label and its own steps, and the app will deal "
+    "them onto the days this family practises. If every session in the phase "
+    "is the same, leave `rotation` out entirely -- an invented rotation is "
+    "worse than none.\n\n"
+    "Write EVERY field in the same language the aim is "
     "written in, and do not change language part-way through. If the "
     "material does not support a real phased plan, reply with an empty "
     "phases list.\n\n"
     'Return STRICT JSON: {"plan_name": "", "why_this_one": "", '
     '"phases": [{"name": "", "what": "", "steps": ["", ""], '
+    '"progression": "", "rotation": [{"label": "", "steps": ["", ""]}], '
     '"milestone": "", "cite": 1}], '
     '"runners_up": [{"cite": 2, "why_not": ""}]}'
 )
@@ -289,6 +376,22 @@ GENERATE_SYSTEM = (
     "somebody could start on Tuesday from the steps alone. A plan that says "
     "'move through basic patterns with control' and names nothing is a "
     "failure, not a safe answer.\n\n"
+    "FIT THE PERSON AND THE SESSION. Write it for the person described below "
+    "and for the length of session they actually have -- a plan built for an "
+    "hour is not a plan for somebody with twenty minutes. If they are a "
+    "child, everything in it has to be doable by a child that age, needing no "
+    "equipment and no adult help the steps do not name.\n\n"
+    "`progression` is how somebody makes one session harder than the last "
+    "one INSIDE a phase, in this activity's own terms -- one more page, a "
+    "faster tempo, one more repetition, a longer hold, one less reminder. "
+    "Every phase needs one; without it a phase is the same session repeated "
+    "until a date passes. It is a rule, never a number on a bar or a dose.\n\n"
+    "`rotation` is for a phase whose sessions are NOT all the same session. "
+    "Where the activity really does alternate -- technique against material, "
+    "new against review, one group of movements against another -- give 2-4 "
+    "labelled sessions with their own steps and the app will deal them onto "
+    "this family's practice days. Where a session is genuinely the same thing "
+    "each time, leave `rotation` out. Do not manufacture variety.\n\n"
     "You MAY say how much to repeat something: sets, reps, rounds, minutes, "
     "times per session. You may NOT put a number on external load or intake "
     "-- no pounds or kilos on a bar, no percentages of a one-rep max, no "
@@ -302,7 +405,9 @@ GENERATE_SYSTEM = (
     "this aim, reply with an empty phases list.\n\n"
     'Return STRICT JSON: {"why_this_one": "<one sentence on the approach>", '
     '"phases": [{"name": "", "what": "", '
-    '"steps": ["<one concrete thing to do>", ""], "milestone": ""}]}'
+    '"steps": ["<one concrete thing to do>", ""], '
+    '"progression": "<how this session beats the last one>", '
+    '"rotation": [{"label": "", "steps": ["", ""]}], "milestone": ""}]}'
 )
 
 
@@ -339,6 +444,76 @@ def generation_allowed(title: str) -> bool:
     return not _GENERATION_WORD_RE.search(low)
 
 
+def screen_starting_point(text: str) -> dict:
+    """The same body screen, on the other free-text field a family types.
+
+    `screen_aim` guards the aim and nothing else, so the moment a second free
+    field reaches a prompt it is a way around the one rule this arc will not
+    bend -- "learn to cook" with a starting point of "I'm 200 lbs and want to
+    be 170" is the refused aim, typed one box lower. Same list, same sentence,
+    named as the starting point so nobody has to guess which box objected.
+    """
+    low = (text or '').strip().lower()
+    if not low:
+        return {'ok': True}
+    if any(term in low for term in BODY_PHRASES) or _BODY_WORD_RE.search(low):
+        return {'ok': False,
+                'message': ("Same rule for the starting point as for the aim: "
+                            "no target weights and no calorie numbers. Say "
+                            "what they can already DO instead."),
+                'alternatives': list(BEHAVIOUR_ALTERNATIVES)}
+    return {'ok': True}
+
+
+# How much of a starting point reaches a prompt. Long enough for "already
+# plays open chords, owns a guitar with old strings", short enough that it
+# cannot become an essay that crowds out the material.
+STARTING_POINT_CHARS = 240
+
+
+def _who_line(member: dict, member_name: str = '') -> str:
+    """Who the plan is for, in the only terms this app actually knows.
+
+    A plan's single biggest variable in EVERY domain is the age of the person
+    following it -- a reading ladder, a cooking program and a bike-skills
+    progression are three different documents for a nine-year-old and for an
+    adult -- and until this line existed the model was handed a first name and
+    nothing else, so every plan came back written for a generic adult beginner.
+
+    Age is stated only when a birthdate really is on file. `stages.age_of`
+    returns None rather than a zero for exactly this reason, and guessing --
+    from a stage, from a role, from a name -- would be inventing the one fact
+    that decides the plan.
+    """
+    name = (member or {}).get('name') or member_name or ''
+    who = f"{name}" if name else 'one person'
+    if not member:
+        return who
+    age = stages.age_of(member)
+    if (member.get('role') or '') == 'child':
+        return f"{who}, {age} years old" if age is not None else f"{who}, a child"
+    return f"{who}, an adult" if age is None else f"{who}, {age} years old"
+
+
+def _context_block(member: dict, member_name: str, per_week: int,
+                   minutes: int, starting_point: str) -> str:
+    """Everything about this household that changes what the plan should say.
+
+    One builder for both tiers, because the two prompts drifting apart is how
+    the generated tier ended up never being told the session length at all --
+    the cited path passed `minutes` from the day it was written and the
+    generated path simply did not, so a family with twenty-minute evenings got
+    a plan built for an hour and no surface ever said the two disagreed.
+    """
+    lines = [f"Who this is for: {_who_line(member, member_name)}.",
+             f"Their week: {per_week} sessions, {minutes} minutes each. "
+             f"What a session contains has to FIT {minutes} minutes."]
+    start = (starting_point or '').strip()[:STARTING_POINT_CHARS]
+    if start:
+        lines.append(f"Where they are starting from: {start}")
+    return "\n".join(lines)
+
+
 def _pool_call(tier, api_key, system, prompt, **kw):
     """Indirection so tests stub one attribute."""
     from services import model_pools
@@ -366,16 +541,24 @@ def _source_generated(why: str, answer: str = '') -> dict:
             'hand_written': True}
 
 
-def curate(title: str, shape: dict, member_name: str = '') -> dict:
+def curate(title: str, shape: dict, member_name: str = '',
+           member: dict = None, starting_point: str = '') -> dict:
     """One research run, turned into cited phases -- or an honest fallback.
 
     Returns {'phases': [...], 'source': {...}}. Phase CONTENT comes from pages
     that were read where there were any; phase PACING is arithmetic over
     `shape` in every tier, because pacing is exactly where a model would
     otherwise start writing curriculum.
+
+    `member` is the whole member row rather than a name, so the one fact that
+    changes a plan more than any other -- how old the person following it is
+    -- reaches both tiers. `member_name` stays for callers that only ever had
+    one, and for a member who has since been removed.
     """
     per_week = int((shape or {}).get('sessions_per_week') or 3)
     minutes = int((shape or {}).get('minutes') or 25)
+    context = _context_block(member, member_name, per_week, minutes,
+                             starting_point)
     question = (f"What is the best established, existing, step-by-step program "
                 f"a beginner should follow to {title}? Name the real program "
                 f"and its phases. Do not invent one.")
@@ -399,20 +582,20 @@ def curate(title: str, shape: dict, member_name: str = '') -> dict:
                     'source': _source_none(_OUTAGE_REASON[status])}
         if status != 'no_results':
             return {'phases': [], 'source': _source_none('unavailable')}
-        return _fallback(title, per_week, member_name, api_key, '')
+        return _fallback(title, per_week, api_key, context, '')
 
     answer = (res.get('answer') or '').strip()
     items = _material(res)
     if not items:
-        return _fallback(title, per_week, member_name, api_key, answer)
+        return _fallback(title, per_week, api_key, context, answer)
 
-    shaped = _phases_from(title, items, per_week, minutes, api_key, member_name)
+    shaped = _phases_from(title, items, per_week, api_key, context)
     if not shaped['phases']:
         # Reached here the material was real and the shaping still produced
         # nothing citable. That used to end the story; now it falls through to
         # a labelled plan built on the material, which is a far better answer
         # than a naked calendar reservation.
-        return _fallback(title, per_week, member_name, api_key, answer)
+        return _fallback(title, per_week, api_key, context, answer)
 
     return {'phases': shaped['phases'],
             'source': {'plan_name': shaped['plan_name'],
@@ -426,7 +609,7 @@ def curate(title: str, shape: dict, member_name: str = '') -> dict:
                        'hand_written': False}}
 
 
-def _fallback(title: str, per_week: int, member_name: str, api_key: str,
+def _fallback(title: str, per_week: int, api_key: str, context: str,
               answer: str) -> dict:
     """No cited plan. Make one and label it, or say why not even that."""
     settings = storage.get_settings() or {}
@@ -435,7 +618,7 @@ def _fallback(title: str, per_week: int, member_name: str, api_key: str,
     if not generation_allowed(title):
         return {'phases': [],
                 'source': _source_none('generation_refused', answer)}
-    made = _generated_phases(title, per_week, api_key, member_name, answer)
+    made = _generated_phases(title, per_week, api_key, context, answer)
     if made['reason']:
         return {'phases': [], 'source': _source_none(made['reason'], answer)}
     return {'phases': made['phases'],
@@ -544,8 +727,8 @@ def _cited_url(ph: dict, by_ref: dict, urls: set) -> str:
     return url if url in urls else ''
 
 
-def _phases_from(title: str, items: list, per_week: int, minutes: int,
-                 api_key: str, member_name: str = '') -> dict:
+def _phases_from(title: str, items: list, per_week: int,
+                 api_key: str, context: str = '') -> dict:
     """Turn what was read into phases, then drop any that cite nothing.
 
     The model is asked to organise material it was given, not to produce
@@ -559,9 +742,7 @@ def _phases_from(title: str, items: list, per_week: int, minutes: int,
         f"[{n}] {it['claim']}"
         + (f" (page: {it['title']})" if it['title'] else '')
         + f" <{it['url']}>" for n, it in by_ref.items())
-    who = f" for {member_name}" if member_name else ''
-    prompt = (f"Aim{who}: {title}.\n"
-              f"They can practise {per_week} times a week for {minutes} minutes.\n\n"
+    prompt = (f"Aim: {title}.\n{context}\n\n"
               f"What was actually read from real pages:\n{corpus}")
     empty = {'phases': [], 'plan_name': '', 'url': '', 'why_this_one': '',
              'runners_up': []}
@@ -592,10 +773,21 @@ def _phases_from(title: str, items: list, per_week: int, minutes: int,
         used.append(url)
         # Note: any 'weeks' the model sent is ignored. Pacing is arithmetic
         # over `shape`, computed once above -- never a number out of the model.
+        # A rotation the material really described replaces nothing: `steps`
+        # stays the phase's material so every surface written before rotations
+        # existed keeps drawing something true, and the rotation is what a
+        # DATED window uses. Deriving `steps` from the first session rather
+        # than asking for it twice also keeps the empty-steps gate honest.
+        rotation = _clean_rotation(ph.get('rotation'), title)
+        steps = _clean_steps(ph.get('steps'), title) or (
+            list(rotation[0]['steps']) if rotation else [])
         out.append({'name': (ph.get('name') or f"Phase {len(out) + 1}")[:60],
                     'weeks': weeks,
                     'what': (ph.get('what') or '').strip()[:400],
-                    'steps': _clean_steps(ph.get('steps'), title),
+                    'steps': steps,
+                    'progression': _clean_line(ph.get('progression'), title,
+                                               PROGRESSION_CHARS),
+                    'rotation': rotation,
                     'milestone': (ph.get('milestone') or '').strip()[:120],
                     'milestone_hit_at': None})
     if not out:
@@ -655,7 +847,7 @@ def _prescribes_load(ph: dict) -> bool:
 
 
 def _generated_phases(title: str, per_week: int, api_key: str,
-                      member_name: str, answer: str) -> dict:
+                      context: str, answer: str) -> dict:
     """Make a plan, label it, and hold it to the two rules that survive the
     move from curating to generating: pacing is still arithmetic, and a phase
     that prescribes a load or a dose is still dropped.
@@ -663,11 +855,9 @@ def _generated_phases(title: str, per_week: int, api_key: str,
     Returns {'phases', 'why_this_one', 'reason'} -- a non-empty `reason` means
     no plan, and names which way it failed.
     """
-    who = f" for {member_name}" if member_name else ''
-    context = (f"\n\nWhat the web said about this aim, uncited and NOT to be "
-               f"quoted as a source:\n{answer}" if answer else '')
-    prompt = (f"Aim{who}: {title}.\n"
-              f"They can practise {per_week} times a week.{context}")
+    heard = (f"\n\nWhat the web said about this aim, uncited and NOT to be "
+             f"quoted as a source:\n{answer}" if answer else '')
+    prompt = f"Aim: {title}.\n{context}{heard}"
 
     def _ask(system):
         try:
@@ -702,9 +892,14 @@ def _generated_phases(title: str, per_week: int, api_key: str,
     for ph in (data.get('phases') or [])[:4]:
         if not isinstance(ph, dict):
             continue
+        rotation = _clean_rotation(ph.get('rotation'), title)
         clean = {'name': (ph.get('name') or f"Phase {len(out) + 1}")[:60],
                  'what': (ph.get('what') or '').strip()[:400],
-                 'steps': _clean_steps(ph.get('steps'), title),
+                 'steps': (_clean_steps(ph.get('steps'), title)
+                           or (list(rotation[0]['steps']) if rotation else [])),
+                 'progression': _clean_line(ph.get('progression'), title,
+                                            PROGRESSION_CHARS),
+                 'rotation': rotation,
                  'milestone': (ph.get('milestone') or '').strip()[:120]}
         if not clean['what']:
             continue

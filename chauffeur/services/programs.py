@@ -550,6 +550,56 @@ PUSH_WINDOW_SECONDS = 15 * 60      # how late a start-of-window push may fire
 PUSH_KEEP_DAYS = 3
 
 
+def phase_started_on(program: dict) -> datetime.date:
+    """The date the phase a program is CURRENTLY in began.
+
+    Phases do not advance on a date -- a person marks a milestone reached,
+    because "switch G to C without looking" is a judgement no app makes -- so
+    this is the latest milestone that was marked, falling back to when the
+    program itself started. It exists to anchor the session rotation, and for
+    nothing else: it is derived on every read and stored nowhere, which is
+    what keeps it from becoming the last-session-gap the six progress rules
+    refuse to let this object hold.
+    """
+    stamps = [p.get('milestone_hit_at') for p in (program.get('phases') or [])
+              if p.get('milestone_hit_at')]
+    if stamps:
+        try:
+            return datetime.datetime.fromtimestamp(
+                max(float(s) for s in stamps)).date()
+        except (TypeError, ValueError, OSError, OverflowError):
+            pass
+    try:
+        return datetime.date.fromisoformat(
+            str((program.get('baseline') or {}).get('start_date'))[:10])
+    except (TypeError, ValueError):
+        pass
+    try:
+        return datetime.datetime.fromtimestamp(
+            float(program.get('created_at') or 0)).date()
+    except (TypeError, ValueError, OSError, OverflowError):
+        return datetime.date.today()
+
+
+def _occurrences_before(days, anchor: datetime.date,
+                        day: datetime.date) -> int:
+    """How many times a weekly window has come round between two dates.
+
+    Counted arithmetically rather than by walking the days, because a phase
+    that began in March and a window being drawn in August is five months of
+    loop for one integer, run once per window on every calendar read.
+    """
+    span = (day - anchor).days
+    if span <= 0:
+        return 0
+    total = 0
+    for w in days:
+        offset = (w - anchor.weekday()) % 7
+        if offset < span:
+            total += 1 + (span - 1 - offset) // 7
+    return total
+
+
 def practice_windows(start: datetime.date, end: datetime.date,
                      member_id: str = None) -> list:
     """Every practice window between two dates, as dated occurrences.
@@ -558,6 +608,15 @@ def practice_windows(start: datetime.date, end: datetime.date,
     session IS (the current phase and its steps) rather than only when it is
     -- a time with no content is the thing that made this feature invisible
     twice over.
+
+    Where a phase carries a ROTATION -- sessions inside it that are not all
+    the same session -- this is where the two halves finally meet: the plan
+    knows the sessions differ and the household has already said which
+    evenings are theirs, so each evening gets the session whose turn it is.
+    Which turn is arithmetic over DATES, deliberately, and never over what
+    was logged: a rotation that advanced on completion would rewrite Friday's
+    content because nobody practised on Wednesday, which is both a surface
+    that changes under you and a miss record wearing a plan's clothes.
     """
     members = {m['id']: m for m in storage.get_all_members(include_archived=True)}
     live = {c['id']: c for c in storage.get_protected_commitments(member_id=member_id)
@@ -569,30 +628,53 @@ def practice_windows(start: datetime.date, end: datetime.date,
             # commitments outright, and a proposal has never claimed any.
             continue
         phase = progress(row).get('phase') or {}
+        rotation = [s for s in (phase.get('rotation') or [])
+                    if isinstance(s, dict) and s.get('steps')]
         member = members.get(row.get('member_id')) or {}
-        for cid in (row.get('emissions') or {}).get('commitment_ids') or []:
-            pc = live.get(cid)
-            if not pc:
-                continue
+        pairs = [(cid, live[cid])
+                 for cid in ((row.get('emissions') or {}).get('commitment_ids') or [])
+                 if cid in live]
+        raw = []
+        for cid, pc in pairs:
             days = set(pc.get('days_of_week') or [])
             day = start
             while day <= end:
                 if day.weekday() in days:
-                    out.append({
-                        'program_id': row['id'],
-                        'commitment_id': cid,
-                        'member_id': row.get('member_id'),
-                        'member_name': member.get('name') or '',
-                        'title': row.get('title') or 'Practice',
-                        'date': day.isoformat(),
-                        'time_start': pc.get('time_start'),
-                        'time_end': pc.get('time_end'),
-                        'phase_name': phase.get('name') or '',
-                        'steps': list(phase.get('steps') or []),
-                        'milestone': phase.get('milestone') or '',
-                        'logged': _already_logged(row, day),
-                    })
+                    raw.append((day, pc.get('time_start') or '', cid, pc))
                 day += datetime.timedelta(days=1)
+        # Chronological across every commitment this program holds, because
+        # the rotation deals onto the WEEK rather than onto one reservation:
+        # two windows on the same evening are two different sessions.
+        raw.sort(key=lambda r: (r[0], r[1]))
+        anchor = phase_started_on(row) if rotation else None
+        before, rank = {}, {}
+        for day, ts, cid, pc in raw:
+            session = None
+            if rotation:
+                if day not in before:
+                    before[day] = sum(
+                        _occurrences_before(set(p.get('days_of_week') or []),
+                                            anchor, day)
+                        for _, p in pairs)
+                n = rank.get(day, 0)
+                rank[day] = n + 1
+                session = rotation[(before[day] + n) % len(rotation)]
+            out.append({
+                'program_id': row['id'],
+                'commitment_id': cid,
+                'member_id': row.get('member_id'),
+                'member_name': member.get('name') or '',
+                'title': row.get('title') or 'Practice',
+                'date': day.isoformat(),
+                'time_start': pc.get('time_start'),
+                'time_end': pc.get('time_end'),
+                'phase_name': phase.get('name') or '',
+                'session_label': (session or {}).get('label') or '',
+                'steps': list((session or phase).get('steps') or []),
+                'progression': phase.get('progression') or '',
+                'milestone': phase.get('milestone') or '',
+                'logged': _already_logged(row, day),
+            })
     out.sort(key=lambda w: (w['date'], w['time_start'] or '', w['title']))
     return out
 

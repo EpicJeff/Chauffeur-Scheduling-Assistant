@@ -726,7 +726,20 @@ class Program(BaseModel):
     # content -- the named exercises, drills or material, in order -- which
     # `what` (a paragraph about the phase) and `milestone` (how you know it
     # ended) between them never were.
+    #
+    # `progression` is how one session beats the last one INSIDE a phase, in
+    # the activity's own terms, and `rotation` is 2-4 labelled sessions for a
+    # phase whose sessions differ from each other (empty where they do not).
+    # Both are content, not record: nothing here counts what happened, which
+    # is what keeps the rotation from becoming a streak by another name.
     phases: List[Dict[str, Any]] = Field(default_factory=list)
+    # What this person can already do, in their own words, and it is an INPUT
+    # to curation rather than a measurement of them. A plan written for a
+    # generic beginner is the single most common way a real plan is useless,
+    # and until this existed the app had no way to say "already plays open
+    # chords" or "has a keyboard but no pedal". Screened for body-composition
+    # terms at every door, exactly like the aim.
+    starting_point: str = ''
     # `origin` is the tier: 'cited' (a real published plan, with its pages),
     # 'generated' (none was found, so the app wrote one and says so) or 'none'
     # (research could not run — time only). `reason` names WHY it is not

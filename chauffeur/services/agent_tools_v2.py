@@ -1712,6 +1712,7 @@ def program_progress(program_title: str, acting_member: dict = None) -> Dict[str
 
 def propose_program(title: str, for_member_name: str = None,
                     sessions_per_week: int = None, minutes: int = None,
+                    starting_point: str = None,
                     acting_member: dict = None) -> Dict[str, Any]:
     """Screen the aim, then curate a real plan for it — the chat mirror of
     `POST /api/programs`. The body-goal screen (`programs_curate.screen_aim`)
@@ -1741,15 +1742,24 @@ def propose_program(title: str, for_member_name: str = None,
     if not screen.get('ok'):
         return {"status": "error", "message": screen.get('message'),
                 "alternatives": screen.get('alternatives') or []}
+    # Same screen on the starting point, because it is the second free field
+    # a person types and a body target typed one box lower is still a body
+    # target. Same sentence as the endpoint's, from the same function.
+    starting_point = (starting_point or '').strip()
+    screen = _cur.screen_starting_point(starting_point)
+    if not screen.get('ok'):
+        return {"status": "error", "message": screen.get('message'),
+                "alternatives": screen.get('alternatives') or []}
     from services import storage as _storage
     member_id = acting_member.get('id')
     member_name = acting_member.get('name') or ''
+    member = acting_member
     if for_member_name:
         m, refusal = _resolve_named_member_or_refuse(
             acting_member, for_member_name, 'start a program for someone else')
         if refusal:
             return refusal
-        member_id, member_name = m['id'], m.get('name') or ''
+        member_id, member_name, member = m['id'], m.get('name') or '', m
     # Clamped, because this schema's bounds are a hint to a model and nothing
     # more: asked for "twice a day" a model says 14, and an unbounded shape
     # hung `propose_slots` forever and wrote a '29:00' window that silently
@@ -1757,9 +1767,11 @@ def propose_program(title: str, for_member_name: str = None,
     from services import programs as _prog
     shape = _prog.clamp_shape({'sessions_per_week': sessions_per_week,
                                'minutes': minutes, 'preferred_days': []})
-    curated = _cur.curate(title, shape, member_name=member_name)
+    curated = _cur.curate(title, shape, member_name=member_name,
+                          member=member, starting_point=starting_point)
     pid = _storage.add_program({
         'member_id': member_id, 'title': title, 'shape': shape,
+        'starting_point': starting_point,
         'phases': curated['phases'], 'source': curated['source'],
         'baseline': {'start_date': None, 'target_date': None,
                      'target_event_id': None, 'rebaselined_at': None,
@@ -4079,7 +4091,8 @@ def get_available_tools() -> List[Dict]:
                     "title": {"type": "string", "description": "The aim, e.g. 'learn guitar' or 'couch to 5k'."},
                     "for_member_name": {"type": "string", "description": "Whose program this is, if not the caller's own."},
                     "sessions_per_week": {"type": "integer", "minimum": 1, "maximum": 7, "description": "How many times a week to practise, 1-7. Defaults to 3."},
-                    "minutes": {"type": "integer", "minimum": 5, "maximum": 240, "description": "Minutes per session, 5-240. Defaults to 25."}
+                    "minutes": {"type": "integer", "minimum": 5, "maximum": 240, "description": "Minutes per session, 5-240. Defaults to 25."},
+                    "starting_point": {"type": "string", "description": "What they can already DO, in their own words ('already plays open chords', 'has a keyboard but no pedal', 'reads chapter books'). Makes the plan fit them instead of a generic beginner. Never a weight, a size or a calorie number - those are refused."}
                 },
                 "required": ["title"]
             }

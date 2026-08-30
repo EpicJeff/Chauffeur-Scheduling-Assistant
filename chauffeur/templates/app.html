@@ -1310,12 +1310,25 @@
             const what = phase ? mfEscape(phase.what || '') : '';
             // What this phase actually asks of you, on the surface the person
             // practising reads. A paragraph about the phase is not a session.
+            const stepLines = list => list.map(st => `<li class="text-[11px] text-gray-300 flex gap-1.5">
+                        <span class="text-gray-600 shrink-0">·</span><span>${mfEscape(st)}</span></li>`).join('');
+            // A phase whose sessions differ shows them labelled rather than
+            // as one flat list -- the same content the practice card deals
+            // onto a given evening, seen whole.
+            const rotation = ((phase && phase.rotation) || []).filter(sess => (sess.steps || []).length);
             const steps = ((phase && phase.steps) || []).slice(0, 8);
-            const stepList = steps.length ? `
-                <ul class="mt-1.5 space-y-0.5">
-                    ${steps.map(st => `<li class="text-[11px] text-gray-300 flex gap-1.5">
-                        <span class="text-gray-600 shrink-0">·</span><span>${mfEscape(st)}</span></li>`).join('')}
-                </ul>` : '';
+            const stepList = rotation.length ? `
+                <div class="mt-1.5 space-y-1.5">
+                    ${rotation.map(sess => `<div>
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300">${mfEscape(sess.label || '')}</span>
+                        <ul class="mt-1 space-y-0.5">${stepLines((sess.steps || []).slice(0, 8))}</ul>
+                    </div>`).join('')}
+                </div>` : (steps.length ? `
+                <ul class="mt-1.5 space-y-0.5">${stepLines(steps)}</ul>` : '');
+            // How this session beats the last one. "Done when" says the phase
+            // is over; without this a phase is the same evening on repeat.
+            const progressionRow = (phase && phase.progression) ? `
+                <div class="text-[11px] text-gray-500 mt-1.5"><span class="text-gray-600">Next time:</span> ${mfEscape(phase.progression)}</div>` : '';
             const nextWindow = programNextWindow(p, commitmentsById || {});
             // Marking a milestone is a judgement only a person makes -- the
             // button exists, there is no counterpart that marks one missed.
@@ -1359,6 +1372,7 @@
                 </div>
                 ${what ? `<div class="text-xs text-gray-400 mt-1">${what}</div>` : ''}
                 ${stepList}
+                ${progressionRow}
                 <div class="text-[11px] text-gray-500 mt-1.5">${mfEscape(programCountPhrase(p))}</div>
                 ${nextWindow ? `<div class="text-[11px] text-gray-500">Next practice: ${nextWindow}</div>` : ''}
                 ${milestoneRow}
@@ -1499,8 +1513,12 @@
                     <div class="text-teal-200 font-bold leading-tight truncate">🎯 ${mfEscape(w.title)}</div>
                     <div class="text-[11px] font-bold text-teal-300 shrink-0">${mfEscape(w.time_start)}–${mfEscape(w.time_end)}</div>
                 </div>
-                ${w.phase_name ? `<div class="text-[11px] text-teal-400/80 font-semibold mt-0.5">${mfEscape(w.phase_name)}</div>` : ''}
+                ${(w.phase_name || w.session_label) ? `<div class="flex items-center gap-1.5 mt-0.5">
+                    ${w.phase_name ? `<span class="text-[11px] text-teal-400/80 font-semibold">${mfEscape(w.phase_name)}</span>` : ''}
+                    ${w.session_label ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300">${mfEscape(w.session_label)}</span>` : ''}
+                </div>` : ''}
                 ${list}
+                ${w.progression ? `<div class="text-[11px] text-teal-400/70 mt-1.5">Next time: ${mfEscape(w.progression)}</div>` : ''}
                 <button onclick="addProgramSession('${w.program_id}')"
                     class="mt-2.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Log a session</button>
             </div>`;
@@ -8098,7 +8116,7 @@
                             <div class="flex-1 min-w-0">
                                 <div class="text-teal-100 font-bold leading-tight truncate">${mfEscape(w.title || card.title)}</div>
                                 <div class="text-xs text-teal-400/90 font-bold uppercase tracking-wider">
-                                    ${mfEscape(w.member_name || '')} · practice · ${mfEscape(w.time_start)}–${mfEscape(w.time_end)}
+                                    ${mfEscape(w.member_name || '')} · practice${w.session_label ? ' · ' + mfEscape(w.session_label) : ''} · ${mfEscape(w.time_start)}–${mfEscape(w.time_end)}
                                 </div>
                             </div>
                             ${w.logged ? '<span class="text-[10px] font-bold text-teal-300 shrink-0">✓ logged</span>' : ''}

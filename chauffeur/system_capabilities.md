@@ -6630,6 +6630,94 @@ asking). The PWA card carries the same two words. The progress line says
 `working towards:` rather than `next:`, which read as the next thing to DO
 over a sentence describing an outcome.
 
+**A plan knows who it is for, how long they have, and where they are
+starting** (v2.436.0 — `programs_curate.curate`, `_who_line`,
+`_context_block`, `Program.starting_point`). Every plan a family can find
+elsewhere is more specific than ours was, and the reason was not the model:
+both system prompts were handed an aim and almost nothing else. Three
+omissions, in the order they cost the most:
+
+- **Age.** Curation received a first name. A reading ladder, a cooking
+  program and a bike-skills progression are three different documents for a
+  nine-year-old and for an adult, in every domain there is, so `curate()` now
+  takes the whole member row and states the age from `stages.age_of`. Age is
+  stated only when a birthdate is really on file — `age_of` returns `None`
+  rather than a zero for exactly this reason, and guessing one from a role, a
+  stage or a name would be inventing the single fact that decides the plan.
+  A member with no birthdate is described as "an adult" or "a child" and no
+  number is offered.
+- **Session length, in the generated tier only.** The cited path passed
+  `minutes` from the day it was written; `_generated_phases` was handed the
+  aim and a number of evenings. A household with twenty-minute evenings got a
+  plan built for an hour and no surface anywhere said the two disagreed. One
+  `_context_block` now builds the same lines for both tiers, so the two
+  prompts cannot drift apart again this way.
+- **Where they are starting.** `Program.starting_point` is a free-text line —
+  "already plays open chords", "has a keyboard but no pedal", "reads chapter
+  books" — typed on the Programs page create and edit forms, accepted by
+  `POST /api/programs` and `/edit`, and exposed as a `starting_point` argument
+  on the `propose_program` chat tool (forwarded by `agent_router`). It is an
+  INPUT to curation, never a measurement of anybody. Editing it spends no
+  research run: the material on the page did not change, only how it should
+  be organised, so it is stored and used the next time somebody taps **Look
+  again**, which the page and the response both say out loud.
+
+`screen_starting_point()` runs the body-composition screen over that second
+field at every door — the endpoint, the edit, and the chat tool. `screen_aim`
+guards the aim and nothing else, so a body target typed one box lower would
+otherwise have been a door beside the locked one; it is the same word list and
+the same sentence, named as the starting point so nobody has to guess which
+box objected.
+
+**A phase says how to beat the last session, and whether every session is the
+same session** (v2.436.0 — `phases[].progression`, `phases[].rotation`).
+Phases escalated across months and a milestone said when one ended; between
+those two there was nothing telling anybody that Tuesday should be a notch
+past last Tuesday, and one flat `steps` list was repeated for every session in
+a phase.
+
+- `progression` is one sentence in the activity's own terms — one more page, a
+  faster tempo, one more repetition, one less reminder from a parent. It goes
+  through `_clean_line`, which is `_clean_steps` for a single string, so the
+  load-and-dose regex applies exactly as it does to steps: "add a rep before
+  you add weight" survives, "add 10 lbs to the bar" is stripped and the phase
+  keeps everything else. It renders as `Next time:` beside `Done when:` on the
+  Programs page, the PWA program card, and the practice-now card.
+- `rotation` is 2–4 labelled sessions for a phase whose sessions genuinely
+  differ, and is empty everywhere else — plenty of aims really are the same
+  thing repeated, and a rotation invented for those is variety theatre. It is
+  held to a higher bar than the fields beside it: an entry whose steps do not
+  survive screening is dropped, and if fewer than two survive the whole
+  rotation is dropped and the phase falls back to its flat list. A rotation of
+  one is a list of steps wearing a hat. Where a rotation exists, `steps` is
+  filled from its first session, so every surface written before rotations
+  existed keeps drawing something true and the empty-steps gate — the rule
+  that makes "be concrete" real rather than requested — keeps meaning
+  something.
+
+**A rotation is dealt onto the evenings the family actually has**
+(v2.436.0 — `programs.practice_windows`, `phase_started_on`,
+`_occurrences_before`). This is the half no plan found on the web can do,
+because no such plan knows the week. `practice_windows` orders a program's
+occurrences chronologically across all of its commitments and hands each one
+the session whose turn it is; the label reaches the practice card, the push
+title, and the calendar event's own title, so an evening reads *Guitar ·
+Session B* rather than *Guitar*.
+
+Whose turn it is, is arithmetic over DATES and never over what was logged. A
+rotation that advanced on completion would rewrite Friday's content because
+nobody practised on Wednesday — a surface that changes under you, and a miss
+record wearing a plan's clothes, which the six progress rules exist to make
+impossible. The count is anchored at `phase_started_on()`: the latest
+milestone marked reached, falling back to `baseline.start_date` and then to
+`created_at`. That means a new phase deals from its own first session rather
+than from wherever the last one stopped, and it is derived on every read and
+stored nowhere — a stored one would be the last-session-gap this object is
+not allowed to hold. `_occurrences_before` counts weekly recurrences by
+formula rather than by walking days, because a phase that began in March and a
+window being drawn in August is five months of loop for one integer, run once
+per window on every calendar read.
+
 **A practice window is visible, announced, and carries the session**
 (v2.435.5 — `programs.practice_windows`, `GET /api/practice-windows`). What
 shipped before this was an arrangement one person had to remember: approving a

@@ -614,6 +614,91 @@ def scenario_claiming_and_releasing_time_reaches_the_solver():
           "a dropped program stops believing in windows that are really gone")
 
 
+def scenario_a_starting_point_is_taken_by_hand_and_used():
+    """The hand path for the field that stops a plan being written for a
+    generic beginner. Typed on the Programs page, stored on the program, and
+    handed to curation with the member themselves rather than a first name."""
+    _reset()
+    import main
+    from services import programs_curate as _cur
+    seen = {}
+    real_curate = _cur.curate
+    def fake(title, shape, member_name='', member=None, starting_point=''):
+        seen['member'] = member
+        seen['starting_point'] = starting_point
+        return {'phases': [], 'source': {}}
+    _cur.curate = fake
+    try:
+        res = main.create_program(body={
+            'member_id': 'kid', 'title': 'learn guitar',
+            'starting_point': 'already plays open chords'}, request=None)
+    finally:
+        _cur.curate = real_curate
+    check(res.get('status') == 'success', f"got {res}")
+    check(seen.get('starting_point') == 'already plays open chords',
+          f"it has to reach curation, got {seen}")
+    check((seen.get('member') or {}).get('id') == 'kid',
+          f"and so does the person, not only their name, got {seen}")
+    row = storage.get_program(res['id'])
+    check(row.get('starting_point') == 'already plays open chords',
+          f"and it is kept, so looking again can use it, got {row}")
+
+
+def scenario_a_body_target_in_the_starting_point_is_refused_too():
+    """The aim screen guards one box. A body target typed one box lower is
+    the same refused thing, and nothing may be created to approve later."""
+    _reset()
+    import main
+    from services import programs_curate as _cur
+    called = []
+    real_curate = _cur.curate
+    _cur.curate = lambda *a, **kw: called.append(1) or {'phases': [],
+                                                        'source': {}}
+    try:
+        res = main.create_program(body={
+            'member_id': 'kid', 'title': 'learn to cook',
+            'starting_point': 'I weigh 200 lbs and want to be 170'},
+            request=None)
+    finally:
+        _cur.curate = real_curate
+    check(res.get('status') == 'error', f"got {res}")
+    check(res.get('alternatives'), "and the behaviour version is offered")
+    check(called == [], "and no research run is spent on a refused proposal")
+    check(storage.get_programs(include_finished=True) == [],
+          "and nothing was created to accept later")
+
+
+def scenario_editing_the_starting_point_spends_no_research():
+    """The material on the page did not change; how it should be organised
+    did. Re-reading the web to learn that would charge the family for an
+    edit, so it is saved and used the next time somebody looks again -- and
+    the answer says so rather than leaving them to wonder."""
+    _reset()
+    import main
+    from services import programs_curate as _cur
+    pid = storage.add_program({
+        'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
+        'shape': {'sessions_per_week': 3, 'minutes': 25, 'preferred_days': []},
+        'phases': [{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords',
+                    'milestone': 'G-C-D', 'milestone_hit_at': None}]})
+    called = []
+    real_curate = _cur.curate
+    _cur.curate = lambda *a, **kw: called.append(1) or {'phases': [],
+                                                        'source': {}}
+    try:
+        res = main.edit_program(pid, body={
+            'member_id': 'mom',
+            'starting_point': 'can already read music'}, request=None)
+    finally:
+        _cur.curate = real_curate
+    check(res.get('status') == 'success', f"got {res}")
+    check(called == [], "an edit of the starting point reads nothing")
+    check('Look again' in (res.get('message') or ''),
+          f"and it says how to act on it, got {res.get('message')!r}")
+    check(storage.get_program(pid).get('starting_point') ==
+          'can already read music', "and it is stored")
+
+
 if __name__ == '__main__':
     scenario_the_endpoints_exist()
     scenario_a_body_aim_is_refused_at_the_door()
@@ -646,4 +731,7 @@ if __name__ == '__main__':
     scenario_dismissing_a_proposal_is_reachable_and_honest()
     scenario_a_child_cannot_read_a_siblings_footprint()
     scenario_claiming_and_releasing_time_reaches_the_solver()
+    scenario_a_starting_point_is_taken_by_hand_and_used()
+    scenario_a_body_target_in_the_starting_point_is_refused_too()
+    scenario_editing_the_starting_point_spends_no_research()
     print("test_programs_endpoints OK")

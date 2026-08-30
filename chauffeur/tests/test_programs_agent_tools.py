@@ -72,6 +72,37 @@ def scenario_a_parents_not_found_hint_still_sees_the_household():
           f"a parent still sees the whole household's titles, got {msg!r}")
 
 
+def scenario_the_chat_tool_can_be_told_where_somebody_is_starting():
+    """Every capability the hand path has, the agent has -- and the router
+    has to forward it, or the schema advertises a field that goes nowhere."""
+    import inspect
+    from services import agent_router
+    tool = next(t for t in agent_tools_v2.get_available_tools()
+                if t['name'] == 'propose_program')
+    check('starting_point' in tool['parameters']['properties'],
+          f"the tool takes it, got {sorted(tool['parameters']['properties'])}")
+    check('starting_point' in
+          inspect.signature(agent_tools_v2.propose_program).parameters,
+          "and the function behind it does too")
+    src = inspect.getsource(agent_router.run_agent_turn) \
+        if hasattr(agent_router, 'run_agent_turn') \
+        else inspect.getsource(agent_router)
+    check('starting_point=args.get("starting_point")' in src,
+          "and the router passes it through rather than dropping it")
+
+
+def scenario_a_body_target_in_the_starting_point_is_refused_in_chat_too():
+    """Same screen, same sentence, wherever the second free field is typed."""
+    _reset_programs()
+    res = agent_tools_v2.propose_program(
+        'learn to cook', starting_point='I want to be at my goal weight',
+        acting_member={'id': 'p1', 'name': 'Mom', 'role': 'parent'})
+    check(res.get('status') == 'error', f"got {res}")
+    check(res.get('alternatives'), f"and offers the behaviour version, got {res}")
+    check(storage.get_programs(include_finished=True) == [],
+          "and nothing was created to approve later")
+
+
 if __name__ == '__main__':
     scenario_reads_are_in_both_stacks()
     scenario_approving_is_never_a_chat_tool()
@@ -79,4 +110,6 @@ if __name__ == '__main__':
     scenario_a_body_aim_is_refused_in_chat_too()
     scenario_a_childs_not_found_hint_never_names_a_sibling()
     scenario_a_parents_not_found_hint_still_sees_the_household()
+    scenario_the_chat_tool_can_be_told_where_somebody_is_starting()
+    scenario_a_body_target_in_the_starting_point_is_refused_in_chat_too()
     print("test_programs_agent_tools OK")

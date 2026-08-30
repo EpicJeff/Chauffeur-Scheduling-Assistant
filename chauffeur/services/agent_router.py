@@ -731,6 +731,7 @@ sending or claiming, and never pass from_member/member_name for them.
                                                     for_member_name=args.get("for_member_name"),
                                                     sessions_per_week=args.get("sessions_per_week"),
                                                     minutes=args.get("minutes"),
+                                                    starting_point=args.get("starting_point"),
                                                     acting_member=actor)
                     elif func_name == "log_program_session":
                         res = _atv2.log_program_session(args.get("program_title", "") or "",

@@ -657,6 +657,205 @@ def scenario_every_real_body_aim_still_refuses():
               f"and still offered the behaviour version, got {res}")
 
 
+def _capture_pool(payload, sink):
+    """Same seam as `_fake_pool`, but the PROMPT is kept. What a plan is told
+    about the family is the whole subject of the scenarios below, and it is
+    invisible from the answer alone."""
+    def f(tier, api_key, system, prompt, **kw):
+        sink.append(prompt)
+        return payload
+    return f
+
+
+def _birthdate(years_ago):
+    import datetime
+    d = datetime.date.today()
+    return d.replace(year=d.year - years_ago).isoformat()
+
+
+_MADE = {'why_this_one': 'Nothing published fits, so here is one.',
+         'phases': [{'name': 'Base', 'what': 'Learn the shape of it',
+                     'steps': ['Three throws, one ball, twenty times'],
+                     'progression': 'Add one throw before you add a ball',
+                     'milestone': 'Twenty clean throws in a row'}]}
+
+
+def scenario_a_made_plan_is_written_for_this_person_and_this_hour():
+    """The bug that made every generated plan generic.
+
+    `curate` has always known the session length and the cited path has
+    always passed it; the generated path was handed the aim and a number of
+    evenings and nothing else. A family with twenty-minute evenings got a
+    plan built for an hour, and no surface anywhere said the two disagreed.
+    Age is the same omission one level up: a plan for a nine-year-old and a
+    plan for an adult are different documents in every domain there is.
+    """
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    seen = []
+    programs_curate.web.research = _fake_research([])
+    programs_curate.storage.get_settings = _settings()
+    programs_curate._pool_call = _capture_pool(_MADE, seen)
+    try:
+        out = programs_curate.curate(
+            'learn to juggle', {'sessions_per_week': 2, 'minutes': 20},
+            member={'name': 'Lily', 'role': 'child',
+                    'birthdate': _birthdate(9)})
+        check(out['phases'], f"a plan still comes back, got {out}")
+        check(seen, "the generation call really happened")
+        prompt = seen[-1]
+        check('20 minutes' in prompt,
+              f"the session length has to reach the plan, got:\n{prompt}")
+        check('9 years old' in prompt,
+              f"and so does who is following it, got:\n{prompt}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+
+
+def scenario_an_age_is_never_guessed():
+    """`stages.age_of` returns None rather than a zero for a member with no
+    birthdate, and this is why: the one fact that decides the plan must not
+    be invented from a role, a stage or a name."""
+    check('an adult' in programs_curate._who_line({'name': 'Jeff',
+                                                   'role': 'parent'}),
+          "an adult with no birthdate is an adult, not an age")
+    line = programs_curate._who_line({'name': 'Sam', 'role': 'child'})
+    check('a child' in line and 'years old' not in line,
+          f"a child with no birthdate gets no number, got {line}")
+
+
+def scenario_the_starting_point_reaches_the_plan():
+    """A plan written for a generic beginner is the commonest way a real plan
+    is useless. This is the household's own sentence about where they are."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    seen = []
+    programs_curate.web.research = _fake_research([])
+    programs_curate.storage.get_settings = _settings()
+    programs_curate._pool_call = _capture_pool(_MADE, seen)
+    try:
+        programs_curate.curate(
+            'learn guitar', {'sessions_per_week': 3, 'minutes': 30},
+            member={'name': 'Lily', 'role': 'parent'},
+            starting_point='already plays open chords, owns a guitar')
+        check('already plays open chords' in seen[-1],
+              f"what they can already do has to reach it, got:\n{seen[-1]}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+
+
+def scenario_the_body_screen_covers_the_starting_point_too():
+    """`screen_aim` guards the aim and nothing else, so the moment a second
+    free-text field reaches a prompt it is a door beside the locked one."""
+    for text in ('I weigh 200 lbs and want to be 170', 'currently 30% body fat',
+                 'eating about 1800 calories a day'):
+        res = programs_curate.screen_starting_point(text)
+        check(res['ok'] is False,
+              f"'{text}' is the refused aim typed one box lower, got {res}")
+        check(res.get('alternatives'),
+              f"and it offers the behaviour version, got {res}")
+    for text in ('', 'already plays open chords', 'reads chapter books alone'):
+        check(programs_curate.screen_starting_point(text)['ok'] is True,
+              f"'{text}' is an ordinary starting point and must pass")
+
+
+def scenario_a_phase_says_how_to_beat_the_last_session():
+    """The missing half of pacing. Phases escalate over months and a
+    milestone says when one ended; between the two there was nothing telling
+    anybody that Tuesday should be a notch past last Tuesday."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    programs_curate.web.research = _fake_research([])
+    programs_curate.storage.get_settings = _settings()
+    programs_curate._pool_call = _fake_pool({
+        'why_this_one': 'made',
+        'phases': [
+            {'name': 'Base', 'what': 'Learn the shape',
+             'steps': ['Twenty throws'],
+             'progression': 'Add one throw before you add a ball',
+             'milestone': 'Twenty clean throws'},
+            {'name': 'Load', 'what': 'More of it',
+             'steps': ['Thirty throws'],
+             'progression': 'Add 10 lbs to the bar each week',
+             'milestone': 'Thirty clean throws'},
+        ]})
+    try:
+        out = programs_curate.curate('learn to juggle',
+                                     {'sessions_per_week': 3, 'minutes': 20})
+        rules = [ph.get('progression') for ph in out['phases']]
+        check(rules[0] == 'Add one throw before you add a ball',
+              f"a relative rule is exactly what this field is for, got {rules}")
+        check(rules[1] == '',
+              f"a number on a bar is not, and is stripped, got {rules}")
+        check(out['phases'][1]['steps'],
+              f"and stripping it costs the phase nothing else, "
+              f"got {out['phases'][1]}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+
+
+def scenario_a_rotation_of_one_is_not_a_rotation():
+    """Half a rotation is worse than none: a Tuesday labelled 'Session B'
+    with nothing in it is a dead end, and one labelled session is a list of
+    steps wearing a hat."""
+    aim = 'learn to juggle'
+    check(programs_curate._clean_rotation(
+        [{'label': 'A', 'steps': ['Throws']}], aim) == [],
+        "one session is not a rotation")
+    check(programs_curate._clean_rotation(
+        [{'label': 'A', 'steps': ['Throws']}, {'label': 'B', 'steps': []}],
+        aim) == [], "and an empty session cannot make it two")
+    out = programs_curate._clean_rotation(
+        [{'label': 'Technique', 'steps': ['Three-ball cascade']},
+         {'label': 'Material', 'steps': ['Run the routine twice']}], aim)
+    check(len(out) == 2 and out[0]['label'] == 'Technique',
+          f"two real sessions are a rotation, got {out}")
+    loaded = programs_curate._clean_rotation(
+        [{'label': 'A', 'steps': ['Squat with 185 lbs']},
+         {'label': 'B', 'steps': ['Row 40 kg']}], aim)
+    check(loaded == [],
+          f"and every step goes through the load screen, got {loaded}")
+
+
+def scenario_a_rotation_fills_the_steps_it_replaces():
+    """`steps` stays the phase's material so every surface written before
+    rotations existed keeps drawing something true -- and the empty-steps
+    gate, which is what makes 'be concrete' real, keeps meaning something."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    programs_curate.web.research = _fake_research([])
+    programs_curate.storage.get_settings = _settings()
+    programs_curate._pool_call = _fake_pool({
+        'why_this_one': 'made',
+        'phases': [{'name': 'Base', 'what': 'Two kinds of evening',
+                    'steps': [],
+                    'rotation': [
+                        {'label': 'Technique', 'steps': ['Cascade drill']},
+                        {'label': 'Material', 'steps': ['Run the routine']}],
+                    'milestone': 'Both feel easy'}]})
+    try:
+        out = programs_curate.curate('learn to juggle',
+                                     {'sessions_per_week': 2, 'minutes': 20})
+        ph = out['phases'][0]
+        check(len(ph['rotation']) == 2, f"the rotation survives, got {ph}")
+        check(ph['steps'] == ['Cascade drill'],
+              f"and the flat list is the first session, got {ph['steps']}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+
+
 if __name__ == '__main__':
     scenario_a_body_aim_is_refused_before_any_research()
     scenario_a_behaviour_aim_passes_the_screen()
@@ -680,4 +879,11 @@ if __name__ == '__main__':
     scenario_research_being_off_is_not_an_invented_plan()
     scenario_ordinary_aims_are_not_refused_as_body_goals()
     scenario_every_real_body_aim_still_refuses()
+    scenario_a_made_plan_is_written_for_this_person_and_this_hour()
+    scenario_an_age_is_never_guessed()
+    scenario_the_starting_point_reaches_the_plan()
+    scenario_the_body_screen_covers_the_starting_point_too()
+    scenario_a_phase_says_how_to_beat_the_last_session()
+    scenario_a_rotation_of_one_is_not_a_rotation()
+    scenario_a_rotation_fills_the_steps_it_replaces()
     print("test_programs_curate OK")

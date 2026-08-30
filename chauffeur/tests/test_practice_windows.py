@@ -295,6 +295,130 @@ def scenario_the_endpoint_is_reachable_by_hand():
     check(len(res['windows']) == 1, f"and it answers, got {res}")
 
 
+def _monday():
+    """The Monday of the current week, so a scenario can talk about Mon/Wed/Fri
+    without caring what day it is run on."""
+    today = datetime.date.today()
+    return today - datetime.timedelta(days=today.weekday())
+
+
+def _rotating(rotation, days=(0, 2, 4), anchor=None, member_id='mom'):
+    """An active program whose phase deals more than one kind of session."""
+    anchor = anchor or _monday()
+    cid = storage.add_protected_commitment({
+        'id': 'c1', 'member_id': member_id, 'title': 'Guitar',
+        'days_of_week': list(days), 'time_start': '19:00',
+        'time_end': '19:30', 'active': True})
+    pid = storage.add_program({
+        'member_id': member_id, 'title': 'Guitar', 'state': 'active',
+        'phases': [{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords',
+                    'steps': ['The flat list'], 'rotation': list(rotation),
+                    'milestone': 'G-C-D without looking',
+                    'milestone_hit_at': None}],
+        'baseline': {'start_date': anchor.isoformat(), 'target_date': None,
+                     'target_event_id': None, 'rebaselined_at': None,
+                     'rebaselines': 0},
+        'emissions': {'commitment_ids': [cid], 'thread_ids': [],
+                      'event_ids': []}})
+    return pid, cid
+
+
+_ABC = [{'label': 'Session A', 'steps': ['Chord changes']},
+        {'label': 'Session B', 'steps': ['Scales']},
+        {'label': 'Session C', 'steps': ['A song end to end']}]
+
+
+def scenario_a_rotation_is_dealt_onto_the_evenings_the_family_has():
+    """The two halves that never met. A plan knows its sessions differ; the
+    household has already said which evenings are theirs. Nobody else can put
+    those together -- a plan found on the web does not know the week."""
+    _reset()
+    monday = _monday()
+    _rotating(_ABC)
+    out = prog.practice_windows(monday, monday + datetime.timedelta(days=13))
+    labels = [w['session_label'] for w in out]
+    check(labels == ['Session A', 'Session B', 'Session C'] * 2,
+          f"three evenings, three sessions, then round again, got {labels}")
+    check(out[1]['steps'] == ['Scales'],
+          f"and the steps are that session's, not the phase's, got {out[1]}")
+
+
+def scenario_a_rotation_shorter_than_the_week_keeps_going():
+    """Two sessions across three evenings is a real split, not a broken one:
+    it lands Mon-A Wed-B Fri-A and starts the next week on B. Resetting every
+    Monday would mean the second session got half the practice."""
+    _reset()
+    monday = _monday()
+    _rotating(_ABC[:2])
+    out = prog.practice_windows(monday, monday + datetime.timedelta(days=13))
+    labels = [w['session_label'] for w in out]
+    check(labels == ['Session A', 'Session B'] * 3,
+          f"it carries across the week boundary, got {labels}")
+
+
+def scenario_which_session_it_is_never_depends_on_what_was_logged():
+    """A rotation that advanced on completion would rewrite Friday because
+    nobody practised on Wednesday: a surface that changes under you, and a
+    miss record wearing a plan's clothes. It is arithmetic over dates."""
+    _reset()
+    monday = _monday()
+    pid, _ = _rotating(_ABC)
+    span = (monday, monday + datetime.timedelta(days=13))
+    before = [w['session_label'] for w in prog.practice_windows(*span)]
+    storage.append_program_session(pid, {'minutes': 30, 'source': 'added'})
+    after = [w['session_label'] for w in prog.practice_windows(*span)]
+    check(before == after,
+          f"logging changes the count and nothing else, got {before} then {after}")
+
+
+def scenario_a_phase_with_one_kind_of_session_is_untouched():
+    """Most aims really are the same thing repeated. Those keep the flat list
+    and carry no label at all -- an empty chip is a question nobody asked."""
+    _reset()
+    today = datetime.date.today()
+    _program()
+    w = prog.practice_windows(today, today)[0]
+    check(w['session_label'] == '',
+          f"no rotation, no label, got {w['session_label']!r}")
+    check(w['steps'] == ['One minute changes: G to C'],
+          f"and the phase's own steps stand, got {w}")
+
+
+def scenario_the_rotation_restarts_where_the_phase_did():
+    """A phase's sessions belong to that phase, so reaching a milestone deals
+    the new phase from its own first session rather than from wherever the
+    old one happened to stop."""
+    _reset()
+    monday = _monday()
+    pid, _ = _rotating(_ABC, anchor=monday - datetime.timedelta(days=28))
+    row = storage.get_program(pid)
+    phases = [dict(row['phases'][0], milestone_hit_at=None)]
+    # A second phase, with the first marked reached this Monday: the rotation
+    # for phase two is anchored on that date and not on the program's start.
+    hit = datetime.datetime.combine(monday, datetime.time(8, 0)).timestamp()
+    phases = [dict(row['phases'][0], name='Grade 1', milestone_hit_at=hit),
+              dict(row['phases'][0], name='Grade 2', milestone_hit_at=None)]
+    storage.update_program(pid, {'phases': phases})
+    out = prog.practice_windows(monday, monday + datetime.timedelta(days=6))
+    labels = [w['session_label'] for w in out]
+    check(labels == ['Session A', 'Session B', 'Session C'],
+          f"the new phase deals from its own start, got {labels}")
+
+
+def scenario_a_window_carries_how_to_beat_the_last_one():
+    """The phase's progression rule travels with the window, because the
+    surface that says 'practice now' is the one where it is actionable."""
+    _reset()
+    today = datetime.date.today()
+    pid, _ = _program()
+    row = storage.get_program(pid)
+    storage.update_program(pid, {'phases': [
+        dict(row['phases'][0], progression='One more change each time')]})
+    w = prog.practice_windows(today, today)[0]
+    check(w['progression'] == 'One more change each time',
+          f"it reaches the window, got {w}")
+
+
 if __name__ == '__main__':
     scenario_an_approved_window_has_a_date_a_time_and_the_session()
     scenario_only_a_live_program_holds_time()
@@ -310,4 +434,10 @@ if __name__ == '__main__':
     scenario_a_practice_event_never_asks_for_a_driver()
     scenario_prep_kits_do_not_pack_for_practice()
     scenario_the_endpoint_is_reachable_by_hand()
+    scenario_a_rotation_is_dealt_onto_the_evenings_the_family_has()
+    scenario_a_rotation_shorter_than_the_week_keeps_going()
+    scenario_which_session_it_is_never_depends_on_what_was_logged()
+    scenario_a_phase_with_one_kind_of_session_is_untouched()
+    scenario_the_rotation_restarts_where_the_phase_did()
+    scenario_a_window_carries_how_to_beat_the_last_one()
     print("test_practice_windows OK")

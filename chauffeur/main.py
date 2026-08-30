@@ -180,9 +180,14 @@ async def push_notification_loop():
                     member = storage.get_member(w.get('member_id')) or {}
                     drv = member.get('driver_id')
                     body = ' · '.join(w.get('steps') or []) or w.get('milestone') or ''
+                    # Which session it is, where a phase deals more than one.
+                    # The steps below already differ; without the label the
+                    # push looks like the plan changed its mind.
+                    named = w['title'] + (f" · {w['session_label']}"
+                                          if w.get('session_label') else '')
                     if drv:
                         send_push(drv, subs,
-                                  f"{w['title']} — {w['time_start']}",
+                                  f"{named} — {w['time_start']}",
                                   body or 'Practice time.', f"practice_{w['push_key']}",
                                   actions=[])
                     sent.append(w['push_key'])
@@ -5690,6 +5695,13 @@ def create_program(body: dict = Body(default={}), request: Request = None):
     if not screen.get('ok'):
         return {"status": "error", "message": screen.get('message'),
                 "alternatives": screen.get('alternatives') or []}
+    # The starting point is the second free-text field a family types, and a
+    # screen that guards only the first is a screen with a door beside it.
+    starting_point = (body.get('starting_point') or '').strip()
+    screen = _cur.screen_starting_point(starting_point)
+    if not screen.get('ok'):
+        return {"status": "error", "message": screen.get('message'),
+                "alternatives": screen.get('alternatives') or []}
     claimed = body.get('member_id')
     actor_id = _acting_id(request, claimed)
     # Clamped HERE, not only by `max="7"` on the number input: a shape nobody
@@ -5706,9 +5718,11 @@ def create_program(body: dict = Body(default={}), request: Request = None):
     if for_member_id and for_member_id != actor_id:
         _approver_of_record(_mind_actor(request, claimed))
     member = storage.get_member(member_id) or {}
-    curated = _cur.curate(title, shape, member_name=member.get('name') or '')
+    curated = _cur.curate(title, shape, member_name=member.get('name') or '',
+                          member=member, starting_point=starting_point)
     pid = storage.add_program({
         'member_id': member_id, 'title': title, 'shape': shape,
+        'starting_point': starting_point,
         'phases': curated['phases'], 'source': curated['source'],
         'baseline': {'start_date': None,
                      'target_date': body.get('target_date'),
@@ -5765,6 +5779,24 @@ def edit_program(program_id: str, body: dict = Body(default={}),
                     "alternatives": screen.get('alternatives') or []}
         updates['title'] = title
 
+    # Changing where somebody is starting from does NOT spend a research run
+    # by itself. The material on the page did not change; how it should be
+    # organised did, and re-reading the web to learn that would charge the
+    # family for an edit. It lands in the row and is used the next time
+    # somebody asks to look again -- which the page says out loud rather than
+    # leaving them to wonder why the plan looks the same.
+    starting_point = row.get('starting_point') or ''
+    restarted = False
+    if 'starting_point' in body:
+        starting_point = (body.get('starting_point') or '').strip()
+        screen = _cur.screen_starting_point(starting_point)
+        if not screen.get('ok'):
+            return {"status": "error", "message": screen.get('message'),
+                    "alternatives": screen.get('alternatives') or []}
+        restarted = starting_point != (row.get('starting_point') or '')
+        if restarted:
+            updates['starting_point'] = starting_point
+
     old_shape = row.get('shape') or {}
     # Every field carries forward unless this call names it — an edit of the
     # minutes must not silently discard the windows somebody chose by hand,
@@ -5801,7 +5833,8 @@ def edit_program(program_id: str, body: dict = Body(default={}),
         # now", the least useful sentence in the app.
         try:
             curated = _cur.curate(updates.get('title') or row.get('title'),
-                                  shape, member_name=member.get('name') or '')
+                                  shape, member_name=member.get('name') or '',
+                                  member=member, starting_point=starting_point)
         except Exception as e:
             print(f"[programs] curate failed for {program_id}: {e!r}")
             return {"status": "error",
@@ -5827,6 +5860,9 @@ def edit_program(program_id: str, body: dict = Body(default={}),
         message = "Looked again and found nothing new — the plan you had stands."
     elif retitled or body.get('recurate'):
         message = "Looked again."
+    elif restarted:
+        message = ("Saved where they're starting from — tap Look again to "
+                   "re-plan around it.")
     else:
         message = "Updated."
     if not updates:
@@ -16337,8 +16373,13 @@ def _practice_events(start_date_str=None, end_date_str=None, days=30,
         # member-shaped surface in the app already uses for them.
         payload = {**w, 'color': member.get('color_code') or '#14b8a6'}
         key = identity.get(w.get('member_id') or '')
+        # Which session this evening is, on the surface where the whole week
+        # is visible at once -- the one thing a plan found on the web can
+        # never say, because only this app knows which evenings are theirs.
         out.append(_Event(
-            id=pid, title=w['title'],
+            id=pid,
+            title=w['title'] + (f" · {w['session_label']}"
+                                if w.get('session_label') else ''),
             start=begins.astimezone(), end=finishes.astimezone(),
             calendar_ids=[key] if key else [],
             source_event_ids=[], all_day=False,

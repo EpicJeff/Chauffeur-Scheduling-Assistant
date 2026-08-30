@@ -125,6 +125,14 @@
                             <option :value="m.id" x-text="m.name"></option>
                         </template>
                     </select>
+                    <!-- The one thing that turns a generic beginner plan into
+                         theirs. Optional, and free text on purpose: every
+                         domain says "where you are" differently, and a set of
+                         levels would fit one of them. Screened for body
+                         targets server-side, same list as the aim. -->
+                    <input type="text" x-model="draft.starting_point"
+                        placeholder="Where they're starting from (optional — e.g. already plays open chords)"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
                     <div class="grid grid-cols-2 gap-2.5">
                         <label class="text-xs text-gray-400 flex items-center gap-2">
                             Sessions / week
@@ -281,7 +289,7 @@
                                                      ABOUT the phase and `milestone` is how you know it
                                                      ended; neither is the session, and for a while
                                                      nothing here was. -->
-                                                <ul class="mt-1 space-y-0.5" x-show="(ph.steps || []).length">
+                                                <ul class="mt-1 space-y-0.5" x-show="(ph.steps || []).length && !(ph.rotation || []).length">
                                                     <template x-for="st in (ph.steps || [])" :key="st">
                                                         <li class="text-[11px] text-gray-300 flex gap-1.5">
                                                             <span class="text-gray-600 shrink-0">·</span>
@@ -289,6 +297,35 @@
                                                         </li>
                                                     </template>
                                                 </ul>
+                                                <!-- A phase whose sessions are not all the same
+                                                     session. The flat list above is what a phase
+                                                     with one kind of session shows; this is the
+                                                     same thing dealt out, and the days these land
+                                                     on are the family's own practice windows. -->
+                                                <div class="mt-1.5 space-y-1.5" x-show="(ph.rotation || []).length">
+                                                    <template x-for="sess in (ph.rotation || [])" :key="sess.label">
+                                                        <div>
+                                                            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300"
+                                                                x-text="sess.label"></span>
+                                                            <ul class="mt-1 space-y-0.5">
+                                                                <template x-for="st in (sess.steps || [])" :key="st">
+                                                                    <li class="text-[11px] text-gray-300 flex gap-1.5">
+                                                                        <span class="text-gray-600 shrink-0">·</span>
+                                                                        <span x-text="st"></span>
+                                                                    </li>
+                                                                </template>
+                                                            </ul>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                                <!-- How one session beats the last one inside this
+                                                     phase. The counterpart to "Done when": that
+                                                     says when the phase ends, this says what makes
+                                                     Tuesday more than a repeat of last Tuesday. -->
+                                                <div class="text-[11px] text-gray-500 mt-1" x-show="ph.progression">
+                                                    <span class="text-gray-600">Next time:</span>
+                                                    <span x-text="ph.progression"></span>
+                                                </div>
                                                 <div class="text-[11px] text-gray-500 mt-1" x-show="ph.milestone">
                                                     <span class="text-gray-600">Done when:</span>
                                                     <span x-text="ph.milestone"></span>
@@ -395,6 +432,9 @@
                                     <div class="mt-2.5 bg-gray-950/60 border border-gray-800 rounded-xl p-2.5 space-y-2.5">
                                         <input type="text" x-model="edits[p.id].title" placeholder="The aim"
                                             class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                                        <input type="text" x-model="edits[p.id].starting_point"
+                                            placeholder="Where they're starting from (optional)"
+                                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
                                         <div class="grid grid-cols-2 gap-2.5">
                                             <label class="text-xs text-gray-400 flex items-center gap-2">
                                                 Sessions / week
@@ -428,6 +468,7 @@
                                         <p class="text-[11px] text-gray-500 italic">
                                             Changing the aim looks for a new plan and spends a research run.
                                             Changing the week re-paces the phases already found and reads nothing.
+                                            Changing the starting point is saved and used the next time you look again — on its own it reads nothing.
                                         </p>
                                         <div class="flex gap-2">
                                             <button @click="saveEdit(p)" :disabled="proposing"
@@ -523,7 +564,7 @@
                     programs_research_pages: 4,
                     programs_generate_enabled: true,
                 },
-                draft: { title: '', for_member_id: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' },
+                draft: { title: '', for_member_id: '', starting_point: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' },
                 sessionOpen: {}, sessionMinutes: {},
                 whyOpen: {}, editOpen: {}, edits: {},
                 slotOpen: {}, slotDraft: {},
@@ -679,7 +720,7 @@
                 },
 
                 blankDraft() {
-                    return { title: '', for_member_id: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' };
+                    return { title: '', for_member_id: '', starting_point: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' };
                 },
 
                 async proposeProgram() {
@@ -693,6 +734,7 @@
                             body: JSON.stringify({
                                 title, for_member_id: this.draft.for_member_id,
                                 member_id: this.myId || null,
+                                starting_point: (this.draft.starting_point || '').trim(),
                                 sessions_per_week: this.draft.sessions_per_week || 3,
                                 minutes: this.draft.minutes || 25,
                                 preferred_days: this.draft.preferred_days,
@@ -761,6 +803,7 @@
                         sessions_per_week: shape.sessions_per_week || 3,
                         minutes: shape.minutes || 25,
                         preferred_days: [...(shape.preferred_days || [])],
+                        starting_point: p.starting_point || '',
                         target_date: (p.baseline || {}).target_date || '',
                     };
                     this.editOpen[p.id] = true;
@@ -794,6 +837,7 @@
                         sessions_per_week: e.sessions_per_week,
                         minutes: e.minutes,
                         preferred_days: e.preferred_days,
+                        starting_point: (e.starting_point || '').trim(),
                         target_date: e.target_date || null,
                     }, "Couldn't save that change.");
                     this.editOpen[p.id] = false;
