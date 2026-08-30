@@ -280,8 +280,11 @@ def scenario_a_child_who_cannot_tap_still_has_a_surface():
     that and only the button disagreed."""
     src = _app()
     fetch = _body(src, 'fetchMyPrograms')
-    check('owner_self_serves' in fetch,
-          "a parent's day must include programs their owner cannot reach")
+    check('owner_practices_alone' in fetch,
+          "a parent's day must include programs whose owner cannot run one alone")
+    check('own_account' not in fetch,
+          "and must not ask about accounts -- a child with a PIN on a shared "
+          "iPad has no account and can still see their own session")
     check("['parent', 'adult'].includes(currentMemberRole())" in fetch,
           "and only a grown-up's day does")
     sheet = _body(src, 'openSessionSheet')

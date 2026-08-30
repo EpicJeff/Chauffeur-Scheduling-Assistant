@@ -51,6 +51,23 @@ DEFAULT_CUTOFFS = [6, 12, 15]
 
 # What each stage turns on. Deliberately a small, explicit switch list, so no
 # surface ever has to know a birthday — they ask for a capability by name.
+#
+# `practices_alone` is the newest and the easiest to get wrong, so plainly: it
+# is about AUTONOMY, not about hardware and not about accounts. It answers
+# "can this child be sent off to do the thing on their own, and judge for
+# themselves that they did it?" -- never "do they have a device".
+#
+# A programs surface reached for `own_account` for this once, and that was two
+# different facts wearing one name. `own_account` is about an email address
+# and a password; a seven-year-old with a PIN on the family iPad has no
+# account of his own and can still open the app, see his session in context
+# and follow it. What he cannot yet do is run it unsupervised and decide it
+# counted. Those are different questions and they need different switches.
+#
+# Whether a household has a tablet per child, one shared one, or none at all
+# is a per-family fact this app cannot know, which is exactly why the stage
+# supplies only a DEFAULT here and `capability_overrides` decides. Children
+# differ most at precisely this, and an age cutoff is the wrong instrument.
 CAPABILITIES = {
     'sprout': {
         'glyph_scale': 'xl', 'density': 'roomy', 'horizon_days': 0,
@@ -62,12 +79,14 @@ CAPABILITIES = {
         # credential is a PIN a parent sets, and it only opens a device
         # somebody already trusted.
         'own_account': False,
+        'practices_alone': False,
     },
     'explorer': {
         'glyph_scale': 'lg', 'density': 'roomy', 'horizon_days': 6,
         'show_points': True, 'show_streaks': True, 'can_request': True,
         'assignable_tasks': False, 'can_drive': False, 'private_location': False,
         'own_account': False,
+        'practices_alone': False,
     },
     'navigator': {
         'glyph_scale': 'sm', 'density': 'tight', 'horizon_days': 13,
@@ -79,12 +98,14 @@ CAPABILITIES = {
         # A phone of their own, so an account of their own — offered, never
         # forced: a Navigator with no email keeps the PIN and loses nothing.
         'own_account': True,
+        'practices_alone': True,
     },
     'copilot': {
         'glyph_scale': 'none', 'density': 'tight', 'horizon_days': 13,
         'show_points': False, 'show_streaks': False, 'can_request': True,
         'assignable_tasks': True, 'can_drive': True, 'private_location': True,
         'own_account': True,
+        'practices_alone': True,
     },
 }
 

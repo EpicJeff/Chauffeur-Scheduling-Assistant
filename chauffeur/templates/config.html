@@ -2444,19 +2444,45 @@
 
                     <div class="space-y-2">
                         <template x-for="k in (stageData.kids || [])" :key="k.member_id">
-                            <div class="bg-gray-900 p-3 rounded-xl flex flex-wrap items-center gap-3">
-                                <span class="font-bold text-white flex-1" x-text="k.name"></span>
-                                <span class="text-xs text-gray-500"
-                                    x-text="k.age === null ? 'no birthday — set it on their identity card' : (k.age + ' years')"></span>
-                                <select :value="k.pinned || ''" @change="pinStage(k, $event.target.value)"
-                                    class="bg-gray-800 rounded-lg px-2 py-1 text-sm">
-                                    <option value="">Follow their age</option>
-                                    <template x-for="s in (stageData.stages || [])" :key="s.key">
-                                        <option :value="s.key" x-text="s.label + ' (' + s.school + ')'"></option>
-                                    </template>
-                                </select>
-                                <span class="px-2 py-0.5 bg-purple-900/40 text-purple-300 rounded-full text-xs font-bold"
-                                    x-text="stageGlyph(k.stage) + ' ' + stageLabel(k.stage)"></span>
+                            <div class="bg-gray-900 p-3 rounded-xl space-y-2">
+                                <div class="flex flex-wrap items-center gap-3">
+                                    <span class="font-bold text-white flex-1" x-text="k.name"></span>
+                                    <span class="text-xs text-gray-500"
+                                        x-text="k.age === null ? 'no birthday — set it on their identity card' : (k.age + ' years')"></span>
+                                    <select :value="k.pinned || ''" @change="pinStage(k, $event.target.value)"
+                                        class="bg-gray-800 rounded-lg px-2 py-1 text-sm">
+                                        <option value="">Follow their age</option>
+                                        <template x-for="s in (stageData.stages || [])" :key="s.key">
+                                            <option :value="s.key" x-text="s.label + ' (' + s.school + ')'"></option>
+                                        </template>
+                                    </select>
+                                    <span class="px-2 py-0.5 bg-purple-900/40 text-purple-300 rounded-full text-xs font-bold"
+                                        x-text="stageGlyph(k.stage) + ' ' + stageLabel(k.stage)"></span>
+                                </div>
+                                <!-- Autonomy, which is NOT the same question as
+                                     the stage and definitely not the same as
+                                     whether they own a device. A child who can
+                                     be sent off to practise on their own keeps
+                                     their program to themselves; one who cannot
+                                     has it ride a grown-up's day as well as
+                                     their own. Families differ wildly here and
+                                     an age cutoff is the wrong instrument, so
+                                     the stage only proposes and this decides. -->
+                                <label class="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                                    <span class="flex-1 min-w-[12rem]">
+                                        Can practise on their own
+                                        <span class="block text-[11px] text-gray-500">
+                                            Off means their program also shows on a grown-up's day, so somebody
+                                            can run the session and mark it done. They still see it on their own.
+                                        </span>
+                                    </span>
+                                    <select :value="practicePin(k)" @change="setPracticesAlone(k, $event.target.value)"
+                                        class="bg-gray-800 rounded-lg px-2 py-1 text-sm shrink-0">
+                                        <option value="" x-text="'Follow their stage (' + ((k.capabilities || {}).practices_alone ? 'yes' : 'no') + ')'"></option>
+                                        <option value="yes">Yes</option>
+                                        <option value="no">No — a grown-up runs it</option>
+                                    </select>
+                                </label>
                             </div>
                         </template>
                         <p x-show="!(stageData.kids || []).length" class="text-gray-500 text-sm italic">
@@ -5726,6 +5752,32 @@
                         await this.loadStages();
                     } catch (e) { showGlobalAlert("Couldn't save that."); }
                 },
+                // '' when the stage decides, 'yes'/'no' when a parent has
+                // said so outright. Read from the OVERRIDES rather than from
+                // the resolved capability, because "follow the stage" and
+                // "pinned to what the stage happens to say" look identical
+                // once resolved and behave differently the day a child moves
+                // up a band.
+                practicePin(k) {
+                    const o = (k.overrides || {});
+                    if (!('practices_alone' in o)) return '';
+                    return o.practices_alone ? 'yes' : 'no';
+                },
+
+                async setPracticesAlone(k, value) {
+                    // The whole map goes back, because a member write replaces
+                    // the field wholesale rather than merging into it.
+                    const next = Object.assign({}, k.overrides || {});
+                    if (value === '') delete next.practices_alone;
+                    else next.practices_alone = (value === 'yes');
+                    try {
+                        await fetch(`${this.apiBase}api/members/${k.member_id}`, {
+                            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ capability_overrides: next }) });
+                        await this.loadStages();
+                    } catch (e) { showGlobalAlert("Couldn't save that."); }
+                },
+
                 async pinStage(k, value) {
                     try {
                         await fetch(`${this.apiBase}api/members/${k.member_id}`, {

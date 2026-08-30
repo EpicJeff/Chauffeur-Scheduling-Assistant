@@ -5116,6 +5116,10 @@ def get_stages():
             'pinned': m.get('stage_override'),
             'acknowledged': m.get('stage_acknowledged'),
             'capabilities': stages.capabilities(m),
+            # What a parent has PINNED, separately from what the stage
+            # supplies -- a control cannot offer "follow their stage" as a
+            # third state without knowing which of the three it is in.
+            'overrides': m.get('capability_overrides') or {},
         })
     return {'stages': stages.STAGES, 'cutoffs': stages.cutoffs(),
             'kids': kids, 'pending': stages.pending_promotions()}
@@ -5674,19 +5678,25 @@ def list_programs_api(member_id: str = None, include_finished: bool = False,
         prog = _prog.progress(r)
         phase = prog.get('phase') or {}
         unit = _prog.unit_for(r, phase) or {}
-        # Whether the person this program belongs to can reach it themselves.
-        # A three-year-old's guitar program is a real program and its owner
-        # will never open this app -- `stages.CAPABILITIES` already says so in
-        # `own_account`, which a parent can override per child, so nothing
-        # here has to guess at a birthday. A surface that only ever draws
-        # "your own" programs leaves that child's plan reachable by nobody.
+        # Whether this program's owner can be sent off to do it alone. A
+        # three-year-old cannot read the session or judge that he finished it,
+        # so his plan rides a grown-up's day or it rides nobody's.
+        #
+        # `practices_alone` and NOT `own_account`: two different facts, and
+        # only one of them is about autonomy. A seven-year-old with a PIN on
+        # the family iPad has no account of his own and can still open the
+        # app, see his session in context and follow it -- and he still needs
+        # a grown-up to run it. Whether a household even has a tablet per
+        # child is a per-family fact this app cannot know, so the stage
+        # supplies a default and `capability_overrides` decides.
         owner = members.get(r.get('member_id')) or {}
         caps = _stages.capabilities(owner)
         out.append({**r, 'progress': prog, 'due_ask': ask,
                     'current_phase': phase.get('name') or '',
                     'current_unit': unit.get('n') or 0,
                     'member_name': owner.get('name') or '',
-                    'owner_self_serves': bool(caps.get('own_account', True))})
+                    'owner_practices_alone': bool(
+                        caps.get('practices_alone', True))})
     return {"programs": out}
 
 

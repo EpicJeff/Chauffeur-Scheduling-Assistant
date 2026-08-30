@@ -6999,19 +6999,30 @@ ENDED is behind you whatever the log says; chasing an unanswered one is the
 still ahead, and `reanchorIfDayChanged` clears `practiceBuiltAt` so an app left
 open overnight stops offering a fetch whose range started on the old day.
 
-**A program whose owner cannot open the app** (v2.440.0 —
-`owner_self_serves`, the sheet's Done). A three-year-old's program is a real
-program, and every PWA surface drew "your own", so his plan was reachable by
-nobody: the Programs page had it, and nothing a parent uses day to day did.
+**A program whose owner cannot run it alone** (v2.440.0, corrected in
+v2.440.1 — `stages.CAPABILITIES['practices_alone']`, `owner_practices_alone`).
+A three-year-old's program is a real program, and every PWA surface drew
+"your own", so his plan was on nobody's day-to-day screen: the Programs page
+had it and nothing else did.
 
-`stages.CAPABILITIES` already carries the right word for this. `own_account`
-is False for sprout and explorer and True from navigator up, and it is a
-per-child override rather than a birthday, so a parent can move it without
-arguing with a number. `GET /api/programs` now returns `owner_self_serves`
-and `member_name` on every row; a parent's or adult's day fetches the
-household and keeps their own programs plus any whose owner cannot reach one.
-Everyone else asks for their own and the server narrows it anyway. The card
-names whose program it is whenever that is not the viewer.
+The first cut asked `own_account` for this, and that was two different facts
+wearing one name. `own_account` is about an email address and a password;
+a seven-year-old with a PIN on the family iPad has neither and can still open
+the app, see his session in context and follow it. What he cannot do is run it
+unsupervised and decide it counted. **The real question is autonomy, and it is
+not answerable from an age band**: whether a household has a tablet each, one
+shared, or none is a per-family fact, and children differ most at precisely
+this.
+
+So `practices_alone` is its own switch. The stage supplies a default (off for
+sprout and explorer, on from navigator up) and `capability_overrides` decides
+— set per child in **Config → Growing up**, three-state: follow their stage,
+yes, or "no, a grown-up runs it". Flipping it grants no account and moves no
+birthday. `GET /api/programs` returns `owner_practices_alone` and
+`member_name`; a parent's or adult's day fetches the household and keeps their
+own programs plus any whose owner cannot run one alone. **The child still sees
+their own program on their own day either way** — this decides only whether it
+ALSO rides a grown-up's.
 
 And **the session sheet lets a grown-up finish it**. The server has always
 allowed this — `_program_permission_or_refuse` is ownership OR parent/adult —

@@ -1196,12 +1196,16 @@
         // and there is no miss, no percentage of a target to show next to it.
         async function fetchMyPrograms() {
             if (!selectedMemberId) return [];
-            // A parent asks unfiltered, because "my programs" is not the whole
-            // question for them: a three-year-old's program belongs to
-            // somebody who will never open this app, so a day that draws only
-            // your own leaves that plan reachable by nobody. `own_account`
-            // (services/stages.py) is the server's word for "can reach it
-            // themselves", overridable per child, and no birthday is guessed.
+            // A parent asks unfiltered, because "my programs" is not the
+            // whole question for them: a small child's program belongs to
+            // somebody who cannot be sent off to do it alone, so a day that
+            // draws only your own leaves that plan on nobody's screen.
+            //
+            // `practices_alone` (services/stages.py) is about AUTONOMY and
+            // not about whether a child owns a device -- a seven-year-old on
+            // the family iPad still sees his own program on his own day, and
+            // this only decides whether it ALSO rides a grown-up's. A parent
+            // sets it per child; the stage is only the default.
             // Anyone else asks for their own and the server narrows it anyway.
             const grown = ['parent', 'adult'].includes(currentMemberRole());
             const url = grown ? `${apiBase}api/programs`
@@ -1216,7 +1220,7 @@
                 return (d.programs || [])
                     .filter(p => p.state === 'active' || p.state === 'paused')
                     .filter(p => p.member_id === selectedMemberId
-                              || (grown && p.owner_self_serves === false));
+                              || (grown && p.owner_practices_alone === false));
             } catch (e) { return []; }
         }
 
