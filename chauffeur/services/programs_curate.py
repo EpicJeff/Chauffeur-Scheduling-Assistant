@@ -101,6 +101,42 @@ GENERATION_WORDS = (
 )
 _GENERATION_WORD_RE = re.compile(r'\b(?:' + '|'.join(GENERATION_WORDS) + r')\b')
 
+# A plan is written in the language the family asked in. Nothing said so, and
+# a real generated plan came back with its first two phases in English and its
+# third in Vietnamese -- an interactive-tier model drifting mid-response, which
+# is a thing small models do and no amount of politeness in the prompt fully
+# prevents. A phase somebody cannot read is not a phase.
+#
+# The test is deliberately crude and one-directional: it only fires when the
+# AIM is plain ASCII (an English-speaking household, as far as anything here
+# can tell) and a phase is full of non-ASCII letters. It cannot catch drift
+# between two ASCII languages, and it must never fire on a household that
+# writes its aims in Vietnamese, Spanish or Polish -- which is why the aim
+# decides, not a language list.
+_NON_ASCII_RE = re.compile(r'[^\x00-\x7f]')
+# Measured rather than guessed: the Vietnamese phase that prompted this runs
+# at 0.255 non-ASCII characters, while English carrying a borrowed word --
+# a cafe or a resume spelled properly -- sits at 0.04 and under. Both
+# bounds have to be cleared, so one accented word in a long English
+# sentence can never trip it.
+FOREIGN_RATIO = 0.10
+FOREIGN_MIN = 4
+
+
+def _looks_foreign(text: str, aim: str) -> bool:
+    """Is this phase written in a language the aim was not?"""
+    text = (text or '').strip()
+    if not text or _NON_ASCII_RE.search(aim or ''):
+        return False
+    hits = len(_NON_ASCII_RE.findall(text))
+    return hits >= FOREIGN_MIN and hits / len(text) > FOREIGN_RATIO
+
+
+def _phase_text(ph: dict) -> str:
+    return ' '.join(str(ph.get(k) or '')
+                    for k in ('name', 'what', 'milestone')).strip()
+
+
 # A generated phase may say "practise for twenty minutes". It may not say how
 # much to lift, how far to push, or how much to take -- those are the numbers
 # an expert earns the right to set. A phase carrying one is dropped, exactly
@@ -178,8 +214,9 @@ PHASE_SYSTEM = (
     "holding the number of the material item it came from. Also name the "
     "program you organised, say in one sentence why it suits this family, "
     "and list the other candidates you did NOT pick with a real reason for "
-    "each. If the material does not support a real phased plan, reply with "
-    "an empty phases list.\n\n"
+    "each. Write EVERY field in the same language the aim is written in, and "
+    "do not change language part-way through. If the material does not "
+    "support a real phased plan, reply with an empty phases list.\n\n"
     'Return STRICT JSON: {"plan_name": "", "why_this_one": "", '
     '"phases": [{"name": "", "what": "", "milestone": "", "cite": 1}], '
     '"runners_up": [{"cite": 2, "why_not": ""}]}'
@@ -194,9 +231,10 @@ GENERATE_SYSTEM = (
     "to, doses or supplements -- describe the practice, not the numbers. "
     "Never name a real published program, and never claim a source: you have "
     "none. Do not give week counts; the app computes pacing. Say plainly "
-    "what a person should be able to do at the end of each phase. If you "
-    "cannot do this responsibly for this aim, reply with an empty phases "
-    "list.\n\n"
+    "what a person should be able to do at the end of each phase. Write "
+    "EVERY field in the same language the aim is written in, and do not "
+    "change language part-way through. If you cannot do this responsibly for "
+    "this aim, reply with an empty phases list.\n\n"
     'Return STRICT JSON: {"why_this_one": "<one sentence on the approach>", '
     '"phases": [{"name": "", "what": "", "milestone": ""}]}'
 )
@@ -480,6 +518,11 @@ def _phases_from(title: str, items: list, per_week: int, minutes: int,
             # A plausible phase with no page behind it does not get to be a
             # phase. This is the whole rule.
             continue
+        if _looks_foreign(_phase_text(ph), title):
+            # Same rule, different failure: a phase nobody in this house can
+            # read is not a phase either.
+            print(f"[programs] dropped a phase written in another language")
+            continue
         used.append(url)
         # Note: any 'weeks' the model sent is ignored. Pacing is arithmetic
         # over `shape`, computed once above -- never a number out of the model.
@@ -558,17 +601,37 @@ def _generated_phases(title: str, per_week: int, api_key: str,
                f"quoted as a source:\n{answer}" if answer else '')
     prompt = (f"Aim{who}: {title}.\n"
               f"They can practise {per_week} times a week.{context}")
-    try:
-        data = _pool_call(TIER, api_key, GENERATE_SYSTEM, prompt,
-                          timeout_s=60, gemma_timeout_s=180)
-    except Exception as e:
-        print(f"[programs] plan generation failed: {e}")
-        return {'phases': [], 'why_this_one': '', 'reason': 'generation_failed'}
+
+    def _ask(system):
+        try:
+            return _pool_call(TIER, api_key, system, prompt,
+                              timeout_s=60, gemma_timeout_s=180)
+        except Exception as e:
+            print(f"[programs] plan generation failed: {e}")
+            return None
+
+    data = _ask(GENERATE_SYSTEM)
     if not isinstance(data, dict) or data.get('error'):
         return {'phases': [], 'why_this_one': '', 'reason': 'generation_failed'}
 
+    # A plan half in another language is not one a family can follow, and
+    # dropping the drifted phase silently leaves a plan with a hole in the
+    # middle of it. One repair pass, naming the aim as the language to match,
+    # costs a single interactive call and only ever runs when drift really
+    # happened -- and if the second answer drifts too, the bad phases are
+    # dropped rather than shown.
+    if any(_looks_foreign(_phase_text(ph), title)
+           for ph in (data.get('phases') or []) if isinstance(ph, dict)):
+        print("[programs] generated plan changed language; asking once more")
+        again = _ask(GENERATE_SYSTEM + (
+            f"\n\nWrite the whole answer in the same language as this aim, "
+            f"and in no other: \"{title}\""))
+        if isinstance(again, dict) and not again.get('error') \
+                and (again.get('phases') or []):
+            data = again
+
     weeks = _phase_weeks(per_week)
-    out, dropped = [], 0
+    out, dropped, foreign = [], 0, 0
     for ph in (data.get('phases') or [])[:4]:
         if not isinstance(ph, dict):
             continue
@@ -579,6 +642,9 @@ def _generated_phases(title: str, per_week: int, api_key: str,
             continue
         if _prescribes_load(clean):
             dropped += 1
+            continue
+        if _looks_foreign(_phase_text(clean), title):
+            foreign += 1
             continue
         clean['weeks'] = weeks
         clean['milestone_hit_at'] = None

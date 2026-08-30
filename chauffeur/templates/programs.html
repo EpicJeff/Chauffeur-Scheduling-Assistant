@@ -259,24 +259,34 @@
                                     <span class="text-gray-700"> · </span>
                                     <span x-text="(p.progress.minutes || 0) + ' min total'"></span>
                                     <template x-if="p.progress.phase">
-                                        <span><span class="text-gray-700"> · </span>next: <span x-text="p.progress.phase.milestone || p.progress.phase.name"></span></span>
+                                        <span><span class="text-gray-700"> · </span>working towards: <span x-text="p.progress.phase.milestone || p.progress.phase.name"></span></span>
                                     </template>
                                 </div>
 
-                                <!-- Phases: milestones are only ever marked hit, never missed -->
+                                <!-- Phases: milestones are only ever marked reached, never missed.
+                                     A phase carries two different sentences and the row used to
+                                     show only one of them, unlabelled: `what` is the practice,
+                                     `milestone` is how you know it worked. Reading a bare can-do
+                                     sentence under a phase name, with a button called "Mark hit"
+                                     beside it, there is no way to tell which of the two you are
+                                     looking at or what the button claims. -->
                                 <div class="mt-2 space-y-1" x-show="(p.phases || []).length && !sec.archived">
                                     <template x-for="ph in (p.phases || [])" :key="ph.name">
-                                        <div class="flex items-center justify-between gap-2 text-xs bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5">
+                                        <div class="flex items-start justify-between gap-2 text-xs bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5">
                                             <div class="min-w-0">
-                                                <div class="font-semibold truncate" :class="ph.milestone_hit_at ? 'text-teal-300' : 'text-gray-300'"
+                                                <div class="font-semibold" :class="ph.milestone_hit_at ? 'text-teal-300' : 'text-gray-300'"
                                                     x-text="ph.name + (ph.weeks ? ' · ' + ph.weeks + 'w' : '')"></div>
-                                                <div class="text-[11px] text-gray-500 truncate" x-show="ph.milestone" x-text="ph.milestone"></div>
+                                                <div class="text-[11px] text-gray-400 mt-0.5" x-show="ph.what" x-text="ph.what"></div>
+                                                <div class="text-[11px] text-gray-500 mt-0.5" x-show="ph.milestone">
+                                                    <span class="text-gray-600">Done when:</span>
+                                                    <span x-text="ph.milestone"></span>
+                                                </div>
                                             </div>
                                             <span class="text-[10px] font-bold text-teal-400 shrink-0" x-show="ph.milestone_hit_at">🎉 done</span>
                                             <button x-show="!ph.milestone_hit_at && (p.state === 'active' || p.state === 'paused') && canAct(p)"
                                                 @click="markMilestone(p, ph)"
                                                 class="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 shrink-0">
-                                                Mark hit
+                                                Reached it
                                             </button>
                                         </div>
                                     </template>
@@ -889,6 +899,14 @@
                 },
 
                 async markMilestone(p, ph) {
+                    // Nothing here can be un-marked and nothing counts a miss,
+                    // so the one thing worth asking is whether they meant this
+                    // milestone -- the button used to say "Mark hit", which
+                    // names neither what is being marked nor that it sticks.
+                    const ok = await promptConfirm('Reached this milestone?',
+                        (ph.milestone || ph.name || 'This phase') + ' — marking it moves the program on to the next phase.',
+                        'Yes, reached it', 'Not yet');
+                    if (!ok) return;
                     try {
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/milestone`, {
                             method: 'POST', headers: this.authHeaders(),

@@ -6575,6 +6575,34 @@ toggle opening onto the argument and an "Also considered" list of the other
 candidates with the model's own reason for passing on each (the canned
 "second choice for this aim" is now only the fallback when it gives none).
 
+**A plan is written in the language the family asked in** (v2.435.3,
+`programs_curate._looks_foreign`). A real generated plan came back with its
+first two phases in English and its third in Vietnamese -- an interactive-tier
+model drifting mid-response, which is a thing small models do and which no
+amount of politeness in a prompt fully prevents. Both system prompts now say
+to match the aim's language and not to change part-way; on top of that a
+deterministic check compares each phase against the AIM: it fires only when
+the aim is plain ASCII and a phase clears BOTH a 0.10 non-ASCII character
+ratio and a 4-character floor (the Vietnamese phase measures 0.255; English
+carrying a borrowed word sits at 0.04 and under). Drift in a GENERATED plan
+triggers exactly one repair pass naming the aim as the language to match --
+dropping the phase silently would leave a plan with a hole in the middle of it
+-- and anything still unreadable after that is dropped, the same way an
+uncited phase is. A household that writes its aims in another language can
+never trip this, because the aim decides and nothing else does.
+
+**A phase carries two sentences and the row now says which is which**
+(v2.435.3). `what` is the practice; `milestone` is how you know it worked. The
+Programs page rendered only the milestone, unlabelled, under the phase name --
+so a can-do sentence sat there with no way to tell what it was, beside a
+button reading **Mark hit**, which named neither what was being marked nor
+that it sticks. The row shows `what`, then `Done when: <milestone>`, and the
+button is **Reached it** with a confirm naming the milestone (nothing here can
+be un-marked and nothing counts a miss, so that is the one thing worth
+asking). The PWA card carries the same two words. The progress line says
+`working towards:` rather than `next:`, which read as the next thing to DO
+over a sentence describing an outcome.
+
 **A family can name their own practice windows** (v2.435.2). `propose_slots`
 has said in its own docstring since the arc shipped that "the person can move
 them on the approval screen anyway", and the approval screen offered no such

@@ -353,6 +353,102 @@ def scenario_generation_is_refused_where_a_wrong_step_injures():
         programs_curate._pool_call = real_pool
 
 
+def scenario_a_plan_that_changes_language_is_repaired_then_dropped():
+    """A real generated plan came back with its first two phases in English
+    and its third in Vietnamese -- an interactive-tier model drifting
+    mid-response. A phase nobody in the house can read is not a phase, and
+    dropping it silently would leave a plan with a hole in the middle, so one
+    repair pass runs first and the drop is the fallback."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    programs_curate.web.research = _fake_research([], answer='')
+    drifted = {'phases': [
+        {'name': 'Phase One', 'what': 'Learn the basic movements slowly',
+         'milestone': 'You can move through them with control'},
+        {'name': 'Phase Three',
+         'what': 'Bạn nên có khả năng thực hiện trọn vẹn các bài tập phức hợp',
+         'milestone': 'với nhịp độ ổn định và kiểm soát hoàn toàn'}]}
+    clean = {'phases': [
+        {'name': 'Phase One', 'what': 'Learn the basic movements slowly',
+         'milestone': 'You can move through them with control'},
+        {'name': 'Phase Two', 'what': 'Put the movements into sequences',
+         'milestone': 'You can hold a sequence without losing form'}]}
+
+    calls = []
+
+    def _drift_then_clean(tier, api_key, system, prompt, **kw):
+        if system is programs_curate.GENERATE_SYSTEM:
+            calls.append('generate')
+            return drifted
+        if 'in no other' in system:          # the repair pass
+            calls.append('repair')
+            return clean
+        return {'phases': []}
+
+    def _always_drift(tier, api_key, system, prompt, **kw):
+        return {'phases': []} if system is programs_curate.PHASE_SYSTEM else drifted
+
+    try:
+        programs_curate._pool_call = _drift_then_clean
+        out = programs_curate.curate('strength training',
+                                     {'sessions_per_week': 3, 'minutes': 30})
+        check(calls == ['generate', 'repair'],
+              f"drift must trigger exactly one repair pass, got {calls}")
+        check(len(out['phases']) == 2,
+              f"and the repaired plan is whole, got {out['phases']}")
+
+        programs_curate._pool_call = _always_drift
+        out = programs_curate.curate('strength training',
+                                     {'sessions_per_week': 3, 'minutes': 30})
+        names = [ph['name'] for ph in out['phases']]
+        check(names == ['Phase One'],
+              f"a phase that still cannot be read is dropped, got {names}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
+def scenario_the_language_check_never_fires_on_the_household_own_words():
+    """The test is one-directional on purpose: the AIM decides. A family that
+    writes its aims in Vietnamese must never have its plan thrown away, and
+    one borrowed word in an English sentence must never look like drift."""
+    vi = 'Bạn nên có khả năng thực hiện trọn vẹn các bài tập phức hợp'
+    check(programs_curate._looks_foreign(vi, 'strength training') is True,
+          "an English aim with a Vietnamese phase is drift")
+    check(programs_curate._looks_foreign(vi, 'Tập luyện sức mạnh') is False,
+          "the same phase under a Vietnamese aim is the household's own language")
+    for ok in ('Practise the café routine',
+               'A naïve first attempt at the résumé exercise today',
+               'You should be able to move smoothly through the patterns'):
+        check(programs_curate._looks_foreign(ok, 'strength training') is False,
+              f"a borrowed word is not another language: {ok!r}")
+
+
+def scenario_a_cited_phase_is_held_to_the_same_language_rule():
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    programs_curate.web.research = _fake_research([
+        {'claim': 'Week 1 alternates running and walking',
+         'url': 'https://c25k.example/week1'}])
+    programs_curate._pool_call = _fake_pool({
+        'phases': [
+            {'name': 'Weeks 1-4', 'what': 'Run-walk intervals', 'cite': 1,
+             'milestone': 'Eight minutes of running'},
+            {'name': 'Giai đoạn hai', 'cite': 1,
+             'what': 'Bạn nên có khả năng chạy liên tục trong hai mươi phút',
+             'milestone': 'với nhịp độ ổn định'},
+        ]})
+    try:
+        out = programs_curate.curate('run a 5K',
+                                     {'sessions_per_week': 3, 'minutes': 30})
+        names = [ph['name'] for ph in out['phases']]
+        check(names == ['Weeks 1-4'],
+              f"a cited phase in another language is dropped too, got {names}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
 def scenario_a_made_plan_that_prescribes_a_load_is_dropped():
     """The one rule that survives from curating into generating, alongside
     pacing: a made-up plan describes the practice, never the numbers an
@@ -495,6 +591,9 @@ if __name__ == '__main__':
     scenario_nothing_found_becomes_a_labelled_plan_not_a_bare_week()
     scenario_an_outage_is_never_papered_over_with_a_made_plan()
     scenario_generation_is_refused_where_a_wrong_step_injures()
+    scenario_a_plan_that_changes_language_is_repaired_then_dropped()
+    scenario_the_language_check_never_fires_on_the_household_own_words()
+    scenario_a_cited_phase_is_held_to_the_same_language_rule()
     scenario_a_made_plan_that_prescribes_a_load_is_dropped()
     scenario_a_household_can_switch_made_plans_off()
     scenario_shaping_failure_is_not_a_crash()
