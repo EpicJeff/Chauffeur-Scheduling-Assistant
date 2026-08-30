@@ -60,6 +60,40 @@ def scenario_an_undriven_event_is_a_home_block():
     check(b[0]['key'] == 'home:party', f"home blocks key as home:<event_id>: {b[0]}")
 
 
+def scenario_a_block_carries_what_a_tap_has_to_answer():
+    """The Family Day card and the calendar open the SAME dialog
+    (`FamilyCalendar.showEvent`), and the two read differently only because
+    the block handed it less than the calendar's own event object does. A
+    practice window opened from the card said "Not assigned / No location
+    provided" and showed no description, while the same window opened from the
+    calendar named its owner, its phase and every step of the session. The
+    dialog was never the problem; the adapter was."""
+    ev = _ev('prac', 21, dur=30, title='Strength Training',
+             description='Bodyweight squats: 3 sets of 10',
+             location='', event_type='practice',
+             practice={'member_name': 'Jeff', 'phase_name': 'Movement Foundation',
+                       'steps': ['Bodyweight squats: 3 sets of 10']})
+    b = family_day.blocks_for(DAY, _sched([ev]))['blocks'][0]
+    check(b['description'] == 'Bodyweight squats: 3 sets of 10',
+          f"the description a tap shows, got {b}")
+    check(b['event_type'] == 'practice' and b['practice'],
+          f"and what KIND of hour it is, so the dialog can say so, got {b}")
+    check(b['practice']['member_name'] == 'Jeff',
+          f"and whose, got {b['practice']}")
+
+
+def scenario_an_ordinary_block_carries_it_too():
+    """Not a practice special case: every block answers a tap the same way,
+    which is the whole point of the two surfaces sharing one dialog."""
+    ev = _ev('party', 12, title='Birthday', description='Bring a gift',
+             location='14 Elm St')
+    b = family_day.blocks_for(DAY, _sched([ev]))['blocks'][0]
+    check(b['description'] == 'Bring a gift' and b['location'] == '14 Elm St',
+          f"an ordinary event carries its own words too, got {b}")
+    check(b['event_type'] == 'standard' and b['practice'] is None,
+          f"and says plainly that it is nothing special, got {b}")
+
+
 def scenario_a_covered_ride_names_its_hand():
     """Grandma driving does not mean the bag packs itself."""
     sched = _sched([_ev('swim', 15, 30)],

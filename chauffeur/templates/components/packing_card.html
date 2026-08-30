@@ -872,7 +872,9 @@
                         start: innerEvent.start, end: null,
                         extendedProps: { driverName: b.driver, carName: b.car,
                                          rawColor: innerEvent.color || b.color,
-                                         passengers: innerEvent.passengers || [] },
+                                         passengers: innerEvent.passengers || [],
+                                         description: innerEvent.description || '',
+                                         location: innerEvent.location || '' },
                     };
                 }
                 if (b.kind === 'outing') {
@@ -886,7 +888,17 @@
                 return {
                     id: b.event_id, title: b.title, start: b.start, end: b.end,
                     extendedProps: Object.assign(
-                        { rawColor: b.color, passengers: b.passengers || [] },
+                        { rawColor: b.color, passengers: b.passengers || [],
+                          // Same dialog, same answers. It opened saying "Not
+                          // assigned / No location provided" and no
+                          // description over a practice window whose steps
+                          // the calendar was showing in full, because this
+                          // adapter handed it three fields fewer than the
+                          // calendar's own event object carries.
+                          description: b.description || '',
+                          location: b.location || '',
+                          isPractice: b.event_type === 'practice',
+                          practice: b.practice || null },
                         b.covered_by ? { assistName: b.covered_by } : {},
                         b.needs_driver ? { isUnassigned: true,
                                            isConflict: !!b.conflict,

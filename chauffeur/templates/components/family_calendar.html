@@ -1090,11 +1090,15 @@ async function _renderAgenda(inst) {
         dayEvents.forEach(ev => {
             const practice = ev.extendedProps && ev.extendedProps.isPractice;
             card.appendChild(agendaEventRow(ev, {
-                // A practice window is not tappable: there is no event behind
-                // it to open, and a row that opens nothing is worse than a
-                // row that never offered.
-                tappable: practice ? false : tappable,
-                onClick: (!practice && tappable) ? (e) => _onEventTap(inst, e) : null,
+                // Every row taps the same way. A practice window was the one
+                // exception, on the reasoning that its dialog could only be
+                // empty -- and then the dialog learned to say whose hour it
+                // is, what phase it belongs to and what the session holds, so
+                // the exception was left standing over an argument that had
+                // stopped being true. An agenda where one row silently does
+                // nothing is worse than either.
+                tappable,
+                onClick: tappable ? (e) => _onEventTap(inst, e) : null,
                 // The person is already named by the pill every event uses;
                 // this badge says what KIND of hour it is, not whose.
                 extraBadgeHtml: practice

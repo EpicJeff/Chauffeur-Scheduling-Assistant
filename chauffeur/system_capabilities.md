@@ -6717,6 +6717,28 @@ is the last place that knows. `tests/test_calmetas.py` EXECUTES it under node
 rather than reading it — every syntax check in the suite passed while the page
 threw.
 
+**One dialog, two adapters, and only one of them was told anything**
+(v2.435.10). The Family Day card and the calendar already open the SAME
+dialog — `packing_card.pkOpenDetails` hands `FamilyCalendar.showEvent` a
+plain event-shaped object — so a practice window tapped from the card saying
+"Not assigned / No location provided" with no description, beside the same
+window tapped from the calendar naming its owner, its phase and every step,
+was never a second dialog. It was `pkDetailsEv` handing that dialog three
+fields fewer than the calendar's own event object carries. The block
+(`family_day._raw_blocks`) now carries `description`, `location`,
+`event_type` and `practice`, and the adapter passes them through — for every
+block, not as a practice special case, which is the whole point of two
+surfaces sharing one dialog. An inner line inside an outing gets its own
+description and location too.
+
+**Every agenda row taps the same way** (v2.435.10). A practice window was
+made non-tappable in the wall agenda on the reasoning that its dialog could
+only be empty — and then the dialog learned to say whose hour it is, what
+phase it belongs to and what the session holds, leaving an exception standing
+over an argument that had stopped being true. An agenda where one row
+silently does nothing is worse than either. (Whether ANY row opens the dialog
+is still the board card's own `details` toggle, unchanged.)
+
 Two things stay outside the feed because they are not a day's drawing: a **now
 block** on the PWA home from 30 minutes before the window until it ends,
 carrying the steps and a Log a session button, and a **push at the start**

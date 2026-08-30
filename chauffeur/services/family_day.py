@@ -129,6 +129,16 @@ def _raw_blocks(target, sched: dict, now: datetime.datetime) -> dict:
             'conflict_reason': conflict_reason,
             'color': _event_color(ev, cal_meta),
             'passengers': _passengers_for(ev, members, cal_meta, matched.get(ev_id)),
+            # What a TAP answers with. The Family Day card and the calendar
+            # already open the same dialog (`FamilyCalendar.showEvent`), so
+            # the two read differently only because the block handed it less
+            # than the calendar's own event object does: no description, no
+            # location, and nothing saying an event is a practice window. The
+            # dialog was never the problem; the adapter was.
+            'description': ev.get('description') or '',
+            'location': ev.get('location') or '',
+            'event_type': ev.get('event_type') or 'standard',
+            'practice': ev.get('practice') or None,
         })
 
     blocks.sort(key=lambda b: (b['start'], b['key']))
