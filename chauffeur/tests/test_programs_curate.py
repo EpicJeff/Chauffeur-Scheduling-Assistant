@@ -1023,6 +1023,105 @@ def scenario_a_made_plan_says_which_kind_of_nothing_it_followed():
         programs_curate.storage.get_settings = real_settings
 
 
+def scenario_a_citation_survives_how_a_model_types_it():
+    """What a citation CLAIMS and how a model TYPES it are different things,
+    and only the first one is the rule.
+
+    Every shape below was a real answer that resolved to nothing and cost a
+    whole cited plan: the corpus marker copied back verbatim, a list because
+    the phase might cite several, a float because JSON has one number type.
+    The prompt asking for "the number in square brackets" was this app
+    inviting the first of them and then discarding it.
+    """
+    by_ref = {1: {'url': 'https://justinguitar.example/grade1'},
+              2: {'url': 'https://justinguitar.example/grade2'}}
+    urls = {i['url'] for i in by_ref.values()}
+    for cite in (1, '1', '[1]', '1.', ' 1 ', [1], 1.0):
+        check(programs_curate._cited_url({'cite': cite}, by_ref, urls)
+              == 'https://justinguitar.example/grade1',
+              f"cite={cite!r} names material we read and must resolve")
+    check(programs_curate._cited_url({'citation': 2}, by_ref, urls)
+          == 'https://justinguitar.example/grade2',
+          "and the key it arrives under is not the thing being checked")
+    check(programs_curate._cited_url(
+        {'url': 'https://justinguitar.example/grade1/'}, by_ref, urls)
+        == 'https://justinguitar.example/grade1',
+        "a trailing slash is not a different page")
+
+
+def scenario_the_citation_rule_itself_is_unmoved():
+    """Reading a citation more generously is not believing one. A phase that
+    names material this app never fetched is still nothing at all."""
+    by_ref = {1: {'url': 'https://justinguitar.example/grade1'}}
+    urls = {'https://justinguitar.example/grade1'}
+    for ph in ({}, {'cite': 9}, {'cite': 0}, {'cite': True}, {'cite': None},
+               {'cite': 'the Justin Guitar course'},
+               {'url': 'https://not-a-page-we-read.example'}):
+        check(programs_curate._cited_url(ph, by_ref, urls) == '',
+              f"{ph} cites nothing this app read, and must not pass")
+
+
+def scenario_a_plan_that_survived_the_model_is_not_lost_in_the_plumbing():
+    """`llm._call_llm_json` returns the LAST top-level JSON it can find, which
+    is right for a model that chatters before its answer and wrong for one
+    that chatters after it. A bare array of phases -- what a model returns
+    when it reads "phases" as the answer rather than as a field -- arrived
+    here as a list and was refused for not being a dict."""
+    payload = programs_curate._phase_payload(
+        [{'name': 'Grade 1', 'what': 'Open chords', 'steps': ['G to C'],
+          'cite': 1}])
+    check(payload and payload.get('phases'),
+          f"a bare list of phases is a plan, got {payload}")
+    check(programs_curate._phase_payload([1, 2]) is None,
+          "and a stray array of numbers is still not one")
+    check(programs_curate._phase_payload('nope') is None,
+          "nor is a string")
+
+
+def scenario_a_bracketed_citation_still_yields_a_cited_plan():
+    """The whole failure end to end: research reads real pages, the model
+    answers with its citations in the corpus's own bracket form, and the
+    family gets the real curriculum rather than one the app wrote."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    seen = []
+    programs_curate.storage.get_settings = _settings()
+    programs_curate.web.research = _fake_research([
+        {'claim': 'Grade 1 module 1 covers three open chords',
+         'url': 'https://justinguitar.example/grade1'}])
+    programs_curate._pool_call = _shaping_pool(
+        {'plan_name': 'Justin Guitar', 'why_this_one': 'The standard course',
+         'phases': [{'name': 'Grade 1', 'what': 'Three open chords',
+                     'steps': ['One minute changes: G to C'],
+                     'milestone': 'G-C-D without looking', 'cite': '[1]'}]},
+        {'phases': []}, seen)
+    try:
+        out = programs_curate.curate('Learn Guitar',
+                                     {'sessions_per_week': 3, 'minutes': 25})
+        check(out['source']['origin'] == programs_curate.ORIGIN_CITED,
+              f"the real plan has to come back, got {out['source']}")
+        check(out['phases'][0]['name'] == 'Grade 1',
+              f"and it is the material that was read, got {out['phases']}")
+        check(seen == ['rich'], f"and on the first pass, got {seen}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+
+
+def scenario_the_prompt_never_asks_for_the_bracket_form():
+    """The instruction that caused it. Naming the square brackets told the
+    model the citation IS "[1]"; the corpus already shows the number, so the
+    prompt only has to say what shape to send it back in."""
+    for system in (programs_curate.PHASE_SYSTEM,
+                   programs_curate.PHASE_SYSTEM_PLAIN):
+        check('in square brackets' not in system,
+              "the prompt must not ask for the bracket form")
+        check('"cite": 1' in system,
+              "it shows the shape it wants instead")
+
+
 if __name__ == '__main__':
     scenario_a_body_aim_is_refused_before_any_research()
     scenario_a_behaviour_aim_passes_the_screen()
@@ -1057,4 +1156,9 @@ if __name__ == '__main__':
     scenario_a_truncated_answer_is_also_rescued()
     scenario_the_plainer_contract_is_never_asked_for_when_the_first_pass_worked()
     scenario_a_made_plan_says_which_kind_of_nothing_it_followed()
+    scenario_a_citation_survives_how_a_model_types_it()
+    scenario_the_citation_rule_itself_is_unmoved()
+    scenario_a_plan_that_survived_the_model_is_not_lost_in_the_plumbing()
+    scenario_a_bracketed_citation_still_yields_a_cited_plan()
+    scenario_the_prompt_never_asks_for_the_bracket_form()
     print("test_programs_curate OK")

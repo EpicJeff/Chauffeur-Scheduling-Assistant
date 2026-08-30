@@ -6726,6 +6726,39 @@ were read — "no published program fit this aim" is a false statement about the
 world when the failure was ours. A run of `uncited` means the shaping is
 failing, not that the web is empty, and those need opposite responses.
 
+**A citation is a claim, not a typing** (v2.436.2 — `_cite_index`,
+`_phase_payload`, `_shaping_note`). The v2.436.1 rescue did not rescue
+anything, and the reason was one clause of its own prompt: the citation rule
+had been reworded to ask for "the number in square brackets", so the model
+answered `"cite": "[1]"` — the corpus marker copied back — and
+`"[1]".isdigit()` is False, so every phase was discarded and an aim that had
+been returning a real published course started returning the app's own plan.
+The retry inherited the same clause and failed identically, which is why one
+more call bought nothing.
+
+The prompt now shows the shape it wants (`"cite": 1`, never "[1]", never a
+list) and `_cite_index` reads the number out of whatever actually arrives:
+`1`, `"1"`, `"[1]"`, `"1."`, `[1]`, `1.0`. `_cited_url` also accepts the key
+under its common aliases and treats a trailing slash as the same page. **None
+of that loosens the rule** — an index outside the material, a URL from a page
+this app never fetched, and a phase with no citation are all still nothing.
+What was being enforced was the typing, not the claim.
+
+`_phase_payload` fixes the other half: `llm._call_llm_json` returns the LAST
+top-level JSON it finds in a response, which is right for a model that
+chatters before its answer and wrong for one that chatters after it — an
+answer followed by a bare `[1]` arrives here as the list `[1]`, and a bare
+array of phases (what a model returns when it reads "phases" as the answer
+rather than as a field) was refused for not being a dict. Both are plans that
+survived the model and died in the plumbing.
+
+`_shaping_note` makes the log settle this instead of narrowing it. "Nothing
+citable" covered four different failures — the call raised, an error payload
+came back, there were no phases, or there were phases citing nothing — and
+they want four different fixes. The line now names which, with the model, the
+phase count, the keys on the first phase and the `cite` values as they
+actually arrived.
+
 **A rotation is dealt onto the evenings the family actually has**
 (v2.436.0 — `programs.practice_windows`, `phase_started_on`,
 `_occurrences_before`). This is the half no plan found on the web can do,

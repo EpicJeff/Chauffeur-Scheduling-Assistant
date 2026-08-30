@@ -380,8 +380,9 @@ _PHASE_CORE = (
 # failure throws the whole plan away. Buried mid-paragraph it was competing
 # with everything else the richer contract asks for.
 _PHASE_CITE = (
-    "\n\nEVERY phase MUST carry `cite`: the number in square brackets of the "
-    "material item it came from. A phase without `cite` is discarded."
+    "\n\nEVERY phase MUST carry `cite`, holding the number of the material "
+    "item it came from as a plain integer -- `\"cite\": 1`, never \"[1]\" and "
+    "never a list. A phase without `cite` is discarded."
 )
 
 PHASE_SYSTEM_PLAIN = (
@@ -769,6 +770,49 @@ def phase_weeks(per_week: int) -> int:
 _phase_weeks = phase_weeks
 
 
+# The keys a model reaches for when it means `cite`. Naming them is not
+# loosening the rule: whatever key it arrives under still has to resolve to a
+# numbered item this app actually read, or to a URL that is one of theirs.
+# What was costing real plans was the SPELLING of the key and the SHAPE of
+# the value, neither of which is the thing being checked.
+_CITE_KEYS = ('cite', 'citation', 'cite_index', 'ref', 'reference',
+              'source_index', 'material', 'item')
+_INT_RE = re.compile(r'\d+')
+
+
+def _cite_index(value):
+    """The number a model meant, out of whatever it actually sent.
+
+    Every shape below was a real answer that resolved to nothing and cost a
+    whole cited plan: "[1]" (copying the corpus marker back), "1." (copying a
+    list label), [1] (a list because the phase might cite several), 1.0 (a
+    float, because JSON has one number type and models know it). None of them
+    is a different CLAIM from `1`; they are the same claim typed differently,
+    and a citation rule that only accepts one typing is checking the typing.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value == int(value) else None
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            n = _cite_index(item)
+            if n is not None:
+                return n
+        return None
+    if isinstance(value, str):
+        m = _INT_RE.search(value)
+        return int(m.group()) if m else None
+    return None
+
+
+def _same_url(a: str, b: str) -> bool:
+    """Two URLs that differ only in a trailing slash are one URL."""
+    return a.rstrip('/') == b.rstrip('/')
+
+
 def _cited_url(ph: dict, by_ref: dict, urls: set) -> str:
     """The page behind a phase, or ''.
 
@@ -778,16 +822,77 @@ def _cited_url(ph: dict, by_ref: dict, urls: set) -> str:
     still accepted, because a model handed material with URLs in it will
     sometimes answer that way and there is no reason to punish a citation that
     is provably right.
+
+    What this does NOT do is guess. An index outside the material, a URL that
+    is not one of the pages we read, and a phase with no citation at all are
+    all still nothing -- the rule is that a phase names material this app
+    really fetched, and it survives every repair above intact.
     """
-    ref = ph.get('cite')
-    if isinstance(ref, bool):
-        ref = None
-    if isinstance(ref, str) and ref.strip().isdigit():
-        ref = int(ref.strip())
-    if isinstance(ref, int) and ref in by_ref:
-        return by_ref[ref]['url']
-    url = (ph.get('url') or '').strip()
-    return url if url in urls else ''
+    for key in _CITE_KEYS:
+        if key not in ph:
+            continue
+        ref = _cite_index(ph.get(key))
+        if ref is not None and ref in by_ref:
+            return by_ref[ref]['url']
+    for key in ('url', 'source', 'source_url', 'link'):
+        url = str(ph.get(key) or '').strip().rstrip('.,)')
+        if not url:
+            continue
+        for known in urls:
+            if _same_url(url, known):
+                return known
+    return ''
+
+
+def _phase_payload(data):
+    """What came back, as the object this module expects, or None.
+
+    `llm._call_llm_json` scans a response for top-level JSON and returns the
+    LAST thing it found, which is right for a model that chatters before its
+    answer and wrong for one that chatters after it: an answer followed by so
+    much as a bare "[1]" comes back as the list `[1]`, and a plan that arrived
+    perfectly intact is discarded here for not being a dict. The same scan
+    turns a bare array of phases -- which is what a model returns when it
+    reads "phases" as the answer rather than as a field -- into a list this
+    code then refuses.
+
+    Neither of those is a plan that failed. They are a plan that survived the
+    model and died in the plumbing.
+    """
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list):
+        phases = [p for p in data if isinstance(p, dict)
+                  and (p.get('name') or p.get('what') or p.get('steps'))]
+        if phases:
+            return {'phases': phases}
+    return None
+
+
+def _shaping_note(data) -> str:
+    """One line saying what actually came back, for the log that has to
+    settle this rather than narrow it.
+
+    Written because two rounds of this were spent reasoning about a payload
+    nobody had looked at: "nothing citable" covers an error, an empty answer,
+    phases with no citation and phases citing something we never read, and
+    those four want four different fixes.
+    """
+    if data is None:
+        return 'the call raised'
+    if isinstance(data, dict) and data.get('error'):
+        return f"error={str(data.get('error'))[:160]!r} model={data.get('_model')}"
+    payload = _phase_payload(data)
+    if payload is None:
+        return f"answer was a {type(data).__name__}, not an object: {str(data)[:160]!r}"
+    phases = [p for p in (payload.get('phases') or []) if isinstance(p, dict)]
+    if not phases:
+        return (f"no phases in the answer; keys={sorted(payload)[:8]} "
+                f"model={payload.get('_model')}")
+    first = phases[0]
+    cites = [p.get('cite') for p in phases]
+    return (f"{len(phases)} phases, none citable; keys={sorted(first)[:8]} "
+            f"cites={cites!r} model={payload.get('_model')}")
 
 
 def _phases_from(title: str, items: list, per_week: int,
@@ -826,10 +931,13 @@ def _phases_from(title: str, items: list, per_week: int,
         different in here: it is what decides whether the plainer contract is
         worth one more call.
         """
-        if not isinstance(data, dict) or data.get('error'):
+        if isinstance(data, dict) and data.get('error'):
+            return None
+        payload = _phase_payload(data)
+        if payload is None:
             return None
         out, used = [], []
-        for ph in (data.get('phases') or [])[:4]:
+        for ph in (payload.get('phases') or [])[:4]:
             if not isinstance(ph, dict):
                 continue
             url = _cited_url(ph, by_ref, urls)
@@ -863,9 +971,10 @@ def _phases_from(title: str, items: list, per_week: int,
                         'rotation': rotation,
                         'milestone': (ph.get('milestone') or '').strip()[:120],
                         'milestone_hit_at': None})
-        return (out, used, data) if out else None
+        return (out, used, payload) if out else None
 
-    built = _build(_ask(PHASE_SYSTEM))
+    rich = _ask(PHASE_SYSTEM)
+    built = _build(rich)
     if built is None:
         # The richer contract asked for more than this model could return with
         # its citations intact -- either it dropped `cite` under the weight of
@@ -879,9 +988,13 @@ def _phases_from(title: str, items: list, per_week: int,
         # rotation existed. A cited plan without those two fields is what the
         # cited tier was always going to be wherever the pages say nothing
         # about them, and it beats a made-up plan every time.
-        print("[programs] nothing citable in the shaped plan -- "
-              "asking again for the plan alone")
-        built = _build(_ask(PHASE_SYSTEM_PLAIN))
+        print(f"[programs] nothing citable in the shaped plan "
+              f"({_shaping_note(rich)}) -- asking again for the plan alone")
+        plain = _ask(PHASE_SYSTEM_PLAIN)
+        built = _build(plain)
+        if built is None:
+            print(f"[programs] the plain contract came back the same way "
+                  f"({_shaping_note(plain)})")
     if built is None:
         return empty
     out, used, data = built
