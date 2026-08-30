@@ -312,6 +312,8 @@ ORIGIN_NONE = 'none'
 # "the research key is missing" and "the web has nothing on this" looked
 # identical to the person reading the card.
 REASON_TEXT = {
+    'uncited': ('real pages were read, but nothing on them could be tied '
+                'to a phase'),
     'disabled': 'web research is switched off for this household',
     'no_key': 'no research key is set up',
     'capped': "this month's research allowance is spent",
@@ -333,33 +335,73 @@ REASON_TEXT = {
 _OUTAGE_REASON = {'disabled': 'disabled', 'no_key': 'no_key',
                   'capped': 'capped'}
 
-PHASE_SYSTEM = (
+# The shaping contract, in two strengths.
+#
+# PHASE_SYSTEM_PLAIN is the one that shipped before progression and rotation
+# existed, kept verbatim rather than rebuilt, because it is the version known
+# to come back with usable citations from a flash-lite model. PHASE_SYSTEM
+# asks for the same thing plus the two new fields.
+#
+# Two prompts and not one, because the first cut of the richer contract cost
+# the arc its whole reason for existing. Asking one interactive-tier call for
+# phases AND steps AND a progression rule AND a 2-4 session rotation AND a
+# citation on every phase pushes both ways at once: more instructions for
+# `cite` to compete with, and several times the output tokens to truncate. A
+# phase that loses its `cite` is dropped, an answer that truncates fails to
+# parse, and BOTH land in the same place -- `_fallback`, which writes a
+# labelled made-up plan. So a household that had been getting real curricula
+# started getting the app's own for everything, silently, because nothing on
+# the way down says "we read four real pages and threw them away".
+#
+# The fix is not to ask for less. It is to ask for the extras FIRST and fall
+# back to the plain contract the moment nothing citable survives -- one extra
+# interactive call, only on the pass that already failed, exactly the shape of
+# the language-drift repair below. A cited plan without a rotation is the
+# outcome that was always intended anyway: the cited tier says what the pages
+# said, and where they said nothing about how sessions differ, it says nothing.
+_PHASE_CORE = (
     "You are organising material for a household's program, not writing one. "
     "You are given exactly what was read from real pages for this aim -- "
     "organise ONLY that material into 2-4 phases. Do not add a step that is "
-    "not supported by the material below. Every phase MUST carry a `cite` "
-    "holding the number of the material item it came from. Also name the "
+    "not supported by the material below. Also name the "
     "program you organised, say in one sentence why it suits this family, "
     "and list the other candidates you did NOT pick with a real reason for "
     "each. `steps` is what the material actually says to DO in that phase -- "
     "the named exercises, drills, lessons or chapters, in order, so somebody "
     "could start a session from them alone. Take them from the material; do "
-    "not invent them, and keep them inside the session length given below.\n\n"
-    "`progression` is how somebody makes one session harder than the last "
-    "one INSIDE this phase, in this activity's own terms -- one more page, a "
-    "faster tempo, one more repetition, one less reminder from a parent. "
-    "Take it from the material. Leave it empty if the material does not say; "
-    "do not invent a rule.\n\n"
-    "`rotation` is for a phase whose sessions are NOT all the same session. "
-    "If the material lays out different sessions that alternate, give 2-4 of "
-    "them, each with a short label and its own steps, and the app will deal "
-    "them onto the days this family practises. If every session in the phase "
-    "is the same, leave `rotation` out entirely -- an invented rotation is "
-    "worse than none.\n\n"
+    "not invent them, and keep them inside the session length given below. "
     "Write EVERY field in the same language the aim is "
     "written in, and do not change language part-way through. If the "
     "material does not support a real phased plan, reply with an empty "
-    "phases list.\n\n"
+    "phases list."
+)
+
+# Said last, alone, and in the imperative, because it is the one rule whose
+# failure throws the whole plan away. Buried mid-paragraph it was competing
+# with everything else the richer contract asks for.
+_PHASE_CITE = (
+    "\n\nEVERY phase MUST carry `cite`: the number in square brackets of the "
+    "material item it came from. A phase without `cite` is discarded."
+)
+
+PHASE_SYSTEM_PLAIN = (
+    _PHASE_CORE + _PHASE_CITE + "\n\n"
+    'Return STRICT JSON: {"plan_name": "", "why_this_one": "", '
+    '"phases": [{"name": "", "what": "", "steps": ["", ""], '
+    '"milestone": "", "cite": 1}], '
+    '"runners_up": [{"cite": 2, "why_not": ""}]}'
+)
+
+PHASE_SYSTEM = (
+    _PHASE_CORE + "\n\n"
+    "`progression` is how somebody makes one session harder than the last one "
+    "INSIDE this phase, in the activity's own terms -- one more page, a "
+    "faster tempo, one more repetition. Take it from the material; leave it "
+    "empty rather than inventing a rule.\n\n"
+    "`rotation` is ONLY for a phase whose sessions genuinely differ from each "
+    "other. If the material lays out sessions that alternate, give 2-4 with a "
+    "short label each; otherwise leave it out. Never manufacture variety."
+    + _PHASE_CITE + "\n\n"
     'Return STRICT JSON: {"plan_name": "", "why_this_one": "", '
     '"phases": [{"name": "", "what": "", "steps": ["", ""], '
     '"progression": "", "rotation": [{"label": "", "steps": ["", ""]}], '
@@ -531,13 +573,21 @@ def _source_none(reason: str, answer: str = '') -> dict:
             'origin': ORIGIN_NONE, 'reason': reason, 'hand_written': True}
 
 
-def _source_generated(why: str, answer: str = '') -> dict:
+def _source_generated(why: str, answer: str = '', reason: str = 'no_plan') -> dict:
     """A plan the app made. No plan name and no url, on purpose: those two
     fields are what the card renders as "Following <a real thing>", and a
-    generated plan has nothing to point at."""
+    generated plan has nothing to point at.
+
+    `reason` used to be 'no_plan' whatever had happened, which is a false
+    statement in the one case worth telling apart: real pages WERE read and
+    the shaping simply could not tie a phase to any of them. That is a
+    different fact about the world from "the web has nothing on this aim",
+    and it is the fact you need when generated plans start arriving for aims
+    that used to find real ones.
+    """
     return {'plan_name': '', 'url': '', 'why_this_one': why,
             'facts': [], 'runners_up': [], 'answer': answer,
-            'origin': ORIGIN_GENERATED, 'reason': 'no_plan',
+            'origin': ORIGIN_GENERATED, 'reason': reason,
             'hand_written': True}
 
 
@@ -592,10 +642,17 @@ def curate(title: str, shape: dict, member_name: str = '',
     shaped = _phases_from(title, items, per_week, api_key, context)
     if not shaped['phases']:
         # Reached here the material was real and the shaping still produced
-        # nothing citable. That used to end the story; now it falls through to
-        # a labelled plan built on the material, which is a far better answer
-        # than a naked calendar reservation.
-        return _fallback(title, per_week, api_key, context, answer)
+        # nothing citable -- twice, since `_phases_from` already spent a
+        # second call on the plainer contract before giving up. That used to
+        # end the story; now it falls through to a labelled plan built on the
+        # material, which is a far better answer than a naked calendar
+        # reservation. It is also the one route to a generated plan that is
+        # worth watching: pages really were read, so a run of these means the
+        # shaping is failing rather than the web being empty.
+        print(f"[programs] read {len(items)} items for {title!r} and cited "
+              f"none of them -- falling back to a made plan")
+        return _fallback(title, per_week, api_key, context, answer,
+                         uncited=True)
 
     return {'phases': shaped['phases'],
             'source': {'plan_name': shaped['plan_name'],
@@ -610,8 +667,12 @@ def curate(title: str, shape: dict, member_name: str = '',
 
 
 def _fallback(title: str, per_week: int, api_key: str, context: str,
-              answer: str) -> dict:
-    """No cited plan. Make one and label it, or say why not even that."""
+              answer: str, uncited: bool = False) -> dict:
+    """No cited plan. Make one and label it, or say why not even that.
+
+    `uncited` says which of the two ways we got here: the web had nothing, or
+    the web had something and none of it survived the citation rule.
+    """
     settings = storage.get_settings() or {}
     if not settings.get('programs_generate_enabled', True):
         return {'phases': [], 'source': _source_none('generation_off', answer)}
@@ -622,7 +683,9 @@ def _fallback(title: str, per_week: int, api_key: str, context: str,
     if made['reason']:
         return {'phases': [], 'source': _source_none(made['reason'], answer)}
     return {'phases': made['phases'],
-            'source': _source_generated(made['why_this_one'], answer)}
+            'source': _source_generated(
+                made['why_this_one'], answer,
+                reason='uncited' if uncited else 'no_plan')}
 
 
 def _material(res: dict) -> list:
@@ -746,52 +809,82 @@ def _phases_from(title: str, items: list, per_week: int,
               f"What was actually read from real pages:\n{corpus}")
     empty = {'phases': [], 'plan_name': '', 'url': '', 'why_this_one': '',
              'runners_up': []}
-    try:
-        data = _pool_call(TIER, api_key, PHASE_SYSTEM, prompt,
-                          timeout_s=60, gemma_timeout_s=180)
-    except Exception as e:
-        print(f"[programs] phase shaping failed: {e}")
-        return empty
-    if not isinstance(data, dict) or data.get('error'):
-        return empty
-
     weeks = _phase_weeks(per_week)
-    out, used = [], []
-    for ph in (data.get('phases') or [])[:4]:
-        if not isinstance(ph, dict):
-            continue
-        url = _cited_url(ph, by_ref, urls)
-        if not url:
-            # A plausible phase with no page behind it does not get to be a
-            # phase. This is the whole rule.
-            continue
-        if _looks_foreign(_phase_text(ph), title):
-            # Same rule, different failure: a phase nobody in this house can
-            # read is not a phase either.
-            print(f"[programs] dropped a phase written in another language")
-            continue
-        used.append(url)
-        # Note: any 'weeks' the model sent is ignored. Pacing is arithmetic
-        # over `shape`, computed once above -- never a number out of the model.
-        # A rotation the material really described replaces nothing: `steps`
-        # stays the phase's material so every surface written before rotations
-        # existed keeps drawing something true, and the rotation is what a
-        # DATED window uses. Deriving `steps` from the first session rather
-        # than asking for it twice also keeps the empty-steps gate honest.
-        rotation = _clean_rotation(ph.get('rotation'), title)
-        steps = _clean_steps(ph.get('steps'), title) or (
-            list(rotation[0]['steps']) if rotation else [])
-        out.append({'name': (ph.get('name') or f"Phase {len(out) + 1}")[:60],
-                    'weeks': weeks,
-                    'what': (ph.get('what') or '').strip()[:400],
-                    'steps': steps,
-                    'progression': _clean_line(ph.get('progression'), title,
-                                               PROGRESSION_CHARS),
-                    'rotation': rotation,
-                    'milestone': (ph.get('milestone') or '').strip()[:120],
-                    'milestone_hit_at': None})
-    if not out:
+
+    def _ask(system):
+        try:
+            return _pool_call(TIER, api_key, system, prompt,
+                              timeout_s=60, gemma_timeout_s=180)
+        except Exception as e:
+            print(f"[programs] phase shaping failed: {e}")
+            return None
+
+    def _build(data):
+        """Phases that survive the citation rule, or None if none did.
+
+        None and an empty list are the same outcome to a caller and very
+        different in here: it is what decides whether the plainer contract is
+        worth one more call.
+        """
+        if not isinstance(data, dict) or data.get('error'):
+            return None
+        out, used = [], []
+        for ph in (data.get('phases') or [])[:4]:
+            if not isinstance(ph, dict):
+                continue
+            url = _cited_url(ph, by_ref, urls)
+            if not url:
+                # A plausible phase with no page behind it does not get to be
+                # a phase. This is the whole rule.
+                continue
+            if _looks_foreign(_phase_text(ph), title):
+                # Same rule, different failure: a phase nobody in this house
+                # can read is not a phase either.
+                print("[programs] dropped a phase written in another language")
+                continue
+            used.append(url)
+            # Note: any 'weeks' the model sent is ignored. Pacing is
+            # arithmetic over `shape` -- never a number out of the model.
+            # A rotation the material really described replaces nothing:
+            # `steps` stays the phase's material so every surface written
+            # before rotations existed keeps drawing something true, and the
+            # rotation is what a DATED window uses. Deriving `steps` from the
+            # first session rather than asking for it twice also keeps the
+            # empty-steps gate honest.
+            rotation = _clean_rotation(ph.get('rotation'), title)
+            steps = _clean_steps(ph.get('steps'), title) or (
+                list(rotation[0]['steps']) if rotation else [])
+            out.append({'name': (ph.get('name') or f"Phase {len(out) + 1}")[:60],
+                        'weeks': weeks,
+                        'what': (ph.get('what') or '').strip()[:400],
+                        'steps': steps,
+                        'progression': _clean_line(ph.get('progression'), title,
+                                                   PROGRESSION_CHARS),
+                        'rotation': rotation,
+                        'milestone': (ph.get('milestone') or '').strip()[:120],
+                        'milestone_hit_at': None})
+        return (out, used, data) if out else None
+
+    built = _build(_ask(PHASE_SYSTEM))
+    if built is None:
+        # The richer contract asked for more than this model could return with
+        # its citations intact -- either it dropped `cite` under the weight of
+        # everything else it was being asked for, or the longer answer never
+        # finished parsing. Both land exactly here, and the behaviour used to
+        # be to walk straight past into a made-up plan: which is how a
+        # household that had been getting real curricula started getting the
+        # app's own for everything, with nothing anywhere saying so.
+        #
+        # One more call, on the contract that shipped before progression and
+        # rotation existed. A cited plan without those two fields is what the
+        # cited tier was always going to be wherever the pages say nothing
+        # about them, and it beats a made-up plan every time.
+        print("[programs] nothing citable in the shaped plan -- "
+              "asking again for the plan alone")
+        built = _build(_ask(PHASE_SYSTEM_PLAIN))
+    if built is None:
         return empty
+    out, used, data = built
 
     name = (data.get('plan_name') or '').strip()[:80]
     answer_ctx = ' '.join(i['claim'] for i in items)

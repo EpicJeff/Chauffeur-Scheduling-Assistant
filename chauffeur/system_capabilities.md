@@ -6695,6 +6695,37 @@ a phase.
   that makes "be concrete" real rather than requested — keeps meaning
   something.
 
+**Asking for more nearly cost the arc its whole point** (v2.436.1 —
+`PHASE_SYSTEM_PLAIN`, the retry in `_phases_from`). The first cut of the
+richer shaping contract asked one interactive-tier call for phases AND steps
+AND a progression rule AND a 2-4 session rotation AND a citation on every
+phase. That pushes both ways at once: more instructions for `cite` to compete
+with, and several times the output tokens to truncate. A phase that loses its
+`cite` is dropped, an answer that truncates comes back as an error payload,
+and BOTH land in `_fallback` — which writes a labelled made-up plan. The
+result was a household that had been getting real curricula getting the app's
+own for everything, silently, because nothing on the way down said "four real
+pages were read and thrown away".
+
+Two prompts now, not one. `PHASE_SYSTEM_PLAIN` is the contract that shipped
+before progression and rotation existed, kept verbatim because it is the
+version known to come back with usable citations from a flash-lite model; the
+citation rule moved to the END of both, alone and in the imperative, because
+it is the one rule whose failure discards the whole plan. `_phases_from` asks
+for the extras first and falls back to the plain contract the moment nothing
+citable survives — one extra interactive call, only on the pass that already
+failed, the same shape as the language-drift repair beside it. A cited plan
+with no rotation is what the cited tier was always going to be wherever the
+pages say nothing about how sessions differ, and it beats a made-up plan every
+time.
+
+The fallthrough is no longer silent. `_phases_from` logs when it retries;
+`curate` logs how many items were read and cited nowhere; and a generated
+plan's `source.reason` is `'uncited'` rather than `'no_plan'` when real pages
+were read — "no published program fit this aim" is a false statement about the
+world when the failure was ours. A run of `uncited` means the shaping is
+failing, not that the web is empty, and those need opposite responses.
+
 **A rotation is dealt onto the evenings the family actually has**
 (v2.436.0 — `programs.practice_windows`, `phase_started_on`,
 `_occurrences_before`). This is the half no plan found on the web can do,

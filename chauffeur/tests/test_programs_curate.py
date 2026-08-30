@@ -856,6 +856,173 @@ def scenario_a_rotation_fills_the_steps_it_replaces():
         programs_curate.storage.get_settings = real_settings
 
 
+def _shaping_pool(rich, plain, seen):
+    """Three different calls go through one seam, told apart by which system
+    prompt they carry: the rich shaping contract, the plain one it falls back
+    to, and generation."""
+    def f(tier, api_key, system, prompt, **kw):
+        if system is programs_curate.GENERATE_SYSTEM:
+            seen.append('generate')
+            return {'why_this_one': 'made it',
+                    'phases': [{'name': 'Made', 'what': 'Something',
+                                'steps': ['A made-up thing']}]}
+        if system is programs_curate.PHASE_SYSTEM:
+            seen.append('rich')
+            return rich
+        seen.append('plain')
+        return plain
+    return f
+
+
+_ONE_PAGE = [{'claim': 'Grade 1 module 1 covers three open chords',
+              'url': 'https://justinguitar.example/grade1'}]
+
+_CITED_PLAIN = {
+    'plan_name': 'Justin Guitar', 'why_this_one': 'It is the standard course',
+    'phases': [{'name': 'Grade 1', 'what': 'Three open chords',
+                'steps': ['One minute changes: G to C'],
+                'milestone': 'G-C-D without looking', 'cite': 1}]}
+
+
+def scenario_a_lost_citation_costs_one_more_call_not_the_whole_plan():
+    """The regression this pass exists for.
+
+    Asking one interactive-tier call for phases AND steps AND a progression
+    rule AND a rotation AND a citation on every phase pushes both ways at
+    once: more instructions for `cite` to compete with, and several times the
+    output to truncate. A phase that loses its `cite` is dropped, and every
+    phase losing it emptied the plan -- straight past into a made-up one. A
+    household that had been getting real curricula got the app's own for
+    everything, and nothing anywhere said so.
+    """
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    seen = []
+    programs_curate.web.research = _fake_research(_ONE_PAGE)
+    programs_curate.storage.get_settings = _settings()
+    # The rich pass answers, and every phase comes back with no `cite`.
+    programs_curate._pool_call = _shaping_pool(
+        {'plan_name': 'Justin Guitar',
+         'phases': [{'name': 'Grade 1', 'what': 'Three open chords',
+                     'steps': ['One minute changes'],
+                     'progression': 'One more change each time',
+                     'milestone': 'G-C-D without looking'}]},
+        _CITED_PLAIN, seen)
+    try:
+        out = programs_curate.curate('play campfire songs',
+                                     {'sessions_per_week': 3, 'minutes': 25})
+        check(out['source']['origin'] == programs_curate.ORIGIN_CITED,
+              f"the real plan has to survive a lost citation, got {out['source']}")
+        check(seen == ['rich', 'plain'],
+              f"one retry on the plainer contract, and no generation, got {seen}")
+        check(out['phases'][0]['name'] == 'Grade 1',
+              f"and it is the cited material, got {out['phases']}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+
+
+def scenario_a_truncated_answer_is_also_rescued():
+    """The other way the richer contract fails: the longer answer never
+    finishes and comes back as an error payload rather than as phases. Same
+    landing place, so the same rescue has to cover it."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    seen = []
+    programs_curate.web.research = _fake_research(_ONE_PAGE)
+    programs_curate.storage.get_settings = _settings()
+    programs_curate._pool_call = _shaping_pool(
+        {'error': 'json parse failed'}, _CITED_PLAIN, seen)
+    try:
+        out = programs_curate.curate('play campfire songs',
+                                     {'sessions_per_week': 3, 'minutes': 25})
+        check(out['source']['origin'] == programs_curate.ORIGIN_CITED,
+              f"a parse failure is not a finding about the world, got {out['source']}")
+        check('generate' not in seen, f"and nothing was made up, got {seen}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+
+
+def scenario_the_plainer_contract_is_never_asked_for_when_the_first_pass_worked():
+    """The retry is a rescue, not a habit: a second interactive call on every
+    proposal is a cost the family did not agree to."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    seen = []
+    programs_curate.web.research = _fake_research(_ONE_PAGE)
+    programs_curate.storage.get_settings = _settings()
+    rich = {'plan_name': 'Justin Guitar',
+            'phases': [{'name': 'Grade 1', 'what': 'Three open chords',
+                        'steps': ['One minute changes'],
+                        'progression': 'One more change each time',
+                        'rotation': [
+                            {'label': 'Changes', 'steps': ['G to C']},
+                            {'label': 'Songs', 'steps': ['Play one through']}],
+                        'milestone': 'G-C-D without looking', 'cite': 1}]}
+    programs_curate._pool_call = _shaping_pool(rich, _CITED_PLAIN, seen)
+    try:
+        out = programs_curate.curate('play campfire songs',
+                                     {'sessions_per_week': 3, 'minutes': 25})
+        check(seen == ['rich'], f"one call when one call worked, got {seen}")
+        ph = out['phases'][0]
+        check(ph['progression'] == 'One more change each time',
+              f"and the richer fields are kept, got {ph}")
+        check(len(ph['rotation']) == 2, f"rotation included, got {ph}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+
+
+def scenario_a_made_plan_says_which_kind_of_nothing_it_followed():
+    """'No published program fit this aim' is a false statement when four
+    real pages were read and the shaping simply could not cite them. They are
+    different facts about the world, and the second is the one you need when
+    made-up plans start arriving for aims that used to find real ones."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    seen = []
+    programs_curate.storage.get_settings = _settings()
+    programs_curate.web.research = _fake_research(_ONE_PAGE)
+    programs_curate._pool_call = _shaping_pool({'phases': []}, {'phases': []},
+                                               seen)
+    try:
+        out = programs_curate.curate('play campfire songs',
+                                     {'sessions_per_week': 3, 'minutes': 25})
+        check(out['source']['origin'] == programs_curate.ORIGIN_GENERATED,
+              f"it still gets a plan, got {out['source']}")
+        check(out['source']['reason'] == 'uncited',
+              f"and the record says pages were read, got {out['source']}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+    # The other kind of nothing is unchanged: the web really was empty.
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    programs_curate.storage.get_settings = _settings()
+    programs_curate.web.research = _fake_research([])
+    programs_curate._pool_call = _shaping_pool({'phases': []}, {'phases': []},
+                                               [])
+    try:
+        out = programs_curate.curate('play campfire songs',
+                                     {'sessions_per_week': 3, 'minutes': 25})
+        check(out['source']['reason'] == 'no_plan',
+              f"nothing was read, so nothing was thrown away, got {out['source']}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+
+
 if __name__ == '__main__':
     scenario_a_body_aim_is_refused_before_any_research()
     scenario_a_behaviour_aim_passes_the_screen()
@@ -886,4 +1053,8 @@ if __name__ == '__main__':
     scenario_a_phase_says_how_to_beat_the_last_session()
     scenario_a_rotation_of_one_is_not_a_rotation()
     scenario_a_rotation_fills_the_steps_it_replaces()
+    scenario_a_lost_citation_costs_one_more_call_not_the_whole_plan()
+    scenario_a_truncated_answer_is_also_rescued()
+    scenario_the_plainer_contract_is_never_asked_for_when_the_first_pass_worked()
+    scenario_a_made_plan_says_which_kind_of_nothing_it_followed()
     print("test_programs_curate OK")
