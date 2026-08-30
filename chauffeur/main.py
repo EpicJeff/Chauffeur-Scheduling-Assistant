@@ -16285,6 +16285,35 @@ def _practice_events(start_date_str=None, end_date_str=None, days=30):
     if end < start:
         start, end = end, start
 
+    # WHOSE it is, said the way every other event says it. An event answers
+    # that through `calendar_ids` -> `calendar_metadata` -> the person's pill
+    # and the person's colour, on every surface at once. A practice window
+    # shipped with none, so it drew as an anonymous blue bar reading only
+    # "Strength Training", and the details dialog it opened said "No
+    # passengers / Not assigned / No location provided" — which is a
+    # perfectly accurate description of a piece of somebody's life that the
+    # app had failed to attach to them.
+    #
+    # Members link to a passenger record (`passenger_id`) and passengers hold
+    # the calendar ids, so the person's own calendar is what a window is
+    # tagged with — it is their hour, and it should look like their hour.
+    pax_cals = {}
+    try:
+        pax_by_id = {p['id']: p for p in storage.get_all_passengers()}
+        for m in storage.get_all_members(include_archived=True):
+            pax = pax_by_id.get(m.get('passenger_id') or '')
+            if pax and (pax.get('calendar_ids') or []):
+                pax_cals[m['id']] = list(pax['calendar_ids'])
+    except Exception:
+        pax_cals = {}
+
+    members_by_id = {}
+    try:
+        members_by_id = {m['id']: m for m in
+                         storage.get_all_members(include_archived=True)}
+    except Exception:
+        pass
+
     out = []
     for w in _prog.practice_windows(start, end):
         try:
@@ -16293,14 +16322,21 @@ def _practice_events(start_date_str=None, end_date_str=None, days=30):
         except (ValueError, TypeError):
             continue
         pid = f"practice-{w['program_id']}-{w['date']}-{w['time_start']}"
+        member = members_by_id.get(w.get('member_id')) or {}
+        # The fallback matters: a member with no passenger record has no
+        # calendar to borrow a colour from, and an anonymous bar is the exact
+        # failure this fixes. Their own `color_code` is what every other
+        # member-shaped surface in the app already uses for them.
+        payload = {**w, 'color': member.get('color_code') or '#14b8a6'}
         out.append(_Event(
             id=pid, title=w['title'],
             start=begins.astimezone(), end=finishes.astimezone(),
-            calendar_ids=[], source_event_ids=[], all_day=False,
+            calendar_ids=pax_cals.get(w.get('member_id')) or [],
+            source_event_ids=[], all_day=False,
             event_type='practice',
             location=None,
             description=' · '.join(w.get('steps') or []) or w.get('milestone') or '',
-            practice=w))
+            practice=payload))
     return out
 
 

@@ -165,9 +165,9 @@ def scenario_a_practice_window_is_an_EVENT_in_the_one_feed():
     check(len(evs) == 1, f"the window is an event, got {evs}")
     e = evs[0]
     check(e.event_type == 'practice', f"marked as what it is, got {e.event_type}")
-    check(e.calendar_ids == [] and e.source_event_ids == [],
-          "with no calendar behind it -- nothing fetched it and nothing "
-          "writes it back")
+    check(e.source_event_ids == [],
+          "with nothing behind it in Google -- nothing fetched it and "
+          "nothing writes it back")
     check(e.practice and e.practice.get('member_name') == 'Mom',
           f"carrying whose it is, got {e.practice}")
     check('One minute changes' in (e.description or ''),
@@ -175,6 +175,48 @@ def scenario_a_practice_window_is_an_EVENT_in_the_one_feed():
           f"got {e.description!r}")
     check(e.start.hour == 19 and e.end.hour == 19 and e.end.minute == 30,
           f"at the hour it claimed, got {e.start}-{e.end}")
+
+
+def scenario_a_practice_event_says_whose_hour_it_is():
+    """An event answers "who is this for?" through `calendar_ids` ->
+    `calendar_metadata` -> the person's pill and the person's colour, on every
+    surface at once. A practice window shipped with none, so it drew as an
+    anonymous blue bar reading only the program title, and the dialog it
+    opened said "No passengers / Not assigned / No location provided" -- an
+    accurate description of a piece of somebody's life the app had failed to
+    attach to them."""
+    _reset()
+    import main
+    from services import storage as _st
+    today = datetime.date.today()
+    _st.passengers_table.truncate()
+    _st.add_passenger({'id': 'pax1', 'name': 'Mom', 'calendar_ids': ['cal-mom']})
+    _st.update_member('mom', {'passenger_id': 'pax1', 'color_code': '#ff0088'})
+    _program()
+    e = main._practice_events(today.isoformat(), today.isoformat())[0]
+    check(e.calendar_ids == ['cal-mom'],
+          f"it is tagged with the person's own calendar, so it looks like "
+          f"their hour everywhere, got {e.calendar_ids}")
+    check(e.practice.get('color') == '#ff0088',
+          f"and carries their colour for the surfaces with no calendar to "
+          f"read, got {e.practice}")
+    check(e.practice.get('member_name') == 'Mom',
+          "and their name, for the pill when no calendar answered")
+
+
+def scenario_a_member_with_no_calendar_is_still_named():
+    """The fallback is the whole point: an anonymous bar is the failure."""
+    _reset()
+    import main
+    today = datetime.date.today()
+    _program(member_id='kid')
+    e = main._practice_events(today.isoformat(), today.isoformat())[0]
+    check(e.calendar_ids == [], "nothing to borrow")
+    check(e.practice.get('member_name') == 'Lily',
+          f"but the person is still named, got {e.practice}")
+    check(e.practice.get('color'),
+          f"and still has a colour that is not the anonymous default, got "
+          f"{e.practice}")
 
 
 def scenario_a_practice_event_never_asks_for_a_driver():
@@ -232,6 +274,8 @@ if __name__ == '__main__':
     scenario_a_window_is_not_announced_early_late_or_after_it_was_logged()
     scenario_the_feed_carries_programs_and_nothing_else()
     scenario_a_practice_window_is_an_EVENT_in_the_one_feed()
+    scenario_a_practice_event_says_whose_hour_it_is()
+    scenario_a_member_with_no_calendar_is_still_named()
     scenario_a_practice_event_never_asks_for_a_driver()
     scenario_prep_kits_do_not_pack_for_practice()
     scenario_the_endpoint_is_reachable_by_hand()

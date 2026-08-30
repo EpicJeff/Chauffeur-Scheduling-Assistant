@@ -6664,8 +6664,8 @@ calendar"), an optional `skip` decision, and a cancellation. Practice is the
 fourth, not a new idea.
 
 So `_practice_events()` builds real `Event` objects (`event_type='practice'`,
-no calendar behind them, an id no calendar event can collide with, the steps
-in `description` and the whole window in a typed `practice` field) and injects
+an id no calendar event can collide with, the steps in `description` and the
+whole window in a typed `practice` field) and injects
 them into `all_events_for_ui` **after** every assignment, rule match and
 duplicate group is computed — which is what makes reaching the solver
 impossible rather than merely unlikely. Every surface built on the event feed
@@ -6675,6 +6675,22 @@ open), the PWA family day, and anything else that reads `events`. The three
 derived readers that walk every cached event and would otherwise act on one —
 prep-kit matching in both its forms, and the kit-match preview — skip
 `event_type == 'practice'` beside `errand`.
+
+**Whose hour it is, said the way every event says it** (v2.435.7). An event
+answers "who is this for?" through `calendar_ids` → `calendar_metadata` → the
+person's pill and the person's colour, on every surface at once. Practice
+windows shipped with none, so one drew as an anonymous blue bar reading only
+"Strength Training", and the dialog it opened said "No passengers / Not
+assigned / No location provided" — an accurate description of a piece of
+somebody's life the app had failed to attach to them. A window is now tagged
+with the owner's own calendar (member → `passenger_id` → the passenger's
+`calendar_ids`), so it looks like their hour everywhere for free; a member
+with no passenger record falls back to their `color_code` and a pill built
+from their name, because the anonymous default is the failure. The dedicated
+branch in the calendar's event pipeline was deleted in the same change —
+practice takes the one road now, which is what earns it the pill. In the
+details dialog, "Not assigned" becomes `<Name>'s practice · <phase> — nobody
+drives to this`, and the location line reads "Wherever they practise."
 
 Two things stay outside the feed because they are not a day's drawing: a **now
 block** on the PWA home from 30 minutes before the window until it ends,

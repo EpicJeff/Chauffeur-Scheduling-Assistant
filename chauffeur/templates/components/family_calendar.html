@@ -1095,8 +1095,10 @@ async function _renderAgenda(inst) {
                 // row that never offered.
                 tappable: practice ? false : tappable,
                 onClick: (!practice && tappable) ? (e) => _onEventTap(inst, e) : null,
+                // The person is already named by the pill every event uses;
+                // this badge says what KIND of hour it is, not whose.
                 extraBadgeHtml: practice
-                    ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 shrink-0">🎯 ${_agEsc((ev.extendedProps.practice || {}).member_name || 'practice')}</span>`
+                    ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 shrink-0">🎯 practice</span>'
                     : undefined,
             }));
         });
@@ -1111,10 +1113,6 @@ function _onEventTap(inst, evObj) {
     if (inst.opts.onEventClick) return inst.opts.onEventClick(evObj);
     if (!inst.opts.details) return;
     const props = evObj.extendedProps || {};
-    // A practice window has no event behind it to open, no driver to name and
-    // no config to edit -- a dialog that can only be empty is worse than no
-    // dialog, so the row shows what there is to know and stops there.
-    if (props.isPractice) return;
     if (props.isTrip) { window.location.href = props.tripUrl; return; }
     _openEventDetails(inst, evObj);
 }
@@ -1178,7 +1176,8 @@ function _openEventDetails(inst, evObj) {
         abEl.textContent = ab ? `⏱ ${ab.label}` : '';
         abEl.classList.toggle('hidden', !ab);
     }
-    document.getElementById('modal-location').textContent = props.location || 'No location provided.';
+    document.getElementById('modal-location').textContent = props.location
+        || (props.isPractice ? 'Wherever they practise.' : 'No location provided.');
 
     const paxContainer = document.getElementById('modal-passengers');
     if (props.passengers && props.passengers.length > 0) {
@@ -1214,6 +1213,18 @@ function _openEventDetails(inst, evObj) {
         `;
     } else if (props.isUnassigned) {
         driverContainer.innerHTML = `<span class="text-red-400 font-bold italic">\u26a0\ufe0f Needs Driver</span>`;
+    } else if (props.isPractice) {
+        // "Not assigned" is true and useless: nobody drives anywhere for this,
+        // and saying so is the difference between a dialog that describes a
+        // gap and one that describes the thing.
+        const _who = _agEsc((props.practice || {}).member_name || 'Somebody');
+        const _phase = (props.practice || {}).phase_name;
+        driverContainer.innerHTML = `
+            <div class="w-8 h-8 rounded-full bg-teal-500/20 text-teal-300 flex items-center justify-center font-bold text-lg border border-teal-500/30">🎯</div>
+            <div class="flex flex-col">
+                <span class="font-bold text-teal-300">${_who}'s practice</span>
+                <span class="text-white/40 text-xs">${_phase ? _agEsc(_phase) + ' — nobody drives to this' : 'Nobody drives to this'}</span>
+            </div>`;
     } else {
         driverContainer.innerHTML = '<span class="italic text-white/40 text-sm">Not assigned</span>';
     }
@@ -1496,6 +1507,13 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                     if (ev.calendar_ids && ev.calendar_ids.length > 0 && data.calendar_metadata && data.calendar_metadata[ev.calendar_ids[0]]) {
                                         color = data.calendar_metadata[ev.calendar_ids[0]].backgroundColor;
                                     }
+                                    // A practice window belongs to a person who may have no
+                                    // calendar to borrow a colour from. Theirs, then teal —
+                                    // never the anonymous default, which is what made one
+                                    // read as an event belonging to nobody.
+                                    if (ev.event_type === 'practice') {
+                                        color = (ev.practice || {}).color || PRACTICE_COLOR;
+                                    }
                                     if (ev.trip_suppressed) {
                                         color = '#6B7280'; // grayed: ignored for the driving schedule
                                     }
@@ -1529,6 +1547,16 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                         });
                                     }
                                     
+                                    // Same question, same answer shape: a practice window
+                                    // with no calendar behind it still names the person
+                                    // whose hour it is, through the pill vocabulary every
+                                    // other event already uses.
+                                    if (ev.event_type === 'practice'
+                                        && Object.keys(paxMap).length === 0
+                                        && (ev.practice || {}).member_name) {
+                                        paxMap[ev.practice.member_name] =
+                                            ev.practice.color || PRACTICE_COLOR;
+                                    }
                                     const paxNames = Object.keys(paxMap);
                                     const passengerPills = paxNames.map(name => ({
                                         name: name,
@@ -1638,26 +1666,6 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                             }
                                             if (carSwap) existing.extendedProps.carSwap = true;
                                         }
-                                    } else if (ev.event_type === 'practice') {
-                                        eventsMap.set(baseId, {
-                                            id: baseId,
-                                            title: rawTitle,
-                                            start: ev.start,
-                                            end: ev.end,
-                                            allDay: false,
-                                            backgroundColor: PRACTICE_COLOR,
-                                            extendedProps: {
-                                                isPractice: true,
-                                                practice: ev.practice || {},
-                                                description: ev.description,
-                                                passengers: [],
-                                                isUnassigned: false,
-                                                isConflict: false,
-                                                isErrand: false,
-                                                rawColor: PRACTICE_COLOR,
-                                                prep: [],
-                                            }
-                                        });
                                     } else {
                                         eventsMap.set(baseId, {
                                             id: baseId,
@@ -1685,6 +1693,8 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                                 arriveBy: ev.arrive_by || null,
                                                 departAfter: ev.depart_after || null,
                                                 rawColor: color,
+                                                isPractice: ev.event_type === 'practice',
+                                                practice: ev.practice || null,
                                                 prep: (data.prep_by_event || {})[ev.id] || []
                                             }
                                         });
