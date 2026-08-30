@@ -6759,6 +6759,34 @@ they want four different fixes. The line now names which, with the model, the
 phase count, the keys on the first phase and the `cite` values as they
 actually arrived.
 
+**Shaping was being given the page NAMES and none of what the pages said**
+(v2.436.3 — `_phases_from(..., answer=...)`). The deepest of this round's
+failures and the only one that predates v2.436.0. On the grounding route —
+the default provider's, the one nearly every household uses — `_material`
+builds each item as `{'claim': title or answer[:160]}`, so a "fact" is a page
+TITLE. The corpus handed to the shaping call was therefore three page names
+("Justin Guitar - Free Online Guitar Lessons" and two more like it) and
+nothing whatsoever about their contents, under an instruction to organise
+ONLY that material and to return an empty phases list where the material
+supports no plan.
+
+The model returned an empty phases list. It was right to. And every one of
+those empty answers fell through to `_fallback` — which HAD been receiving
+the grounded answer as its context since generation was built. So the tier
+that invents a plan was the only tier holding the substance to build one
+from, and the app wrote its own curriculum for an aim whose real curriculum
+it had just read and thrown away.
+
+`_phases_from` now takes the research `answer` (capped at `ANSWER_CHARS`) and
+presents it as the material, with the numbered sources beneath it as what
+`cite` names. That is not a new source and does not weaken the rule: it is
+what those pages said, a phase still has to name one of the pages, and a
+grounding citation was always the weaker page-level kind — which is exactly
+what `_material` already says about it. The escape hatch is also narrower:
+where the material names a real published program and describes its stages,
+that IS a phased plan, and an empty list is only for material describing no
+program at all.
+
 **A rotation is dealt onto the evenings the family actually has**
 (v2.436.0 — `programs.practice_windows`, `phase_started_on`,
 `_occurrences_before`). This is the half no plan found on the web can do,

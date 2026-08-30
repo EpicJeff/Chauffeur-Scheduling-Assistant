@@ -169,6 +169,11 @@ PROGRESSION_CHARS = 200
 # steps repeated twelve times was never what the plan said.
 #
 # Two is the floor because a rotation of one is a list of steps with a hat on.
+# How much of the research answer reaches shaping. Long enough to carry a
+# real curriculum's phases, short enough that it cannot crowd out the
+# instructions around it.
+ANSWER_CHARS = 4000
+
 MIN_ROTATION = 2
 MAX_ROTATION = 4
 LABEL_CHARS = 40
@@ -371,9 +376,10 @@ _PHASE_CORE = (
     "could start a session from them alone. Take them from the material; do "
     "not invent them, and keep them inside the session length given below. "
     "Write EVERY field in the same language the aim is "
-    "written in, and do not change language part-way through. If the "
-    "material does not support a real phased plan, reply with an empty "
-    "phases list."
+    "written in, and do not change language part-way through. Where the "
+    "material names a real published program and describes its stages, that "
+    "IS a phased plan -- organise it. Reply with an empty phases list only "
+    "when the material genuinely describes no program at all."
 )
 
 # Said last, alone, and in the imperative, because it is the one rule whose
@@ -640,7 +646,8 @@ def curate(title: str, shape: dict, member_name: str = '',
     if not items:
         return _fallback(title, per_week, api_key, context, answer)
 
-    shaped = _phases_from(title, items, per_week, api_key, context)
+    shaped = _phases_from(title, items, per_week, api_key, context,
+                          answer=answer)
     if not shaped['phases']:
         # Reached here the material was real and the shaping still produced
         # nothing citable -- twice, since `_phases_from` already spent a
@@ -896,13 +903,30 @@ def _shaping_note(data) -> str:
 
 
 def _phases_from(title: str, items: list, per_week: int,
-                 api_key: str, context: str = '') -> dict:
+                 api_key: str, context: str = '', answer: str = '') -> dict:
     """Turn what was read into phases, then drop any that cite nothing.
 
     The model is asked to organise material it was given, not to produce
     material. Anything whose citation is not one of the items we actually put
     in front of it is discarded -- the same discipline `web.research`'s own
     `dropped` counter applies one level down.
+
+    `answer` is why this function had stopped working at all on the route
+    nearly every household uses. On the GROUNDING route a "fact" is a page
+    TITLE (`_material`: `'claim': title or answer[:160]`), so the material
+    handed to shaping was three page names -- "Justin Guitar - Free Online
+    Guitar Lessons" and two more like it -- and nothing whatsoever about what
+    those pages SAY. A model told to organise only that material, and told
+    plainly to return an empty phases list where the material does not support
+    a plan, returned an empty phases list. It was right to. Every one of those
+    empty answers then fell through to generation, which HAD been receiving
+    the grounded answer all along as its context -- so the tier that invents
+    a plan was the only tier holding the substance to build one from.
+
+    The answer is not an extra source and does not weaken the citation rule:
+    it is what those pages said, and `cite` still has to name one of them. A
+    grounding citation was always the weaker page-level kind, which is exactly
+    what `_material` says about it.
     """
     by_ref = {n + 1: it for n, it in enumerate(items)}
     urls = {it['url'] for it in items}
@@ -910,8 +934,13 @@ def _phases_from(title: str, items: list, per_week: int,
         f"[{n}] {it['claim']}"
         + (f" (page: {it['title']})" if it['title'] else '')
         + f" <{it['url']}>" for n, it in by_ref.items())
-    prompt = (f"Aim: {title}.\n{context}\n\n"
-              f"What was actually read from real pages:\n{corpus}")
+    answer = (answer or '').strip()[:ANSWER_CHARS]
+    material = (f"What the research found, built from the pages below -- this "
+                f"is the material:\n{answer}\n\nThe pages it was built from, "
+                f"numbered for `cite`:\n{corpus}"
+                if answer else
+                f"What was actually read from real pages:\n{corpus}")
+    prompt = f"Aim: {title}.\n{context}\n\n{material}"
     empty = {'phases': [], 'plan_name': '', 'url': '', 'why_this_one': '',
              'runners_up': []}
     weeks = _phase_weeks(per_week)

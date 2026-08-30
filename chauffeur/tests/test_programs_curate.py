@@ -1122,6 +1122,86 @@ def scenario_the_prompt_never_asks_for_the_bracket_form():
               "it shows the shape it wants instead")
 
 
+def scenario_shaping_is_given_what_the_pages_said_not_only_their_names():
+    """The failure that made the cited tier unreachable on the route nearly
+    every household uses.
+
+    On the GROUNDING route a "fact" is a page TITLE -- `_material` sets
+    `'claim': title or answer[:160]` -- so the material handed to shaping was
+    three page names, "Justin Guitar - Free Online Guitar Lessons" and two
+    more like it, and nothing at all about what those pages SAY. A model told
+    to organise only that material, and told plainly to return an empty
+    phases list where the material supports no plan, returned an empty phases
+    list; it was right to. Every one of those fell through to generation --
+    which had been receiving the grounded answer as its context all along. So
+    the tier that INVENTS a plan was the only tier holding the substance to
+    build one from, and the app made up a curriculum for an aim whose real
+    curriculum it had just read.
+    """
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    seen = []
+    answer = ('Justin Guitar is the standard free beginner course. Grade 1 '
+              'covers the first three open chords and one-minute changes; '
+              'Grade 2 adds the F barre chord and strumming patterns.')
+    programs_curate.storage.get_settings = _settings()
+    programs_curate.web.research = _fake_grounded(
+        [{'title': 'Justin Guitar - Free Online Guitar Lessons',
+          'url': 'https://justinguitar.example/'},
+         {'title': 'Beginner Guitar Course Grade 1',
+          'url': 'https://justinguitar.example/grade1'}],
+        answer=answer)
+    programs_curate._pool_call = _capture_pool(
+        {'plan_name': 'Justin Guitar', 'why_this_one': 'The standard course',
+         'phases': [{'name': 'Grade 1', 'what': 'Three open chords',
+                     'steps': ['One minute changes: G to C'],
+                     'milestone': 'G-C-D without looking', 'cite': 1}]}, seen)
+    try:
+        out = programs_curate.curate('Learn Guitar',
+                                     {'sessions_per_week': 3, 'minutes': 25})
+        check('Grade 1 covers the first three open chords' in seen[0],
+              f"what the pages SAID has to reach shaping, got:\n{seen[0]}")
+        check('[1]' in seen[0] and 'justinguitar.example' in seen[0],
+              f"and the numbered pages stay, to cite, got:\n{seen[0]}")
+        check(out['source']['origin'] == programs_curate.ORIGIN_CITED,
+              f"so a real plan comes back cited, got {out['source']}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+
+
+def scenario_the_answer_is_material_and_never_a_source():
+    """Handing shaping the research answer is not handing it a citation. A
+    phase still has to name one of the pages, and a plan whose phases name
+    nothing is still not a cited plan."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    seen = []
+    programs_curate.storage.get_settings = _settings()
+    programs_curate.web.research = _fake_grounded(
+        [{'title': 'Justin Guitar', 'url': 'https://justinguitar.example/'}],
+        answer='Justin Guitar Grade 1 covers three open chords.')
+    programs_curate._pool_call = _shaping_pool(
+        {'phases': [{'name': 'Grade 1', 'what': 'Three open chords',
+                     'steps': ['G to C']}]},
+        {'phases': [{'name': 'Grade 1', 'what': 'Three open chords',
+                     'steps': ['G to C']}]}, seen)
+    try:
+        out = programs_curate.curate('Learn Guitar',
+                                     {'sessions_per_week': 3, 'minutes': 25})
+        check(out['source']['origin'] == programs_curate.ORIGIN_GENERATED,
+              f"an uncited phase is still uncited, got {out['source']}")
+        check(out['source']['reason'] == 'uncited',
+              f"and the record says pages were read, got {out['source']}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+
+
 if __name__ == '__main__':
     scenario_a_body_aim_is_refused_before_any_research()
     scenario_a_behaviour_aim_passes_the_screen()
@@ -1161,4 +1241,6 @@ if __name__ == '__main__':
     scenario_a_plan_that_survived_the_model_is_not_lost_in_the_plumbing()
     scenario_a_bracketed_citation_still_yields_a_cited_plan()
     scenario_the_prompt_never_asks_for_the_bracket_form()
+    scenario_shaping_is_given_what_the_pages_said_not_only_their_names()
+    scenario_the_answer_is_material_and_never_a_source()
     print("test_programs_curate OK")
