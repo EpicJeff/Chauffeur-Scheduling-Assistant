@@ -5666,7 +5666,16 @@ def list_programs_api(member_id: str = None, include_finished: bool = False,
         # did not practise is a miss record wearing a prompt's clothes.
         ask = ({'slot_date': asks[-1]['slot_date'], 'body': asks[-1]['body']}
                if asks else None)
-        out.append({**r, 'progress': _prog.progress(r), 'due_ask': ask})
+        # Which rung of the ladder, computed HERE rather than re-derived in
+        # the page: the walk depends on when the current phase began and on
+        # every session logged since, and a second implementation of that in
+        # JavaScript is a second implementation that drifts.
+        prog = _prog.progress(r)
+        phase = prog.get('phase') or {}
+        unit = _prog.unit_for(r, phase) or {}
+        out.append({**r, 'progress': prog, 'due_ask': ask,
+                    'current_phase': phase.get('name') or '',
+                    'current_unit': unit.get('n') or 0})
     return {"programs": out}
 
 
@@ -5853,8 +5862,10 @@ def edit_program(program_id: str, body: dict = Body(default={}),
         # Pacing is arithmetic over the shape, so a shape edit re-paces what
         # was already found. Nothing is re-read and no model is asked: the
         # material did not change, only how much of it fits in a week.
-        weeks = _cur.phase_weeks(shape.get('sessions_per_week') or 3)
-        updates['phases'] = [{**ph, 'weeks': weeks} for ph in row['phases']]
+        per_week = shape.get('sessions_per_week') or 3
+        updates['phases'] = [
+            {**ph, 'weeks': _cur.phase_weeks(per_week, ph.get('units'))}
+            for ph in row['phases']]
 
     if kept:
         message = "Looked again and found nothing new — the plan you had stands."
@@ -5870,6 +5881,52 @@ def edit_program(program_id: str, body: dict = Body(default={}),
     storage.update_program(program_id, updates)
     return {"status": "success", "program": storage.get_program(program_id),
             "message": message}
+
+
+@app.post("/api/programs/{program_id}/unit")
+def move_program_unit(program_id: str, body: dict = Body(default={}),
+                      request: Request = None):
+    """Stay on this lesson, or move on to the next one.
+
+    Which rung a session lands on is derived from the sessions logged since
+    the phase began, which is right often enough to be the default and wrong
+    often enough to need a hand on it: a lesson that needs another evening,
+    or two lessons done in one sitting, are both ordinary and neither is
+    visible to this app.
+
+    `unit_shift` is a bookmark and nothing else. It does not count anything,
+    it is not a record of what happened, and it moves in both directions --
+    which is exactly why it is not any of the six things a program may not
+    hold. Nothing here can mark a lesson missed, because there is nowhere to
+    write that down.
+    """
+    from services import programs as _prog
+    row = storage.get_program(program_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such program")
+    _program_permission_or_refuse(request, body, row)
+    direction = (body.get('direction') or '').strip()
+    if direction not in ('next', 'stay'):
+        return {"status": "error", "message": "Which way — next, or stay?"}
+    phases, moved = [], None
+    for ph in (row.get('phases') or []):
+        if moved is None and not ph.get('milestone_hit_at'):
+            units = [u for u in (ph.get('units') or []) if isinstance(u, dict)]
+            if not units:
+                return {"status": "error",
+                        "message": "This plan has no lessons to move between."}
+            ph = {**ph, 'unit_shift': int(ph.get('unit_shift') or 0)
+                  + (1 if direction == 'next' else -1)}
+            moved = ph
+        phases.append(ph)
+    if moved is None:
+        return {"status": "error", "message": "Nothing left to move through."}
+    storage.update_program(program_id, {'phases': phases})
+    fresh = storage.get_program(program_id)
+    unit = _prog.unit_for(fresh, _prog.progress(fresh).get('phase') or {}) or {}
+    return {"status": "success", "program": fresh,
+            "message": (f"On {unit.get('title')} now."
+                        if unit.get('title') else "Moved.")}
 
 
 @app.get("/api/practice-windows")
@@ -16385,7 +16442,9 @@ def _practice_events(start_date_str=None, end_date_str=None, days=30,
             source_event_ids=[], all_day=False,
             event_type='practice',
             location=None,
-            description=' · '.join(w.get('steps') or []) or w.get('milestone') or '',
+            description=' · '.join(
+                ([w['unit_title']] if w.get('unit_title') else [])
+                + (w.get('steps') or [])) or w.get('milestone') or '',
             practice=payload))
     return out
 

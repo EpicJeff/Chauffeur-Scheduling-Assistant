@@ -169,14 +169,46 @@ PROGRESSION_CHARS = 200
 # steps repeated twelve times was never what the plan said.
 #
 # Two is the floor because a rotation of one is a list of steps with a hat on.
+MIN_ROTATION = 2
+MAX_ROTATION = 4
+LABEL_CHARS = 40
+
 # How much of the research answer reaches shaping. Long enough to carry a
 # real curriculum's phases, short enough that it cannot crowd out the
 # instructions around it.
 ANSWER_CHARS = 4000
 
-MIN_ROTATION = 2
-MAX_ROTATION = 4
-LABEL_CHARS = 40
+# --- The ladder -----------------------------------------------------------
+# The level below a phase, and the one a real curriculum is actually made of.
+# Justin Guitar Grade 1 is about ten modules in order; Couch to 5K is nine
+# weeks of three named sessions; a state's driving curriculum is units. This
+# app modelled all of that as two to four PHASES with a flat list of steps,
+# which is why a finished plan read as "here is some stuff, go and figure out
+# how to follow it" rather than "this session, that one, then that one".
+#
+# A unit is one rung: the title the material gives it, how many sessions it
+# takes, and -- where it exists -- somewhere to actually READ it. Which of
+# those two places depends on the tier, and the split is not a convenience:
+#
+#   cited      a `url`, and only ever a page the app really read. Copying a
+#              published lesson's text into this app would be reproducing
+#              somebody's work AND blurring the exact line the three tiers
+#              exist to draw.
+#   generated  a `body`, because the app writing the session IS the generated
+#              tier, and a made-up plan pointing at a source it does not have
+#              is the one thing that tier may never do.
+#
+# Two is the floor for the same reason it is for a rotation: one rung is not a
+# ladder, it is a phase with a second name.
+MIN_UNITS = 2
+MAX_UNITS = 12
+UNIT_TITLE_CHARS = 80
+UNIT_BODY_CHARS = 600
+# How many sessions one rung may claim. Bounded because this number decides
+# pacing, and pacing is the one thing a model has never been allowed to set
+# outright -- four is a fortnight of evenings on a single lesson, which is
+# already generous for anything a household would follow.
+MAX_UNIT_SESSIONS = 4
 
 
 def _phase_text(ph: dict) -> str:
@@ -192,6 +224,10 @@ def _phase_text(ph: dict) -> str:
         if isinstance(sess, dict):
             words.append(str(sess.get('label') or ''))
             words += list(sess.get('steps') or [])
+    for unit in (ph.get('units') or []):
+        if isinstance(unit, dict):
+            words.append(str(unit.get('title') or ''))
+            words.append(str(unit.get('body') or ''))
     return ' '.join(w for w in words if w).strip()
 
 
@@ -254,6 +290,47 @@ def _clean_rotation(raw, aim: str) -> list:
         if len(out) >= MAX_ROTATION:
             break
     return out if len(out) >= MIN_ROTATION else []
+
+
+def _clean_units(raw, aim: str, urls=None, allow_body: bool = False) -> list:
+    """The lessons of a phase, in order, or nothing at all.
+
+    `urls` is the set of pages this app actually read. A unit may carry a link
+    only when it is one of them -- a plausible lesson URL is exactly the
+    "Following <a real thing>" failure this module exists to prevent, one
+    level further down and harder to spot. `allow_body` is the generated
+    tier's half of the same rule: the app may write what to do, and may never
+    point at a source it does not have.
+
+    Held to the same bar as a rotation: a rung with no title is not a rung,
+    and fewer than MIN_UNITS surviving means there was no ladder to describe.
+    """
+    out = []
+    for item in (raw or []):
+        if not isinstance(item, dict):
+            continue
+        title = _clean_line(item.get('title') or item.get('name'), aim,
+                            UNIT_TITLE_CHARS)
+        if not title:
+            continue
+        url = ''
+        for known in (urls or ()):
+            if _same_url(str(item.get('url') or '').strip().rstrip('.,)'),
+                         known):
+                url = known
+                break
+        body = (_clean_line(item.get('body'), aim, UNIT_BODY_CHARS)
+                if allow_body else '')
+        try:
+            sessions = int(item.get('sessions') or 1)
+        except (TypeError, ValueError):
+            sessions = 1
+        out.append({'n': len(out) + 1, 'title': title, 'url': url,
+                    'body': body,
+                    'sessions': max(1, min(MAX_UNIT_SESSIONS, sessions))})
+        if len(out) >= MAX_UNITS:
+            break
+    return out if len(out) >= MIN_UNITS else []
 
 
 # The line between structure and prescription, and the first cut of it was in
@@ -407,11 +484,21 @@ PHASE_SYSTEM = (
     "empty rather than inventing a rule.\n\n"
     "`rotation` is ONLY for a phase whose sessions genuinely differ from each "
     "other. If the material lays out sessions that alternate, give 2-4 with a "
-    "short label each; otherwise leave it out. Never manufacture variety."
+    "short label each; otherwise leave it out. Never manufacture variety.\n\n"
+    "`units` is the LADDER: the lessons, modules, weeks or chapters this "
+    "phase works through, IN ORDER, each with the title the material gives "
+    "it -- \"Module 3: The F chord\", \"Week 4\", \"Chapter 2\". This is the "
+    "part a person follows one session at a time, so take it from the "
+    "material and never invent a lesson that is not in it. `sessions` is how "
+    "many practice sessions that unit takes, 1-4. Give a unit's `url` ONLY "
+    "when the material shows that unit's own page; leave it empty otherwise "
+    "and never guess one. Leave `units` out entirely if the material names no "
+    "ordered lessons."
     + _PHASE_CITE + "\n\n"
     'Return STRICT JSON: {"plan_name": "", "why_this_one": "", '
     '"phases": [{"name": "", "what": "", "steps": ["", ""], '
     '"progression": "", "rotation": [{"label": "", "steps": ["", ""]}], '
+    '"units": [{"title": "", "sessions": 1, "url": ""}], '
     '"milestone": "", "cite": 1}], '
     '"runners_up": [{"cite": 2, "why_not": ""}]}'
 )
@@ -441,6 +528,12 @@ GENERATE_SYSTEM = (
     "labelled sessions with their own steps and the app will deal them onto "
     "this family's practice days. Where a session is genuinely the same thing "
     "each time, leave `rotation` out. Do not manufacture variety.\n\n"
+    "`units` is the LADDER: the lessons this phase works through IN ORDER, "
+    "each with a title and a `body` of a few sentences saying what to "
+    "actually do in that session -- enough that somebody could sit down and "
+    "follow it without looking anything up. `sessions` is how many sessions "
+    "that unit takes, 1-4. NEVER give a unit a `url`: you have no source and "
+    "a link you invented is worse than no link.\n\n"
     "You MAY say how much to repeat something: sets, reps, rounds, minutes, "
     "times per session. You may NOT put a number on external load or intake "
     "-- no pounds or kilos on a bar, no percentages of a one-rep max, no "
@@ -456,7 +549,9 @@ GENERATE_SYSTEM = (
     '"phases": [{"name": "", "what": "", '
     '"steps": ["<one concrete thing to do>", ""], '
     '"progression": "<how this session beats the last one>", '
-    '"rotation": [{"label": "", "steps": ["", ""]}], "milestone": ""}]}'
+    '"rotation": [{"label": "", "steps": ["", ""]}], '
+    '"units": [{"title": "", "sessions": 1, "body": "<what to do>"}], '
+    '"milestone": ""}]}'
 )
 
 
@@ -762,16 +857,30 @@ def _plan_name_ok(name: str, items: list, answer: str) -> bool:
     return needle in hay
 
 
-def phase_weeks(per_week: int) -> int:
+def unit_sessions(units) -> int:
+    """How many sessions a phase's ladder actually asks for."""
+    return sum(max(1, int(u.get('sessions') or 1))
+               for u in (units or []) if isinstance(u, dict))
+
+
+def phase_weeks(per_week: int, units=None) -> int:
     """How many weeks a phase takes. Computed, not asked for -- see the
     SESSIONS_PER_PHASE comment above.
+
+    With a ladder, the arithmetic finally runs over something true. Without
+    one it ran over a CONSTANT: every phase in every domain was
+    `ceil(12 / per_week)`, so at two evenings a week Lesson 1 and Lesson 4
+    were both "6w" on the card, and the number said nothing about either. It
+    was arithmetic, which was the rule, but arithmetic over a placeholder is
+    a placeholder.
 
     Public because editing a proposal's shape has to re-pace the phases it
     already has, and re-pacing by copying this arithmetic into main.py is how
     two pacing rules start disagreeing.
     """
     safe = per_week if isinstance(per_week, int) and per_week > 0 else 1
-    return max(1, math.ceil(SESSIONS_PER_PHASE / safe))
+    sessions = unit_sessions(units) or SESSIONS_PER_PHASE
+    return max(1, math.ceil(sessions / safe))
 
 
 _phase_weeks = phase_weeks
@@ -943,7 +1052,6 @@ def _phases_from(title: str, items: list, per_week: int,
     prompt = f"Aim: {title}.\n{context}\n\n{material}"
     empty = {'phases': [], 'plan_name': '', 'url': '', 'why_this_one': '',
              'runners_up': []}
-    weeks = _phase_weeks(per_week)
 
     def _ask(system):
         try:
@@ -989,15 +1097,22 @@ def _phases_from(title: str, items: list, per_week: int,
             # first session rather than asking for it twice also keeps the
             # empty-steps gate honest.
             rotation = _clean_rotation(ph.get('rotation'), title)
+            # A link only ever points at a page this app really read. The
+            # generated tier's `body` is refused here outright: a cited phase
+            # carrying the app's own prose would be the one thing the tiers
+            # exist to keep apart, wearing a citation.
+            units = _clean_units(ph.get('units'), title, urls=urls)
             steps = _clean_steps(ph.get('steps'), title) or (
                 list(rotation[0]['steps']) if rotation else [])
             out.append({'name': (ph.get('name') or f"Phase {len(out) + 1}")[:60],
-                        'weeks': weeks,
+                        'weeks': phase_weeks(per_week, units),
                         'what': (ph.get('what') or '').strip()[:400],
                         'steps': steps,
                         'progression': _clean_line(ph.get('progression'), title,
                                                    PROGRESSION_CHARS),
                         'rotation': rotation,
+                        'units': units,
+                        'unit_shift': 0,
                         'milestone': (ph.get('milestone') or '').strip()[:120],
                         'milestone_hit_at': None})
         return (out, used, payload) if out else None
@@ -1122,12 +1237,14 @@ def _generated_phases(title: str, per_week: int, api_key: str,
                 and (again.get('phases') or []):
             data = again
 
-    weeks = _phase_weeks(per_week)
     out, dropped, foreign, empty = [], 0, 0, 0
     for ph in (data.get('phases') or [])[:4]:
         if not isinstance(ph, dict):
             continue
         rotation = _clean_rotation(ph.get('rotation'), title)
+        # No `urls` at all, so any link the model produced is dropped: a made
+        # plan has no source and may never appear to have one.
+        units = _clean_units(ph.get('units'), title, allow_body=True)
         clean = {'name': (ph.get('name') or f"Phase {len(out) + 1}")[:60],
                  'what': (ph.get('what') or '').strip()[:400],
                  'steps': (_clean_steps(ph.get('steps'), title)
@@ -1135,6 +1252,8 @@ def _generated_phases(title: str, per_week: int, api_key: str,
                  'progression': _clean_line(ph.get('progression'), title,
                                             PROGRESSION_CHARS),
                  'rotation': rotation,
+                 'units': units,
+                 'unit_shift': 0,
                  'milestone': (ph.get('milestone') or '').strip()[:120]}
         if not clean['what']:
             continue
@@ -1152,7 +1271,7 @@ def _generated_phases(title: str, per_week: int, api_key: str,
         if _looks_foreign(_phase_text(clean), title):
             foreign += 1
             continue
-        clean['weeks'] = weeks
+        clean['weeks'] = phase_weeks(per_week, units)
         clean['milestone_hit_at'] = None
         out.append(clean)
     if not out:

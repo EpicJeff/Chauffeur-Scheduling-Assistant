@@ -1325,6 +1325,19 @@
                     </div>`).join('')}
                 </div>` : (steps.length ? `
                 <ul class="mt-1.5 space-y-0.5">${stepLines(steps)}</ul>` : '');
+            // Which rung of the ladder, from the server -- re-deriving the
+            // walk here would be a second implementation of it.
+            const unit = ((phase && phase.units) || [])
+                .find(u => u.n === p.current_unit);
+            const unitRow = unit ? `
+                <div class="mt-2 rounded-lg bg-gray-950/60 border border-gray-800 px-2.5 py-1.5">
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="text-xs font-bold text-gray-200 min-w-0">${mfEscape(unit.title)}</div>
+                        ${unit.url ? `<a href="${mfEscape(unit.url)}" target="_blank" rel="noopener"
+                            class="text-[11px] font-bold text-blue-400 underline underline-offset-2 shrink-0">Open the lesson</a>` : ''}
+                    </div>
+                    ${unit.body ? `<div class="text-[11px] text-gray-400 mt-1">${mfEscape(unit.body)}</div>` : ''}
+                </div>` : '';
             // How this session beats the last one. "Done when" says the phase
             // is over; without this a phase is the same evening on repeat.
             const progressionRow = (phase && phase.progression) ? `
@@ -1371,6 +1384,7 @@
                     ${madeChip}
                 </div>
                 ${what ? `<div class="text-xs text-gray-400 mt-1">${what}</div>` : ''}
+                ${unitRow}
                 ${stepList}
                 ${progressionRow}
                 <div class="text-[11px] text-gray-500 mt-1.5">${mfEscape(programCountPhrase(p))}</div>
@@ -1499,6 +1513,29 @@
                 .sort((a, b) => at(a.time_start) - at(b.time_start))[0] || null;
         }
 
+        // Which lesson tonight is, and the whole point of having a ladder:
+        // somewhere to actually READ it. A cited plan links out to the page
+        // the app really read; a plan the app wrote carries its own words,
+        // because a made-up plan pointing at a source it does not have is the
+        // one thing that tier may never do.
+        function practiceLesson(w) {
+            if (!w.unit_title) return '';
+            const link = w.unit_url
+                ? `<a href="${mfEscape(w.unit_url)}" target="_blank" rel="noopener"
+                      class="text-[11px] font-bold text-blue-300 underline underline-offset-2 shrink-0">Open the lesson</a>`
+                : '';
+            const body = w.unit_body
+                ? `<div class="text-xs text-gray-200 mt-1">${mfEscape(w.unit_body)}</div>` : '';
+            return `
+                <div class="mt-2 rounded-lg bg-teal-950/40 border border-teal-800/60 px-2.5 py-1.5">
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="text-xs font-bold text-teal-100 min-w-0">${mfEscape(w.unit_title)}</div>
+                        ${link}
+                    </div>
+                    ${body}
+                </div>`;
+        }
+
         function renderPracticeNow(w) {
             if (!w) return '';
             const steps = (w.steps || []).slice(0, 8);
@@ -1517,6 +1554,7 @@
                     ${w.phase_name ? `<span class="text-[11px] text-teal-400/80 font-semibold">${mfEscape(w.phase_name)}</span>` : ''}
                     ${w.session_label ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300">${mfEscape(w.session_label)}</span>` : ''}
                 </div>` : ''}
+                ${practiceLesson(w)}
                 ${list}
                 ${w.progression ? `<div class="text-[11px] text-teal-400/70 mt-1.5">Next time: ${mfEscape(w.progression)}</div>` : ''}
                 <button onclick="addProgramSession('${w.program_id}')"
@@ -8121,6 +8159,7 @@
                             </div>
                             ${w.logged ? '<span class="text-[10px] font-bold text-teal-300 shrink-0">✓ logged</span>' : ''}
                         </div>
+                        ${w.unit_title ? `<div class="mt-1.5 ml-8 text-[11px] font-bold text-teal-200">${mfEscape(w.unit_title)}</div>` : ''}
                         ${steps.length ? `<ul class="mt-2 ml-8 space-y-0.5">${steps.map(st =>
                             `<li class="text-[11px] text-gray-300 flex gap-1.5"><span class="text-gray-600 shrink-0">·</span><span>${mfEscape(st)}</span></li>`).join('')}</ul>` : ''}
                     </div>`;

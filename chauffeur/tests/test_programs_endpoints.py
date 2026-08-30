@@ -41,6 +41,7 @@ def scenario_the_endpoints_exist():
               '/api/programs/{program_id}/session',
               '/api/programs/{program_id}/milestone',
               '/api/programs/{program_id}/pause',
+              '/api/programs/{program_id}/unit',
               '/api/programs/{program_id}/drop'):
         check(p in paths, f"{p} must be reachable by hand")
 

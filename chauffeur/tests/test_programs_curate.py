@@ -1202,6 +1202,114 @@ def scenario_the_answer_is_material_and_never_a_source():
         programs_curate.storage.get_settings = real_settings
 
 
+def scenario_a_cited_lesson_links_out_and_never_carries_our_words():
+    """The split that makes a ladder honest.
+
+    A cited plan may point at the lesson; it may not reproduce it. Copying a
+    published lesson's text into this app would be somebody else's work
+    republished AND the exact blurring the three tiers exist to prevent -- so
+    `body` is refused outright on this path, and a `url` survives only when it
+    is a page the app really read.
+    """
+    units = programs_curate._clean_units(
+        [{'title': 'Module 1: Your first chords', 'sessions': 2,
+          'url': 'https://justinguitar.example/grade1',
+          'body': 'Place your fingers like this...'},
+         {'title': 'Module 2: One minute changes',
+          'url': 'https://a-page-we-never-read.example/lesson2'}],
+        'Learn Guitar', urls={'https://justinguitar.example/grade1'})
+    check(len(units) == 2, f"both rungs are real, got {units}")
+    check(units[0]['url'] == 'https://justinguitar.example/grade1',
+          f"a page we read is linkable, got {units[0]}")
+    check(units[0]['body'] == '',
+          f"and a cited rung never carries our prose, got {units[0]}")
+    check(units[1]['url'] == '',
+          f"a lesson URL nobody fetched is a guess, got {units[1]}")
+
+
+def scenario_a_made_lesson_carries_words_and_never_a_link():
+    """The other half. The app writing the session IS the generated tier; a
+    made-up plan appearing to have a source is the one thing it may not do."""
+    units = programs_curate._clean_units(
+        [{'title': 'Session 1: The cascade', 'body': 'Two balls, twenty throws.',
+          'url': 'https://plausible-but-invented.example/1'},
+         {'title': 'Session 2: Adding the third',
+          'body': 'Three balls, slow.'}],
+        'learn to juggle', allow_body=True)
+    check([u['url'] for u in units] == ['', ''],
+          f"no made plan gets to look sourced, got {units}")
+    check(units[0]['body'] == 'Two balls, twenty throws.',
+          f"and it says what to do, got {units[0]}")
+
+
+def scenario_a_ladder_of_one_is_not_a_ladder():
+    check(programs_curate._clean_units(
+        [{'title': 'The only lesson'}], 'x') == [],
+        "one rung is a phase with a second name")
+    check(programs_curate._clean_units(
+        [{'title': 'One'}, {'body': 'no title'}], 'x') == [],
+        "and a rung with no title is not a rung")
+    loaded = programs_curate._clean_units(
+        [{'title': 'Week 1: squat 185 lbs'}, {'title': 'Week 2'}], 'x')
+    check(len(loaded) == 1 or loaded == [],
+          f"a title carrying a load goes through the same screen, got {loaded}")
+
+
+def scenario_pacing_finally_runs_over_something_true():
+    """`ceil(12 / per_week)` gave every phase in every domain the same length
+    -- at two evenings a week Lesson 1 and Lesson 4 were both "6w", and the
+    number said nothing about either. Still arithmetic; now arithmetic over
+    the ladder."""
+    units = [{'title': 'A', 'sessions': 2}, {'title': 'B', 'sessions': 1},
+             {'title': 'C', 'sessions': 1}]
+    units = programs_curate._clean_units(units, 'x')
+    check(programs_curate.phase_weeks(2, units) == 2,
+          f"four sessions at two a week is two weeks, got "
+          f"{programs_curate.phase_weeks(2, units)}")
+    check(programs_curate.phase_weeks(2) == 6,
+          "and a phase with no ladder keeps the old constant")
+    check(programs_curate.unit_sessions(units) == 4,
+          "the ladder says how many sessions it needs")
+
+
+def scenario_a_cited_plan_comes_back_with_its_lessons():
+    """End to end on the route a household actually uses."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    real_settings = programs_curate.storage.get_settings
+    seen = []
+    programs_curate.storage.get_settings = _settings()
+    programs_curate.web.research = _fake_grounded(
+        [{'title': 'Justin Guitar Grade 1',
+          'url': 'https://justinguitar.example/grade1'}],
+        answer='Grade 1 runs from Module 1 (first chords) to Module 3.')
+    programs_curate._pool_call = _shaping_pool(
+        {'plan_name': 'Justin Guitar', 'why_this_one': 'The standard course',
+         'phases': [{'name': 'Grade 1', 'what': 'Open chords', 'cite': 1,
+                     'steps': ['One minute changes'],
+                     'units': [
+                         {'title': 'Module 1: First chords', 'sessions': 2,
+                          'url': 'https://justinguitar.example/grade1'},
+                         {'title': 'Module 2: One minute changes'},
+                         {'title': 'Module 3: Your first song'}],
+                     'milestone': 'G-C-D without looking'}]},
+        {'phases': []}, seen)
+    try:
+        out = programs_curate.curate('Learn Guitar',
+                                     {'sessions_per_week': 2, 'minutes': 25})
+        ph = out['phases'][0]
+        check(len(ph['units']) == 3, f"the ladder survives, got {ph}")
+        check(ph['weeks'] == 2,
+              f"and paces the phase -- four sessions at two a week, got "
+              f"{ph['weeks']}")
+        check(ph['units'][0]['url'].endswith('grade1'),
+              f"with the page we read, got {ph['units'][0]}")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+        programs_curate.storage.get_settings = real_settings
+
+
 if __name__ == '__main__':
     scenario_a_body_aim_is_refused_before_any_research()
     scenario_a_behaviour_aim_passes_the_screen()
@@ -1243,4 +1351,9 @@ if __name__ == '__main__':
     scenario_the_prompt_never_asks_for_the_bracket_form()
     scenario_shaping_is_given_what_the_pages_said_not_only_their_names()
     scenario_the_answer_is_material_and_never_a_source()
+    scenario_a_cited_lesson_links_out_and_never_carries_our_words()
+    scenario_a_made_lesson_carries_words_and_never_a_link()
+    scenario_a_ladder_of_one_is_not_a_ladder()
+    scenario_pacing_finally_runs_over_something_true()
+    scenario_a_cited_plan_comes_back_with_its_lessons()
     print("test_programs_curate OK")

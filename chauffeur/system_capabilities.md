@@ -6787,6 +6787,70 @@ where the material names a real published program and describes its stages,
 that IS a phased plan, and an empty list is only for material describing no
 program at all.
 
+**A phase is a bucket; a curriculum is a ladder** (v2.437.0 —
+`phases[].units`, `phases[].unit_shift`, `programs.unit_for`,
+`POST /api/programs/{id}/unit`). Even with steps, a progression rule and a
+rotation, a finished plan still read as "here is some stuff, go and figure out
+how to follow it". Two reasons, and both were structural.
+
+The first was pacing. `phase_weeks()` was `ceil(SESSIONS_PER_PHASE /
+per_week)` with `SESSIONS_PER_PHASE` a flat 12, so every phase in every domain
+came out the same length — at two evenings a week, Lesson 1 and Lesson 4 both
+read "6w" and the number described neither. It was arithmetic, which was the
+rule, but arithmetic over a constant is a placeholder.
+
+The second was granularity. A program was modelled as 2–4 phases; a real
+curriculum is N ordered units — Justin Guitar Grade 1 is about ten modules,
+Couch to 5K is nine weeks of three named sessions, a driving curriculum is
+units. Collapsing that ladder into three buckets and a flat step list threw
+away the one structure a person follows one session at a time.
+
+`phases[].units` is that ladder: `{n, title, url, body, sessions}`, in order,
+2–12 rungs (one rung is a phase with a second name). **Where you READ it
+depends on the tier, and the split is not a convenience:**
+
+- **cited** — a `url`, and only ever a page `_material` actually read;
+  `_clean_units` drops any other link and refuses `body` outright. Copying a
+  published lesson's text into this app would republish somebody's work AND
+  blur the exact line the three tiers exist to draw.
+- **generated** — a `body` of a few sentences and never a `url`, because a
+  made-up plan appearing to have a source is the one thing that tier may not
+  do.
+
+Pacing now runs over the ladder: `phase_weeks(per_week, units)` is
+`ceil(sum(unit.sessions) / per_week)`, so Grade 1 and Grade 2 come out
+different lengths because they contain different amounts. Still computed,
+still never a week count out of the model — `sessions` per unit is clamped to
+1–4. A phase with no ladder keeps the old constant, so everything that shipped
+before this is untouched.
+
+**Which rung a session lands on is derived from sessions LOGGED, not from
+dates** (`programs.unit_for`) — and that is deliberately the opposite of the
+rotation rule beside it. A rotation deals by date because its sessions are
+interchangeable and advancing on completion would rewrite Friday because
+nobody practised on Wednesday. A ladder is cumulative: nobody is on Lesson 8
+having done none of the first seven. `len(sessions)` is already one of the
+three derivable numbers, it only goes up, and nothing here marks a miss.
+Running past the last rung sits on it rather than falling off — a milestone
+is what ends a phase, not arithmetic.
+
+It renders as a MARKED rung and never a count. "3 of 10" is a completion
+percentage with the division left undone, which is one of the six.
+
+`unit_shift` is the hand on the ladder — "another session on this" and "move
+on", `POST /api/programs/{id}/unit`, ownership-gated like every other program
+write. A lesson that needs a second evening and two lessons done in one
+sitting are both ordinary and neither is visible to this app. It is a
+bookmark: it moves both ways, counts nothing, and records nothing about how
+anything went, which is what keeps it out of the six.
+
+Surfaces: the practice-now card leads with the lesson and its link or its
+text, the PWA program card carries the same rung (`current_unit` comes from
+the server, so the walk has one implementation), the Programs page draws the
+whole ladder with the current rung marked and the two hand controls, the
+family card names the lesson, and the calendar event's description leads with
+it.
+
 **A rotation is dealt onto the evenings the family actually has**
 (v2.436.0 — `programs.practice_windows`, `phase_started_on`,
 `_occurrences_before`). This is the half no plan found on the web can do,

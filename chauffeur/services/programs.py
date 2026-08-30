@@ -581,6 +581,65 @@ def phase_started_on(program: dict) -> datetime.date:
         return datetime.date.today()
 
 
+def sessions_since(program: dict, anchor: datetime.date) -> int:
+    """How many sessions have been logged since a date. Only ever counts up.
+
+    A session with no timestamp is counted: `append_program_session` stamps
+    every entry, so an unstamped one is old data rather than a session that
+    did not happen, and dropping it would silently walk the ladder backwards.
+    """
+    n = 0
+    for entry in (program.get('sessions') or []):
+        ts = entry.get('ts')
+        if ts is None:
+            n += 1
+            continue
+        try:
+            if datetime.datetime.fromtimestamp(float(ts)).date() >= anchor:
+                n += 1
+        except (TypeError, ValueError, OSError, OverflowError):
+            n += 1
+    return n
+
+
+def unit_for(program: dict, phase: dict) -> dict:
+    """Which rung of the ladder this session is on, or None.
+
+    Deliberately NOT the rule the rotation uses. A rotation deals by DATE,
+    because its sessions are interchangeable and advancing on completion
+    would rewrite Friday because nobody practised on Wednesday. A ladder is
+    the opposite: lessons are cumulative, and nobody is on Lesson 8 having
+    done none of the first seven. So this walks the units by the sessions
+    actually LOGGED since the phase began.
+
+    That stays inside the six progress rules rather than sneaking around
+    them: `len(sessions)` is already one of the three derivable numbers, it
+    only goes up, and nothing here marks or counts a miss. What it must never
+    become is "3 of 10", which is a completion percentage with the division
+    left undone -- so this returns the rung, and no total.
+
+    `unit_shift` is the hand on the ladder: a person who needs another
+    session on this lesson, or who did two in one evening, says so and the
+    pointer moves. It is a bookmark, not a record of anything.
+    """
+    units = [u for u in (phase.get('units') or []) if isinstance(u, dict)]
+    if not units:
+        return None
+    done = sessions_since(program, phase_started_on(program))
+    index, seen = len(units) - 1, 0
+    for i, unit in enumerate(units):
+        seen += max(1, int(unit.get('sessions') or 1))
+        if done < seen:
+            index = i
+            break
+    try:
+        index += int(phase.get('unit_shift') or 0)
+    except (TypeError, ValueError):
+        pass
+    index = max(0, min(len(units) - 1, index))
+    return {**units[index], 'index': index}
+
+
 def _occurrences_before(days, anchor: datetime.date,
                         day: datetime.date) -> int:
     """How many times a weekly window has come round between two dates.
@@ -628,6 +687,7 @@ def practice_windows(start: datetime.date, end: datetime.date,
             # commitments outright, and a proposal has never claimed any.
             continue
         phase = progress(row).get('phase') or {}
+        unit = unit_for(row, phase) or {}
         rotation = [s for s in (phase.get('rotation') or [])
                     if isinstance(s, dict) and s.get('steps')]
         member = members.get(row.get('member_id')) or {}
@@ -669,6 +729,12 @@ def practice_windows(start: datetime.date, end: datetime.date,
                 'time_start': pc.get('time_start'),
                 'time_end': pc.get('time_end'),
                 'phase_name': phase.get('name') or '',
+                # Which lesson this evening is, and where to actually read it
+                # -- a link for a cited plan, the app's own words for one it
+                # wrote. Never both, and never a link it does not have.
+                'unit_title': unit.get('title') or '',
+                'unit_url': unit.get('url') or '',
+                'unit_body': unit.get('body') or '',
                 'session_label': (session or {}).get('label') or '',
                 'steps': list((session or phase).get('steps') or []),
                 'progression': phase.get('progression') or '',

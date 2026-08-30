@@ -318,6 +318,40 @@
                                                         </div>
                                                     </template>
                                                 </div>
+                                                <!-- The ladder. A phase used to be a bucket of
+                                                     weeks with a flat list in it, which is not how
+                                                     any curriculum is organised: real ones are
+                                                     lessons in order, and a person follows one per
+                                                     session. The current rung is MARKED, never
+                                                     counted -- "3 of 10" is a completion
+                                                     percentage with the division left undone, and
+                                                     that is one of the six. -->
+                                                <div class="mt-1.5 space-y-1" x-show="(ph.units || []).length">
+                                                    <template x-for="u in (ph.units || [])" :key="u.n">
+                                                        <div class="flex items-start gap-1.5 text-[11px]">
+                                                            <span class="shrink-0"
+                                                                :class="onThisRung(p, ph, u) ? 'text-teal-400' : 'text-gray-600'"
+                                                                x-text="onThisRung(p, ph, u) ? '▸' : '·'"></span>
+                                                            <div class="min-w-0">
+                                                                <span :class="onThisRung(p, ph, u) ? 'text-teal-300 font-semibold' : 'text-gray-300'"
+                                                                    x-text="u.title"></span>
+                                                                <a x-show="u.url" :href="u.url" target="_blank" rel="noopener"
+                                                                    class="ml-1.5 text-blue-400 underline underline-offset-2">Open the lesson</a>
+                                                                <div x-show="u.body" class="text-gray-400 mt-0.5" x-text="u.body"></div>
+                                                            </div>
+                                                        </div>
+                                                    </template>
+                                                    <div class="flex gap-2 pt-0.5" x-show="onThisPhase(p, ph) && p.state === 'active' && canAct(p)">
+                                                        <button @click="moveUnit(p, 'stay')"
+                                                            class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">
+                                                            Another session on this
+                                                        </button>
+                                                        <button @click="moveUnit(p, 'next')"
+                                                            class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">
+                                                            Move on
+                                                        </button>
+                                                    </div>
+                                                </div>
                                                 <!-- How one session beats the last one inside this
                                                      phase. The counterpart to "Done when": that
                                                      says when the phase ends, this says what makes
@@ -809,6 +843,26 @@
                     this.editOpen[p.id] = true;
                 },
 
+                // Which rung, straight from the server. Re-deriving it here
+                // would mean a second implementation of a walk that depends
+                // on when the phase began and on every session logged since,
+                // and two implementations of that drift.
+                onThisPhase(p, ph) {
+                    return !!ph.name && ph.name === p.current_phase;
+                },
+
+                onThisRung(p, ph, u) {
+                    return this.onThisPhase(p, ph) && u.n === p.current_unit;
+                },
+
+                // The hand on the ladder: a lesson that needs another evening,
+                // or two done in one sitting. Both are ordinary and neither is
+                // visible to the app.
+                async moveUnit(p, direction) {
+                    await this.patchProgram(p, { direction },
+                        "Couldn't move to that lesson.", 'unit');
+                },
+
                 toggleEditDay(p, d) {
                     const e = this.edits[p.id];
                     if (!e) return;
@@ -861,10 +915,10 @@
                 // dropped connection, which is the sentence that makes a bug
                 // unreportable: nobody can tell you what broke because the
                 // screen never knew either.
-                async patchProgram(p, body, failure) {
+                async patchProgram(p, body, failure, path) {
                     this.proposing = true;
                     try {
-                        const r = await fetch(this.apiBase + `api/programs/${p.id}/edit`, {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/${path || 'edit'}`, {
                             method: 'POST', headers: this.authHeaders(),
                             body: JSON.stringify({ member_id: this.myId || null, ...body })
                         });

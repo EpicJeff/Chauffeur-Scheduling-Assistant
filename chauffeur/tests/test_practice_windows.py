@@ -419,6 +419,108 @@ def scenario_a_window_carries_how_to_beat_the_last_one():
           f"it reaches the window, got {w}")
 
 
+_LADDER = [{'n': 1, 'title': 'Module 1', 'sessions': 2, 'url': '', 'body': ''},
+           {'n': 2, 'title': 'Module 2', 'sessions': 1, 'url': '', 'body': ''},
+           {'n': 3, 'title': 'Module 3', 'sessions': 1,
+            'url': 'https://justinguitar.example/m3', 'body': ''}]
+
+
+def _laddered(units=None, member_id='mom'):
+    anchor = _monday()
+    cid = storage.add_protected_commitment({
+        'id': 'c1', 'member_id': member_id, 'title': 'Guitar',
+        'days_of_week': [0, 2, 4], 'time_start': '19:00',
+        'time_end': '19:30', 'active': True})
+    pid = storage.add_program({
+        'member_id': member_id, 'title': 'Guitar', 'state': 'active',
+        'phases': [{'name': 'Grade 1', 'weeks': 2, 'what': 'Open chords',
+                    'steps': ['One minute changes'],
+                    'units': list(units if units is not None else _LADDER),
+                    'unit_shift': 0, 'milestone': 'G-C-D',
+                    'milestone_hit_at': None}],
+        'baseline': {'start_date': anchor.isoformat(), 'target_date': None,
+                     'target_event_id': None, 'rebaselined_at': None,
+                     'rebaselines': 0},
+        'emissions': {'commitment_ids': [cid], 'thread_ids': [],
+                      'event_ids': []}})
+    return pid
+
+
+def _current(pid):
+    row = storage.get_program(pid)
+    return prog.unit_for(row, prog.progress(row).get('phase') or {})
+
+
+def scenario_a_ladder_climbs_on_sessions_not_on_dates():
+    """The rotation deals by DATE because its sessions are interchangeable.
+    A ladder is the opposite -- lessons are cumulative, and nobody is on
+    Lesson 8 having done none of the first seven -- so it walks on what was
+    actually logged."""
+    _reset()
+    pid = _laddered()
+    check(_current(pid)['title'] == 'Module 1',
+          "nothing logged yet, so the first rung")
+    storage.append_program_session(pid, {'minutes': 30, 'source': 'added'})
+    check(_current(pid)['title'] == 'Module 1',
+          "Module 1 takes two sessions, so one does not clear it")
+    storage.append_program_session(pid, {'minutes': 30, 'source': 'added'})
+    check(_current(pid)['title'] == 'Module 2', "two does")
+    for _ in range(9):
+        storage.append_program_session(pid, {'minutes': 30, 'source': 'added'})
+    check(_current(pid)['title'] == 'Module 3',
+          "and running past the end sits on the last rung rather than falling "
+          "off it -- the milestone is what ends a phase, not arithmetic")
+
+
+def scenario_the_ladder_has_a_hand_on_it():
+    """A lesson that needs another evening, and two done in one sitting, are
+    both ordinary and neither is visible to this app."""
+    _reset()
+    import main
+    pid = _laddered()
+    storage.append_program_session(pid, {'minutes': 30, 'source': 'added'})
+    storage.append_program_session(pid, {'minutes': 30, 'source': 'added'})
+    check(_current(pid)['title'] == 'Module 2', "derived to the second rung")
+    res = main.move_program_unit(pid, body={'member_id': 'mom',
+                                            'direction': 'stay'}, request=None)
+    check(res.get('status') == 'success', f"got {res}")
+    check(_current(pid)['title'] == 'Module 1', "back a rung by hand")
+    main.move_program_unit(pid, body={'member_id': 'mom',
+                                      'direction': 'next'}, request=None)
+    main.move_program_unit(pid, body={'member_id': 'mom',
+                                      'direction': 'next'}, request=None)
+    check(_current(pid)['title'] == 'Module 3', "and forward again")
+    row = storage.get_program(pid)
+    check('missed' not in str(row) and 'streak' not in str(row),
+          "the bookmark records nothing about how it went")
+
+
+def scenario_a_window_says_which_lesson_and_where_to_read_it():
+    _reset()
+    monday = _monday()
+    pid = _laddered()
+    for _ in range(3):
+        storage.append_program_session(pid, {'minutes': 30, 'source': 'added'})
+    w = prog.practice_windows(monday, monday)[0]
+    check(w['unit_title'] == 'Module 3', f"the evening names its lesson, got {w}")
+    check(w['unit_url'] == 'https://justinguitar.example/m3',
+          f"and links to the page the app read, got {w}")
+
+
+def scenario_a_plan_with_no_ladder_is_untouched():
+    """Most of what shipped before this has no units, and must keep working
+    exactly as it did."""
+    _reset()
+    today = datetime.date.today()
+    pid, _ = _program()
+    row = storage.get_program(pid)
+    check(prog.unit_for(row, row['phases'][0]) is None,
+          "no ladder, no rung")
+    w = prog.practice_windows(today, today)[0]
+    check(w['unit_title'] == '' and w['unit_url'] == '',
+          f"and the window says nothing about one, got {w}")
+
+
 if __name__ == '__main__':
     scenario_an_approved_window_has_a_date_a_time_and_the_session()
     scenario_only_a_live_program_holds_time()
@@ -440,4 +542,8 @@ if __name__ == '__main__':
     scenario_a_phase_with_one_kind_of_session_is_untouched()
     scenario_the_rotation_restarts_where_the_phase_did()
     scenario_a_window_carries_how_to_beat_the_last_one()
+    scenario_a_ladder_climbs_on_sessions_not_on_dates()
+    scenario_the_ladder_has_a_hand_on_it()
+    scenario_a_window_says_which_lesson_and_where_to_read_it()
+    scenario_a_plan_with_no_ladder_is_untouched()
     print("test_practice_windows OK")

@@ -732,6 +732,14 @@ class Program(BaseModel):
     # phase whose sessions differ from each other (empty where they do not).
     # Both are content, not record: nothing here counts what happened, which
     # is what keeps the rotation from becoming a streak by another name.
+    #
+    # `units` is the ladder a real curriculum is actually made of -- the
+    # lessons, modules or chapters in order, each with a title, how many
+    # sessions it takes, and somewhere to read it: a `url` for a cited plan
+    # (only ever a page the app really read) or a `body` for one the app
+    # wrote. Never both. `unit_shift` is the hand on that ladder, a bookmark
+    # a person moves either way; it counts nothing and records nothing, which
+    # is what keeps it out of the six.
     phases: List[Dict[str, Any]] = Field(default_factory=list)
     # What this person can already do, in their own words, and it is an INPUT
     # to curation rather than a measurement of them. A plan written for a
