@@ -1697,6 +1697,29 @@
             });
         }
 
+        // The same answer the wall's dialog gives for a background trip, in
+        // the phone's own sheet -- one wording, wherever it is tapped. No way
+        // in to the trip EDITOR from here: this is a read, and the editor is
+        // a page a person opens on purpose.
+        function openTripSheet(key) {
+            const t = _sessionSheets[key] || {};
+            const span = t.start
+                ? new Date(t.start).toLocaleDateString(undefined,
+                    { weekday: 'long', month: 'long', day: 'numeric' })
+                : '';
+            _pwaModal(`
+                <div class="text-[11px] font-bold uppercase tracking-widest text-blue-300">✈️ Trip</div>
+                <div class="text-gray-100 font-bold text-lg mt-0.5">${mfEscape(t.title || 'Trip')}</div>
+                ${span ? `<div class="text-xs text-gray-400 mt-0.5">${mfEscape(span)}</div>` : ''}
+                <div class="text-sm text-gray-300 mt-3">Everybody on it is away, so the schedule leaves their events alone while it runs.</div>
+                <div class="flex justify-end mt-5">
+                    <button data-close class="px-4 py-2.5 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Close</button>
+                </div>`, (overlay, close) => {
+                overlay.querySelector('[data-close]').onclick = close;
+                overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+            });
+        }
+
         function renderPracticeNow(w) {
             if (!w) return '';
             const steps = (w.steps || []).slice(0, 8);
@@ -8540,8 +8563,13 @@
             }
 
             if (card.isTrip) {
+                // Tappable like every other row here. It was the last card in
+                // this view that answered nothing, and a background trip is
+                // exactly the one whose MEANING a person cannot infer from
+                // its title -- it is why everybody's events went quiet.
                 return `
-                    <div class="mb-3 rounded-xl border border-blue-500/40 bg-blue-900/20 px-4 py-3 flex items-center gap-3">
+                    <div onclick="openTripSheet('${sessionKey({ title: card.title, start: card.start, end: card.end })}')"
+                        class="mb-3 rounded-xl border border-blue-500/40 bg-blue-900/20 px-4 py-3 flex items-center gap-3 cursor-pointer active:bg-blue-900/30">
                         <span class="text-xl">✈️</span>
                         <div class="flex-1 min-w-0">
                             <div class="text-blue-200 font-bold leading-tight truncate">${card.title}</div>

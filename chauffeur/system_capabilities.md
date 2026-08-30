@@ -7031,6 +7031,40 @@ unfinishable. `Done` becomes `Done — <name>` on somebody else's. A sibling
 still gets no button: for them the server really would refuse, and offering a
 tap that 403s is worse than offering none.
 
+**One tap, one answer** (v2.441.0 — `_typedDetailsHtml`, `tripLinks`).
+Three surfaces gave three different answers to the same tap: the PWA Family
+tab opened the session sheet for a practice window, the Family Day card
+opened a generic event dialog for the same window, and a trip opened the trip
+EDITOR. The shared dialog already knew about kinds — a practice window got its
+own driver line, an errand its own banner — but the BODY was the same four
+fields for everything, so a session read as an event with a funny title.
+
+`_typedDetailsHtml(props)` fills one new container with the kind's own terms:
+a practice window gets its session label, the lesson (link for a cited plan,
+the app's own words for one it wrote), the steps as a list, the progression
+rule and the milestone; a trip gets what a background trip DOES to the week,
+which is the thing a reader cannot infer from its title; an errand says it is
+fitted around the driving rather than set by hand. Every surface that opens
+this dialog — the calendar page, its kiosk, the board's calendar card, the
+Family Day card — now answers identically, because they all call one builder.
+A practice window's flat `description` (its steps joined with dots, for
+surfaces that can draw only one line) is suppressed there, having been said
+properly above.
+
+**And a wall can no longer walk into the trip editor.** `_onEventTap` sent any
+trip tap to `props.tripUrl` for any host that had turned `details` on — which
+includes a board card, where the person tapping is whoever walked past and the
+page they land on can rewrite the household's holiday. `details` means "say
+what this is" and was quietly also granting "and let them change it". The link
+is now `tripLinks`, default false, held only by the calendar page and dropped
+in its own kiosk mode, the same way that page already drops `onConfigure`.
+Everywhere else a trip answers in the dialog like every other kind of thing.
+
+The phone matches: the Family tab's trip card was the last row there that
+opened nothing, and it now opens a sheet saying the same sentence in the same
+words — with no way into the editor, because that is a page a person opens on
+purpose.
+
 **A practice window is visible, announced, and carries the session**
 (v2.435.5 — `programs.practice_windows`, `GET /api/practice-windows`). What
 shipped before this was an arrangement one person had to remember: approving a

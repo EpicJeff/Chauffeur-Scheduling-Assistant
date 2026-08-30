@@ -419,6 +419,18 @@ body.ha-theme #simple-event-modal .glass-panel {
                     </div>
                 </div>
 
+                <!-- What KIND of thing this is, answered in its own terms.
+                     The dialog knew about kinds already -- a practice window
+                     got its own driver line, an errand its own banner -- but
+                     the body was the same four fields for everything, so a
+                     practice session and a soccer game read identically and
+                     a trip did not open this dialog at all. One container,
+                     filled by `_typedDetailsHtml`, so every surface that
+                     opens this dialog answers a tap the same way. -->
+                <div id="modal-typed-container" class="hidden text-gray-300 bg-white/5 rounded-xl p-4 border border-white/5">
+                    <div id="modal-typed" class="text-sm"></div>
+                </div>
+
                 <!-- Description -->
                 <div id="modal-description-container" class="flex items-start text-gray-300 bg-white/5 rounded-xl p-4 border border-white/5">
                     <div class="bg-white/10 p-2 rounded-lg mr-3">
@@ -1117,8 +1129,73 @@ function _onEventTap(inst, evObj) {
     if (inst.opts.onEventClick) return inst.opts.onEventClick(evObj);
     if (!inst.opts.details) return;
     const props = evObj.extendedProps || {};
-    if (props.isTrip) { window.location.href = props.tripUrl; return; }
+    // A trip used to navigate straight to its editor from any surface that
+    // had turned `details` on -- including a wall panel, where the person
+    // tapping is whoever walked past and the page they landed on can rewrite
+    // the household's holiday. `details` means "say what this is", and it
+    // was quietly granting "and let them change it".
+    //
+    // `tripLinks` is the separate permission, and only the calendar PAGE
+    // holds it. Everywhere else a trip answers in this dialog like every
+    // other kind of thing does.
+    if (props.isTrip && inst.opts.tripLinks && props.tripUrl) {
+        window.location.href = props.tripUrl;
+        return;
+    }
     _openEventDetails(inst, evObj);
+}
+
+// What this thing IS, in the terms that thing is measured in. One builder,
+// because the complaint that produced it was that the same tap answered
+// differently depending on which surface you tapped from: a practice window
+// gave you the session on the phone's Family tab and a bare event dialog on
+// the Family Day card, and a trip gave you an editor.
+function _typedDetailsHtml(props) {
+    const row = (label, value) => value
+        ? `<div class="mt-2"><span class="text-xs font-semibold text-white/50 uppercase tracking-wider">${_agEsc(label)}</span>
+             <div class="text-white/90">${_agEsc(value)}</div></div>` : '';
+
+    if (props.isPractice) {
+        const w = props.practice || {};
+        const steps = (w.steps || []);
+        // The lesson is a LINK for a cited plan and the app's own words for
+        // one it wrote -- never both, and never a link it does not have.
+        const lesson = !w.unit_title ? '' : `
+            <div class="mt-2 rounded-lg bg-black/20 border border-white/10 px-3 py-2">
+                <div class="flex items-start justify-between gap-2">
+                    <div class="font-bold text-white">${_agEsc(w.unit_title)}</div>
+                    ${w.unit_url ? `<a href="${_agEsc(w.unit_url)}" target="_blank" rel="noopener"
+                        class="text-teal-300 underline text-xs font-bold shrink-0">Open the lesson</a>` : ''}
+                </div>
+                ${w.unit_body ? `<div class="text-white/70 text-xs mt-1">${_agEsc(w.unit_body)}</div>` : ''}
+            </div>`;
+        return `
+            <div class="text-xs font-semibold text-white/50 uppercase tracking-wider">The session</div>
+            ${w.session_label ? `<div class="font-bold text-teal-300 mt-0.5">${_agEsc(w.session_label)}</div>` : ''}
+            ${lesson}
+            ${steps.length ? `<ul class="mt-2 space-y-1">${steps.map(st =>
+                `<li class="flex gap-2 text-white/90"><span class="text-white/30">·</span><span>${_agEsc(st)}</span></li>`).join('')}</ul>` : ''}
+            ${row('Next time', w.progression)}
+            ${row('Done when', w.milestone)}`;
+    }
+
+    // A trip's own title and dates are already on the dialog above. What a
+    // reader cannot infer from those is what a background trip DOES to the
+    // week, which is the whole reason it is drawn at all. No invented fields
+    // here: nothing on a trip event carries a destination.
+    if (props.isTrip) {
+        return `
+            <div class="text-xs font-semibold text-white/50 uppercase tracking-wider">The trip</div>
+            <div class="text-white/90 mt-0.5">Everybody on it is away, so the schedule leaves their events alone while it runs.</div>`;
+    }
+
+    if (props.isErrand) {
+        return `
+            <div class="text-xs font-semibold text-white/50 uppercase tracking-wider">The errand</div>
+            <div class="text-white/90 mt-0.5">Fitted around the driving rather than set by hand — it moves when the day does.</div>
+            ${row('Where', props.location)}`;
+    }
+    return '';
 }
 
 // The shared details dialog. FullCalendar passes its EventApi, the agenda
@@ -1268,8 +1345,18 @@ function _openEventDetails(inst, evObj) {
         prepContainer.classList.add('hidden');
     }
 
+    const typedContainer = document.getElementById('modal-typed-container');
+    if (typedContainer) {
+        const typed = _typedDetailsHtml(props);
+        document.getElementById('modal-typed').innerHTML = typed;
+        typedContainer.classList.toggle('hidden', !typed);
+    }
+
     const descContainer = document.getElementById('modal-description-container');
-    if (props.description) {
+    // A practice window's description is its steps joined with dots, for the
+    // surfaces that can only show one line. Having said them properly above,
+    // saying them again as a blob is noise.
+    if (props.description && !props.isPractice) {
         descContainer.classList.remove('hidden');
         document.getElementById('modal-description').textContent = props.description;
     } else {
@@ -1337,6 +1424,10 @@ async function mountFamilyCalendar(options = {}) {
         toolbar: true,
         legend: false,
         details: false,
+        // Whether a trip tap may leave for the trip editor. Separate from
+        // `details` on purpose: a wall says what a trip is and never opens
+        // the page that can change it.
+        tripLinks: false,
         base: (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : ''),
         only: null,
         agendaDays: 7,

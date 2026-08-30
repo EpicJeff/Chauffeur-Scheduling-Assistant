@@ -381,6 +381,11 @@
                 toolbar: true,
                 legend: true,
                 details: true,
+                // The page a signed-in person opened deliberately is the one
+                // surface where a trip tap may go to the trip editor -- and
+                // NOT in kiosk mode, which is this same page hung on a wall
+                // and already gives up every other edit affordance below.
+                tripLinks: _calUrlParams.get('kiosk') !== 'true',
                 agendaDays: _agendaDaysPref,
                 carryParams: _calCarryParams,
                 // The kiosk is a display surface: no edit affordances.
