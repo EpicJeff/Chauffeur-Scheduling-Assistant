@@ -145,6 +145,73 @@ def scenario_the_feed_carries_programs_and_nothing_else():
           f"a commitment nobody's program claimed is not published, got {titles}")
 
 
+def scenario_a_practice_window_is_an_EVENT_in_the_one_feed():
+    """The correction that matters most in this arc.
+
+    The first cut fetched practice separately on each surface, which made a
+    program's claimed hour a second-class citizen of the calendar: a kid's
+    piano lesson shows up everywhere because it is an event, and an in-house
+    program showed up on the two surfaces somebody remembered to wire (and
+    the family tab, which nobody had, stayed blank). This app already has
+    three ways for an event to be drawn everywhere while the solver ignores
+    it -- `trip_suppressed`, a `skip` decision, a cancellation -- so practice
+    is the fourth, not a new idea.
+    """
+    _reset()
+    import main
+    today = datetime.date.today()
+    _program()
+    evs = main._practice_events(today.isoformat(), today.isoformat())
+    check(len(evs) == 1, f"the window is an event, got {evs}")
+    e = evs[0]
+    check(e.event_type == 'practice', f"marked as what it is, got {e.event_type}")
+    check(e.calendar_ids == [] and e.source_event_ids == [],
+          "with no calendar behind it -- nothing fetched it and nothing "
+          "writes it back")
+    check(e.practice and e.practice.get('member_name') == 'Mom',
+          f"carrying whose it is, got {e.practice}")
+    check('One minute changes' in (e.description or ''),
+          f"and the session itself, for surfaces that show a description, "
+          f"got {e.description!r}")
+    check(e.start.hour == 19 and e.end.hour == 19 and e.end.minute == 30,
+          f"at the hour it claimed, got {e.start}-{e.end}")
+
+
+def scenario_a_practice_event_never_asks_for_a_driver():
+    """It is stamped AFTER the solve, so it cannot reach it even by accident.
+    What is checkable here is the shape the skip sites key on."""
+    _reset()
+    import main
+    today = datetime.date.today()
+    _program()
+    e = main._practice_events(today.isoformat(), today.isoformat())[0]
+    check(not e.all_day, "not an all-day event -- those have their own rule")
+    check(e.location is None, "no location, so nobody is driven to it")
+    check(e.id.startswith('practice-'),
+          f"and an id no calendar event can collide with, got {e.id}")
+
+
+def scenario_prep_kits_do_not_pack_for_practice():
+    """The one derived reader that walks every cached event and would
+    otherwise try to match a kit to a session at home."""
+    _reset()
+    import main
+    from services import storage as _st
+    today = datetime.date.today()
+    _program()
+    e = main._practice_events(today.isoformat(), today.isoformat())[0]
+    _st.set_cached_schedule({'events': [{
+        'id': e.id, 'title': e.title, 'start': e.start.isoformat(),
+        'end': e.end.isoformat(), 'event_type': 'practice',
+        'calendar_ids': []}]})
+    _st.prep_kits_table.truncate()
+    _st.add_prep_kit({'id': 'k1', 'name': 'Everything', 'items': ['towel'],
+                      'match': {}})
+    out = main.prep_kit_matches()
+    check(out.get('k1') == [],
+          f"a practice window is not something to pack for, got {out}")
+
+
 def scenario_the_endpoint_is_reachable_by_hand():
     _reset()
     import main
@@ -164,5 +231,8 @@ if __name__ == '__main__':
     scenario_a_window_announces_itself_once()
     scenario_a_window_is_not_announced_early_late_or_after_it_was_logged()
     scenario_the_feed_carries_programs_and_nothing_else()
+    scenario_a_practice_window_is_an_EVENT_in_the_one_feed()
+    scenario_a_practice_event_never_asks_for_a_driver()
+    scenario_prep_kits_do_not_pack_for_practice()
     scenario_the_endpoint_is_reachable_by_hand()
     print("test_practice_windows OK")

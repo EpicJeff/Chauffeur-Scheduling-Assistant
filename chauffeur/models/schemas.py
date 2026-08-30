@@ -55,6 +55,16 @@ class Event(BaseModel):
     # persisted beyond the cache (services/arrive_by).
     arrive_by: Optional[dict] = None
     depart_after: Optional[dict] = None
+    # A practice window an approved program claimed, riding the ONE event feed
+    # as an event rather than as a parallel thing every surface had to learn
+    # about separately: {program_id, member_id, member_name, phase_name,
+    # steps, milestone, logged}. Set only on `event_type == 'practice'`, which
+    # is stamped after the solve and can therefore never reach it -- the same
+    # standing this app already gives `trip_suppressed` ("excluded from
+    # solving but still shown on the calendar"), a `skip` decision and a
+    # cancellation. Derived every refresh, never persisted, never sent to
+    # Google.
+    practice: Optional[dict] = None
     # Cancellations: this OCCURRENCE was called off — out of the solve like a
     # skip, still drawn (struck through), with the reason riding along.
     # Stamped each refresh from storage.event_cancellations

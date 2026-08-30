@@ -9238,7 +9238,7 @@ def prep_kit_matches():
     seen = {k['id']: set() for k in kits}
     events = sorted(cache.get('events', []), key=lambda e: e.get('start') or '')
     for ev in events:
-        if ev.get('event_type') == 'errand' or ev.get('trip_suppressed'):
+        if ev.get('event_type') in ('errand', 'practice') or ev.get('trip_suppressed'):
             continue
         parent_id = str(ev.get('id', ''))
         for suffix in ('_dropoff', '_pickup'):
@@ -10687,7 +10687,7 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
     for ev in sched.get('events', []):
         if not str(ev.get('start', '')).startswith(date_str):
             continue
-        if ev.get('event_type') == 'errand' or ev.get('trip_suppressed'):
+        if ev.get('event_type') in ('errand', 'practice') or ev.get('trip_suppressed'):
             continue
         ev_id = str(ev.get('id', ''))
         parent_id = ev_id  # split-leg parent: suffix stripped, instance kept
@@ -16261,6 +16261,49 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh
         import traceback
         return {"error": "Fatal Error: " + str(e), "traceback": traceback.format_exc()}
 
+def _practice_events(start_date_str=None, end_date_str=None, days=30):
+    """The household's practice windows, as events the whole app can draw.
+
+    An `Event` with `event_type='practice'` and no calendar behind it: nothing
+    fetched it from Google and nothing will write it back. It exists for the
+    length of one payload, exactly like the per-day slices a multi-day trip is
+    cut into.
+    """
+    import datetime as _dt
+    from models.schemas import Event as _Event
+    from services import programs as _prog
+    try:
+        start = (_dt.date.fromisoformat(start_date_str) if start_date_str
+                 else _dt.date.today())
+    except (ValueError, TypeError):
+        start = _dt.date.today()
+    try:
+        end = (_dt.date.fromisoformat(end_date_str) if end_date_str
+               else start + _dt.timedelta(days=int(days or 30)))
+    except (ValueError, TypeError):
+        end = start + _dt.timedelta(days=int(days or 30))
+    if end < start:
+        start, end = end, start
+
+    out = []
+    for w in _prog.practice_windows(start, end):
+        try:
+            begins = _dt.datetime.fromisoformat(f"{w['date']}T{w['time_start']}:00")
+            finishes = _dt.datetime.fromisoformat(f"{w['date']}T{w['time_end']}:00")
+        except (ValueError, TypeError):
+            continue
+        pid = f"practice-{w['program_id']}-{w['date']}-{w['time_start']}"
+        out.append(_Event(
+            id=pid, title=w['title'],
+            start=begins.astimezone(), end=finishes.astimezone(),
+            calendar_ids=[], source_event_ids=[], all_day=False,
+            event_type='practice',
+            location=None,
+            description=' · '.join(w.get('steps') or []) or w.get('milestone') or '',
+            practice=w))
+    return out
+
+
 def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_refresh=False, draft=False, ignore_overrides=False):
     from services import arrive_by as _arrive_by
     settings = storage.get_settings()
@@ -17231,6 +17274,27 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             if m_rules:
                 matched_rules[e.id] = m_rules
 
+        # Practice windows join the event feed HERE, after every assignment,
+        # rule match and duplicate group is already computed — so they cannot
+        # reach the solver even by accident, and every surface that draws an
+        # event draws them without being taught a second kind of thing.
+        #
+        # This replaces a parallel feed each surface fetched for itself, which
+        # was the wrong shape twice over: it made a program's claimed hour a
+        # second-class citizen of the calendar (a piano lesson shows on every
+        # surface; an in-house program showed on the two somebody remembered
+        # to wire), and it left the family tab blank because one of them was
+        # not wired. This app already has three ways for an event to be shown
+        # everywhere while the solver ignores it — `trip_suppressed`, a `skip`
+        # decision, a cancellation — so a fourth is not a new idea, it is the
+        # house pattern applied to the thing that was missing it.
+        try:
+            for _pe in _practice_events(start_date_str, end_date_str,
+                                        days_to_fetch):
+                all_events_for_ui[_pe.id] = _pe
+        except Exception as _pex:
+            logger.warning(f"practice windows skipped: {_pex}")
+
         data_payload = jsonable_encoder({
             "duplicate_groups": duplicate_groups,
             "events": list(all_events_for_ui.values()),
@@ -17964,7 +18028,7 @@ def _prep_by_event(events):
         for ev in events or []:
             if not isinstance(ev, dict):
                 ev = ev.dict() if hasattr(ev, 'dict') else vars(ev)
-            if ev.get('event_type') in ('errand', 'background_trip'):
+            if ev.get('event_type') in ('errand', 'background_trip', 'practice'):
                 continue
             items = prep_kits.items_for_event(ev, kits, pax)
             if items:

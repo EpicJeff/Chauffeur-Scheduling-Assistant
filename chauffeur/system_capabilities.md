@@ -6650,22 +6650,44 @@ than the id the program remembers (a window deleted by hand stops drawing at
 once), and commitments that did NOT come from a program are untouched and stay
 exactly as private as they were.
 
-Four surfaces, at the user's direction: the **PWA family day** (its own teal
-card beside the events, built where errands already join the day — practice is
-never turned into a calendar event, because an event needs a driver and a
-recurring practice event would reach the solver as work to assign rather than
-time to protect); the **wall calendar card** (shaped into the agenda's event
-form only to be drawn, through the one shared `agendaEventRow` builder, with a
-`🎯 <name>` badge and no tap target because there is no event behind it); a
-**now block** on the PWA home from 30 minutes before the window until it ends,
-carrying the steps and a Log a session button; and a **push at the start**,
-fired from the 30-second notification loop, whose body is the steps. The push
-is marked in `app_state` (`programs_practice_pushed`, pruned after 3 days) so a
+**A practice window is an EVENT, in the one feed** (v2.435.6,
+`main._practice_events`). The first cut of this fetched practice separately on
+every surface, and that was the wrong shape twice over: it made a program's
+claimed hour a second-class citizen of the calendar — a kid's piano lesson
+shows up everywhere because it IS an event, while an in-house program showed
+up on the two surfaces somebody remembered to wire — and the PWA family tab,
+which nobody had wired, stayed blank. The objection the parallel feed was
+built around ("an event needs a driver") was simply false: this app already
+has three ways for an event to be drawn everywhere while the solver ignores
+it — `trip_suppressed` ("excluded from solving but still shown on the
+calendar"), an optional `skip` decision, and a cancellation. Practice is the
+fourth, not a new idea.
+
+So `_practice_events()` builds real `Event` objects (`event_type='practice'`,
+no calendar behind them, an id no calendar event can collide with, the steps
+in `description` and the whole window in a typed `practice` field) and injects
+them into `all_events_for_ui` **after** every assignment, rule match and
+duplicate group is computed — which is what makes reaching the solver
+impossible rather than merely unlikely. Every surface built on the event feed
+then draws them with no further wiring: the wall calendar's grid and agenda
+(teal, badged `🎯 <name>`, not tappable because there is no event behind it to
+open), the PWA family day, and anything else that reads `events`. The three
+derived readers that walk every cached event and would otherwise act on one —
+prep-kit matching in both its forms, and the kit-match preview — skip
+`event_type == 'practice'` beside `errand`.
+
+Two things stay outside the feed because they are not a day's drawing: a **now
+block** on the PWA home from 30 minutes before the window until it ends,
+carrying the steps and a Log a session button, and a **push at the start**
+from the 30-second notification loop with the steps as its body. The push is
+marked in `app_state` (`programs_practice_pushed`, pruned after 3 days) so a
 restart inside the window cannot double-announce — deliberately NOT on the
 program row, which is the one document in this app that must not accumulate
 fields about how somebody is doing. Push reaches drivers only, since
-subscriptions are keyed by `driver_id`; everyone else gets the three on-screen
-surfaces.
+subscriptions are keyed by `driver_id`; everyone else gets the on-screen
+surfaces. Both read `GET /api/practice-windows`, which remains the precise
+answer to "when, and what is in it" for callers that want it without a whole
+schedule payload.
 
 The household sees the hour. That is the point rather than a leak: the
 Programs page already lists every member's programs and the wall card already

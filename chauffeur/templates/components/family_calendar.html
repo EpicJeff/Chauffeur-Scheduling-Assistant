@@ -1030,34 +1030,6 @@ async function _renderAgenda(inst) {
         if (wres.ok) (await wres.json()).forEach(w => { weather[w.date] = w; });
     } catch (e) { /* no chips */ }
 
-    // Practice windows an approved program claimed. Not calendar events and
-    // never allowed to become them — an event needs a driver, and a recurring
-    // practice event would arrive in the solver as work to assign rather than
-    // time to protect — so they are fetched separately and shaped into the
-    // agenda's own event form only to be DRAWN, by the one row builder.
-    //
-    // They belong on the wall precisely because the alternative is what
-    // shipped: an hour reserved in the solver that no shared surface showed,
-    // which everybody else booked over in good faith. The disclosure is the
-    // same one the programs card beside it already makes.
-    const practiceEvents = [];
-    try {
-        const pres = await fetch(`${inst.opts.base}api/practice-windows?start_date=${startStr}&end_date=${endStr}`);
-        if (pres.ok) {
-            ((await pres.json()).windows || []).forEach(w => {
-                practiceEvents.push({
-                    id: `practice-${w.program_id}-${w.date}-${w.time_start}`,
-                    title: w.title,
-                    start: `${w.date}T${w.time_start}:00`,
-                    end: `${w.date}T${w.time_end}:00`,
-                    allDay: false,
-                    extendedProps: { isPractice: true, rawColor: '#14b8a6',
-                                     practiceWho: w.member_name || '' },
-                });
-            });
-        }
-    } catch (e) { /* a wall without practice drawn is not a broken wall */ }
-
     if (seq !== inst.agendaSeq) return; // superseded by a newer render
     grid.innerHTML = '';
 
@@ -1075,7 +1047,7 @@ async function _renderAgenda(inst) {
         const dayEnd = new Date(day);
         dayEnd.setDate(dayEnd.getDate() + 1);
 
-        const dayEvents = events.concat(practiceEvents).filter(ev => {
+        const dayEvents = events.filter(ev => {
             if (ev.allDay) {
                 // Compare on the ISO date part: all-day events parse as UTC
                 // midnight and would shift a day through local Date math.
@@ -1124,7 +1096,7 @@ async function _renderAgenda(inst) {
                 tappable: practice ? false : tappable,
                 onClick: (!practice && tappable) ? (e) => _onEventTap(inst, e) : null,
                 extraBadgeHtml: practice
-                    ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 shrink-0">🎯 ${_agEsc(ev.extendedProps.practiceWho || 'practice')}</span>`
+                    ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-300 shrink-0">🎯 ${_agEsc((ev.extendedProps.practice || {}).member_name || 'practice')}</span>`
                     : undefined,
             }));
         });
@@ -1139,6 +1111,10 @@ function _onEventTap(inst, evObj) {
     if (inst.opts.onEventClick) return inst.opts.onEventClick(evObj);
     if (!inst.opts.details) return;
     const props = evObj.extendedProps || {};
+    // A practice window has no event behind it to open, no driver to name and
+    // no config to edit -- a dialog that can only be empty is worse than no
+    // dialog, so the row shows what there is to know and stops there.
+    if (props.isPractice) return;
     if (props.isTrip) { window.location.href = props.tripUrl; return; }
     _openEventDetails(inst, evObj);
 }
@@ -1429,6 +1405,14 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                         window._schedData = data;
 
                         let eventsMap = new Map();
+                        // A practice window is an event now (event_type
+                        // 'practice', stamped after the solve so it can never
+                        // reach it), which is why it needs no branch anywhere
+                        // downstream: it goes through this pipeline once and
+                        // every surface built on it draws it. It carries no
+                        // calendar, no driver and no passengers, so the
+                        // colour is its own rather than a calendar's.
+                        const PRACTICE_COLOR = '#14b8a6';
                         const assignments = data.assignments || {};
                         const carAssignments = data.car_assignments || {};
                         const carsById = new Map((data.cars || []).map(c => [c.id, c]));
@@ -1654,6 +1638,26 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                             }
                                             if (carSwap) existing.extendedProps.carSwap = true;
                                         }
+                                    } else if (ev.event_type === 'practice') {
+                                        eventsMap.set(baseId, {
+                                            id: baseId,
+                                            title: rawTitle,
+                                            start: ev.start,
+                                            end: ev.end,
+                                            allDay: false,
+                                            backgroundColor: PRACTICE_COLOR,
+                                            extendedProps: {
+                                                isPractice: true,
+                                                practice: ev.practice || {},
+                                                description: ev.description,
+                                                passengers: [],
+                                                isUnassigned: false,
+                                                isConflict: false,
+                                                isErrand: false,
+                                                rawColor: PRACTICE_COLOR,
+                                                prep: [],
+                                            }
+                                        });
                                     } else {
                                         eventsMap.set(baseId, {
                                             id: baseId,

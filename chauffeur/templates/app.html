@@ -7909,6 +7909,21 @@
                 let baseId = ev.id;
                 let title = ev.title;
                 let legType = null;
+                // A practice window is an event in the one feed now, so the
+                // family day gets it the same way it gets everything else --
+                // no second fetch, and no surface left blank because nobody
+                // remembered to wire it.
+                if (ev.event_type === 'practice') {
+                    cards.set(ev.id, {
+                        id: ev.id, title: ev.title, isTrip: false,
+                        start: ev.start, end: ev.end, allDay: false,
+                        location: '', calendarIds: [], legs: [],
+                        driverIds: new Set(), isUnassigned: false,
+                        suppressed: false, isErrand: false,
+                        isPractice: true, practice: ev.practice || {},
+                    });
+                    return;
+                }
                 const isTrip = ev.event_type === 'background_trip';
                 if (isTrip) {
                     if (baseId.includes('_slice_')) baseId = baseId.split('_slice_')[0];
@@ -8017,25 +8032,6 @@
                     calendarIds: [], legs: [],
                     driverIds: new Set(er.driver ? [er.driver.id] : []),
                     isUnassigned: false, suppressed: false, isErrand: true
-                });
-            });
-
-            // Practice windows sit in the family day for one reason: an hour
-            // nobody can see is an hour everybody books over. They are NOT
-            // calendar events and must never become them -- an event needs a
-            // driver, and a recurring practice event would reach the solver
-            // as work to assign rather than time to protect -- so they arrive
-            // as their own item, drawn as their own card.
-            (practiceWindows || []).forEach(w => {
-                push(new Date(`${w.date}T${w.time_start}:00`), {
-                    id: `practice-${w.program_id}-${w.date}-${w.time_start}`,
-                    title: w.title, isTrip: false,
-                    start: `${w.date}T${w.time_start}:00`,
-                    end: `${w.date}T${w.time_end}:00`,
-                    allDay: false, location: '',
-                    calendarIds: [], legs: [], driverIds: new Set(),
-                    isUnassigned: false, suppressed: false, isErrand: false,
-                    isPractice: true, practice: w
                 });
             });
 
@@ -8804,20 +8800,6 @@
                             scheduleData[k] = data[k];
                         }
                     });
-
-                    // The family view draws whatever days it paged in, so the
-                    // windows have to cover the same span rather than only
-                    // today, which is all the home block needs.
-                    try {
-                        const paged = await fetchPracticeWindows(startStr, endStr);
-                        const seen = new Set(practiceWindows.map(w =>
-                            `${w.program_id}|${w.date}|${w.time_start}`));
-                        paged.forEach(w => {
-                            if (!seen.has(`${w.program_id}|${w.date}|${w.time_start}`)) {
-                                practiceWindows.push(w);
-                            }
-                        });
-                    } catch (e) { /* a day without practice drawn is not a broken day */ }
 
                     buildTimeline();
 
