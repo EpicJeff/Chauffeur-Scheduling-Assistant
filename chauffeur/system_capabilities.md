@@ -6683,10 +6683,19 @@ windows shipped with none, so one drew as an anonymous blue bar reading only
 "Strength Training", and the dialog it opened said "No passengers / Not
 assigned / No location provided" — an accurate description of a piece of
 somebody's life the app had failed to attach to them. A window is now tagged
-with the owner's own calendar (member → `passenger_id` → the passenger's
-`calendar_ids`), so it looks like their hour everywhere for free; a member
-with no passenger record falls back to their `color_code` and a pill built
-from their name, because the anonymous default is the failure. The dedicated
+with the owner's RESOLVED id — the passenger id, or the member id for
+somebody with no passenger record — because that is what belongs in
+`calendar_ids`: the solver rewrites a matched event's list into resolved
+passenger ids and `calendar_metadata` is keyed to match. Tagging with the
+owner's raw GOOGLE calendar id was the first attempt (v2.435.7) and it fixed
+only the surfaces that read Google ids; the Family Day card resolves people
+through `family_day._passengers_for`, which compares member and passenger
+ids, so it went on saying the hour belonged to nobody. A practice window is
+injected after the solve, so nothing rewrites its ids for it — it carries the
+resolved id from the start and brings its own `calendar_metadata` entry (name
++ `color_code`) when the household has none, which is exactly the case for a
+driver with no passenger record: neither loop that builds that map keys them,
+and that is precisely the person whose program this was. The dedicated
 branch in the calendar's event pipeline was deleted in the same change —
 practice takes the one road now, which is what earns it the pill. In the
 details dialog, "Not assigned" becomes `<Name>'s practice · <phase> — nobody

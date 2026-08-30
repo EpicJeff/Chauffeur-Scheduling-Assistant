@@ -16261,7 +16261,8 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh
         import traceback
         return {"error": "Fatal Error: " + str(e), "traceback": traceback.format_exc()}
 
-def _practice_events(start_date_str=None, end_date_str=None, days=30):
+def _practice_events(start_date_str=None, end_date_str=None, days=30,
+                     calendar_metadata=None):
     """The household's practice windows, as events the whole app can draw.
 
     An `Event` with `event_type='practice'` and no calendar behind it: nothing
@@ -16287,32 +16288,39 @@ def _practice_events(start_date_str=None, end_date_str=None, days=30):
 
     # WHOSE it is, said the way every other event says it. An event answers
     # that through `calendar_ids` -> `calendar_metadata` -> the person's pill
-    # and the person's colour, on every surface at once. A practice window
-    # shipped with none, so it drew as an anonymous blue bar reading only
-    # "Strength Training", and the details dialog it opened said "No
-    # passengers / Not assigned / No location provided" — which is a
-    # perfectly accurate description of a piece of somebody's life that the
-    # app had failed to attach to them.
+    # and the person's colour, on every surface at once.
     #
-    # Members link to a passenger record (`passenger_id`) and passengers hold
-    # the calendar ids, so the person's own calendar is what a window is
-    # tagged with — it is their hour, and it should look like their hour.
-    pax_cals = {}
-    try:
-        pax_by_id = {p['id']: p for p in storage.get_all_passengers()}
-        for m in storage.get_all_members(include_archived=True):
-            pax = pax_by_id.get(m.get('passenger_id') or '')
-            if pax and (pax.get('calendar_ids') or []):
-                pax_cals[m['id']] = list(pax['calendar_ids'])
-    except Exception:
-        pax_cals = {}
-
+    # The id that belongs in `calendar_ids` is NOT a Google calendar id: the
+    # solver rewrites a matched event's list into resolved PASSENGER ids, and
+    # `calendar_metadata` is keyed to match (by passenger id, and by member id
+    # for calendar-only people). Tagging a window with the owner's raw Google
+    # calendar was the first attempt and it fixed only the surfaces that
+    # happen to read Google ids -- the Family Day card resolves people through
+    # `family_day._passengers_for`, which compares member and PASSENGER ids,
+    # so it went on saying the hour belonged to nobody.
+    #
+    # A practice window is injected after the solve, so nothing rewrites its
+    # ids for it. It carries the resolved id from the start, and brings its
+    # own metadata entry when the household has none -- a driver with no
+    # passenger record is keyed nowhere, which is precisely the person whose
+    # program this was.
     members_by_id = {}
+    identity = {}
     try:
-        members_by_id = {m['id']: m for m in
-                         storage.get_all_members(include_archived=True)}
+        for m in storage.get_all_members(include_archived=True):
+            members_by_id[m['id']] = m
+            identity[m['id']] = str(m.get('passenger_id') or m['id'])
     except Exception:
         pass
+    if isinstance(calendar_metadata, dict):
+        for mid, key in identity.items():
+            if key in calendar_metadata:
+                continue
+            m = members_by_id.get(mid) or {}
+            calendar_metadata[key] = {
+                'summary': m.get('name') or 'Family member',
+                'backgroundColor': m.get('color_code') or '#14B8A6',
+                'foregroundColor': '#ffffff'}
 
     out = []
     for w in _prog.practice_windows(start, end):
@@ -16328,10 +16336,11 @@ def _practice_events(start_date_str=None, end_date_str=None, days=30):
         # failure this fixes. Their own `color_code` is what every other
         # member-shaped surface in the app already uses for them.
         payload = {**w, 'color': member.get('color_code') or '#14b8a6'}
+        key = identity.get(w.get('member_id') or '')
         out.append(_Event(
             id=pid, title=w['title'],
             start=begins.astimezone(), end=finishes.astimezone(),
-            calendar_ids=pax_cals.get(w.get('member_id')) or [],
+            calendar_ids=[key] if key else [],
             source_event_ids=[], all_day=False,
             event_type='practice',
             location=None,
@@ -17326,7 +17335,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # house pattern applied to the thing that was missing it.
         try:
             for _pe in _practice_events(start_date_str, end_date_str,
-                                        days_to_fetch):
+                                        days_to_fetch, calendar_metadata):
                 all_events_for_ui[_pe.id] = _pe
         except Exception as _pex:
             logger.warning(f"practice windows skipped: {_pex}")

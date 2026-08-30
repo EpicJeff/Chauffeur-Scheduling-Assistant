@@ -179,12 +179,13 @@ def scenario_a_practice_window_is_an_EVENT_in_the_one_feed():
 
 def scenario_a_practice_event_says_whose_hour_it_is():
     """An event answers "who is this for?" through `calendar_ids` ->
-    `calendar_metadata` -> the person's pill and the person's colour, on every
-    surface at once. A practice window shipped with none, so it drew as an
-    anonymous blue bar reading only the program title, and the dialog it
-    opened said "No passengers / Not assigned / No location provided" -- an
-    accurate description of a piece of somebody's life the app had failed to
-    attach to them."""
+    `calendar_metadata`, and the id in that list is NOT a Google calendar id:
+    the solver rewrites a matched event's list into resolved PASSENGER ids and
+    the metadata is keyed to match. Tagging a window with the owner's raw
+    Google calendar fixed only the surfaces that read Google ids -- the Family
+    Day card resolves people through `family_day._passengers_for`, which
+    compares member and passenger ids, so it went on saying the hour belonged
+    to nobody."""
     _reset()
     import main
     from services import storage as _st
@@ -193,30 +194,59 @@ def scenario_a_practice_event_says_whose_hour_it_is():
     _st.add_passenger({'id': 'pax1', 'name': 'Mom', 'calendar_ids': ['cal-mom']})
     _st.update_member('mom', {'passenger_id': 'pax1', 'color_code': '#ff0088'})
     _program()
-    e = main._practice_events(today.isoformat(), today.isoformat())[0]
-    check(e.calendar_ids == ['cal-mom'],
-          f"it is tagged with the person's own calendar, so it looks like "
-          f"their hour everywhere, got {e.calendar_ids}")
-    check(e.practice.get('color') == '#ff0088',
-          f"and carries their colour for the surfaces with no calendar to "
-          f"read, got {e.practice}")
-    check(e.practice.get('member_name') == 'Mom',
-          "and their name, for the pill when no calendar answered")
+    meta = {}
+    e = main._practice_events(today.isoformat(), today.isoformat(),
+                              calendar_metadata=meta)[0]
+    check(e.calendar_ids == ['pax1'],
+          f"the RESOLVED id, the one every resolver compares against, got "
+          f"{e.calendar_ids}")
+    check(meta.get('pax1', {}).get('summary') == 'Mom',
+          f"and the metadata to read it back, got {meta}")
 
 
-def scenario_a_member_with_no_calendar_is_still_named():
-    """The fallback is the whole point: an anonymous bar is the failure."""
+def scenario_a_member_keyed_nowhere_brings_its_own_metadata():
+    """A driver with no passenger record is keyed by neither loop that builds
+    `calendar_metadata` — and that is precisely the person whose program this
+    was."""
     _reset()
     import main
+    from services import storage as _st
     today = datetime.date.today()
-    _program(member_id='kid')
-    e = main._practice_events(today.isoformat(), today.isoformat())[0]
-    check(e.calendar_ids == [], "nothing to borrow")
-    check(e.practice.get('member_name') == 'Lily',
-          f"but the person is still named, got {e.practice}")
-    check(e.practice.get('color'),
-          f"and still has a colour that is not the anonymous default, got "
-          f"{e.practice}")
+    _st.update_member('mom', {'passenger_id': None, 'color_code': '#00ddaa'})
+    _program()
+    meta = {}
+    e = main._practice_events(today.isoformat(), today.isoformat(),
+                              calendar_metadata=meta)[0]
+    check(e.calendar_ids == ['mom'],
+          f"their member id stands in, got {e.calendar_ids}")
+    check(meta.get('mom', {}).get('summary') == 'Mom'
+          and meta['mom']['backgroundColor'] == '#00ddaa',
+          f"with a name and their own colour, so no surface has to guess, "
+          f"got {meta}")
+    check(e.practice.get('member_name') == 'Mom',
+          "and the window still names them directly for anything that would "
+          "rather not resolve at all")
+
+
+def scenario_the_family_day_resolver_finds_the_owner():
+    """The surface that was still saying nobody. It resolves people by member
+    and passenger id, which is why the Google id never reached it."""
+    _reset()
+    import main
+    from services import storage as _st
+    from services import family_day as _fd
+    today = datetime.date.today()
+    _st.passengers_table.truncate()
+    _st.add_passenger({'id': 'pax1', 'name': 'Mom', 'calendar_ids': ['cal-mom']})
+    _st.update_member('mom', {'passenger_id': 'pax1', 'color_code': '#ff0088'})
+    _program()
+    meta = {}
+    e = main._practice_events(today.isoformat(), today.isoformat(),
+                              calendar_metadata=meta)[0]
+    people = _fd._passengers_for({'calendar_ids': e.calendar_ids},
+                                 _st.get_all_members(), meta, [])
+    check([p['name'] for p in people] == ['Mom'],
+          f"the Family Day card can name the owner now, got {people}")
 
 
 def scenario_a_practice_event_never_asks_for_a_driver():
@@ -275,7 +305,8 @@ if __name__ == '__main__':
     scenario_the_feed_carries_programs_and_nothing_else()
     scenario_a_practice_window_is_an_EVENT_in_the_one_feed()
     scenario_a_practice_event_says_whose_hour_it_is()
-    scenario_a_member_with_no_calendar_is_still_named()
+    scenario_a_member_keyed_nowhere_brings_its_own_metadata()
+    scenario_the_family_day_resolver_finds_the_owner()
     scenario_a_practice_event_never_asks_for_a_driver()
     scenario_prep_kits_do_not_pack_for_practice()
     scenario_the_endpoint_is_reachable_by_hand()
