@@ -376,6 +376,75 @@ def scenario_looking_again_re_runs_research_on_the_same_aim():
     check(row['source']['origin'] == 'cited', f"and its tier moved, got {row['source']}")
 
 
+def scenario_a_replan_drops_the_old_plans_lessons():
+    """A lesson is keyed to (phase_name, unit_n, session_label). Re-curating
+    replaces `phases` wholesale, `_clean_units` renumbers `n` from 1 every
+    time, and phase names and rotation labels recur -- so a colliding slot
+    kept the PREVIOUS plan's script, and `generate_for`'s
+    already-has-a-lesson skip meant the sweep would never replace it. The
+    book-spine "plan without the book" fork is exactly this path: the two
+    plans are most likely to share a phase name there and least likely to
+    mean the same thing by it."""
+    _reset()
+    import main
+    from services import programs_curate as _cur
+    pid = storage.add_program({
+        'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
+        'phases': [{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords',
+                    'milestone': 'G-C-D', 'milestone_hit_at': None}],
+        'source': {'origin': 'cited', 'reason': '', 'hand_written': False}})
+    slot = {'phase_name': 'Grade 1', 'unit_n': 1, 'session_label': ''}
+    storage.upsert_program_lesson(pid, slot, {
+        'origin': 'cited', 'source_url': 'https://books.example/',
+        'scenes': [{'type': 'say', 'text': 'Open your Piano Adventures book.'}]})
+    real_curate = _cur.curate
+    _stub_curate([{'name': 'Grade 1', 'weeks': 4, 'what': 'App-made plan',
+                   'milestone': 'G-C-D', 'milestone_hit_at': None}])
+    try:
+        res = main.edit_program(pid, body={'member_id': 'mom',
+                                           'recurate': True,
+                                           'exclude_books': True}, request=None)
+    finally:
+        _cur.curate = real_curate
+    check(res.get('status') == 'success', f"got {res}")
+    check(storage.get_program_lesson(pid, slot) is None,
+          "the old plan's script goes with the old plan")
+    check(storage.get_program(pid)['phases'][0]['what'] == 'App-made plan',
+          "and the new plan is the one that stands")
+
+
+def scenario_a_kept_plan_keeps_its_lessons():
+    """The mirror rule, and the reason the clear lives inside the branch
+    that actually replaces `phases`: a second look that finds nothing must
+    not cost the family the plan they had -- and must not cost its lessons
+    either, or "Look again" becomes a button that can only lose twice."""
+    _reset()
+    import main
+    from services import programs_curate as _cur
+    had = [{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords',
+            'milestone': 'G-C-D', 'milestone_hit_at': None}]
+    pid = storage.add_program({
+        'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
+        'phases': list(had),
+        'source': {'plan_name': 'Justin Guitar', 'url': 'https://jg.example/',
+                   'origin': 'cited', 'reason': '', 'hand_written': False}})
+    slot = {'phase_name': 'Grade 1', 'unit_n': 1, 'session_label': ''}
+    storage.upsert_program_lesson(pid, slot, {
+        'origin': 'cited', 'scenes': [{'type': 'say', 'text': 'G and C.'}]})
+    real_curate = _cur.curate
+    _cur.curate = lambda *a, **kw: {
+        'phases': [], 'source': {'origin': 'none', 'reason': 'capped',
+                                 'hand_written': True}}
+    try:
+        main.edit_program(pid, body={'member_id': 'mom', 'recurate': True},
+                          request=None)
+    finally:
+        _cur.curate = real_curate
+    kept = storage.get_program_lesson(pid, slot)
+    check(kept and kept['scenes'][0]['text'] == 'G and C.',
+          f"the plan stood, so its lessons stand too, got {kept}")
+
+
 def scenario_looking_again_never_costs_the_plan_already_found():
     """Research can be down, capped or simply unlucky. Overwriting a cited
     plan with an empty one would make Look again a button that can only
@@ -783,6 +852,8 @@ if __name__ == '__main__':
     scenario_a_proposal_can_be_re_shaped_without_spending_research()
     scenario_changing_the_aim_looks_for_a_new_plan()
     scenario_looking_again_re_runs_research_on_the_same_aim()
+    scenario_a_replan_drops_the_old_plans_lessons()
+    scenario_a_kept_plan_keeps_its_lessons()
     scenario_looking_again_never_costs_the_plan_already_found()
     scenario_a_family_can_choose_their_own_practice_windows()
     scenario_handing_the_choice_back_resumes_proposing()

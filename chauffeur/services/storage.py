@@ -3156,6 +3156,15 @@ def upsert_program_lesson(program_id: str, slot: dict, data: dict) -> str:
                'edited': bool(data.get('edited')),
                'scenes': list(data.get('scenes') or []),
                'model': data.get('model') or '',
+               # Why a slot has no script yet, when the answer is not
+               # "nothing has tried". program_lessons._record_attempt
+               # writes a scenes-less row carrying the reason in words and
+               # how many chargeable failures it has cost, so generation
+               # can stop spending on a slot that will never work and a
+               # person can read why in the slot's own editor. A row with
+               # scenes has neither, by construction.
+               'attempts': int(data.get('attempts') or 0),
+               'note': str(data.get('note') or ''),
                'created_at': time.time()}
         program_lessons_table.remove(cond)
         program_lessons_table.insert(row)
@@ -3181,10 +3190,16 @@ def delete_program_lesson(program_id: str, slot: dict) -> bool:
         return bool(gone)
 
 def delete_program_lessons(program_id: str) -> int:
-    """Every lesson a program holds, gone -- drop and replan both retire a
-    program's whole plan at once, and a lesson keyed to a phase/unit/session
-    that no longer exists has nothing left to mean. Returns how many rows
-    went."""
+    """Every lesson a program holds, gone -- a REPLAN retires the whole plan
+    at once (main.py's edit endpoint, the branch that replaces `phases`),
+    and a lesson keyed to a phase/unit/session that plan no longer contains
+    has nothing left to mean. Worse than meaningless, in fact: `_clean_units`
+    renumbers units from 1 and phase names and rotation labels recur, so a
+    colliding slot would hand the NEW plan the OLD plan's script, and
+    `generate_for`'s already-has-a-lesson skip means it would never be
+    replaced. Dropping a program deliberately does NOT call this -- dropping
+    is not failing, the record and its plan both stay, so its lessons still
+    mean exactly what they meant. Returns how many rows went."""
     with db_lock:
         q = Query()
         gone = program_lessons_table.remove(q.program_id == program_id)

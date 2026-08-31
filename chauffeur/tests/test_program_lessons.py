@@ -49,6 +49,106 @@ def scenario_unknown_primitive_dropped_bad_params_degrade():
     check(out[1]['type'] == 'show', "valid primitive survives")
 
 
+def scenario_card_faces_run_the_same_screens_as_every_other_beat():
+    """The hole this closes was live and verified: `_valid_cards` checked
+    that a face was non-empty and nothing else, and the `show` branch
+    screened the caption alone -- so a card BACK reading "About 300 -
+    great for weight loss. Keep your wrist straight and rotate the elbow."
+    survived verbatim on a generated origin and rendered through
+    cardFace(). Both halves of the screen have to fire on a face: the body
+    words on every origin, the physical prescription on generated."""
+    body = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Chord names',
+         'primitive': {'kind': 'cards',
+                       'pairs': [{'front': 'G', 'back': 'About 300 calories'}]}},
+    ], 'cited')
+    check(body == [], f"a body-composition card face dies on EVERY origin, got {body}")
+    physical = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Chord names',
+         'primitive': {'kind': 'cards',
+                       'pairs': [{'front': 'G', 'back': 'Keep your wrist straight'}]}},
+    ], 'generated')
+    check(physical == [],
+          f"a generated card face may not prescribe a body, got {physical}")
+    kept = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Chord names',
+         'primitive': {'kind': 'cards',
+                       'pairs': [{'front': 'G', 'back': 'Three fingers'}]}},
+    ], 'generated')
+    check(len(kept) == 1 and kept[0]['primitive']['pairs'][0]['back'] == 'Three fingers',
+          f"a clean pair still survives, got {kept}")
+
+
+def scenario_card_faces_are_capped_like_every_other_string():
+    """Every other text field in a script is capped at 280 or 120; a card
+    face was capped at nothing at all, so a 5000-character front was stored
+    and shipped whole."""
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Cards',
+         'primitive': {'kind': 'cards',
+                       'pairs': [{'front': 'x' * 5000, 'back': 'y' * 5000}]}},
+    ], 'generated')
+    check(len(out) == 1, f"the scene survives, got {out}")
+    pair = out[0]['primitive']['pairs'][0]
+    check(len(pair['front']) == pl.MAX_SHORT_TEXT
+          and len(pair['back']) == pl.MAX_SHORT_TEXT,
+          f"both faces clamped to {pl.MAX_SHORT_TEXT}, got "
+          f"{len(pair['front'])}/{len(pair['back'])}")
+
+
+def scenario_the_stored_primitive_is_rebuilt_not_the_models_own_dict():
+    """`out.append({... 'primitive': prim ...})` stored the model's own
+    object: any extra key it invented rode along past every cap and every
+    screen, and the dict that reached storage was the same one the caller
+    still held, so mutating the input afterwards rewrote a sanitized
+    scene."""
+    prim = {'kind': 'counter', 'target': 10, 'label': 'reps',
+            'note': 'keep your wrist straight'}
+    out = pl.sanitize_script([{'type': 'show', 'primitive': prim,
+                               'caption': 'Ten'}], 'generated')
+    check(len(out) == 1, f"the scene survives, got {out}")
+    stored = out[0]['primitive']
+    check(set(stored) == {'kind', 'target'},
+          f"only the validated keys are kept, got {sorted(stored)}")
+    check(stored is not prim, "and it is a new dict, not the caller's own")
+    prim['target'] = 999
+    check(stored['target'] == 10,
+          f"so a later mutation of the input cannot rewrite it, got {stored}")
+
+
+def scenario_every_primitive_kind_survives_the_rebuild():
+    """Rebuilding from validated keys must not quietly drop a primitive it
+    was only ever supposed to clean -- all six kinds still come through
+    with the params their renderer reads."""
+    scenes = pl.sanitize_script([
+        {'type': 'show', 'primitive': {'kind': 'timer', 'seconds': 60}},
+        {'type': 'show', 'primitive': {'kind': 'metronome', 'bpm': 80}},
+        {'type': 'show', 'primitive': {'kind': 'keyboard', 'keys': ['C4', 'E4']}},
+        {'type': 'show', 'primitive': {'kind': 'fretboard',
+                                       'dots': [{'string': 5, 'fret': 2, 'finger': 2}]}},
+        {'type': 'show', 'primitive': {'kind': 'cards',
+                                       'pairs': [{'front': 'G', 'back': 'Three'}]}},
+        {'type': 'show', 'primitive': {'kind': 'counter', 'target': 10}},
+    ], 'generated')
+    kinds = [s['primitive']['kind'] for s in scenes]
+    check(kinds == ['timer', 'metronome', 'keyboard', 'fretboard',
+                    'cards', 'counter'], f"all six still draw, got {kinds}")
+    check(scenes[2]['primitive']['keys'] == ['C4', 'E4'], f"got {scenes[2]}")
+    check(scenes[3]['primitive']['dots'] == [{'string': 5, 'fret': 2, 'finger': 2}],
+          f"got {scenes[3]}")
+
+
+def scenario_a_do_beat_is_session_shaped_not_an_afternoon():
+    """MAX_DO_SECONDS was 240*60 -- four hours, which is
+    `programs.MAX_MINUTES` in seconds: the ceiling on a whole SESSION,
+    handed to one beat inside it, under a comment saying the opposite."""
+    check(pl.MAX_DO_SECONDS <= 60 * 60,
+          f"one beat is minutes, got {pl.MAX_DO_SECONDS}s")
+    out = pl.sanitize_script([{'type': 'do', 'text': 'Play slowly',
+                               'seconds': 999999}], 'generated')
+    check(out[0]['seconds'] == pl.MAX_DO_SECONDS, f"clamped, got {out}")
+
+
 def scenario_generated_origin_screens_physical_technique():
     """A generated lesson may structure practice; it may not prescribe what
     a body does. Enforced like load/dose: the scene is dropped, not
@@ -398,6 +498,126 @@ def scenario_existing_lesson_skips_before_spending_a_call():
           f"the existing lesson is untouched, got {row}")
 
 
+def scenario_a_slot_that_always_fails_stops_costing_a_call():
+    """A script that always sanitizes to nothing used to re-spend a full
+    model call every night, forever, silently. The failure is recorded
+    instead: a scenes-less row carrying the reason and an attempt count,
+    and after MAX_ATTEMPTS chargeable failures nothing else is spent."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.program_lessons_table.truncate()
+    calls = {'n': 0}
+
+    def fake_pool(*a, **k):
+        calls['n'] += 1
+        # Survives JSON, dies in the screens ('pounds' is a BODY_WORD) --
+        # the exact shape that used to cost a call a night for the life of
+        # the unit, because nothing recorded that it had failed before.
+        return {'scenes': [{'type': 'say', 'text': 'Practise off 10 pounds.'}],
+                '_model': 'gemma-4-31b-it'}
+
+    orig = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    try:
+        for _ in range(6):
+            pl.generate_for(_program_row(), _window(), {'n': 1},
+                            {'llm_gemini_api_key': 'k'})
+    finally:
+        mp.call_pool_json = orig
+    check(calls['n'] == pl.MAX_ATTEMPTS,
+          f"six nights, {pl.MAX_ATTEMPTS} calls, got {calls['n']}")
+    row = storage.get_program_lesson('p9', pl.slot_of(_window(), unit_n=1))
+    check(row and not row['scenes'],
+          f"the record holds no scenes, so the ladder still plays, got {row}")
+    check(row.get('note'), f"and it says why, in words: {row}")
+    check(pl.needs_lesson('p9', pl.slot_of(_window(), unit_n=1)) is False,
+          "and the slot no longer asks for a call")
+
+
+def scenario_a_transient_failure_is_recorded_but_never_counted():
+    """A 429 tonight is not a reason to stop trying a slot that may live
+    for weeks -- the pool already says which failures are transient, and
+    only the others spend an attempt. The reason is still written down,
+    because "every call fails and the toggle says lessons are on" is
+    exactly the state that has to be legible somewhere."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.program_lessons_table.truncate()
+    calls = {'n': 0}
+
+    def fake_pool(*a, **k):
+        calls['n'] += 1
+        return {'error': '429 quota', 'transient': True}
+
+    orig = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    try:
+        for _ in range(5):
+            pl.generate_for(_program_row(), _window(), {'n': 1},
+                            {'llm_gemini_api_key': 'k'})
+    finally:
+        mp.call_pool_json = orig
+    check(calls['n'] == 5, f"a transient failure keeps retrying, got {calls['n']}")
+    row = storage.get_program_lesson('p9', pl.slot_of(_window(), unit_n=1))
+    check(row and row.get('attempts') == 0 and '429' in (row.get('note') or ''),
+          f"recorded, never counted, got {row}")
+
+
+def scenario_a_hard_pool_error_does_spend_an_attempt():
+    """The empty-api-key case: not transient, fails identically forever.
+    That one has to stop, and has to leave the reason where a person
+    looks."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.program_lessons_table.truncate()
+    calls = {'n': 0}
+
+    def fake_pool(*a, **k):
+        calls['n'] += 1
+        return {'error': 'API key not valid', 'transient': False}
+
+    orig = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    try:
+        for _ in range(6):
+            pl.generate_for(_program_row(), _window(), {'n': 1},
+                            {'llm_gemini_api_key': ''})
+    finally:
+        mp.call_pool_json = orig
+    check(calls['n'] == pl.MAX_ATTEMPTS,
+          f"it stops after {pl.MAX_ATTEMPTS}, got {calls['n']}")
+    row = storage.get_program_lesson('p9', pl.slot_of(_window(), unit_n=1))
+    check('API key' in (row.get('note') or ''),
+          f"and the reason is readable, got {row}")
+
+
+def scenario_a_recorded_failure_never_becomes_a_lesson():
+    """The row that records a failure must stay invisible to every reader
+    that asks "is there a lesson": no scenes means the fallback ladder,
+    on every surface, exactly as before."""
+    from services import storage, program_lessons as pl
+    storage.program_lessons_table.truncate()
+    slot = pl.slot_of(_window(), unit_n=1)
+    pl._record_attempt('p9', slot, 'generated', '', 'nothing survived')
+    row = storage.get_program_lesson('p9', slot)
+    check(row['scenes'] == [], f"no scenes, got {row}")
+    check(row['edited'] is False, "and it is not a hand edit")
+
+
+def scenario_a_hand_edit_is_never_bounced_by_a_recorded_failure():
+    """needs_lesson has to answer False for an edited slot BEFORE it looks
+    at attempts, or a slot that failed three times and was then written by
+    hand would read as backed-off rather than as done."""
+    from services import storage, program_lessons as pl
+    storage.program_lessons_table.truncate()
+    slot = pl.slot_of(_window(), unit_n=1)
+    storage.upsert_program_lesson('p9', slot, {
+        'origin': 'generated', 'attempts': 99, 'edited': True,
+        'scenes': [{'type': 'say', 'text': 'mine'}]})
+    check(pl.needs_lesson('p9', slot) is False,
+          "a slot that already has a script never asks for a call")
+
+
 # --- the nightly sweep: tomorrow's lessons, written tonight -----------
 
 def _due_fixture(cid='pl-c1', day_offset=1):
@@ -433,6 +653,122 @@ def _due_fixture(cid='pl-c1', day_offset=1):
     storage.update_program(pid, {'emissions': {**row['emissions'],
                                                'commitment_ids': [cid]}})
     return pid
+
+
+def _due_fixture_many(n=3, day_offset=1):
+    """`n` active programs all claiming the same evening. The only way to
+    put more than one window inside generate_due's three-day scan: a single
+    commitment names one weekday, and a weekday repeats every seven days,
+    so one program can never match twice in three."""
+    import datetime
+    from services import storage
+    storage.programs_table.truncate()
+    storage.program_lessons_table.truncate()
+    storage.protected_commitments_table.truncate()
+    target = datetime.date.today() + datetime.timedelta(days=day_offset)
+    for i in range(n):
+        pid = storage.add_program({
+            'member_id': 'kid', 'title': f'Program {i}',
+            'shape': {'sessions_per_week': 1, 'minutes': 20},
+            'phases': [{'name': 'Foundations',
+                        'steps': ['One-minute changes G-C'], 'weeks': 4}]})
+        storage.update_program(pid, {'state': 'active'})
+        cid = f'pl-many-{i}'
+        storage.add_protected_commitment({
+            'id': cid, 'member_id': 'kid', 'title': 'Practice', 'active': True,
+            'days_of_week': [target.weekday()],
+            'time_start': f'{17 + i}:00', 'time_end': f'{17 + i}:20'})
+        row = storage.get_program(pid)
+        storage.update_program(pid, {'emissions': {**row['emissions'],
+                                                   'commitment_ids': [cid]}})
+
+
+def scenario_the_sweep_is_capped_per_pass():
+    """One pass may not be unbounded. Every slot it reaches is up to four
+    pool candidates at a 180-second gemma timeout, and the marker is a
+    date -- so an app that was down overnight and restarts at 07:00 runs
+    the WHOLE sweep in the school run. The lookahead absorbs the rest."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.set_app_state('program_lessons_swept', '')
+    _due_fixture_many(3)
+    calls = {'n': 0}
+
+    def fake_pool(*a, **k):
+        calls['n'] += 1
+        return {'scenes': [{'type': 'say', 'text': 'Chords are shapes.'}],
+                '_model': 'gemma-4-31b-it'}
+
+    orig = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    try:
+        wrote = pl.generate_due(limit=2)
+    finally:
+        mp.call_pool_json = orig
+    check(wrote == 2, f"three windows, a cap of two, got {wrote}")
+    check(calls['n'] == 2, f"and exactly two calls spent, got {calls['n']}")
+
+
+def scenario_the_pass_budget_counts_calls_not_windows():
+    """A cap on iteration would be no cap on cost: a pass that spent its
+    whole allowance on slots which already had a script would leave the one
+    slot that needed a call unwritten while spending nothing."""
+    import datetime
+    from services import storage, programs, program_lessons as pl
+    import services.model_pools as mp
+    storage.set_app_state('program_lessons_swept', '')
+    _due_fixture_many(3)
+    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+    ws = programs.practice_windows(tomorrow, tomorrow + datetime.timedelta(days=2))
+    check(len(ws) == 3, f"the fixture must make three windows, got {len(ws)}")
+    for w in ws[:2]:
+        row = storage.get_program(w['program_id'])
+        phase = programs.progress(row).get('phase') or {}
+        unit = programs.unit_for(row, phase) or {}
+        storage.upsert_program_lesson(
+            w['program_id'], pl.slot_of(w, unit_n=int(unit.get('n') or 0)),
+            {'origin': 'generated',
+             'scenes': [{'type': 'say', 'text': 'already here'}]})
+    calls = {'n': 0}
+
+    def fake_pool(*a, **k):
+        calls['n'] += 1
+        return {'scenes': [{'type': 'say', 'text': 'Chords are shapes.'}],
+                '_model': 'gemma-4-31b-it'}
+
+    orig = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    try:
+        wrote = pl.generate_due(limit=1)
+    finally:
+        mp.call_pool_json = orig
+    check(wrote == 1,
+          f"the two already-scripted slots cost nothing and the third is "
+          f"still written, got {wrote}")
+    check(calls['n'] == 1, f"one call, as budgeted, got {calls['n']}")
+
+
+def scenario_the_sweep_runs_on_the_slow_loop_not_the_push_loop():
+    """It shipped awaited INLINE in the 30-second push loop, ahead of the
+    departure notifications and practice pushes that loop exists to fire on
+    time. poll_schedule is the loop that already owns slow work (a CP-SAT
+    re-solve, a Google-backed trips rebuild) and has nothing behind it that
+    cares about a minute. Scoped to poll_schedule's own body, not a bare
+    substring search of a 15,000-line file."""
+    import io
+    import os
+    import re
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = io.open(os.path.join(here, 'main.py'), encoding='utf-8').read()
+    m = re.search(r'async def poll_schedule\(\):(.*?)await asyncio\.sleep\(300\)',
+                  src, re.S)
+    check(m, "poll_schedule's body is findable")
+    check('generate_due' in (m.group(1) if m else ''),
+          "the lesson sweep runs on the 300s loop")
+    # `.generate_due` is the CALL; a bare 'generate_due' also matches the
+    # prose in the comment above it, which is not a wiring.
+    check(src.count('.generate_due') == 1,
+          "and is called exactly once — never from two loops at all")
 
 
 def scenario_generate_due_end_to_end():
@@ -536,6 +872,11 @@ if __name__ == '__main__':
     scenario_scene_cap()
     scenario_text_cap_and_type_whitelist()
     scenario_unknown_primitive_dropped_bad_params_degrade()
+    scenario_card_faces_run_the_same_screens_as_every_other_beat()
+    scenario_card_faces_are_capped_like_every_other_string()
+    scenario_the_stored_primitive_is_rebuilt_not_the_models_own_dict()
+    scenario_every_primitive_kind_survives_the_rebuild()
+    scenario_a_do_beat_is_session_shaped_not_an_afternoon()
     scenario_generated_origin_screens_physical_technique()
     scenario_body_screen_fires_on_every_origin()
     scenario_body_word_screen_fires_on_every_origin()
@@ -554,6 +895,14 @@ if __name__ == '__main__':
     scenario_cited_carries_its_source()
     scenario_generation_survives_a_pool_error()
     scenario_existing_lesson_skips_before_spending_a_call()
+    scenario_a_slot_that_always_fails_stops_costing_a_call()
+    scenario_a_transient_failure_is_recorded_but_never_counted()
+    scenario_a_hard_pool_error_does_spend_an_attempt()
+    scenario_a_recorded_failure_never_becomes_a_lesson()
+    scenario_a_hand_edit_is_never_bounced_by_a_recorded_failure()
+    scenario_the_sweep_is_capped_per_pass()
+    scenario_the_pass_budget_counts_calls_not_windows()
+    scenario_the_sweep_runs_on_the_slow_loop_not_the_push_loop()
     scenario_generate_due_end_to_end()
     scenario_sweep_respects_the_switch()
     scenario_sweep_respects_programs_enabled_too()

@@ -382,10 +382,41 @@
                                                                 </template>
                                                                 <template x-if="lessonLoaded[lessonKey(p, ph, label)]">
                                                                     <div class="space-y-2">
+                                                                        <!-- Where this script came from, which the family
+                                                                             could not see anywhere: the cited/generated
+                                                                             split is the whole reason the curate module
+                                                                             exists, and Task 9's "honest label" for an
+                                                                             uncited unit labelled nothing on any screen.
+                                                                             Metadata + chip vocabulary from
+                                                                             docs/ui_design_guide.md. -->
+                                                                        <div class="flex items-center gap-1.5 flex-wrap"
+                                                                            x-show="lessonOriginLabel(p, ph, label)">
+                                                                            <span class="text-[11px] font-semibold text-gray-500"
+                                                                                x-text="lessonOriginLabel(p, ph, label)"></span>
+                                                                            <template x-if="(lessonMeta[lessonKey(p, ph, label)] || {}).source_url">
+                                                                                <a :href="(lessonMeta[lessonKey(p, ph, label)] || {}).source_url"
+                                                                                    target="_blank" rel="noopener"
+                                                                                    class="text-[11px] font-bold text-blue-400 underline underline-offset-2 truncate"
+                                                                                    x-text="lessonSourceHost(p, ph, label)"></a>
+                                                                            </template>
+                                                                            <span x-show="(lessonMeta[lessonKey(p, ph, label)] || {}).edited"
+                                                                                class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300">edited by hand</span>
+                                                                        </div>
                                                                         <p class="text-[11px] text-gray-500 italic"
                                                                             x-show="!(lessonDraft[lessonKey(p, ph, label)] || []).length">
                                                                             No script yet — tonight plays the plain steps above.
                                                                         </p>
+                                                                        <!-- Why there is no script, when the answer is not
+                                                                             "nothing has tried yet". An empty
+                                                                             llm_gemini_api_key fails every call forever
+                                                                             while the toggle says lessons are being
+                                                                             written, and that used to be indistinguishable
+                                                                             from a sweep that had not reached this slot.
+                                                                             program_lessons._record_attempt writes the
+                                                                             reason down; this is where a person reads it. -->
+                                                                        <p class="text-[11px] text-amber-300/80"
+                                                                            x-show="(lessonMeta[lessonKey(p, ph, label)] || {}).note"
+                                                                            x-text="(lessonMeta[lessonKey(p, ph, label)] || {}).note"></p>
                                                                         <template x-for="(row, i) in (lessonDraft[lessonKey(p, ph, label)] || [])" :key="i">
                                                                             <div class="flex items-center gap-1.5">
                                                                                 <span class="text-[9px] font-bold uppercase tracking-wide text-gray-500 w-10 shrink-0"
@@ -399,7 +430,25 @@
                                                                                 <input x-show="row.type === 'show'" x-model="row.caption"
                                                                                     type="text" placeholder="Caption…"
                                                                                     class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
+                                                                                <!-- Reorder: the verb the spec named, the
+                                                                                     capabilities doc claimed, and this form
+                                                                                     did not have. The draft array IS the
+                                                                                     order and Save sends it whole, so a
+                                                                                     splice is the entire change. -->
+                                                                                <button type="button" @click="moveLessonRow(p, ph, label, i, -1)"
+                                                                                    :disabled="i === 0"
+                                                                                    aria-label="Move this beat up"
+                                                                                    class="text-[10px] font-bold px-1.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-30 shrink-0">
+                                                                                    ▲
+                                                                                </button>
+                                                                                <button type="button" @click="moveLessonRow(p, ph, label, i, 1)"
+                                                                                    :disabled="i === (lessonDraft[lessonKey(p, ph, label)] || []).length - 1"
+                                                                                    aria-label="Move this beat down"
+                                                                                    class="text-[10px] font-bold px-1.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-30 shrink-0">
+                                                                                    ▼
+                                                                                </button>
                                                                                 <button type="button" @click="removeLessonRow(p, ph, label, i)"
+                                                                                    aria-label="Delete this beat"
                                                                                     class="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 shrink-0">
                                                                                     ✕
                                                                                 </button>
@@ -725,11 +774,13 @@
                 footprints: {},
                 // Today's practice windows, so an active program's card can
                 // offer the exact tap that starts tonight's session. The
-                // wall card (components/programs_card.html) is the only
-                // other reader of api/practice-windows and already drops a
-                // window once it is logged -- todayWindowsFor() below does
-                // the same, for the same reason: a session that already
-                // happened offers nothing left to start.
+                // other readers of api/practice-windows are the wall card
+                // (components/programs_card.html) and the PWA
+                // (app.html's `fetchPracticeWindows`, which takes a whole
+                // week rather than a day); both drop a window once it is
+                // logged -- todayWindowsFor() below does the same, for the
+                // same reason: a session that already happened offers
+                // nothing left to start.
                 practiceToday: [],
                 creating: false,
                 proposing: false,
@@ -754,6 +805,11 @@
                 // disclosures at once, one per rotation label.
                 lessonOpen: {}, lessonDraft: {}, lessonLoaded: {},
                 lessonSaving: {}, lessonAddType: {},
+                // What the row says about ITSELF -- origin, source_url,
+                // edited, and the note _record_attempt leaves when a
+                // generation failed. Held apart from the draft because the
+                // draft is scenes and only scenes: it is what gets PUT back.
+                lessonMeta: {},
 
                 readIdentity() {
                     try {
@@ -846,12 +902,20 @@
                 // A lesson that fails to load just leaves that window's tap
                 // on the player's own fallback ladder, which is the whole
                 // point of shipping the player before generation existed.
+                //
+                // The rung comes off the WINDOW (`w.unit_n`, which
+                // programs.practice_windows derives from the same
+                // `unit_for` walk `p.current_unit` does) rather than off
+                // the program row this page happens to hold, so this page,
+                // the PWA and the wall board -- only one of which can read
+                // a program row at all -- resolve one evening to one lesson
+                // by one route. The EDITOR below still keys off
+                // `p.current_unit`, because it edits a phase's slot with no
+                // window in hand; both name the same rung by construction.
                 async loadWindowLesson(w) {
-                    const p = this.programs.find(x => x.id === w.program_id);
-                    const unitN = p ? (p.current_unit || 0) : 0;
                     try {
                         const qs = new URLSearchParams({ phase_name: w.phase_name || '',
-                                                         unit_n: unitN,
+                                                         unit_n: w.unit_n || 0,
                                                          session_label: w.session_label || '' });
                         const r = await fetch(this.apiBase + `api/programs/${w.program_id}/lesson?${qs}`,
                                               { headers: this.authHeaders() });
@@ -869,10 +933,21 @@
                 // "Log a session" button already calls, so there is one
                 // path to a logged session, not a second one grown for
                 // the player.
+                //
+                // It answers the SLOT, though, not "somebody practised at
+                // some point": `source: 'asked'` with the window's own
+                // date, which is what the PWA's own done-listener has
+                // always sent (app.html) and what this page used to throw
+                // away -- it had `detail.window` in hand and kept only the
+                // program id. The two surfaces wrote two different records
+                // for the identical act, and the page's one filed a session
+                // finished after midnight under the wrong day, which leaves
+                // `w.logged` false, the tonight row still offering Start,
+                // and the "did it happen?" ask still to come.
                 onLessonDone(detail) {
                     const w = (detail || {}).window || {};
                     const p = this.programs.find(x => x.id === w.program_id);
-                    if (p) this.logSession(p);
+                    if (p) this.logSession(p, { source: 'asked', slot_date: w.date });
                 },
 
                 async saveProgramSettings() {
@@ -1219,13 +1294,27 @@
                     } catch (e) { showGlobalAlert("Couldn't approve that just now."); }
                 },
 
-                async logSession(p) {
+                // `opts` is how the SAME write serves two different acts.
+                // The page's own "Log a session" button is practice nobody
+                // scheduled -- `source: 'added'`, with the minutes a person
+                // typed. Finishing the player is answering a scheduled slot
+                // -- `source: 'asked'`, with that slot's own date, so the
+                // server files it under the evening it was about
+                // (services/programs.py's `_slot_ts`) rather than the
+                // moment it was tapped. One POST, one code path; the caller
+                // says which act it is instead of a second function saying
+                // it a second way.
+                async logSession(p, opts) {
                     const minutes = this.sessionMinutes[p.id];
+                    const o = opts || {};
                     try {
+                        const payload = { member_id: this.myId || null,
+                                          minutes: minutes || null,
+                                          source: o.source || 'added' };
+                        if (o.slot_date) payload.slot_date = o.slot_date;
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/session`, {
                             method: 'POST', headers: this.authHeaders(),
-                            body: JSON.stringify({ member_id: this.myId || null,
-                                                   minutes: minutes || null, source: 'added' })
+                            body: JSON.stringify(payload)
                         });
                         const d = await r.json().catch(() => ({}));
                         if (!r.ok || d.status === 'error') {
@@ -1392,11 +1481,33 @@
                         // form below only exposes text/ask/caption -- so
                         // saving back a row this form did not touch never
                         // clobbers what generation or a citation put there.
-                        this.lessonDraft[key] = ((body.lesson || {}).scenes || [])
-                            .map(s => ({ ...s }));
+                        const l = body.lesson || {};
+                        this.lessonDraft[key] = (l.scenes || []).map(s => ({ ...s }));
+                        this.lessonMeta[key] = { origin: l.origin || '',
+                                                 source_url: l.source_url || '',
+                                                 edited: !!l.edited,
+                                                 note: l.note || '' };
                         this.lessonAddType[key] = this.lessonAddType[key] || 'say';
                         this.lessonLoaded[key] = true;
                     } catch (e) { showGlobalAlert("Couldn't load that lesson."); }
+                },
+
+                // Where the stored script came from, in the same words the
+                // player's own footer uses -- one sentence, two surfaces,
+                // said the same way. Empty for a slot with no script: a row
+                // that exists only to record a failed attempt has an origin
+                // field and nothing to attribute.
+                lessonOriginLabel(p, ph, label) {
+                    const key = this.lessonKey(p, ph, label);
+                    if (!(this.lessonDraft[key] || []).length) return '';
+                    return (this.lessonMeta[key] || {}).source_url
+                        ? 'From' : 'Written by the app';
+                },
+                lessonSourceHost(p, ph, label) {
+                    const u = (this.lessonMeta[this.lessonKey(p, ph, label)] || {}).source_url || '';
+                    if (!u) return '';
+                    try { return new URL(u).hostname.replace(/^www\./, ''); }
+                    catch (e) { return u.slice(0, 40); }
                 },
 
                 addLessonRow(p, ph, label) {
@@ -1412,6 +1523,18 @@
 
                 removeLessonRow(p, ph, label, i) {
                     (this.lessonDraft[this.lessonKey(p, ph, label)] || []).splice(i, 1);
+                },
+
+                // Move one beat by one place. The draft array is the order
+                // -- saveLesson PUTs it whole and sanitize_script preserves
+                // the sequence it is handed -- so reordering is a splice out
+                // and a splice back in, with no server round trip until
+                // Save, exactly like editing a beat's words.
+                moveLessonRow(p, ph, label, i, delta) {
+                    const draft = this.lessonDraft[this.lessonKey(p, ph, label)] || [];
+                    const j = i + delta;
+                    if (j < 0 || j >= draft.length) return;
+                    draft.splice(j, 0, draft.splice(i, 1)[0]);
                 },
 
                 // Refreshes tonight's own copy when this slot is what Start

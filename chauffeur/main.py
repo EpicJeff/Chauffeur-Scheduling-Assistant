@@ -98,6 +98,32 @@ async def poll_schedule():
             await asyncio.to_thread(refresh_trips_snapshot)
         except Exception as e:
             print(f"Trips snapshot error: {e}")
+        # Tomorrow's lesson scripts, written tonight. Self-throttled to one
+        # real pass a day inside generate_due (an app_state day marker), so
+        # this loop can call it blindly the way it already calls the two
+        # above — and capped to a handful of slots per pass, because every
+        # slot it does reach is up to four model candidates at a 180-second
+        # gemma timeout.
+        #
+        # It lives HERE, on the 300s loop, and not on the 30s push loop
+        # where it first shipped. That loop exists to fire departure
+        # notifications and practice pushes at a particular minute, and it
+        # awaited this sweep inline, ahead of them: a pass that took
+        # minutes delayed every push behind it by minutes. The failure is
+        # not hypothetical and not nocturnal — the marker is a date, so an
+        # app that was down overnight and restarts at 07:00 runs the entire
+        # sweep in the school run. This loop is the one that already owns
+        # slow work (a CP-SAT re-solve, a Google-backed trips rebuild) and
+        # has nothing behind it that cares about a minute. Fire-and-forget
+        # (`asyncio.create_task`) would have kept it off the critical path
+        # too, but it would also have made an unsupervised task whose
+        # exceptions nobody reads out of a loop built for punctuality —
+        # moving the work is the smaller, more honest change.
+        try:
+            from services import program_lessons as _pl_gen
+            await asyncio.to_thread(_pl_gen.generate_due)
+        except Exception as e:
+            print(f"Lesson generation sweep error: {e}")
         await asyncio.sleep(300)
 
 
@@ -196,14 +222,12 @@ async def push_notification_loop():
             except Exception as pe:
                 print(f"Practice window push error: {pe}")
 
-            # Tomorrow's lessons, written tonight. Self-throttled to one
-            # pass a day inside generate_due, so this 30s loop can call it
-            # blindly — the traffic-sweep pattern one block up.
-            try:
-                from services import program_lessons as _pl_gen
-                await asyncio.to_thread(_pl_gen.generate_due)
-            except Exception as le:
-                print(f"Lesson generation sweep error: {le}")
+            # Tomorrow's lessons are written by the 300s loop
+            # (`poll_schedule`), not here. This loop's job is time-critical
+            # — departure notifications and practice pushes fire off it —
+            # and an awaited LLM sweep in front of them is a stall of
+            # unknown length: every slot is up to four pool candidates at a
+            # 180s gemma timeout. See poll_schedule for the whole argument.
 
             for notif in pending_notifications:
                 if notif.get("fired"): continue
@@ -5887,6 +5911,17 @@ def edit_program(program_id: str, body: dict = Body(default={}),
         if retitled or curated['phases'] or not (row.get('phases') or []):
             updates['phases'] = curated['phases']
             updates['source'] = curated['source']
+            # The old plan's lessons go with the old plan. A lesson is keyed
+            # to (phase_name, unit_n, session_label), `_clean_units`
+            # renumbers `n` from 1 every time, and phase names and rotation
+            # labels recur across a re-curate -- so a colliding slot would
+            # otherwise hand the NEW plan a script written for the OLD one,
+            # and `generate_for`'s already-has-a-lesson skip means the sweep
+            # would never replace it. The book-spine "plan without the book"
+            # fork lands exactly here, which is the case where the two plans
+            # are most likely to share a phase name and least likely to mean
+            # the same thing by it.
+            storage.delete_program_lessons(program_id)
         else:
             kept = True
     elif 'shape' in updates and row.get('phases'):
@@ -6154,6 +6189,64 @@ def delete_program_lesson_api(program_id: str, phase_name: str = '',
         'phase_name': phase_name, 'unit_n': unit_n,
         'session_label': session_label})
     return {"status": "ok"}
+
+
+@app.get("/api/programs/{program_id}/lesson-scenes")
+def program_lesson_scenes(program_id: str, phase_name: str = '',
+                          unit_n: int = 0, session_label: str = ''):
+    """The lesson a wall board may play — the scenes, and nothing else.
+
+    A deliberately narrow projection, the same shape and the same reasoning
+    as `/api/programs/celebrations` above rather than a widened read of the
+    route beside it: a `?panel=true` board identifies as DEVICE, so
+    `_program_list_scope` returns `_NOBODY` and `GET
+    /api/programs/{id}/lesson` answers a panel `{"lesson": null}` forever.
+    That is correct for THAT route, which returns the stored row whole —
+    who edited it, which model wrote it, when.
+
+    The scenes themselves are a different object. A wall is a shared
+    household screen with nobody signed in at it, and it is also where a
+    great deal of family practice physically happens — the piano is in the
+    living room, the mat is in front of the board. Refusing the wall its
+    script does not protect anybody; it just means the one surface a family
+    practises in front of plays a visibly worse lesson than the phone in
+    their pocket, silently, which is exactly the quiet degradation this arc
+    exists to remove.
+
+    And the disclosure is not new in kind. `GET /api/practice-windows` is
+    already WALL, and already hands a panel the same session's title, whose
+    it is, its phase, its rotation label, its steps and its cited unit's own
+    url — the material a script is BUILT from. What this adds is the same
+    material arranged into beats. What it does not add is any record of a
+    person: `program_lessons` cannot hold one (a check tap is never stored,
+    and there is no field for it to be stored in), so there is nothing here
+    to count, order, or read as one person short of another — the standing
+    test every wall surface in this app has to pass.
+
+    Scoped by what it RETURNS, not by who is asking, which is why the
+    handler carries no `request`: scenes, the origin label, and the source
+    link. No id, no model, no edited flag, no created_at. An unresolvable
+    slot reads as `{"lesson": null}`, exactly like the signed-in route's own
+    answer for one — nothing distinguishes "no such slot" from "no such
+    program" from "nothing generated yet", because the player's fallback
+    ladder plays the plain steps for all three.
+    """
+    try:
+        unit_n = int(unit_n or 0)
+    except (TypeError, ValueError, OverflowError):
+        return {"lesson": None}
+    if not (0 <= unit_n <= _LESSON_UNIT_N_MAX):
+        return {"lesson": None}
+    if not storage.get_program(program_id):
+        return {"lesson": None}
+    lesson = storage.get_program_lesson(program_id, {
+        'phase_name': phase_name, 'unit_n': unit_n,
+        'session_label': session_label}) or {}
+    if not lesson.get('scenes'):
+        return {"lesson": None}
+    return {"lesson": {'scenes': lesson.get('scenes') or [],
+                       'origin': lesson.get('origin') or '',
+                       'source_url': lesson.get('source_url') or ''}}
 
 
 @app.get("/api/programs/celebrations")

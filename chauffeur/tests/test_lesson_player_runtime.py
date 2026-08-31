@@ -57,8 +57,24 @@ def scenario_programs_page_never_posts_from_the_player_directly():
     src = _read('programs.html')
     check('lesson-player:done' in src, "the page listens for the finish")
     check('onLessonDone' in src, "and handles it")
-    check('this.logSession(p)' in src,
+    import re
+    m = re.search(r'onLessonDone\(detail\)\s*\{(.*?)\n                \},', src, re.S)
+    check(m, "onLessonDone's body is findable")
+    body = m.group(1) if m else ''
+    check('this.logSession(p' in body,
           "by calling the exact log action the page already had")
+    check('fetch(' not in body,
+          "and never by growing a second path to the same POST")
+    # Same act, same record: this used to file `source: 'added'` with no
+    # slot_date while app.html filed `source: 'asked'` with one, so a
+    # session finished after midnight from this page landed on the wrong
+    # day -- `w.logged` stays false, tonight still offers Start, and the
+    # "did it happen?" ask still fires.
+    check("source: 'asked'" in body,
+          "answering a scheduled slot is 'asked', the same source the PWA sends")
+    check('slot_date: w.date' in body,
+          "and it carries the window's own date, so the session files under "
+          "the evening it was about")
 
 
 def scenario_the_component_reads_the_panel_flag():
@@ -175,9 +191,168 @@ def scenario_fallback_ladder_never_produces_an_empty_scene_list():
 
 
 def scenario_the_wall_and_the_pwa_reach_the_player():
-    for page in ('components/programs_card.html', 'app.html'):
-        src = _read(page)
-        check('lesson-player:open' in src, f"{page} can open the player")
+    """Not "can open the player" -- open it with a REAL LESSON.
+
+    The version of this scenario that shipped only looked for the string
+    `lesson-player:open` in each file, which both surfaces had from the
+    first slice, and it stayed green through an entire arc in which
+    neither one ever fetched a lesson: both dispatched `lesson: null` on
+    every tap and both always ran the P1 fallback ladder, so the sweep,
+    the stored scripts, the origins and every primitive renderer were
+    invisible on the phone and on the wall while the arc claimed the three
+    tap sites reached the identical session.
+
+    So this asserts the join itself, scoped to each surface's own fetch:
+    the request that resolves the slot, and the dispatch that carries what
+    came back."""
+    import re
+    pwa = _read('app.html')
+    m = re.search(r'async function loadWindowLesson\(w\)\s*\{(.*?)\n        \}',
+                  pwa, re.S)
+    check(m, "the PWA has a lesson join at all")
+    body = m.group(1) if m else ''
+    check('api/programs/${w.program_id}/lesson?' in body,
+          "and it asks the lesson endpoint for THIS window's program")
+    for key in ('phase_name', 'unit_n', 'session_label'):
+        check(key in body, f"with the whole slot key -- {key} is part of it")
+    check('w._lesson = (await r.json()).lesson' in body,
+          "and joins the answer onto the window the player is handed")
+    check(re.search(r"lesson-player:open'[\s\S]{0,200}?lesson: w\._lesson", pwa),
+          "the PWA's Start dispatch passes that lesson, not a bare null")
+    check('await loadWindowLesson(w)' in pwa,
+          "and the join is awaited before the dispatch that reads it")
+
+    wall = _read('components/programs_card.html')
+    m = re.search(r'async loadWindowLesson\(w\)\s*\{(.*?)\n            \},',
+                  wall, re.S)
+    check(m, "the wall card has a lesson join too")
+    body = m.group(1) if m else ''
+    # A panel is DEVICE: the signed-in lesson read answers it null forever
+    # and correctly (it returns the stored row). The wall gets the
+    # scenes-only projection instead -- the same shape of answer, decided
+    # by what the endpoint returns rather than by widening a refused read,
+    # exactly as api/programs/celebrations already is.
+    check('lesson-scenes' in body,
+          "through the scenes-only route a panel is actually allowed to call")
+    for key in ('phase_name', 'unit_n', 'session_label'):
+        check(key in body, f"with the whole slot key -- {key} is part of it")
+    check('w._lesson = (await r.json()).lesson' in body,
+          "and joins it onto the raw window the player is handed")
+    check('this.loadWindowLesson(x.raw)' in wall,
+          "called for today's windows as they load")
+    check(re.search(r"lesson-player:open'[\s\S]{0,200}?lesson: w\.raw\._lesson", wall),
+          "and the wall's Start dispatch passes that lesson, not a bare null")
+
+
+def scenario_the_wall_reads_the_slot_key_off_the_window():
+    """A panel is refused `GET /api/programs` outright, so it can never
+    learn `current_unit` from a program row -- which is half a lesson's
+    slot key. `practice_windows` carries `unit_n` for exactly this reason,
+    derived from the same `unit_for` walk the unit title beside it came
+    from, so one evening can never name two rungs."""
+    from services import programs
+    import inspect
+    src = inspect.getsource(programs.practice_windows)
+    check("'unit_n': int(unit.get('n') or 0)" in src,
+          "the practice window carries its own rung")
+    for page in ('app.html', 'components/programs_card.html'):
+        check('unit_n: w.unit_n' in _read(page).replace('w.raw.', 'w.'),
+              f"{page} takes the rung off the window, not from a second source")
+
+
+def scenario_the_last_scene_is_never_an_ambient_tap():
+    """Finishing offers an irreversible write -- append_program_session has
+    no unlog and a logged session moves the rung on. A whole-screen tap
+    target is the right shape for "next beat" and the wrong one for that,
+    so the scene area's own handler goes inert on the last scene and the
+    footer button is the only way out. Safe before this only by luck:
+    stepsToScenes always ends on a `check`, but _SYSTEM asks for a check
+    "near the end" and a generated script routinely ends on say/do/show."""
+    import re
+    src = _read('components/lesson_player.html')
+    m = re.search(r'@click="scene\(\)\.type !== \'check\'([^"]*)"', src)
+    check(m, "the scene area's tap handler is findable")
+    check('!isLast()' in (m.group(1) if m else ''),
+          "and it does nothing on the last scene")
+
+
+def scenario_finishing_asks_before_it_logs():
+    """The design says the final check merely PREFILLS the log ask. It was
+    the log: whichever tap landed last POSTed a session immediately, on
+    both listening surfaces. promptConfirm, never a browser dialog."""
+    import re
+    src = _read('components/lesson_player.html')
+    m = re.search(r'async finish\(\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m, "finish() is findable")
+    body = m.group(1) if m else ''
+    check('promptConfirm' in body, "it asks first")
+    for banned in ('confirm(', 'alert(', 'prompt('):
+        check(banned not in body.replace('promptConfirm(', '')
+                                .replace('promptInput(', ''),
+              f"never a browser {banned} dialog (house rule)")
+    check(re.search(r'promptConfirm[\s\S]*?dispatchEvent', body),
+          "and the dispatch only happens after the ask")
+    check('!this.panel' in body,
+          "no ask on a wall board, where nothing listens for the event and a "
+          "confirmed write would never happen")
+
+
+def scenario_the_wall_button_does_not_promise_a_write():
+    """home.html registers no `lesson-player:done` listener, by design -- a
+    panel authenticates as a place, not a person. "Log it?" there promised
+    a write that was never coming and simply closed the modal."""
+    import re
+    src = _read('components/lesson_player.html')
+    m = re.search(r'x-text="isLast\(\) \? ([^"]*)"', src)
+    check(m, "the footer button's label expression is findable")
+    label = m.group(1) if m else ''
+    check("panel ? 'Finish'" in label,
+          f"a wall board says Finish, not Log it?, got {label!r}")
+    check("'Log it?'" in label, "and the phone still gets the log ask")
+    check('lesson-player:done' not in _read('home.html'),
+          "the wall really does not listen -- if that changes, so must this")
+
+
+def scenario_the_player_says_where_the_lesson_came_from():
+    """The spec: "source_url carried; the player shows the link." It was
+    carried on every row and displayed nowhere, which left the whole
+    cited/generated distinction -- the thing the curate module exists to
+    defend -- invisible to the family, and Task 9's honest label for an
+    uncited unit labelling nothing anybody sees."""
+    import re
+    src = _read('components/lesson_player.html')
+    m = re.search(r'originLabel\(\)\s*\{(.*?)\n        \},', src, re.S)
+    check(m, "originLabel() exists")
+    body = m.group(1) if m else ''
+    check('Written by the app' in body, "a generated lesson says so")
+    check('sourceHost()' in body, "and a cited one names where it came from")
+    check("plan's own steps" in body,
+          "and the fallback ladder says it is playing the plain steps, "
+          "rather than passing them off as a lesson")
+    check(re.search(r'source_url[\s\S]{0,400}?x-text="sourceHost\(\)"', src),
+          "and the source is rendered as a real link, not just computed")
+
+
+def scenario_the_editor_can_reorder_and_names_its_source():
+    """Two claims the shipped editor did not honour: the spec's own
+    "reorder/edit/delete beats", and showing where a script came from."""
+    import re
+    src = _read('programs.html')
+    m = re.search(r'moveLessonRow\(p, ph, label, i, delta\)\s*\{(.*?)\n                \},',
+                  src, re.S)
+    check(m, "the editor can move a beat")
+    body = m.group(1) if m else ''
+    check('splice' in body, "by splicing the draft, which IS the order")
+    check('moveLessonRow(p, ph, label, i, -1)' in src, "there is an up tap")
+    check('moveLessonRow(p, ph, label, i, 1)' in src, "and a down tap")
+    check('lessonOriginLabel(p, ph, label)' in src,
+          "and the disclosure names the origin")
+    check('lessonSourceHost(p, ph, label)' in src, "and links the source")
+    # The reason a slot has no script, when the answer is not "nothing has
+    # tried yet" -- an empty api key fails every call forever and used to
+    # be indistinguishable from a sweep that had not got there.
+    check(re.search(r'lessonMeta\[lessonKey\(p, ph, label\)\] \|\| \{\}\)\.note', src),
+          "and prints why a generation failed, where a person looks")
 
 
 def scenario_the_wall_card_dispatches_the_raw_window_not_the_display_row():
@@ -493,6 +668,12 @@ if __name__ == '__main__':
     scenario_an_unrenderable_show_with_no_caption_still_says_something()
     scenario_fallback_ladder_never_produces_an_empty_scene_list()
     scenario_the_wall_and_the_pwa_reach_the_player()
+    scenario_the_wall_reads_the_slot_key_off_the_window()
+    scenario_the_last_scene_is_never_an_ambient_tap()
+    scenario_finishing_asks_before_it_logs()
+    scenario_the_wall_button_does_not_promise_a_write()
+    scenario_the_player_says_where_the_lesson_came_from()
+    scenario_the_editor_can_reorder_and_names_its_source()
     scenario_the_wall_card_dispatches_the_raw_window_not_the_display_row()
     scenario_the_lesson_player_is_included_once_on_each_page_not_inside_the_card()
     scenario_the_wall_tap_is_panel_sized()

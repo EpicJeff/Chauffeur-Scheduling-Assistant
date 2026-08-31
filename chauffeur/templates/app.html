@@ -1544,6 +1544,36 @@
             return practiceWindows.filter(w => w.date === dateStr);
         }
 
+        // The lesson behind one window, joined onto the window itself.
+        // Without this the PWA dispatched `lesson: null` on every tap and
+        // the player always fell back to the plain steps -- the nightly
+        // sweep, the stored scripts, the origins, the screens, the keyboard
+        // and fretboard renderers, all of it invisible on the phone while
+        // the arc claimed the same lesson opened in the hand as on the
+        // wall. Same endpoint and the same never-throws bargain as
+        // programs.html's own `loadWindowLesson`, and the same slot key --
+        // taken here off the window itself (`w.unit_n`, which
+        // `programs.practice_windows` derives from the very `unit_for` walk
+        // the programs page's `current_unit` comes from), so all three
+        // surfaces resolve one evening to one lesson by one route.
+        //
+        // `_lesson === undefined` means "not asked yet"; null means asked
+        // and there is none, which is a real answer the player handles by
+        // playing the window's own steps. Setting it to null BEFORE the
+        // await is what keeps two taps in quick succession from firing two
+        // fetches for the same window.
+        async function loadWindowLesson(w) {
+            if (!w || !w.program_id || w._lesson !== undefined) return;
+            w._lesson = null;
+            try {
+                const qs = new URLSearchParams({ phase_name: w.phase_name || '',
+                                                 unit_n: w.unit_n || 0,
+                                                 session_label: w.session_label || '' });
+                const r = await fetch(`${apiBase}api/programs/${w.program_id}/lesson?${qs}`);
+                if (r.ok) w._lesson = (await r.json()).lesson || null;
+            } catch (e) { /* the player just falls back to plain steps */ }
+        }
+
         // The window happening NOW, or close enough that starting it is the
         // next thing you would do. This is the "when is it time" half; the
         // steps under it are the "what do I do" half, and neither existed.
@@ -1715,8 +1745,14 @@
                     await askProgramSession(w.program_id, w.date);
                 };
                 const start = overlay.querySelector('[data-start]');
-                if (start) start.onclick = () => {
+                if (start) start.onclick = async () => {
                     close();
+                    // Today's windows already carry their lesson from the
+                    // eager join in buildPracticeParts; this tops up an
+                    // evening further out in the week, which is cheaper
+                    // than fetching a lesson for every session of it up
+                    // front. A no-op when `_lesson` was already resolved.
+                    await loadWindowLesson(w);
                     window.dispatchEvent(new CustomEvent('lesson-player:open',
                         {detail: {window: w, lesson: w._lesson || null}}));
                 };
@@ -1856,6 +1892,12 @@
                 const weekEnd = `${wk.getFullYear()}-${pad(wk.getMonth() + 1)}-${pad(wk.getDate())}`;
                 practiceWindows = await fetchPracticeWindows(todayStr, weekEnd);
                 out.now = renderPracticeNow(practiceNow(t));
+                // Tonight's lessons, eagerly -- these are the windows with a
+                // Start tap on screen right now. A window further out in
+                // the week tops up on its own tap (openSessionSheet's Start
+                // handler) rather than costing a request here for an
+                // evening nobody has opened yet.
+                await Promise.all(practiceWindowsOn(todayStr).map(loadWindowLesson));
                 const myPrograms = await fetchMyPrograms();
                 if (myPrograms.length) {
                     const myCommitments = await fetchMyCommitments();

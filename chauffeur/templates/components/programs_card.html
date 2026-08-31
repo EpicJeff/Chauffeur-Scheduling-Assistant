@@ -205,9 +205,40 @@
                             // display projection.
                             raw: w,
                         }));
+                    // ...and the SCRIPT for each of them. Without this
+                    // the wall dispatched `lesson: null` on every Start tap
+                    // and always played the plain-steps fallback, while the
+                    // phone two rooms away played the real lesson -- the
+                    // one thing this arc claims outright is that both taps
+                    // open the same session.
+                    await Promise.all(this.pgToday.map(x => this.loadWindowLesson(x.raw)));
                 } catch (e) {
                     // Stale beats false-empty, same as the celebrations poll.
                 }
+            },
+
+            // The one lesson route a panel may call (`services/auth.py`,
+            // WALL): scenes, origin and source link, never the stored row.
+            // A board identifies as DEVICE, so the signed-in read beside it
+            // (`GET api/programs/{id}/lesson`) answers a wall `null`
+            // forever and correctly -- that route returns who edited a
+            // lesson and which model wrote it, which is program payload.
+            // The slot key comes off the window itself; `unit_n` is on the
+            // practice-windows row for exactly this reason, because a panel
+            // cannot read a program row to find it.
+            //
+            // Never throws: a lesson that will not load leaves this window's
+            // tap on the player's own fallback ladder, the same bargain the
+            // poll around it makes.
+            async loadWindowLesson(w) {
+                if (!w || !w.program_id) return;
+                try {
+                    const qs = new URLSearchParams({ phase_name: w.phase_name || '',
+                                                     unit_n: w.unit_n || 0,
+                                                     session_label: w.session_label || '' });
+                    const r = await fetch(`${apiBase}api/programs/${w.program_id}/lesson-scenes?${qs}`);
+                    if (r.ok) w._lesson = (await r.json()).lesson || null;
+                } catch (e) { /* plain steps, which is never a blocked session */ }
             },
 
             async loadPrograms() {

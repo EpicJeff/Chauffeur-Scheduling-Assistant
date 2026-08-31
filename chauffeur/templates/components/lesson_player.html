@@ -71,10 +71,21 @@
                 :class="panel ? 'w-14 h-14 text-3xl' : 'w-10 h-10 text-xl'">&times;</button>
     </div>
 
-    <!-- scene area: one scene, keyed by idx, tap (almost) anywhere to advance -->
+    <!-- scene area: one scene, keyed by idx, tap (almost) anywhere to advance
+         -- except on the LAST scene, where this ambient handler is inert.
+         Advancing off the last scene is finish(), and finishing offers an
+         irreversible write (services/programs.py's `sessions` is append-only,
+         there is no unlog, and a logged session moves the child's rung on
+         via `programs.unit_for`). A whole-screen tap target is the right
+         shape for "next beat" and completely the wrong one for that, so the
+         last step out is the footer button alone, and that button asks
+         first. Safe today only by luck: `stepsToScenes` always ends on a
+         `check`, whose own three buttons carry .stop, but _SYSTEM asks the
+         model for a check "near the end" and a generated script routinely
+         ends on say/do/show. -->
     <div class="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center gap-5 p-6 text-center lp-beat-in"
          x-effect="idx, $nextTick(() => replayBeat($el))"
-         @click="scene().type !== 'check' && advance()">
+         @click="scene().type !== 'check' && !isLast() && advance()">
 
         <div class="uppercase tracking-widest text-teal-400 font-black"
              :class="panel ? 'text-sm' : 'text-[11px]'" x-show="kicker()" x-text="kicker()"></div>
@@ -227,8 +238,31 @@
         </div>
     </div>
 
-    <!-- footer: progress dots (position only, never results), advance tap -->
+    <!-- footer: where this came from, progress dots (position only, never
+         results), advance tap -->
     <div class="shrink-0 px-4 py-4 border-t border-gray-800 space-y-3">
+        <!-- Where the lesson came from, which is the whole point of the
+             cited/generated split and was visible nowhere: a cited script
+             names the page it was written from and links it, a generated one
+             says the app wrote it, and a window with no script at all says
+             it is playing the plan's own steps. Metadata styling per
+             docs/ui_design_guide.md ("metadata text-[11px] ... text-gray-400").
+             In the FOOTER rather than over the scene, so the link is not
+             inside the tap-to-advance area at all. On a wall board the host
+             is plain text: a panel has one window and no way back from a
+             page it navigates to. -->
+        <div class="flex items-center justify-center gap-1.5 flex-wrap" x-show="originLabel()">
+            <span class="font-semibold text-gray-500" :class="panel ? 'text-base' : 'text-[11px]'"
+                  x-text="originLabel()"></span>
+            <template x-if="sourceHost() && !panel">
+                <a :href="(lesson || {}).source_url" target="_blank" rel="noopener"
+                   class="text-[11px] font-bold text-blue-400 underline underline-offset-2"
+                   x-text="sourceHost()"></a>
+            </template>
+            <template x-if="sourceHost() && panel">
+                <span class="text-base font-semibold text-gray-400" x-text="sourceHost()"></span>
+            </template>
+        </div>
         <div class="flex items-center justify-center gap-1.5">
             <template x-for="(sc, i) in scenes" :key="i">
                 <span class="rounded-full" :class="i === idx ? 'bg-teal-400 w-5 h-1.5' : 'bg-gray-700 w-1.5 h-1.5'"></span>
@@ -236,14 +270,20 @@
         </div>
         <!-- the final screen: on the last scene this same tap is the "log
              it?" ask -- tapping it calls advance(), which (already on the
-             last index) calls finish(), which only ever DISPATCHES; the
-             page that opened the player owns the actual log write. A check
-             scene skips this row entirely -- its own three taps already
-             advance, last scene or not. -->
+             last index) calls finish(), which ASKS and then only ever
+             DISPATCHES; the page that opened the player owns the actual log
+             write. A check scene skips this row entirely -- its own three
+             taps already advance, last scene or not, and land on the same
+             finish() and the same ask.
+             On a wall board this button says "Finish", not "Log it?":
+             home.html registers no `lesson-player:done` listener at all, by
+             design (a panel authenticates as a place, not a person, and a
+             session log needs a person), so "Log it?" there promised a write
+             that was never going to happen and simply closed the modal. -->
         <button type="button" @click="advance()" x-show="scene().type !== 'check'"
                 class="w-full rounded-xl bg-blue-600 text-white font-bold active:bg-blue-700"
                 :class="panel ? 'py-4 text-2xl' : 'py-3 text-sm'"
-                x-text="isLast() ? 'Log it?' : 'Continue'"></button>
+                x-text="isLast() ? (panel ? 'Finish' : 'Log it?') : 'Continue'"></button>
     </div>
 </div>
 
@@ -258,6 +298,11 @@ function lessonPlayer() {
 
     return {
         openFlag: false, w: null, scenes: [], idx: 0,
+        // The lesson ROW behind the scenes (origin, source_url), kept so the
+        // footer can say where this came from. `usingLesson` is false when
+        // the fallback ladder built the scenes from the window's own steps,
+        // which is a different, equally honest thing to say.
+        lesson: null, usingLesson: false,
         panel: new URLSearchParams(location.search).get('panel') === 'true',
         timer: null, timeLeft: 0, timerTotal: 0, audio: null, metroTimer: null,
         ringC: 2 * Math.PI * 44,
@@ -267,10 +312,29 @@ function lessonPlayer() {
 
         open(w, lesson) {
             this.w = w || {};
-            this.scenes = (lesson && (lesson.scenes || []).length)
+            this.lesson = lesson || null;
+            this.usingLesson = !!(lesson && (lesson.scenes || []).length);
+            this.scenes = this.usingLesson
                 ? lesson.scenes : this.stepsToScenes(this.w);
             this.idx = 0; this.openFlag = true;
             this.enterScene();
+        },
+
+        // Where this lesson came from, in the family's own terms. A cited
+        // script names the host it was written from (linked, off-panel);
+        // a generated one says so outright, which is the honest label an
+        // uncited unit is supposed to carry and which nothing on any screen
+        // was actually showing; and a window playing the fallback ladder
+        // says that too, rather than passing plain steps off as a lesson.
+        originLabel() {
+            if (!this.usingLesson) return "The plan's own steps";
+            return this.sourceHost() ? 'From' : 'Written by the app';
+        },
+        sourceHost() {
+            const u = (this.lesson && this.lesson.source_url) || '';
+            if (!u) return '';
+            try { return new URL(u).hostname.replace(/^www\./, ''); }
+            catch (e) { return u.slice(0, 40); }
         },
 
         // The fallback ladder: a window with no lesson plays its own steps.
@@ -619,8 +683,27 @@ function lessonPlayer() {
         // The only place this component ever talks to the outside world.
         // No fetch, no POST -- the page that opened the player owns the
         // actual session log and reuses its own existing action for it.
-        finish() {
+        //
+        // It ASKS first, because what it sets off is irreversible:
+        // `storage.append_program_session` is append-only, there is no
+        // unlog anywhere in this app, and a logged session moves the
+        // child's rung on (`programs.unit_for`). The design has always said
+        // the final check merely PREFILLS the log ask; before this it WAS
+        // the log, fired by whichever tap happened to land last.
+        // promptConfirm, never a browser dialog (house rule).
+        //
+        // No ask on a wall board: nothing there listens for this event
+        // (home.html registers no done-handler, deliberately), so a panel
+        // confirming a write that is not going to happen would be the same
+        // lie the "Log it?" label was, one dialog deeper.
+        async finish() {
             this.stopSound();
+            if (!this.panel) {
+                const ok = await promptConfirm('Log this session?',
+                    'It records the practice and cannot be undone.',
+                    'Log it', 'Not now');
+                if (!ok) { this.openFlag = false; return; }
+            }
             window.dispatchEvent(new CustomEvent('lesson-player:done', {detail: {window: this.w}}));
             this.openFlag = false;
         },

@@ -735,6 +735,15 @@ def practice_windows(start: datetime.date, end: datetime.date,
                 'unit_title': unit.get('title') or '',
                 'unit_url': unit.get('url') or '',
                 'unit_body': unit.get('body') or '',
+                # WHICH rung, as a number -- the other half of a lesson's
+                # slot key (program_lessons.slot_of is phase_name + unit_n +
+                # session_label). Without it a surface holding a window
+                # still cannot ask for that window's lesson, and the wall
+                # board cannot ask for `current_unit` any other way: a
+                # panel is refused `GET /api/programs` outright. Derived
+                # from the same `unit_for` walk the unit title beside it
+                # came from, so one window can never name two rungs.
+                'unit_n': int(unit.get('n') or 0),
                 'session_label': (session or {}).get('label') or '',
                 'steps': list((session or phase).get('steps') or []),
                 'progression': phase.get('progression') or '',

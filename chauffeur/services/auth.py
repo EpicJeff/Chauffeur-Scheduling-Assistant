@@ -372,6 +372,18 @@ RULES = [
     # so what it may read is decided by what the endpoint returns, not by
     # widening the read it was refused.
     ('GET', '/api/programs/celebrations', WALL, None),
+    # The second, and last, program route a wall panel may call: the SCENES
+    # of one practice window's lesson, and nothing else about it — no id, no
+    # model, no edited flag, no created_at. Same principle as celebrations
+    # above (a narrow projection, never a widened read of the row beside
+    # it), and the same disclosure `/api/practice-windows` below already
+    # makes: that route is WALL and already hands a panel this session's
+    # title, phase, rotation label, steps and cited url — the material the
+    # script is built FROM. A lesson holds no record of a person to leak;
+    # there is no field in `program_lessons` for one. What it buys is the
+    # wall playing the same lesson as the phone, which is the whole point of
+    # a shared screen in the room where the practising happens.
+    ('GET', '/api/programs/{program_id}/lesson-scenes', WALL, None),
     # WHEN the household's practice windows are, for the surfaces that draw a
     # day -- the wall's calendar card included, which is why this is WALL and
     # not SIGNED_IN. It carries a title, a name and an hour, which is the same

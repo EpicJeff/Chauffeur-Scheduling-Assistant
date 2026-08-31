@@ -61,9 +61,19 @@ ProgramLesson {
   source_url,                              -- cited only
   edited: bool,
   scenes: [Scene, ...],                    -- ~2-5KB JSON
+  attempts, note,                          -- why there is no script yet
   created_at, model
 }
 ```
+
+**A replan retires the plan's lessons with it.** Re-curating replaces
+`phases` wholesale, `_clean_units` renumbers `n` from 1, and phase names
+and rotation labels recur — so a colliding slot would hand the new plan
+the old plan's script, and generation's already-has-a-lesson skip means it
+would never be replaced. The branch that replaces `phases` calls
+`storage.delete_program_lessons`; a second look that finds nothing keeps
+both the plan and its lessons. Dropping a program does not: dropping is
+not failing, the plan stays, so its lessons still mean what they meant.
 
 ### Scene schema v1 — four beat types
 
@@ -97,18 +107,47 @@ presentations (kiosk-shares-logic / TripLogic pattern):
 - **PWA session view:** personal, tap-through
 - **`?panel=true` variant:** large type, tap-light
 
-Entry: tapping tonight's session on the programs page / programs card.
-Input: one row from `practice_windows` plus its slot's `ProgramLesson`
-(or none → fallback ladder). Sound is local Web Audio (metronome click);
-no TTS in v1. Both themes, both surfaces.
+Entry: tapping tonight's session on the programs page / the PWA's session
+sheet / the wall's programs card. Input: one row from `practice_windows`
+plus its slot's `ProgramLesson` (or none → fallback ladder) — every one of
+the three surfaces fetches that lesson itself, or the whole generation
+half of this design is invisible behind a tap that looks identical.
+`practice_windows` carries `unit_n` so the slot key can be resolved from
+the window alone, which is the only way the wall can resolve it at all.
+The wall reads a **scenes-only WALL projection**
+(`GET /api/programs/{id}/lesson-scenes`) rather than the stored row: a
+panel is a place, not a person, and what it may read is decided by what
+the endpoint returns — the same call `api/programs/celebrations` makes.
+
+The footer says where the lesson came from: a cited script names and links
+its page, a generated one says the app wrote it, and a window with no
+script says it is playing the plan's own steps.
+
+Finishing **asks** (`promptConfirm`) before it dispatches, and the
+whole-screen tap-to-advance goes inert on the last scene: a session log is
+append-only, has no undo, and moves the rung on. On `?panel=true` the
+final button says "Finish", not "Log it?" — nothing on the wall listens
+for `lesson-player:done`, deliberately.
+
+Sound is local Web Audio (metronome click); no TTS in v1. Both themes,
+both surfaces.
 
 ## Generation pipeline
 
-- **Trigger:** watcher tick, once daily — scan
+- **Trigger:** the 300s `poll_schedule` loop — the one that already owns
+  slow work — once daily by an `app_state` day marker; scan
   `practice_windows(tomorrow..+2d)`; any window whose slot lacks a script
-  is queued. Background tier (gemma-first; nobody is waiting). Family
-  scale is about 2/day. Failure → fallback rendering; retry next tick;
-  never announced.
+  is queued, **capped at a handful of slots per pass** (each slot is up to
+  four pool candidates at a 180s gemma timeout, and the marker is a date,
+  so a restart at 07:00 runs the whole sweep in the school run). Never the
+  30s push loop, which exists to fire departure notifications on time.
+  Background tier (gemma-first; nobody is waiting). Family scale is about
+  2/day. Failure → fallback rendering; retry next pass; never announced —
+  but always **recorded**: a scenes-less row carries the reason in words
+  (the editor prints it) and an attempt count, so a slot that can never
+  work stops costing a call a night and "the key is empty" stops being
+  indistinguishable from "the sweep has not got there yet". Transient
+  failures are recorded and never counted.
 - **Cited plan:** generator re-reads the unit's cited page (`web.py`,
   allowance-aware; threads-arc discipline — content only from pages
   actually read). Beats built from that material; `source_url` carried;
@@ -116,9 +155,14 @@ no TTS in v1. Both themes, both surfaces.
 - **Generated plan:** source is the plan's own steps/units. The model
   expands *practice structure* (warmup / new material / review / one
   fix) and is banned from inventing physical-technique specifics.
-- **Hand path:** lesson editor on the program page — reorder/edit/delete
-  beats, edit primitive params. Sets `edited: true`. No agent tools in
-  v1 (deliberate; revisit if asked).
+- **Hand path:** lesson editor on the program page — reorder / edit /
+  delete beats, and it names where the script came from (origin + source
+  link) and why one is missing when a generation failed. Sets
+  `edited: true`. Primitive PARAMS are deliberately not hand-editable in
+  v1 — a fretboard dot editor is its own surface, and this form is a form,
+  not the show; every field it does not expose round-trips untouched, so a
+  wording fix never erases a generated chord diagram underneath it. No
+  agent tools in v1 (deliberate; revisit if asked).
 - **Setting:** `program_lessons` toggle in `settings_registry` plus the
   programs page (config-decentralisation rule), default ON. OFF loses
   depth, never practice.
@@ -131,12 +175,21 @@ no TTS in v1. Both themes, both surfaces.
 | `metronome` | bpm 30–240                                | pulse + Web Audio click    |
 | `keyboard`  | keys[] (note names, range-checked)        | SVG keys highlighted       |
 | `fretboard` | dots[] {string, fret max 24, finger 1–4}  | SVG neck + dots            |
-| `cards`     | pairs[] {front, back}                     | flip cards                 |
-| `counter`   | target, label                             | rep/interval counter       |
+| `cards`     | pairs[] {front, back}, each capped + screened | flip cards             |
+| `counter`   | target                                    | rep/interval counter       |
 
 Adding a primitive never changes the script schema — a new `kind`; old
 scripts untouched. Music primitives ship first (P3a), movement/cards
 next (P3b).
+
+A stored primitive is **rebuilt from the keys its own validator checked**,
+never the model's dict passed through: an invented extra key would
+otherwise be stored and shipped whole, past every cap and both screens
+(`counter`'s `label` was in this table for one release and was exactly
+that — never validated, never rendered; a `show` scene's own `caption` is
+the words above a counter). Any free text a primitive carries — today only
+a card's `front`/`back` — is capped and screened exactly like a caption,
+and a violating face drops the whole scene rather than being reworded.
 
 ## Book-spine flow (curate-side)
 

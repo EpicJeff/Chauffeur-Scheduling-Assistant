@@ -58,6 +58,74 @@ def scenario_endpoints_exist():
           f"got {methods}")
 
 
+def scenario_the_wall_route_exists_and_is_wall_tier():
+    """The one lesson route a panel may call. A `?panel=true` board
+    identifies as DEVICE, so `_program_list_scope` hands the signed-in read
+    `_NOBODY` and it answers null forever -- correctly, since that route
+    returns the stored row. Without a WALL-tier projection beside it the
+    wall board could only ever play the fallback ladder, while the arc
+    claimed the wall and the hand opened the same session."""
+    import main
+    from services import auth
+    paths = [getattr(r, 'path', None) for r in main.app.routes]
+    check('/api/programs/{program_id}/lesson-scenes' in paths,
+          "the scenes-only route is registered")
+    check(auth.resolve('GET', '/api/programs/{program_id}/lesson-scenes')
+          == auth.WALL, "and a panel may call it")
+    check(auth.resolve('GET', '/api/programs/{program_id}/lesson')
+          == auth.SIGNED_IN, "while the row read beside it stays signed-in")
+
+
+def scenario_the_wall_route_returns_scenes_only():
+    """Scoped by what it RETURNS, the way api/programs/celebrations is --
+    never the stored row. No id, no model, no edited flag, no created_at:
+    a wall is read by whoever is in the room."""
+    pid = _reset()
+    storage.upsert_program_lesson(pid, {'phase_name': 'F', 'unit_n': 1,
+                                        'session_label': ''},
+                                  {'origin': 'cited',
+                                   'source_url': 'https://jg.example/s1',
+                                   'model': 'gemma-4-31b-it', 'edited': True,
+                                   'scenes': [{'type': 'say', 'text': 'hi'}]})
+    import main
+    res = main.program_lesson_scenes(pid, phase_name='F', unit_n=1,
+                                     session_label='')
+    lesson = res['lesson']
+    check(set(lesson) == {'scenes', 'origin', 'source_url'},
+          f"scenes, origin and the link, nothing else, got {sorted(lesson)}")
+    check(lesson['scenes'][0]['text'] == 'hi', f"got {lesson}")
+    check(lesson['source_url'] == 'https://jg.example/s1',
+          "the wall says where its lesson came from too")
+
+
+def scenario_the_wall_route_reads_null_for_anything_it_cannot_resolve():
+    """A missing program, an unknown slot, a bad unit_n and a slot whose
+    only row is a recorded failure all read the same: null, which every
+    surface plays as the plain steps. Nothing here is a refusal wearing a
+    read's clothes."""
+    pid = _reset()
+    import main
+    check(main.program_lesson_scenes('nope', phase_name='F', unit_n=1,
+                                     session_label='')['lesson'] is None,
+          "no such program")
+    check(main.program_lesson_scenes(pid, phase_name='Other', unit_n=1,
+                                     session_label='')['lesson'] is None,
+          "no such slot")
+    check(main.program_lesson_scenes(pid, phase_name='F', unit_n=10 ** 30,
+                                     session_label='')['lesson'] is None,
+          "a huge finite unit_n is a null read, never a crash")
+    check(main.program_lesson_scenes(pid, phase_name='F', unit_n=None,
+                                     session_label='')['lesson'] is None,
+          "and None reads as unit 0, which holds nothing here")
+    storage.upsert_program_lesson(pid, {'phase_name': 'F', 'unit_n': 2,
+                                        'session_label': ''},
+                                  {'origin': 'generated', 'scenes': [],
+                                   'attempts': 3, 'note': 'API key not valid'})
+    check(main.program_lesson_scenes(pid, phase_name='F', unit_n=2,
+                                     session_label='')['lesson'] is None,
+          "a recorded failure is not a lesson — the wall plays the steps")
+
+
 def scenario_owner_reads_their_lesson():
     """The control-center's own trusted-place reading -- no token, no
     claim -- sees the household's lessons, same as it sees the whole
@@ -436,6 +504,9 @@ def scenario_a_parent_can_edit_a_childs_lesson():
 
 if __name__ == '__main__':
     scenario_endpoints_exist()
+    scenario_the_wall_route_exists_and_is_wall_tier()
+    scenario_the_wall_route_returns_scenes_only()
+    scenario_the_wall_route_reads_null_for_anything_it_cannot_resolve()
     scenario_owner_reads_their_lesson()
     scenario_a_sibling_gets_null_not_the_lesson()
     scenario_a_missing_program_reads_as_a_null_lesson()

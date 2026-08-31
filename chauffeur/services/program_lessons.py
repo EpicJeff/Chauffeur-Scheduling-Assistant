@@ -19,7 +19,13 @@ import re
 
 MAX_SCENES = 12
 MAX_TEXT = 280
-MAX_DO_SECONDS = 240 * 60          # a session is minutes, not an afternoon
+MAX_SHORT_TEXT = 120               # a check's ask, a show's caption, a card face
+# One BEAT, not one session -- the longest a single countdown may run.
+# This used to be 240*60, which is `programs.MAX_MINUTES` in seconds: the
+# ceiling on a whole session, handed to one drill inside it, under a comment
+# saying the opposite. An hour is already longer than any beat a real
+# session holds and is unmistakably minutes rather than an afternoon.
+MAX_DO_SECONDS = 60 * 60
 
 _NOTE_RE = re.compile(r'^[A-G][#b]?[0-8]$')
 
@@ -70,13 +76,24 @@ def _valid_timer(p):
 
 
 def _valid_cards(p):
+    # Validity is asked of the CLEANED face, never the raw one, so this and
+    # `_build_primitive` below can never disagree about whether a pair has
+    # words on it: a face that is only whitespace collapses to '' here
+    # exactly as it does there.
     pairs = p.get('pairs')
     return (isinstance(pairs, list) and 0 < len(pairs) <= 12
-            and all(isinstance(x, dict) and str(x.get('front') or '').strip()
-                    and str(x.get('back') or '').strip() for x in pairs))
+            and all(isinstance(x, dict)
+                    and _clean_text(x.get('front'), MAX_SHORT_TEXT)
+                    and _clean_text(x.get('back'), MAX_SHORT_TEXT)
+                    for x in pairs))
 
 
 def _valid_counter(p):
+    # `target` is the whole contract. The design's primitives table once
+    # promised a `label` too; nothing ever validated one and nothing ever
+    # drew one -- a `show` scene's own caption is the words above a counter
+    # (lesson_player.html renders it directly above the dial), so a second
+    # unscreened text field would have been a duplicate with a hole in it.
     target = _to_int(p.get('target'))
     return target is not None and 1 <= target <= 500
 
@@ -114,6 +131,65 @@ def slot_of(window: dict, unit_n: int = 0) -> dict:
 
 def _clean_text(raw, cap: int = MAX_TEXT) -> str:
     return re.sub(r'\s+', ' ', str(raw or '')).strip()[:cap]
+
+
+def _build_primitive(prim):
+    """A stored primitive, REBUILT from the keys its own validator checked.
+
+    The first cut stored the model's own dict verbatim
+    (`{'primitive': prim}`), which quietly cost two things. Any extra key
+    the model invented -- `{"kind":"cards","pairs":[...],"note":"keep your
+    wrist straight"}` -- was stored and shipped whole, past every cap and
+    past both screens, because nothing here ever looked at a key it had not
+    asked for. And the dict that reached storage was the very object the
+    caller still held, so a later mutation of the input would silently
+    rewrite a sanitized scene. Rebuilding from the validated keys closes
+    both at once, and it means a primitive's own free text (a card face) is
+    capped exactly like every other string in a script.
+
+    Returns None for an unknown kind or for params the validator refuses;
+    the caller decides whether that degrades to a caption or drops the
+    scene. Screening is deliberately NOT here -- it needs the script's
+    origin, and `sanitize_script` runs it over `_primitive_text` below.
+    """
+    if not isinstance(prim, dict):
+        return None
+    kind = prim.get('kind')
+    if kind not in PRIMITIVES or not PRIMITIVES[kind](prim):
+        return None
+    if kind == 'timer':
+        return {'kind': 'timer',
+                'seconds': max(5, min(MAX_DO_SECONDS, _to_int(prim.get('seconds'))))}
+    if kind == 'metronome':
+        return {'kind': 'metronome',
+                'bpm': max(30, min(240, _to_int(prim.get('bpm'))))}
+    if kind == 'keyboard':
+        return {'kind': 'keyboard', 'keys': [str(k) for k in prim['keys']]}
+    if kind == 'fretboard':
+        return {'kind': 'fretboard',
+                'dots': [{'string': _to_int(d.get('string')),
+                          'fret': _to_int(d.get('fret')),
+                          'finger': _to_int(d.get('finger'))}
+                         for d in prim['dots']]}
+    if kind == 'cards':
+        return {'kind': 'cards',
+                'pairs': [{'front': _clean_text(x.get('front'), MAX_SHORT_TEXT),
+                           'back': _clean_text(x.get('back'), MAX_SHORT_TEXT)}
+                          for x in prim['pairs']]}
+    return {'kind': 'counter', 'target': _to_int(prim.get('target'))}
+
+
+def _primitive_text(prim: dict) -> list:
+    """Every free-text field a primitive carries. Card faces are the only
+    ones today -- every other primitive is numbers and note names -- and
+    they were the hole: a card `back` reading "About 300 calories - great
+    for weight loss. Keep your wrist straight." survived verbatim, because
+    the `show` branch screened the caption and nothing else. The design says
+    the screens run on ALL script text, whatever shape it arrives in."""
+    if prim.get('kind') == 'cards':
+        return [f for pair in prim.get('pairs') or []
+                for f in (pair.get('front') or '', pair.get('back') or '')]
+    return []
 
 
 def _screened(text: str, origin: str) -> bool:
@@ -164,20 +240,27 @@ def sanitize_script(scenes: list, origin: str) -> list:
                 scene['metronome_bpm'] = max(30, min(240, bpm))
             out.append(scene)
         elif kind == 'check':
-            ask = _clean_text(raw.get('ask'), 120)
+            ask = _clean_text(raw.get('ask'), MAX_SHORT_TEXT)
             if not ask or _screened(ask, origin):
                 continue
             out.append({'type': 'check', 'ask': ask})
         elif kind == 'show':
             prim = raw.get('primitive')
-            caption = _clean_text(raw.get('caption'), 120)
+            caption = _clean_text(raw.get('caption'), MAX_SHORT_TEXT)
             if caption and _screened(caption, origin):
                 continue
-            valid = (isinstance(prim, dict)
-                     and prim.get('kind') in PRIMITIVES
-                     and PRIMITIVES[prim['kind']](prim))
-            if valid:
-                out.append({'type': 'show', 'primitive': prim,
+            built = _build_primitive(prim)
+            # The screens run on the primitive's own text as well as the
+            # caption, and a violating scene is DROPPED rather than
+            # reworded -- the same answer a screened caption already gets
+            # two lines up, and the same one a screened say/do/check gets.
+            # Degrading to the caption here would keep a scene the screen
+            # just refused, one field short of the reason it refused it.
+            if built and any(_screened(t, origin)
+                             for t in _primitive_text(built)):
+                continue
+            if built:
+                out.append({'type': 'show', 'primitive': built,
                             'caption': caption})
             elif (isinstance(prim, dict) and prim.get('kind') in PRIMITIVES
                   and caption):
@@ -216,10 +299,17 @@ _SYSTEM = (
     "At most 10 scenes. Structure: a short why, then the drill as do-beats, "
     "one check near the end. Every do-beat must be startable alone from its "
     "text. No praise-fluff, no streaks, no scores. Never write about "
-    "weight, calories, body composition, or dieting -- any scene that does "
-    "is dropped before it ever reaches a family, so writing one only "
-    "wastes this call."
+    "weight, calories, body composition, or dieting -- anywhere, card "
+    "fronts and backs included; any scene that does is dropped before it "
+    "ever reaches a family, so writing one only wastes this call."
 )
+
+# How many chargeable failures a single slot is allowed before generation
+# stops spending calls on it, and how many slots one nightly pass may spend
+# a call on at all. Both exist for the same reason: a sweep nobody is
+# watching must have a ceiling on what it can quietly burn.
+MAX_ATTEMPTS = 3
+MAX_SLOTS_PER_PASS = 6
 
 _CITED_PROMPT = (
     "Turn THIS material into tonight's {minutes}-minute session script. Use "
@@ -237,6 +327,59 @@ _GENERATED_PROMPT = (
     "Structure the practice (warmup, the work, brief review). Do NOT "
     "prescribe how to hold or move any part of the body."
 )
+
+
+def needs_lesson(program_id: str, slot: dict) -> bool:
+    """Whether this slot would actually cost a model call.
+
+    One predicate, two callers, so the rule cannot drift: `generate_for`
+    asks it before spending anything, and `generate_due` asks it to decide
+    whether a slot counts against the pass budget -- a pass that spent its
+    whole allowance on slots which were only ever going to be skipped would
+    be a cap on iteration, not on cost.
+
+    False for a slot that already has a script (edited or not -- generated
+    once, reused), and for one that has already burned MAX_ATTEMPTS
+    chargeable failures; see `_record_attempt`.
+    """
+    from services import storage
+    existing = storage.get_program_lesson(program_id, slot) or {}
+    if existing.get('edited') or existing.get('scenes'):
+        return False
+    return int(existing.get('attempts') or 0) < MAX_ATTEMPTS
+
+
+def _record_attempt(program_id: str, slot: dict, origin: str, source_url: str,
+                    note: str, counts: bool = True) -> None:
+    """A call was spent on this slot and no script came back.
+
+    Left unrecorded, a slot whose script always sanitizes to nothing -- or
+    a household whose `llm_gemini_api_key` is empty, where EVERY call fails
+    forever -- re-spends a model call every night, silently, while the
+    toggle says lessons are being written and nothing anywhere tells the
+    difference between that and "the sweep has not reached this slot yet".
+
+    The row this writes holds no scenes, so every surface still plays the
+    fallback ladder exactly as before; what it adds is the reason, in
+    words, where a person looks when they wonder why a lesson is plain (the
+    slot's own editor on the programs page prints it), and an attempt count
+    that stops the spending after MAX_ATTEMPTS. A TRANSIENT failure -- a
+    429, a timeout, a 5xx, whatever the pool itself flags -- is recorded
+    but never counted: a quota that ran out tonight is not a reason to stop
+    trying a slot that may live for weeks. `DELETE
+    /api/programs/{id}/lesson` drops the row, so the editor's own
+    "Regenerate" is the reset.
+    """
+    from services import storage
+    try:
+        existing = storage.get_program_lesson(program_id, slot) or {}
+        storage.upsert_program_lesson(program_id, slot, {
+            'origin': origin, 'source_url': source_url, 'scenes': [],
+            'attempts': int(existing.get('attempts') or 0) + (1 if counts else 0),
+            'note': _clean_text(note, MAX_SHORT_TEXT),
+            'model': existing.get('model') or ''})
+    except Exception as e:
+        print(f"[lessons] could not record a failed attempt: {e}")
 
 
 def generate_for(program: dict, window: dict, unit: dict, settings: dict):
@@ -284,9 +427,9 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
         origin = ((program.get('source') or {}).get('origin')
                   or 'generated')
         slot = slot_of(window, unit_n=int((unit or {}).get('n') or 0))
-        existing = storage.get_program_lesson(program['id'], slot)
-        if existing and (existing.get('edited') or existing.get('scenes')):
-            return None                       # already has its lesson
+        if not needs_lesson(program['id'], slot):
+            # Already has its lesson, or has already burned its attempts.
+            return None
         minutes = int((program.get('shape') or {}).get('minutes') or 25)
         fields = {'minutes': minutes,
                   'title': program.get('title') or '',
@@ -318,9 +461,17 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
             _SYSTEM, prompt, timeout_s=60, gemma_timeout_s=180,
             settings=settings)
         if not isinstance(res, dict) or res.get('error'):
+            _record_attempt(
+                program['id'], slot, origin, source_url,
+                str((res or {}).get('error') if isinstance(res, dict)
+                    else 'the model pool answered with nothing usable'),
+                counts=not (isinstance(res, dict) and res.get('transient')))
             return None
         scenes = sanitize_script(res.get('scenes') or [], origin)
         if not scenes:
+            _record_attempt(program['id'], slot, origin, source_url,
+                            'Nothing in the script the model wrote survived '
+                            'the screens.')
             return None
         return storage.upsert_program_lesson(program['id'], slot, {
             'origin': origin, 'source_url': source_url, 'scenes': scenes,
@@ -337,10 +488,22 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
 # (Task 9) is only half a feature until something calls it -- and calls it
 # exactly once, not once per 30-second tick forever.
 
-def generate_due(now=None) -> int:
-    """Tomorrow's lessons, written tonight. Called blindly from the 30s
-    loop (main.py) and self-throttled to one real pass per day, so a
-    restart never double-spends and idle cost is one app_state read.
+def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS) -> int:
+    """Tomorrow's lessons, written tonight. Called blindly from the 300s
+    loop (main.py's `poll_schedule`, the one that already owns slow work)
+    and self-throttled to one real pass per day, so a restart never
+    double-spends and idle cost is one app_state read.
+
+    Bounded per pass, not merely per day. Every slot this reaches is up to
+    four pool candidates at `gemma_timeout_s=180`, so an unbounded pass is
+    an unbounded stall -- and the realistic bad case is not midnight but a
+    morning: the marker is date-based, so an app that was down overnight
+    and comes up at 07:00 runs the WHOLE sweep in the school-run window.
+    `limit` counts slots that would actually spend a call (`needs_lesson`),
+    never slots that were only ever going to be skipped, so the cap is a
+    cap on cost. The remainder is absorbed by the two-day lookahead below:
+    a slot passed over tonight is seen again tomorrow, before the evening
+    it is needed.
 
     The day-marker check comes FIRST, ahead of both settings reads --
     self-throttling is the whole point of a function a 30s loop calls
@@ -388,6 +551,7 @@ def generate_due(now=None) -> int:
         tomorrow = now.date() + datetime.timedelta(days=1)
         rows = {r['id']: r for r in storage.get_programs(state='active')}
         wrote = 0
+        spent = 0
         for w in programs.practice_windows(
                 tomorrow, tomorrow + datetime.timedelta(days=2)):
             row = rows.get(w.get('program_id'))
@@ -395,6 +559,12 @@ def generate_due(now=None) -> int:
                 continue
             phase = programs.progress(row).get('phase') or {}
             unit = programs.unit_for(row, phase) or {}
+            slot = slot_of(w, unit_n=int((unit or {}).get('n') or 0))
+            if not needs_lesson(row['id'], slot):
+                continue          # costs one storage read, never a call
+            if spent >= max(0, int(limit or 0)):
+                break             # tomorrow night sees the rest
+            spent += 1
             if generate_for(row, w, unit, settings):
                 wrote += 1
         return wrote
