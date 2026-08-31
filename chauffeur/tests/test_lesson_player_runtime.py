@@ -1793,6 +1793,54 @@ def scenario_a_cue_stores_nothing():
                   f"a cue is said and forgotten -- {fn} must not {forbidden}")
 
 
+# --- explain this -------------------------------------------------------
+
+
+def scenario_explain_this_asks_and_never_writes():
+    src = _read('components/lesson_player.html')
+    check('Explain this' in src, "the tap exists and says what it does")
+    import re
+    m = re.search(r'\n        async explainThis\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "explainThis exists")
+    body = m.group(1) if m else ''
+    check('lesson-help' in body, f"it asks the help route, got {body!r}")
+    check('this.say(' in body, "and says the answer out loud")
+    # localStorage appears once, READ-ONLY, for the member token every
+    # other lesson fetch in this app already sends. Nothing is written.
+    check('localStorage.setItem' not in body and 'removeItem' not in body,
+          "and writes nothing to the device")
+    for forbidden in ('lesson-player:done', "'PUT'"):
+        check(forbidden not in body,
+              f"asking is not an outcome -- no {forbidden}")
+
+
+def scenario_explain_this_is_hidden_in_a_preview():
+    """A preview spends nothing. The daily cap is a household's one
+    free-tier quota and a look at a lesson nobody is having is the last
+    thing that should be spending it."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'x-show="[^"]*explainable\(\)[^"]*"', src)
+    check(m, "the tap is gated on explainable()")
+    m2 = re.search(r'\n        explainable\(\) \{(.*?)\n        \},', src, re.S)
+    check(m2, "explainable exists")
+    body = m2.group(1) if m2 else ''
+    check('this.preview' in body and 'usingLesson' in body,
+          f"never in a preview, and never on the fallback ladder -- there "
+          f"is no stored beat to explain, got {body!r}")
+
+
+def scenario_an_unanswerable_question_says_so():
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        async explainThis\(\) \{(.*?)\n        \},', src, re.S)
+    body = m.group(1) if m else ''
+    check('helpText' in body, "the answer lands somewhere visible")
+    check("couldn" in body.lower() or 'could not' in body.lower(),
+          f"and an empty answer says so rather than failing silently, "
+          f"got {body!r}")
+
+
 # --- hint ladders -------------------------------------------------------
 
 
@@ -2093,6 +2141,9 @@ if __name__ == '__main__':
     scenario_the_cue_scheduler_rides_the_beats_own_timer()
     scenario_cues_never_outlive_their_scene()
     scenario_a_cue_stores_nothing()
+    scenario_explain_this_asks_and_never_writes()
+    scenario_explain_this_is_hidden_in_a_preview()
+    scenario_an_unanswerable_question_says_so()
     scenario_a_hint_ladder_reveals_one_rung_at_a_time()
     scenario_a_hint_ladder_shows_position_never_a_score()
     scenario_the_answer_is_the_last_rung_not_a_shortcut()

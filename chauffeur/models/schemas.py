@@ -1520,6 +1520,7 @@ class Settings(BaseModel):
     # (services/program_lessons.py: generate_due). Off loses depth, never
     # practice -- the session still shows its plain steps.
     program_lessons_enabled: Optional[bool] = True
+    lesson_help_daily_cap: Optional[int] = 20
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

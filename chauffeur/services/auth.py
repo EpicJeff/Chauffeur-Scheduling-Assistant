@@ -405,6 +405,16 @@ RULES = [
     # kitchen work is exactly the kind of session that happens in front of
     # a board rather than a phone.
     ('POST', '/api/lessons/wait', WALL, None),
+    # The escape hatch: two sentences about the beat somebody is stuck on.
+    # WALL because the kid stuck at the piano is the use case and the
+    # piano is in the room with the board. It reads one lesson's own scene
+    # -- material a panel may already fetch through lesson-scenes above --
+    # and returns model text about it; it stores nothing, names nobody,
+    # and cannot add or replace a beat. What it DOES spend is the
+    # household's free-tier quota, which is why the handler carries a
+    # per-program gap and a settable daily cap that a household can set
+    # to zero.
+    ('POST', '/api/programs/{program_id}/lesson-help', WALL, None),
     # WHEN the household's practice windows are, for the surfaces that draw a
     # day -- the wall's calendar card included, which is why this is WALL and
     # not SIGNED_IN. It carries a title, a name and an hour, which is the same

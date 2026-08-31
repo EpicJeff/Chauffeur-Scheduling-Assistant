@@ -818,6 +818,161 @@ def scenario_the_speak_route_stores_nothing():
               f"the speak route must not {forbidden} -- nothing spoken is kept")
 
 
+# --- explain this -------------------------------------------------------
+# The one live question inside a session. Everything below is about the
+# ceiling on it: a free-tier pool a kid at a piano can reach from a
+# hallway panel needs a throttle, a daily cap, and an answer that goes
+# through the same screens a stored script does.
+
+
+def _help(**kw):
+    import main
+    main._lesson_help_at = {}
+    body = {'phase_name': 'F', 'unit_n': 1, 'session_label': ''}
+    body.update(kw)
+    return main.lesson_help_api(kw.pop('program_id', _HELP_PID[0]), body=body)
+
+
+_HELP_PID = ['']
+
+
+def _help_reset(cap=20):
+    from services import storage
+    _HELP_PID[0] = _reset()
+    storage.set_app_state('lesson_help_used', {})
+    # harness.py stubs storage.get_settings outright (no real settings row
+    # is ever read in tests), so the cap is set on that stub rather than
+    # through update_settings, which this process would never read back.
+    storage.get_settings = lambda: {'lesson_help_daily_cap': cap}
+    return _HELP_PID[0]
+
+
+def _fake_help(answer='Play the G string with your third finger.'):
+    import services.model_pools as mp
+    mp.call_pool_json = lambda *a, **kw: {'answer': answer}
+
+
+def scenario_the_help_route_exists_and_is_wall_tier():
+    """The kid stuck at the piano IS the use case, and the piano is in the
+    living room where the board is."""
+    import main
+    from services import auth
+    paths = [getattr(r, 'path', None) for r in main.app.routes]
+    check('/api/programs/{program_id}/lesson-help' in paths,
+          "the route is registered")
+    check(auth.resolve('POST', '/api/programs/{program_id}/lesson-help')
+          == auth.WALL, "and a panel may ask")
+
+
+def scenario_the_help_route_answers_from_the_lite_pool():
+    import services.model_pools as mp
+    _help_reset()
+    seen = {}
+
+    def fake(tier, api_key, system, prompt, **kw):
+        seen['tier'], seen['prompt'] = tier, prompt
+        return {'answer': 'Play it with your third finger.'}
+
+    orig = mp.call_pool_json
+    mp.call_pool_json = fake
+    try:
+        out = _help()
+    finally:
+        mp.call_pool_json = orig
+    check(seen.get('tier') == 'interactive',
+          f"a person is waiting -- lite pool first, got {seen.get('tier')}")
+    check((out or {}).get('answer') == 'Play it with your third finger.',
+          f"and the answer comes back, got {out}")
+
+
+def scenario_the_help_answer_runs_the_screens():
+    import services.model_pools as mp
+    _help_reset()
+    orig = mp.call_pool_json
+    try:
+        _fake_help('Keep your wrist straight and rotate the elbow.')
+        out = _help()
+        check(not (out or {}).get('answer'),
+              f"a physical prescription never comes back, got {out}")
+        _fake_help('This one burns calories.')
+        out = _help()
+        check(not (out or {}).get('answer'),
+              f"nor body language, got {out}")
+    finally:
+        mp.call_pool_json = orig
+
+
+def scenario_the_help_route_throttles_per_program():
+    import main
+    import services.model_pools as mp
+    pid = _help_reset()
+    orig = mp.call_pool_json
+    try:
+        _fake_help()
+        _help()
+        code = _denied(main.lesson_help_api, pid,
+                       body={'phase_name': 'F', 'unit_n': 1, 'session_label': ''})
+        check(code == 429, f"asking twice in a breath is refused, got {code}")
+    finally:
+        mp.call_pool_json = orig
+
+
+def scenario_the_help_route_has_a_daily_cap():
+    import main
+    import services.model_pools as mp
+    from services import storage
+    pid = _help_reset(cap=2)
+    orig = mp.call_pool_json
+    try:
+        _fake_help()
+        _help()
+        _help()
+        code = _denied(_help)
+        check(code == 429, f"the third is refused for the day, got {code}")
+        used = storage.get_app_state('lesson_help_used') or {}
+        check(list(used.values()) == [2],
+              f"the counter holds a NUMBER and never who asked, got {used}")
+    finally:
+        mp.call_pool_json = orig
+
+
+def scenario_a_zero_cap_turns_the_hatch_off():
+    import services.model_pools as mp
+    _help_reset(cap=0)
+    orig = mp.call_pool_json
+    try:
+        _fake_help()
+        code = _denied(_help)
+        check(code == 429, f"nobody may ask, got {code}")
+    finally:
+        mp.call_pool_json = orig
+
+
+def scenario_asking_for_help_writes_nothing():
+    """Never stored -- not the question, not the answer, not that it was
+    asked. The only thing that survives is the shared quota's own number."""
+    import inspect
+    import main
+    src = inspect.getsource(main.lesson_help_api)
+    for forbidden in ('upsert_program_lesson', 'append_program_session',
+                      'update_program'):
+        check(forbidden not in src, f"the help route must not {forbidden}")
+    import services.model_pools as mp
+    from services import storage
+    pid = _help_reset()
+    before = storage.get_program_lesson(pid, {'phase_name': 'F', 'unit_n': 1,
+                                              'session_label': ''})
+    orig = mp.call_pool_json
+    try:
+        _fake_help()
+        _help()
+    finally:
+        mp.call_pool_json = orig
+    after = storage.get_program_lesson(pid, {'phase_name': 'F', 'unit_n': 1,
+                                             'session_label': ''})
+    check(before == after, "and the lesson is untouched")
+
+
 # --- the wait's one-shot call -------------------------------------------
 
 
@@ -930,6 +1085,13 @@ if __name__ == '__main__':
     scenario_the_speak_route_screens_what_it_is_asked_to_say()
     scenario_the_speak_route_throttles()
     scenario_the_speak_route_stores_nothing()
+    scenario_the_help_route_exists_and_is_wall_tier()
+    scenario_the_help_route_answers_from_the_lite_pool()
+    scenario_the_help_answer_runs_the_screens()
+    scenario_the_help_route_throttles_per_program()
+    scenario_the_help_route_has_a_daily_cap()
+    scenario_a_zero_cap_turns_the_hatch_off()
+    scenario_asking_for_help_writes_nothing()
     scenario_the_wait_route_exists_and_is_wall_tier()
     scenario_the_wait_route_arms_a_call_and_the_loop_fires_it()
     scenario_the_wait_route_screens_and_bounds_like_the_speak_route()

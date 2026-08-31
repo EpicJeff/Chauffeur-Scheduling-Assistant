@@ -6372,6 +6372,125 @@ def lesson_wait_api(body: dict = Body(default={})):
     return {'status': 'armed', 'fire_ts': entry['fire_ts']}
 
 
+# The escape hatch's two ceilings. The gap is per PROGRAM rather than per
+# process, unlike the speak route's: two children practising in two rooms
+# are two separate conversations and neither is the other's rate limit,
+# while one child tapping the same button four times is exactly the thing
+# to stop. The daily cap is the household's, because the quota being
+# spent is the household's one free-tier key.
+_LESSON_HELP_GAP_S = 30.0
+_LESSON_HELP_CAP_MAX = 200
+_LESSON_HELP_DEFAULT_CAP = 20
+_lesson_help_at = {}
+
+_LESSON_HELP_SYSTEM = (
+    "You are a patient instructor answering ONE question from somebody in "
+    "the middle of a practice session. Reply with ONLY JSON: "
+    '{"answer": "..."}. At most two sentences. Explain the step in front '
+    "of them in plainer words, or give one concrete way to try it. Never "
+    "prescribe how to hold or move a part of the body, never mention "
+    "weight, calories or diet, and never invent a fact about their "
+    "program that is not in what you were given."
+)
+
+
+@app.post("/api/programs/{program_id}/lesson-help")
+def lesson_help_api(program_id: str, body: dict = Body(default={})):
+    """Two sentences about the beat somebody is stuck on, right now.
+
+    The one live model call inside a session, and the only thing in this
+    arc that is not a script written the night before. A scripted lesson
+    is the whole design and this does not weaken it: it answers about the
+    beat already on screen and cannot add, reorder or replace one.
+
+    WALL-allowed, because the kid stuck at the piano IS the use case and
+    the piano is in the room with the board. That makes it a free-tier
+    model pool anybody who can reach a hallway panel can spend, so it
+    carries both ceilings a route like that needs: thirty seconds per
+    PROGRAM (two children in two rooms are two conversations and neither
+    is the other's rate limit; one child tapping the same button four
+    times is what this stops) and a household daily cap, default 20,
+    settable, zero meaning off.
+
+    The counter for that cap holds a NUMBER against a date and nothing
+    else. It is a shared quota, not a record of who asked -- there is no
+    person in it to read, and that is deliberate rather than incidental,
+    because "how often does this child need help" is precisely the record
+    the arc refuses to keep.
+
+    The answer runs the same screens a stored script does, on the
+    stricter generated origin: a live answer has no citation behind it
+    whatever the plan's own origin says. A screened answer comes back
+    empty rather than reworded -- the player says it could not help,
+    which is honest and costs one tap to retry.
+
+    Nothing is stored: not the question, not the answer, not that it was
+    asked.
+    """
+    import time
+    from services import model_pools, program_lessons as _pl
+    if not storage.get_program(program_id):
+        raise HTTPException(status_code=404, detail="No such program.")
+    try:
+        unit_n = int((body or {}).get('unit_n') or 0)
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(status_code=400, detail="A unit is a number.")
+    if not (0 <= unit_n <= _LESSON_UNIT_N_MAX):
+        raise HTTPException(status_code=400, detail="A unit is a number.")
+    settings = storage.get_settings() or {}
+    cap = settings.get('lesson_help_daily_cap')
+    cap = _LESSON_HELP_DEFAULT_CAP if cap is None else cap
+    try:
+        cap = max(0, min(_LESSON_HELP_CAP_MAX, int(cap)))
+    except (TypeError, ValueError, OverflowError):
+        cap = _LESSON_HELP_DEFAULT_CAP
+    if cap <= 0:
+        raise HTTPException(status_code=429,
+                            detail="Asking mid-session is switched off.")
+    today = datetime.now().date().isoformat()
+    used = storage.get_app_state('lesson_help_used') or {}
+    if not isinstance(used, dict):
+        used = {}
+    # Only today's key is kept, so this can never grow into a history of
+    # which days a household leaned on it.
+    count = int(used.get(today) or 0)
+    if count >= cap:
+        raise HTTPException(status_code=429,
+                            detail="That is all the questions for today.")
+    now = time.monotonic()
+    if now - float(_lesson_help_at.get(program_id) or 0) < _LESSON_HELP_GAP_S:
+        raise HTTPException(status_code=429, detail="One at a time.")
+
+    lesson = storage.get_program_lesson(program_id, {
+        'phase_name': str((body or {}).get('phase_name') or ''),
+        'unit_n': unit_n,
+        'session_label': str((body or {}).get('session_label') or '')}) or {}
+    scenes = lesson.get('scenes') or []
+    try:
+        idx = int((body or {}).get('scene_idx') or 0)
+    except (TypeError, ValueError, OverflowError):
+        idx = 0
+    scene = scenes[idx] if 0 <= idx < len(scenes) else {}
+    row = storage.get_program(program_id) or {}
+    beat = ' '.join(str(scene.get(k) or '')
+                    for k in ('text', 'ask', 'caption', 'speak')).strip()
+    prompt = (f"Program: {row.get('title') or 'practice'}\n"
+              f"The beat they are on: {beat or 'the current step'}\n"
+              f"They tapped 'Explain this'.")
+    _lesson_help_at[program_id] = now
+    used[today] = count + 1
+    storage.set_app_state('lesson_help_used', {today: used[today]})
+    res = model_pools.call_pool_json(
+        'interactive', settings.get('llm_gemini_api_key', ''),
+        _LESSON_HELP_SYSTEM, prompt, timeout_s=25, settings=settings)
+    if not isinstance(res, dict) or res.get('error'):
+        return {'answer': ''}
+    answer = _pl._clean_text(res.get('answer'), _pl.MAX_SPEAK)
+    if not answer or _pl._screened(answer, 'generated'):
+        return {'answer': ''}
+    return {'answer': answer}
+
+
 # The magnitude bound `days` and `limit` share below, mirroring
 # _LESSON_UNIT_N_MAX's own role for unit_n a few endpoints up: generous
 # enough that no real value is ever clipped (the scan below defaults to

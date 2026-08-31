@@ -581,6 +581,11 @@ ENTRIES: List[dict] = [
        'Write a short scripted lesson for each practice session the night '
        'before — the session still shows its plain steps with this off '
        '(default on).', page='programs', anchor='lessons'),
+    _e('lesson_help_daily_cap', 'programs', 'Questions a day during a session',
+       'How many times anybody in the house may tap Explain this inside a '
+       'lesson before the app stops answering for the day (default 20). '
+       'Zero switches it off. Nothing asked or answered is ever recorded.',
+       page='programs', anchor='lessons'),
     _e('programs_research_pages', 'programs', 'Pages to read',
        'How many real pages a curation run reads before proposing a plan '
        '(default 4). One run per program, cached for its life.',

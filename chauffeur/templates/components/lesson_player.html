@@ -382,6 +382,25 @@
                   :style="'animation-duration:' + (60 / (metroBpm() || 100)) + 's'"></span>
             <span class="text-gray-400" :class="panel ? 'text-lg' : 'text-xs'" x-text="metroBpm() + ' bpm'"></span>
         </div>
+
+        <!-- The escape hatch. A script is written the night before and
+             cannot know which word lost somebody; this is the one live
+             question in the whole arc, and it answers about the beat
+             already on screen rather than changing it. Its answer appears
+             here and is spoken, then goes when the scene does -- nothing
+             about having asked survives the beat. .stop like every other
+             in-scene control. -->
+        <div class="w-full max-w-sm mx-auto space-y-2" x-show="explainable()">
+            <button type="button" @click.stop="explainThis()" :disabled="helpBusy"
+                    class="w-full rounded-lg bg-gray-800 border border-gray-700 text-gray-300 font-bold active:bg-gray-700 disabled:opacity-50"
+                    :class="panel ? 'py-3 text-xl' : 'py-2 text-sm'">
+                <span x-show="!helpBusy">Explain this</span>
+                <span x-show="helpBusy" x-cloak>Thinking…</span>
+            </button>
+            <div x-show="helpText" x-cloak
+                 class="rounded-xl bg-teal-900/40 border border-teal-700 text-gray-100 p-3 text-left"
+                 :class="panel ? 'text-xl' : 'text-sm'" x-text="helpText"></div>
+        </div>
     </div>
 
     <!-- footer: where this came from, progress dots (position only, never
@@ -510,6 +529,10 @@ function lessonPlayer() {
         // Whether a check's offer chips are showing instead of its three
         // taps. Scene-local like everything else here; reset on entry.
         offerOpen: false,
+        // The escape hatch's answer, and whether one is in flight. Both
+        // die with the scene: nothing about having asked outlives the
+        // beat it was asked about.
+        helpText: '', helpBusy: false,
         // The current beat's cues and how many of them have already been
         // said. A cursor rather than a set, which is safe because the
         // sanitizer stores them sorted by `at`. Both reset on every scene
@@ -1263,6 +1286,7 @@ function lessonPlayer() {
             this.counterRunning = false;
             this.cues = []; this.cuesFired = 0;
             this.waitLeft = 0; this.offerOpen = false;
+            this.helpText = ''; this.helpBusy = false;
             if (this.waitTimer) { clearInterval(this.waitTimer); this.waitTimer = null; }
             if (this.counterTimer) { clearInterval(this.counterTimer); this.counterTimer = null; }
             const s = this.scene();
@@ -1411,6 +1435,59 @@ function lessonPlayer() {
             secs = Math.max(0, Math.floor(secs || 0));
             const m = Math.floor(secs / 60), s = secs % 60;
             return m + ':' + String(s).padStart(2, '0');
+        },
+
+        // Whether there is anything here worth asking about. Never in a
+        // preview -- the daily cap is a household's one free-tier quota
+        // and a look at a lesson nobody is having is the last thing that
+        // should spend it -- and never on the fallback ladder, where the
+        // beats are the plan's own steps and there is no stored scene on
+        // the server to explain.
+        explainable() {
+            return !!(this.usingLesson && !this.preview && this.w
+                      && this.w.program_id);
+        },
+        // One live question, about the beat already on screen. It can add
+        // nothing, reorder nothing and replace nothing -- the scripted
+        // lesson stays the design and this answers beside it. Records
+        // nothing anywhere; the answer is cleared by the next scene.
+        async explainThis() {
+            if (this.helpBusy || !this.explainable()) return;
+            this.helpBusy = true;
+            this.helpText = '';
+            try {
+                const w = this.w || {};
+                // Same header shape every other lesson fetch in this app
+                // uses (family_calendar.html's _startPracticeSession, the
+                // programs card): whatever member token this browser
+                // holds, or none at all on a panel, which has none to
+                // hold and reaches this route at WALL tier anyway.
+                const headers = {'Content-Type': 'application/json'};
+                try {
+                    const token = localStorage.getItem('chauffeur_member_token') || '';
+                    if (token) headers['X-Member-Token'] = token;
+                } catch (e) { /* a panel has no token and needs none */ }
+                const res = await fetch(
+                    (window.chfBase || '') + 'api/programs/'
+                    + encodeURIComponent(w.program_id) + '/lesson-help',
+                    {method: 'POST', headers,
+                     body: JSON.stringify({
+                         phase_name: w.phase_name || '',
+                         unit_n: w.unit_n || 0,
+                         session_label: w.session_label || '',
+                         scene_idx: this.idx,
+                     })});
+                const data = res.ok ? await res.json() : {};
+                const answer = (data && data.answer) || '';
+                // An empty answer is a real outcome -- a screened reply, a
+                // pool with nothing left, a cap reached -- and saying so
+                // is honest and costs one tap to try again.
+                this.helpText = answer || "I couldn't help with that one.";
+                if (answer) this.say(answer, this.scene().speak_lang, this.scene().tone);
+            } catch (e) {
+                this.helpText = "I couldn't help with that one.";
+            }
+            this.helpBusy = false;
         },
 
         // Retriggers the fade-up across a reflow, so it plays again even
