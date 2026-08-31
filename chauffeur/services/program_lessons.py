@@ -329,3 +329,54 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
         print(f"[lessons] generate failed for "
               f"{(program or {}).get('id')}: {e}")
         return None
+
+
+# --- the nightly sweep ---------------------------------------------------
+# generate_for is a single slot; this is what actually runs, once a day,
+# with nobody watching. It exists because "a lesson generates itself"
+# (Task 9) is only half a feature until something calls it -- and calls it
+# exactly once, not once per 30-second tick forever.
+
+def generate_due(now=None) -> int:
+    """Tomorrow's lessons, written tonight. Called blindly from the 30s
+    loop (main.py) and self-throttled to one real pass per day, so a
+    restart never double-spends and idle cost is one app_state read.
+
+    The day-marker check comes FIRST, ahead of both settings reads --
+    self-throttling is the whole point of a function a 30s loop calls
+    unconditionally forever, the same traffic-sweep shape
+    maps.run_day_of_traffic_sweep already uses one block up in that loop.
+    Neither settings check sets the marker: only a real pass earns it, so
+    flipping a switch back on later gets tonight's sweep rather than
+    waiting out a day a disabled sweep never actually ran.
+
+    Never raises. `generate_for` already promises that per slot; the loop
+    over `practice_windows` here carries no other risk beyond what
+    `due_practice_pushes` already runs unguarded from the same caller, and
+    main.py wraps this call the same way it wraps that one.
+    """
+    import datetime
+    from services import storage, programs
+    now = now or datetime.datetime.now()
+    marker = now.date().isoformat()
+    if (storage.get_app_state('program_lessons_swept') or '') == marker:
+        return 0
+    settings = storage.get_settings() or {}
+    if not settings.get('programs_enabled', True):
+        return 0
+    if not settings.get('program_lessons_enabled', True):
+        return 0
+    storage.set_app_state('program_lessons_swept', marker)
+    tomorrow = now.date() + datetime.timedelta(days=1)
+    rows = {r['id']: r for r in storage.get_programs(state='active')}
+    wrote = 0
+    for w in programs.practice_windows(
+            tomorrow, tomorrow + datetime.timedelta(days=1)):
+        row = rows.get(w.get('program_id'))
+        if not row:
+            continue
+        phase = programs.progress(row).get('phase') or {}
+        unit = programs.unit_for(row, phase) or {}
+        if generate_for(row, w, unit, settings):
+            wrote += 1
+    return wrote

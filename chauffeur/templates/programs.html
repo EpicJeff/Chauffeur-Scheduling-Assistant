@@ -63,6 +63,18 @@
                         <input type="checkbox" x-model="s.programs_generate_enabled"
                             @change="saveProgramSettings()" class="shrink-0">
                     </label>
+                    <label id="lessons" class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-300">
+                            Lesson scripts
+                            <span class="block text-[11px] text-gray-500 mt-0.5">
+                                Write a short scripted lesson for each practice session the
+                                night before. Off still shows the plain steps — only the
+                                depth is lost.
+                            </span>
+                        </span>
+                        <input type="checkbox" x-model="s.program_lessons_enabled"
+                            @change="saveProgramSettings()" class="shrink-0">
+                    </label>
                     <label class="flex items-center justify-between gap-3">
                         <span class="text-xs text-gray-300">
                             Ask after (hours)
@@ -730,6 +742,7 @@
                     programs_rebaseline_cooldown_days: 14,
                     programs_research_pages: 4,
                     programs_generate_enabled: true,
+                    program_lessons_enabled: true,
                 },
                 draft: { title: '', for_member_id: '', starting_point: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' },
                 sessionOpen: {}, sessionMinutes: {},

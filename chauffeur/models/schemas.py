@@ -1516,6 +1516,10 @@ class Settings(BaseModel):
     # one and label it as its own (services/programs_curate.py: _fallback)?
     # Off means those programs claim time and carry no plan at all.
     programs_generate_enabled: Optional[bool] = True
+    # Write a scripted lesson for a practice session the night before
+    # (services/program_lessons.py: generate_due). Off loses depth, never
+    # practice -- the session still shows its plain steps.
+    program_lessons_enabled: Optional[bool] = True
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

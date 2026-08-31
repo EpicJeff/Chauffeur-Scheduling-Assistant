@@ -196,6 +196,15 @@ async def push_notification_loop():
             except Exception as pe:
                 print(f"Practice window push error: {pe}")
 
+            # Tomorrow's lessons, written tonight. Self-throttled to one
+            # pass a day inside generate_due, so this 30s loop can call it
+            # blindly — the traffic-sweep pattern one block up.
+            try:
+                from services import program_lessons as _pl_gen
+                await asyncio.to_thread(_pl_gen.generate_due)
+            except Exception as le:
+                print(f"Lesson generation sweep error: {le}")
+
             for notif in pending_notifications:
                 if notif.get("fired"): continue
 

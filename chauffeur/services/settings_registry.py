@@ -577,6 +577,10 @@ ENTRIES: List[dict] = [
        'write one and label it as made by the app (default on). Off means '
        'those programs claim practice time and carry no plan at all.',
        page='programs'),
+    _e('program_lessons_enabled', 'programs', 'Lesson scripts',
+       'Write a short scripted lesson for each practice session the night '
+       'before — the session still shows its plain steps with this off '
+       '(default on).', page='programs', anchor='lessons'),
     _e('programs_research_pages', 'programs', 'Pages to read',
        'How many real pages a curation run reads before proposing a plan '
        '(default 4). One run per program, cached for its life.',

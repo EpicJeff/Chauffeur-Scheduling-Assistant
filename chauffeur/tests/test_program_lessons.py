@@ -398,6 +398,111 @@ def scenario_existing_lesson_skips_before_spending_a_call():
           f"the existing lesson is untouched, got {row}")
 
 
+# --- the nightly sweep: tomorrow's lessons, written tonight -----------
+
+def _due_fixture(cid='pl-c1'):
+    """An active program with one evening claimed tomorrow, in the shape
+    approve()/_emit_commitments actually write (services/programs.py) --
+    not a hand-typed guess at it. Two things a first draft of this fixture
+    got wrong against that code: add_protected_commitment writes the dict
+    it is given straight into storage and returns data['id'], it does not
+    mint one, so the row needs an 'id' already on it; and the field is
+    'title' (what _emit_commitments writes), never 'label'."""
+    import datetime
+    from services import storage
+    storage.programs_table.truncate()
+    storage.program_lessons_table.truncate()
+    storage.protected_commitments_table.truncate()
+    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+    pid = storage.add_program({'member_id': 'kid', 'title': 'Play guitar',
+                               'shape': {'sessions_per_week': 1, 'minutes': 20},
+                               'phases': [{'name': 'Foundations',
+                                           'steps': ['One-minute changes G-C'],
+                                           'weeks': 4}]})
+    storage.update_program(pid, {'state': 'active'})
+    cid = storage.add_protected_commitment({
+        'id': cid, 'member_id': 'kid', 'title': 'Practice', 'active': True,
+        'days_of_week': [tomorrow.weekday()],
+        'time_start': '17:00', 'time_end': '17:20'})
+    row = storage.get_program(pid)
+    storage.update_program(pid, {'emissions': {**row['emissions'],
+                                               'commitment_ids': [cid]}})
+    return pid
+
+
+def scenario_generate_due_end_to_end():
+    """The critical path, RUN rather than read: real storage, real windows,
+    mocked model. One active program with a window tomorrow gets exactly
+    one lesson; the second call the same day does nothing."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.set_app_state('program_lessons_swept', '')
+    _due_fixture('pl-c1')
+    orig = mp.call_pool_json
+    mp.call_pool_json = lambda *a, **k: {
+        'scenes': [{'type': 'say', 'text': 'Chords are shapes.'}],
+        '_model': 'gemma-4-31b-it'}
+    try:
+        wrote = pl.generate_due()
+        wrote_again = pl.generate_due()
+    finally:
+        mp.call_pool_json = orig
+    check(wrote == 1, f"one window, one lesson, got {wrote}")
+    check(wrote_again == 0, "self-throttled: one pass a day")
+
+
+def scenario_sweep_respects_the_switch():
+    """Off means off -- and genuinely off, not a coincidence: the fixture
+    is fresh (no lesson yet exists for this slot), so a zero here can only
+    come from the settings check, not from generate_for's own "already has
+    a lesson" skip. storage.get_settings is reassigned directly rather than
+    routed through update_settings: harness.py (and every other sweep test
+    beside it, e.g. test_watchers.scenario_master_toggle) stubs get_settings
+    to a constant lambda at import time, so a write through update_settings
+    is never seen by a caller that reads get_settings back afterwards."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.set_app_state('program_lessons_swept', '')
+    _due_fixture('pl-c2')
+    orig_settings = storage.get_settings
+    storage.get_settings = lambda: {'calendar_ids': ['primary'],
+                                    'program_lessons_enabled': False}
+    calls = {'n': 0}
+    def fake_pool(*a, **k):
+        calls['n'] += 1
+        return {'scenes': [{'type': 'say', 'text': 'x'}], '_model': 'x'}
+    orig_pool = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    try:
+        wrote = pl.generate_due()
+    finally:
+        storage.get_settings = orig_settings
+        mp.call_pool_json = orig_pool
+    check(wrote == 0, f"off means off, got {wrote}")
+    check(calls['n'] == 0, "the switch stops the sweep before any model call")
+
+
+def scenario_sweep_respects_programs_enabled_too():
+    """The OLDER master toggle gates this sweep as well -- programs_enabled
+    off has to cost the same zero, not just the new program_lessons_enabled,
+    since the sweep is downstream of the whole Programs arc."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.set_app_state('program_lessons_swept', '')
+    _due_fixture('pl-c3')
+    orig_settings = storage.get_settings
+    storage.get_settings = lambda: {'calendar_ids': ['primary'],
+                                    'programs_enabled': False}
+    orig_pool = mp.call_pool_json
+    mp.call_pool_json = lambda *a, **k: {'scenes': [], '_model': 'x'}
+    try:
+        wrote = pl.generate_due()
+    finally:
+        storage.get_settings = orig_settings
+        mp.call_pool_json = orig_pool
+    check(wrote == 0, f"programs_enabled off means off too, got {wrote}")
+
+
 if __name__ == '__main__':
     scenario_scene_cap()
     scenario_text_cap_and_type_whitelist()
@@ -420,4 +525,7 @@ if __name__ == '__main__':
     scenario_cited_carries_its_source()
     scenario_generation_survives_a_pool_error()
     scenario_existing_lesson_skips_before_spending_a_call()
+    scenario_generate_due_end_to_end()
+    scenario_sweep_respects_the_switch()
+    scenario_sweep_respects_programs_enabled_too()
     print("test_program_lessons OK")
