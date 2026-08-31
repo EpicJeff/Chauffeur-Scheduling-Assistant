@@ -69,12 +69,22 @@ pass until you are reciting).
 Two channels, split by latency:
 
 - **Room voice** — greeting, scene `speak`s, celebration, wait
-  announces. Used when the session runs ON a wall panel: the panel
-  resolves its area (the music arc's per-device panel naming) and the
-  line goes through `services/announce.py`'s existing path — satellite
-  `announce` or `tts.speak` on the room's player, in the Argyle
-  pipeline's own voice, ducking and resuming whatever plays. Text in,
-  house voice out; no audio files to manage.
+  announces. Used when the session runs ON a wall panel: the line goes
+  through `services/announce.py`'s existing path — satellite `announce`
+  or `tts.speak` on the room's player, in the Argyle pipeline's own
+  voice, ducking and resuming whatever plays. Text in, house voice out;
+  no audio files to manage.
+
+  **AS BUILT (v2.449.4), correcting this section's first draft:** the
+  panel does NOT resolve its own area, because no board-level or
+  device-level room binding exists in this app. The music arc's naming is
+  a per-CARD `room` option, which is right for music (a card is often
+  pointed at another room on purpose) and wrong for a screen, which is in
+  exactly one place and cannot have two cards in two of them. The panel
+  asks whoever is standing at it, once per device, keeps the answer in
+  `localStorage`, and carries a header chip showing the room or offering
+  to set one. A host-set `window.chfLessonRoom` wins outright, so a board
+  that ever does learn its own room has a door to land in.
 - **Local voice** — in-beat material (cues, counts, phonemes, card
   taps) uses the browser's own `speechSynthesis` and the existing Web
   Audio path, because sub-second timing cannot ride an HA round trip.
@@ -116,8 +126,18 @@ caps live at the door, as ever, on every origin including hand edits.
 - **Speech wrapper** — `say(text, lang, tone)`: voice picked by
   language prefix, rate/pitch by tone, cancel-before-speak, wrapped so
   a missing or throwing speech API can never break a scene.
-- **Cue scheduler** — rides the existing do-timer; pause stops it,
-  resume re-offsets it, `stopSound()` clears it.
+- **Cue scheduler** — rides the existing do-timer; `stopSound()` clears
+  it.
+
+  **AS BUILT (v2.449.3), and this is a design change rather than a
+  detail:** cues are owed by ELAPSED TIME, not delivered by a chain of
+  `setTimeout`s that would need re-offsetting. A timeout chain in a
+  backgrounded tab fires late and drifts away from the countdown ring
+  beside it — two clocks disagreeing about how far into a beat we are.
+  `cuesDueAt(cues, elapsed, fired)` asks the beat's own countdown one
+  question instead, so a clock that jumps delivers everything owed at
+  once and a stop is simply a clock that stopped ticking. It is pure, and
+  is executed under Node against a fake clock rather than read.
 - **Mic engine** — `getUserMedia` requested lazily on the first
   listen/tuner scene. Refusal or absence degrades that scene to
   tap-to-confirm with an honest note (a panel may have no mic). Pitch
@@ -135,6 +155,14 @@ caps live at the door, as ever, on every origin including hand edits.
   mispronouncing a letter sound is worse than silence and the set is
   closed. Missing key → the speaker tap is simply absent.
 
+  **AS BUILT (v2.449.12):** `tools/gen_phonemes.py` renders the set and
+  writes `static/phonics/manifest.json`; `program_lessons.phoneme_keys()`
+  validates against that manifest and holds no list of its own, so it can
+  never drift from the files on disk. **The tool is a HAND STEP on the
+  live add-on** and has not been run — the shipped manifest is empty,
+  which is the correct empty state: cards still speak ordinary words and
+  only the per-phoneme taps are absent.
+
 ## Server surface
 
 Two thin endpoints, both WALL-tier like `lesson-scenes`, both screened
@@ -142,8 +170,17 @@ and throttled (a speaker endpoint is a prank vector):
 
 - `POST /api/lessons/speak` — ≤200 chars, rate-limited, routed through
   announce's target picking.
-- The wait scheduler — one-shot, riding the main loop's existing
-  pending-notifications machinery; nothing stored on the program.
+- `POST /api/lessons/wait` — the wait scheduler, one-shot; nothing
+  stored on the program.
+
+  **AS BUILT (v2.449.5):** a dedicated `lesson_wait_announces` list in
+  `app_state`, popped by its own block in the 30s loop beside the
+  practice push, rather than riding the pending-notifications machinery.
+  That machinery is keyed to drivers and departures and carries a shape a
+  wait beat has nothing to put in; a plain persisted queue is one storage
+  read when idle, survives a restart the same way, and prunes anything
+  more than a day stale rather than announcing dough somebody has already
+  thrown out.
 
 And the escape hatch: `POST /api/programs/{id}/lesson-help` — beat
 context in, two sentences back from the lite pool, spoken and shown.
