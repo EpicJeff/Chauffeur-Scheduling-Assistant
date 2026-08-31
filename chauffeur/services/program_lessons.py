@@ -24,6 +24,19 @@ MAX_DO_SECONDS = 240 * 60          # a session is minutes, not an afternoon
 _NOTE_RE = re.compile(r'^[A-G][#b]?[0-8]$')
 
 
+def _to_int(value):
+    """int() that never raises. A plain try/except (TypeError, ValueError)
+    still lets one shape through: int(float('inf')) raises OverflowError
+    instead, and JSON hands this door exactly that shape for free -- the
+    bare token `Infinity` parses under json.loads, and so does any numeral
+    past a double's range (`1e400`). One helper, six call sites, so the fix
+    lives once rather than once per validator that forgot it."""
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _valid_keyboard(p):
     keys = p.get('keys')
     return (isinstance(keys, list) and 0 < len(keys) <= 10
@@ -37,28 +50,23 @@ def _valid_fretboard(p):
     for d in dots:
         if not isinstance(d, dict):
             return False
-        try:
-            if not (1 <= int(d.get('string')) <= 6 and
-                    0 <= int(d.get('fret')) <= 24 and
-                    1 <= int(d.get('finger')) <= 4):
-                return False
-        except (TypeError, ValueError):
+        string, fret, finger = (_to_int(d.get('string')), _to_int(d.get('fret')),
+                                 _to_int(d.get('finger')))
+        if string is None or fret is None or finger is None:
+            return False
+        if not (1 <= string <= 6 and 0 <= fret <= 24 and 1 <= finger <= 4):
             return False
     return True
 
 
 def _valid_metronome(p):
-    try:
-        return 30 <= int(p.get('bpm')) <= 240
-    except (TypeError, ValueError):
-        return False
+    bpm = _to_int(p.get('bpm'))
+    return bpm is not None and 30 <= bpm <= 240
 
 
 def _valid_timer(p):
-    try:
-        return 5 <= int(p.get('seconds')) <= MAX_DO_SECONDS
-    except (TypeError, ValueError):
-        return False
+    secs = _to_int(p.get('seconds'))
+    return secs is not None and 5 <= secs <= MAX_DO_SECONDS
 
 
 def _valid_cards(p):
@@ -69,10 +77,8 @@ def _valid_cards(p):
 
 
 def _valid_counter(p):
-    try:
-        return 1 <= int(p.get('target')) <= 500
-    except (TypeError, ValueError):
-        return False
+    target = _to_int(p.get('target'))
+    return target is not None and 1 <= target <= 500
 
 
 # kind -> validator. Adding a primitive is a new row here plus a renderer
@@ -112,10 +118,14 @@ def _clean_text(raw, cap: int = MAX_TEXT) -> str:
 
 def _screened(text: str, origin: str) -> bool:
     """True when this text may not survive. Body-composition language dies
-    on every origin; physical prescriptions die on generated only."""
-    from services.programs_curate import BODY_PHRASES
+    on every origin -- both halves of curate's own screen, phrases matched
+    as substrings (`BODY_PHRASES`) and single words matched on a boundary
+    (`_BODY_WORD_RE`), because screening only the phrases let "this drill
+    burns calories" straight through. Physical prescriptions die on
+    generated only."""
+    from services.programs_curate import BODY_PHRASES, _BODY_WORD_RE
     low = text.lower()
-    if any(p in low for p in BODY_PHRASES):
+    if any(p in low for p in BODY_PHRASES) or _BODY_WORD_RE.search(low):
         return True
     return origin == 'generated' and bool(_PHYSICAL_RE.search(text))
 
@@ -125,7 +135,12 @@ def sanitize_script(scenes: list, origin: str) -> list:
     what survives, which may be nothing — and nothing is a fine answer,
     because the player's fallback ladder plays the plain steps."""
     out = []
-    for raw in (scenes or []):
+    # `scenes or []` only coalesces FALSY junk (None, 0, ''); a truthy
+    # scalar -- an int, a float, a bare True -- is not a list and would
+    # otherwise reach the for and raise. Anything that is not actually a
+    # list of scenes becomes no scenes, the same way a malformed scene
+    # inside the list becomes no scene below.
+    for raw in (scenes if isinstance(scenes, list) else []):
         if len(out) >= MAX_SCENES:
             break
         if not isinstance(raw, dict):
@@ -141,16 +156,12 @@ def sanitize_script(scenes: list, origin: str) -> list:
             if not text or _screened(text, origin):
                 continue
             scene = {'type': 'do', 'text': text}
-            try:
-                secs = int(raw.get('seconds'))
+            secs = _to_int(raw.get('seconds'))
+            if secs is not None:
                 scene['seconds'] = max(5, min(MAX_DO_SECONDS, secs))
-            except (TypeError, ValueError):
-                pass
-            try:
-                bpm = int(raw.get('metronome_bpm'))
+            bpm = _to_int(raw.get('metronome_bpm'))
+            if bpm is not None:
                 scene['metronome_bpm'] = max(30, min(240, bpm))
-            except (TypeError, ValueError):
-                pass
             out.append(scene)
         elif kind == 'check':
             ask = _clean_text(raw.get('ask'), 120)

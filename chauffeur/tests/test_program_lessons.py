@@ -72,6 +72,61 @@ def scenario_body_screen_fires_on_every_origin():
     check(out == [], "body-composition text never survives, cited or not")
 
 
+def scenario_body_word_screen_fires_on_every_origin():
+    """BODY_PHRASES is only half of curate's own screen -- the single words
+    (calorie, bmi, skinny, ...) matter just as much, and a sanitizer that
+    only imported the phrases let a body-composition WORD straight
+    through. Checked on both origins: this is not the technique screen,
+    which only fires on generated -- this one never lets up."""
+    for origin in ('generated', 'cited'):
+        out = pl.sanitize_script(
+            [_say('This drill burns calories fast.')], origin)
+        check(out == [], f"body-composition word dropped, origin={origin}, "
+                         f"got {out}")
+
+
+def scenario_hostile_non_list_scenes_never_raise():
+    """`scenes or []` coalesces the FALSY shapes for free; the door still
+    has to survive a TRUTHY non-list -- a bare int, float, or True --
+    which used to reach the for loop itself and raise TypeError."""
+    for bad in (42, 3.14, True, None, 'not a list'):
+        out = pl.sanitize_script(bad, 'generated')
+        check(out == [], f"non-list scenes yields no scenes, got {out} "
+                         f"for {bad!r}")
+
+
+def scenario_infinite_numerics_never_raise():
+    """int(float('inf')) raises OverflowError, which a bare
+    (TypeError, ValueError) guard does not catch -- and JSON hands this
+    door exactly that shape for free (the bare token Infinity, or any
+    numeral past a double's range). Every numeric field, on every
+    validator that parses one, has to absorb it without raising."""
+    out = pl.sanitize_script([
+        {'type': 'do', 'text': 'a', 'seconds': float('inf')},
+        {'type': 'do', 'text': 'b', 'metronome_bpm': float('inf')},
+        {'type': 'show', 'primitive': {'kind': 'metronome',
+                                       'bpm': float('inf')},
+         'caption': 'tempo'},
+        {'type': 'show', 'primitive': {'kind': 'timer',
+                                       'seconds': float('inf')},
+         'caption': 'timer'},
+        {'type': 'show', 'primitive': {'kind': 'counter',
+                                       'target': float('inf')},
+         'caption': 'reps'},
+        {'type': 'show', 'primitive': {'kind': 'fretboard',
+                                       'dots': [{'string': float('inf'),
+                                                 'fret': 1, 'finger': 1}]},
+         'caption': 'chord'},
+    ], 'generated')
+    check(len(out) == 6, f"every inf-bearing scene survives, got {out}")
+    check('seconds' not in out[0], "unparseable seconds silently omitted")
+    check('metronome_bpm' not in out[1], "unparseable bpm silently omitted")
+    check(out[2] == {'type': 'say', 'text': 'tempo'}, f"got {out[2]}")
+    check(out[3] == {'type': 'say', 'text': 'timer'}, f"got {out[3]}")
+    check(out[4] == {'type': 'say', 'text': 'reps'}, f"got {out[4]}")
+    check(out[5] == {'type': 'say', 'text': 'chord'}, f"got {out[5]}")
+
+
 def scenario_slot_of():
     w = {'program_id': 'p1', 'phase_name': 'Foundations', 'session_label': 'Technique',
          'date': '2026-09-01', 'unit_title': '', 'steps': []}
@@ -86,5 +141,8 @@ if __name__ == '__main__':
     scenario_unknown_primitive_dropped_bad_params_degrade()
     scenario_generated_origin_screens_physical_technique()
     scenario_body_screen_fires_on_every_origin()
+    scenario_body_word_screen_fires_on_every_origin()
+    scenario_hostile_non_list_scenes_never_raise()
+    scenario_infinite_numerics_never_raise()
     scenario_slot_of()
     print("test_program_lessons OK")
