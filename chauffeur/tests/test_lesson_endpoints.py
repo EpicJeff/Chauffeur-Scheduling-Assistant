@@ -715,6 +715,109 @@ def scenario_forced_sweep_a_negative_days_is_a_400():
     check(code == 400, f"a negative days must be a 400, got {code}")
 
 
+# --- the room voice -----------------------------------------------------
+# A speaker endpoint is a prank vector, so everything here is about the
+# door rather than the words: who may knock, how often, how long, and
+# what may never be said through it.
+
+
+def _speak(**kw):
+    import main
+    main._lesson_spoke_at = 0.0          # a fresh throttle per scenario
+    return main.lesson_speak_api(body=kw)
+
+
+def scenario_the_speak_route_exists_and_is_wall_tier():
+    """The wall is the whole point: a session running on a board in the
+    room where the practising happens should come out of that room's own
+    speaker, in the house voice, not out of a tablet."""
+    import main
+    from services import auth
+    paths = [getattr(r, 'path', None) for r in main.app.routes]
+    check('/api/lessons/speak' in paths, "the route is registered")
+    check(auth.resolve('POST', '/api/lessons/speak') == auth.WALL,
+          "and a panel may call it")
+
+
+def scenario_the_speak_route_routes_through_announce():
+    """One path into a room, the same one Argyle already uses for dinner:
+    satellite announce or tts.speak on the room's own player, ducking and
+    resuming whatever is playing. No second speaker implementation."""
+    import main
+    from services import announce
+    seen = {}
+
+    def fake(room, message):
+        seen['room'], seen['message'] = room, message
+        return {'status': 'success', 'area': 'Kitchen'}
+
+    orig = announce.announce
+    announce.announce = fake
+    try:
+        out = _speak(room='kitchen', text='Switch sides.')
+    finally:
+        announce.announce = orig
+    check(seen.get('room') == 'kitchen' and seen.get('message') == 'Switch sides.',
+          f"the words reach announce untouched, got {seen}")
+    check((out or {}).get('status') == 'success',
+          f"and its answer comes back, got {out}")
+
+
+def scenario_the_speak_route_refuses_a_speech_longer_than_a_scene():
+    from services import program_lessons as pl
+    code = _denied(_speak, room='kitchen', text='x' * (pl.MAX_SPEAK + 1))
+    check(code == 400, f"a 400, got {code}")
+
+
+def scenario_the_speak_route_screens_what_it_is_asked_to_say():
+    """The strictest screen, deliberately: this door takes no origin's
+    word for anything, because the caller is whoever can reach the panel
+    rather than a script that already went through the sanitizer."""
+    from services import announce
+    called = {'n': 0}
+    orig = announce.announce
+    announce.announce = lambda r, m: called.__setitem__('n', called['n'] + 1)
+    try:
+        code = _denied(_speak, room='kitchen', text='This one burns calories.')
+        check(code == 400, f"body language never reaches a speaker, got {code}")
+        code = _denied(_speak, room='kitchen', text='Keep your wrist straight.')
+        check(code == 400, f"nor a physical prescription, got {code}")
+    finally:
+        announce.announce = orig
+    check(called['n'] == 0, "and nothing was said in either case")
+
+
+def scenario_the_speak_route_throttles():
+    import main
+    from services import announce
+    orig = announce.announce
+    announce.announce = lambda r, m: {'status': 'success'}
+    try:
+        _speak(room='kitchen', text='One.')
+        code = _denied(main.lesson_speak_api,
+                       body={'room': 'kitchen', 'text': 'Two.'})
+        check(code == 429, f"a second line straight away is refused, got {code}")
+        # A real gap between lines is fine -- this is a rate limit, not a
+        # one-shot.
+        main._lesson_spoke_at -= (main._LESSON_SPEAK_GAP_S + 1)
+        out = main.lesson_speak_api(body={'room': 'kitchen', 'text': 'Three.'})
+        check((out or {}).get('status') == 'success',
+              f"and the next one lands, got {out}")
+    finally:
+        announce.announce = orig
+
+
+def scenario_the_speak_route_stores_nothing():
+    """Nothing spoken is ever recorded -- the standing rule of this arc,
+    asserted where the temptation to keep a log is highest."""
+    import inspect
+    import main
+    src = inspect.getsource(main.lesson_speak_api)
+    for forbidden in ('set_app_state', 'upsert', 'append', 'add_'):
+        check(forbidden not in src,
+              f"the speak route must not {forbidden} -- nothing spoken is kept")
+
+
 if __name__ == '__main__':
     scenario_endpoints_exist()
     scenario_the_wall_route_exists_and_is_wall_tier()
@@ -757,4 +860,10 @@ if __name__ == '__main__':
     scenario_forced_sweep_an_infinite_limit_is_a_400()
     scenario_forced_sweep_a_huge_finite_days_is_a_400()
     scenario_forced_sweep_a_negative_days_is_a_400()
+    scenario_the_speak_route_exists_and_is_wall_tier()
+    scenario_the_speak_route_routes_through_announce()
+    scenario_the_speak_route_refuses_a_speech_longer_than_a_scene()
+    scenario_the_speak_route_screens_what_it_is_asked_to_say()
+    scenario_the_speak_route_throttles()
+    scenario_the_speak_route_stores_nothing()
     print("test_lesson_endpoints OK")

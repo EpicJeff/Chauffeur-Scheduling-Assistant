@@ -90,6 +90,17 @@
             <span x-show="preview" class="inline-block font-bold rounded bg-teal-500/20 text-teal-300 mt-0.5"
                  :class="panel ? 'text-xs px-2 py-0.5' : 'text-[10px] px-1.5 py-0.5'">Just a look — nothing gets saved</span>
         </div>
+        <!-- Which room this board speaks into. Panel only: a phone in a
+             pocket has its own speaker and a teenager's lesson does not
+             play to the kitchen. Shows the room when there is one and
+             offers to set one when there is not, so the once-per-device
+             ask is never the only way in and a wrong answer is one tap
+             from being right. -->
+        <button type="button" x-show="panel" @click="askRoom()"
+                class="shrink-0 rounded-full border font-bold px-4 h-14 text-base"
+                :class="room ? 'bg-teal-500/20 border-teal-500/40 text-teal-300'
+                             : 'bg-gray-800 border-gray-700 text-gray-400'"
+                x-text="room ? ('🔈 ' + room) : 'Set room'"></button>
         <!-- Argyle's voice, off for this session. Always visible, never a
              setting: a lesson in a quiet house is the same lesson, and a
              person who wants the voice back gets it by tapping again or
@@ -408,6 +419,9 @@ function lessonPlayer() {
         // countdown, but it is exactly as scene-local as either one).
         cardIdx: 0, cardFlipped: false, counterVal: 0, counterRunning: false,
         counterTimer: null,
+        // Which room this SCREEN is in, on a wall panel. Empty everywhere
+        // else and empty until somebody says -- see loadRoom()/askRoom().
+        room: '',
         // The current beat's cues and how many of them have already been
         // said. A cursor rather than a set, which is safe because the
         // sanitizer stores them sorted by `at`. Both reset on every scene
@@ -428,6 +442,14 @@ function lessonPlayer() {
             this.scenes = this.usingLesson
                 ? lesson.scenes : this.stepsToScenes(this.w);
             this.idx = 0; this.openFlag = true;
+            this.room = this.loadRoom();
+            // Asked ONCE per device, and never again whatever the answer
+            // was -- a household that wants the panel to stay quiet says
+            // so by cancelling, and the header chip is how they change
+            // their mind later. Not awaited: the session starts on time
+            // and this first one's session-level lines come out of the
+            // panel itself, which is what would have happened anyway.
+            if (this.panel && !this.preview && !this.room) this.maybeAskRoom();
             // A preview is never greeted. Everything else about it plays
             // identically -- same scenes, same voice on each of them --
             // but being welcomed by name to a session nobody is actually
@@ -856,7 +878,91 @@ function lessonPlayer() {
         // because a script asking for `pt-BR` on a machine that only ships
         // `pt-PT` is far better served by a Portuguese voice than by the
         // English default reading Portuguese words aloud.
+        // WHERE a session-level line goes. Two channels, split by latency
+        // and nothing else: a greeting, a scene's own line and the
+        // send-off sit BETWEEN beats and can afford a round trip through
+        // Home Assistant, so on a wall panel standing in a named room
+        // they come out of that room's own speaker in the house voice.
+        // Everything in-beat -- a cue at 0:30, a rep count -- calls
+        // sayLocal() directly instead, because a line that arrives after
+        // the moment it was about is worse than one nobody heard.
         say(text, lang, tone) {
+            if (this.muted || !text) return;
+            if (this.roomSay(text)) return;
+            this.sayLocal(text, lang, tone);
+        },
+
+        // The room channel. Fire-and-forget on purpose: a session must
+        // never wait on Home Assistant, and a room that will not take the
+        // line is a room that stays quiet, not a lesson that stalls.
+        // Returns whether the line was HANDED OFF, so say() knows not to
+        // also read it out of the panel's own tinny speaker.
+        //
+        // Never in a preview: a look at a lesson nobody is having is not
+        // a reason to talk to the house.
+        roomSay(text) {
+            if (!this.panel || !this.room || this.preview) return false;
+            try {
+                fetch((window.chfBase || '') + 'api/lessons/speak', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room: this.room, text: String(text)}),
+                }).catch(() => {});
+            } catch (e) { return false; }
+            return true;
+        },
+
+        // Which room this SCREEN is in. Deliberately not a per-card
+        // setting: the music card has one because a music card is often
+        // pointed at another room on purpose, but a screen is in exactly
+        // one place and two cards on one panel cannot be in two of them.
+        // No board-level or device-level room binding exists in this app
+        // today, so the panel asks whoever is standing at it, once, and
+        // keeps the answer on the device -- a per-viewer convenience,
+        // which is exactly what localStorage is for, and a wrong answer
+        // costs one re-ask.
+        //
+        // A host-set `window.chfLessonRoom` wins outright, the same
+        // chf-prefixed pattern window.chfBase and chfHasLessonDoneListener
+        // already use, so a board that ever does learn its own room has a
+        // door to land in without this component changing.
+        loadRoom() {
+            if (window.chfLessonRoom) return String(window.chfLessonRoom);
+            try { return localStorage.getItem('chf-lesson-room') || ''; }
+            catch (e) { return ''; }
+        },
+        async askRoom() {
+            const answer = await promptInput(
+                'Which room is this screen in?',
+                'Argyle will speak this session through that room’s '
+                + 'speaker. The name Home Assistant knows it by.',
+                {placeholder: 'Kitchen', value: this.room || '',
+                 okText: 'Use this room'});
+            // null is a CANCEL and means leave it alone; '' typed on
+            // purpose means stop speaking into a room. Only the second
+            // one clears what is stored.
+            if (answer === null) return this.room;
+            const room = (answer || '').trim();
+            this.room = room;
+            try {
+                if (room) localStorage.setItem('chf-lesson-room', room);
+                else localStorage.removeItem('chf-lesson-room');
+            } catch (e) { /* a private window still gets a voice tonight */ }
+            return room;
+        },
+        // The once-per-device version. A cancel is an ANSWER -- this
+        // panel stays local -- so the marker is written either way and
+        // nothing asks again unprompted; the header chip is the hand path
+        // back for a household that changes its mind.
+        async maybeAskRoom() {
+            try {
+                if (localStorage.getItem('chf-lesson-room-asked')) return '';
+                localStorage.setItem('chf-lesson-room-asked', '1');
+            } catch (e) { return ''; }
+            return await this.askRoom();
+        },
+
+        sayLocal(text, lang, tone) {
             if (this.muted || !text) return;
             try {
                 const synth = window.speechSynthesis;
@@ -921,9 +1027,13 @@ function lessonPlayer() {
         // rep counter already keep.
         runCue(c, elapsed) {
             if (!c) return;
-            if (c.say) this.say(c.say, c.speak_lang || this.scene().speak_lang,
-                                this.scene().tone);
-            if (c.count) this.say(String(Math.max(0, Math.round(elapsed))));
+            // sayLocal, never say: a cue is IN the beat, and a line that
+            // has to reach a speaker through Home Assistant first arrives
+            // after the moment it was about.
+            if (c.say) this.sayLocal(c.say,
+                                     c.speak_lang || this.scene().speak_lang,
+                                     this.scene().tone);
+            if (c.count) this.sayLocal(String(Math.max(0, Math.round(elapsed))));
             if (c.chime) this.playClick();
         },
 

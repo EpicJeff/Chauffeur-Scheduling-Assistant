@@ -6249,6 +6249,74 @@ def program_lesson_scenes(program_id: str, phase_name: str = '',
                        'source_url': lesson.get('source_url') or ''}}
 
 
+# One line at a time, and not two in the same breath. A route that puts
+# words through a household's own speakers is a prank vector by
+# construction -- it is WALL tier because the wall is exactly where it is
+# useful, which means anybody who can reach a hallway panel can reach it.
+# The cap on WHAT it may say is the sanitizer's screens below; this is the
+# cap on HOW OFTEN, and it is per process rather than per caller because
+# the resource being protected is a room, not an account: two panels
+# talking over each other in the same kitchen is the failure this
+# prevents, and neither of them is the one at fault.
+#
+# Three seconds is a spoken sentence. Long enough that a scene cannot
+# machine-gun a room, short enough that a lesson's own beats -- which are
+# tens of seconds apart -- never notice it exists.
+_LESSON_SPEAK_GAP_S = 3.0
+_lesson_spoke_at = 0.0
+
+
+@app.post("/api/lessons/speak")
+def lesson_speak_api(body: dict = Body(default={})):
+    """Say one line of a lesson out loud in a room.
+
+    The room half of the two-channel split this arc's design draws: what
+    is said BETWEEN beats -- the greeting, a scene's own line, the
+    send-off -- rides the announce path into the room the session is
+    actually running in, in the Argyle pipeline's own voice, ducking and
+    resuming whatever is playing. What is said INSIDE a beat (a cue at
+    0:30, a rep count) never comes here at all: sub-second timing cannot
+    survive a round trip through HA, so the player speaks those itself.
+
+    `services/announce.py` is reused whole rather than reimplemented --
+    same area matching, same satellite-then-tts.speak ladder, same pins a
+    household already set for "announce in the kitchen". A second speaker
+    implementation would be a second set of rooms to name and a second
+    thing to fix when a satellite changes shape.
+
+    Everything it may say runs `_screened(text, 'generated')` -- the
+    STRICTER of the two screens, deliberately, even for a line that came
+    off a cited script. Origin is a property of a stored lesson, and this
+    door has no stored lesson: it takes a string from whoever can reach a
+    panel. A door that trusted the caller's word about where the words
+    came from would be a door with no screen on it at all.
+
+    Records nothing, here or anywhere. A spoken line leaves the same trace
+    a check tap does.
+    """
+    global _lesson_spoke_at
+    import time
+    from services import announce as _announce, program_lessons as _pl
+    room = str((body or {}).get('room') or '').strip()
+    text = _pl._clean_text((body or {}).get('text'), _pl.MAX_SPEAK + 1)
+    if not room or not text:
+        raise HTTPException(status_code=400,
+                            detail="A room and something to say.")
+    if len(text) > _pl.MAX_SPEAK:
+        raise HTTPException(status_code=400,
+                            detail=f"A spoken line is at most {_pl.MAX_SPEAK} "
+                                   f"characters.")
+    if _pl._screened(text, 'generated'):
+        raise HTTPException(status_code=400,
+                            detail="That is not something this app says out loud.")
+    now = time.monotonic()
+    if now - _lesson_spoke_at < _LESSON_SPEAK_GAP_S:
+        raise HTTPException(status_code=429,
+                            detail="One line at a time.")
+    _lesson_spoke_at = now
+    return _announce.announce(room, text)
+
+
 # The magnitude bound `days` and `limit` share below, mirroring
 # _LESSON_UNIT_N_MAX's own role for unit_n a few endpoints up: generous
 # enough that no real value is ever clipped (the scan below defaults to

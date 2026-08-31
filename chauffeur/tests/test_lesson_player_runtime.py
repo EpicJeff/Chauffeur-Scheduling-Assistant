@@ -1535,18 +1535,29 @@ def scenario_self_contained_svg_shapes_keep_their_literal_fills():
 def scenario_the_speech_wrapper_can_never_break_a_scene():
     """A voiceless device -- a wall panel with no speech engine, a browser
     that throws on getVoices -- still runs the whole lesson. Speech is an
-    enhancement, and the wrapper is the only place that promise is kept."""
+    enhancement, and the wrapper is the only place that promise is kept.
+
+    Two functions, one door: `say` decides WHERE a line goes (this room's
+    speaker, or this device), `sayLocal` is the browser wrapper itself.
+    Everything in-beat calls the second directly, because a cue at 0:30
+    cannot afford a round trip; see the room-voice scenarios below."""
     src = _read('components/lesson_player.html')
     import re
     m = re.search(r'\n        say\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
-    check(m, "say(text, lang, tone) exists as the one speech door")
+    check(m, "say(text, lang, tone) exists as the one session-level door")
+    check('this.muted' in (m.group(1) if m else ''),
+          "and the mute tap silences it at that door")
+    m = re.search(r'\n        sayLocal\(text, lang, tone\) \{(.*?)\n        \},',
+                  src, re.S)
+    check(m, "sayLocal(text, lang, tone) is the browser wrapper")
     body = m.group(1) if m else ''
     check('try {' in body and 'catch' in body,
           "and everything it touches is inside a try/catch")
     check('speechSynthesis' in body, "it speaks through the browser's own engine")
     check('.cancel()' in body,
           "cancelling first, so a new line never queues behind a stale one")
-    check('this.muted' in body, "and the mute tap silences it at the door")
+    check('this.muted' in body,
+          "and it is silenced too, since in-beat lines reach it directly")
 
 
 def scenario_a_scene_speaks_its_own_line_on_entry():
@@ -1771,6 +1782,72 @@ def scenario_a_cue_stores_nothing():
                   f"a cue is said and forgotten -- {fn} must not {forbidden}")
 
 
+# --- the room voice -----------------------------------------------------
+
+
+def scenario_only_session_level_lines_reach_the_room():
+    """Two channels, split by latency, and the split is the design. What
+    is said BETWEEN beats can afford a round trip through Home Assistant;
+    what is said INSIDE one -- a cue at 0:30, a rep count -- cannot, and
+    an in-beat line routed through a room would arrive after the moment
+    it was about."""
+    src = _read('components/lesson_player.html')
+    import re
+    for fn, wanted in [('runCue', False), ('speakCount', False),
+                       ('tickCounter', False)]:
+        m = re.search(r'\n        ' + fn + r'\([^)]*\) \{(.*?)\n        \},',
+                      src, re.S)
+        check(m, f"{fn} is findable")
+        check(('roomSay' in m.group(1)) == wanted,
+              f"{fn} must not send an in-beat line through a room")
+    m = re.search(r'\n        say\(text, lang, tone\) \{(.*?)\n        \},',
+                  src, re.S)
+    check('roomSay' in (m.group(1) if m else ''),
+          "and say() is the one place the room fork lives, so every "
+          "session-level line takes it without a second call site")
+
+
+def scenario_the_room_voice_is_a_panel_only_fork():
+    """A teenager's lesson on their own phone does not play to the
+    kitchen. The room channel exists because a WALL board has no speaker
+    worth the name and is standing in a room that does."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        roomSay\(text\) \{(.*?)\n        \},', src, re.S)
+    check(m, "roomSay(text) exists")
+    body = m.group(1) if m else ''
+    check('this.panel' in body, "and it is panel-only")
+    check('this.room' in body, "and needs a room to speak into")
+    check('this.preview' in body,
+          "a preview never speaks into a room -- nobody asked the house to "
+          "listen to a look")
+    check('/api/lessons/speak' in body or 'lessons/speak' in body,
+          f"routed through the speak endpoint, got {body!r}")
+
+
+def scenario_the_room_is_asked_once_and_remembered_on_the_device():
+    """No board-level or device-level room binding exists in this app: the
+    music card's own room is a per-CARD option, which is right for music
+    (a card deliberately sends audio somewhere else) and wrong for a
+    screen, which is in exactly one room and cannot have two cards in two
+    of them. So the panel asks, once, and keeps the answer where a
+    per-viewer convenience belongs."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        async askRoom\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "askRoom() exists")
+    body = m.group(1) if m else ''
+    check('promptInput' in body, "asked with the house's own prompt")
+    for banned in ('prompt(', 'confirm(', 'alert('):
+        check(banned not in body, f"never a browser {banned} dialog")
+    check('localStorage' in body, "and kept on the device that answered")
+    m2 = re.search(r'\n        loadRoom\(\) \{(.*?)\n        \},', src, re.S)
+    check(m2, "loadRoom() exists")
+    check('chfLessonRoom' in (m2.group(1) if m2 else ''),
+          "with a host-set override ahead of it, so a board that ever does "
+          "learn its own room has a door to land in")
+
+
 if __name__ == '__main__':
     scenario_component_exists_and_renders_the_four_beats()
     scenario_checks_are_never_stored()
@@ -1856,4 +1933,7 @@ if __name__ == '__main__':
     scenario_the_cue_scheduler_rides_the_beats_own_timer()
     scenario_cues_never_outlive_their_scene()
     scenario_a_cue_stores_nothing()
+    scenario_only_session_level_lines_reach_the_room()
+    scenario_the_room_voice_is_a_panel_only_fork()
+    scenario_the_room_is_asked_once_and_remembered_on_the_device()
     print("test_lesson_player_runtime OK")

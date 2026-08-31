@@ -384,6 +384,21 @@ RULES = [
     # wall playing the same lesson as the phone, which is the whole point of
     # a shared screen in the room where the practising happens.
     ('GET', '/api/programs/{program_id}/lesson-scenes', WALL, None),
+    # The room half of a lesson's voice: one line, said out loud through
+    # the announce path, in the room the session is running in. WALL for
+    # the same reason the scenes above are -- the wall is where a family
+    # practises, and a board that can draw the lesson but not speak it is
+    # the quiet degradation this arc exists to remove.
+    #
+    # This one PUTS SOMETHING INTO A ROOM rather than answering a
+    # question, which is a different kind of route and is guarded
+    # differently: the handler caps the length, runs the strictest of the
+    # two content screens over every line regardless of where it claims to
+    # come from, and rate-limits the whole process to one line every few
+    # seconds. It reads nothing and stores nothing, so there is no
+    # disclosure here at all -- the exposure is a speaker, and that is
+    # what those three guards are for.
+    ('POST', '/api/lessons/speak', WALL, None),
     # WHEN the household's practice windows are, for the surfaces that draw a
     # day -- the wall's calendar card included, which is why this is WALL and
     # not SIGNED_IN. It carries a title, a name and an hour, which is the same
