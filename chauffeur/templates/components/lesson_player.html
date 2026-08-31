@@ -311,6 +311,14 @@
                              :class="panel ? 'text-3xl' : 'text-xl'">
                             <div class="font-bold text-gray-100 text-center" x-text="cardFace()"></div>
                         </div>
+                        <!-- The card's own voice, where it has one. A
+                             letter sound plays its rendered file; ordinary
+                             words go through the speech wrapper. Absent
+                             entirely on a card with neither. -->
+                        <button type="button" @click.stop="speakCard()"
+                                x-show="cardCanSpeak()"
+                                class="rounded-full bg-gray-800 border border-gray-700 text-gray-300 font-bold active:bg-gray-700"
+                                :class="panel ? 'px-6 py-3 text-2xl' : 'px-4 py-2 text-base'">🔊 Say it</button>
                         <div class="flex items-center gap-1.5">
                             <template x-for="(p, i) in (scene().primitive.pairs || [])" :key="i">
                                 <span class="rounded-full"
@@ -1040,6 +1048,38 @@ function lessonPlayer() {
             return this.cardFlipped ? ((pair && pair.back) || '') : ((pair && pair.front) || '');
         },
         toggleCardFlip() { this.cardFlipped = !this.cardFlipped; },
+
+        // Whether this card has a voice at all. Bound straight to the
+        // tap, so a card with neither a rendered letter sound nor words
+        // to say draws no button -- an offer of sound that produces
+        // silence is worse than no offer, and it is the exact failure a
+        // closed phoneme set exists to prevent.
+        cardPair() {
+            const pairs = ((this.scene().primitive) || {}).pairs || [];
+            return pairs[this.cardIdx] || {};
+        },
+        cardCanSpeak() {
+            const p = this.cardPair();
+            return !!(p.phoneme || p.speak);
+        },
+        // A letter sound plays its OWN rendered file; ordinary words go
+        // through the speech wrapper. The split is the whole point: a
+        // general voice handed `c` says "see" when a reading lesson needs
+        // /k/, and it says "la manzana" perfectly well. Nothing about a
+        // tap is recorded.
+        speakCard() {
+            const p = this.cardPair();
+            if (p.phoneme) {
+                try {
+                    const a = new Audio((window.chfBase || '')
+                                        + 'static/phonics/' + p.phoneme + '.wav');
+                    a.play().catch(() => {});
+                } catch (e) { /* a card with no sound is still a card */ }
+                return;
+            }
+            this.say(p.speak, p.speak_lang || this.scene().speak_lang,
+                     this.scene().tone);
+        },
 
         // A hint ladder, as one list: the rungs the model wrote and then
         // the answer, so `hintIdx` is a position in one array rather than

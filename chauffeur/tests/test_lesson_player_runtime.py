@@ -1793,6 +1793,72 @@ def scenario_a_cue_stores_nothing():
                   f"a cue is said and forgotten -- {fn} must not {forbidden}")
 
 
+# --- a card that can be heard -------------------------------------------
+
+
+def scenario_a_card_offers_a_speaker_tap_only_when_it_has_a_voice():
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\s{8}cardCanSpeak\(\) \{(.*?)\s{8}\},', src, re.S)
+    check(m, "cardCanSpeak exists")
+    body = m.group(1) if m else ''
+    check('phoneme' in body and 'speak' in body,
+          f"either a rendered letter sound or words to say, got {body!r}")
+    check(re.search(r'x-show="cardCanSpeak\(\)"', src),
+          "and the tap is bound straight to it, so a card with neither "
+          "draws no button at all")
+
+
+def scenario_a_letter_sound_plays_its_own_file_never_a_guess():
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\s{8}speakCard\(\) \{(.*?)\s{8}\},', src, re.S)
+    check(m, "speakCard exists")
+    body = m.group(1) if m else ''
+    check('static/phonics/' in body,
+          f"a phoneme plays the rendered file, got {body!r}")
+    check('this.say(' in body or 'sayLocal(' in body,
+          "and ordinary words go through the speech wrapper")
+    for forbidden in ('localStorage', "'POST'"):
+        check(forbidden not in body,
+              f"tapping a card records nothing -- no {forbidden}")
+
+
+# --- a card that can be heard -------------------------------------------
+
+
+def scenario_a_card_offers_a_speaker_tap_only_when_it_has_a_voice():
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        cardCanSpeak\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "cardCanSpeak exists")
+    body = m.group(1) if m else ''
+    check('phoneme' in body and 'speak' in body,
+          f"either a rendered letter sound or words to say, got {body!r}")
+    check(re.search(r'x-show="cardCanSpeak\(\)"', src),
+          "and the tap is bound straight to it, so a card with neither "
+          "draws no button at all")
+
+
+def scenario_a_letter_sound_plays_its_own_file_never_a_guess():
+    """The closed set exists because a general voice says the letter `c`
+    as "see" when a reading lesson needs /k/. A key with no rendered file
+    behind it never reaches the player at all (the sanitizer drops it),
+    and what does reach it plays that file rather than a guess."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        speakCard\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "speakCard exists")
+    body = m.group(1) if m else ''
+    check('static/phonics/' in body,
+          f"a phoneme plays the rendered file, got {body!r}")
+    check('this.say(' in body or 'sayLocal(' in body,
+          "and ordinary words go through the speech wrapper")
+    for forbidden in ('localStorage', "'POST'"):
+        check(forbidden not in body,
+              f"tapping a card records nothing -- no {forbidden}")
+
+
 # --- run-lines and fade -------------------------------------------------
 
 
@@ -2465,6 +2531,10 @@ if __name__ == '__main__':
     scenario_the_cue_scheduler_rides_the_beats_own_timer()
     scenario_cues_never_outlive_their_scene()
     scenario_a_cue_stores_nothing()
+    scenario_a_card_offers_a_speaker_tap_only_when_it_has_a_voice()
+    scenario_a_letter_sound_plays_its_own_file_never_a_guess()
+    scenario_a_card_offers_a_speaker_tap_only_when_it_has_a_voice()
+    scenario_a_letter_sound_plays_its_own_file_never_a_guess()
     scenario_a_fade_only_ever_tightens()
     scenario_the_same_pass_is_always_the_same_puzzle()
     scenario_run_lines_say_the_cue_and_wait()

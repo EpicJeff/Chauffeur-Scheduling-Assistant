@@ -1181,6 +1181,65 @@ def scenario_sweep_report_names_over_the_pass_limit():
     check(len(over) == 1, f"named as over the pass limit, got {out['slots']}")
 
 
+# --- a card that can be heard -------------------------------------------
+
+
+def scenario_a_card_face_may_carry_its_own_voice():
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Words',
+         'primitive': {'kind': 'cards',
+                       'pairs': [{'front': 'la manzana', 'back': 'the apple',
+                                  'speak': 'la manzana', 'speak_lang': 'es'}]}},
+    ], 'cited')
+    pair = out[0]['primitive']['pairs'][0]
+    check(pair['speak'] == 'la manzana' and pair['speak_lang'] == 'es',
+          f"the card says its own word in its own voice, got {pair}")
+
+
+def scenario_a_card_spoken_line_runs_the_screens():
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Words',
+         'primitive': {'kind': 'cards',
+                       'pairs': [{'front': 'G', 'back': 'Three fingers',
+                                  'speak': 'This one burns calories.'}]}},
+    ], 'cited')
+    check(out == [],
+          f"a spoken face is screened exactly like a written one, got {out}")
+
+
+def scenario_a_phoneme_key_must_be_one_this_app_actually_has():
+    """The closed set is the whole point. A letter sound said wrong in an
+    authoritative voice is worse than silence, so a key with no rendered
+    file behind it is dropped here and the player draws no tap for it."""
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Sounds',
+         'primitive': {'kind': 'cards',
+                       'pairs': [{'front': 'c', 'back': 'cat',
+                                  'phoneme': 'not_a_real_key'}]}},
+    ], 'generated')
+    pair = out[0]['primitive']['pairs'][0]
+    check('phoneme' not in pair,
+          f"an unknown key is dropped and the card stands, got {pair}")
+    check(pair['front'] == 'c', "the card itself is untouched")
+
+
+def scenario_the_phoneme_set_is_read_from_the_manifest():
+    """Whatever tools/gen_phonemes.py actually rendered, and nothing
+    else -- the validator can never drift from the files on disk because
+    it has no list of its own."""
+    keys = pl.phoneme_keys()
+    check(isinstance(keys, (set, frozenset)), f"a set of keys, got {type(keys)}")
+    for k in keys:
+        out = pl.sanitize_script([
+            {'type': 'show', 'caption': 'Sounds',
+             'primitive': {'kind': 'cards',
+                           'pairs': [{'front': 'c', 'back': 'cat',
+                                      'phoneme': k}]}},
+        ], 'generated')
+        check(out[0]['primitive']['pairs'][0].get('phoneme') == k,
+              f"a key the manifest lists survives, got {out}")
+
+
 # --- run-lines and fade -------------------------------------------------
 
 
@@ -1978,6 +2037,10 @@ if __name__ == '__main__':
     scenario_a_spoken_cue_runs_the_same_screens_as_everything_else()
     scenario_a_cue_line_is_shorter_than_a_beat_of_text()
     scenario_the_schema_names_cues()
+    scenario_a_card_face_may_carry_its_own_voice()
+    scenario_a_card_spoken_line_runs_the_screens()
+    scenario_a_phoneme_key_must_be_one_this_app_actually_has()
+    scenario_the_phoneme_set_is_read_from_the_manifest()
     scenario_run_lines_are_cue_and_answer_pairs()
     scenario_a_line_without_its_cue_is_not_a_pair()
     scenario_run_lines_run_the_screens()

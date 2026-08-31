@@ -109,6 +109,15 @@ MAX_HINT_STEPS = 4
 # rehearsing, they are reading.
 MAX_LINE_PAIRS = 8
 
+# The rendered letter-sound set, read from disk ONCE and never listed
+# here. A key with no file behind it must be dropped, and the only thing
+# that actually knows which files exist is the manifest
+# tools/gen_phonemes.py writes -- a second list in this module would be a
+# second thing to keep in step, and the failure mode of it drifting is a
+# card offering a sound that plays nothing.
+_PHONEME_KEYS = None
+PHONICS_MANIFEST = 'static/phonics/manifest.json'
+
 # Progressive fade: the same words, with more of them blanked each pass,
 # until you are reciting rather than reading. Two passes is the smallest
 # thing that is a fade at all; four is where a long passage stops being
@@ -198,6 +207,35 @@ def _valid_cards(p):
                     and _clean_text(x.get('front'), MAX_SHORT_TEXT)
                     and _clean_text(x.get('back'), MAX_SHORT_TEXT)
                     for x in pairs))
+
+
+def phoneme_keys() -> frozenset:
+    """Which letter sounds this install actually has audio for.
+
+    Empty until `tools/gen_phonemes.py` has been run on the live add-on,
+    where the household's own Piper voice is reachable -- and empty is the
+    correct empty state rather than a gap: an unlisted key is dropped at
+    the door and the player draws no speaker tap, because a letter sound
+    said wrong by a general TTS voice is worse than silence and a
+    five-year-old will believe it either way.
+
+    Read once and cached for the process. The manifest only changes when
+    somebody runs that tool by hand, which is a restart-shaped event.
+    """
+    global _PHONEME_KEYS
+    if _PHONEME_KEYS is None:
+        import json
+        import os
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        try:
+            with open(os.path.join(here, PHONICS_MANIFEST),
+                      encoding='utf-8') as f:
+                data = json.load(f) or {}
+            _PHONEME_KEYS = frozenset((data.get('phonemes') or {}).keys())
+        except Exception as e:
+            print(f"[lessons] no phoneme manifest ({e}); cards stay silent")
+            _PHONEME_KEYS = frozenset()
+    return _PHONEME_KEYS
 
 
 def _valid_lines(p):
@@ -356,10 +394,29 @@ def _build_primitive(prim):
             built['muted'] = sorted({_to_int(m) for m in prim['muted']})
         return built
     if kind == 'cards':
-        return {'kind': 'cards',
-                'pairs': [{'front': _clean_text(x.get('front'), MAX_SHORT_TEXT),
-                           'back': _clean_text(x.get('back'), MAX_SHORT_TEXT)}
-                          for x in prim['pairs']]}
+        # A pair may also carry its own voice: `speak` for the words a
+        # browser says correctly, `phoneme` for the letter sounds no
+        # general voice does. Both optional, both dropped rather than
+        # guessed at, and the card itself is never lost over either --
+        # a silent card is a card, a missing card is a gap in a lesson.
+        # `speak` is NOT screened here: _primitive_text below hands it to
+        # the same screens the faces go through, so a screened spoken
+        # face drops its whole scene exactly as a screened written one
+        # does, in one place rather than two.
+        pairs = []
+        for x in prim['pairs']:
+            pair = {'front': _clean_text(x.get('front'), MAX_SHORT_TEXT),
+                    'back': _clean_text(x.get('back'), MAX_SHORT_TEXT)}
+            speak = _clean_text(x.get('speak'), MAX_SHORT_TEXT)
+            if speak:
+                pair['speak'] = speak
+            lang = x.get('speak_lang')
+            if isinstance(lang, str) and _LANG_RE.match(lang):
+                pair['speak_lang'] = lang
+            if x.get('phoneme') in phoneme_keys():
+                pair['phoneme'] = x['phoneme']
+            pairs.append(pair)
+        return {'kind': 'cards', 'pairs': pairs}
     if kind == 'lines':
         built = {'kind': 'lines',
                  'pairs': [{'cue': _clean_text(x.get('cue')),
@@ -412,7 +469,8 @@ def _primitive_text(prim: dict) -> list:
     the screens run on ALL script text, whatever shape it arrives in."""
     if prim.get('kind') == 'cards':
         return [f for pair in prim.get('pairs') or []
-                for f in (pair.get('front') or '', pair.get('back') or '')]
+                for f in (pair.get('front') or '', pair.get('back') or '',
+                          pair.get('speak') or '')]
     # A hint ladder is nothing BUT free text -- every rung, and the answer
     # at the bottom of it. Exactly the hole card faces had before this
     # function existed: a screened caption over an unscreened payload.
@@ -793,7 +851,10 @@ _SYSTEM = (
     '{"kind":"fretboard","dots":[{"string":5,"fret":2,"finger":2}],"muted":[6]} '
     '(string 1=high E .. string 6=low E; muted is optional, string numbers '
     "that are not played at all -- never a fret or a finger for those), "
-    '{"kind":"cards","pairs":[{"front":"","back":""}]}, '
+    '{"kind":"cards","pairs":[{"front":"","back":"","speak":"",'
+    '"speak_lang":"es"}]} '
+    "(a pair may carry \"speak\", the words said out loud when the "
+    "card is tapped, with an optional language tag), "
     '{"kind":"hints","steps":["widest nudge","narrower"],"answer":""} '
     '{"kind":"lines","pairs":[{"cue":"","line":""}],"lang":"en-GB"} '
     "(rehearsal: the app says the cue out loud, they answer with the "
