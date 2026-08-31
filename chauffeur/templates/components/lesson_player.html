@@ -146,10 +146,20 @@
                  x-text="sayText()"></div>
         </template>
 
-        <!-- do: the drill itself, live -->
+        <!-- do: the drill itself, live. The one control on it is the
+             commonest thing a person wants mid-drill and the one no model
+             has to be asked for: the same beat again, slower. Deterministic
+             arithmetic on the beat's own numbers, once, and .stop because
+             this sits inside the tap-to-advance area. -->
         <template x-if="scene().type === 'do'">
-            <div class="w-full max-w-sm font-bold text-gray-100" :class="panel ? 'text-3xl' : 'text-xl'"
-                 x-text="scene().text"></div>
+            <div class="w-full max-w-sm flex flex-col items-center gap-5">
+                <div class="font-bold text-gray-100" :class="panel ? 'text-3xl' : 'text-xl'"
+                     x-text="scene().text"></div>
+                <button type="button" @click.stop="againSlower()"
+                        x-show="scene().seconds || scene().metronome_bpm"
+                        class="rounded-lg bg-gray-800 border border-gray-700 text-gray-300 font-bold active:bg-gray-700"
+                        :class="panel ? 'px-6 py-3 text-xl' : 'px-4 py-2 text-sm'">Again, slower</button>
+            </div>
         </template>
 
         <!-- check: fixed taps, never stored -- answerCheck() only advances.
@@ -168,16 +178,29 @@
         <template x-if="scene().type === 'check'">
             <div class="w-full max-w-sm space-y-5">
                 <div class="font-bold text-gray-100" :class="panel ? 'text-3xl' : 'text-xl'" x-text="scene().ask"></div>
-                <div class="flex flex-col gap-2.5">
-                    <button type="button" @click.stop="answerCheck()"
+                <div class="flex flex-col gap-2.5" x-show="!offerOpen">
+                    <button type="button" @click.stop="answerCheck('got')"
                             class="w-full rounded-xl bg-teal-700 text-white font-bold active:brightness-90"
                             :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Got it</button>
-                    <button type="button" @click.stop="answerCheck()"
+                    <button type="button" @click.stop="answerCheck('almost')"
                             class="w-full rounded-xl bg-gray-800 border border-gray-700 text-gray-200 font-bold active:bg-gray-700"
                             :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Almost</button>
-                    <button type="button" @click.stop="answerCheck()"
+                    <button type="button" @click.stop="answerCheck('not_yet')"
                             class="w-full rounded-xl bg-gray-800 border border-gray-700 text-gray-400 font-bold active:bg-gray-700"
                             :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Not yet</button>
+                </div>
+                <!-- The offer. Two chips, both of them an exit: taking it
+                     splices a short detour into THIS session only, leaving
+                     it moves on exactly as a not-yet always did. Nothing
+                     about which one was tapped is kept anywhere. -->
+                <div class="flex flex-col gap-2.5" x-show="offerOpen">
+                    <button type="button" @click.stop="acceptOffer()"
+                            class="w-full rounded-xl bg-teal-700 text-white font-bold active:brightness-90"
+                            :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'"
+                            x-text="((scene().not_yet_offer || {}).label) || 'Try it another way'"></button>
+                    <button type="button" @click.stop="declineOffer()"
+                            class="w-full rounded-xl bg-gray-800 border border-gray-700 text-gray-400 font-bold active:bg-gray-700"
+                            :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Next time</button>
                 </div>
             </div>
         </template>
@@ -450,6 +473,9 @@ function lessonPlayer() {
         // A wait beat's on-screen countdown. Cosmetic only -- the call
         // into the room is armed on the server and outlives this.
         waitLeft: 0, waitTimer: null,
+        // Whether a check's offer chips are showing instead of its three
+        // taps. Scene-local like everything else here; reset on entry.
+        offerOpen: false,
         // The current beat's cues and how many of them have already been
         // said. A cursor rather than a set, which is safe because the
         // sanitizer stores them sorted by `at`. Both reset on every scene
@@ -1108,8 +1134,68 @@ function lessonPlayer() {
             if (this.idx < this.scenes.length - 1) { this.idx++; this.enterScene(); }
             else this.finish();
         },
-        // A check tap advances. It is not stored, not sent, not remembered.
-        answerCheck() { this.advance(); },
+        // A check tap advances. It is not stored, not sent, not remembered
+        // -- and that is still true of the offer below, which changes what
+        // happens NEXT in this session and nothing else anywhere.
+        //
+        // `kind` exists only to tell the one tap that may open an offer
+        // from the two that never can. Nothing reads it afterwards; it is
+        // not a grade, and there is nowhere for it to be one.
+        answerCheck(kind) {
+            const offer = this.scene().not_yet_offer;
+            if (kind === 'not_yet' && offer && (offer.scenes || []).length) {
+                this.offerOpen = true;
+                this.say(offer.label, this.scene().speak_lang, this.scene().tone);
+                return;
+            }
+            this.advance();
+        },
+        // Taken. The detour goes in immediately after this check, in the
+        // live scene list and nowhere else: no fetch, no storage, no
+        // record that it was ever offered or ever accepted. Any offer
+        // riding a spliced scene is stripped on the way in -- the
+        // sanitizer already refuses nested offers, and a spliced scene is
+        // the one path into this list that never came through open(), so
+        // the client keeps its own copy of that rule rather than trusting
+        // the shape it was handed.
+        acceptOffer() {
+            const offer = this.scene().not_yet_offer || {};
+            const detour = (offer.scenes || []).map(s => {
+                const copy = Object.assign({}, s);
+                delete copy.not_yet_offer;
+                return copy;
+            });
+            this.offerOpen = false;
+            if (!detour.length) { this.advance(); return; }
+            this.scenes.splice(this.idx + 1, 0, ...detour);
+            this.advance();
+        },
+        // Declined. Exactly what a not-yet did before offers existed.
+        declineOffer() { this.offerOpen = false; this.advance(); },
+
+        // The same drill, slower. No model, no offer, no round trip --
+        // one factor applied to the beat's own numbers, and the cues
+        // scaled with them so a line written for the halfway point is
+        // still at the halfway point. Runs once, on the scene as it
+        // stands; the stored script is never touched, so leaving and
+        // coming back to this beat gets it at its written speed again.
+        againSlower() {
+            const s = this.scene();
+            if (s.type !== 'do') return;
+            const SLOWER = 0.75;
+            this.stopSound();
+            // Cues before the clock, the same order enterScene() uses, so
+            // a line written for second 0 lands with the replay rather
+            // than a tick behind it.
+            if (s.cues) {
+                this.startCues((s.cues || []).map(
+                    c => Object.assign({}, c, {at: Math.round((c.at || 0) / SLOWER)})));
+            }
+            if (s.seconds) this.startTimer(Math.max(5, Math.round(s.seconds / SLOWER)));
+            if (s.metronome_bpm) {
+                this.startMetronome(Math.max(30, Math.round(s.metronome_bpm * SLOWER)));
+            }
+        },
 
         enterScene() {
             // Cards/counter state is scene-local by design -- reset on
@@ -1125,7 +1211,7 @@ function lessonPlayer() {
             this.cardIdx = 0; this.cardFlipped = false; this.counterVal = 0;
             this.counterRunning = false;
             this.cues = []; this.cuesFired = 0;
-            this.waitLeft = 0;
+            this.waitLeft = 0; this.offerOpen = false;
             if (this.waitTimer) { clearInterval(this.waitTimer); this.waitTimer = null; }
             if (this.counterTimer) { clearInterval(this.counterTimer); this.counterTimer = null; }
             const s = this.scene();

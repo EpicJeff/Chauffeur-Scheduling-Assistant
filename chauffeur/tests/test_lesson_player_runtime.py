@@ -124,11 +124,18 @@ def scenario_check_taps_never_bubble_into_the_advance_handler():
     check tap must stop propagation so it can never reach that handler."""
     src = _read('components/lesson_player.html')
     import re
-    taps = re.findall(r'@click(\.stop)?="answerCheck\(\)"', src)
+    taps = re.findall(r'@click(\.stop)?="answerCheck\([^)]*\)"', src)
     check(len(taps) >= 3, f"all three check taps present, found {len(taps)}")
     check(all(m == '.stop' for m in taps),
           "every check tap must carry .stop, or it can bubble into the "
           "scene area's own tap-to-advance handler")
+    # The offer chips replace those three taps in place on the same
+    # check scene, so they sit inside the same ancestor and need the
+    # identical guard for the identical reason.
+    chips = re.findall(r'@click(\.stop)?="(acceptOffer|declineOffer)\(\)"', src)
+    check(len(chips) == 2, f"both offer chips present, found {len(chips)}")
+    check(all(m[0] == '.stop' for m in chips),
+          "and both carry .stop, same handler, same bug")
 
 
 def scenario_an_unrenderable_show_with_no_caption_still_says_something():
@@ -1377,9 +1384,13 @@ def scenario_text_white_survives_only_on_invariant_accent_fills():
     import re
     src = _read('components/lesson_player.html')
     classes = re.findall(r'class="([^"]*\btext-white\b[^"]*)"', src)
-    check(len(classes) == 2,
-          f"exactly two text-white uses should remain (both on invariant "
-          f"solid fills), found {len(classes)}: {classes}")
+    # The COUNT is not the rule and never was -- the rule is that every
+    # one of them sits on an invariant fill, checked below. A primary
+    # action added later (the offer's accept chip) legitimately grows this
+    # list; a `text-white` on the themed surface is what must not.
+    check(len(classes) >= 2,
+          f"the invariant-fill text-white uses should still be here, "
+          f"found {len(classes)}: {classes}")
     for cls in classes:
         check('bg-teal-700' in cls or 'bg-blue-600' in cls,
               f"text-white must sit beside an invariant solid fill, got {cls!r}")
@@ -1782,6 +1793,66 @@ def scenario_a_cue_stores_nothing():
                   f"a cue is said and forgotten -- {fn} must not {forbidden}")
 
 
+# --- offers, and again slower -------------------------------------------
+
+
+def scenario_not_yet_offers_rather_than_taking_over():
+    """Offered, never automatic. A tap declines it and the session moves
+    on exactly as it did before offers existed -- which is also what a
+    check with no offer still does."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        answerCheck\(kind\) \{(.*?)\n        \},', src, re.S)
+    check(m, "answerCheck takes which tap it was")
+    body = m.group(1) if m else ''
+    check('not_yet_offer' in body and 'offerOpen' in body,
+          f"a not-yet tap on a check that offers one opens it, got {body!r}")
+    check('advance()' in body, "and every other tap advances as before")
+    check('Next time' in src, "the decline is a visible chip, not a dismissal")
+
+
+def scenario_accepting_an_offer_splices_this_session_only():
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        acceptOffer\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "acceptOffer exists")
+    body = m.group(1) if m else ''
+    check('splice' in body, f"it splices into the live scene list, got {body!r}")
+    check('this.idx + 1' in body, "immediately after the beat that offered it")
+    for forbidden in ('fetch', 'localStorage', 'api/'):
+        check(forbidden not in body,
+              f"and records nothing about having done so -- no {forbidden}")
+
+
+def scenario_an_offer_can_never_offer_again():
+    """The server drops nested offers; the client must not reintroduce
+    one by splicing scenes that carry their own. Belt and braces, because
+    a spliced scene is the one path into the list that never went through
+    open()."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        acceptOffer\(\) \{(.*?)\n        \},', src, re.S)
+    body = m.group(1) if m else ''
+    check('not_yet_offer' in body,
+          f"the splice strips any offer riding a spliced scene, got {body!r}")
+
+
+def scenario_every_drill_can_be_run_again_slower():
+    """Deterministic, no model, no offer needed: the commonest thing a
+    person wants mid-drill is the same drill, slower."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        againSlower\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "againSlower exists")
+    body = m.group(1) if m else ''
+    check('SLOWER' in body, "it scales by one named factor")
+    check('metronome_bpm' in body and 'cues' in body,
+          f"the beat, the click and the cues all slow together, got {body!r}")
+    for forbidden in ('fetch', 'localStorage'):
+        check(forbidden not in body, f"and it stores nothing -- no {forbidden}")
+    check('Again, slower' in src, "and the tap says what it does")
+
+
 # --- wait beats ---------------------------------------------------------
 
 
@@ -1975,6 +2046,10 @@ if __name__ == '__main__':
     scenario_the_cue_scheduler_rides_the_beats_own_timer()
     scenario_cues_never_outlive_their_scene()
     scenario_a_cue_stores_nothing()
+    scenario_not_yet_offers_rather_than_taking_over()
+    scenario_accepting_an_offer_splices_this_session_only()
+    scenario_an_offer_can_never_offer_again()
+    scenario_every_drill_can_be_run_again_slower()
     scenario_a_wait_beat_renders_its_own_countdown()
     scenario_a_wait_says_out_loud_that_it_will_call_you_back()
     scenario_closing_a_wait_leaves_the_call_armed()

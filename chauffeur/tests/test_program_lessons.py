@@ -1181,6 +1181,78 @@ def scenario_sweep_report_names_over_the_pass_limit():
     check(len(over) == 1, f"named as over the pass limit, got {out['slots']}")
 
 
+# --- offers -------------------------------------------------------------
+
+
+def _offer_check(**kw):
+    base = {'type': 'check', 'ask': 'Could you keep the beat?',
+            'not_yet_offer': {'label': 'Try it slower',
+                              'scenes': [{'type': 'do', 'text': 'Half speed.',
+                                          'seconds': 30}]}}
+    base['not_yet_offer'].update(kw)
+    return base
+
+
+def scenario_a_check_may_offer_a_way_back_in():
+    out = pl.sanitize_script([_offer_check()], 'generated')
+    offer = out[0].get('not_yet_offer') or {}
+    check(offer.get('label') == 'Try it slower', f"the label survives, got {out[0]}")
+    check([s['type'] for s in offer.get('scenes') or []] == ['do'],
+          f"and the beats behind it, got {offer}")
+
+
+def scenario_an_offer_may_not_contain_another_door():
+    """An offer splices scenes into THIS session. A check inside one is a
+    second decision inside a decision, a wait inside one is a timer inside
+    a detour, and an offer inside one is unbounded recursion wearing a
+    label. All three are refused, and the check they hang off survives
+    without its offer rather than being dropped."""
+    out = pl.sanitize_script([_offer_check(scenes=[
+        {'type': 'check', 'ask': 'Better?',
+         'not_yet_offer': {'label': 'Deeper', 'scenes': [{'type': 'say', 'text': 'x'}]}},
+        {'type': 'wait', 'minutes': 5, 'text': 'Rest.'},
+        {'type': 'say', 'text': 'Slow it right down.'},
+    ])], 'generated')
+    check(out[0]['type'] == 'check', f"the check itself stays, got {out}")
+    offer = out[0].get('not_yet_offer') or {}
+    check([s['type'] for s in offer.get('scenes') or []] == ['say'],
+          f"only the plain beat survives inside, got {offer}")
+    check(not any('not_yet_offer' in s for s in offer.get('scenes') or []),
+          f"and nothing inside carries a further offer, got {offer}")
+
+
+def scenario_an_empty_offer_is_no_offer():
+    out = pl.sanitize_script([
+        _offer_check(scenes=[]),
+        _offer_check(label=''),
+        _offer_check(scenes=[{'type': 'check', 'ask': 'Again?'}]),
+    ], 'generated')
+    check(len(out) == 3 and all(s['type'] == 'check' for s in out),
+          f"every check survives, got {out}")
+    check(not any('not_yet_offer' in s for s in out),
+          f"and none of them keeps an offer that says nothing, got {out}")
+
+
+def scenario_an_offer_is_capped_and_screened():
+    long_offer = _offer_check(
+        label='x' * 500,
+        scenes=[{'type': 'say', 'text': f'beat {i}'} for i in range(12)])
+    out = pl.sanitize_script([long_offer], 'generated')
+    offer = out[0]['not_yet_offer']
+    check(len(offer['label']) == pl.MAX_OFFER_LABEL,
+          f"the label is clamped to {pl.MAX_OFFER_LABEL}, got {offer['label']}")
+    check(len(offer['scenes']) == pl.MAX_OFFER_SCENES,
+          f"and the detour to {pl.MAX_OFFER_SCENES} beats, got {len(offer['scenes'])}")
+    screened = pl.sanitize_script([_offer_check(label='Burns calories faster')],
+                                  'cited')
+    check('not_yet_offer' not in screened[0],
+          f"a screened label takes the offer, not the check, got {screened[0]}")
+
+
+def scenario_the_schema_names_the_offer():
+    check('not_yet_offer' in pl._SYSTEM, "the model is told it may offer one")
+
+
 # --- wait beats ---------------------------------------------------------
 
 
@@ -1668,6 +1740,11 @@ if __name__ == '__main__':
     scenario_a_spoken_cue_runs_the_same_screens_as_everything_else()
     scenario_a_cue_line_is_shorter_than_a_beat_of_text()
     scenario_the_schema_names_cues()
+    scenario_a_check_may_offer_a_way_back_in()
+    scenario_an_offer_may_not_contain_another_door()
+    scenario_an_empty_offer_is_no_offer()
+    scenario_an_offer_is_capped_and_screened()
+    scenario_the_schema_names_the_offer()
     scenario_a_wait_is_minutes_and_words()
     scenario_a_wait_is_bounded_at_both_ends()
     scenario_a_wait_announce_runs_the_screens()

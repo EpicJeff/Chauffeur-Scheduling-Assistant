@@ -80,6 +80,13 @@ MAX_WAIT_ANNOUNCE = 120
 MAX_WAIT_QUEUE = 20
 WAIT_STALE_S = 24 * 3600
 
+# An offer: what a "not yet" tap may propose. Four beats, because a
+# detour longer than that is not a detour, it is a second lesson nobody
+# chose; and a label short enough to read on a chip while standing at a
+# piano.
+MAX_OFFER_LABEL = 60
+MAX_OFFER_SCENES = 4
+
 # A BCP-47 tag only as far as this app can actually act on one: a language
 # and, optionally, a region. The player picks a voice by prefix, so the
 # region half is a preference the browser may ignore and the language half
@@ -391,10 +398,48 @@ def _clean_cues(raw, seconds, origin: str) -> list:
     return out[:MAX_CUES]
 
 
-def sanitize_script(scenes: list, origin: str) -> list:
+def _clean_offer(raw, origin: str):
+    """What a "not yet" may propose: a label and a short detour.
+
+    Offered, never automatic -- that is a player rule, but this is where
+    the shape that makes it possible is bounded. Three things may not be
+    inside an offer, and all three are the same mistake at different
+    sizes: a `check` is a second decision inside a decision, a `wait` is a
+    timer inside a detour nobody planned to be on, and another offer is
+    unbounded recursion wearing a label. The inner scenes go through
+    `sanitize_script` itself (so every cap and both screens apply exactly
+    once, in one place) at depth 1, which is where that function refuses
+    to read an offer at all -- so the bound is structural rather than a
+    counter somebody has to remember to decrement.
+
+    A failed offer drops the OFFER, never the check it hangs off. The
+    check asked a real question and its own text already passed its own
+    screen; losing the beat because the detour behind it was malformed
+    would be the tail refusing the dog.
+    """
+    if not isinstance(raw, dict):
+        return None
+    label = _clean_text(raw.get('label'), MAX_OFFER_LABEL)
+    if not label or _screened(label, origin):
+        return None
+    inner = [s for s in sanitize_script(raw.get('scenes'), origin, _depth=1)
+             if s.get('type') not in ('check', 'wait')]
+    if not inner:
+        return None
+    return {'label': label, 'scenes': inner[:MAX_OFFER_SCENES]}
+
+
+def sanitize_script(scenes: list, origin: str, _depth: int = 0) -> list:
     """Every script through one door. Clamps, whitelists, screens; returns
     what survives, which may be nothing — and nothing is a fine answer,
-    because the player's fallback ladder plays the plain steps."""
+    because the player's fallback ladder plays the plain steps.
+
+    `_depth` is not a caller's argument. It is 1 exactly once, when
+    `_clean_offer` above runs an offer's own scenes back through here, and
+    all it does is refuse to read a further offer at that depth. That
+    makes "an offer may not contain an offer" a property of the shape
+    rather than a rule anybody has to enforce twice.
+    """
     out = []
     # `scenes or []` only coalesces FALSY junk (None, 0, ''); a truthy
     # scalar -- an int, a float, a bare True -- is not a list and would
@@ -437,7 +482,12 @@ def sanitize_script(scenes: list, origin: str) -> list:
             ask = _clean_text(raw.get('ask'), MAX_SHORT_TEXT)
             if not ask or _screened(ask, origin):
                 continue
-            out.append({'type': 'check', 'ask': ask, **voice})
+            scene = {'type': 'check', 'ask': ask, **voice}
+            offer = (_clean_offer(raw.get('not_yet_offer'), origin)
+                     if not _depth else None)
+            if offer:
+                scene['not_yet_offer'] = offer
+            out.append(scene)
         elif kind == 'wait':
             # A beat whose whole content is that nothing happens for a
             # while. It needs BOTH halves or it is not a wait: minutes
@@ -591,7 +641,11 @@ _SYSTEM = (
     "-- up to 8, and only on a beat that has seconds. A cue carries "
     "\"say\", or \"count\": true to say the seconds elapsed, or "
     "\"chime\": true for a tick); "
-    '{"type":"check","ask":""} a self-check with fixed answers; '
+    '{"type":"check","ask":"","not_yet_offer":{"label":"Try it slower",'
+    '"scenes":[...]}} a self-check with fixed answers -- "not_yet_offer" '
+    "is optional and is what gets OFFERED (never forced) when the answer "
+    "is not yet: a label and up to 4 ordinary beats, no checks and no "
+    "waits inside it; "
     '{"type":"wait","minutes":45,"text":"","announce":""} time in which '
     "nothing happens (the dough rises, the glue sets) -- the app calls the "
     "room with \"announce\" when it is up, so use this instead of making "
