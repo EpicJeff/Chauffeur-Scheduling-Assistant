@@ -76,6 +76,19 @@ def scenario_exclude_books_reaches_the_question():
     check('_fallback' in src, "and can route a stubborn book plan to generated")
 
 
+def scenario_the_fork_is_on_the_proposal():
+    """A book-spined proposal asks its one question on the card, with both
+    answers a tap away -- reachable by hand, per the house rule."""
+    import io, os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = io.open(os.path.join(here, 'templates', 'programs.html'),
+                  encoding='utf-8').read()
+    check('book_spine' in src, "the card knows a book-spined plan")
+    check('exclude_books' in src, "and can ask for a bookless one")
+    check('Have it' in src or 'have it' in src,
+          "and can keep the book as the spine")
+
+
 if __name__ == '__main__':
     scenario_a_book_only_plan_is_flagged()
     scenario_a_taught_plan_is_not_flagged()
@@ -84,4 +97,5 @@ if __name__ == '__main__':
     scenario_series_name_is_extracted()
     scenario_curate_prefers_pages_that_teach()
     scenario_exclude_books_reaches_the_question()
+    scenario_the_fork_is_on_the_proposal()
     print("test_programs_bookspine OK")

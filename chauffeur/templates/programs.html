@@ -433,6 +433,26 @@
                                             <div class="text-xs text-gray-300" x-show="footprints[p.id].thread" x-text="'Kit thread: ' + footprints[p.id].thread"></div>
                                             <div class="text-xs text-gray-300" x-show="footprints[p.id].event"
                                                 x-text="footprints[p.id].event ? ('Calendar target: ' + footprints[p.id].event.title + ' on ' + fmtDate(footprints[p.id].event.date)) : ''"></div>
+
+                                            <!-- The book-spine fork. A cited plan can be honest and
+                                                 still hollow: the page it read named lesson books and
+                                                 teaches nothing on its own. One question, two taps,
+                                                 no surprise at the till. -->
+                                            <div x-show="p.state === 'proposed' && canAct(p) && (p.source || {}).book_spine"
+                                                class="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+                                                <div class="text-[12px] text-amber-300 font-semibold mb-1">
+                                                    This path follows <span x-text="(p.source || {}).book_spine"></span> — real books, bought or borrowed.
+                                                </div>
+                                                <div class="text-[11px] text-gray-400 mb-2">
+                                                    Have it (or will get it)? Approve as usual and the books stay the spine.
+                                                    Or ask for a plan with the lessons on free pages instead.
+                                                </div>
+                                                <button @click="replanWithoutBooks(p)" :disabled="proposing"
+                                                    class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">
+                                                    Plan without the book
+                                                </button>
+                                            </div>
+
                                             <button @click="approveProgram(p)" x-show="canApprove()"
                                                 class="w-full text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">
                                                 Approve — claim this time
@@ -906,6 +926,21 @@
                         'Look again', 'Cancel');
                     if (!ok) return;
                     await this.patchProgram(p, { recurate: true },
+                                            "Couldn't look again just now.");
+                },
+
+                // The other half of the same fork: a book-spined plan can be
+                // looked up again with the books ruled out, so the family
+                // is never stuck choosing between the plan that was found
+                // and a trip to the store. Same one research run as Look
+                // again; if nothing bookless turns up, the plan says so
+                // honestly rather than pretending the books were never there.
+                async replanWithoutBooks(p) {
+                    const ok = await promptConfirm('Plan without the book?',
+                        'This spends one research run looking for a plan whose lessons are on free pages. If nothing bookless turns up, the app writes a plan and says so.',
+                        'Look again', 'Cancel');
+                    if (!ok) return;
+                    await this.patchProgram(p, { recurate: true, exclude_books: true },
                                             "Couldn't look again just now.");
                 },
 
