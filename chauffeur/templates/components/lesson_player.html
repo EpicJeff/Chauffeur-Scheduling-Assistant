@@ -686,6 +686,12 @@ function lessonPlayer() {
         // A wait beat's on-screen countdown. Cosmetic only -- the call
         // into the room is armed on the server and outlives this.
         waitLeft: 0, waitTimer: null,
+        // key -> {say, file} for whatever letter sounds this install
+        // actually has rendered. Fetched once, lazily, and only by a
+        // session that meets a card carrying a phoneme -- an empty
+        // manifest (the state until tools/gen_phonemes.py has been run)
+        // is the common case and must cost nothing.
+        phonics: null,
         // Whether a check's offer chips are showing instead of its three
         // taps. Scene-local like everything else here; reset on entry.
         offerOpen: false,
@@ -1077,6 +1083,21 @@ function lessonPlayer() {
         },
         toggleCardFlip() { this.cardFlipped = !this.cardFlipped; },
 
+        // The rendered letter-sound set, fetched at most once per
+        // session and only when a card actually names one. A failure is
+        // an empty map, not an error: every tap it would have enabled is
+        // simply absent, which is the same answer a missing file gets.
+        async loadPhonics(prim) {
+            if (this.phonics !== null) return;
+            if (!((prim.pairs || []).some(p => p && p.phoneme))) return;
+            this.phonics = {};
+            try {
+                const r = await fetch((window.chfBase || '')
+                                      + 'static/phonics/manifest.json');
+                if (r.ok) this.phonics = (await r.json()).phonemes || {};
+            } catch (e) { /* no manifest, no taps -- never an error */ }
+        },
+
         // Whether this card has a voice at all. Bound straight to the
         // tap, so a card with neither a rendered letter sound nor words
         // to say draws no button -- an offer of sound that produces
@@ -1088,7 +1109,12 @@ function lessonPlayer() {
         },
         cardCanSpeak() {
             const p = this.cardPair();
-            return !!(p.phoneme || p.speak);
+            // A phoneme counts only once its file is actually known. The
+            // sanitizer already refuses a key the manifest does not list,
+            // so this is the same rule enforced against the copy the
+            // BROWSER holds -- a stored script written before a manifest
+            // was regenerated must not offer a tap that plays nothing.
+            return !!((p.phoneme && (this.phonics || {})[p.phoneme]) || p.speak);
         },
         // A letter sound plays its OWN rendered file; ordinary words go
         // through the speech wrapper. The split is the whole point: a
@@ -1098,9 +1124,16 @@ function lessonPlayer() {
         speakCard() {
             const p = this.cardPair();
             if (p.phoneme) {
+                // The FILENAME comes from the manifest, never assembled
+                // from the key: HA's tts_proxy serves mp3 for most
+                // engines and wav for some, and a stored script holds the
+                // key rather than a filename precisely so a re-render
+                // with a different engine cannot orphan every card.
+                const file = ((this.phonics || {})[p.phoneme] || {}).file;
+                if (!file) return;
                 try {
                     const a = new Audio((window.chfBase || '')
-                                        + 'static/phonics/' + p.phoneme + '.wav');
+                                        + 'static/phonics/' + file);
                     a.play().catch(() => {});
                 } catch (e) { /* a card with no sound is still a card */ }
                 return;
@@ -1543,6 +1576,11 @@ function lessonPlayer() {
                 && ['listen', 'tuner'].includes(s.primitive.kind)) {
                 this.startListening(s.primitive);
             }
+            // A card scene may name letter sounds; the manifest that
+            // says which ones exist is fetched here, once, rather than on
+            // every open.
+            if (s.type === 'show' && s.primitive
+                && s.primitive.kind === 'cards') this.loadPhonics(s.primitive);
             // A rehearsal opens with the first cue, spoken -- there is
             // nothing to answer until somebody says the other part.
             if (s.type === 'show' && s.primitive

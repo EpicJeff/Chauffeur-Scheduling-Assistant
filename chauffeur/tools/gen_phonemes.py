@@ -15,16 +15,29 @@ manifest naming exactly which keys actually have audio behind them.
 manifest, so a key with no file is dropped at the door and the player
 draws no speaker tap for it. Missing audio is silence, never a guess.
 
-RUNNING IT (a hand step, on purpose)
-------------------------------------
-This needs the live Home Assistant add-on environment, where the
-household's own Piper voice is reachable -- it is not CI-runnable and it
-is not run on boot. From the add-on shell:
+RUNNING IT (a hand step, on purpose — and NOT on the add-on)
+------------------------------------------------------------
+Run it from a DEV CHECKOUT pointed at the house's Home Assistant, not
+from inside the add-on container. `static/` is baked into the add-on
+image, so anything this wrote in there would vanish on the next rebuild —
+these files are an ASSET that belongs in the repo, committed and shipped,
+exactly like the vendored fonts and the pet artwork beside them.
 
-    python tools/gen_phonemes.py
+    cd chauffeur
+    HA_BASE_URL=http://homeassistant.local:8123 HA_TOKEN=<long-lived token> \
+        python tools/gen_phonemes.py
 
-It writes `static/phonics/<key>.wav` for every phrase Piper renders and
-rewrites `static/phonics/manifest.json` to list exactly those. Re-running
+(`ha_api._base_and_token` takes those two env vars as its dev fallback,
+which is the whole reason that fallback exists; `ha_base_url`/`ha_token`
+in settings work too if this checkout shares the household's database.)
+Then commit what it wrote and rebuild the add-on the usual way.
+
+It is not CI-runnable and never runs on boot.
+
+It writes `static/phonics/<key>.<ext>` for every phrase Piper renders --
+the extension comes from what HA's tts_proxy actually served, never
+assumed -- and rewrites `static/phonics/manifest.json` to list exactly
+those, filename included. Re-running
 it is safe: it overwrites, and a key whose render fails is left out of
 the manifest rather than left pointing at a broken file.
 
@@ -80,47 +93,51 @@ LETTER_NAMES = {f'name_{c}': c for c in 'abcdefghijklmnopqrstuvwxyz'}
 ALL = dict(PHONEMES, **LETTER_NAMES)
 
 
-def _render(key: str, phrase: str) -> bool:
+def _render(key: str, phrase: str):
     """One phrase through the household's own Piper voice.
 
-    Returns whether a real file landed. Anything that fails -- no HA, no
-    TTS engine configured, a voice that refuses the phrase -- returns
-    False and the key stays OUT of the manifest, which is exactly the
+    Returns the written filename, or None. Anything that fails -- no HA,
+    no TTS engine configured, a voice that refuses the phrase -- returns
+    None and the key stays OUT of the manifest, which is exactly the
     behaviour the no-guessing rule needs.
+
+    Rendering without playing is an HTTP endpoint, `POST /api/tts_get_url`,
+    and NOT a service call: `tts.speak` sends audio at a media player,
+    which is what the announce path wants and the opposite of what this
+    does. The endpoint hands back `{url, path}` for the clip sitting in
+    HA's own tts_proxy cache; `path` is HA-relative, which is the half
+    `ha_api.fetch_binary` already knows how to fetch with the token
+    attached.
+
+    The extension comes from the RESPONSE, never assumed: HA's tts_proxy
+    serves mp3 for most engines and wav for some, and a file named .wav
+    holding mp3 bytes plays on nothing.
     """
     from services import announce, ha_api
     tts, language, voice = announce._tts_config()
     if not tts:
-        print(f"  no TTS engine configured in Home Assistant; nothing to render")
-        return False
-    data = {'entity_id': tts, 'message': phrase, 'cache': True}
+        print("  no TTS engine configured in Home Assistant; nothing to render")
+        return None
+    body = {'engine_id': tts, 'message': phrase}
     if language:
-        data['language'] = language
+        body['language'] = language
     if voice:
-        data['options'] = {'voice': voice}
-    # `tts.get_url` hands back a URL to the rendered clip rather than
-    # playing it, which is the half of the TTS integration this needs --
-    # the announce path plays into a room, and this wants a file.
-    # `return_response` comes back inside HA's own wrapper, the same
-    # shape ha_api.get_weather_forecast already unwraps.
-    res = ha_api.call_service('tts', 'get_url', data, return_response=True)
-    sr = (res or {}).get('service_response') or res or {}
-    url = sr.get('url') if isinstance(sr, dict) else None
-    if not url:
-        print(f"  {key}: no url came back")
-        return False
-    import requests
-    base, token = ha_api._base_and_token()
-    # HA hands back an absolute URL on some setups and a path on others.
-    full = url if url.startswith('http') else base.rstrip('/') + url
-    r = requests.get(full, headers={'Authorization': f'Bearer {token}'},
-                     timeout=30)
-    if not r.ok or not r.content:
-        print(f"  {key}: the url would not load ({r.status_code})")
-        return False
-    with open(os.path.join(OUT_DIR, f'{key}.wav'), 'wb') as f:
-        f.write(r.content)
-    return True
+        body['options'] = {'voice': voice}
+    res = ha_api._request('POST', '/tts_get_url', json_body=body)
+    path = (res or {}).get('path') or (res or {}).get('url') or ''
+    if not path:
+        print(f"  {key}: no url came back ({res})")
+        return None
+    got = ha_api.fetch_binary(path)
+    if not got or not got[0]:
+        print(f"  {key}: the url would not load")
+        return None
+    audio, _ = got
+    ext = os.path.splitext(path.split('?')[0])[1] or '.mp3'
+    name = f'{key}{ext}'
+    with open(os.path.join(OUT_DIR, name), 'wb') as f:
+        f.write(audio)
+    return name
 
 
 def main():
@@ -130,9 +147,10 @@ def main():
     written = {}
     for key, phrase in ALL.items():
         try:
-            if _render(key, phrase):
-                written[key] = {'say': phrase, 'file': f'{key}.wav'}
-                print(f"  {key}: ok")
+            name = _render(key, phrase)
+            if name:
+                written[key] = {'say': phrase, 'file': name}
+                print(f"  {key}: ok ({name})")
         except Exception as e:
             print(f"  {key}: {e}")
     manifest = {
