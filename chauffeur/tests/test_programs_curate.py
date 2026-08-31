@@ -1310,6 +1310,58 @@ def scenario_a_cited_plan_comes_back_with_its_lessons():
         programs_curate.storage.get_settings = real_settings
 
 
+def scenario_exclude_books_routes_a_stubborn_book_plan_to_generated():
+    """The guard in curate() has to be caught misbehaving, not just read --
+    flip its `and` to an `or`, or make the branch dead, and a check that only
+    greps curate's source text would never notice. So this drives it for
+    real: one fake research run and one fake shaping call, shaped into a plan
+    whose only steps are book pointers, run through curate() BOTH ways.
+    Unflagged, that plan is exactly what the household asked for and comes
+    back cited. Flagged, the same plan is not good enough and has to come
+    back generated instead -- proving the guard fires on the flag, not on
+    its own."""
+    real_research = programs_curate.web.research
+    real_pool = programs_curate._pool_call
+    programs_curate.web.research = _fake_research([
+        {'claim': 'A graded method series for beginner piano students',
+         'url': 'https://piano.example/method'}])
+    # One payload serves both calls curate() can make here: the shaping call
+    # reads `cite` and does not care what `steps` says, and the generation
+    # call -- only reached if the guard fires -- reads `what`/`steps` and
+    # does not care about `cite`. Reusing it is deterministic and offline
+    # either way, the same `_fake_pool` idiom every other scenario here uses.
+    programs_curate._pool_call = _fake_pool({
+        'phases': [
+            {'name': 'Primer', 'what': 'Work the primer book',
+             'steps': ['Work through Piano Adventures Primer Level'],
+             'milestone': 'Finish the primer', 'cite': 1},
+            {'name': 'Level 1', 'what': 'Work the level 1 book',
+             'steps': ['Complete Piano Adventures Level 1'],
+             'milestone': 'Finish level 1', 'cite': 1},
+        ]})
+    try:
+        cited = programs_curate.curate(
+            'learn piano', {'sessions_per_week': 3, 'minutes': 25})
+        check(cited['source']['book_spine'] == 'Piano Adventures',
+              f"the fixture must actually be book-spined, got {cited['source']}")
+        check(cited['source']['origin'] == programs_curate.ORIGIN_CITED,
+              f"unflagged, a book-spined plan still comes back cited, got "
+              f"{cited['source']}")
+
+        routed = programs_curate.curate(
+            'learn piano', {'sessions_per_week': 3, 'minutes': 25},
+            exclude_books=True)
+        check(routed['source']['origin'] == programs_curate.ORIGIN_GENERATED,
+              f"exclude_books must route the same book-spined plan to "
+              f"generated instead, got {routed['source']}")
+        check(routed['source']['hand_written'] is True,
+              f"and a generated plan says so, got {routed['source']}")
+        check(routed['phases'], "the household still gets a followable plan")
+    finally:
+        programs_curate.web.research = real_research
+        programs_curate._pool_call = real_pool
+
+
 if __name__ == '__main__':
     scenario_a_body_aim_is_refused_before_any_research()
     scenario_a_behaviour_aim_passes_the_screen()
@@ -1356,4 +1408,5 @@ if __name__ == '__main__':
     scenario_a_ladder_of_one_is_not_a_ladder()
     scenario_pacing_finally_runs_over_something_true()
     scenario_a_cited_plan_comes_back_with_its_lessons()
+    scenario_exclude_books_routes_a_stubborn_book_plan_to_generated()
     print("test_programs_curate OK")
