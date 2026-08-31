@@ -89,18 +89,30 @@
                  x-text="scene().text"></div>
         </template>
 
-        <!-- check: fixed taps, never stored -- answerCheck() only advances -->
+        <!-- check: fixed taps, never stored -- answerCheck() only advances.
+             .stop on every tap is load-bearing, not decoration: this block
+             sits inside the scene-area div, whose own handler is
+             `scene().type !== 'check' && advance()`. Without .stop, a tap
+             here runs answerCheck() -> advance() (idx already moved), THEN
+             bubbles to that ancestor, which re-reads scene() against the
+             now-NEXT scene -- and if that scene is not itself a check, the
+             bubbled click double-advances, skipping a scene (and killing
+             whatever enterScene() just started for it) or finishing a
+             scene early. Invisible today only because stepsToScenes always
+             puts the check last, where the second read still sees 'check'
+             and the `&&` short-circuits; a generated script's MID-lesson
+             check would not be so lucky. -->
         <template x-if="scene().type === 'check'">
             <div class="w-full max-w-sm space-y-5">
                 <div class="font-bold text-white" :class="panel ? 'text-3xl' : 'text-xl'" x-text="scene().ask"></div>
                 <div class="flex flex-col gap-2.5">
-                    <button type="button" @click="answerCheck()"
+                    <button type="button" @click.stop="answerCheck()"
                             class="w-full rounded-xl bg-teal-700 text-white font-bold active:bg-teal-800"
                             :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Got it</button>
-                    <button type="button" @click="answerCheck()"
+                    <button type="button" @click.stop="answerCheck()"
                             class="w-full rounded-xl bg-gray-800 border border-gray-700 text-gray-200 font-bold active:bg-gray-700"
                             :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Almost</button>
-                    <button type="button" @click="answerCheck()"
+                    <button type="button" @click.stop="answerCheck()"
                             class="w-full rounded-xl bg-gray-800 border border-gray-700 text-gray-400 font-bold active:bg-gray-700"
                             :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Not yet</button>
                 </div>
@@ -193,9 +205,18 @@ function lessonPlayer() {
                 && (s.primitive.kind === 'timer' || s.primitive.kind === 'metronome'));
         },
 
+        // `say` always has non-empty text (sanitize_script drops an empty
+        // or screened say beat outright), but a `show` scene is explicitly
+        // allowed an empty caption even when its primitive is valid -- and
+        // an unrenderable kind (keyboard/fretboard/cards/counter, Task
+        // 11/12 territory) lands here on that caption alone. A bare '' as
+        // the last resort used to mean a literally blank content area:
+        // no kicker, no ring, no metronome, no text. The third term is a
+        // real sentence so that shape can never happen once generation
+        // starts producing primitives this player does not draw yet.
         sayText() {
             const s = this.scene();
-            return s.text || s.caption || '';
+            return s.text || s.caption || (s.type === 'show' ? 'New material.' : '');
         },
 
         kicker() {

@@ -94,6 +94,86 @@ def scenario_sound_is_cleared_on_scene_change_and_close():
           "called from advance (scene change), close, and finish")
 
 
+def scenario_check_taps_never_bubble_into_the_advance_handler():
+    """Fix round 1, finding 1. The three check buttons sit inside the
+    scene-area div, whose own handler is `scene().type !== 'check' &&
+    advance()`. A tap runs answerCheck() -> advance() (idx already moved),
+    then bubbles to that ancestor, which re-reads scene() against the
+    ALREADY-advanced index — and if the new scene is not itself a check,
+    the bubbled click double-advances: it skips a scene (killing whatever
+    enterScene() just started for it) or finishes one scene early.
+    Invisible today only because stepsToScenes always puts the check last,
+    where the second read still sees 'check' and the `&&` short-circuits —
+    a generated script's mid-lesson check would not be so lucky. Every
+    check tap must stop propagation so it can never reach that handler."""
+    src = _read('components/lesson_player.html')
+    import re
+    taps = re.findall(r'@click(\.stop)?="answerCheck\(\)"', src)
+    check(len(taps) >= 3, f"all three check taps present, found {len(taps)}")
+    check(all(m == '.stop' for m in taps),
+          "every check tap must carry .stop, or it can bubble into the "
+          "scene area's own tap-to-advance handler")
+
+
+def scenario_an_unrenderable_show_with_no_caption_still_says_something():
+    """Fix round 1, finding 2. sayText() used to fall through text/caption
+    to a bare ''. A `say` scene always has non-empty text (sanitize_script
+    drops an empty or screened say beat outright), but a `show` scene is
+    explicitly allowed an EMPTY caption even when its primitive is valid —
+    services/program_lessons.py's sanitize_script only screens a caption
+    when one is present (`if caption and _screened(...)`), so a well-formed
+    keyboard/fretboard/cards/counter primitive (kinds this task does not
+    draw yet) with no caption at all sails through. That scene lands on
+    sayText() alone, and a bare '' meant a literally blank content area:
+    no kicker, no ring, no metronome, no text. The fallback chain needs a
+    real third term, not another empty string standing in for one."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r"sayText\(\)\s*\{([^}]*)\}", src)
+    check(m, "sayText exists")
+    body = m.group(1)
+    check(body.count('||') >= 2, "text, caption, and a real fallback — three terms")
+    check("New material" in body,
+          "the last-resort term must be an actual sentence, not '' playing "
+          "the part of one")
+
+
+def scenario_fallback_ladder_never_produces_an_empty_scene_list():
+    """Fix round 1, finding 2's companion ask: exercise the degenerate
+    fallback ladder (steps: [], no unit_title, no milestone) rather than
+    just reading it.
+
+    stepsToScenes lives inside the component's own <script>, not as an
+    importable Python function, and the coordinator's note was explicit
+    that extracting it into something separately testable would be
+    restructuring the component for testability — ruled out. So this
+    asserts the one structural guarantee that actually makes the claim
+    true, traced by hand against the current source: an empty w.unit_title
+    skips the opening say; an empty w.steps skips every do (Array.forEach
+    on [] never calls its callback); `!scenes.length && w.milestone` is
+    false whenever w.milestone is ALSO falsy, so the fallback say is
+    skipped too — and the final scenes.push for the check runs two lines
+    later regardless, completely unguarded. A window with nothing at all
+    to say therefore still ends up with exactly one scene: the check.
+
+    The assertion below is what makes "unconditional and outside every
+    guard" a checked fact rather than a claim: the check-push and the
+    `return scenes` that follows it are adjacent, same-indentation lines
+    with no closing brace between them. A guarded push (inside the `if`
+    two lines above it, or any other conditional) would need to close
+    that block before reaching the shared return, which would break this
+    exact adjacency."""
+    src = _read('components/lesson_player.html')
+    check('stepsToScenes' in src, "the fallback ladder function exists")
+    check(
+        "scenes.push({type: 'check', ask: 'Good session?'});\n"
+        "            return scenes;" in src,
+        "the check push must be the line immediately before the return, "
+        "with no closing brace in between — proof it sits outside every "
+        "earlier `if`, so the scene list can never come back empty"
+    )
+
+
 if __name__ == '__main__':
     scenario_component_exists_and_renders_the_four_beats()
     scenario_checks_are_never_stored()
@@ -103,4 +183,7 @@ if __name__ == '__main__':
     scenario_the_component_reads_the_panel_flag()
     scenario_show_degrades_unknown_kinds_to_a_caption()
     scenario_sound_is_cleared_on_scene_change_and_close()
+    scenario_check_taps_never_bubble_into_the_advance_handler()
+    scenario_an_unrenderable_show_with_no_caption_still_says_something()
+    scenario_fallback_ladder_never_produces_an_empty_scene_list()
     print("test_lesson_player_runtime OK")
