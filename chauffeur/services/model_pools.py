@@ -2,11 +2,11 @@
 
 The Gemini free tier gives each MODEL its own daily request quota, so models
 of similar ability are grouped into pools whose quotas combine (daily caps as
-of 2026-08-02):
+of 2026-08-30):
 
 - lite:  gemini-3.5-flash-lite (500), gemini-3.1-flash-lite (500),
          gemini-2.5-flash-lite (20)  -> ~1,020/day, answers in seconds.
-- flash: gemini-3.6/3.5/3.1/3/2.5-flash (20 each) -> ~100/day, highest quality.
+- flash: gemini-3.7/3.6/3.5/3.1/3/2.5-flash (20 each) -> ~120/day, highest quality.
 - gemma: gemma-4-31b-it (14,400), gemma-4-26b-it (14,400) -> ~28,800/day, but
          44-180s per call measured on the free API (2026-07-30).
 
@@ -37,8 +37,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_POOLS = {
     'lite': ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"],
-    'flash': ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash",
-              "gemini-3-flash", "gemini-2.5-flash"],
+    'flash': ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
+              "gemini-3.1-flash", "gemini-3-flash", "gemini-2.5-flash"],
     'gemma': ["gemma-4-31b-it", "gemma-4-26b-it"],
 }
 
@@ -48,7 +48,7 @@ TIER_CHAINS = {
     'heavy': ['flash', 'lite', 'gemma'],
     # Image-input calls (intake vision capture). Gemma is text-only so it is
     # excluded; flash first because flyers/screenshots are the hard case and
-    # volume is family-scale (dozens/week vs the ~100/day flash quota).
+    # volume is family-scale (dozens/week vs the ~120/day flash quota).
     'vision': ['flash', 'lite'],
 }
 
