@@ -6024,12 +6024,24 @@ def get_program_lesson_api(program_id: str, phase_name: str = '',
     gets `_NOBODY`. Both of the last two read as null, not a refusal -- a
     sibling poking at this by hand learns nothing, not even that it exists.
 
-    An out-of-range `unit_n` (see `_LESSON_UNIT_N_MAX`) reads the same way:
-    a magnitude no real slot ever has names no real slot, so it is treated
-    exactly like one that does not exist yet rather than like a caller who
-    did something wrong -- this endpoint's own rule, not a 400/403 wearing
-    a read's clothes.
+    An out-of-range, non-numeric, or missing `unit_n` all read the same
+    way: none of them names a real slot, so each is treated exactly like
+    one that does not exist yet rather than like a caller who did something
+    wrong -- this endpoint's own rule, not a 400/403 wearing a read's
+    clothes. `unit_n` arrives already `int`-typed over real HTTP (FastAPI's
+    own query coercion, with no upper bound of its own -- see
+    `_LESSON_UNIT_N_MAX` below), but a direct in-process call -- exactly how
+    every scenario in `test_lesson_endpoints.py` reaches this function --
+    can hand it anything at all, `None` included. Comparing an
+    unnormalised value against `_LESSON_UNIT_N_MAX` before coercing it is
+    the fix-round-1 gap fix round 2 closed: `0 <= None` raises `TypeError`,
+    not the null this endpoint promises. Normalise first, mirroring PUT's
+    own `int(... or 0)`, then range-check.
     """
+    try:
+        unit_n = int(unit_n or 0)
+    except (TypeError, ValueError, OverflowError):
+        return {"lesson": None}
     if not (0 <= unit_n <= _LESSON_UNIT_N_MAX):
         return {"lesson": None}
     row = storage.get_program(program_id)
@@ -6113,10 +6125,20 @@ def delete_program_lesson_api(program_id: str, phase_name: str = '',
     if not row:
         raise HTTPException(status_code=404, detail="No such program")
     _program_permission_or_refuse(request, {}, row)
-    # Same magnitude guard as PUT, and for the same reason: FastAPI's own
-    # `int` query coercion has no upper bound, so a huge-but-finite unit_n
-    # sails past it and would otherwise reach storage._lesson_query's
-    # sqlite3 driver, which raises its own unhandled OverflowError.
+    # Same normalise-then-range-check as PUT, mirrored here for the same
+    # reason GET now carries it (fix round 2): FastAPI's own `int` query
+    # coercion covers shape AND magnitude over real HTTP, but a direct
+    # in-process call -- exactly how every scenario in
+    # test_lesson_endpoints.py reaches this function -- can hand `unit_n`
+    # anything at all. Comparing an unnormalised value straight against
+    # _LESSON_UNIT_N_MAX (fix round 1's own gap) raises TypeError on None
+    # and on a non-numeric string alike; coercing first turns both into the
+    # same 400 every other bad unit_n on a write already answers with.
+    try:
+        unit_n = int(unit_n or 0)
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(status_code=400,
+                            detail="unit_n must be a whole number")
     if not (0 <= unit_n <= _LESSON_UNIT_N_MAX):
         raise HTTPException(status_code=400, detail="unit_n is out of range")
     storage.delete_program_lesson(program_id, {

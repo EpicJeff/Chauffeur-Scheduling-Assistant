@@ -132,6 +132,43 @@ def scenario_a_huge_finite_float_unit_n_reads_as_no_lesson_on_get():
     check(res == {'lesson': None}, f"got {res}")
 
 
+# --- unit_n type (fix round 2): fix round 1's own guard compared unit_n
+# against _LESSON_UNIT_N_MAX BEFORE normalising it, which is exactly the
+# defect class the round existed to close, just on values the round's own
+# probes never tried. `None` (`0 <= None` raises TypeError) is a NEW gap
+# fix round 1 introduced on GET/DELETE -- PUT was always safe here, since
+# its int(body.get('unit_n') or 0) already normalised before comparing. A
+# non-numeric string on GET/DELETE is a PRE-EXISTING gap neither round
+# fixed until now: pre-round-1 it escaped as a ValueError from storage's
+# own int(); post-round-1 it escaped as a TypeError from main.py's
+# unnormalised comparison instead -- never actually fixed, just moved.
+
+def scenario_a_none_unit_n_is_treated_as_zero_on_get():
+    """Proves the fix restores the pre-round-1 behaviour exactly -- None
+    resolves to slot 0 and that slot's real content comes back -- not just
+    that it stopped crashing."""
+    _reset()
+    import main
+    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+                               'shape': {'sessions_per_week': 2, 'minutes': 20}})
+    storage.upsert_program_lesson(pid, {'phase_name': 'F', 'unit_n': 0,
+                                        'session_label': ''},
+                                  {'origin': 'generated',
+                                   'scenes': [{'type': 'say', 'text': 'zero slot'}]})
+    res = main.get_program_lesson_api(pid, phase_name='F', unit_n=None,
+                                      session_label='', request=None)
+    check(res['lesson'] and res['lesson']['scenes'][0]['text'] == 'zero slot',
+          f"None must coerce to 0 and find that slot, got {res}")
+
+
+def scenario_a_non_numeric_unit_n_reads_as_no_lesson_on_get():
+    pid = _reset()
+    import main
+    res = main.get_program_lesson_api(pid, phase_name='F', unit_n='abc',
+                                      session_label='', request=None)
+    check(res == {'lesson': None}, f"got {res}")
+
+
 def scenario_edit_sanitizes_and_marks_edited():
     pid = _reset()
     import main
@@ -239,6 +276,38 @@ def scenario_a_huge_finite_float_unit_n_is_a_400_on_put():
           f"a huge finite float unit_n must be a 400, got {code}")
 
 
+def scenario_a_none_unit_n_is_treated_as_zero_on_put():
+    """PUT was never vulnerable to fix round 1's gap -- its own
+    int(body.get('unit_n') or 0) already normalised None before any
+    comparison existed. Added for symmetry with the GET/DELETE fix and to
+    lock the shared behaviour in across all three verbs together."""
+    _reset()
+    import main
+    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+                               'shape': {'sessions_per_week': 2, 'minutes': 20}})
+    res = main.put_program_lesson_api(pid, body={
+        'phase_name': 'F', 'unit_n': None, 'session_label': '',
+        'scenes': [{'type': 'say', 'text': 'zero slot'}]}, request=None)
+    check(res.get('status') == 'ok', f"got {res}")
+    row = storage.get_program_lesson(pid, {'phase_name': 'F', 'unit_n': 0,
+                                           'session_label': ''})
+    check(row and row['scenes'][0]['text'] == 'zero slot',
+          f"None must coerce to 0 and land on that slot, got {row}")
+
+
+def scenario_an_abc_unit_n_is_a_400_on_put():
+    """Same shape scenario_a_malformed_unit_n_is_a_400_not_a_crash already
+    covers with a different string -- kept as its own scenario so all
+    three verbs are tested against the identical 'abc' value the coordinator
+    named, for direct comparison."""
+    pid = _reset()
+    import main
+    code = _denied(main.put_program_lesson_api, pid, body={
+        'phase_name': 'F', 'unit_n': 'abc', 'session_label': '',
+        'scenes': [{'type': 'say', 'text': 'hi'}]}, request=None)
+    check(code == 400, f"got {code}")
+
+
 def scenario_delete_clears_the_slot():
     pid = _reset()
     import main
@@ -272,6 +341,37 @@ def scenario_a_huge_finite_float_unit_n_is_a_400_on_delete():
                    unit_n=1e300, session_label='', request=None)
     check(code == 400,
           f"a huge finite float unit_n must be a 400, got {code}")
+    check(storage.get_program_lesson(pid, {'phase_name': 'F', 'unit_n': 1,
+                                           'session_label': ''}) is not None,
+          "the refused delete must not have touched the real slot")
+
+
+def scenario_a_none_unit_n_is_treated_as_zero_on_delete():
+    """Fix round 2: DELETE carried the exact same fix-round-1 gap as GET
+    (`0 <= None` raising TypeError before the value was ever normalised).
+    None must coerce to 0 and clear THAT slot, not crash and not touch the
+    unrelated real slot at unit_n=1."""
+    _reset()
+    import main
+    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+                               'shape': {'sessions_per_week': 2, 'minutes': 20}})
+    storage.upsert_program_lesson(pid, {'phase_name': 'F', 'unit_n': 0,
+                                        'session_label': ''},
+                                  {'origin': 'generated',
+                                   'scenes': [{'type': 'say', 'text': 'zero slot'}]})
+    main.delete_program_lesson_api(pid, phase_name='F', unit_n=None,
+                                   session_label='', request=None)
+    check(storage.get_program_lesson(pid, {'phase_name': 'F', 'unit_n': 0,
+                                           'session_label': ''}) is None,
+          "None must coerce to 0 and clear that slot")
+
+
+def scenario_a_non_numeric_unit_n_is_a_400_on_delete():
+    pid = _reset()
+    import main
+    code = _denied(main.delete_program_lesson_api, pid, phase_name='F',
+                   unit_n='abc', session_label='', request=None)
+    check(code == 400, f"got {code}")
     check(storage.get_program_lesson(pid, {'phase_name': 'F', 'unit_n': 1,
                                            'session_label': ''}) is not None,
           "the refused delete must not have touched the real slot")
@@ -341,6 +441,8 @@ if __name__ == '__main__':
     scenario_a_missing_program_reads_as_a_null_lesson()
     scenario_a_huge_finite_unit_n_reads_as_no_lesson_on_get()
     scenario_a_huge_finite_float_unit_n_reads_as_no_lesson_on_get()
+    scenario_a_none_unit_n_is_treated_as_zero_on_get()
+    scenario_a_non_numeric_unit_n_reads_as_no_lesson_on_get()
     scenario_edit_sanitizes_and_marks_edited()
     scenario_editing_a_cited_lesson_keeps_cited_screening()
     scenario_an_edit_that_sanitizes_to_nothing_is_a_soft_error()
@@ -348,9 +450,13 @@ if __name__ == '__main__':
     scenario_an_infinite_unit_n_is_a_400_not_a_crash()
     scenario_a_huge_finite_unit_n_is_a_400_on_put()
     scenario_a_huge_finite_float_unit_n_is_a_400_on_put()
+    scenario_a_none_unit_n_is_treated_as_zero_on_put()
+    scenario_an_abc_unit_n_is_a_400_on_put()
     scenario_delete_clears_the_slot()
     scenario_a_huge_finite_unit_n_is_a_400_on_delete()
     scenario_a_huge_finite_float_unit_n_is_a_400_on_delete()
+    scenario_a_none_unit_n_is_treated_as_zero_on_delete()
+    scenario_a_non_numeric_unit_n_is_a_400_on_delete()
     scenario_a_child_cannot_edit_a_siblings_lesson()
     scenario_a_child_cannot_delete_a_siblings_lesson()
     scenario_a_parent_can_edit_a_childs_lesson()
