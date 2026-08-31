@@ -34,10 +34,14 @@ def _read(*parts):
 
 
 def _fn(src, name):
-    m = re.search(r'\nfunction ' + re.escape(name) + r'\s*\(', src)
+    """One function's body. The component's functions sit at column 0 and the
+    PWA's are indented inside a <script>, so the indent is matched rather
+    than assumed away."""
+    m = re.search(r'\n(\s*)function ' + re.escape(name) + r'\s*\(', src)
     check(m, f"{name}() must exist")
-    nxt = re.search(r'\nfunction ', src[m.end():])
-    return src[m.end():m.end() + nxt.start()] if nxt else src[m.end():]
+    rest = src[m.end():]
+    nxt = re.search(r'\n' + m.group(1) + r'(?:async )?function ', rest)
+    return rest[:nxt.start()] if nxt else rest
 
 
 def scenario_a_wall_cannot_walk_into_the_trip_editor():
@@ -108,10 +112,56 @@ def scenario_the_phone_answers_a_trip_tap_too():
           "and never offering a way into the editor from a phone's read")
 
 
+def scenario_a_trip_answers_with_what_it_actually_has():
+    """A background trip IS an ordinary calendar event: it has attendees, a
+    location, a description and a span of days. The event object carried
+    three fields, because the tap used to navigate away and nothing else was
+    ever read -- so the dialog said "No passengers / Not assigned / No
+    location" over a trip that has all of them."""
+    cal = _read('components', 'family_calendar.html')
+    trip = cal[cal.index('isTrip: true,'):][:900]
+    for field in ('passengers:', 'location:', 'description:', 'driverName:'):
+        check(field in trip, f"a trip event must carry {field}")
+    check('_tripPax(ev, data)' in trip,
+          "and its attendees in the same pill shape every event uses")
+    merge = _fn(cal, '_mergeTripPax')
+    check('passengers' in merge,
+          "every day-slice of one trip contributes its own attendees")
+
+
+def scenario_an_all_day_span_says_both_ends():
+    """A week-long trip said one date and "(All Day)" -- the single most
+    useful fact about it left unsaid. And an all-day calendar event ends at
+    midnight of the day AFTER its last day, so read literally the trip comes
+    home on a day nobody is travelling."""
+    cal = _read('components', 'family_calendar.html')
+    body = cal[cal.index("let timeText = '';"):][:1500]
+    check('setUTCDate' in body and 'getUTCHours() === 0' in body,
+          "the exclusive end has to be corrected before it is shown")
+    check('_spans' in body, "and a multi-day thing prints both ends")
+
+    app = _read('app.html')
+    span = _fn(app, 'tripSpanLabel')
+    check('setDate(last.getDate() - 1)' in span,
+          "the phone corrects it the same way")
+
+
+def scenario_not_assigned_is_not_said_over_a_holiday():
+    """The same false gap the practice line already retired: nothing is
+    missing, the schedule simply does not plan this."""
+    cal = _read('components', 'family_calendar.html')
+    check("} else if (props.isTrip) {" in cal
+          and "doesn't plan the travel for a trip" in cal,
+          "a trip says why no driver is named, rather than 'Not assigned'")
+
+
 if __name__ == '__main__':
     scenario_a_wall_cannot_walk_into_the_trip_editor()
     scenario_the_calendar_page_keeps_it_and_its_kiosk_does_not()
     scenario_every_kind_answers_in_its_own_terms()
     scenario_a_practice_window_does_not_say_its_steps_twice()
     scenario_the_phone_answers_a_trip_tap_too()
+    scenario_a_trip_answers_with_what_it_actually_has()
+    scenario_an_all_day_span_says_both_ends()
+    scenario_not_assigned_is_not_said_over_a_holiday()
     print("test_event_details_consistency OK")

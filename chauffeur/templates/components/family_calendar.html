@@ -1145,6 +1145,25 @@ function _onEventTap(inst, evObj) {
     _openEventDetails(inst, evObj);
 }
 
+// Who is on a trip, in the same pill shape every other event uses. Only the
+// calendar-id route: a background trip is somebody's own calendar entry, and
+// the matched-rule route below belongs to events the solver drives to.
+function _tripPax(ev, data) {
+    const out = [];
+    (ev.calendar_ids || []).forEach(cid => {
+        const meta = (data.calendar_metadata || {})[cid];
+        out.push({ name: meta ? meta.summary : cid,
+                   color: meta ? meta.backgroundColor : '#3B82F6' });
+    });
+    return out;
+}
+
+function _mergeTripPax(props, more) {
+    const have = new Set((props.passengers || []).map(p => p.name));
+    props.passengers = (props.passengers || [])
+        .concat((more || []).filter(p => !have.has(p.name)));
+}
+
 // What this thing IS, in the terms that thing is measured in. One builder,
 // because the complaint that produced it was that the same tap answered
 // differently depending on which surface you tapped from: a practice window
@@ -1179,10 +1198,10 @@ function _typedDetailsHtml(props) {
             ${row('Done when', w.milestone)}`;
     }
 
-    // A trip's own title and dates are already on the dialog above. What a
-    // reader cannot infer from those is what a background trip DOES to the
-    // week, which is the whole reason it is drawn at all. No invented fields
-    // here: nothing on a trip event carries a destination.
+    // Who is away, where and when are ordinary event fields and are answered
+    // by the ordinary blocks above -- this event carries them now. What is
+    // left for this section is the one thing those cannot say: what being a
+    // background trip DOES to the week.
     if (props.isTrip) {
         return `
             <div class="text-xs font-semibold text-white/50 uppercase tracking-wider">The trip</div>
@@ -1240,7 +1259,26 @@ function _openEventDetails(inst, evObj) {
     if (ev.allDay) {
         // All-day events are typically parsed as midnight UTC. Format in UTC
         // to avoid the local timezone shifting it to the day before.
-        timeText = ev.start ? formatDateUTC(ev.start) + ' (All Day)' : 'All Day';
+        //
+        // And a trip that runs a week said one date and "(All Day)", which is
+        // the single most useful fact about it left unsaid. An all-day
+        // calendar event ends at midnight of the day AFTER its last day --
+        // taken literally that is a trip one day too long, coming home on a
+        // day nobody is travelling, which `_kid_trip_line` already knows and
+        // this had no idea about.
+        const _endsAt = ev.end ? new Date(ev.end) : null;
+        let _last = null;
+        if (_endsAt && ev.start) {
+            _last = new Date(_endsAt);
+            const _midnightUTC = _endsAt.getUTCHours() === 0
+                && _endsAt.getUTCMinutes() === 0;
+            if (_midnightUTC) _last.setUTCDate(_last.getUTCDate() - 1);
+        }
+        const _spans = _last && ev.start
+            && _last.toISOString().slice(0, 10) > ev.start.toISOString().slice(0, 10);
+        timeText = !ev.start ? 'All Day'
+            : _spans ? `${formatDateUTC(ev.start)} – ${formatDateUTC(_last)}`
+            : formatDateUTC(ev.start) + ' (All Day)';
     } else {
         const startStr = ev.start ? formatTime(ev.start) : '';
         const endStr = ev.end ? ' - ' + ev.end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
@@ -1306,6 +1344,13 @@ function _openEventDetails(inst, evObj) {
                 <span class="font-bold text-teal-300">${_who}'s practice</span>
                 <span class="text-white/40 text-xs">${_phase ? _agEsc(_phase) + ' — nobody drives to this' : 'Nobody drives to this'}</span>
             </div>`;
+    } else if (props.isTrip) {
+        // "Not assigned" over a holiday is the same false gap the practice
+        // line was: nothing is missing, the schedule simply does not plan
+        // this. Said once, in the vocabulary the rest of the dialog uses.
+        driverContainer.innerHTML = `
+            <div class="w-8 h-8 rounded-full bg-blue-500/20 text-blue-300 flex items-center justify-center font-bold text-lg border border-blue-500/30">✈️</div>
+            <span class="text-white/60 text-sm">The schedule doesn't plan the travel for a trip</span>`;
     } else {
         driverContainer.innerHTML = '<span class="italic text-white/40 text-sm">Not assigned</span>';
     }
@@ -1564,7 +1609,33 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                         if (new Date(ev.start) < new Date(existing.start)) {
                                             existing.start = ev.start;
                                         }
+                                        // Every slice of the same trip carries
+                                        // its own attendees; the trip is all of
+                                        // them, not whichever day happened to
+                                        // be built first.
+                                        _mergeTripPax(existing.extendedProps,
+                                                      _tripPax(ev, data));
+                                        if (!existing.extendedProps.location && ev.location) {
+                                            existing.extendedProps.location = ev.location;
+                                        }
+                                        if (!existing.extendedProps.driverName
+                                            && assignments[ev.id]) {
+                                            const _d = drivers.find(d => d.id === assignments[ev.id]);
+                                            if (_d) existing.extendedProps.driverName = _d.name;
+                                        }
                                     } else {
+                                        // A trip event used to carry three
+                                        // fields, because the tap navigated
+                                        // away and nothing else was ever read.
+                                        // Now that it opens the shared dialog,
+                                        // that poverty showed as "No passengers
+                                        // / Not assigned / No location" over an
+                                        // event that has all three. It is an
+                                        // ordinary calendar event underneath
+                                        // and it answers like one.
+                                        const _tDriver = assignments[ev.id]
+                                            ? (drivers.find(d => d.id === assignments[ev.id]) || {}).name
+                                            : null;
                                         eventsMap.set(baseId, {
                                             id: baseId,
                                             title: '✈️ ' + ev.title,
@@ -1579,7 +1650,11 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                                 // this link is built in JS after nav.html's
                                                 // one-shot link rewrite already ran.
                                                 tripUrl: 'trip?event_id=' + encodeURIComponent(baseId) + carryParams,
-                                                rawColor: '#1e3a8a'
+                                                rawColor: '#1e3a8a',
+                                                passengers: _tripPax(ev, data),
+                                                location: ev.location || '',
+                                                description: ev.description || '',
+                                                driverName: _tDriver || null
                                             }
                                         });
                                     }

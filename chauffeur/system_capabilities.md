@@ -7051,6 +7051,26 @@ A practice window's flat `description` (its steps joined with dots, for
 surfaces that can draw only one line) is suppressed there, having been said
 properly above.
 
+**A trip answers with what it actually has** (v2.441.1). The trip event
+carried three fields — `isTrip`, `tripUrl`, `rawColor` — because the tap used
+to navigate away and nothing else was ever read. Opening the dialog instead
+exposed that: "No passengers / Not assigned / No location" over a trip that
+has attendees, a location, a description and a week of dates. It is an
+ordinary calendar event underneath and it now carries them, with every
+day-slice of one trip contributing its attendees to the merged event
+(`_tripPax` / `_mergeTripPax`).
+
+The dialog also says both ends of a span. An all-day event printed one date
+and "(All Day)", which for a week-long trip leaves out the most useful fact
+about it — and an all-day calendar event ends at midnight of the day AFTER its
+last day, so read literally a trip comes home on a day nobody is travelling.
+`_kid_trip_line` has always known that; no screen did. Both the dialog and the
+phone's sheet correct it.
+
+And a trip no longer says "Not assigned". That is the same false gap the
+practice line already retired: nothing is missing, the schedule simply does
+not plan the travel for a trip, so it says that instead.
+
 **And a wall can no longer walk into the trip editor.** `_onEventTap` sent any
 trip tap to `props.tripUrl` for any host that had turned `details` on — which
 includes a board card, where the person tapping is whoever walked past and the
