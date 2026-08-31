@@ -187,3 +187,121 @@ def sanitize_script(scenes: list, origin: str) -> list:
             # An unknown kind is dropped whole: the model demanded a
             # visual this player has never heard of.
     return out
+
+
+# --- generation ---------------------------------------------------------
+# A script has exactly one source, decided by the plan's own origin. A
+# cited plan may only speak from the unit's page, re-read HERE rather than
+# trusted from whatever curate happened to read months ago -- the same
+# threads-arc discipline that never cites a page nobody actually read.
+# A generated plan may only speak from the plan's own steps; it may
+# structure the practice, never invent what a body does with it, and that
+# half is the sanitizer's job, not this one's -- generate_for only has to
+# pick the right origin and hand it through.
+
+_SYSTEM = (
+    "You write one practice-session lesson script for a family app. Reply "
+    'with ONLY JSON: {"scenes": [...]}. Scene types: '
+    '{"type":"say","text":""} a short teaching beat; '
+    '{"type":"do","text":"","seconds":60,"metronome_bpm":80} a '
+    "practice interlude (seconds and metronome_bpm optional); "
+    '{"type":"check","ask":""} a self-check with fixed answers; '
+    '{"type":"show","primitive":{...},"caption":""} a visual. '
+    'Primitives: {"kind":"timer","seconds":60}, '
+    '{"kind":"metronome","bpm":80}, '
+    '{"kind":"keyboard","keys":["C4","E4","G4"]}, '
+    '{"kind":"fretboard","dots":[{"string":5,"fret":2,"finger":2}]}, '
+    '{"kind":"cards","pairs":[{"front":"","back":""}]}, '
+    '{"kind":"counter","target":10}. '
+    "At most 10 scenes. Structure: a short why, then the drill as do-beats, "
+    "one check near the end. Every do-beat must be startable alone from its "
+    "text. No praise-fluff, no streaks, no scores."
+)
+
+_CITED_PROMPT = (
+    "Turn THIS material into tonight's {minutes}-minute session script. Use "
+    "ONLY what the material says — do not add exercises or advice it does "
+    'not contain.\n\nSession: {label} in phase {phase} of "{title}".\n'
+    "Steps the plan already names: {steps}\n\nMATERIAL from {url}:\n{page}"
+)
+
+_GENERATED_PROMPT = (
+    "Write tonight's {minutes}-minute session script for "
+    '"{title}" '
+    "(phase {phase}, session {label}). Build it AROUND these steps — they "
+    "are the session, your script paces and explains them: {steps}\n"
+    "Unit notes: {body}\nProgression rule: {progression}\n"
+    "Structure the practice (warmup, the work, brief review). Do NOT "
+    "prescribe how to hold or move any part of the body."
+)
+
+
+def generate_for(program: dict, window: dict, unit: dict, settings: dict):
+    """One slot's lesson, written and stored — or nothing, quietly.
+
+    A cited plan speaks only from its page: the unit's url is re-read HERE,
+    at generation time, rather than trusted from whatever curate happened
+    to read months ago -- a citation is only as good as the read behind
+    it. A fetch failure therefore means no script at all, never a
+    generated stand-in, because an outage is never papered over. A
+    generated plan speaks only from the plan's own steps; keeping it from
+    prescribing how a body moves is the sanitizer's job, not this
+    function's -- generate_for only has to pass the right origin through.
+
+    Storage already refuses to overwrite a hand edit. What it cannot know
+    on its own is whether a slot has any lesson at all, edited or not --
+    so that check happens here, first, before either a page fetch or a
+    model call is spent on a slot that does not need one. The
+    'background' tier is deliberate too: this is meant to be called from a
+    nightly sweep with nobody waiting on the other end, so it spends the
+    huge, slow gemma quota first and leaves the fast lite models free for
+    whoever actually is waiting, elsewhere.
+
+    Never raises. Any failure -- a malformed program row, an exhausted
+    model pool, a page that will not load -- comes back as a printed line
+    and a None, so a sweep calling this in a loop never needs a
+    try/except of its own.
+    """
+    from services import model_pools, storage, web
+    try:
+        origin = ((program.get('source') or {}).get('origin')
+                  or 'generated')
+        slot = slot_of(window, unit_n=int((unit or {}).get('n') or 0))
+        existing = storage.get_program_lesson(program['id'], slot)
+        if existing and (existing.get('edited') or existing.get('scenes')):
+            return None                       # already has its lesson
+        minutes = int((program.get('shape') or {}).get('minutes') or 25)
+        fields = {'minutes': minutes,
+                  'title': program.get('title') or '',
+                  'phase': window.get('phase_name') or '',
+                  'label': window.get('session_label') or 'practice',
+                  'steps': ' | '.join(window.get('steps') or []),
+                  'body': window.get('unit_body') or '',
+                  'progression': window.get('progression') or ''}
+        source_url = ''
+        if origin == 'cited':
+            url = window.get('unit_url') or ''
+            page = web.read_page(url) if url else None
+            if not page:
+                return None                   # no page, no script
+            source_url = url
+            prompt = _CITED_PROMPT.format(url=url, page=page[:8000], **fields)
+        else:
+            origin = 'generated'
+            prompt = _GENERATED_PROMPT.format(**fields)
+        res = model_pools.call_pool_json(
+            'background', settings.get('llm_gemini_api_key', ''),
+            _SYSTEM, prompt, timeout_s=60, gemma_timeout_s=180,
+            settings=settings)
+        if not isinstance(res, dict) or res.get('error'):
+            return None
+        scenes = sanitize_script(res.get('scenes') or [], origin)
+        if not scenes:
+            return None
+        return storage.upsert_program_lesson(program['id'], slot, {
+            'origin': origin, 'source_url': source_url, 'scenes': scenes,
+            'model': res.get('_model') or ''}) or None
+    except Exception as e:
+        print(f"[lessons] generate failed for "
+              f"{(program or {}).get('id')}: {e}")
+        return None

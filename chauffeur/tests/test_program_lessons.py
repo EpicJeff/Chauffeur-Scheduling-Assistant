@@ -234,6 +234,132 @@ def scenario_none_slot_and_data_never_raise():
           "a null slot and an empty slot land on the same row")
 
 
+# --- generation: one slot's script, from the right source, or nothing ---
+
+def _program_row(origin='generated', unit_url=''):
+    return {'id': 'p9', 'member_id': 'kid', 'title': 'Play guitar',
+            'source': {'origin': origin},
+            'shape': {'minutes': 20}}
+
+
+def _window():
+    return {'program_id': 'p9', 'phase_name': 'Foundations',
+            'session_label': 'Technique', 'steps': ['One-minute changes G-C'],
+            'unit_title': 'Stage 1', 'unit_url': '', 'unit_body': 'Chords first.',
+            'milestone': 'Play a song', 'progression': 'Add D when G-C is clean'}
+
+
+def scenario_generated_origin_uses_pool_and_stores():
+    from services import storage, program_lessons as pl
+    storage.program_lessons_table.truncate()
+    calls = {}
+    def fake_pool(tier, api_key, system, prompt, **kw):
+        calls['tier'] = tier
+        return {'scenes': [{'type': 'say', 'text': 'Chords are shapes.'},
+                           {'type': 'do', 'text': 'One-minute changes G-C',
+                            'seconds': 60}], '_model': 'gemma-4-31b-it'}
+    import services.model_pools as mp
+    orig = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    try:
+        lid = pl.generate_for(_program_row(), _window(), {'n': 1},
+                              {'llm_gemini_api_key': 'k'})
+    finally:
+        mp.call_pool_json = orig
+    check(lid, "stored a lesson")
+    check(calls['tier'] == 'background', "nobody is waiting — background tier")
+    row = storage.get_program_lesson('p9', {'phase_name': 'Foundations',
+                                            'unit_n': 1,
+                                            'session_label': 'Technique'})
+    check(row['origin'] == 'generated' and row['model'] == 'gemma-4-31b-it',
+          f"got {row}")
+
+
+def scenario_cited_needs_its_page_or_stays_silent():
+    """An outage is never papered over: fetch fails -> no script."""
+    from services import storage, program_lessons as pl, web
+    storage.program_lessons_table.truncate()
+    w = {**_window(), 'unit_url': 'https://jg.example/s1'}
+    orig = web.read_page
+    web.read_page = lambda url: None
+    try:
+        lid = pl.generate_for(_program_row(origin='cited'), w, {'n': 1},
+                              {'llm_gemini_api_key': 'k'})
+    finally:
+        web.read_page = orig
+    check(lid is None, "no page, no script")
+    check(storage.get_program_lesson('p9', {'phase_name': 'Foundations',
+                                            'unit_n': 1,
+                                            'session_label': 'Technique'}) is None,
+          "and nothing stored")
+
+
+def scenario_cited_carries_its_source():
+    from services import storage, program_lessons as pl, web
+    import services.model_pools as mp
+    storage.program_lessons_table.truncate()
+    w = {**_window(), 'unit_url': 'https://jg.example/s1'}
+    orig_read, orig_pool = web.read_page, mp.call_pool_json
+    web.read_page = lambda url: 'Stage 1: learn G and C. Practice changes.'
+    mp.call_pool_json = lambda *a, **k: {
+        'scenes': [{'type': 'say', 'text': 'G and C first.'}],
+        '_model': 'gemini-3.5-flash-lite'}
+    try:
+        lid = pl.generate_for(_program_row(origin='cited'), w, {'n': 1},
+                              {'llm_gemini_api_key': 'k'})
+    finally:
+        web.read_page, mp.call_pool_json = orig_read, orig_pool
+    row = storage.get_program_lesson('p9', {'phase_name': 'Foundations',
+                                            'unit_n': 1,
+                                            'session_label': 'Technique'})
+    check(lid and row['origin'] == 'cited'
+          and row['source_url'] == 'https://jg.example/s1', f"got {row}")
+
+
+def scenario_generation_survives_a_pool_error():
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.program_lessons_table.truncate()
+    orig = mp.call_pool_json
+    mp.call_pool_json = lambda *a, **k: {'error': '429 quota', 'transient': True}
+    try:
+        lid = pl.generate_for(_program_row(), _window(), {'n': 1},
+                              {'llm_gemini_api_key': 'k'})
+    finally:
+        mp.call_pool_json = orig
+    check(lid is None, "a failed call stores nothing and raises nothing")
+
+
+def scenario_existing_lesson_skips_before_spending_a_call():
+    """Storage already refuses to overwrite a HAND EDIT; this covers the
+    other half of the rule -- a slot that already has any lesson at all is
+    not regenerated either, and that has to be checked before a model call
+    (or a page fetch) is spent finding out."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    storage.program_lessons_table.truncate()
+    slot = pl.slot_of(_window(), unit_n=1)
+    storage.upsert_program_lesson('p9', slot, {
+        'origin': 'generated',
+        'scenes': [{'type': 'say', 'text': 'already here'}]})
+    calls = {'n': 0}
+    def fake_pool(*a, **k):
+        calls['n'] += 1
+        return {'scenes': [], '_model': 'x'}
+    orig = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    try:
+        lid = pl.generate_for(_program_row(), _window(), {'n': 1},
+                              {'llm_gemini_api_key': 'k'})
+    finally:
+        mp.call_pool_json = orig
+    check(lid is None, "nothing new for a slot that already has a lesson")
+    check(calls['n'] == 0, "no model call spent finding that out")
+    row = storage.get_program_lesson('p9', slot)
+    check(row['scenes'][0]['text'] == 'already here',
+          f"the existing lesson is untouched, got {row}")
+
+
 if __name__ == '__main__':
     scenario_scene_cap()
     scenario_text_cap_and_type_whitelist()
@@ -250,4 +376,9 @@ if __name__ == '__main__':
     scenario_delete_one_lesson()
     scenario_delete_clears_a_program()
     scenario_none_slot_and_data_never_raise()
+    scenario_generated_origin_uses_pool_and_stores()
+    scenario_cited_needs_its_page_or_stays_silent()
+    scenario_cited_carries_its_source()
+    scenario_generation_survives_a_pool_error()
+    scenario_existing_lesson_skips_before_spending_a_call()
     print("test_program_lessons OK")

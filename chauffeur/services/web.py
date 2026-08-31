@@ -125,6 +125,24 @@ def _fetch(url: str, max_chars: int = MAX_PAGE_CHARS) -> Optional[str]:
         return None
 
 
+def read_page(url: str) -> Optional[str]:
+    """One page, read for its text -- the single-page sibling of research().
+
+    `_fetch` already runs `html_to_text` internally and never raises, so
+    this is a thin, explicitly public door onto it: program_lessons.py's
+    generator needs exactly one page re-read at write time, not a search,
+    and callers outside this module have no business reaching past the
+    underscore on `_fetch` to get it. None on any failure -- a page that
+    will not load is a retry, and the caller decides what the silence
+    means (for a cited lesson, program_lessons.py's own answer is: no
+    script)."""
+    try:
+        return _fetch(url)
+    except Exception as e:
+        logger.info(f"[web] read_page failed for {url}: {e}")
+        return None
+
+
 # ------------------------------------------------------------- searching
 
 def _brave_search(query: str, count: int = RESULTS_PER_SEARCH) -> list:
