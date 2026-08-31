@@ -19,7 +19,9 @@
     {% include 'nav.html' %}
 
     <div class="flex-1 overflow-y-auto bg-gray-900/50">
-        <div x-data="programsPage()" x-init="load()" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
+        <div x-data="programsPage()" x-init="load()"
+             @lesson-player:done.window="onLessonDone($event.detail)"
+             class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
 
             <h2 class="panel-page-title">Programs</h2>
             <p class="text-sm text-gray-500 mb-5">
@@ -268,6 +270,28 @@
                                     <span x-text="(p.progress.minutes || 0) + ' min total'"></span>
                                     <template x-if="p.progress.phase">
                                         <span><span class="text-gray-700"> · </span>working towards: <span x-text="p.progress.phase.milestone || p.progress.phase.name"></span></span>
+                                    </template>
+                                </div>
+
+                                <!-- Tonight: the practice-windows read this page never made until
+                                     now -- one compact row per today's window on THIS program,
+                                     carrying the tap that opens the lesson player. `w._lesson` is
+                                     always empty until a later task starts storing scripts, so
+                                     this always opens on the player's own fallback ladder for now
+                                     -- exactly the P1 shape, no LLM change. Gated like every other
+                                     action on this card: informational content shows to the room,
+                                     but a tap that ends in a session log is canAct(p) only. -->
+                                <div class="mt-2 space-y-1" x-show="!sec.archived && canAct(p) && todayWindowsFor(p).length">
+                                    <template x-for="w in todayWindowsFor(p)" :key="w.commitment_id + w.date + w.time_start">
+                                        <div class="flex items-center gap-2 text-xs bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5">
+                                            <span class="text-[11px] font-semibold text-gray-400 shrink-0" x-text="(w.time_start || '').slice(0, 5)"></span>
+                                            <span class="text-[11px] text-gray-300 truncate flex-1" x-text="w.session_label || 'Tonight'"></span>
+                                            <button @click="window.dispatchEvent(new CustomEvent('lesson-player:open',
+                                                    {detail: {window: w, lesson: w._lesson || null}}))"
+                                                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-teal-600 text-white active:bg-teal-700 shrink-0">
+                                                Start session
+                                            </button>
+                                        </div>
                                     </template>
                                 </div>
 
@@ -587,6 +611,7 @@
     </div>
     {% include 'components/control_center.html' %}
     {% include 'components/moments_hearth.html' %}
+    {% include 'components/lesson_player.html' %}
 
     <script>
         function programsPage() {
@@ -606,6 +631,14 @@
                 programs: [],
                 members: [],
                 footprints: {},
+                // Today's practice windows, so an active program's card can
+                // offer the exact tap that starts tonight's session. The
+                // wall card (components/programs_card.html) is the only
+                // other reader of api/practice-windows and already drops a
+                // window once it is logged -- todayWindowsFor() below does
+                // the same, for the same reason: a session that already
+                // happened offers nothing left to start.
+                practiceToday: [],
                 creating: false,
                 proposing: false,
                 archiveOpen: false,
@@ -674,11 +707,48 @@
                                 this.sessionMinutes[p.id] = (p.shape || {}).minutes || 25;
                             }
                         });
-                        await Promise.all(
-                            this.programs.filter(p => p.state === 'proposed')
-                                .map(p => this.loadFootprint(p.id))
-                        );
+                        await Promise.all([
+                            ...this.programs.filter(p => p.state === 'proposed')
+                                .map(p => this.loadFootprint(p.id)),
+                            this.loadPracticeToday(),
+                        ]);
                     } catch (e) { showGlobalAlert("Couldn't load programs."); }
+                },
+
+                // A read this page never made before Task 6 (the lesson
+                // player). Its own try/catch never throws, so a failed
+                // fetch here can never turn into the generic "Couldn't
+                // load programs" alert above for a page that in fact
+                // loaded fine -- stale/absent beats a false alarm, the
+                // same call the wall card already made for this endpoint.
+                async loadPracticeToday() {
+                    try {
+                        const d = new Date();
+                        const pad = n => String(n).padStart(2, '0');
+                        const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+                        const r = await fetch(this.apiBase + `api/practice-windows?start_date=${day}&end_date=${day}`,
+                                              { headers: this.authHeaders() });
+                        if (r.ok) {
+                            const body = await r.json();
+                            this.practiceToday = (body.windows || []).filter(w => !w.logged);
+                        }
+                    } catch (e) { /* the Start tap just stays absent today */ }
+                },
+
+                todayWindowsFor(p) {
+                    return this.practiceToday.filter(w => w.program_id === p.id);
+                },
+
+                // The player never posts. Finishing a lesson dispatches
+                // lesson-player:done and this is the one place that reacts
+                // to it -- by calling the exact same action the page's own
+                // "Log a session" button already calls, so there is one
+                // path to a logged session, not a second one grown for
+                // the player.
+                onLessonDone(detail) {
+                    const w = (detail || {}).window || {};
+                    const p = this.programs.find(x => x.id === w.program_id);
+                    if (p) this.logSession(p);
                 },
 
                 async saveProgramSettings() {

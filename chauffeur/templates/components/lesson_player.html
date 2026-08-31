@@ -1,0 +1,318 @@
+<!-- The lesson player. One scene at a time, tap to advance. The renderer
+     owns every pixel; a script only parameterizes it. Nothing in here
+     records how a lesson went: a check tap advances the scene, full stop.
+     The only persisted outcome of practice anywhere is the session log,
+     and the final screen merely offers that existing tap -- the player
+     itself never posts. It dispatches `lesson-player:done` and the page
+     that opened it calls its own existing log action.
+
+     Fallback ladder, always: a window with no stored lesson plays its own
+     plain steps as beats (`stepsToScenes`). The player must never block
+     practice, which is what makes this shippable before any generation
+     exists (program_lessons.py, Task 4) -- `open()` is only ever called
+     with `lesson: null` until a later task starts writing scripts.
+
+     Scene shapes come from services/program_lessons.py's `sanitize_script`:
+     say / do / check / show. This task renders say, do, check, and for
+     show renders the `timer` and `metronome` primitives -- any other show
+     kind (keyboard/fretboard/cards/counter land in later tasks) draws its
+     caption as a say beat, mirroring the sanitizer's own degrade rule for
+     a primitive this renderer has never heard of.
+
+     One presentation, two sizes: `?panel=true` is read directly (the
+     kiosk-shares-logic / TripLogic pattern -- see docs/ui_design_guide.md)
+     rather than this becoming a second component, and `panel-modal` is the
+     class components/avatar_editor.html and the pet_* overlays already use
+     so a full-screen modal reads as opaque on a wall board instead of the
+     board's own see-through glass (panel_skin.html's `.panel-modal` rule). -->
+<style>
+    [x-cloak] { display: none !important; }
+
+    /* A beat fading up, replayed on every scene change -- including two
+       back-to-back scenes of the SAME type (several `do` steps, one after
+       another), where Alpine never removes/re-adds the element so the
+       animation would otherwise only ever play once. `replayBeat()` below
+       forces it by toggling this class across a reflow. */
+    @keyframes lpBeatIn {
+        from { opacity: 0; transform: translateY(14px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+    .lp-beat-in { animation: lpBeatIn .45s ease-out; }
+
+    /* The metronome's visible pulse. The real beat is the Web Audio click
+       in startMetronome(); this is only ever a picture of it. */
+    @keyframes lpMetroPulse {
+        0%, 100% { transform: scale(1); opacity: .5; }
+        50%      { transform: scale(1.4); opacity: 1; }
+    }
+    .lp-metro-dot { animation: lpMetroPulse 1s ease-in-out infinite; }
+</style>
+
+<div x-data="lessonPlayer()" x-show="openFlag" x-cloak
+     @lesson-player:open.window="open($event.detail.window, $event.detail.lesson)"
+     class="panel-modal fixed inset-0 z-[90] bg-gray-950/95 flex flex-col select-none"
+     :class="panel ? 'text-2xl' : 'text-base'">
+
+    <!-- header: program title, session label, close -->
+    <div class="shrink-0 flex items-center gap-3 px-4 py-3 border-b border-gray-800">
+        <span class="shrink-0" :class="panel ? 'text-3xl' : 'text-xl'">&#9654;&#65039;</span>
+        <div class="min-w-0 flex-1">
+            <div class="font-black text-white truncate" :class="panel ? 'text-2xl' : 'text-base'"
+                 x-text="(w || {}).title || 'Practice'"></div>
+            <div class="text-gray-500 truncate" :class="panel ? 'text-base' : 'text-[11px]'"
+                 x-show="(w || {}).session_label" x-text="(w || {}).session_label"></div>
+        </div>
+        <button type="button" @click="close()"
+                class="shrink-0 rounded-full bg-gray-800 border border-gray-700 text-gray-300 leading-none grid place-items-center"
+                :class="panel ? 'w-14 h-14 text-3xl' : 'w-10 h-10 text-xl'">&times;</button>
+    </div>
+
+    <!-- scene area: one scene, keyed by idx, tap (almost) anywhere to advance -->
+    <div class="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center gap-5 p-6 text-center lp-beat-in"
+         x-effect="idx, $nextTick(() => replayBeat($el))"
+         @click="scene().type !== 'check' && advance()">
+
+        <div class="uppercase tracking-widest text-teal-400 font-black"
+             :class="panel ? 'text-sm' : 'text-[11px]'" x-show="kicker()" x-text="kicker()"></div>
+
+        <!-- say: an animated text beat. Also where a `show` this player has
+             no primitive for lands -- its caption reads exactly like a say,
+             which is the sanitizer's own degrade rule mirrored client-side. -->
+        <template x-if="scene().type === 'say' || (scene().type === 'show' && !isRenderableShow(scene()))">
+            <div class="w-full max-w-sm font-bold text-white" :class="panel ? 'text-3xl' : 'text-xl'"
+                 x-text="sayText()"></div>
+        </template>
+
+        <!-- do: the drill itself, live -->
+        <template x-if="scene().type === 'do'">
+            <div class="w-full max-w-sm font-bold text-white" :class="panel ? 'text-3xl' : 'text-xl'"
+                 x-text="scene().text"></div>
+        </template>
+
+        <!-- check: fixed taps, never stored -- answerCheck() only advances -->
+        <template x-if="scene().type === 'check'">
+            <div class="w-full max-w-sm space-y-5">
+                <div class="font-bold text-white" :class="panel ? 'text-3xl' : 'text-xl'" x-text="scene().ask"></div>
+                <div class="flex flex-col gap-2.5">
+                    <button type="button" @click="answerCheck()"
+                            class="w-full rounded-xl bg-teal-700 text-white font-bold active:bg-teal-800"
+                            :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Got it</button>
+                    <button type="button" @click="answerCheck()"
+                            class="w-full rounded-xl bg-gray-800 border border-gray-700 text-gray-200 font-bold active:bg-gray-700"
+                            :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Almost</button>
+                    <button type="button" @click="answerCheck()"
+                            class="w-full rounded-xl bg-gray-800 border border-gray-700 text-gray-400 font-bold active:bg-gray-700"
+                            :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Not yet</button>
+                </div>
+            </div>
+        </template>
+
+        <!-- show: primitive dispatch. Only timer/metronome render a picture
+             in this task; a caption is drawn either way. -->
+        <template x-if="scene().type === 'show' && isRenderableShow(scene())">
+            <div class="text-gray-400" :class="panel ? 'text-xl' : 'text-sm'"
+                 x-show="scene().caption" x-text="scene().caption"></div>
+        </template>
+
+        <!-- the countdown ring: a `do` with seconds, or a `show timer` -->
+        <div class="relative w-36 h-36 mx-auto" x-show="timerSeconds() > 0">
+            <svg class="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 100 100">
+                <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="8"></circle>
+                <circle cx="50" cy="50" r="44" fill="none" stroke="#2dd4bf" stroke-width="8" stroke-linecap="round"
+                        :stroke-dasharray="ringC" :stroke-dashoffset="ringOffset()"></circle>
+            </svg>
+            <div class="absolute inset-0 flex items-center justify-center font-black text-white"
+                 :class="panel ? 'text-3xl' : 'text-2xl'" x-text="fmtClock(timeLeft)"></div>
+        </div>
+
+        <!-- the metronome: a `do` with metronome_bpm, or a `show metronome` -->
+        <div class="flex items-center justify-center gap-2.5" x-show="metroBpm() > 0">
+            <span class="rounded-full bg-teal-400 lp-metro-dot" :class="panel ? 'w-5 h-5' : 'w-3.5 h-3.5'"
+                  :style="'animation-duration:' + (60 / (metroBpm() || 100)) + 's'"></span>
+            <span class="text-gray-500" :class="panel ? 'text-lg' : 'text-xs'" x-text="metroBpm() + ' bpm'"></span>
+        </div>
+    </div>
+
+    <!-- footer: progress dots (position only, never results), advance tap -->
+    <div class="shrink-0 px-4 py-4 border-t border-gray-800 space-y-3">
+        <div class="flex items-center justify-center gap-1.5">
+            <template x-for="(sc, i) in scenes" :key="i">
+                <span class="rounded-full" :class="i === idx ? 'bg-teal-400 w-5 h-1.5' : 'bg-gray-700 w-1.5 h-1.5'"></span>
+            </template>
+        </div>
+        <!-- the final screen: on the last scene this same tap is the "log
+             it?" ask -- tapping it calls advance(), which (already on the
+             last index) calls finish(), which only ever DISPATCHES; the
+             page that opened the player owns the actual log write. A check
+             scene skips this row entirely -- its own three taps already
+             advance, last scene or not. -->
+        <button type="button" @click="advance()" x-show="scene().type !== 'check'"
+                class="w-full rounded-xl bg-blue-600 text-white font-bold active:bg-blue-700"
+                :class="panel ? 'py-4 text-2xl' : 'py-3 text-sm'"
+                x-text="isLast() ? 'Log it?' : 'Continue'"></button>
+    </div>
+</div>
+
+<script>
+function lessonPlayer() {
+    return {
+        openFlag: false, w: null, scenes: [], idx: 0,
+        panel: new URLSearchParams(location.search).get('panel') === 'true',
+        timer: null, timeLeft: 0, timerTotal: 0, audio: null, metroTimer: null,
+        ringC: 2 * Math.PI * 44,
+
+        open(w, lesson) {
+            this.w = w || {};
+            this.scenes = (lesson && (lesson.scenes || []).length)
+                ? lesson.scenes : this.stepsToScenes(this.w);
+            this.idx = 0; this.openFlag = true;
+            this.enterScene();
+        },
+
+        // The fallback ladder: a window with no lesson plays its own steps.
+        // The player never blocks practice.
+        stepsToScenes(w) {
+            const scenes = [];
+            if (w.unit_title) scenes.push({type: 'say', text: w.unit_title});
+            (w.steps || []).forEach(s => scenes.push({type: 'do', text: s}));
+            if (!scenes.length && w.milestone)
+                scenes.push({type: 'say', text: w.milestone});
+            scenes.push({type: 'check', ask: 'Good session?'});
+            return scenes;
+        },
+
+        scene() { return this.scenes[this.idx] || {type: 'say', text: ''}; },
+        isLast() { return this.idx >= this.scenes.length - 1; },
+
+        // A `show` whose kind this renderer draws. Anything else (a real
+        // lesson may cite keyboard/fretboard/cards/counter -- later tasks)
+        // falls through to the say-shaped caption below, same call
+        // sanitize_script already made server-side for a broken primitive.
+        isRenderableShow(s) {
+            return !!(s && s.primitive
+                && (s.primitive.kind === 'timer' || s.primitive.kind === 'metronome'));
+        },
+
+        sayText() {
+            const s = this.scene();
+            return s.text || s.caption || '';
+        },
+
+        kicker() {
+            const t = this.scene().type;
+            if (t === 'do') return 'Practice';
+            if (t === 'check') return 'Quick check';
+            return '';
+        },
+
+        // Seconds/bpm for whichever scene is showing, whether it arrived as
+        // a `do`'s own fields or as a `show timer` / `show metronome`
+        // primitive -- one place the ring and the pulse both read from.
+        timerSeconds() {
+            const s = this.scene();
+            if (s.type === 'do' && s.seconds) return s.seconds;
+            if (s.type === 'show' && s.primitive && s.primitive.kind === 'timer') return s.primitive.seconds;
+            return 0;
+        },
+        metroBpm() {
+            const s = this.scene();
+            if (s.type === 'do' && s.metronome_bpm) return s.metronome_bpm;
+            if (s.type === 'show' && s.primitive && s.primitive.kind === 'metronome') return s.primitive.bpm;
+            return 0;
+        },
+
+        advance() {
+            this.stopSound();
+            if (this.idx < this.scenes.length - 1) { this.idx++; this.enterScene(); }
+            else this.finish();
+        },
+        // A check tap advances. It is not stored, not sent, not remembered.
+        answerCheck() { this.advance(); },
+
+        enterScene() {
+            const s = this.scene();
+            if (s.type === 'do' && s.seconds) this.startTimer(s.seconds);
+            if (s.type === 'do' && s.metronome_bpm) this.startMetronome(s.metronome_bpm);
+            if (s.type === 'show' && s.primitive) {
+                if (s.primitive.kind === 'timer' && s.primitive.seconds) this.startTimer(s.primitive.seconds);
+                if (s.primitive.kind === 'metronome' && s.primitive.bpm) this.startMetronome(s.primitive.bpm);
+            }
+        },
+
+        startTimer(secs) {
+            if (this.timer) clearInterval(this.timer);
+            this.timerTotal = secs;
+            this.timeLeft = secs;
+            this.timer = setInterval(() => {
+                this.timeLeft = Math.max(0, this.timeLeft - 1);
+                if (this.timeLeft <= 0) { clearInterval(this.timer); this.timer = null; }
+            }, 1000);
+        },
+
+        startMetronome(bpm) {
+            if (this.metroTimer) clearInterval(this.metroTimer);
+            try {
+                if (!this.audio) this.audio = new (window.AudioContext || window.webkitAudioContext)();
+                if (this.audio.state === 'suspended') this.audio.resume().catch(() => {});
+            } catch (e) { return; }
+            const click = () => {
+                if (!this.audio) return;
+                const osc = this.audio.createOscillator();
+                const gain = this.audio.createGain();
+                osc.frequency.value = 880;
+                osc.connect(gain).connect(this.audio.destination);
+                const now = this.audio.currentTime;
+                gain.gain.setValueAtTime(0.25, now);
+                gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.04);
+                osc.start(now);
+                osc.stop(now + 0.04);
+            };
+            click();
+            this.metroTimer = setInterval(click, Math.max(60000 / bpm, 100));
+        },
+
+        // Cleared on every scene change (advance() calls this before it
+        // moves idx), on close, and on finish -- so nothing here can ever
+        // keep ticking or clicking past the player being on screen.
+        stopSound() {
+            if (this.timer) { clearInterval(this.timer); this.timer = null; }
+            if (this.metroTimer) { clearInterval(this.metroTimer); this.metroTimer = null; }
+            if (this.audio) { try { this.audio.close(); } catch (e) {} this.audio = null; }
+        },
+
+        ringOffset() {
+            const total = this.timerTotal || 1;
+            const frac = Math.max(0, Math.min(1, this.timeLeft / total));
+            return (this.ringC * (1 - frac)).toFixed(1);
+        },
+
+        fmtClock(secs) {
+            secs = Math.max(0, Math.floor(secs || 0));
+            const m = Math.floor(secs / 60), s = secs % 60;
+            return m + ':' + String(s).padStart(2, '0');
+        },
+
+        // Retriggers the fade-up across a reflow, so it plays again even
+        // between two back-to-back scenes of the SAME type (several `do`
+        // steps, one after another), where Alpine's x-if never removes the
+        // element and a plain CSS `animation` would otherwise only ever
+        // fire once.
+        replayBeat(el) {
+            if (!el) return;
+            el.classList.remove('lp-beat-in');
+            void el.offsetWidth;
+            el.classList.add('lp-beat-in');
+        },
+
+        // The only place this component ever talks to the outside world.
+        // No fetch, no POST -- the page that opened the player owns the
+        // actual session log and reuses its own existing action for it.
+        finish() {
+            this.stopSound();
+            window.dispatchEvent(new CustomEvent('lesson-player:done', {detail: {window: this.w}}));
+            this.openFlag = false;
+        },
+        close() { this.stopSound(); this.openFlag = false; },
+    };
+}
+</script>
