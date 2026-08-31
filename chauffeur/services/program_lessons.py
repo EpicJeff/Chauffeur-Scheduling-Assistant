@@ -104,6 +104,18 @@ MAX_HINT_STEPS = 4
 # under five seconds nobody has finished a phrase, and past two minutes an
 # open microphone in a family's living room has stopped being a scene and
 # started being a fixture.
+# Run-lines: Argyle says the other character's cue, you deliver yours.
+# Eight exchanges is a scene, not a play -- past that nobody is
+# rehearsing, they are reading.
+MAX_LINE_PAIRS = 8
+
+# Progressive fade: the same words, with more of them blanked each pass,
+# until you are reciting rather than reading. Two passes is the smallest
+# thing that is a fade at all; four is where a long passage stops being
+# learnable in one sitting.
+MIN_FADE_PASSES = 2
+MAX_FADE_PASSES = 4
+
 LISTEN_MODES = ('presence', 'pitch', 'tempo')
 MIN_LISTEN_SECONDS = 5
 MAX_LISTEN_SECONDS = 120
@@ -188,6 +200,17 @@ def _valid_cards(p):
                     for x in pairs))
 
 
+def _valid_lines(p):
+    # BOTH halves of every pair. A cue with no line prompts a silence,
+    # and a line with no cue arrives out of nowhere -- neither is a
+    # rehearsal, and the scene degrades to its caption rather than
+    # half-running one.
+    pairs = p.get('pairs')
+    return (isinstance(pairs, list) and 0 < len(pairs) <= MAX_LINE_PAIRS
+            and all(isinstance(x, dict) and _clean_text(x.get('cue'))
+                    and _clean_text(x.get('line')) for x in pairs))
+
+
 def _valid_tuner(p):
     # A tuner needs nothing at all -- "tune up" is a complete instruction
     # and the needle draws whatever it hears. `target` is optional and,
@@ -259,6 +282,7 @@ PRIMITIVES = {
     'hints': _valid_hints,
     'listen': _valid_listen,
     'tuner': _valid_tuner,
+    'lines': _valid_lines,
 }
 
 # A generated lesson may structure practice; it may not prescribe what a
@@ -336,6 +360,15 @@ def _build_primitive(prim):
                 'pairs': [{'front': _clean_text(x.get('front'), MAX_SHORT_TEXT),
                            'back': _clean_text(x.get('back'), MAX_SHORT_TEXT)}
                           for x in prim['pairs']]}
+    if kind == 'lines':
+        built = {'kind': 'lines',
+                 'pairs': [{'cue': _clean_text(x.get('cue')),
+                            'line': _clean_text(x.get('line'))}
+                           for x in prim['pairs']]}
+        lang = prim.get('lang')
+        if isinstance(lang, str) and _LANG_RE.match(lang):
+            built['lang'] = lang
+        return built
     if kind == 'tuner':
         built = {'kind': 'tuner'}
         target = str(prim.get('target') or '')
@@ -385,6 +418,11 @@ def _primitive_text(prim: dict) -> list:
     # function existed: a screened caption over an unscreened payload.
     if prim.get('kind') == 'hints':
         return list(prim.get('steps') or []) + [prim.get('answer') or '']
+    # Both halves of a run-line: the cue is SPOKEN, which makes it the
+    # more important of the two to screen, not the less.
+    if prim.get('kind') == 'lines':
+        return [f for pair in prim.get('pairs') or []
+                for f in (pair.get('cue') or '', pair.get('line') or '')]
     return []
 
 
@@ -545,7 +583,19 @@ def sanitize_script(scenes: list, origin: str, _depth: int = 0) -> list:
             text = _clean_text(raw.get('text'))
             if not text or _screened(text, origin):
                 continue
-            out.append({'type': 'say', 'text': text, **voice})
+            scene = {'type': 'say', 'text': text}
+            # A fading beat is the same words with more of them blanked
+            # each pass, until you are reciting rather than reading.
+            # `passes` alone means nothing -- it is a parameter of the
+            # fade, not a beat of its own -- so it only survives beside it.
+            if raw.get('fade'):
+                scene['fade'] = True
+                scene['passes'] = max(MIN_FADE_PASSES,
+                                      min(MAX_FADE_PASSES,
+                                          _to_int(raw.get('passes'))
+                                          or MIN_FADE_PASSES))
+            scene.update(voice)
+            out.append(scene)
         elif kind == 'do':
             text = _clean_text(raw.get('text'))
             if not text or _screened(text, origin):
@@ -717,7 +767,9 @@ def due_wait_announces(now_ts=None) -> list:
 _SYSTEM = (
     "You write one practice-session lesson script for a family app. Reply "
     'with ONLY JSON: {"scenes": [...]}. Scene types: '
-    '{"type":"say","text":""} a short teaching beat; '
+    '{"type":"say","text":"","fade":true,"passes":3} a short '
+    "teaching beat (\"fade\" repeats the same words with more of "
+    "them blanked each pass, 2-4, for anything learned by heart); "
     '{"type":"do","text":"","seconds":60,"metronome_bpm":80,'
     '"cues":[{"at":30,"say":"Switch sides"}]} a '
     "practice interlude (seconds and metronome_bpm optional; \"cues\" are "
@@ -743,6 +795,9 @@ _SYSTEM = (
     "that are not played at all -- never a fret or a finger for those), "
     '{"kind":"cards","pairs":[{"front":"","back":""}]}, '
     '{"kind":"hints","steps":["widest nudge","narrower"],"answer":""} '
+    '{"kind":"lines","pairs":[{"cue":"","line":""}],"lang":"en-GB"} '
+    "(rehearsal: the app says the cue out loud, they answer with the "
+    "line -- up to 8 exchanges), "
     '{"kind":"tuner","target":"E2"} '
     "(a live tuner needle; target is optional), "
     '{"kind":"listen","mode":"presence","seconds":20} '

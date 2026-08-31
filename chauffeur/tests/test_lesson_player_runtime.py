@@ -1793,6 +1793,109 @@ def scenario_a_cue_stores_nothing():
                   f"a cue is said and forgotten -- {fn} must not {forbidden}")
 
 
+# --- run-lines and fade -------------------------------------------------
+
+
+def _fade_under_node():
+    """The fade mask, executed. Two properties are the whole feature and
+    neither is visible by reading: the same pass always blanks the same
+    words (so a second look at pass 2 is the same puzzle, not a new one),
+    and a word blanked at pass k is still blanked at pass k+1 (so it
+    tightens rather than shuffling)."""
+    import json
+    import os
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node is not installed')
+        return None
+    src = _read('components/lesson_player.html')
+    m = re.search(r'\n        fadeMask\(count, pass_, passes\) \{(.*?)\n        \},',
+                  src, re.S)
+    check(m, "fadeMask(count, pass_, passes) is findable")
+    body = m.group(1)
+    check('this.' not in body and 'Math.random' not in body,
+          f"pure and never random -- a fade nobody can repeat is a new "
+          f"puzzle every time, got {body!r}")
+    harness = r"""
+const out = {};
+const N = 9, PASSES = 4;
+out.masks = [];
+for (let p = 0; p <= PASSES; p++) out.masks.push(fadeMask(N, p, PASSES));
+out.repeat = fadeMask(N, 2, PASSES);
+out.zero = fadeMask(0, 2, PASSES);
+console.log(JSON.stringify(out));
+"""
+    scratch = tempfile.mkdtemp(prefix='chauffeur_fade_')
+    path = os.path.join(scratch, 'run.mjs')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('function fadeMask(count, pass_, passes) {' + body + '\n}\n'
+                + harness)
+    proc = subprocess.run([node, path], capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', timeout=60)
+    check(proc.returncode == 0, f"the fade threw:\n{proc.stderr[-1500:]}")
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def scenario_a_fade_only_ever_tightens():
+    got = _fade_under_node()
+    if got is None:
+        return
+    masks = got['masks']
+    check(all(not h for h in masks[0]),
+          f"the first pass hides nothing -- you read it once, got {masks[0]}")
+    check(all(h for h in masks[-1]),
+          f"and the last hides everything -- you are reciting, got {masks[-1]}")
+    for i in range(1, len(masks)):
+        for j, hidden in enumerate(masks[i - 1]):
+            check(not hidden or masks[i][j],
+                  f"a word hidden at pass {i - 1} must stay hidden at "
+                  f"pass {i}, got {masks[i - 1]} then {masks[i]}")
+    counts = [sum(1 for h in m if h) for m in masks]
+    check(counts == sorted(counts), f"and the count only grows, got {counts}")
+
+
+def scenario_the_same_pass_is_always_the_same_puzzle():
+    got = _fade_under_node()
+    if got is None:
+        return
+    check(got['repeat'] == got['masks'][2],
+          f"pass 2 asked twice is pass 2, got {got['repeat']} vs "
+          f"{got['masks'][2]}")
+    check(got['zero'] == [], "and an empty beat has an empty mask")
+
+
+def scenario_run_lines_say_the_cue_and_wait():
+    src = _read('components/lesson_player.html')
+    check("primitive.kind === 'lines'" in src, "the player draws run-lines")
+    import re
+    m = re.search(r'\n        nextLine\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "nextLine exists")
+    body = m.group(1) if m else ''
+    check('say' in body, f"Argyle delivers the cue, got {body!r}")
+    check('lineRevealed' in body, "and the line stays hidden until asked for")
+    for forbidden in ('fetch', 'localStorage'):
+        check(forbidden not in body,
+              f"a rehearsal records nothing -- no {forbidden}")
+
+
+def scenario_a_fading_beat_taps_through_its_passes():
+    src = _read('components/lesson_player.html')
+    check('fadePass' in src, "there is a pass counter")
+    import re
+    m = re.search(r'\n        nextFadePass\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "nextFadePass exists")
+    body = m.group(1) if m else ''
+    check('fadePass' in body, f"it advances the pass, got {body!r}")
+    for forbidden in ('fetch', 'localStorage'):
+        check(forbidden not in body,
+              f"and how many passes somebody needed is not a record -- no "
+              f"{forbidden}")
+
+
 # --- pitch, and the tuner -----------------------------------------------
 
 
@@ -2362,6 +2465,10 @@ if __name__ == '__main__':
     scenario_the_cue_scheduler_rides_the_beats_own_timer()
     scenario_cues_never_outlive_their_scene()
     scenario_a_cue_stores_nothing()
+    scenario_a_fade_only_ever_tightens()
+    scenario_the_same_pass_is_always_the_same_puzzle()
+    scenario_run_lines_say_the_cue_and_wait()
+    scenario_a_fading_beat_taps_through_its_passes()
     scenario_the_pitch_detector_lands_on_the_note()
     scenario_silence_is_not_a_note()
     scenario_a_frequency_becomes_a_note_name_the_validator_would_accept()

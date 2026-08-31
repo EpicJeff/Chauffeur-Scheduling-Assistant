@@ -141,9 +141,33 @@
         <!-- say: an animated text beat. Also where a `show` this player has
              no primitive for lands -- its caption reads exactly like a say,
              which is the sanitizer's own degrade rule mirrored client-side. -->
-        <template x-if="scene().type === 'say' || (scene().type === 'show' && !isRenderableShow(scene()))">
+        <template x-if="(scene().type === 'say' && !scene().fade)
+                        || (scene().type === 'show' && !isRenderableShow(scene()))">
             <div class="w-full max-w-sm font-bold text-gray-100" :class="panel ? 'text-3xl' : 'text-xl'"
                  x-text="sayText()"></div>
+        </template>
+
+        <!-- say, fading: the same words with more of them blanked each
+             pass, until the last pass is blank and you are reciting.
+             Which words go is deterministic (fadeMask), so the same pass
+             is always the same puzzle rather than a new one -- and the
+             blanks are drawn as underscored gaps of the word's own width
+             so the SHAPE of the sentence survives, which is the half that
+             makes it learnable. Nothing counts the passes. -->
+        <template x-if="scene().type === 'say' && scene().fade">
+            <div class="w-full max-w-sm flex flex-col items-center gap-5">
+                <div class="font-bold text-gray-100 flex flex-wrap justify-center gap-x-2 gap-y-1"
+                     :class="panel ? 'text-3xl' : 'text-xl'">
+                    <template x-for="(t, i) in fadeWords()" :key="i">
+                        <span :class="t.hidden ? 'text-transparent border-b-2 border-gray-400/70' : ''"
+                              x-text="t.w"></span>
+                    </template>
+                </div>
+                <button type="button" @click.stop="nextFadePass()"
+                        x-show="fadePass < (scene().passes || 2)"
+                        class="rounded-lg bg-gray-800 border border-gray-700 text-gray-300 font-bold active:bg-gray-700"
+                        :class="panel ? 'px-6 py-3 text-xl' : 'px-4 py-2 text-sm'">Again, with less</button>
+            </div>
         </template>
 
         <!-- do: the drill itself, live. The one control on it is the
@@ -349,6 +373,42 @@
                                     class="w-full rounded-xl bg-teal-700 text-white font-bold active:brightness-90"
                                     :class="panel ? 'py-4 text-2xl' : 'py-2.5 text-sm'">Tap when you have</button>
                         </div>
+                    </div>
+                </template>
+
+                <!-- lines: Argyle reads the other part, you answer. The
+                     line stays hidden until it is asked for, because a
+                     rehearsal with the answer already on screen is a
+                     reading. Dots draw position, never how many were
+                     right -- there is no right here to count. -->
+                <template x-if="scene().primitive.kind === 'lines'">
+                    <div class="w-full flex flex-col items-center gap-4"
+                         :class="panel ? 'max-w-2xl' : 'max-w-sm'">
+                        <div class="w-full rounded-2xl bg-gray-800 border border-gray-700 p-5 text-center">
+                            <div class="text-gray-400 mb-1" :class="panel ? 'text-base' : 'text-[11px]'">
+                                Argyle
+                            </div>
+                            <div class="font-bold text-gray-100" :class="panel ? 'text-2xl' : 'text-lg'"
+                                 x-text="((scene().primitive.pairs || [])[lineIdx] || {}).cue"></div>
+                        </div>
+                        <div class="w-full rounded-2xl bg-teal-900/40 border border-teal-700 p-5 text-center"
+                             x-show="lineRevealed">
+                            <div class="text-teal-300 mb-1" :class="panel ? 'text-base' : 'text-[11px]'">
+                                You
+                            </div>
+                            <div class="font-bold text-gray-100" :class="panel ? 'text-2xl' : 'text-lg'"
+                                 x-text="((scene().primitive.pairs || [])[lineIdx] || {}).line"></div>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <template x-for="(p, i) in (scene().primitive.pairs || [])" :key="i">
+                                <span class="rounded-full"
+                                      :class="i === lineIdx ? 'bg-teal-400 w-5 h-1.5' : 'bg-gray-700 w-1.5 h-1.5'"></span>
+                            </template>
+                        </div>
+                        <button type="button" @click.stop="nextLine()"
+                                class="rounded-lg bg-gray-800 border border-gray-700 text-gray-300 font-bold active:bg-gray-700"
+                                :class="panel ? 'px-6 py-3 text-xl' : 'px-4 py-2 text-sm'"
+                                x-text="lineRevealed ? 'Next cue' : 'Show the line'"></button>
                     </div>
                 </template>
 
@@ -627,6 +687,9 @@ function lessonPlayer() {
         // cleared on entry and on release: none of it is a result.
         tunerNote: '', tunerCents: 0, pitchHeldSince: 0,
         peaks: [], lastPeakAt: 0,
+        // A fading beat's pass, and where a rehearsal has got to. Both
+        // scene-local, both reset on entry, neither counted anywhere.
+        fadePass: 0, lineIdx: 0, lineRevealed: false,
         // The current beat's cues and how many of them have already been
         // said. A cursor rather than a set, which is safe because the
         // sanitizer stores them sorted by `at`. Both reset on every scene
@@ -720,7 +783,7 @@ function lessonPlayer() {
         isRenderableShow(s) {
             return !!(s && s.primitive && ['timer', 'metronome', 'keyboard',
                 'fretboard', 'cards', 'counter', 'hints',
-                'listen', 'tuner'].includes(s.primitive.kind));
+                'listen', 'tuner', 'lines'].includes(s.primitive.kind));
         },
 
         // `say` always has non-empty text (sanitize_script drops an empty
@@ -1385,6 +1448,7 @@ function lessonPlayer() {
             this.listenHeard = ''; this.listenDone = false; this.listenLeft = 0;
             this.tunerNote = ''; this.tunerCents = 0; this.pitchHeldSince = 0;
             this.peaks = []; this.lastPeakAt = 0;
+            this.fadePass = 0; this.lineIdx = 0; this.lineRevealed = false;
             if (this.waitTimer) { clearInterval(this.waitTimer); this.waitTimer = null; }
             if (this.counterTimer) { clearInterval(this.counterTimer); this.counterTimer = null; }
             const s = this.scene();
@@ -1402,11 +1466,77 @@ function lessonPlayer() {
                 && ['listen', 'tuner'].includes(s.primitive.kind)) {
                 this.startListening(s.primitive);
             }
+            // A rehearsal opens with the first cue, spoken -- there is
+            // nothing to answer until somebody says the other part.
+            if (s.type === 'show' && s.primitive
+                && s.primitive.kind === 'lines') {
+                const first = (s.primitive.pairs || [])[0] || {};
+                this.say(first.cue, s.primitive.lang, s.tone);
+            }
             if (s.type === 'do' && s.seconds) this.startTimer(s.seconds);
             if (s.type === 'do' && s.metronome_bpm) this.startMetronome(s.metronome_bpm);
             if (s.type === 'show' && s.primitive) {
                 if (s.primitive.kind === 'timer' && s.primitive.seconds) this.startTimer(s.primitive.seconds);
                 if (s.primitive.kind === 'metronome' && s.primitive.bpm) this.startMetronome(s.primitive.bpm);
+            }
+        },
+
+        // --- fade: reading becomes reciting ----------------------------
+        // Which words are blanked on a given pass. Two properties are the
+        // whole feature and neither is visible by reading the code, which
+        // is why this is pure and driven under Node against both of them:
+        //
+        //   * the same pass always blanks the SAME words -- a fade nobody
+        //     can repeat is a new puzzle every time instead of the same
+        //     one getting harder, and Math.random() would guarantee that;
+        //   * a word blanked at pass k stays blanked at pass k+1, so the
+        //     passage tightens rather than shuffling under you.
+        //
+        // Both fall straight out of the construction: a fixed permutation
+        // of the word indices, and a count that only grows.
+        fadeMask(count, pass_, passes) {
+            const n = Math.max(0, count | 0);
+            const total = Math.max(1, passes | 0);
+            const p = Math.max(0, Math.min(total, pass_ | 0));
+            // A deterministic shuffle of 0..n-1: order by a fixed
+            // multiplicative hash of the index, so it is stable across
+            // machines and reloads and is never in reading order (which
+            // would blank the passage front to back, the one order that
+            // teaches nothing).
+            const order = [];
+            for (let i = 0; i < n; i++) order.push(i);
+            order.sort((a, b) => ((a * 2654435761) % 100000) - ((b * 2654435761) % 100000));
+            const hide = Math.round(n * p / total);
+            const mask = new Array(n).fill(false);
+            for (let k = 0; k < hide; k++) mask[order[k]] = true;
+            return mask;
+        },
+        fadeWords() {
+            const s = this.scene();
+            const words = String(s.text || '').split(/\s+/).filter(Boolean);
+            const mask = this.fadeMask(words.length, this.fadePass, s.passes || 2);
+            return words.map((w, i) => ({w, hidden: mask[i]}));
+        },
+        // One tap, one pass tighter. Nothing counts how many passes
+        // somebody needed: that is the record this app refuses to keep,
+        // and there is nowhere for it to be kept.
+        nextFadePass() {
+            const s = this.scene();
+            if (this.fadePass < (s.passes || 2)) this.fadePass++;
+        },
+
+        // --- run-lines -------------------------------------------------
+        // Argyle delivers the other character's cue out loud; the line
+        // stays hidden until it is asked for, because a rehearsal where
+        // the answer is already on screen is a reading.
+        nextLine() {
+            const pairs = ((this.scene().primitive) || {}).pairs || [];
+            const lang = ((this.scene().primitive) || {}).lang;
+            if (!this.lineRevealed) { this.lineRevealed = true; return; }
+            if (this.lineIdx < pairs.length - 1) {
+                this.lineIdx++;
+                this.lineRevealed = false;
+                this.say((pairs[this.lineIdx] || {}).cue, lang, this.scene().tone);
             }
         },
 

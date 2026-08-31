@@ -1181,6 +1181,88 @@ def scenario_sweep_report_names_over_the_pass_limit():
     check(len(over) == 1, f"named as over the pass limit, got {out['slots']}")
 
 
+# --- run-lines and fade -------------------------------------------------
+
+
+def scenario_run_lines_are_cue_and_answer_pairs():
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Act two',
+         'primitive': {'kind': 'lines', 'lang': 'en-GB',
+                       'pairs': [{'cue': 'Who goes there?',
+                                  'line': 'Nay, answer me.'},
+                                 {'cue': 'Long live the king!',
+                                  'line': 'Bernardo?'}]}},
+    ], 'generated')
+    prim = out[0]['primitive']
+    check(len(prim['pairs']) == 2, f"both pairs survive, got {prim}")
+    check(prim['pairs'][0]['cue'] == 'Who goes there?'
+          and prim['pairs'][0]['line'] == 'Nay, answer me.',
+          f"cue and line kept apart, got {prim}")
+    check(prim['lang'] == 'en-GB', f"and the voice tag, got {prim}")
+
+
+def scenario_a_line_without_its_cue_is_not_a_pair():
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Half a scene',
+         'primitive': {'kind': 'lines',
+                       'pairs': [{'cue': 'Who goes there?'},
+                                 {'line': 'Bernardo?'}]}},
+    ], 'generated')
+    check(out[0]['type'] == 'say',
+          f"it degrades to its caption rather than prompting silence, "
+          f"got {out}")
+
+
+def scenario_run_lines_run_the_screens():
+    out = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Rehearse',
+         'primitive': {'kind': 'lines',
+                       'pairs': [{'cue': 'Ready?',
+                                  'line': 'This one burns calories.'}]}},
+    ], 'cited')
+    check(out == [], f"a screened line takes the scene, got {out}")
+
+
+def scenario_run_lines_are_capped():
+    over = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Whole play',
+         'primitive': {'kind': 'lines',
+                       'pairs': [{'cue': f'c{i}', 'line': f'l{i}'}
+                                 for i in range(20)]}},
+    ], 'generated')
+    check(over[0]['type'] == 'say',
+          f"too many pairs fails the primitive like every other one, "
+          f"got {over}")
+    long = pl.sanitize_script([
+        {'type': 'show', 'caption': 'Long',
+         'primitive': {'kind': 'lines',
+                       'pairs': [{'cue': 'x' * 900, 'line': 'y' * 900}]}},
+    ], 'generated')
+    pair = long[0]['primitive']['pairs'][0]
+    check(len(pair['cue']) == pl.MAX_TEXT and len(pair['line']) == pl.MAX_TEXT,
+          f"and both halves are clamped, got {pair}")
+
+
+def scenario_a_say_beat_may_fade_across_passes():
+    out = pl.sanitize_script([
+        {'type': 'say', 'text': 'Now I lay me down to sleep.',
+         'fade': True, 'passes': 3},
+        {'type': 'say', 'text': 'Plain.', 'fade': True, 'passes': 99},
+        {'type': 'say', 'text': 'Also plain.', 'passes': 3},
+    ], 'generated')
+    check(out[0].get('fade') is True and out[0].get('passes') == 3,
+          f"a fading beat keeps both, got {out[0]}")
+    check(out[1].get('passes') == pl.MAX_FADE_PASSES,
+          f"passes clamped, got {out[1]}")
+    check('fade' not in out[2] and 'passes' not in out[2],
+          f"and passes without fade means nothing, got {out[2]}")
+
+
+def scenario_the_schema_names_lines_and_fade():
+    check('"lines"' in pl._SYSTEM, "the model is told about run-lines")
+    check('"fade"' in pl._SYSTEM, "and about fading a beat")
+
+
 # --- the tuner ----------------------------------------------------------
 
 
@@ -1896,6 +1978,12 @@ if __name__ == '__main__':
     scenario_a_spoken_cue_runs_the_same_screens_as_everything_else()
     scenario_a_cue_line_is_shorter_than_a_beat_of_text()
     scenario_the_schema_names_cues()
+    scenario_run_lines_are_cue_and_answer_pairs()
+    scenario_a_line_without_its_cue_is_not_a_pair()
+    scenario_run_lines_run_the_screens()
+    scenario_run_lines_are_capped()
+    scenario_a_say_beat_may_fade_across_passes()
+    scenario_the_schema_names_lines_and_fade()
     scenario_a_tuner_may_name_a_target_note()
     scenario_the_schema_names_the_tuner()
     scenario_a_listen_scene_names_one_of_three_modes()
