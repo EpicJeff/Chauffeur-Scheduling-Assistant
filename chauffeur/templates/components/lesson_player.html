@@ -90,6 +90,19 @@
             <span x-show="preview" class="inline-block font-bold rounded bg-teal-500/20 text-teal-300 mt-0.5"
                  :class="panel ? 'text-xs px-2 py-0.5' : 'text-[10px] px-1.5 py-0.5'">Just a look — nothing gets saved</span>
         </div>
+        <!-- Argyle's voice, off for this session. Always visible, never a
+             setting: a lesson in a quiet house is the same lesson, and a
+             person who wants the voice back gets it by tapping again or
+             by opening the player tomorrow. Sits beside Close because
+             those are the two things a person reaches for without
+             looking. -->
+        <button type="button" @click="toggleMute()"
+                :aria-label="muted ? 'Turn the voice on' : 'Turn the voice off'"
+                :title="muted ? 'Voice off — tap for sound' : 'Voice on — tap for quiet'"
+                class="shrink-0 rounded-full border leading-none grid place-items-center"
+                :class="(muted ? 'bg-gray-800 border-gray-700 text-gray-400 ' : 'bg-teal-500/20 border-teal-500/40 text-teal-300 ')
+                        + (panel ? 'w-14 h-14 text-2xl' : 'w-10 h-10 text-base')"
+                x-text="muted ? '🔇' : '🔊'"></button>
         <button type="button" @click="close()"
                 class="shrink-0 rounded-full bg-gray-800 border border-gray-700 text-gray-300 leading-none grid place-items-center"
                 :class="panel ? 'w-14 h-14 text-3xl' : 'w-10 h-10 text-xl'">&times;</button>
@@ -395,17 +408,42 @@ function lessonPlayer() {
         // countdown, but it is exactly as scene-local as either one).
         cardIdx: 0, cardFlipped: false, counterVal: 0, counterRunning: false,
         counterTimer: null,
+        // Argyle's voice, silenced for THIS session only. Session-local
+        // like every other flag here, and deliberately not a setting: a
+        // quiet house tonight is not a household that never wants a voice,
+        // and the tap is one press away every time the player opens.
+        muted: false,
 
         open(w, lesson, preview) {
             this.w = w || {};
             this.lesson = lesson || null;
             this.preview = !!preview;
+            this.muted = false;
             this.usingLesson = !!(lesson && (lesson.scenes || []).length);
             this.scenes = this.usingLesson
                 ? lesson.scenes : this.stepsToScenes(this.w);
             this.idx = 0; this.openFlag = true;
+            // A preview is never greeted. Everything else about it plays
+            // identically -- same scenes, same voice on each of them --
+            // but being welcomed by name to a session nobody is actually
+            // having is the one place the header's marker chip is not
+            // enough, and it is the same call finish() already makes at
+            // the other end.
+            if (!this.preview) this.say(this.greetingLine());
             this.enterScene();
         },
+
+        // The two lines Argyle says that no model ever writes: how it
+        // opens and how it closes. Template strings off the window's own
+        // fields, so there is no call to fail, nothing to screen, and no
+        // way for a lesson script to put words in the house voice's mouth
+        // at the two moments a person is most likely to be listening.
+        greetingLine() {
+            const who = (this.w || {}).member_name || '';
+            const what = (this.w || {}).title || 'practice';
+            return who ? `Ready, ${who}? ${what}.` : `Ready? ${what}.`;
+        },
+        sendOffLine() { return "That's the session. Nice work."; },
 
         // Where this lesson came from, in the family's own terms. A cited
         // script names the host it was written from (linked, off-panel);
@@ -788,11 +826,89 @@ function lessonPlayer() {
         // tick and the dial rather than trailing behind them.
         speakCount(n) {
             try {
+                if (this.muted) return;
                 const synth = window.speechSynthesis;
                 if (!synth || !(synth.getVoices() || []).length) return;
                 synth.cancel();
                 synth.speak(new SpeechSynthesisUtterance(String(n)));
             } catch (e) { /* the tick alone is never blocked by a speech failure */ }
+        },
+
+        // --- Argyle's voice ------------------------------------------
+        // One door for everything spoken inside a session. A voiceless
+        // device -- a wall panel with no engine installed, a browser that
+        // throws on getVoices() -- still plays the whole lesson: speech
+        // is an enhancement here and never a dependency, the same bargain
+        // speakCount() above already makes for a rep count, which is why
+        // every line of this is inside the try.
+        //
+        // cancel() before every line for the same reason it fires per
+        // tick up there: the newest thing Argyle has to say is always the
+        // one worth hearing, and a backlog of stale sentences read over a
+        // scene that has already moved on is worse than silence.
+        //
+        // Voice is picked by LANGUAGE PREFIX rather than an exact match,
+        // because a script asking for `pt-BR` on a machine that only ships
+        // `pt-PT` is far better served by a Portuguese voice than by the
+        // English default reading Portuguese words aloud.
+        say(text, lang, tone) {
+            if (this.muted || !text) return;
+            try {
+                const synth = window.speechSynthesis;
+                if (!synth) return;
+                synth.cancel();
+                const u = new SpeechSynthesisUtterance(String(text));
+                if (lang) {
+                    const v = (synth.getVoices() || []).find(
+                        v => v.lang && v.lang.toLowerCase().startsWith(
+                            String(lang).slice(0, 2).toLowerCase()));
+                    if (v) u.voice = v;
+                    u.lang = lang;
+                }
+                // One persona, two paces. `calm` is a wind-down voice --
+                // slower and a shade lower; `coach` is the ordinary one.
+                u.rate = tone === 'calm' ? 0.85 : 1.0;
+                u.pitch = tone === 'calm' ? 0.9 : 1.0;
+                synth.speak(u);
+            } catch (e) { /* a voiceless device still runs the scene */ }
+        },
+
+        // A tap, not a setting. A quiet house tonight is not a household
+        // that never wants a voice, so this lives for the length of one
+        // session and records nothing about the preference -- open the
+        // player again tomorrow and Argyle speaks again.
+        toggleMute() {
+            this.muted = !this.muted;
+            if (this.muted) {
+                try { window.speechSynthesis && window.speechSynthesis.cancel(); }
+                catch (e) {}
+            }
+        },
+
+        // A chime is the same short Web Audio figure playClick() already
+        // owns, at a different pitch -- `success` one note, `fanfare` two.
+        // Reusing the player's own AudioContext rather than growing a
+        // third audio implementation is the lesson the counter and the
+        // metronome already taught this file once.
+        playChime(kind) {
+            if (this.muted) return;
+            try {
+                if (!this.audio) this.audio = new (window.AudioContext || window.webkitAudioContext)();
+                if (this.audio.state === 'suspended') this.audio.resume().catch(() => {});
+            } catch (e) { return; }
+            if (!this.audio) return;
+            const notes = kind === 'fanfare' ? [660, 880] : [880];
+            notes.forEach((hz, i) => {
+                const osc = this.audio.createOscillator();
+                const gain = this.audio.createGain();
+                osc.frequency.value = hz;
+                osc.connect(gain).connect(this.audio.destination);
+                const at = this.audio.currentTime + i * 0.14;
+                gain.gain.setValueAtTime(0.2, at);
+                gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.16);
+                osc.start(at);
+                osc.stop(at + 0.16);
+            });
         },
 
         advance() {
@@ -818,6 +934,12 @@ function lessonPlayer() {
             this.counterRunning = false;
             if (this.counterTimer) { clearInterval(this.counterTimer); this.counterTimer = null; }
             const s = this.scene();
+            // The voice goes first, before any timer starts under it: a
+            // cue that explains the drill is worth nothing said over the
+            // drill's own countdown. The chime comes after the words for
+            // the same reason -- it punctuates them.
+            if (s.speak) this.say(s.speak, s.speak_lang, s.tone);
+            if (s.chime) this.playChime(s.chime);
             if (s.type === 'do' && s.seconds) this.startTimer(s.seconds);
             if (s.type === 'do' && s.metronome_bpm) this.startMetronome(s.metronome_bpm);
             if (s.type === 'show' && s.primitive) {
@@ -876,6 +998,13 @@ function lessonPlayer() {
             if (this.metroTimer) { clearInterval(this.metroTimer); this.metroTimer = null; }
             if (this.counterTimer) { clearInterval(this.counterTimer); this.counterTimer = null; }
             this.counterRunning = false;
+            // Speech is exactly as scene-local as the countdown and the
+            // click beside it. Without this, advancing, closing or
+            // finishing leaves a sentence still being read aloud into a
+            // room whose lesson has already moved on or ended -- the one
+            // failure mode a voice has that a timer does not.
+            try { window.speechSynthesis && window.speechSynthesis.cancel(); }
+            catch (e) {}
             if (this.audio) { try { this.audio.close(); } catch (e) {} this.audio = null; }
         },
 
@@ -937,6 +1066,13 @@ function lessonPlayer() {
             // session, because the event that tells them one happened is
             // never fired.
             if (this.preview) { this.openFlag = false; return; }
+            // Said AFTER stopSound() above, which cancels whatever the
+            // last scene was still reading -- a send-off talked over by
+            // the beat it is sending off is worse than none. Spoken
+            // before the log ask so the sentence lands while the session
+            // is still the thing on screen, and never in a preview, which
+            // returned one line up.
+            this.say(this.sendOffLine());
             if (this.hostListens) {
                 const ok = await promptConfirm('Log this session?',
                     'It records the practice and cannot be undone.',

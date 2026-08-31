@@ -1529,6 +1529,114 @@ def scenario_self_contained_svg_shapes_keep_their_literal_fills():
         check(literal in src, f"{why} should still be the literal constant, unchanged")
 
 
+# --- Argyle's voice inside the session ----------------------------------
+
+
+def scenario_the_speech_wrapper_can_never_break_a_scene():
+    """A voiceless device -- a wall panel with no speech engine, a browser
+    that throws on getVoices -- still runs the whole lesson. Speech is an
+    enhancement, and the wrapper is the only place that promise is kept."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        say\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    check(m, "say(text, lang, tone) exists as the one speech door")
+    body = m.group(1) if m else ''
+    check('try {' in body and 'catch' in body,
+          "and everything it touches is inside a try/catch")
+    check('speechSynthesis' in body, "it speaks through the browser's own engine")
+    check('.cancel()' in body,
+          "cancelling first, so a new line never queues behind a stale one")
+    check('this.muted' in body, "and the mute tap silences it at the door")
+
+
+def scenario_a_scene_speaks_its_own_line_on_entry():
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        enterScene\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "enterScene body is findable")
+    body = m.group(1) if m else ''
+    check('s.speak' in body, "a scene's spoken line is said when it opens")
+    check('s.tone' in body and 's.speak_lang' in body,
+          "with its own voice and tone, not a fixed one")
+    check('s.chime' in body, "and its chime, where the scene asks for one")
+
+
+def scenario_the_mute_tap_is_reachable_and_gates_the_voice():
+    """One tap silences Argyle for the session without touching a scene --
+    a lesson in a quiet house is the same lesson."""
+    src = _read('components/lesson_player.html')
+    check('muted: false' in src, "the flag is session-local state")
+    check('toggleMute()' in src, "and a tap flips it")
+    import re
+    m = re.search(r'toggleMute\(\) \{(.*?)\},', src, re.S)
+    body = m.group(1) if m else ''
+    for forbidden in ('fetch', 'localStorage', 'api'):
+        check(forbidden not in body,
+              f"muting is not a preference anyone records -- no {forbidden}")
+
+
+def scenario_the_greeting_is_the_players_own_words_never_the_models():
+    """The one thing a model never writes: how Argyle addresses the person
+    in front of it. Template strings off the window's own fields, so there
+    is no call to fail and nothing to screen."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'greetingLine\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "greetingLine() exists")
+    body = m.group(1) if m else ''
+    check('member_name' in body and 'title' in body,
+          "built from the window's member and program")
+    for forbidden in ('fetch', 'scenes', 'lesson'):
+        check(forbidden not in body,
+              f"and never from {forbidden} -- a greeting is not model text")
+    m2 = re.search(r'sendOffLine\(\) \{(.*?)\n        \},', src, re.S)
+    check(m2, "sendOffLine() exists too")
+    check('fetch' not in (m2.group(1) if m2 else ''), "same rule on the way out")
+
+
+def scenario_a_preview_is_never_greeted():
+    """A preview plays the scenes and ends in nothing. Being welcomed to a
+    session nobody is having is the one place the marker chip is not
+    enough."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        open\(w, lesson, preview\) \{(.*?)\n        \},', src, re.S)
+    check(m, "open() body is findable")
+    body = m.group(1) if m else ''
+    check('this.preview' in body and 'greetingLine' in body,
+          "the greeting is spoken from open()")
+    check(re.search(r'if \(!this\.preview\)[^\n]*greetingLine', body),
+          f"and only when this is a real session, got {body!r}")
+
+
+def scenario_stopping_the_sound_stops_the_voice_too():
+    """Speech is exactly as scene-local as the metronome: advancing,
+    closing or finishing must not leave a sentence still being read into
+    a room nobody is in."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'\n        stopSound\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "stopSound body is findable")
+    body = m.group(1) if m else ''
+    check('speechSynthesis' in body and 'cancel' in body,
+          f"and it cancels whatever is being spoken, got {body!r}")
+
+
+def scenario_the_chime_shares_the_players_one_audio_context():
+    """The counter and the metronome already share playClick(); a chime is
+    the same short Web Audio figure at a different pitch, and a third
+    implementation of it would be the second time this file learned that
+    lesson."""
+    src = _read('components/lesson_player.html')
+    import re
+    m = re.search(r'playChime\(kind\) \{(.*?)\n        \},', src, re.S)
+    check(m, "playChime(kind) exists")
+    body = m.group(1) if m else ''
+    check('this.audio' in body, "on the player's own AudioContext")
+    check('this.muted' in body, "and the mute tap silences it too")
+    check("'fanfare'" in body, "with a two-note figure for the fanfare")
+
+
 if __name__ == '__main__':
     scenario_component_exists_and_renders_the_four_beats()
     scenario_checks_are_never_stored()
@@ -1602,4 +1710,11 @@ if __name__ == '__main__':
     scenario_metadata_text_is_gray_400_not_gray_500()
     scenario_svg_elements_on_the_transparent_canvas_never_hardcode_a_dark_only_color()
     scenario_self_contained_svg_shapes_keep_their_literal_fills()
+    scenario_the_speech_wrapper_can_never_break_a_scene()
+    scenario_a_scene_speaks_its_own_line_on_entry()
+    scenario_the_mute_tap_is_reachable_and_gates_the_voice()
+    scenario_the_greeting_is_the_players_own_words_never_the_models()
+    scenario_a_preview_is_never_greeted()
+    scenario_stopping_the_sound_stops_the_voice_too()
+    scenario_the_chime_shares_the_players_one_audio_context()
     print("test_lesson_player_runtime OK")
