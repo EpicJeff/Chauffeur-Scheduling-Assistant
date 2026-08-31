@@ -16470,6 +16470,54 @@ def _practice_events(start_date_str=None, end_date_str=None, days=30,
     return out
 
 
+def _trip_attendee_names(entities, passengers, drivers, members) -> list:
+    """Trip entity strings -> the pills a screen can draw.
+
+    `global` means the whole household is away, which is a different claim
+    from a list of names and is said as one rather than expanded into
+    everybody -- expanding it would put a name on a trip nobody has said is
+    going, and the difference matters on a wall.
+
+    A person who is both a passenger and a driver appears once: `driver_*`
+    and `passenger_*` are two records of one human, and the pill is about the
+    human.
+    """
+    by_pid = {str(getattr(p, 'id', '')): p for p in (passengers or [])}
+    by_did = {str(d.get('id')): d for d in (drivers or [])
+              if isinstance(d, dict)}
+    # Identity colour is the single source of truth for a person's colour
+    # (see `update_member_endpoint`, which mirrors it down onto the driving
+    # record). A Passenger carries no colour of its own, so the name is what
+    # both records agree on and what the pill shows anyway.
+    colors = {}
+    for mem in (members or []):
+        nm = (mem.get('name') or '').strip().lower()
+        if nm and mem.get('color_code'):
+            colors[nm] = mem['color_code']
+
+    out, seen = [], set()
+
+    def _add(name, color=None):
+        key = (name or '').strip().lower()
+        if not key or key in seen:
+            return
+        seen.add(key)
+        out.append({'name': name, 'color': color or colors.get(key) or '#3B82F6'})
+
+    for ent in sorted(str(e) for e in (entities or [])):
+        if ent == 'global':
+            _add('Everyone')
+        elif ent.startswith('passenger_'):
+            p = by_pid.get(ent[len('passenger_'):])
+            if p is not None:
+                _add(getattr(p, 'name', ''))
+        elif ent.startswith('driver_'):
+            d = by_did.get(ent[len('driver_'):])
+            if d:
+                _add(d.get('name'), d.get('color_code'))
+    return out
+
+
 def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_refresh=False, draft=False, ignore_overrides=False):
     from services import arrive_by as _arrive_by
     settings = storage.get_settings()
@@ -16928,6 +16976,12 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     events = unrolled_events
     
     trip_metadata = []
+    # Read once for the whole sweep: a household has a handful of trips and
+    # this is the same roster for every one of them.
+    try:
+        _trip_members = storage.get_all_members(include_archived=True)
+    except Exception:
+        _trip_members = []
     for e in all_events_for_ui.values():
         if getattr(e, 'event_type', '') == 'background_trip':
             applicable_entities = set()
@@ -16950,7 +17004,16 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     
             if not applicable_entities:
                 applicable_entities.add('global')
-                
+
+            # The same set, said in names. Every surface that draws a trip was
+            # reading `calendar_ids` -- which is passengers, and only those
+            # with a calendar -- so an explicitly configured attendee and a
+            # driver triaged onto the trip both showed up nowhere. Resolved
+            # once, here, next to the set that decides suppression, because
+            # two answers to "who is away" is how they start disagreeing.
+            e.trip_attendees = _trip_attendee_names(
+                applicable_entities, passengers, drivers_data, _trip_members)
+
             trip_start = e.start
             trip_end = e.end
             

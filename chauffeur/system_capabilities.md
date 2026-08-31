@@ -7060,6 +7060,27 @@ ordinary calendar event underneath and it now carries them, with every
 day-slice of one trip contributing its attendees to the merged event
 (`_tripPax` / `_mergeTripPax`).
 
+**Who is away includes the driver** (v2.441.2 — `Event.trip_attendees`,
+`_trip_attendee_names`). Attendees were read from `calendar_ids`, which is
+passengers, and only those with a calendar. A parent driving the family to the
+coast is on the trip in every sense that matters — their events are suppressed
+for it — and appeared on no screen as being on it, as did anyone marked
+through the trip's own attendee config.
+
+The trip's `entities` set is the authority, because it is the same set that
+decides the suppression, and it carries `driver_*` and explicitly configured
+attendees as readily as `passenger_*`. It is resolved to names ONCE, on the
+server, beside the set itself: two answers to "who is away" is how they start
+disagreeing. `global` stays "Everyone" rather than being expanded into a list
+— putting a name on a trip nobody said is going is worse than saying the
+claim. One human appearing as both a driver and a passenger gets one pill, and
+identity colour is the source of truth for it.
+
+The block's own label follows what it lists: **Who is away** on a trip,
+**Passengers** everywhere else, and "Nobody is marked on this trip" instead of
+"No passengers". The dialog falls back to the calendar route for payloads
+written before this.
+
 The dialog also says both ends of a span. An all-day event printed one date
 and "(All Day)", which for a week-long trip leaves out the most useful fact
 about it — and an all-day calendar event ends at midnight of the day AFTER its

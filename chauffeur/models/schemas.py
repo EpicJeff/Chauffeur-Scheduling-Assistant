@@ -47,6 +47,13 @@ class Event(BaseModel):
     # Set by the refresh when every passenger on the event is away on a
     # background trip: excluded from solving but still shown on the calendar.
     trip_suppressed: bool = False
+    # Everybody a background trip takes away, resolved to names the UI can
+    # draw. The trip's own `entities` set is the authority on this (it is what
+    # decides whose events get suppressed) and it holds `driver_*` as readily
+    # as `passenger_*` -- a parent driving the family to the coast is on the
+    # trip in every sense that matters and appeared on no screen, because the
+    # only list any surface had was `calendar_ids`, which is passengers.
+    trip_attendees: List[Dict[str, Any]] = Field(default_factory=list)
     # Arrive By: {arrive_at, arrive_label, lead_mins, source, reason, label,
     # short_label} or None. Stamped on the EVENT during the refresh — not on
     # the day payload — because the wall board, the drive sheet, the digest

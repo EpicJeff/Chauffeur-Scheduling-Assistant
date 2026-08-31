@@ -1726,13 +1726,20 @@
             // calendar event, and the first cut of this sheet said neither --
             // one sentence over a trip that has attendees, a location, and a
             // week of dates on it.
-            const pax = familyPaxBadges(t.calendarIds || []);
+            const away = (t.tripAttendees || []);
+            const pax = away.length
+                ? away.map(p => `<span class="px-2 py-0.5 rounded-full text-[11px] font-bold text-white"
+                        style="background-color: ${mfEscape(p.color || '#3B82F6')}">${mfEscape(p.name)}</span>`).join('')
+                : familyPaxBadges(t.calendarIds || []);
             _pwaModal(`
                 <div class="text-[11px] font-bold uppercase tracking-widest text-blue-300">✈️ Trip</div>
                 <div class="text-gray-100 font-bold text-lg mt-0.5">${mfEscape(t.title || 'Trip')}</div>
                 ${span ? `<div class="text-xs text-gray-400 mt-0.5">${mfEscape(span)}</div>` : ''}
                 ${t.location ? `<div class="text-sm text-gray-300 mt-2">📍 ${mfEscape(t.location)}</div>` : ''}
-                ${pax ? `<div class="flex flex-wrap gap-1 mt-2">${pax}</div>` : ''}
+                ${pax ? `<div class="mt-3">
+                    <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-1">Who is away</div>
+                    <div class="flex flex-wrap gap-1">${pax}</div>
+                </div>` : ''}
                 <div class="text-sm text-gray-300 mt-3">Everybody on it is away, so the schedule leaves their events alone while it runs.</div>
                 <div class="flex justify-end mt-5">
                     <button data-close class="px-4 py-2.5 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Close</button>
@@ -8417,6 +8424,9 @@
                         allDay: !!ev.all_day || isTrip,
                         location: ev.location,
                         calendarIds: [...(ev.calendar_ids || [])],
+                        // Who a trip takes away, resolved server-side --
+                        // drivers included, which `calendar_ids` never is.
+                        tripAttendees: [...(ev.trip_attendees || [])],
                         driverIds: new Set(),
                         carIds: new Set(),
                         legs: [],

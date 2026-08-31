@@ -388,7 +388,7 @@ body.ha-theme #simple-event-modal .glass-panel {
                 <div class="grid grid-cols-2 gap-4">
                     <!-- Passengers -->
                     <div class="bg-white/5 rounded-xl p-4 border border-white/5">
-                        <div class="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2">Passengers</div>
+                        <div id="modal-passengers-label" class="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2">Passengers</div>
                         <div id="modal-passengers" class="flex flex-wrap gap-1.5"></div>
                     </div>
                     
@@ -1149,6 +1149,18 @@ function _onEventTap(inst, evObj) {
 // calendar-id route: a background trip is somebody's own calendar entry, and
 // the matched-rule route below belongs to events the solver drives to.
 function _tripPax(ev, data) {
+    // The server resolves who a trip takes away, because it is the same set
+    // that decides whose events get suppressed and two answers to that
+    // question would eventually disagree. Crucially it includes DRIVERS: a
+    // parent driving the family to the coast is on the trip in every sense
+    // that matters, and `calendar_ids` is passengers only -- so the person
+    // who booked the holiday appeared on no screen as being on it.
+    if ((ev.trip_attendees || []).length) {
+        return ev.trip_attendees.map(a => ({
+            name: a.name, color: a.color || '#3B82F6' }));
+    }
+    // Older payloads, and anything the resolver could not name: the calendar
+    // route this always had.
     const out = [];
     (ev.calendar_ids || []).forEach(cid => {
         const meta = (data.calendar_metadata || {})[cid];
@@ -1299,12 +1311,18 @@ function _openEventDetails(inst, evObj) {
         || (props.isPractice ? 'Wherever they practise.' : 'No location provided.');
 
     const paxContainer = document.getElementById('modal-passengers');
+    const _paxLabel = document.getElementById('modal-passengers-label');
+    // Nobody is a PASSENGER on a holiday; they are on it. The block is the
+    // same block, and the word above it follows what is being listed.
+    if (_paxLabel) _paxLabel.textContent = props.isTrip ? 'Who is away' : 'Passengers';
     if (props.passengers && props.passengers.length > 0) {
         paxContainer.innerHTML = props.passengers.map(p => {
             return `<span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm" style="background-color: ${p.color}">${p.name}</span>`;
         }).join('');
     } else {
-        paxContainer.innerHTML = '<span class="italic text-white/40 text-sm">No passengers</span>';
+        paxContainer.innerHTML = props.isTrip
+            ? '<span class="italic text-white/40 text-sm">Nobody is marked on this trip</span>'
+            : '<span class="italic text-white/40 text-sm">No passengers</span>';
     }
 
     const driverContainer = document.getElementById('modal-driver');

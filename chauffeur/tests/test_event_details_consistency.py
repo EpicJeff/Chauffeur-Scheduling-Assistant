@@ -105,7 +105,7 @@ def scenario_the_phone_answers_a_trip_tap_too():
     check('function openTripSheet(' in app, "the phone needs a trip sheet")
     check('openTripSheet(' in app[app.index('if (card.isTrip) {'):][:900],
           "and the trip card must open it")
-    sheet = app[app.index('function openTripSheet('):][:1400]
+    sheet = _fn(app, 'openTripSheet')
     check('leaves their events alone' in sheet,
           "saying the same thing the wall's dialog says, in the same words")
     check('trip?event_id' not in sheet and 'location.href' not in sheet,
@@ -155,6 +155,72 @@ def scenario_not_assigned_is_not_said_over_a_holiday():
           "a trip says why no driver is named, rather than 'Not assigned'")
 
 
+def scenario_a_driver_on_a_trip_is_on_the_trip():
+    """`calendar_ids` is passengers, and only those with a calendar. A parent
+    driving the family to the coast is on the trip in every sense that
+    matters -- their events get suppressed for it -- and appeared on no
+    screen as being on it.
+
+    The server's `entities` set is the authority (it is what decides the
+    suppression) and it holds `driver_*` and explicitly configured attendees
+    as readily as `passenger_*`. Resolving it twice is how two answers to
+    "who is away" start disagreeing, so it is resolved once, server-side.
+    """
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import tempfile
+    os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp())
+    import main
+    from models.schemas import Passenger
+
+    pax = [Passenger(id='p1', name='Lily')]
+    drv = [{'id': 'd1', 'name': 'Jeff', 'color_code': '#14B8A6'}]
+    mem = [{'name': 'Lily', 'color_code': '#EC4899'},
+           {'name': 'Jeff', 'color_code': '#14B8A6'}]
+
+    out = main._trip_attendee_names({'passenger_p1', 'driver_d1'}, pax, drv, mem)
+    names = [a['name'] for a in out]
+    check('Jeff' in names, f"the driver is on the trip, got {out}")
+    check('Lily' in names, f"and so is the passenger, got {out}")
+    check(next(a for a in out if a['name'] == 'Lily')['color'] == '#EC4899',
+          "identity colour is the source of truth for the pill")
+
+    # One human, two records.
+    both = main._trip_attendee_names({'passenger_p1', 'driver_d1',
+                                      'passenger_p1'}, pax, drv, mem)
+    check(len([a for a in both if a['name'] == 'Lily']) == 1,
+          f"a person on it twice is on it once, got {both}")
+
+    # `global` is a different claim from a list of names, and putting a name
+    # on a trip nobody said is going is worse than saying the claim.
+    everyone = main._trip_attendee_names({'global'}, pax, drv, mem)
+    check([a['name'] for a in everyone] == ['Everyone'],
+          f"the whole household is said as one thing, got {everyone}")
+
+    # An entity naming nobody this app knows resolves to nothing, rather than
+    # to a pill reading "passenger_p9".
+    unknown = main._trip_attendee_names({'passenger_p9'}, pax, drv, mem)
+    check(unknown == [], f"an unresolvable entity is not a person, got {unknown}")
+
+
+def scenario_the_surfaces_read_the_resolved_list():
+    cal = _read('components', 'family_calendar.html')
+    pax = _fn(cal, '_tripPax')
+    check('ev.trip_attendees' in pax,
+          "the dialog must prefer the resolved list")
+    check('calendar_ids' in pax,
+          "and keep the calendar route as the fallback for older payloads")
+    check("props.isTrip ? 'Who is away' : 'Passengers'" in cal,
+          "nobody is a passenger on a holiday")
+
+    app = _read('app.html')
+    check('tripAttendees' in app, "the phone carries it onto the card")
+    sheet = _fn(app, 'openTripSheet')
+    check('t.tripAttendees' in sheet and 'Who is away' in sheet,
+          "and draws it under the same words the dialog uses")
+
+
 if __name__ == '__main__':
     scenario_a_wall_cannot_walk_into_the_trip_editor()
     scenario_the_calendar_page_keeps_it_and_its_kiosk_does_not()
@@ -164,4 +230,6 @@ if __name__ == '__main__':
     scenario_a_trip_answers_with_what_it_actually_has()
     scenario_an_all_day_span_says_both_ends()
     scenario_not_assigned_is_not_said_over_a_holiday()
+    scenario_a_driver_on_a_trip_is_on_the_trip()
+    scenario_the_surfaces_read_the_resolved_list()
     print("test_event_details_consistency OK")
